@@ -66,11 +66,15 @@ pub fn already_read_here(vendor: u16, product: u16) -> bool {
         (VALVE_VID, DECK_PID) => true,
         // The Deck's touchscreen, read by `crate::touch`.
         (TOUCH_VID, TOUCH_PID) => true,
+        // A PlayStation pad's touchpad, read by `crate::gamepad` as a trackpad. libinput would
+        // otherwise also make it a mouse, and one thumb would move two pointers.
+        (SONY_VID, _) => true,
         _ => false,
     }
 }
 
 const VALVE_VID: u16 = 0x28DE;
+const SONY_VID: u16 = 0x054C;
 const DECK_PID: u16 = 0x1205;
 /// The Deck's built-in touchscreen, from its own report descriptor.
 const TOUCH_VID: u16 = 0x2808;

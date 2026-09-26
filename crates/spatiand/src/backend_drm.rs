@@ -319,6 +319,8 @@ pub fn run(
     // worked out after this frame's shell events have already been handled, because it needs
     // this frame's head pose. One frame late is a click nobody can feel.
     let mut pointed_events: Vec<ShellEvent> = Vec::new();
+    // Whether the right pad was clicked last frame, for a click's edge in a menu.
+    let mut menu_click_was = false;
     // Where each ray meets the keyboard, as `[right, left]`, so the reticle can be put *on* it.
     //
     // The keyboard is not a window and so is not in the list the aim is cast against. Without
@@ -1097,7 +1099,10 @@ pub fn run(
                     // the controller editor -- as a held arrow key would.
                     let held = shell
                         .menu_is_open()
-                        .then(|| crate::input_map::held_direction(c.state().buttons))
+                        .then(|| {
+                            crate::input_map::held_direction(c.state().buttons)
+                                .or(controls.pad_held_direction())
+                        })
                         .flatten();
                     if let Some(intent) = nav_repeat.tick(held, std::time::Instant::now()) {
                         if let Some(event) = shell.handle(intent) {
@@ -1163,8 +1168,25 @@ pub fn run(
                     }
                 }
             }
-            let deck_input = controller.as_ref().map(|c| *c.state());
+            let mut deck_input = controller.as_ref().map(|c| *c.state());
             let snapshot = controls.gather(deck_input.as_ref());
+            // A PlayStation pad's touchpad is a right trackpad: the pointer, in the world and in
+            // the menus, for as long as the Deck's own right pad is not in use. After `gather`,
+            // so the layout still sees the Deck exactly as it is.
+            if let Some(touch) = controls.touchpad().filter(|t| t.touched || t.clicked) {
+                let state = deck_input.get_or_insert_with(Default::default);
+                if !state.right_pad.touched {
+                    state.right_pad = spatiand_input::Pad {
+                        x: touch.x,
+                        y: touch.y,
+                        touched: true,
+                        clicked: touch.clicked,
+                        // It says nothing of pressure. Anything steady will do for what reads it,
+                        // which looks at change rather than at the value.
+                        pressure: 8000,
+                    };
+                }
+            }
             // Rested under a menu, on the waiting screen and through calibration: a game must
             // never be left holding a button that was pressed to work a menu.
             let layout_resting = shell.menu_is_open() || missing.is_some() || calibration.is_some();
@@ -1185,10 +1207,24 @@ pub fn run(
                     c.rumble(strong, weak);
                 }
             }
-            // A Bluetooth pad's guide button is its STEAM button.
-            if delivery.guide {
-                if let Some(event) = shell.handle(spatiand_shell::Intent::ToggleHud) {
-                    shell_events.push(event);
+            // A Bluetooth pad's guide button is its STEAM button, and held, its `⋯`.
+            for (fired, intent) in [
+                (delivery.guide, spatiand_shell::Intent::ToggleHud),
+                (delivery.guide_held, spatiand_shell::Intent::ToggleLauncher),
+            ] {
+                if fired {
+                    if let Some(event) = shell.handle(intent) {
+                        shell_events.push(event);
+                    }
+                }
+            }
+            // And its D-pad, A, B and Y work a menu as the Deck's do. In the world they are the
+            // layout's, like every other button on it.
+            if shell.menu_is_open() && calibration.is_none() {
+                for control in &delivery.menu_presses {
+                    if let Some(event) = intent_for(*control).and_then(|i| shell.handle(i)) {
+                        shell_events.push(event);
+                    }
                 }
             }
             for command in &delivery.commands {
@@ -2226,11 +2262,18 @@ pub fn run(
                 });
             let menu_pointed = menu_aim.as_ref().and_then(|(_, target)| *target);
             let menu_aim = menu_aim.map(|(aim, _)| aim);
+            // Another pad's touchpad clicks as a whole, and is only seen as a state, so its
+            // press is the edge of that state.
+            let pad_clicked = deck_input.is_some_and(|p| p.right_pad.clicked);
+            let pad_click = pad_clicked && !menu_click_was;
+            menu_click_was = pad_clicked;
             if let Some(target) = menu_pointed {
-                if controller.as_ref().is_some_and(|c| {
-                    c.just_pressed(spatiand_input::Control::RPadClick)
-                        || c.just_pressed(spatiand_input::Control::R2)
-                }) {
+                if pad_click
+                    || controller.as_ref().is_some_and(|c| {
+                        c.just_pressed(spatiand_input::Control::RPadClick)
+                            || c.just_pressed(spatiand_input::Control::R2)
+                    })
+                {
                     if let Some(c) = controller.as_ref() {
                         c.pulse(spatiand_input::HapticPad::Right, spatiand_input::Feel::Click);
                     }

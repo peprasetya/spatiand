@@ -24,6 +24,21 @@ use spatiand_mapper::{
 /// The glasses only say a temple button was pressed, never that it was let go, so a press is
 /// held down for this long.
 const GLASSES_PRESS: Duration = Duration::from_millis(120);
+/// How long a pad's guide button is held to open the launcher rather than the settings.
+///
+/// A PlayStation or Xbox pad has no `⋯`, and every other button it has is a game's. So the one
+/// button that is already the session's does both: a press is STEAM, a hold is `⋯`.
+const GUIDE_HOLD: Duration = Duration::from_millis(500);
+/// The controls of another pad that work the menus, as the Deck's own controls they stand for.
+const PAD_MENU_CONTROLS: [(Button, Control); 7] = [
+    (Button::DpadUp, Control::Up),
+    (Button::DpadDown, Control::Down),
+    (Button::DpadLeft, Control::Left),
+    (Button::DpadRight, Control::Right),
+    (Button::A, Control::A),
+    (Button::B, Control::B),
+    (Button::Y, Control::Y),
+];
 
 /// What the frame's layout asks the compositor to deliver, as changes.
 #[derive(Debug, Default)]
@@ -36,8 +51,13 @@ pub struct Delivery {
     pub commands: Vec<Command>,
     /// Which triggers click Spatiand's pointer, `[left, right]`.
     pub pointer_clicks: [bool; 2],
-    /// A Bluetooth pad's guide button went down: what STEAM does on the Deck.
+    /// A Bluetooth pad's guide button was pressed and let go: what STEAM does on the Deck.
     pub guide: bool,
+    /// ...or held: what `⋯` does. See [`GUIDE_HOLD`].
+    pub guide_held: bool,
+    /// Menu controls another pad pressed this frame, as the Deck's controls they stand for.
+    /// Only the menus read these; in the world the same presses belong to the layout.
+    pub menu_presses: Vec<Control>,
     pub radial: Option<RadialView>,
 }
 
@@ -54,7 +74,14 @@ pub struct Controls {
     keys: Vec<u16>,
     mouse: Vec<MouseButton>,
     guide_now: bool,
-    guide_was: bool,
+    /// When the guide button went down, and whether its hold has already done its thing.
+    guide_down: Option<(Instant, bool)>,
+    /// Other pads' buttons last frame and this, for the menus' presses.
+    pad_buttons_was: spatiand_mapper::Buttons,
+    pad_buttons_now: spatiand_mapper::Buttons,
+    /// The first touchpad on another pad that has a thumb on it, or failing that the first
+    /// there is.
+    touchpad: Option<spatiand_input::gamepad::Touchpad>,
     last_step: Option<Instant>,
     suspended: bool,
     editor: Option<Editor>,
@@ -93,7 +120,10 @@ impl Controls {
             keys: Vec::new(),
             mouse: Vec::new(),
             guide_now: false,
-            guide_was: false,
+            guide_down: None,
+            pad_buttons_was: Default::default(),
+            pad_buttons_now: Default::default(),
+            touchpad: None,
             last_step: None,
             suspended: false,
             editor: None,
@@ -145,9 +175,19 @@ impl Controls {
     pub fn gather(&mut self, deck: Option<&ControllerState>) -> Snapshot {
         let mut snapshot = deck.map(deck_snapshot).unwrap_or_default();
         self.guide_now = false;
+        self.pad_buttons_was = self.pad_buttons_now;
+        self.pad_buttons_now = Default::default();
+        self.touchpad = None;
         for pad in self.gamepads.poll() {
             self.guide_now |= pad.guide;
-            snapshot.merge(&gamepad_snapshot(&pad));
+            let theirs = gamepad_snapshot(&pad);
+            self.pad_buttons_now = self.pad_buttons_now.union(theirs.buttons);
+            if let Some(t) = pad.touchpad {
+                if self.touchpad.is_none_or(|held| !held.touched && t.touched) {
+                    self.touchpad = Some(t);
+                }
+            }
+            snapshot.merge(&theirs);
         }
         if self.glasses_samples > 0 {
             let r = self.glasses_sum / self.glasses_samples as f64;
@@ -256,9 +296,40 @@ impl Controls {
         delivery.commands = frame.commands;
         delivery.pointer_clicks = frame.pointer_clicks;
         delivery.radial = frame.radial;
-        delivery.guide = self.guide_now && !self.guide_was;
-        self.guide_was = self.guide_now;
+        let now = Instant::now();
+        match (self.guide_now, self.guide_down) {
+            (true, None) => self.guide_down = Some((now, false)),
+            (true, Some((since, false))) if now.duration_since(since) >= GUIDE_HOLD => {
+                delivery.guide_held = true;
+                self.guide_down = Some((since, true));
+            }
+            (false, Some((_, held))) => {
+                delivery.guide = !held;
+                self.guide_down = None;
+            }
+            _ => {}
+        }
+        delivery.menu_presses = PAD_MENU_CONTROLS
+            .iter()
+            .filter(|(b, _)| self.pad_buttons_now.is_down(*b) && !self.pad_buttons_was.is_down(*b))
+            .map(|(_, c)| *c)
+            .collect();
         delivery
+    }
+
+    /// The D-pad direction another pad is holding, as the Deck's control, for the menus'
+    /// held repeat. As of the last [`Self::gather`].
+    pub fn pad_held_direction(&self) -> Option<Control> {
+        PAD_MENU_CONTROLS[..4]
+            .iter()
+            .find(|(b, _)| self.pad_buttons_now.is_down(*b))
+            .map(|(_, c)| *c)
+    }
+
+    /// Another pad's touchpad, as of the last [`Self::gather`]: what the right trackpad is on
+    /// a Deck, for a pad that has one.
+    pub fn touchpad(&self) -> Option<spatiand_input::gamepad::Touchpad> {
+        self.touchpad
     }
 
     /// The pad as the layout last made it.
@@ -500,7 +571,19 @@ fn gamepad_snapshot(pad: &GamepadState) -> Snapshot {
     s.right_stick = pad.right_stick;
     s.left_trigger = pad.left_trigger;
     s.right_trigger = pad.right_trigger;
+    s.gyro = pad.gyro.map(pad_rates);
     s
+}
+
+/// A PlayStation pad's gyro in the holder's terms: about X is pitch, Y yaw and Z roll, which is
+/// how SDL reads these pads. Not yet checked by turning one here; every gyro mode has invert
+/// switches for exactly this.
+fn pad_rates(g: [f32; 3]) -> Rates {
+    Rates {
+        pitch: g[0],
+        yaw: g[1],
+        roll: g[2],
+    }
 }
 
 /// The buttons in [`virtual_pad::BUTTON_CODES`] order.
