@@ -32,5 +32,12 @@
             <meta-data android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                 android:resource="@xml/glasses" />
         </activity>
+        <!-- Opens the activity on plugging in: the attach *intent* goes to Nebula, fixed by
+             XREAL's framework, but the attach *broadcast* goes to everyone. -->
+        <receiver android:name=".Plugged" android:exported="true">
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

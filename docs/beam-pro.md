@@ -22,7 +22,12 @@ This comes from decompiling Nebula 2.2.1 and the framework's own `services.jar`.
     DESTROY_CONTENT_ON_REMOVAL, TRUSTED), followed by `setLaunchDisplayId`, with input
     delivered by `injectInputEvent`.
   - Its video player is inside Nebula itself, which is why it can switch 2D/3D.
-- **It takes the glasses through a `USB_DEVICE_ATTACHED` filter** on `SplashActivity`.
+- **The framework hands it the glasses, whatever else is installed.** XREAL's `UsbHostManager`
+  matches `xreal_vids` (with `persist.sys.lc_default_xreal_usbhost`, true by default) and
+  starts Nebula's `SplashActivity` as a fixed handler (`deviceAttachedForFixedHandler`).
+  Android never asks which app should have the glasses, so there is no "Always" to tick. With
+  Nebula disabled the start fails quietly (result -92) and nobody is asked at all. The
+  `USB_DEVICE_ATTACHED` *broadcast* still goes to every app, before that start.
 - **The "static placeholder" in [xreal-air.md §8](xreal-air.md) is a framework window.**
   - When an `MRG` display is added, `DisplayManagerService` sets
     `Settings.System xreal_priview_show=1`. `PhoneWindowManager.showPresent()` then shows an
@@ -71,11 +76,37 @@ adb shell am start -n id.prasetya.spatiand.spike/.Main --es cmd mode --ei mode 3
 adb logcat -s spike
 ```
 
+## Taking the glasses from Nebula, once — verified 2026-09-26
+
+`android/setup.sh`, run once from a computer with adb, with the glasses plugged in. Each of
+its three steps survives reboots:
+
+1. **Nebula disabled** (`pm disable-user`). While it is enabled, the fixed handler gives it
+   the glasses on every plug-in. `android/setup.sh nebula` gives them back.
+2. **"Display over other apps"** for Spatiand (`appops set … SYSTEM_ALERT_WINDOW allow`).
+   - Its picture is a `TYPE_APPLICATION_OVERLAY` window on the glasses' display, which sits
+     above the NebulaOS placeholder, so the placeholder needs no shell to dismiss.
+   - The window must not be `FLAG_NOT_TOUCHABLE`, or Android caps it at alpha 0.8 and the
+     placeholder shows through.
+   - The permission also lets the app start its activity from the background.
+3. **A persistent USB permission.**
+   - `Setup.java` runs as the shell through `app_process` and calls
+     `IUsbManager.setDevicePersistentPermission` (shell holds `MANAGE_USB`).
+   - `dumpsys usb` then lists `uid_permission … is_granted=true` for the glasses' serial.
+
+After that, plugging in opens Spatiand. `Plugged.java` receives the attach broadcast, starts
+the activity (`BAL_ALLOW_SAW_PERMISSION`), and the activity takes the USB with no question.
+This works whether or not the app is running.
+
+The one exception is a **force-stopped** app. Android sends no broadcasts to one until it
+has been opened by hand once.
+
 ## Consequences for the design
 
 - **Without shell privilege**, one app gets the sphere, head tracking and remote Linux apps:
   it owns the glasses display (Presentation) and the glasses' USB.
 - **Shell privilege is needed only for** hosting other Android apps (TRUSTED virtual
-  displays), injecting input into them, dismissing the placeholder and toggling Nebula.
+  displays), injecting input into them and toggling Nebula. The placeholder is drawn
+  over instead (above).
   Android revokes it at every reboot. Getting it back on the device itself (Shizuku) uses
   wireless debugging, which Android enables only while connected to Wi-Fi.
