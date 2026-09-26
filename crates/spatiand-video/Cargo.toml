@@ -16,6 +16,8 @@ license.workspace = true
 spatiand-stream = { path = "../spatiand-stream" }
 log.workspace = true
 libc = "0.2"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
 # libavcodec, the same library the host encodes with. The first attempt used `cros-codecs`
 # over libva, which is pure Rust and needs no headers — and cannot run here: it opens its
 # decoder with a 16x16 probe context, and this GPU refuses any video context below 64x64. Both
@@ -24,6 +26,10 @@ libc = "0.2"
 # The Deck has ffmpeg 7.1's libraries but no headers, so the headers are vendored and the
 # libraries are the system's; `ffmpeg7_1` pins the version this is built against.
 rsmpeg = { version = "0.18", default-features = false, features = ["ffmpeg7_1", "link_system_ffmpeg"] }
+
+# Android decodes with MediaCodec into GPU buffers instead; see `android`.
+[target.'cfg(target_os = "android")'.dependencies]
+ndk-sys = { version = "0.6", features = ["media", "nativewindow"] }
 
 [dev-dependencies]
 env_logger.workspace = true

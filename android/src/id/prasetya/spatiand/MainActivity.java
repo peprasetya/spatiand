@@ -9,97 +9,120 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.hardware.display.DisplayManager;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbManager;
+import android.media.AudioDeviceInfo;
+import android.media.AudioManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.Display;
-import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.view.View;
 import android.view.WindowManager;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
-import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.Spinner;
 import android.widget.TextView;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
+
 /**
- * The phone's screen, and the owner of everything Android only gives an activity: the
- * glasses' display, through a Presentation, and the glasses' USB.
+ * The phone: the Beam Pro's controller for the session on the glasses, and the owner of what
+ * Android only gives an activity -- the glasses' display and their USB.
  *
- * The glasses' display comes and goes: switching them to side-by-side 3D removes it and adds
- * a double-width one. So the Presentation is put back whenever an XREAL display (PnP id "MRG")
- * appears, and the drawing follows its surface.
+ * The session is the Deck's own compositor (crates/spatiand-android); this is its controller:
+ *
+ *   top      the sound's way out and way in, small, side by side
+ *   middle   the touch area: the Deck's left pad, with the machine's monitors under the thumb
+ *   bottom   ⋯ (the launcher), B (back), the keyboard, and recentre
+ *
+ * and, without a place on the screen, the orange key as STEAM and the phone itself, pointed,
+ * as the right pad. The glasses' display comes and goes -- switching them to 3D removes it and
+ * adds a double-width one -- so their window is put back whenever an XREAL display appears.
  */
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements SensorEventListener {
     static final String TAG = "spatiand";
     static final int VENDOR = 0x3318, PRODUCT = 0x0424;
     static final String ACTION_USB = "id.prasetya.spatiand.USB";
     /** The Beam Pro's orange key, as the framework rebroadcasts it while glasses are on. */
     static final String ORANGE_DOWN = "XREAL.switchMode.down";
+    static final String ORANGE_UP = "XREAL.switchMode.up";
+    /** Bumped when the bundled keyboard layouts change, so they are unpacked again. */
+    static final String XKB_VERSION = "xkb-data 2.42-1";
 
     final Handler ui = new Handler(Looper.getMainLooper());
     TextView status;
-    /** A button for each application the host offers; rebuilt when the list changes. */
-    LinearLayout apps;
-    String appsShown = "";
+    TouchArea touch;
+    Spinner output, input;
     Presentation presentation;
     /** The glasses' window when it is an overlay, above XREAL's placeholder. */
     SurfaceView overlay;
     WindowManager overlayManager;
     int presentationDisplay = -1;
     UsbDeviceConnection connection;
+    SensorManager sensors;
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        Native.configDir(getFilesDir().getPath());
+        Native.configDir(getFilesDir().getPath(), getCacheDir().getPath());
+        Native.xkbDir(unpackLayouts());
+        Native.begin();
 
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
-        column.setBackgroundColor(Color.rgb(12, 14, 20));
-        column.setPadding(48, 96, 48, 48);
+        column.setBackgroundColor(Color.rgb(9, 10, 14));
+        column.setPadding(24, 72, 24, 24);
+
+        // The sound's way out and way in: small, as the rest of the screen is the pad.
+        LinearLayout sound = new LinearLayout(this);
+        output = new Spinner(this);
+        input = new Spinner(this);
+        sound.addView(output, new LinearLayout.LayoutParams(0, -2, 1));
+        sound.addView(input, new LinearLayout.LayoutParams(0, -2, 1));
+        column.addView(sound, new LinearLayout.LayoutParams(-1, -2));
+
         status = new TextView(this);
-        status.setTextColor(Color.rgb(220, 226, 236));
-        status.setTextSize(16);
-        column.addView(status, new LinearLayout.LayoutParams(-1, 0, 1));
-        apps = new LinearLayout(this);
-        apps.setOrientation(LinearLayout.VERTICAL);
-        column.addView(apps, new LinearLayout.LayoutParams(-1, -2));
-        LinearLayout row = new LinearLayout(this);
+        status.setTextColor(Color.rgb(150, 158, 175));
+        status.setTextSize(12);
+        column.addView(status, new LinearLayout.LayoutParams(-1, -2));
+
+        touch = new TouchArea(this);
+        column.addView(touch, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        LinearLayout bar = new LinearLayout(this);
+        bar.addView(pressable("⋯", 1), new LinearLayout.LayoutParams(0, -2, 1));
+        bar.addView(pressable("B", 2), new LinearLayout.LayoutParams(0, -2, 1));
+        Button keys = new Button(this);
+        keys.setText("⌨");
+        keys.setOnClickListener(v -> touch.toggleKeyboard());
+        bar.addView(keys, new LinearLayout.LayoutParams(0, -2, 1));
         Button recenter = new Button(this);
-        recenter.setText("Recenter");
+        recenter.setText("◎");
         recenter.setOnClickListener(v -> Native.recenter());
-        row.addView(recenter, new LinearLayout.LayoutParams(0, -2, 1));
-        Button close = new Button(this);
-        close.setText("Close windows");
-        close.setOnClickListener(v -> Native.closeAll());
-        row.addView(close, new LinearLayout.LayoutParams(0, -2, 1));
-        column.addView(row, new LinearLayout.LayoutParams(-1, -2));
-        // Pairing with a host: its owner runs `spatiand-host --pair` there, both ends show a
-        // code, and it is written down once both say yes.
-        LinearLayout pairing = new LinearLayout(this);
-        EditText address = new EditText(this);
-        address.setHint("host, e.g. myhost");
-        address.setSingleLine(true);
-        address.setTextColor(Color.rgb(220, 226, 236));
-        address.setHintTextColor(Color.rgb(120, 126, 136));
-        pairing.addView(address, new LinearLayout.LayoutParams(0, -2, 2));
-        Button pair = new Button(this);
-        pair.setText("Pair");
-        pair.setOnClickListener(v -> Native.pair(address.getText().toString()));
-        pairing.addView(pair, new LinearLayout.LayoutParams(0, -2, 1));
-        Button match = new Button(this);
-        match.setText("Codes match");
-        match.setOnClickListener(v -> Native.confirmPair());
-        pairing.addView(match, new LinearLayout.LayoutParams(0, -2, 1));
-        column.addView(pairing, new LinearLayout.LayoutParams(-1, -2));
+        bar.addView(recenter, new LinearLayout.LayoutParams(0, -2, 1));
+        column.addView(bar, new LinearLayout.LayoutParams(-1, -2));
+
         if (!Settings.canDrawOverlays(this)) {
             // Once, and kept: what puts the glasses' picture above XREAL's placeholder.
             Button allow = new Button(this);
@@ -109,20 +132,149 @@ public class MainActivity extends Activity {
                     android.net.Uri.parse("package:" + getPackageName()))));
             column.addView(allow, new LinearLayout.LayoutParams(-1, -2));
         }
-        column.setGravity(Gravity.BOTTOM);
         setContentView(column);
+        fillSoundPickers();
 
         registerReceiver(usbPermission, new IntentFilter(ACTION_USB), Context.RECEIVER_NOT_EXPORTED);
-        // While running, plugging in is heard here too: the attach intent only starts the
-        // activity when it is the app chosen for the glasses, and not before.
+        // While running, plugging in is heard here too.
         registerReceiver(usbAttached, new IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED),
                 Context.RECEIVER_EXPORTED);
-        registerReceiver(orangeKey, new IntentFilter(ORANGE_DOWN), Context.RECEIVER_EXPORTED);
+        IntentFilter orange = new IntentFilter(ORANGE_DOWN);
+        orange.addAction(ORANGE_UP);
+        registerReceiver(orangeKey, orange, Context.RECEIVER_EXPORTED);
         getSystemService(DisplayManager.class).registerDisplayListener(displays, ui);
 
+        sensors = getSystemService(SensorManager.class);
         showOnGlasses();
         takeGlasses(true);
         ui.post(refresh);
+    }
+
+    /** A bottom-bar button that is held as long as the finger is on it, as a Deck button is. */
+    Button pressable(String label, int which) {
+        Button b = new Button(this);
+        b.setText(label);
+        b.setOnTouchListener((v, e) -> {
+            if (e.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                Native.button(which, true);
+                v.setPressed(true);
+            } else if (e.getActionMasked() == MotionEvent.ACTION_UP
+                    || e.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                Native.button(which, false);
+                v.setPressed(false);
+            }
+            return true;
+        });
+        return b;
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // The game rotation vector: no magnetometer, so no swing near a speaker or a desk lamp;
+        // its yaw is its own, which the session aligns with the head at every recentre.
+        Sensor rotation = sensors.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
+        if (rotation != null) sensors.registerListener(this, rotation, SensorManager.SENSOR_DELAY_GAME);
+    }
+
+    @Override
+    protected void onPause() {
+        sensors.unregisterListener(this);
+        super.onPause();
+    }
+
+    @Override
+    public void onSensorChanged(SensorEvent e) {
+        float[] q = new float[4];
+        SensorManager.getQuaternionFromVector(q, e.values);
+        // Android gives w, x, y, z.
+        Native.rotation(q[1], q[2], q[3], q[0]);
+    }
+
+    @Override
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+
+    /** A keyboard's keys go to the session, except the phone's own volume and back. */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent e) {
+        int code = e.getKeyCode();
+        boolean system = code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN
+                || code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_HOME
+                || code == 206 /* KEYCODE_3D_MODE: the orange key, the framework's */;
+        if (!system && e.getAction() != KeyEvent.ACTION_MULTIPLE
+                && Native.key(code, e.getAction() == KeyEvent.ACTION_DOWN)) {
+            return true;
+        }
+        return super.dispatchKeyEvent(e);
+    }
+
+    /**
+     * The keyboard layouts the compositor's keyboard is made from, out of the APK and into the
+     * app's files, once per version. See android/xkbcommon.
+     */
+    String unpackLayouts() {
+        File root = new File(getFilesDir(), "xkb");
+        File stamp = new File(root, ".version");
+        try {
+            if (stamp.exists() && new String(java.nio.file.Files.readAllBytes(stamp.toPath())).equals(XKB_VERSION)) {
+                return root.getPath();
+            }
+            copyAssets("xkb", root);
+            try (OutputStream out = new FileOutputStream(stamp)) {
+                out.write(XKB_VERSION.getBytes());
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "could not unpack the keyboard layouts", e);
+        }
+        return root.getPath();
+    }
+
+    void copyAssets(String from, File to) throws Exception {
+        String[] names = getAssets().list(from);
+        if (names == null || names.length == 0) {
+            to.getParentFile().mkdirs();
+            try (InputStream in = getAssets().open(from); OutputStream out = new FileOutputStream(to)) {
+                byte[] buffer = new byte[16384];
+                for (int n; (n = in.read(buffer)) > 0; ) out.write(buffer, 0, n);
+            }
+            return;
+        }
+        to.mkdirs();
+        for (String name : names) copyAssets(from + "/" + name, new File(to, name));
+    }
+
+    /** What the phone can play to and listen with, for the pickers at the top. */
+    void fillSoundPickers() {
+        AudioManager audio = getSystemService(AudioManager.class);
+        fillPicker(output, audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS), "Out");
+        fillPicker(input, audio.getDevices(AudioManager.GET_DEVICES_INPUTS), "In");
+    }
+
+    void fillPicker(Spinner picker, AudioDeviceInfo[] devices, String what) {
+        List<String> names = new ArrayList<>();
+        for (AudioDeviceInfo d : devices) {
+            String name = d.getProductName() == null ? "" : d.getProductName().toString();
+            names.add(what + ": " + deviceKind(d.getType()) + (name.isEmpty() ? "" : " (" + name + ")"));
+        }
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, names);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        picker.setAdapter(adapter);
+    }
+
+    static String deviceKind(int type) {
+        switch (type) {
+            case AudioDeviceInfo.TYPE_BUILTIN_SPEAKER: return "Speaker";
+            case AudioDeviceInfo.TYPE_BUILTIN_EARPIECE: return "Earpiece";
+            case AudioDeviceInfo.TYPE_BUILTIN_MIC: return "Microphone";
+            case AudioDeviceInfo.TYPE_USB_DEVICE:
+            case AudioDeviceInfo.TYPE_USB_HEADSET: return "Glasses / USB";
+            case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
+            case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:
+            case AudioDeviceInfo.TYPE_BLE_HEADSET: return "Bluetooth";
+            case AudioDeviceInfo.TYPE_WIRED_HEADPHONES:
+            case AudioDeviceInfo.TYPE_WIRED_HEADSET: return "Headphones";
+            default: return "Device " + type;
+        }
     }
 
     @Override
@@ -318,9 +470,8 @@ public class MainActivity extends Activity {
     final BroadcastReceiver orangeKey = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
-            // For now it recentres; it becomes the settings menu once the shell is here.
-            Log.i(TAG, "orange key");
-            Native.recenter();
+            // STEAM: the HUD. Down and up, as the framework says them.
+            Native.button(0, ORANGE_DOWN.equals(i.getAction()));
         }
     };
 
@@ -329,21 +480,8 @@ public class MainActivity extends Activity {
     final Runnable refresh = new Runnable() {
         @Override
         public void run() {
-            status.setText("Spatiand\n\n" + Native.status() + "\n\n" + Native.remoteStatus());
-            String offered = Native.apps();
-            if (!offered.equals(appsShown)) {
-                appsShown = offered;
-                apps.removeAllViews();
-                for (String line : offered.split("\n")) {
-                    String[] app = line.split("\t", 2);
-                    if (app.length != 2) continue;
-                    Button start = new Button(MainActivity.this);
-                    start.setText(app[1]);
-                    start.setOnClickListener(v -> Native.launch(app[0]));
-                    apps.addView(start, new LinearLayout.LayoutParams(-1, -2));
-                }
-            }
-            ui.postDelayed(this, 500);
+            status.setText(Native.status());
+            ui.postDelayed(this, 1000);
         }
     };
 }

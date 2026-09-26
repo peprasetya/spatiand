@@ -1,6 +1,6 @@
 [package]
 name = "spatiand-android"
-description = "Spatiand on Android: the glasses, the tracker and the sphere, driven from the id.prasetya.spatiand app"
+description = "Spatiand on Android: the Deck's compositor on the glasses, with the phone as its controller"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,21 +13,53 @@ crate-type = ["cdylib"]
 
 # Everything is Android-only. On any other target the library is empty, so a plain
 # `cargo build` of the workspace still builds on the Mac and the Deck.
+#
+# The first half is `crates/spatiand`'s own list, because its modules are compiled here by path
+# (see `src/lib.rs`); keep the two in step.
 [target.'cfg(target_os = "android")'.dependencies]
+spatiand-stream = { path = "../spatiand-stream" }
+spatiand-video = { path = "../spatiand-video" }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+tokio = { version = "1", features = ["rt", "net", "time", "io-util", "macros"] }
 spatiand-hmd = { path = "../spatiand-hmd" }
 spatiand-track = { path = "../spatiand-track" }
 spatiand-render = { path = "../spatiand-render" }
-spatiand-stream = { path = "../spatiand-stream" }
-# The same versions spatiand-stream links, for its link's types.
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"] }
-serde.workspace = true
-toml.workspace = true
+spatiand-input = { path = "../spatiand-input" }
+spatiand-mapper = { path = "../spatiand-mapper" }
+spatiand-shell = { path = "../spatiand-shell" }
+spatiand-platform = { path = "../spatiand-platform" }
+spatiand-proto = { path = "../spatiand-proto", features = ["client"] }
+# On Android the `server` is `server_android.rs`: the same interface, no PipeWire.
+spatiand-audio = { path = "../spatiand-audio", features = ["server"] }
 glam.workspace = true
 log.workspace = true
+serde.workspace = true
+toml.workspace = true
+env_logger.workspace = true
+thiserror.workspace = true
 libc = "0.2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+resvg = "0.45"
+usvg = "0.45"
+tiny-skia = "0.11"
+
+# What only this library needs: the JNI calls, and Android's windows and buffers.
 jni-sys = "0.4"
-# `media` for MediaCodec and AImageReader, `nativewindow` for AHardwareBuffer.
+# `media` for AImageReader, `nativewindow` for ANativeWindow and AHardwareBuffer.
 ndk-sys = { version = "0.6", features = ["media", "nativewindow"] }
-khronos-egl = { version = "6", features = ["dynamic"] }
-glow = "0.16"
+
+# The Deck's features less what needs the Deck: no DRM scanout, GBM, libinput, logind or winit.
+# `backend_drm` stays for its `DrmNode` type, which `dmabuf` names; it opens nothing here.
+[target.'cfg(target_os = "android")'.dependencies.smithay]
+version = "0.7"
+default-features = false
+features = [
+    "backend_egl",
+    "backend_drm",
+    "renderer_gl",
+    "wayland_frontend",
+    "desktop",
+    "xwayland",
+]

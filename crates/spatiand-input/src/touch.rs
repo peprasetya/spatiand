@@ -406,7 +406,7 @@ fn axis_range(fd: std::os::fd::RawFd, axis: u16) -> std::io::Result<Range> {
         | ((std::mem::size_of::<[i32; 6]>() as u32) << 16)
         | ((b'E' as u32) << 8)
         | (0x40 + axis as u32);
-    let rc = unsafe { libc::ioctl(fd, request as libc::c_ulong, info.as_mut_ptr()) };
+    let rc = unsafe { libc::ioctl(fd, request as _, info.as_mut_ptr()) };
     if rc < 0 {
         return Err(std::io::Error::last_os_error());
     }

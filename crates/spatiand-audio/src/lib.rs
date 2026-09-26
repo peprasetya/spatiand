@@ -23,7 +23,11 @@ pub mod hrtf;
 pub mod panner;
 pub mod render;
 pub mod ring;
-#[cfg(feature = "server")]
+#[cfg(all(feature = "server", not(target_os = "android")))]
+pub mod server;
+/// The same interface on Android, where there is no PipeWire; see the file.
+#[cfg(all(feature = "server", target_os = "android"))]
+#[path = "server_android.rs"]
 pub mod server;
 pub mod stage;
 

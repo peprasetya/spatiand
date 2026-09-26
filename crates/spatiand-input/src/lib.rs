@@ -28,6 +28,7 @@ pub mod gamepad;
 pub mod gesture;
 pub mod haptics;
 pub mod layout;
+pub mod phone;
 pub mod report;
 pub mod scroll;
 #[cfg(test)]

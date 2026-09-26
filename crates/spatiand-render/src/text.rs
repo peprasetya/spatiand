@@ -126,6 +126,24 @@ impl TextImage {
     }
 }
 
+/// The machine's fonts.
+#[cfg(not(target_os = "android"))]
+fn font_system() -> FontSystem {
+    FontSystem::new()
+}
+
+/// Android's fonts, which fontdb does not look for by itself: they are all in `/system/fonts`,
+/// and the sans-serif is Roboto.
+#[cfg(target_os = "android")]
+fn font_system() -> FontSystem {
+    let mut db = cosmic_text::fontdb::Database::new();
+    db.load_fonts_dir("/system/fonts");
+    db.set_sans_serif_family("Roboto");
+    db.set_serif_family("Noto Serif");
+    db.set_monospace_family("Droid Sans Mono");
+    FontSystem::new_with_locale_and_db("en-US".into(), db)
+}
+
 pub struct TextRenderer {
     font_system: FontSystem,
     swash_cache: SwashCache,
@@ -134,7 +152,7 @@ pub struct TextRenderer {
 impl TextRenderer {
     pub fn new() -> Self {
         Self {
-            font_system: FontSystem::new(),
+            font_system: font_system(),
             swash_cache: SwashCache::new(),
         }
     }

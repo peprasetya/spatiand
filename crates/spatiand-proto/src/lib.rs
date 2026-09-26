@@ -128,7 +128,7 @@ pub mod pose {
     /// from the glasses, and a host, filling it from what the session sends, write through
     /// this — so there is one seqlock in the tree, not two that nearly agree. What goes *in*
     /// a slot is the caller's business; this only guarantees a reader never sees half of one.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub struct Ring {
         memory: *mut u8,
         fd: std::os::fd::OwnedFd,
@@ -137,10 +137,10 @@ pub mod pose {
 
     // The pointer is to a mapping this type owns alone; it is written from one thread at a time
     // and never shared as a reference.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe impl Send for Ring {}
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     impl Ring {
         /// Make the memory and map it.
         ///
@@ -262,7 +262,7 @@ pub mod pose {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     impl Drop for Ring {
         fn drop(&mut self) {
             // SAFETY: unmapping exactly what `new` mapped.
@@ -337,7 +337,7 @@ pub mod pose {
             assert!(SLOTS.is_power_of_two());
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         fn sample(n: i64) -> Slot {
             Slot {
                 sample_ns: n,
@@ -347,7 +347,7 @@ pub mod pose {
             }
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         #[test]
         fn a_written_slot_reads_back_whole() {
             let mut ring = Ring::new(c"test-poses").expect("ring");
@@ -359,7 +359,7 @@ pub mod pose {
             assert_eq!(newest.predicted_ns, 112);
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         #[test]
         fn the_ring_wraps_without_losing_the_newest() {
             let mut ring = Ring::new(c"test-poses").expect("ring");
@@ -369,7 +369,7 @@ pub mod pose {
             assert_eq!(ring.newest().expect("written").sample_ns, SLOTS as i64 * 3 - 1);
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         #[test]
         fn the_read_only_descriptor_sees_the_poses_and_cannot_change_them() {
             use std::os::fd::AsRawFd;

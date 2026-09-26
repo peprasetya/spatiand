@@ -3921,21 +3921,35 @@ dependencies = [
 name = "spatiand-android"
 version = "0.1.0"
 dependencies = [
+ "env_logger",
  "glam",
- "glow",
+ "image",
  "jni-sys 0.4.1",
- "khronos-egl",
  "libc",
  "log",
  "ndk-sys 0.6.0+11769913",
  "quinn",
+ "resvg",
  "serde",
+ "smithay",
+ "spatiand-audio",
  "spatiand-hmd",
+ "spatiand-input",
+ "spatiand-mapper",
+ "spatiand-platform",
+ "spatiand-proto",
  "spatiand-render",
+ "spatiand-shell",
  "spatiand-stream",
  "spatiand-track",
+ "spatiand-video",
+ "thiserror 2.0.20",
+ "tiny-skia",
  "tokio",
  "toml",
+ "usvg",
+ "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]
@@ -4109,6 +4123,7 @@ dependencies = [
  "env_logger",
  "libc",
  "log",
+ "ndk-sys 0.6.0+11769913",
  "rsmpeg",
  "spatiand-stream",
 ]

@@ -77,6 +77,24 @@ pub fn ray_from_pad(
     }
 }
 
+/// Where on the pad a thumb would have to be to aim along `direction`: [`ray_from_pad`] the
+/// other way round, unclamped.
+///
+/// For a pointer that is not a thumb on a pad -- a phone held as a laser, whose direction is in
+/// the world rather than in the head -- so that it can be handed to everything that reads a pad
+/// and aims exactly where the phone does. Beyond ±1 the direction is outside what a pad can
+/// reach from this head, and [`ray_from_pad`] will hold it at the edge.
+pub fn pad_for_direction(direction: DVec3, head: DQuat, cfg: &PointerConfig) -> (f32, f32) {
+    let local = (head.inverse() * direction).normalize();
+    // `aim * X` is (cos p cos y, cos p sin y, -sin p) for the yaw and pitch `ray_from_pad` uses.
+    let yaw = local.y.atan2(local.x);
+    let pitch = -local.z.clamp(-1.0, 1.0).asin();
+    (
+        (-yaw / cfg.half_fov_x_deg.to_radians()) as f32,
+        (-pitch / cfg.half_fov_y_deg.to_radians()) as f32,
+    )
+}
+
 /// A flat rectangle in the world — a window, a bubble's hit area, a HUD panel.
 ///
 /// Local axes follow the world's: **+X is the outward normal** (pointing away from the viewer,
@@ -160,6 +178,17 @@ pub fn pick(ray: &Ray, quads: &[Quad]) -> Option<(usize, Hit)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_direction_turns_back_into_the_pad_position_that_aims_along_it() {
+        let cfg = PointerConfig::default();
+        let head = DQuat::from_rotation_z(0.7) * DQuat::from_rotation_y(-0.25);
+        for (x, y) in [(0.0, 0.0), (0.5, -0.3), (-0.9, 0.8), (1.0, -1.0)] {
+            let ray = ray_from_pad(x, y, head, DVec3::ZERO, &cfg);
+            let (px, py) = pad_for_direction(ray.direction, head, &cfg);
+            assert!((px - x).abs() < 1e-4 && (py - y).abs() < 1e-4, "({x}, {y}) came back ({px}, {py})");
+        }
+    }
 
     fn close(a: f64, b: f64, tol: f64) -> bool {
         (a - b).abs() < tol

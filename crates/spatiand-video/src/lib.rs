@@ -23,12 +23,26 @@
 //! wreckage until the next keyframe, and that wreckage is the smear people recognise as bad
 //! game streaming.
 
+#[cfg(not(target_os = "android"))]
 pub mod convert;
+#[cfg(not(target_os = "android"))]
 pub mod decode;
+#[cfg(not(target_os = "android"))]
 pub mod export;
+#[cfg(not(target_os = "android"))]
 pub mod split;
+#[cfg(not(target_os = "android"))]
 pub mod voice;
 
+#[cfg(not(target_os = "android"))]
 pub use convert::{Converted, Converter};
+#[cfg(not(target_os = "android"))]
 pub use decode::{Decoder, Picture, VideoError};
+#[cfg(not(target_os = "android"))]
 pub use split::Units;
+
+/// The same interface on Android, on `MediaCodec`; see the file.
+#[cfg(target_os = "android")]
+pub mod android;
+#[cfg(target_os = "android")]
+pub use android::{voice, Converted, Converter, Decoder, Picture, VideoError};
