@@ -464,6 +464,11 @@ would need finding by observation. **[inferred]**
 
 ## 8. Host software will fight you (Beam Pro specifically)
 
+> **Correction, 2026-09-26.** The "static placeholder image" below is not XREAL owning the
+> scan-out. It is a framework window, `ArLauncherPresentation`, put over every `MRG` display.
+> `settings put system xreal_preview_update stop` dismisses it, and after that an ordinary
+> app's pixels reach the glasses. See [beam-pro.md](beam-pro.md).
+
 Relevant to Android; probably not to a Mac or Linux host, where nothing else wants these
 interfaces. Recorded because it cost a lot of time.
 

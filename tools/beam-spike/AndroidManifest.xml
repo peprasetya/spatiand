@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phase 0 spike: can an ordinary app own the glasses' display and sensors on the Beam Pro? -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="id.prasetya.spatiand.spike">
+    <uses-sdk android:minSdkVersion="34" android:targetSdkVersion="34" />
+    <uses-feature android:name="android.hardware.usb.host" />
+    <uses-feature android:glEsVersion="0x00030002" />
+    <application android:label="Spatiand spike" android:hasCode="true">
+        <activity android:name=".Main" android:exported="true" android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/glasses" />
+        </activity>
+    </application>
+</manifest>
