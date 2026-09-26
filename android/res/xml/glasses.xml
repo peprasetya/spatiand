@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- XREAL Air: vendor 0x3318, product 0x0424 -->
+    <usb-device vendor-id="13080" product-id="1060" />
+</resources>

@@ -17,6 +17,7 @@ members = [
     "crates/spatiand-host-config",
     "crates/spatiand-video",
     "crates/spatiand",
+    "crates/spatiand-android",
 ]
 
 # Crates scaffolded but not yet implemented are deliberately left out of `members`

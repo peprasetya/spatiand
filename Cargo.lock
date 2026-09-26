@@ -3918,6 +3918,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatiand-android"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "glow",
+ "jni-sys 0.4.1",
+ "khronos-egl",
+ "libc",
+ "log",
+ "ndk-sys 0.6.0+11769913",
+ "spatiand-hmd",
+ "spatiand-render",
+ "spatiand-track",
+]
+
+[[package]]
 name = "spatiand-audio"
 version = "0.1.0"
 dependencies = [

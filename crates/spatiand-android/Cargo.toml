@@ -1,0 +1,26 @@
+[package]
+name = "spatiand-android"
+description = "Spatiand on Android: the glasses, the tracker and the sphere, driven from the id.prasetya.spatiand app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+# `libspatiand.so`, which the app's `System.loadLibrary("spatiand")` finds.
+name = "spatiand"
+crate-type = ["cdylib"]
+
+# Everything is Android-only. On any other target the library is empty, so a plain
+# `cargo build` of the workspace still builds on the Mac and the Deck.
+[target.'cfg(target_os = "android")'.dependencies]
+spatiand-hmd = { path = "../spatiand-hmd" }
+spatiand-track = { path = "../spatiand-track" }
+spatiand-render = { path = "../spatiand-render" }
+glam.workspace = true
+log.workspace = true
+libc = "0.2"
+jni-sys = "0.4"
+ndk-sys = "0.6"
+khronos-egl = { version = "6", features = ["dynamic"] }
+glow = "0.16"
