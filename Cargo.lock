@@ -3928,9 +3928,14 @@ dependencies = [
  "libc",
  "log",
  "ndk-sys 0.6.0+11769913",
+ "quinn",
+ "serde",
  "spatiand-hmd",
  "spatiand-render",
+ "spatiand-stream",
  "spatiand-track",
+ "tokio",
+ "toml",
 ]
 
 [[package]]

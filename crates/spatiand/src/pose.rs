@@ -24,6 +24,7 @@ use std::os::fd::BorrowedFd;
 use glam::{DQuat, DVec3};
 
 use spatiand_proto::pose::{Eye as WireEye, Ring, Slot, SLOTS};
+use spatiand_render::openxr::{openxr_eye, to_openxr};
 use spatiand_render::{EyeSide, StereoConfig};
 
 /// A mapped ring the compositor writes and clients read.
@@ -143,46 +144,21 @@ pub fn now_ns() -> i64 {
     ts.tv_sec as i64 * 1_000_000_000 + ts.tv_nsec as i64
 }
 
-/// One eye, in OpenXR's frame and field order.
+/// One eye, in OpenXR's frame and field order. The maths is `spatiand_render::openxr`'s,
+/// shared with the Beam Pro, which sends a host the same viewport from the same numbers.
 fn wire_eye(
     side: EyeSide,
     orientation: DQuat,
     head_position: DVec3,
     stereo: &StereoConfig,
 ) -> WireEye {
-    // The same function the renderer uses, so a client drawing from these poses and the
-    // compositor drawing the room cannot disagree about where the eyes are. That is worth
-    // more than it sounds: two nearly-identical camera models is how content ends up
-    // half a centimetre out and nobody can say why.
-    let eye = spatiand_render::eye_for(side, orientation, head_position, stereo);
-    let (q, p) = to_openxr(eye.orientation, eye.position);
-    let half_h = (stereo.h_fov_deg.to_radians() * 0.5) as f32;
-    // Vertical from the horizontal and the eye's aspect, matching the projection matrix.
-    let aspect = stereo.per_eye.1.max(1) as f32 / stereo.per_eye.0.max(1) as f32;
-    let half_v = (half_h.tan() * aspect).atan();
+    let eye = openxr_eye(side, orientation, head_position, stereo);
     WireEye {
-        orientation: q,
-        position: p,
+        orientation: eye.orientation,
+        position: eye.position,
         _pad: 0.0,
-        // Signed, and symmetric here because the projection is. `XrFovf` exactly.
-        fov: [-half_h, half_h, half_v, -half_v],
+        fov: eye.fov,
     }
-}
-
-/// Spatiand's frame to OpenXR's.
-///
-/// Ours is +X forward, +Y left, +Z up. OpenXR's is +X right, +Y up, −Z forward. So a vector
-/// `(x, y, z)` becomes `(−y, z, −x)`, which is a pure rotation — the determinant is +1 — and
-/// a rotation may be applied to a quaternion's vector part alone, leaving `w` untouched.
-fn to_openxr(orientation: DQuat, position: DVec3) -> ([f32; 4], [f32; 3]) {
-    let q = [
-        -orientation.y as f32,
-        orientation.z as f32,
-        -orientation.x as f32,
-        orientation.w as f32,
-    ];
-    let p = [-position.y as f32, position.z as f32, -position.x as f32];
-    (q, p)
 }
 
 #[cfg(test)]

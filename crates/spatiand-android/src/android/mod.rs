@@ -4,8 +4,10 @@
 //! `String` back. Every call is short: the work happens on the two threads these start, the
 //! glasses' ([`glasses`]) and the drawing ([`render`]).
 
+mod decode;
 mod glasses;
 mod logging;
+mod remote;
 mod render;
 
 use std::os::fd::{FromRawFd, OwnedFd};
@@ -24,12 +26,48 @@ pub struct Shared {
     pub fps: AtomicU32,
     /// A line for the phone's screen about the glasses themselves.
     pub glasses_state: Mutex<String>,
+    /// The host being shown, for the drawing thread: its windows, and where to send the head.
+    pub remote: Mutex<Option<remote::Handle>>,
 }
 
 struct App {
     shared: Arc<Shared>,
     glasses: Option<glasses::Glasses>,
     render: Option<render::Renderer>,
+    remote: Option<remote::Remote>,
+    pairing: Option<remote::Pairing>,
+}
+
+impl App {
+    /// Show this host, in place of any other.
+    fn show_host(&mut self, entry: remote::HostEntry) {
+        *self.shared.remote.lock().unwrap() = None;
+        self.remote = None;
+        match remote::Remote::start(entry) {
+            Ok(remote) => {
+                *self.shared.remote.lock().unwrap() = Some(remote.handle.clone());
+                self.remote = Some(remote);
+            }
+            Err(e) => log::error!("remote: {e}"),
+        }
+    }
+}
+
+/// A Java string as a Rust one.
+unsafe fn java_string(env: *mut JNIEnv, text: jstring) -> Option<String> {
+    let chars = ((**env).v1_1.GetStringUTFChars)(env, text, std::ptr::null_mut());
+    if chars.is_null() {
+        return None;
+    }
+    let owned = std::ffi::CStr::from_ptr(chars).to_string_lossy().into_owned();
+    ((**env).v1_1.ReleaseStringUTFChars)(env, text, chars);
+    Some(owned)
+}
+
+/// A Rust string as a Java one.
+unsafe fn new_string(env: *mut JNIEnv, text: &str) -> jstring {
+    let c = std::ffi::CString::new(text.replace('\0', "")).unwrap_or_default();
+    ((**env).v1_1.NewStringUTF)(env, c.as_ptr())
 }
 
 fn app() -> &'static Mutex<App> {
@@ -44,9 +82,12 @@ fn app() -> &'static Mutex<App> {
                 imu_hz: AtomicU32::new(0),
                 fps: AtomicU32::new(0),
                 glasses_state: Mutex::new("no glasses yet".into()),
+                remote: Mutex::new(None),
             }),
             glasses: None,
             render: None,
+            remote: None,
+            pairing: None,
         })
     })
 }
@@ -83,15 +124,20 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_configDir(
 ) {
     // Logging starts with the app's state; this is the first call, so start it here.
     let _ = app();
-    let chars = unsafe { ((**env).v1_1.GetStringUTFChars)(env, path, std::ptr::null_mut()) };
-    if chars.is_null() {
+    let Some(dir) = (unsafe { java_string(env, path) }) else { return };
+    let mut app = app().lock().unwrap();
+    if std::env::var_os("XDG_CONFIG_HOME").is_some() {
+        // Called again by an activity made again; everything below is already running.
         return;
     }
-    let dir = unsafe { std::ffi::CStr::from_ptr(chars) }.to_string_lossy().into_owned();
-    unsafe { ((**env).v1_1.ReleaseStringUTFChars)(env, path, chars) };
     // Set before anything reads it, from the one thread that starts everything else.
     std::env::set_var("XDG_CONFIG_HOME", &dir);
     log::info!("remembering in {dir}/spatiand");
+    // The host paired most recently, shown from the start: it is what the glasses are for.
+    match remote::load_hosts().into_iter().next() {
+        Some(entry) => app.show_host(entry),
+        None => log::info!("no host paired yet"),
+    }
 }
 
 /// `Native.stop()`: let go of the glasses, which puts them back in 2D on the way.
@@ -159,4 +205,103 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_status(
     };
     let c = std::ffi::CString::new(line).unwrap_or_default();
     unsafe { ((**env).v1_1.NewStringUTF)(env, c.as_ptr()) }
+}
+
+/// `Native.remoteStatus()`: the host, for the phone's screen -- its link, a pairing under way,
+/// and the windows it has open.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_remoteStatus(
+    env: *mut JNIEnv,
+    _class: jclass,
+) -> jstring {
+    let mut app = app().lock().unwrap();
+    // A pairing both ends agreed to is written down and shown here, from this call, because
+    // it is the one the phone's screen makes twice a second anyway.
+    if let Some(entry) = app.pairing.as_ref().and_then(|p| p.settle()) {
+        app.show_host(entry);
+    }
+    let mut lines = Vec::new();
+    if let Some(pairing) = &app.pairing {
+        lines.push(pairing.describe());
+    }
+    match &app.remote {
+        Some(remote) => {
+            let view = remote.handle.view.lock().unwrap();
+            lines.push(view.link.clone());
+            for window in view.windows.values() {
+                lines.push(format!("  {}{}", window.title, match window.layer {
+                    spatiand_stream::Layer::Projection => " (the room)",
+                    spatiand_stream::Layer::Window => "",
+                }));
+            }
+        }
+        None if app.pairing.is_none() => lines.push("no host paired: pair one below".into()),
+        None => {}
+    }
+    unsafe { new_string(env, &lines.join("\n")) }
+}
+
+/// `Native.apps()`: what the host offers, one `id\tname` per line.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_apps(env: *mut JNIEnv, _class: jclass) -> jstring {
+    let app = app().lock().unwrap();
+    let text = app
+        .remote
+        .as_ref()
+        .map(|r| {
+            r.handle
+                .view
+                .lock()
+                .unwrap()
+                .apps
+                .iter()
+                .map(|(id, name)| format!("{id}\t{name}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+    unsafe { new_string(env, &text) }
+}
+
+/// `Native.launch(id)`: ask the host to start one of its applications.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_launch(env: *mut JNIEnv, _class: jclass, id: jstring) {
+    let Some(id) = (unsafe { java_string(env, id) }) else { return };
+    if let Some(remote) = &app().lock().unwrap().remote {
+        remote.handle.launch(&id);
+    }
+}
+
+/// `Native.closeAll()`: close every window the host has open here.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_closeAll(_env: *mut JNIEnv, _class: jclass) {
+    if let Some(remote) = &app().lock().unwrap().remote {
+        let ids: Vec<u32> = remote.handle.view.lock().unwrap().windows.keys().copied().collect();
+        for id in ids {
+            remote.handle.close(id);
+        }
+    }
+}
+
+/// `Native.pair(address)`: start pairing with a host whose owner has run
+/// `spatiand-host --pair` on it.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_pair(env: *mut JNIEnv, _class: jclass, address: jstring) {
+    let Some(address) = (unsafe { java_string(env, address) }) else { return };
+    let address = address.trim().to_string();
+    if address.is_empty() {
+        return;
+    }
+    // With the default port, as the host listens on.
+    let address = if address.contains(':') { address } else { format!("{address}:47600") };
+    log::info!("pairing with {address}");
+    app().lock().unwrap().pairing = Some(remote::Pairing::start(address));
+}
+
+/// `Native.confirmPair()`: the person holding the phone says the two codes match.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_confirmPair(_env: *mut JNIEnv, _class: jclass) {
+    if let Some(pairing) = &app().lock().unwrap().pairing {
+        pairing.state.lock().unwrap().confirmed = true;
+    }
 }

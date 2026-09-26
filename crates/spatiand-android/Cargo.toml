@@ -17,10 +17,17 @@ crate-type = ["cdylib"]
 spatiand-hmd = { path = "../spatiand-hmd" }
 spatiand-track = { path = "../spatiand-track" }
 spatiand-render = { path = "../spatiand-render" }
+spatiand-stream = { path = "../spatiand-stream" }
+# The same versions spatiand-stream links, for its link's types.
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"] }
+serde.workspace = true
+toml.workspace = true
 glam.workspace = true
 log.workspace = true
 libc = "0.2"
 jni-sys = "0.4"
-ndk-sys = "0.6"
+# `media` for MediaCodec and AImageReader, `nativewindow` for AHardwareBuffer.
+ndk-sys = { version = "0.6", features = ["media", "nativewindow"] }
 khronos-egl = { version = "6", features = ["dynamic"] }
 glow = "0.16"

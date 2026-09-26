@@ -24,6 +24,7 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -44,6 +45,9 @@ public class MainActivity extends Activity {
 
     final Handler ui = new Handler(Looper.getMainLooper());
     TextView status;
+    /** A button for each application the host offers; rebuilt when the list changes. */
+    LinearLayout apps;
+    String appsShown = "";
     Presentation presentation;
     /** The glasses' window when it is an overlay, above XREAL's placeholder. */
     SurfaceView overlay;
@@ -65,10 +69,37 @@ public class MainActivity extends Activity {
         status.setTextColor(Color.rgb(220, 226, 236));
         status.setTextSize(16);
         column.addView(status, new LinearLayout.LayoutParams(-1, 0, 1));
+        apps = new LinearLayout(this);
+        apps.setOrientation(LinearLayout.VERTICAL);
+        column.addView(apps, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout row = new LinearLayout(this);
         Button recenter = new Button(this);
         recenter.setText("Recenter");
         recenter.setOnClickListener(v -> Native.recenter());
-        column.addView(recenter, new LinearLayout.LayoutParams(-1, -2));
+        row.addView(recenter, new LinearLayout.LayoutParams(0, -2, 1));
+        Button close = new Button(this);
+        close.setText("Close windows");
+        close.setOnClickListener(v -> Native.closeAll());
+        row.addView(close, new LinearLayout.LayoutParams(0, -2, 1));
+        column.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        // Pairing with a host: its owner runs `spatiand-host --pair` there, both ends show a
+        // code, and it is written down once both say yes.
+        LinearLayout pairing = new LinearLayout(this);
+        EditText address = new EditText(this);
+        address.setHint("host, e.g. myhost");
+        address.setSingleLine(true);
+        address.setTextColor(Color.rgb(220, 226, 236));
+        address.setHintTextColor(Color.rgb(120, 126, 136));
+        pairing.addView(address, new LinearLayout.LayoutParams(0, -2, 2));
+        Button pair = new Button(this);
+        pair.setText("Pair");
+        pair.setOnClickListener(v -> Native.pair(address.getText().toString()));
+        pairing.addView(pair, new LinearLayout.LayoutParams(0, -2, 1));
+        Button match = new Button(this);
+        match.setText("Codes match");
+        match.setOnClickListener(v -> Native.confirmPair());
+        pairing.addView(match, new LinearLayout.LayoutParams(0, -2, 1));
+        column.addView(pairing, new LinearLayout.LayoutParams(-1, -2));
         if (!Settings.canDrawOverlays(this)) {
             // Once, and kept: what puts the glasses' picture above XREAL's placeholder.
             Button allow = new Button(this);
@@ -298,7 +329,20 @@ public class MainActivity extends Activity {
     final Runnable refresh = new Runnable() {
         @Override
         public void run() {
-            status.setText("Spatiand\n\n" + Native.status());
+            status.setText("Spatiand\n\n" + Native.status() + "\n\n" + Native.remoteStatus());
+            String offered = Native.apps();
+            if (!offered.equals(appsShown)) {
+                appsShown = offered;
+                apps.removeAllViews();
+                for (String line : offered.split("\n")) {
+                    String[] app = line.split("\t", 2);
+                    if (app.length != 2) continue;
+                    Button start = new Button(MainActivity.this);
+                    start.setText(app[1]);
+                    start.setOnClickListener(v -> Native.launch(app[0]));
+                    apps.addView(start, new LinearLayout.LayoutParams(-1, -2));
+                }
+            }
             ui.postDelayed(this, 500);
         }
     };

@@ -6,6 +6,7 @@
 //! live anyway.
 
 pub mod camera;
+pub mod openxr;
 pub mod panel;
 pub mod ray;
 pub mod sky;

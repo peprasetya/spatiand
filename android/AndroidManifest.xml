@@ -7,6 +7,8 @@
     <!-- "Display over other apps", allowed once in Settings: the glasses' picture is an
          overlay, which sits above XREAL's NebulaOS placeholder where a Presentation does not. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Remote applications: the hosts are reached over QUIC. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-feature android:glEsVersion="0x00030000" />
     <application
         android:label="Spatiand"
