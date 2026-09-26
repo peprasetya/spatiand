@@ -10,6 +10,9 @@ final class Native {
 
     private Native() {}
 
+    /** Where to keep what is learned about the glasses between runs. Call first. */
+    static native void configDir(String path);
+
     /** Take the glasses through a UsbDeviceConnection's descriptor, which is duplicated. */
     static native boolean start(int usbFd);
 

@@ -73,6 +73,27 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_start(
     JNI_TRUE
 }
 
+/// `Native.configDir(path)`: where to keep what is learned between runs -- the app's own files
+/// directory. `spatiand_track::config` finds it the way it finds `~/.config` on the Deck.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_configDir(
+    env: *mut JNIEnv,
+    _class: jclass,
+    path: jni_sys::jstring,
+) {
+    // Logging starts with the app's state; this is the first call, so start it here.
+    let _ = app();
+    let chars = unsafe { ((**env).v1_1.GetStringUTFChars)(env, path, std::ptr::null_mut()) };
+    if chars.is_null() {
+        return;
+    }
+    let dir = unsafe { std::ffi::CStr::from_ptr(chars) }.to_string_lossy().into_owned();
+    unsafe { ((**env).v1_1.ReleaseStringUTFChars)(env, path, chars) };
+    // Set before anything reads it, from the one thread that starts everything else.
+    std::env::set_var("XDG_CONFIG_HOME", &dir);
+    log::info!("remembering in {dir}/spatiand");
+}
+
 /// `Native.stop()`: let go of the glasses, which puts them back in 2D on the way.
 #[no_mangle]
 pub extern "system" fn Java_id_prasetya_spatiand_Native_stop(_env: *mut JNIEnv, _class: jclass) {

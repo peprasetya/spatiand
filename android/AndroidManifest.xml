@@ -8,7 +8,8 @@
     <application
         android:label="Spatiand"
         android:hasCode="true"
-        android:extractNativeLibs="true">
+        android:extractNativeLibs="true"
+        android:debuggable="true">
         <!-- The phone's screen: the controller and the status. The glasses are a Presentation
              this activity puts on their display. Opened by plugging the glasses in, once it is
              the app chosen for them. -->

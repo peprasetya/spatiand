@@ -55,6 +55,12 @@ impl Drop for Renderer {
     }
 }
 
+/// How far ahead to predict the head, from reading the pose to light leaving the panel.
+///
+/// Longer than the Deck's one refresh: there Spatiand scans out itself, and here a frame goes
+/// through Android's compositor on the next 60 Hz tick before it is scanned out -- about two.
+const PREDICTION_SECONDS: f64 = 2.0 / 60.0;
+
 const SKY_VS: &str = r#"#version 300 es
 out vec2 ndc;
 void main() {
@@ -230,7 +236,7 @@ fn run(window: *mut ndk_sys::ANativeWindow, shared: &Shared, stop: &AtomicBool) 
             ..StereoConfig::default()
         };
         let orientation = shared.tracker.lock().unwrap().predicted_orientation(
-            spatiand_track::DEFAULT_PREDICTION_SECONDS,
+            PREDICTION_SECONDS,
             spatiand_track::DEFAULT_PREDICTION_MAX_DEGREES,
         );
         let eyes: Vec<(Eye, (i32, i32, i32, i32))> = if stereo {

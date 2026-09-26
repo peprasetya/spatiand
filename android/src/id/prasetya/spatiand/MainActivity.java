@@ -50,6 +50,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        Native.configDir(getFilesDir().getPath());
 
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
@@ -75,7 +76,7 @@ public class MainActivity extends Activity {
         getSystemService(DisplayManager.class).registerDisplayListener(displays, ui);
 
         showOnGlasses();
-        takeGlasses();
+        takeGlasses(true);
         ui.post(refresh);
     }
 
@@ -83,7 +84,7 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         // Plugged in again while already running.
-        if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(intent.getAction())) takeGlasses();
+        if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(intent.getAction())) takeGlasses(false);
     }
 
     @Override
@@ -157,7 +158,7 @@ public class MainActivity extends Activity {
         public void onDisplayAdded(int id) {
             showOnGlasses();
             // The glasses' display and their USB arrive together; whichever is heard first.
-            if (connection == null) takeGlasses();
+            if (connection == null) takeGlasses(false);
         }
 
         @Override
@@ -183,7 +184,14 @@ public class MainActivity extends Activity {
         return null;
     }
 
-    void takeGlasses() {
+    /**
+     * Open the glasses if Android lets us. {@code ask} is whether to ask for them when it does
+     * not yet: only when the app was opened by hand with the glasses already in. On plugging in,
+     * Android asks itself -- "Open Spatiand to handle XREAL Air?" -- and that question, unlike
+     * ours, has an "Always" that makes the answer permanent. Asking here as well would put
+     * ours, which lasts only until unplugging, in front of it every time.
+     */
+    void takeGlasses(boolean ask) {
         UsbDevice d = glassesDevice();
         if (d == null) {
             Log.i(TAG, "no glasses on USB");
@@ -192,6 +200,10 @@ public class MainActivity extends Activity {
         Log.i(TAG, "glasses on USB: " + d.getDeviceName());
         UsbManager usb = getSystemService(UsbManager.class);
         if (!usb.hasPermission(d)) {
+            if (!ask) {
+                Log.i(TAG, "glasses on USB, waiting for Android to hand them over");
+                return;
+            }
             Intent reply = new Intent(ACTION_USB).setPackage(getPackageName());
             usb.requestPermission(d, PendingIntent.getBroadcast(this, 0, reply, PendingIntent.FLAG_MUTABLE));
             return;
@@ -211,14 +223,14 @@ public class MainActivity extends Activity {
     final BroadcastReceiver usbAttached = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
-            if (connection == null) takeGlasses();
+            if (connection == null) takeGlasses(false);
         }
     };
 
     final BroadcastReceiver usbPermission = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
-            if (i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) takeGlasses();
+            if (i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) takeGlasses(false);
         }
     };
 

@@ -11,7 +11,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use spatiand_hmd::{DisplayMode, Hmd, HmdEvent, XrealGlasses};
-use spatiand_track::AxisMap;
+use spatiand_track::{AxisMap, SensorMemory};
 
 use super::Shared;
 
@@ -59,8 +59,20 @@ fn run(fd: OwnedFd, shared: &Shared, stop: &AtomicBool) {
         .sensor_axes
         .and_then(AxisMap::from_mounting)
         .unwrap_or(AxisMap::XREAL_AIR);
-    shared.tracker.lock().unwrap().set_axes(axes);
+    // What was learned about these glasses last time -- the gyro's resting offset and the
+    // magnetometer's own field -- after the axes, which a remembered calibration belongs to.
+    // Without it every start begins by guessing the bias, and the world drifts until it has.
+    let mut memory = SensorMemory::new();
+    {
+        let mut tracker = shared.tracker.lock().unwrap();
+        tracker.set_axes(axes);
+        memory.restore(&info.name, &mut tracker);
+    }
     *shared.h_fov_deg.lock().unwrap() = info.h_fov_deg;
+
+    // The Beam Pro composites every display on the phone screen's 60 Hz clock. A panel at the
+    // glasses' preferred 72 would show one frame in five twice, which is a judder on every turn.
+    hmd.prefer_refresh(60);
 
     // Side-by-side from the start. The glasses' display then goes away and comes back at
     // double width, which the app answers by putting its Presentation on the new one.
@@ -78,8 +90,13 @@ fn run(fd: OwnedFd, shared: &Shared, stop: &AtomicBool) {
     while !stop.load(Ordering::Relaxed) {
         match hmd.poll(Duration::from_millis(20)) {
             Ok(Some(HmdEvent::Imu(sample))) => {
-                shared.tracker.lock().unwrap().integrate(&sample);
+                let mut tracker = shared.tracker.lock().unwrap();
+                tracker.integrate(&sample);
                 samples += 1;
+                // Logs every half minute and saves at most once a minute; cheap otherwise.
+                if samples % 100 == 0 {
+                    memory.tick(&tracker);
+                }
             }
             Ok(Some(HmdEvent::Disconnected)) => {
                 say(shared, format!("{} unplugged", info.name));
