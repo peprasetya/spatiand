@@ -325,17 +325,49 @@ impl Monitors {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn read_cpu() -> Option<CpuTotals> {
     parse_cpu(&std::fs::read_to_string("/proc/stat").ok()?)
+}
+
+/// On Android an app may not read the machine's CPU time, only its own: this is Spatiand's
+/// share of every core, which on the Beam Pro is most of what the phone is doing.
+#[cfg(target_os = "android")]
+fn read_cpu() -> Option<CpuTotals> {
+    let text = std::fs::read_to_string("/proc/self/stat").ok()?;
+    // After the command name, which is in brackets and may hold spaces.
+    let fields: Vec<&str> = text.rsplit_once(')')?.1.split_whitespace().collect();
+    let busy = fields.get(11)?.parse::<u64>().ok()? + fields.get(12)?.parse::<u64>().ok()?;
+    let cores = std::thread::available_parallelism().map(|n| n.get() as u64).unwrap_or(1);
+    let mut now = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) };
+    // Clock ticks are hundredths of a second on Android.
+    let ticks = now.tv_sec as u64 * 100 + now.tv_nsec as u64 / 10_000_000;
+    Some(CpuTotals { busy, total: ticks * cores })
 }
 
 fn read_memory() -> Option<f32> {
     parse_memory(&std::fs::read_to_string("/proc/meminfo").ok()?)
 }
 
+/// The network's bytes received and sent, on Android, where only the app's own Java side may
+/// ask (`TrafficStats`); it hands them over once a second.
+#[cfg(target_os = "android")]
+pub static ANDROID_TRAFFIC: [std::sync::atomic::AtomicU64; 2] =
+    [std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)];
+
+#[cfg(target_os = "android")]
+fn read_net() -> Option<[u64; 2]> {
+    use std::sync::atomic::Ordering;
+    let rx = ANDROID_TRAFFIC[0].load(Ordering::Relaxed);
+    let tx = ANDROID_TRAFFIC[1].load(Ordering::Relaxed);
+    (rx > 0 || tx > 0).then_some([rx, tx])
+}
+
 /// Only interfaces backed by hardware, which is what `device` under sysfs means. That leaves
 /// out loopback, Tailscale, bridges and VPNs, all of which carry traffic that is also counted
 /// on the real interface underneath.
+#[cfg(not(target_os = "android"))]
 fn read_net() -> Option<[u64; 2]> {
     parse_net(&std::fs::read_to_string("/proc/net/dev").ok()?, |name| {
         std::path::Path::new("/sys/class/net")
@@ -356,7 +388,17 @@ fn read_disk() -> Option<[u64; 2]> {
     })
 }
 
+/// GPU utilisation from Adreno's driver: busy and total cycles over its last window.
+#[cfg(target_os = "android")]
+fn read_gpu_busy() -> Option<f32> {
+    let text = std::fs::read_to_string("/sys/class/kgsl/kgsl-3d0/gpubusy").ok()?;
+    let mut numbers = text.split_whitespace().filter_map(|n| n.parse::<f64>().ok());
+    let (busy, total) = (numbers.next()?, numbers.next()?);
+    (total > 0.0).then(|| (busy / total).clamp(0.0, 1.0) as f32)
+}
+
 /// GPU utilisation, if the driver publishes it. amdgpu does; many do not.
+#[cfg(not(target_os = "android"))]
 fn read_gpu_busy() -> Option<f32> {
     let entries = std::fs::read_dir("/sys/class/drm").ok()?;
     for entry in entries.flatten() {

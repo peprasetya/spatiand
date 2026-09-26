@@ -59,6 +59,9 @@ final class Native {
     /** Play the room's sound to this audio device; 0 for wherever Android routes it. */
     static native void audioOutput(int deviceId);
 
+    /** The network's bytes so far, for the monitors under the thumb. */
+    static native void traffic(long received, long sent);
+
     /** A line for the phone's screen. */
     static native String status();
 }

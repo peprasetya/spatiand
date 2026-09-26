@@ -505,6 +505,7 @@ public class MainActivity extends Activity implements SensorEventListener {
         @Override
         public void run() {
             status.setText(Native.status());
+            Native.traffic(android.net.TrafficStats.getTotalRxBytes(), android.net.TrafficStats.getTotalTxBytes());
             ui.postDelayed(this, 1000);
         }
     };

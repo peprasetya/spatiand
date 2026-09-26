@@ -40,7 +40,12 @@ pub struct PhonePanel {
 }
 
 fn percent(series: &Series) -> String {
-    format!("{} {:.0}%", series_name(series), series.latest() * 100.0)
+    let name = match series_name(series) {
+        // Only Spatiand's own share: Android shows an app nothing else.
+        "CPU" => "CPU (Spatiand)",
+        other => other,
+    };
+    format!("{name} {:.0}%", series.latest() * 100.0)
 }
 
 fn series_name(series: &Series) -> &'static str {
@@ -62,11 +67,17 @@ impl PhonePanel {
                 crate::system::format_rate(net[0]),
                 crate::system::format_rate(net[1])
             ),
-            format!(
-                "Disk read {}  write {}",
-                crate::system::format_rate(disk[0]),
-                crate::system::format_rate(disk[1])
-            ),
+            // Android tells an app nothing about its disks; the row stays, empty, so the layout
+            // is the sidecar's.
+            if disk == [0.0, 0.0] {
+                "Disk: not visible to apps on Android".to_string()
+            } else {
+                format!(
+                    "Disk read {}  write {}",
+                    crate::system::format_rate(disk[0]),
+                    crate::system::format_rate(disk[1])
+                )
+            },
         ];
         self.labels.resize_with(self.wanted.len(), || None);
         self.images.resize_with(self.wanted.len(), || None);

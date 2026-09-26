@@ -259,6 +259,13 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_audioOutput(_env: *mut J
     spatiand_audio::server::set_output_device(id);
 }
 
+/// `Native.traffic(rx, tx)`: the network's bytes so far, from `TrafficStats`, for the monitors.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_traffic(_env: *mut JNIEnv, _class: jclass, rx: jni_sys::jlong, tx: jni_sys::jlong) {
+    crate::system::ANDROID_TRAFFIC[0].store(rx.max(0) as u64, Ordering::Relaxed);
+    crate::system::ANDROID_TRAFFIC[1].store(tx.max(0) as u64, Ordering::Relaxed);
+}
+
 /// `Native.status()`: a line for the phone's screen.
 #[no_mangle]
 pub extern "system" fn Java_id_prasetya_spatiand_Native_status(env: *mut JNIEnv, _class: jclass) -> jstring {
