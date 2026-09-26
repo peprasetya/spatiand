@@ -101,37 +101,60 @@ This works whether or not the app is running.
 The one exception is a **force-stopped** app. Android sends no broadcasts to one until it
 has been opened by hand once.
 
-## Remote applications — verified 2026-09-26
+## The Deck's session on the Beam Pro — running 2026-09-27
 
-The Beam Pro is a client of the same `spatiand-host` as the Deck, over the same protocol
-(`crates/spatiand-android/src/android/remote.rs`).
+The app runs **the Deck's compositor itself**. `crates/spatiand-android` compiles
+`crates/spatiand/src`'s own modules by path, so the room is the Deck's:
+- the windows have the same frames and title bars, and are moved, resized and pushed away the
+  same way;
+- the HUD, launcher, menus and on-screen keyboard are the same.
 
-- **Pairing.** The owner runs `spatiand-host --pair` on the host. On the phone's screen, type
-  the host's name and tap **Pair**, compare the codes, answer yes on the host, and tap
-  **Codes match**. The host is written to `hosts.toml` in the app's files. The phone has its
-  own identity, so the host keeps its windows apart from the Deck's.
-- **Launching.** The host's catalogue appears on the phone's screen as buttons. Windows
-  already open on the host come back on reconnect.
-- **Pictures.**
-  - `MediaCodec` (HEVC or H.264) decodes into an `AImageReader`. Each picture is an
-    `AHardwareBuffer`, imported as an `EGLImage` and sampled as an external texture.
-  - There is no copy and no CPU colour conversion (`decode.rs`).
-  - 1280×800 HEVC decodes on the Beam Pro with no errors.
-- **The room.**
-  - The Deck's generated studio environment surrounds the wearer.
-  - Windows sit 1.1 m wide at 2.2 m, like the Deck's defaults, and open where the head points.
-  - An application that takes the room (layer `projection`, as SpatiWorld does) replaces the
-    environment. Its picture is reprojected to the head pose it was drawn for, using the
-    viewport number each frame carries.
-- **The head.**
-  - A `Viewport` goes out every drawn frame, as a datagram, built by
-    `spatiand_render::openxr`. The Deck's pose channel now uses the same maths.
-- **Not yet:**
-  - input into remote windows (the phone as controller comes next);
-  - sound (its streams are read and dropped, so the host is never held up);
-  - SpatiWorld itself: the projection path is written but not yet seen working.
-- A host reached over Tailscale can take several attempts on the first connection, while the
-  tunnel wakes. The session retries by itself.
+Only what the Deck gets from its hardware is Android's (`crates/spatiand-android/src/android/`):
+
+| on the Deck | on the Beam Pro |
+|---|---|
+| DRM scanout | smithay's `GlesRenderer` drawing straight into the glasses' `ANativeWindow` (`backend.rs`, adapted from `backend_drm.rs`) |
+| the Deck's controller | the phone, made into the Deck's controller state (`phone.rs`) |
+| hidraw | the glasses' usbfs descriptor |
+| the sidecar panel | the phone's touch area, with the monitors drawn dim under the thumb (`panel.rs`) |
+| VAAPI dmabufs | MediaCodec into `AHardwareBuffer`s; a placeholder shm buffer carries a token, and the compositor draws the decoder's picture in its place (`spatiand_video::android`, `remote_video.rs`) |
+| PipeWire sinks | the same `Binaural` renderer and measured head, on AAudio (`spatiand_audio`'s `server_android.rs`) |
+
+**The phone as a controller:**
+- The **touch area** is the left pad: one finger scrolls, a pinch zooms the window pointed at.
+- Clicks:
+  - **tap:** click;
+  - **tap then hold:** hold the click, to drag a title bar or select, with finger movement setting a dragged window's distance;
+  - **long press:** right click.
+- **Where the phone points** is the right pad. It is aimed at the world, not the head, through
+  `spatiand_render::ray::pad_for_direction`. Recentring aims it where the head faces.
+- Buttons:
+  - the **orange key** is STEAM (the framework rebroadcasts it as `XREAL.switchMode.down/up`);
+  - the on-screen **⋯** and **B** are the Deck's;
+  - **⌨** brings up Android's keyboard, which types into the focused window;
+  - **◎** recentres.
+- At the top, the sound output picker chooses where the placed sound plays.
+
+**What Android needed** (all built from upstream source by scripts in `android/`, pinned):
+- `xkbcommon/`: libxkbcommon and the keyboard layouts, since smithay's keyboard needs them.
+- `eglshim/`: a `libEGL.so.1` that is Android's `libEGL.so`, since smithay opens EGL by the
+  Linux name. The display itself is opened with `eglGetDisplay` and adopted with
+  `EGLDisplay::from_raw`: Android returns an unusable display from
+  `eglGetPlatformDisplayEXT`.
+- `mysofa/`: libmysofa and the MIT KEMAR dataset (558 taps, the head SteamOS installs).
+- Fonts come from `/system/fonts`, which fontdb does not search on Android.
+
+**Measured on the device:**
+- 59–60 fps at 3840×1080 stereo, with GPU about 50%.
+- Remote windows from a host arrive with their Deck title bars and pictures, and come back
+  on reconnect.
+- The measured head loads.
+
+**Not yet:**
+- Android's own apps as windows.
+- The microphone to a host (the input picker is for show).
+- The Deck's own `crates/spatiand` changes (cfg gates only) have **not been compiled on the
+  Deck**.
 
 ## Consequences for the design
 
