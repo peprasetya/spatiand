@@ -24,6 +24,7 @@ use glam::DVec3;
 
 use crate::device::{self, DeviceSpec};
 use crate::hid::{self, HidDevice, HidNode};
+use crate::port::Port;
 use crate::{DisplayMode, Hmd, HmdButton, HmdError, HmdEvent, HmdInfo, ImuSample, Result};
 
 // --- MCU (interface 4) ---
@@ -75,7 +76,7 @@ const IMU_DATA_SIG: [u8; 2] = [0x01, 0x02];
 pub struct XrealGlasses {
     spec: &'static DeviceSpec,
     info: HmdInfo,
-    imu: HidDevice,
+    imu: Box<dyn Port>,
     mcu: mcu::Mcu,
     mode: DisplayMode,
     /// Scratch buffer sized from the device spec, reused every poll so the ~1 kHz sample path
@@ -121,12 +122,25 @@ impl XrealGlasses {
         };
         let imu = HidDevice::open(pick(spec.imu_interface)?)?;
         let mcu = HidDevice::open(pick(spec.mcu_interface)?)?;
-        log::info!(
-            "{}: IMU {} MCU {}",
-            spec.name,
-            imu.path().display(),
-            mcu.path().display()
-        );
+        Self::with_ports(spec, Box::new(imu), Box::new(mcu))
+    }
+
+    /// Open the glasses through a usbfs descriptor for the whole device, which is what
+    /// Android's `UsbManager.openDevice` hands an app. The interfaces are claimed from the
+    /// kernel's HID driver, as `claimInterface(iface, force = true)` would.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn open_usb(fd: std::os::fd::OwnedFd) -> Result<Self> {
+        let device = crate::usbfs::UsbDevice::from_fd(fd)?;
+        let spec = device::lookup(device.vid(), device.pid())
+            .filter(|s| s.driver == "xreal")
+            .ok_or(HmdError::NotFound)?;
+        let imu = device.claim(spec.imu_interface)?;
+        let mcu = device.claim(spec.mcu_interface)?;
+        Self::with_ports(spec, Box::new(imu), Box::new(mcu))
+    }
+
+    fn with_ports(spec: &'static DeviceSpec, imu: Box<dyn Port>, mcu: Box<dyn Port>) -> Result<Self> {
+        log::info!("{}: IMU {} MCU {}", spec.name, imu.describe(), mcu.describe());
         let mcu = mcu::Mcu::start(mcu, mcu::TIMING)?;
 
         let info = HmdInfo {
@@ -398,7 +412,7 @@ impl Hmd for XrealGlasses {
         // leave an event sitting until the next one.
         let mut fds = [
             libc::pollfd {
-                fd: self.imu.as_raw_fd(),
+                fd: self.imu.fd(),
                 events: libc::POLLIN,
                 revents: 0,
             },
@@ -454,7 +468,7 @@ impl Hmd for XrealGlasses {
     }
 
     fn event_fd(&self) -> Option<std::os::fd::RawFd> {
-        Some(self.imu.as_raw_fd())
+        Some(self.imu.fd())
     }
 }
 

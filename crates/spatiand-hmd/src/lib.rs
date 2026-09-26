@@ -19,6 +19,9 @@ use std::time::Duration;
 pub mod device;
 pub mod hid;
 pub mod null;
+pub mod port;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub mod usbfs;
 pub mod xreal;
 
 pub use device::DeviceSpec;

@@ -44,7 +44,7 @@ use std::time::{Duration, Instant};
 
 use super::{XrealGlasses, MCU_DATA_OFFSET, MCU_MSGID_OFFSET, MSG_R_BRIGHTNESS, MSG_W_BRIGHTNESS};
 use super::MSG_W_DISP_MODE;
-use crate::hid::HidDevice;
+use crate::port::Port;
 use crate::{HmdError, HmdEvent, Result};
 
 /// How long things take, and how often to look. See [`TIMING`].
@@ -65,28 +65,6 @@ pub(super) const TIMING: Timing = Timing {
     read_every: Duration::from_secs(2),
     settle: Duration::from_millis(300),
 };
-
-/// The MCU's end of the wire: the hidraw node in use, a socket in the tests.
-pub(super) trait Port: Send {
-    fn fd(&self) -> RawFd;
-    fn write_report(&mut self, payload: &[u8]) -> Result<()>;
-    /// One report, waiting at most `timeout`. `Ok(None)` is the timeout expiring.
-    fn read_report(&mut self, buf: &mut [u8], timeout: Duration) -> Result<Option<usize>>;
-}
-
-impl Port for HidDevice {
-    fn fd(&self) -> RawFd {
-        self.as_raw_fd()
-    }
-
-    fn write_report(&mut self, payload: &[u8]) -> Result<()> {
-        HidDevice::write_report(self, payload)
-    }
-
-    fn read_report(&mut self, buf: &mut [u8], timeout: Duration) -> Result<Option<usize>> {
-        HidDevice::read_report(self, buf, timeout)
-    }
-}
 
 /// Something for the thread to do.
 enum Command {
@@ -521,6 +499,10 @@ mod tests {
                 path: "test port".into(),
                 source,
             })
+        }
+
+        fn describe(&self) -> String {
+            "test port".into()
         }
 
         fn read_report(&mut self, buf: &mut [u8], timeout: Duration) -> Result<Option<usize>> {
