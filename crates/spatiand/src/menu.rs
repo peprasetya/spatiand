@@ -76,11 +76,26 @@ impl MenuModel {
     }
 }
 
+/// What goes in front of a card's title, which is also the pointer's way back.
+///
+/// The pointer can choose every row, and without this it could not leave: backing out was B,
+/// and a Beam Pro has no B. The title line is where "up a level" sits on every phone and
+/// every window, so the arrow is drawn there and the whole line is the target
+/// ([`crate::scene::MenuTarget::Back`]).
+pub const BACK_MARK: &str = "\u{2039}  ";
+
 /// The menu the shell currently has open, if any.
 ///
 /// `None` means there is nothing to draw: the world, or a launcher, which is a grid of glass
 /// bubbles rather than a card and draws itself.
 pub fn model(shell: &Shell) -> Option<MenuModel> {
+    card(shell).map(|mut m| {
+        m.title.insert_str(0, BACK_MARK);
+        m
+    })
+}
+
+fn card(shell: &Shell) -> Option<MenuModel> {
     match shell.mode() {
         Mode::World => None,
         Mode::Hud => {
@@ -484,7 +499,7 @@ mod tests {
             EnvironmentChoice::Studio,
         );
         let m = model(&shell).expect("the picker is open");
-        assert_eq!(m.title, "Environment");
+        assert_eq!(m.title, format!("{BACK_MARK}Environment"));
         let marked: Vec<_> = m.rows.iter().filter(|r| r.trailing.is_some()).collect();
         assert_eq!(marked.len(), 1, "exactly one environment is in use");
         assert_eq!(marked[0].label, "Studio");

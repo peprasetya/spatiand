@@ -71,6 +71,15 @@ impl Switcher {
     ///
     /// Left and right step as well as up and down, because this is drawn as a column but
     /// thought of as a row: every switcher anyone has used is horizontal.
+    /// Put the cursor on a row the pointer is over.
+    pub fn select(&mut self, index: usize) -> bool {
+        if index >= self.entries.len() || index == self.cursor {
+            return false;
+        }
+        self.cursor = index;
+        true
+    }
+
     pub fn step(&mut self, direction: Direction) -> bool {
         if self.entries.len() < 2 {
             return false;

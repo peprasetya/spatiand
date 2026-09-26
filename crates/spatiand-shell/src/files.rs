@@ -73,6 +73,15 @@ impl FileBrowser {
         rows
     }
 
+    /// Put the cursor on a row the pointer is over. Row 0 is the parent.
+    pub fn select(&mut self, index: usize) -> bool {
+        if index > self.entries.len() || index == self.cursor {
+            return false;
+        }
+        self.cursor = index;
+        true
+    }
+
     pub fn step(&mut self, direction: Direction) -> bool {
         let before = self.cursor;
         match direction {

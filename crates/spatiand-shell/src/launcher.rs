@@ -333,6 +333,17 @@ impl Launcher {
         self.grid = Grid::new(COLUMNS, self.len());
     }
 
+    /// Put the cursor on a bubble the pointer is over. Only the page on show: a bubble on
+    /// another page is not in front of anyone, and jumping to it would turn the page under
+    /// the pointer.
+    pub fn select(&mut self, index: usize) -> bool {
+        if !self.visible().contains(&index) || index == self.grid.cursor() {
+            return false;
+        }
+        self.grid.set_cursor(index);
+        true
+    }
+
     pub fn step(&mut self, direction: Direction) -> bool {
         self.grid.step(direction)
     }

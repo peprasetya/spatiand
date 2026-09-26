@@ -172,6 +172,17 @@ impl Bluetooth {
         self.armed = armed.and_then(|a| self.view.devices.iter().position(|d| d.address == a));
     }
 
+    /// Put the cursor on a row the pointer is over. Moving off a device disarms a pending
+    /// "forget", exactly as the D-pad does.
+    pub fn select(&mut self, index: usize) -> bool {
+        if index >= self.len() || index == self.cursor() {
+            return false;
+        }
+        self.cursor = index;
+        self.armed = None;
+        true
+    }
+
     pub fn step(&mut self, direction: Direction) -> bool {
         let before = self.cursor();
         match direction {

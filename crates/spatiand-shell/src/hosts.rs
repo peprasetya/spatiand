@@ -182,6 +182,18 @@ impl Hosts {
         self.armed = None;
     }
 
+    /// Put the cursor on a row the pointer is over. Only the list has rows to choose; the
+    /// typing and pairing pages are one row each. Moving off a computer disarms a pending
+    /// "forget", exactly as the D-pad does.
+    pub fn select(&mut self, index: usize) -> bool {
+        if self.page != Page::List || index >= self.len() || index == self.cursor() {
+            return false;
+        }
+        self.cursor = index;
+        self.armed = None;
+        true
+    }
+
     pub fn step(&mut self, direction: Direction) -> bool {
         if self.page != Page::List {
             return false;

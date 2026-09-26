@@ -106,6 +106,15 @@ impl EnvironmentPicker {
     }
 
     /// Move the highlight. Sideways does nothing — it is a single column.
+    /// Put the cursor on a row the pointer is over, the browse row past the end included.
+    pub fn select(&mut self, index: usize) -> bool {
+        if index >= self.len() || index == self.cursor {
+            return false;
+        }
+        self.cursor = index;
+        true
+    }
+
     pub fn step(&mut self, direction: Direction) -> bool {
         let before = self.cursor;
         match direction {

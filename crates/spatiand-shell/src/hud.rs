@@ -253,6 +253,16 @@ impl Hud {
 
     /// Move the highlight. Left and right are ignored: it is a single column, and having them
     /// wrap onto another row would be a surprise.
+    /// Put the cursor on a row the pointer is over. `false` if it was already there or there
+    /// is no such row.
+    pub fn select(&mut self, index: usize) -> bool {
+        if index >= self.items.len() || index == self.cursor {
+            return false;
+        }
+        self.cursor = index;
+        true
+    }
+
     pub fn step(&mut self, direction: Direction) -> bool {
         let before = self.cursor;
         match direction {

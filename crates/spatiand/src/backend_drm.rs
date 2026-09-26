@@ -315,6 +315,10 @@ pub fn run(
     let mut keyboard_struck: Vec<(&'static Key, std::time::Instant)> = Vec::new();
     // A direction held in a menu, going on like a held arrow key. See `NavRepeat`.
     let mut nav_repeat = crate::input_map::NavRepeat::default();
+    // What pointing at a menu decided, carried to the start of the next frame: the pointer is
+    // worked out after this frame's shell events have already been handled, because it needs
+    // this frame's head pose. One frame late is a click nobody can feel.
+    let mut pointed_events: Vec<ShellEvent> = Vec::new();
     // Where each ray meets the keyboard, as `[right, left]`, so the reticle can be put *on* it.
     //
     // The keyboard is not a window and so is not in the list the aim is cast against. Without
@@ -955,7 +959,7 @@ pub fn run(
             // Polled once a frame and read from a snapshot, so the menus, the pointer and the
             // two-thumb gesture all see the same instant. Reading the device separately for
             // each would let them disagree about whether a thumb is down.
-            let mut shell_events: Vec<ShellEvent> = Vec::new();
+            let mut shell_events: Vec<ShellEvent> = std::mem::take(&mut pointed_events);
             let mut pads: Option<spatiand_input::ControllerState> = None;
             // Hold the sound device open exactly while a keyboard is up and clicking is on.
             // The stream has to be fed without gaps to be reliable -- see `click` -- and that
@@ -2177,6 +2181,68 @@ pub fn run(
             };
             let right_aim = pads.as_ref().and_then(|p| aim_of(&p.right_pad));
             let left_aim = pads.as_ref().and_then(|p| aim_of(&p.left_pad));
+
+            // --- pointing at a menu ---
+            //
+            // A menu used to take the pointer away and leave only the D-pad, which is fine on
+            // a Deck and nothing at all on a device without one. Now the right thumb points at
+            // the card's rows and the launcher's bubbles too: hovering moves the same cursor the
+            // D-pad moves, and a click is A. Windows still get nothing while a menu is up --
+            // this aims at the shell alone, and `pads` stays empty for everything below.
+            //
+            // Not while the shell wants text: then the pointer is the keyboard's.
+            let menu_aim = (shell.menu_is_open() && !shell.wants_text())
+                .then_some(deck_input.as_ref())
+                .flatten()
+                .filter(|p| p.right_pad.touched)
+                .map(|p| {
+                    let ray = ray_from_pad(
+                        p.right_pad.x,
+                        p.right_pad.y,
+                        orientation,
+                        origin,
+                        &pointer_config,
+                    );
+                    let target =
+                        scene.menu_target(&shell, &ray, (stereo.h_fov_deg, stereo.v_fov_deg()));
+                    if let Some((crate::scene::MenuTarget::Row(index), _)) = target {
+                        // A tick per row crossed, as the D-pad's steps are felt as presses.
+                        if shell.point(index) {
+                            if let Some(c) = controller.as_ref() {
+                                c.pulse(spatiand_input::HapticPad::Right, spatiand_input::Feel::Tick);
+                            }
+                        }
+                    }
+                    let aim = pointer::Aim {
+                        ray,
+                        // No window: the index is never read, only the hit's depth, which is
+                        // what puts the reticle on the card rather than behind it.
+                        hit: target.and_then(|(_, hit)| hit).map(|hit| (usize::MAX, hit)),
+                        popup: None,
+                        on_title: false,
+                        zone: None,
+                    };
+                    (aim, target.map(|(t, _)| t))
+                });
+            let menu_pointed = menu_aim.as_ref().and_then(|(_, target)| *target);
+            let menu_aim = menu_aim.map(|(aim, _)| aim);
+            if let Some(target) = menu_pointed {
+                if controller.as_ref().is_some_and(|c| {
+                    c.just_pressed(spatiand_input::Control::RPadClick)
+                        || c.just_pressed(spatiand_input::Control::R2)
+                }) {
+                    if let Some(c) = controller.as_ref() {
+                        c.pulse(spatiand_input::HapticPad::Right, spatiand_input::Feel::Click);
+                    }
+                    let intent = match target {
+                        crate::scene::MenuTarget::Row(_) => spatiand_shell::Intent::Accept,
+                        crate::scene::MenuTarget::Back => spatiand_shell::Intent::Back,
+                    };
+                    if let Some(event) = shell.handle(intent) {
+                        pointed_events.push(event);
+                    }
+                }
+            }
             // Whether a hand moved, in the pad's own coordinates rather than the ray's. The
             // ray is cast through the head, so it sweeps the room when the wearer turns with
             // no thumb involved -- watching it would be head tracking wearing a hat.
@@ -2884,6 +2950,7 @@ pub fn run(
                 let shell = &shell;
                 let windows = &windows;
                 let right_aim = &right_aim;
+                let menu_aim = &menu_aim;
                 let left_aim = &left_aim;
                 let keyboard_open = keyboard.open;
                 let keyboard_state = &keyboard;
@@ -2997,7 +3064,7 @@ pub fn run(
                             pads.as_ref().map(|p| p.right_pad.clicked).unwrap_or(false);
                         for (aim, aimed_by, on_keys, fade) in [
                             (
-                                right_aim.as_ref(),
+                                right_aim.as_ref().or(menu_aim.as_ref()),
                                 crate::scene::Pointing::RightThumb,
                                 keyboard_reach[0],
                                 1.0,

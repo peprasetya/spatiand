@@ -2109,6 +2109,85 @@ impl Scene {
         }
     }
 
+    /// What a ray is on in the open menu, and where it meets it: what [`Shell::point`] wants,
+    /// and where to draw the pointer.
+    ///
+    /// The same arithmetic as [`Self::draw_card`] and [`Self::draw_launcher`], at the size a
+    /// menu settles at rather than the size it passes through while arriving -- a row is chosen
+    /// where it is drawn, or the highlight lands one row off from the thumb.
+    pub fn menu_target(&self, shell: &Shell, ray: &Ray, fov: (f64, f64)) -> Option<(MenuTarget, Option<Hit>)> {
+        match shell.mode() {
+            // Bubbles float in the sky with nothing between them to be a title, so the sky
+            // itself is the way back: a click on no bubble climbs out, as B does.
+            Mode::Launcher if !shell.launcher().is_empty() => Some(
+                self.bubble_target(shell, ray)
+                    .map(|(i, hit)| (MenuTarget::Row(i), Some(hit)))
+                    .unwrap_or((MenuTarget::Back, None)),
+            ),
+            // The layout editor keeps its own cursor, which the shell does not point at yet.
+            Mode::World | Mode::Controller => None,
+            _ => self.card_target(ray, fov).map(|(t, hit)| (t, Some(hit))),
+        }
+    }
+
+    fn card_target(&self, ray: &Ray, fov: (f64, f64)) -> Option<(MenuTarget, Hit)> {
+        use spatiand_render::panel;
+
+        let layout = self.menu_layout.as_ref()?;
+        let card_width =
+            2.0 * MENU_DISTANCE * ((fov.0 * self.card_fraction() / 2.0).to_radians().tan() as f32);
+        let metres = card_width / panel::WIDTH;
+        let quat = self.anchor_quat();
+        let up = quat * Vec3::Z;
+        let centre = self.menu_centre(MENU_DISTANCE) - up * self.card_shift(card_width);
+        let card = Quad {
+            centre: centre.as_dvec3(),
+            orientation: quat.as_dquat(),
+            width: card_width as f64,
+            height: (layout.height * metres) as f64,
+        };
+        let hit = spatiand_render::intersect_quad(ray, &card)?;
+        let (x, y) = (hit.u as f32 * panel::WIDTH, hit.v as f32 * layout.height);
+        let inside = |r: &panel::Rect| y >= r.y && y <= r.y + r.h && x >= r.x && x <= r.x + r.w;
+        // The whole width of the title's line, not just its ink: the arrow is small, and the
+        // line is what a thumb can find.
+        let title_line = panel::Rect {
+            x: 0.0,
+            w: panel::WIDTH,
+            ..layout.title
+        };
+        if inside(&title_line) {
+            return Some((MenuTarget::Back, hit));
+        }
+        let offset = layout.rows.iter().position(inside)?;
+        Some((MenuTarget::Row(layout.first + offset), hit))
+    }
+
+    fn bubble_target(&self, shell: &Shell, ray: &Ray) -> Option<(usize, Hit)> {
+        shell
+            .launcher()
+            .placements()
+            .into_iter()
+            .filter_map(|(index, placement)| {
+                let orientation = self.anchor_quat()
+                    * Quat::from_rotation_z(placement.yaw)
+                    * Quat::from_rotation_y(-placement.pitch);
+                let centre = self.menu_origin() + orientation * Vec3::X * placement.radius;
+                let size = (BUBBLE_DIAMETER_M * placement.scale) as f64;
+                let disc = Quad {
+                    centre: centre.as_dvec3(),
+                    orientation: orientation.as_dquat(),
+                    width: size,
+                    height: size,
+                };
+                let hit = spatiand_render::intersect_quad(ray, &disc)?;
+                // A bubble is round; the corners of its square are sky.
+                let (du, dv) = (hit.u - 0.5, hit.v - 0.5);
+                (du * du + dv * dv <= 0.25).then_some((index, hit))
+            })
+            .min_by(|(_, a), (_, b)| a.distance.total_cmp(&b.distance))
+    }
+
     /// Draw a menu as a card: ground, selection, rows, explanation, hints.
     ///
     /// Every rectangle comes from the layout, in logical panel pixels, and is placed on the
@@ -2595,6 +2674,15 @@ impl Scene {
         let cfg = spatiand_render::StereoConfig::default();
         self.anchor_quat() * Vec3::new(cfg.neck_forward_m as f32, 0.0, cfg.neck_up_m as f32)
     }
+}
+
+/// What the pointer is on in an open menu. See [`Scene::menu_target`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuTarget {
+    /// A row of the card, or a bubble of the launcher, by the index the shell uses.
+    Row(usize),
+    /// The card's title line, or the launcher's empty sky: B.
+    Back,
 }
 
 /// Largest quad of a given aspect ratio that fits inside a field of view at `distance`.

@@ -302,6 +302,26 @@ impl Shell {
         Some(ShellEvent::ModeChanged(mode))
     }
 
+    /// The pointer is over row (or, in the launcher, bubble) `index` of the menu on show: put
+    /// the cursor there. `true` if it moved.
+    ///
+    /// Clicking is then [`Intent::Accept`], so the pointer and the D-pad share one cursor and
+    /// one meaning of "choose" -- the pointer only saves the walk. Indices are those the
+    /// compositor draws: the menu's rows in order, and [`Launcher::placements`]' indices.
+    /// The layout editor keeps its own cursor and is not pointed at yet.
+    pub fn point(&mut self, index: usize) -> bool {
+        match self.mode {
+            Mode::Hud => self.hud.select(index),
+            Mode::Environment => self.environments.select(index),
+            Mode::Files => self.files.select(index),
+            Mode::Launcher => self.launcher.select(index),
+            Mode::Switcher => self.switcher.select(index),
+            Mode::Hosts => self.hosts.select(index),
+            Mode::Bluetooth => self.bluetooth.select(index),
+            Mode::Controller | Mode::World => false,
+        }
+    }
+
     /// Feed one intent in, get at most one event out.
     pub fn handle(&mut self, intent: Intent) -> Option<ShellEvent> {
         match intent {
@@ -545,6 +565,47 @@ mod tests {
             );
             assert_eq!(s.mode(), Mode::World);
         }
+    }
+
+    #[test]
+    fn pointing_then_accepting_is_the_same_as_walking_there() {
+        // The pointer is a shortcut for the D-pad, not a second way of choosing: whatever row
+        // it lands on, A must do what three presses of Down and A would have done.
+        let mut walked = shell();
+        walked.handle(Intent::ToggleHud);
+        for _ in 0..3 {
+            walked.handle(Intent::Navigate(Direction::Down));
+        }
+        let mut pointed = shell();
+        pointed.handle(Intent::ToggleHud);
+        assert!(pointed.point(3));
+        assert!(!pointed.point(3), "already there");
+        assert_eq!(pointed.hud().cursor(), walked.hud().cursor());
+        assert_eq!(pointed.handle(Intent::Accept), walked.handle(Intent::Accept));
+    }
+
+    #[test]
+    fn pointing_past_the_end_or_in_the_world_does_nothing() {
+        let mut s = shell();
+        assert!(!s.point(0), "no menu, nothing to point at");
+        s.handle(Intent::ToggleHud);
+        let rows = s.hud().items().len();
+        assert!(!s.point(rows));
+        assert_eq!(s.hud().cursor(), 0);
+    }
+
+    #[test]
+    fn the_launcher_is_pointed_at_on_the_page_on_show_only() {
+        let apps: Vec<AppEntry> = (0..40).map(|i| app(&format!("app{i}"))).collect();
+        let mut s = Shell::new(apps, DesktopPanels::ALL, true);
+        s.handle(Intent::ToggleLauncher);
+        // Into the only group, where forty apps fill several pages.
+        s.handle(Intent::Accept);
+        let page = s.launcher().visible();
+        assert!(s.launcher().pages() > 1);
+        assert!(s.point(page.end - 1));
+        assert!(!s.point(page.end), "the next page is not in front of anyone");
+        assert_eq!(s.launcher().cursor(), page.end - 1);
     }
 
     #[test]
