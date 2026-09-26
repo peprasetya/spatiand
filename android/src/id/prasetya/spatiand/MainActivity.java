@@ -87,6 +87,7 @@ public class MainActivity extends Activity implements SensorEventListener {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         Native.configDir(getFilesDir().getPath(), getCacheDir().getPath());
         Native.xkbDir(unpackLayouts());
+        unpackAsset("default.sofa", new File(getFilesDir(), "default.sofa"));
         Native.begin();
 
         LinearLayout column = new LinearLayout(this);
@@ -229,6 +230,17 @@ public class MainActivity extends Activity implements SensorEventListener {
         return root.getPath();
     }
 
+    /** One file out of the APK, once. */
+    void unpackAsset(String name, File to) {
+        if (to.exists()) return;
+        try (InputStream in = getAssets().open(name); OutputStream out = new FileOutputStream(to)) {
+            byte[] buffer = new byte[65536];
+            for (int n; (n = in.read(buffer)) > 0; ) out.write(buffer, 0, n);
+        } catch (Exception e) {
+            Log.e(TAG, "could not unpack " + name, e);
+        }
+    }
+
     void copyAssets(String from, File to) throws Exception {
         String[] names = getAssets().list(from);
         if (names == null || names.length == 0) {
@@ -246,12 +258,24 @@ public class MainActivity extends Activity implements SensorEventListener {
     /** What the phone can play to and listen with, for the pickers at the top. */
     void fillSoundPickers() {
         AudioManager audio = getSystemService(AudioManager.class);
-        fillPicker(output, audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS), "Out");
+        AudioDeviceInfo[] outs = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
+        fillPicker(output, outs, "Out");
         fillPicker(input, audio.getDevices(AudioManager.GET_DEVICES_INPUTS), "In");
+        // The first entry is Android's own choice, which follows whatever is plugged in.
+        output.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                Native.audioOutput(position == 0 ? 0 : outs[position - 1].getId());
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
     }
 
     void fillPicker(Spinner picker, AudioDeviceInfo[] devices, String what) {
         List<String> names = new ArrayList<>();
+        names.add(what + ": automatic");
         for (AudioDeviceInfo d : devices) {
             String name = d.getProductName() == null ? "" : d.getProductName().toString();
             names.add(what + ": " + deviceKind(d.getType()) + (name.isEmpty() ? "" : " (" + name + ")"));

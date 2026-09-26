@@ -41,7 +41,15 @@ use crate::ears::Ears;
 pub const SYSTEM_DATASET: &str = "/usr/share/libmysofa/default.sofa";
 
 /// The library's own name, as the loader will look for it.
+#[cfg(not(target_os = "android"))]
 const LIBRARY: &str = "libmysofa.so.1";
+/// On Android, as the app ships it: Android's build gives it no version in its name.
+#[cfg(target_os = "android")]
+const LIBRARY: &str = "libmysofa.so";
+
+/// Names a dataset to use instead of [`SYSTEM_DATASET`]: for a machine that keeps its measured
+/// head somewhere else -- the Android app, which unpacks one into its own files.
+pub const DATASET_ENV: &str = "SPATIAND_HRTF_DATASET";
 
 /// How much of each measured response is worth convolving.
 ///
@@ -188,7 +196,10 @@ impl Hrtf {
 
     /// Open whatever the system has, which on the target hardware is a real dataset.
     pub fn system(rate: u32) -> Result<Hrtf, Error> {
-        Hrtf::open(Path::new(SYSTEM_DATASET), rate)
+        match std::env::var_os(DATASET_ENV) {
+            Some(path) => Hrtf::open(Path::new(&path), rate),
+            None => Hrtf::open(Path::new(SYSTEM_DATASET), rate),
+        }
     }
 
     /// Taps in the dataset's own responses, before the arrival delay is prepended.

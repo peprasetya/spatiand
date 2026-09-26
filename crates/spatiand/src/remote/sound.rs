@@ -160,11 +160,13 @@ impl Drop for Player {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 struct Output {
     child: Child,
     target: Option<String>,
 }
 
+#[cfg(not(target_os = "android"))]
 impl Output {
     fn start(app_id: &str, target: Option<String>) -> Option<Output> {
         let mut command = Command::new("pw-cat");
@@ -215,6 +217,7 @@ impl Output {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 impl Drop for Output {
     fn drop(&mut self) {
         drop(self.child.stdin.take());
@@ -223,6 +226,45 @@ impl Drop for Output {
     }
 }
 
+/// On Android there is no `pw-cat` and no sink to play into: the sound goes to the audio
+/// engine at its window's slot, which places it the same way (`spatiand_audio`'s
+/// `server_android.rs`). The engine's queue is the buffer the pipe is on the Deck.
+#[cfg(target_os = "android")]
+fn play(app_id: &str, shared: &Shared) {
+    let mut samples: Vec<i16> = Vec::with_capacity(4096);
+    let mut slot = None;
+    let mut checked: Option<Instant> = None;
+    while !shared.stop.load(Ordering::Relaxed) {
+        let chunk: Vec<u8> = match shared.queue.lock() {
+            Ok(mut queue) => {
+                let n = queue.len().min(8192) / FRAME_BYTES * FRAME_BYTES;
+                queue.drain(..n).collect()
+            }
+            Err(_) => return,
+        };
+        if chunk.is_empty() {
+            std::thread::sleep(Duration::from_millis(2));
+            continue;
+        }
+        // Follow the window's slot: it is often given one only after the sound has started.
+        if checked.is_none_or(|at| at.elapsed() > Duration::from_millis(500)) {
+            checked = Some(Instant::now());
+            let now = sink_for(app_id).and_then(|sink| spatiand_audio::server::slot_of_sink(&sink));
+            if now != slot {
+                log::info!(
+                    "remote sound: {app_id} plays {}",
+                    if now.is_some() { "at its window" } else { "unplaced" }
+                );
+                slot = now;
+            }
+        }
+        samples.clear();
+        samples.extend(chunk.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])));
+        spatiand_audio::server::feed(slot, &samples, CHANNELS as usize);
+    }
+}
+
+#[cfg(not(target_os = "android"))]
 fn play(app_id: &str, shared: &Shared) {
     let mut output: Option<Output> = None;
     let mut last_sound = Instant::now();

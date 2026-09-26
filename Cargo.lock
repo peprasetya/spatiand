@@ -3960,6 +3960,7 @@ dependencies = [
  "glam",
  "libloading",
  "log",
+ "ndk-sys 0.6.0+11769913",
  "pipewire",
  "thiserror 2.0.20",
 ]

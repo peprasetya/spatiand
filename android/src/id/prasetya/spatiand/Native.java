@@ -56,6 +56,9 @@ final class Native {
     /** Recentre the room, and aim the phone where the head faces. */
     static native void recenter();
 
+    /** Play the room's sound to this audio device; 0 for wherever Android routes it. */
+    static native void audioOutput(int deviceId);
+
     /** A line for the phone's screen. */
     static native String status();
 }

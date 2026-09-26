@@ -61,6 +61,8 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_configDir(
     ] {
         std::env::set_var(name, value);
     }
+    // The measured head the app unpacks, for spatial sound: see `spatiand_audio::hrtf`.
+    std::env::set_var(spatiand_audio::hrtf::DATASET_ENV, format!("{files}/default.sofa"));
     log::info!("remembering in {files}/spatiand");
 }
 
@@ -248,6 +250,13 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_recenter(_env: *mut JNIE
     // Recentring is the HUD's to do, with everything it moves; the laser is re-aimed with it.
     phone::input().lock().unwrap().reaim = true;
     super::recentre_requested().store(true, Ordering::SeqCst);
+}
+
+/// `Native.audioOutput(id)`: play the room's sound to this Android audio device; 0 for
+/// wherever Android routes it.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_audioOutput(_env: *mut JNIEnv, _class: jclass, id: jint) {
+    spatiand_audio::server::set_output_device(id);
 }
 
 /// `Native.status()`: a line for the phone's screen.
