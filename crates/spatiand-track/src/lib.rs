@@ -11,11 +11,13 @@ pub mod axis;
 pub mod calibration;
 pub mod config;
 pub mod hard_iron;
+pub mod memory;
 pub mod smoothing;
 pub mod tracker;
 
 pub use axis::{AxisMap, CURRENT_VERSION as AXIS_MAP_VERSION};
 pub use hard_iron::{FitState, HardIron};
+pub use memory::SensorMemory;
 pub use calibration::{Phase, PhaseCollector};
 pub use smoothing::{OneEuroFilter, PoseSmoother};
 pub use tracker::{Euler, HeadTracker, MagneticStatus, TrackerConfig};

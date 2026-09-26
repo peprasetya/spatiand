@@ -74,11 +74,13 @@ const MSG_START_IMU: u8 = 0x19;
 const IMU_DATA_SIG: [u8; 2] = [0x01, 0x02];
 
 pub struct XrealGlasses {
-    spec: &'static DeviceSpec,
     info: HmdInfo,
     imu: Box<dyn Port>,
     mcu: mcu::Mcu,
     mode: DisplayMode,
+    /// The raw modes asked for, which are the device table's unless
+    /// [`XrealGlasses::prefer_refresh`] said otherwise.
+    modes: (u8, u8, Option<u8>),
     /// Scratch buffer sized from the device spec, reused every poll so the ~1 kHz sample path
     /// does no allocation.
     buf: Vec<u8>,
@@ -155,18 +157,37 @@ impl XrealGlasses {
         };
 
         let mut this = Self {
-            spec,
             info,
             imu,
             mcu,
             // We cannot read the mode back reliably at startup, so assume the desktop-safe
             // one; the first set_display_mode call makes it true either way.
             mode: DisplayMode::Mono,
+            modes: (spec.mode_mono, spec.mode_stereo, Some(spec.mode_stereo_fallback)),
             buf: vec![0u8; spec.imu_report_len.max(64)],
             streaming: false,
         };
         this.start_imu_stream()?;
         Ok(this)
+    }
+
+    /// Run the panel at this refresh rate, in both modes, from the next mode change on.
+    ///
+    /// The device table's modes are the fastest the glasses do well, which is right where
+    /// Spatiand drives the panel itself. It is wrong where something else composites at its
+    /// own rate: a Beam Pro's compositor runs every display on the phone screen's 60 Hz clock,
+    /// so a panel at 72 shows one frame in five twice, and every head turn judders. There the
+    /// panel has to match the compositor. `false` for a rate these glasses have no mode for.
+    pub fn prefer_refresh(&mut self, hz: u32) -> bool {
+        // docs/xreal-air.md §6.
+        let (mono, stereo) = match hz {
+            60 => (0x01, 0x03),
+            72 => (0x05, 0x04),
+            90 => (0x0A, 0x09),
+            _ => return false,
+        };
+        self.modes = (mono, stereo, None);
+        true
     }
 
     // --- MCU ---
@@ -354,8 +375,8 @@ impl Hmd for XrealGlasses {
 
     fn set_display_mode(&mut self, mode: DisplayMode) -> Result<DisplayMode> {
         let (primary, fallback) = match mode {
-            DisplayMode::Mono => (self.spec.mode_mono, None),
-            DisplayMode::Stereo => (self.spec.mode_stereo, Some(self.spec.mode_stereo_fallback)),
+            DisplayMode::Mono => (self.modes.0, None),
+            DisplayMode::Stereo => (self.modes.1, self.modes.2),
         };
 
         let mut err = match self.mcu_command(MSG_W_DISP_MODE, &[primary], "display mode") {
@@ -478,7 +499,7 @@ impl Drop for XrealGlasses {
         // into half the screen — and the cause is not remotely obvious to whoever plugs them
         // in next. Restoring is best effort but worth attempting on every exit path.
         if self.mode == DisplayMode::Stereo {
-            let mono = self.spec.mode_mono;
+            let mono = self.modes.0;
             let _ = self.mcu_command(MSG_W_DISP_MODE, &[mono], "restore mono");
         }
         if self.streaming {

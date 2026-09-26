@@ -422,7 +422,7 @@ pub fn run(
         TrackerConfig::default(),
     );
     // The gyro offset and the magnetometer's own field, from last time and for next time.
-    let mut sensor_memory = crate::sensors::SensorMemory::new();
+    let mut sensor_memory = spatiand_track::SensorMemory::new();
     // Windows that arrived before their app id was set, still to be matched to a sink.
     let mut awaiting_app_id: Vec<(usize, std::time::Instant)> = Vec::new();
     // Raw samples to a file, when the session environment asks: see `imu_record`.

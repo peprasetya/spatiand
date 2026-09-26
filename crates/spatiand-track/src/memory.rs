@@ -5,7 +5,7 @@
 //! the fragile one, taken on a head that is never still, and this sensor's offset barely moves
 //! from one day to the next. And the magnetometer's own field: without it the anchor does not
 //! run at all, and measuring it takes a minute or two of looking around. See
-//! `spatiand_track::hard_iron`.
+//! [`crate::hard_iron`].
 //!
 //! The log line is there because yaw drift is otherwise impossible to reason about after the
 //! fact: whether the anchor was holding, still measuring, or refusing a field that made no
@@ -13,8 +13,8 @@
 
 use std::time::{Duration, Instant};
 
-use spatiand_track::config::Remembered;
-use spatiand_track::{FitState, HeadTracker};
+use crate::config::Remembered;
+use crate::{FitState, HeadTracker};
 
 const LOG_EVERY: Duration = Duration::from_secs(30);
 const SAVE_EVERY: Duration = Duration::from_secs(60);
@@ -45,7 +45,7 @@ impl SensorMemory {
     /// Hand the tracker what was learned last time. Call after the axis map is settled: a new
     /// map resets the tracker, and what is remembered belongs to one map.
     pub fn restore(&mut self, device: &str, tracker: &mut HeadTracker) {
-        let remembered = spatiand_track::config::load_sensors(device, &tracker.axes());
+        let remembered = crate::config::load_sensors(device, &tracker.axes());
         if let Some(bias) = remembered.gyro_bias {
             tracker.preset_bias(bias);
             log::info!(
@@ -109,7 +109,7 @@ impl SensorMemory {
                 );
             }
         }
-        match spatiand_track::config::save_sensors(device, &tracker.axes(), &now) {
+        match crate::config::save_sensors(device, &tracker.axes(), &now) {
             Ok(()) => self.saved = now,
             Err(e) => log::warn!("could not remember the sensor calibration: {e}"),
         }

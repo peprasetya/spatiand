@@ -171,7 +171,7 @@ pub fn run(
         stored.unwrap_or(AxisMap::XREAL_AIR),
         TrackerConfig::default(),
     );
-    let mut sensor_memory = crate::sensors::SensorMemory::new();
+    let mut sensor_memory = spatiand_track::SensorMemory::new();
     if let Some(h) = hmd.as_ref() {
         crate::backend_drm::settle_axes(h.info(), stored, &mut tracker, &mut calibration);
         sensor_memory.restore(&h.info().name, &mut tracker);

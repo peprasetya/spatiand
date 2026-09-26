@@ -42,7 +42,6 @@ mod pose;
 mod prefs;
 mod remote;
 mod scene;
-mod sensors;
 mod shutdown;
 mod startup;
 mod sidecar;
