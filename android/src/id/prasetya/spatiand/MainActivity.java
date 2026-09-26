@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Color;
+import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
@@ -15,6 +16,7 @@ import android.hardware.usb.UsbManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.Display;
 import android.view.Gravity;
@@ -43,6 +45,9 @@ public class MainActivity extends Activity {
     final Handler ui = new Handler(Looper.getMainLooper());
     TextView status;
     Presentation presentation;
+    /** The glasses' window when it is an overlay, above XREAL's placeholder. */
+    SurfaceView overlay;
+    WindowManager overlayManager;
     int presentationDisplay = -1;
     UsbDeviceConnection connection;
 
@@ -64,6 +69,15 @@ public class MainActivity extends Activity {
         recenter.setText("Recenter");
         recenter.setOnClickListener(v -> Native.recenter());
         column.addView(recenter, new LinearLayout.LayoutParams(-1, -2));
+        if (!Settings.canDrawOverlays(this)) {
+            // Once, and kept: what puts the glasses' picture above XREAL's placeholder.
+            Button allow = new Button(this);
+            allow.setText("Allow drawing over XREAL's placeholder");
+            allow.setOnClickListener(v -> startActivity(new Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    android.net.Uri.parse("package:" + getPackageName()))));
+            column.addView(allow, new LinearLayout.LayoutParams(-1, -2));
+        }
         column.setGravity(Gravity.BOTTOM);
         setContentView(column);
 
@@ -94,7 +108,7 @@ public class MainActivity extends Activity {
         unregisterReceiver(usbPermission);
         unregisterReceiver(usbAttached);
         unregisterReceiver(orangeKey);
-        if (presentation != null) presentation.dismiss();
+        closeGlassesWindow();
         Native.stop();
         if (connection != null) connection.close();
         super.onDestroy();
@@ -119,18 +133,24 @@ public class MainActivity extends Activity {
             Log.i(TAG, "no glasses display yet");
             return;
         }
-        if (presentation != null && presentationDisplay == d.getDisplayId() && presentation.isShowing()) {
+        if (presentationDisplay == d.getDisplayId() && (overlay != null
+                || (presentation != null && presentation.isShowing()))) {
             return;
         }
-        if (presentation != null) presentation.dismiss();
-        presentation = new Presentation(this, d);
+        closeGlassesWindow();
         presentationDisplay = d.getDisplayId();
-        SurfaceView view = new SurfaceView(presentation.getContext());
+        // Above XREAL's placeholder if Android lets us, as an overlay; as a Presentation, under
+        // whatever the placeholder does, if not.
+        boolean above = Settings.canDrawOverlays(this);
+        Context on = above
+                ? createDisplayContext(d).createWindowContext(
+                        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
+                : null;
+        if (!above) presentation = new Presentation(this, d);
+        SurfaceView view = new SurfaceView(above ? on : presentation.getContext());
         view.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override
             public void surfaceCreated(SurfaceHolder holder) {
-                // Paced to the glasses, not to the phone: left alone, the window follows the
-                // phone's 60 Hz while the glasses refresh at 72 in 3D.
                 holder.getSurface().setFrameRate(d.getRefreshRate(),
                         android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
                 Native.surface(holder.getSurface());
@@ -144,13 +164,46 @@ public class MainActivity extends Activity {
                 Native.surfaceGone();
             }
         });
-        presentation.setContentView(view);
-        // And ask for the glasses' own mode outright, which the frame rate alone may not get.
-        WindowManager.LayoutParams attrs = presentation.getWindow().getAttributes();
-        attrs.preferredDisplayModeId = d.getMode().getModeId();
-        presentation.getWindow().setAttributes(attrs);
-        presentation.show();
-        Log.i(TAG, "on the glasses, display " + d.getDisplayId() + " " + d.getMode());
+        if (above) {
+            WindowManager.LayoutParams attrs = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    // Not NOT_TOUCHABLE: Android caps an untouchable overlay at 80% opacity, so
+                    // the placeholder showed through. The glasses have no touch to take anyway.
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                            | WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                    PixelFormat.OPAQUE);
+            attrs.preferredDisplayModeId = d.getMode().getModeId();
+            overlayManager = on.getSystemService(WindowManager.class);
+            overlayManager.addView(view, attrs);
+            overlay = view;
+        } else {
+            presentation.setContentView(view);
+            WindowManager.LayoutParams attrs = presentation.getWindow().getAttributes();
+            attrs.preferredDisplayModeId = d.getMode().getModeId();
+            presentation.getWindow().setAttributes(attrs);
+            presentation.show();
+        }
+        Log.i(TAG, "on the glasses " + (above ? "above" : "under") + " XREAL's placeholder, display "
+                + d.getDisplayId() + " " + d.getMode());
+    }
+
+    void closeGlassesWindow() {
+        if (overlay != null) {
+            try {
+                overlayManager.removeViewImmediate(overlay);
+            } catch (RuntimeException gone) {
+                // Its display has gone already, and the window with it.
+            }
+            overlay = null;
+        }
+        if (presentation != null) {
+            presentation.dismiss();
+            presentation = null;
+        }
+        presentationDisplay = -1;
     }
 
     final DisplayManager.DisplayListener displays = new DisplayManager.DisplayListener() {
@@ -168,10 +221,7 @@ public class MainActivity extends Activity {
 
         @Override
         public void onDisplayRemoved(int id) {
-            if (id == presentationDisplay) {
-                presentation = null;
-                presentationDisplay = -1;
-            }
+            if (id == presentationDisplay) closeGlassesWindow();
         }
     };
 
