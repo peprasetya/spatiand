@@ -183,6 +183,10 @@ impl Identity {
 /// a tolerance, not a cure** — something is stalling for seconds at a time and that is still
 /// worth finding. It is here so that finding it is not urgent.
 pub const IDLE_TIMEOUT_MS: u32 = 15_000;
+/// The application close code a host gives a session when another device has taken its
+/// windows over. A session told this does not reconnect by itself -- two devices each taking
+/// the windows back would pass them to and fro for ever -- but only when its wearer asks.
+pub const CLOSE_TAKEN_OVER: u32 = 2;
 /// How often a quiet connection proves it is still there.
 const KEEPALIVE_MS: u64 = 1_000;
 

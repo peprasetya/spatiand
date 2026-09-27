@@ -12,20 +12,24 @@
 //! * **Pictures** go as datagrams, cut to whatever the path will carry in one packet. A piece
 //!   that goes missing loses its frame and nothing else; see [`spatiand_stream::video`].
 //!
-//! ## Only one session at a time
+//! ## Only one session at a time, and the newest wins
 //!
-//! A second one taking over is the useful behaviour — you have walked to another room and
-//! picked up the other headset — and two at once is not: they would fight over window sizes,
-//! which window has focus and what the bitrate should be. The newcomer wins and the old
-//! connection is closed, because the alternative is being locked out by a session that is no
-//! longer anywhere near you.
+//! A second one taking over is the useful behaviour — you have put the Deck down and picked up
+//! the Beam Pro — and two at once is not: they would fight over window sizes, which window has
+//! focus and what the bitrate should be. So the newcomer wins: the old connection is closed
+//! with [`CLOSE_TAKEN_OVER`], and every application still running here comes back on the new
+//! one exactly as a reconnect brings them back. Nothing here belongs to a device: the
+//! applications are the host's, and whoever is connected is looking at them.
+//!
+//! This used to say the same and do otherwise: the accept loop sat inside the running session,
+//! so a second device waited, connected and seeing nothing, until the first went away.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::mpsc::{Receiver, Sender};
 
 use quinn::Connection;
-use spatiand_stream::transport::{peer_fingerprint, Trust};
+use spatiand_stream::transport::{peer_fingerprint, Trust, CLOSE_TAKEN_OVER};
 use spatiand_stream::video::{split, Packet, FLAG_KEYFRAME, FLAG_LAST};
 use spatiand_stream::{ClientMessage, Fingerprint, HostMessage, Identity};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -126,7 +130,46 @@ async fn serve(
     inbox: Sender<FromSession>,
     mut poses: Option<crate::pose::Poses>,
 ) {
-    while let Some(incoming) = endpoint.accept().await {
+    let mut next: Option<(Connection, spatiand_stream::Fingerprint)> = None;
+    loop {
+        let (connection, who) = match next.take() {
+            Some(newcomer) => newcomer,
+            None => match arrival(&endpoint).await {
+                Some(arrived) => arrived,
+                None => return,
+            },
+        };
+        let address = connection.remote_address();
+        log::info!("session {} joined from {address}", who.short());
+        let _ = inbox.send(FromSession::Joined { who, address });
+        if let Some(poses) = poses.as_mut() {
+            poses.reset();
+        }
+
+        // One at a time, and listening meanwhile: a newcomer takes over.
+        tokio::select! {
+            _ = session(&connection, &mut outbox, &inbox, poses.as_mut()) => {
+                log::info!("session {} left", who.short());
+            }
+            arrived = arrival(&endpoint) => {
+                let Some(arrived) = arrived else { return };
+                log::info!(
+                    "session {} takes over from {}; its windows go with it",
+                    arrived.1.short(),
+                    who.short()
+                );
+                connection.close(CLOSE_TAKEN_OVER.into(), b"another device took over");
+                next = Some(arrived);
+            }
+        }
+        let _ = inbox.send(FromSession::Left);
+    }
+}
+
+/// The next session to finish connecting, with who it is. `None` once the endpoint closes.
+async fn arrival(endpoint: &quinn::Endpoint) -> Option<(Connection, spatiand_stream::Fingerprint)> {
+    loop {
+        let incoming = endpoint.accept().await?;
         let connection = match incoming.await {
             Ok(connection) => connection,
             Err(e) => {
@@ -139,17 +182,7 @@ async fn serve(
             connection.close(1u32.into(), b"no identity");
             continue;
         };
-        let address = connection.remote_address();
-        log::info!("session {} joined from {address}", who.short());
-        let _ = inbox.send(FromSession::Joined { who, address });
-        if let Some(poses) = poses.as_mut() {
-            poses.reset();
-        }
-
-        // One at a time: this returns when the session goes, and the next is accepted then.
-        session(&connection, &mut outbox, &inbox, poses.as_mut()).await;
-        log::info!("session {} left", who.short());
-        let _ = inbox.send(FromSession::Left);
+        return Some((connection, who));
     }
 }
 
@@ -159,6 +192,10 @@ async fn session(
     inbox: &Sender<FromSession>,
     mut poses: Option<&mut crate::pose::Poses>,
 ) {
+    // Whatever is still queued was meant for the session before this one -- pictures and news
+    // of its windows, posted before the compositor heard it had gone. This one hears its
+    // windows from the start, after its own hello.
+    while outbox.try_recv().is_ok() {}
     let mut control = match connection.open_uni().await {
         Ok(stream) => stream,
         Err(e) => {

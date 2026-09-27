@@ -129,6 +129,18 @@ enum Ended {
     Refused(String),
     /// The compositor side is gone, so there is nothing to show windows on.
     NoCompositor(String),
+    /// Another device took this host's windows over. Not tried again until the wearer starts
+    /// one of its applications here, which takes them back.
+    TakenOver,
+}
+
+/// Whether the host closed this link because another device took its windows.
+fn taken_over(connection: &quinn::Connection) -> bool {
+    matches!(
+        connection.close_reason(),
+        Some(quinn::ConnectionError::ApplicationClosed(ref closed))
+            if closed.error_code == spatiand_stream::transport::CLOSE_TAKEN_OVER.into()
+    )
 }
 
 /// Keep a host's windows in the room for as long as the session runs.
@@ -185,6 +197,9 @@ pub fn run(
     runtime.block_on(async {
         let mut pause = Duration::from_secs(1);
         let mut last_said = String::new();
+        // An application asked for while another device had the windows: started once they
+        // are back here.
+        let mut launch_first: Option<String> = None;
         while !stop.load(Ordering::Relaxed) {
             set(Link::Connecting);
             let ended = match connect(&identity, &config).await {
@@ -200,8 +215,13 @@ pub fn run(
                         &stop,
                         &view,
                         &mut commands,
+                        launch_first.take(),
                     )
                     .await;
+                    let ended = match ended {
+                        Ended::Lost(_) if taken_over(&connection) => Ended::TakenOver,
+                        ended => ended,
+                    };
                     connection.close(0u32.into(), b"session ended");
                     ended
                 }
@@ -224,6 +244,40 @@ pub fn run(
                 Ended::Lost(reason) => {
                     set(Link::Offline(reason.clone()));
                     reason
+                }
+                Ended::TakenOver => {
+                    log::info!(
+                        "remote {}: another device took the windows; starting one of its \
+                         applications here takes them back",
+                        config.host
+                    );
+                    set(Link::Offline("another device has these windows".into()));
+                    last_said.clear();
+                    // Until the wearer asks. Coming back by itself would take the windows
+                    // from the device now being used, which would take them back in turn.
+                    loop {
+                        if stop.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+                            command = commands.recv() => match command {
+                                Some(Command::Launch(app)) => {
+                                    log::info!("remote {}: taking the windows back for {app}", config.host);
+                                    launch_first = Some(app);
+                                    break;
+                                }
+                                None => return,
+                                _ => {}
+                            }
+                        }
+                        if let Err(e) = client::pump(&mut client, &mut queue) {
+                            log::error!("remote: {e}");
+                            return;
+                        }
+                    }
+                    pause = Duration::from_secs(1);
+                    continue;
                 }
             };
             // Said once per reason, not once per attempt: a host that is off for a night would
@@ -268,6 +322,7 @@ async fn serve(
     stop: &AtomicBool,
     view: &Mutex<HostView>,
     commands: &mut UnboundedReceiver<Command>,
+    launch_first: Option<String>,
 ) -> Ended {
     let mut streams: HashMap<u32, Stream> = HashMap::new();
     let mut windows: HashMap<u32, Reassembler> = HashMap::new();
@@ -309,7 +364,7 @@ async fn serve(
                 session: "spatiand".into(),
             },
         );
-        for app in &config.launch {
+        for app in config.launch.iter().chain(launch_first.iter()) {
             say(&out, ClientMessage::Launch { app: app.clone() });
         }
 
