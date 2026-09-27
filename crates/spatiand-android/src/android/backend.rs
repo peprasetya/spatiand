@@ -302,6 +302,10 @@ pub fn run(
         let mut last_tick = Instant::now();
         let mut last_imu = Instant::now();
         let mut screenshot_owed = false;
+        // A video being recorded of this window. Belongs to it: rebuilt, it stops and the file
+        // is finished.
+        let mut recorder: Option<super::record::Recorder> = None;
+        shell.set_recording(false);
 
         while shared.running.load(std::sync::atomic::Ordering::Relaxed) {
             // A new window, a window taken away, or new glasses: go round again.
@@ -324,6 +328,7 @@ pub fn run(
             };
             let two_handed: Option<spatiand_input::GestureDelta> = None;
             let mut screenshot = false;
+            let mut record_toggle = false;
 
             // --- input ---
             controller.poll(tracker.orientation());
@@ -661,7 +666,7 @@ pub fn run(
                             shell.set_environments(environments.entries(), environments.choice());
                         }
                         HudAction::Screenshot => screenshot = true,
-                        HudAction::Record => log::info!("recording is not built for this device yet"),
+                        HudAction::Record => record_toggle = true,
                         HudAction::OpenSwitcher => shell.set_windows(runtime.state.open_windows()),
                         HudAction::ControllerLayout => controls.open_editor(),
                         HudAction::ToggleKeyboard => {
@@ -1407,6 +1412,23 @@ pub fn run(
                 }
             }
 
+            // --- the recording ---
+            if record_toggle {
+                match recorder.take() {
+                    Some(r) => {
+                        r.stop(&mut renderer);
+                        shell.set_recording(false);
+                    }
+                    None => match super::record::Recorder::start((w, h), &egl_display, renderer.egl_context()) {
+                        Ok(r) => {
+                            recorder = Some(r);
+                            shell.set_recording(true);
+                        }
+                        Err(e) => log::warn!("could not start recording: {e}"),
+                    },
+                }
+            }
+
             // --- draw, straight into the glasses' window ---
             let Some(output) = glasses.as_mut() else { break };
             {
@@ -1427,6 +1449,8 @@ pub fn run(
                     _ => None,
                 };
                 let room_draws_cursor = |ray: &spatiand_render::Ray| pointers.room_draws_cursor(ray);
+                let record_now = recorder.as_mut().is_some_and(|r| r.due());
+                let recorder_ref = &mut recorder;
                 screenshot_owed |= screenshot;
                 let take_shot = std::mem::take(&mut screenshot_owed);
                 let mut shot: Option<Vec<u8>> = None;
@@ -1494,6 +1518,12 @@ pub fn run(
                             scene.quads().draw(gl, tex, &(eye.view_projection() * model), [1.0, 1.0, 1.0, 1.0], (0.0, 1.0));
                         }
                     }
+                    // The recording's copy of the frame, while it is still in the window.
+                    if record_now {
+                        if let Some(r) = recorder_ref.as_mut() {
+                            r.copy(gl);
+                        }
+                    }
                     // What is on the glass, read back before it is presented.
                     if take_shot {
                         let mut pixels = vec![0u8; (w * h * 4) as usize];
@@ -1512,6 +1542,10 @@ pub fn run(
                 log::warn!("the glasses' window would not present ({e:?}); rebuilding");
                 glasses = None;
                 break;
+            }
+            // The recording's frame, after the glasses have theirs.
+            if let Some(r) = recorder.as_mut() {
+                r.present(&mut renderer);
             }
             remote_video::end_frame(&mut renderer);
 

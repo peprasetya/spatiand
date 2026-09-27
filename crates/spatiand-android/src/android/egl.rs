@@ -30,19 +30,29 @@ pub fn open_display() -> Result<smithay::backend::egl::EGLDisplay, String> {
             return Err(format!("eglInitialize failed: {:#x}", egl::GetError()));
         }
         log::info!("EGL {major}.{minor}");
-        let attributes = [
+        // Recordable as well: a video encoder's input surface is a window only a config that
+        // says so may draw into, and the one context draws the glasses, the phone and that.
+        const RECORDABLE_ANDROID: i32 = 0x3142;
+        let mut attributes = vec![
             egl::RED_SIZE as i32, 8,
             egl::GREEN_SIZE as i32, 8,
             egl::BLUE_SIZE as i32, 8,
             egl::ALPHA_SIZE as i32, 8,
             egl::RENDERABLE_TYPE as i32, egl::OPENGL_ES3_BIT as i32,
             egl::SURFACE_TYPE as i32, (egl::WINDOW_BIT | egl::PBUFFER_BIT) as i32,
+            RECORDABLE_ANDROID, 1,
             egl::NONE as i32,
         ];
         let mut config = std::ptr::null();
         let mut found = 0;
         if egl::ChooseConfig(display, attributes.as_ptr(), &mut config, 1, &mut found) == egl::FALSE || found == 0 {
-            return Err("no EGL config for GLES 3 windows".into());
+            log::warn!("no recordable EGL config; recording will not work");
+            attributes.truncate(attributes.len() - 3);
+            attributes.push(egl::NONE as i32);
+            found = 0;
+            if egl::ChooseConfig(display, attributes.as_ptr(), &mut config, 1, &mut found) == egl::FALSE || found == 0 {
+                return Err("no EGL config for GLES 3 windows".into());
+            }
         }
         smithay::backend::egl::EGLDisplay::from_raw(display, config).map_err(|e| format!("{e}"))
     }

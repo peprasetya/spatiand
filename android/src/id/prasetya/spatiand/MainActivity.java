@@ -99,6 +99,8 @@ public class MainActivity extends Activity implements SensorEventListener {
         Native.configDir(getFilesDir().getPath(), getCacheDir().getPath());
         Native.xkbDir(unpackLayouts());
         unpackAsset("default.sofa", new File(getFilesDir(), "default.sofa"));
+        File movies = getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES);
+        if (movies != null) Native.recordingsDir(movies.getPath());
         Native.begin();
 
         LinearLayout column = new LinearLayout(this);
@@ -191,6 +193,46 @@ public class MainActivity extends Activity implements SensorEventListener {
         ui.post(refresh);
         ui.post(rumbler);
         startBuzzer();
+    }
+
+    // ------------------------------------------------------------------ recordings
+
+    /**
+     * Move a finished recording from the app's own storage to Movies/Spatiand, where a gallery
+     * and a computer plugged in find it. Android lets an app write there only through its media
+     * store, and a recording is hundreds of megabytes: copied on a thread of its own.
+     */
+    void publish(String path) {
+        new Thread(() -> {
+            File from = new File(path);
+            android.content.ContentResolver resolver = getContentResolver();
+            android.content.ContentValues values = new android.content.ContentValues();
+            values.put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, from.getName());
+            values.put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4");
+            values.put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, "Movies/Spatiand");
+            values.put(android.provider.MediaStore.Video.Media.IS_PENDING, 1);
+            android.net.Uri uri = resolver.insert(android.provider.MediaStore.Video.Media.getContentUri(
+                    android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
+            if (uri == null) {
+                Log.w(TAG, "recording: the media store would not take " + from.getName() + "; it stays at " + path);
+                return;
+            }
+            try (InputStream in = new java.io.FileInputStream(from);
+                 OutputStream out = resolver.openOutputStream(uri)) {
+                byte[] buffer = new byte[1 << 20];
+                int n;
+                while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+            } catch (Exception e) {
+                Log.w(TAG, "recording: could not copy " + from.getName() + " (" + e + "); it stays at " + path);
+                resolver.delete(uri, null, null);
+                return;
+            }
+            values.clear();
+            values.put(android.provider.MediaStore.Video.Media.IS_PENDING, 0);
+            resolver.update(uri, values, null, null);
+            from.delete();
+            Log.i(TAG, "recording: " + from.getName() + " is in Movies/Spatiand");
+        }, "spatiand-publish").start();
     }
 
     // ------------------------------------------------------------------ the phone's own buzz
@@ -832,6 +874,8 @@ public class MainActivity extends Activity implements SensorEventListener {
         @Override
         public void run() {
             status.setText(Native.status());
+            String recording = Native.takeRecording();
+            if (recording != null) publish(recording);
             ui.postDelayed(this, 1000);
         }
     };

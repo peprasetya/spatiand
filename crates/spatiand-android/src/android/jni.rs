@@ -351,6 +351,25 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_rumble(_env: *mut JNIEnv
     super::pads::take_rumble()
 }
 
+/// `Native.recordingsDir(path)`: where recordings are written before the app publishes them.
+/// Before `begin()`.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_recordingsDir(env: *mut JNIEnv, _class: jclass, path: jstring) {
+    if let Some(path) = unsafe { java_string(env, path) } {
+        std::env::set_var("SPATIAND_RECORDINGS", path);
+    }
+}
+
+/// `Native.takeRecording()`: a finished recording's path, for the app to move to
+/// `Movies/Spatiand`; null for none.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_takeRecording(env: *mut JNIEnv, _class: jclass) -> jstring {
+    match super::record::take_finished() {
+        Some(path) => unsafe { new_string(env, &path) },
+        None => std::ptr::null_mut(),
+    }
+}
+
 /// `Native.nextBuzz()`: the next buzz for the phone -- 0 click, 1 tick, 2 alert -- waiting up
 /// to a second for one; −1 for none. Called from a thread of the app's own.
 #[no_mangle]

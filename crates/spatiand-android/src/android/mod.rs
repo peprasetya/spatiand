@@ -9,6 +9,7 @@ mod logging;
 pub mod pads;
 pub mod panel;
 pub mod phone;
+pub mod record;
 pub mod remote_video;
 
 use std::os::fd::OwnedFd;

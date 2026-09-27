@@ -126,6 +126,9 @@ struct Shared {
     /// The session's own short sounds -- the keyboard's click -- written only by its render
     /// thread, since a ring has one writer.
     cues: Ring,
+    /// Where what is played goes as well, while a video is being recorded: "what you heard".
+    /// Written only by AAudio's callback.
+    heard: Mutex<Option<Arc<Ring>>>,
     head: Mutex<Head>,
     directness: Mutex<Directness>,
     rate: AtomicU32,
@@ -143,6 +146,7 @@ fn shared() -> &'static Shared {
         unplaced: Ring::new(QUEUE_FRAMES * 2),
         unplaced_primed: AtomicBool::new(false),
         cues: Ring::new(QUEUE_FRAMES * 2),
+        heard: Mutex::new(None),
         head: Mutex::new(Head::Measured),
         directness: Mutex::new(Directness::default()),
         rate: AtomicU32::new(48_000),
@@ -214,6 +218,11 @@ pub fn feed(slot: Option<Slot>, pcm: &[i16], channels: usize) {
     state.queue.write(&output);
 }
 
+/// Copy what the output plays, stereo at the engine's rate, into `into` from now on, or stop.
+pub fn record_heard(into: Option<Arc<Ring>>) {
+    *shared().heard.lock().unwrap() = into;
+}
+
 /// A short sound of the session's own, mono 16-bit at the engine's rate, played at once and
 /// unplaced. From one thread only: the render loop's.
 ///
@@ -269,6 +278,13 @@ unsafe extern "C" fn play(
     }
     for o in out.iter_mut() {
         *o = o.clamp(-1.0, 1.0);
+    }
+    // Never waits: a callback that cannot look this once leaves the recording a gap, which
+    // the recorder fills with silence, rather than the output a glitch.
+    if let Ok(heard) = shared.heard.try_lock() {
+        if let Some(ring) = heard.as_ref() {
+            ring.write(out);
+        }
     }
     ndk::AAUDIO_CALLBACK_RESULT_CONTINUE as ndk::aaudio_data_callback_result_t
 }
@@ -462,8 +478,9 @@ impl Engine {
         }
     }
 
-    /// Recording is not built here yet; see `server.rs`. Accepted and ignored, so the session
-    /// drives both engines the same way.
+    /// The surround bed is not recorded here -- MP4 carries AAC, and Android's AAC encoder
+    /// stops at eight channels -- so this is accepted and ignored, and the session drives both
+    /// engines the same way. What is heard is recorded; see [`record_heard`].
     pub fn record(&self, _into: Option<Arc<Ring>>) {}
 
     pub fn set_directness(&self, directness: Directness) {
