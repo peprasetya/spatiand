@@ -89,6 +89,15 @@ around you and turns it with your head, while local windows float in front of it
 If its host goes quiet, the room is taken away within three seconds rather than
 left frozen round you. See [docs/remote.md](docs/remote.md).
 
+**Recording.** The HUD's *Record a video* saves what the glasses show, both
+eyes side by side, remote pictures included, as Matroska in `~/Videos/Spatiand`
+— H.264, 36 fps, marked left/right stereo. It carries three sound tracks, so an
+edit can remix or replace any of them: what you heard after the HRTF (stereo,
+the default), a 7.1.4 surround mix made before the HRTF from where each window
+sits — a window on your left plays from the left speakers, a raised one from
+the heights — and the microphone. The Beam Pro records the same file. On the
+Deck, `kill -USR2 $(pgrep -x spatiand)` starts and stops it too.
+
 **The panel** is a touch sidecar: volume, brightness, audio device, a second
 keyboard, and the way out.
 
@@ -153,9 +162,11 @@ There is a headless renderer for looking at layout without hardware:
 
     SPATIAND_BACKEND=snapshot SPATIAND_SNAPSHOT=/tmp/hud.png SPATIAND_VIEW=hud spatiand
 
-And a running session will take a picture of itself:
+And a running session will take a picture of itself, or start and stop a
+recording:
 
     kill -USR1 $(pgrep -x spatiand)
+    kill -USR2 $(pgrep -x spatiand)
 
 The snapshot backend can also *click*, which is the only way to open a real
 application's menu without wearing anything:
@@ -197,7 +208,7 @@ on purpose — it is shown precisely when there is no headset to ask.
 | `spatiand-platform` | session install, launching, desktop settings |
 | `spatiand-proto` | private Wayland protocols |
 | `spatiand-stream` | the wire to a remote host: messages, pairing, video packets, the clipboard |
-| `spatiand-video` | decoding a host's pictures on the Deck |
+| `spatiand-video` | decoding a host's pictures on the Deck, and encoding recordings |
 | `spatiand-host` | the remote application host, a small compositor of its own |
 | `spatiand-host-catalog` | what a host keeps on disk: its applications and settings |
 | `spatiand-host-config` | the host's settings, as an application the headset opens |
