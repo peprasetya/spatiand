@@ -10,7 +10,7 @@
 //! |---|---|
 //! | one finger moving | the left pad moving: scroll |
 //! | tap | right pad click: the left mouse button, a menu's accept |
-//! | touch and hold, or tap and then touch and hold | right pad held until the finger lifts: drag a title bar, an edge, or anything in a window -- select text, turn a camera; sliding the finger meanwhile sets a dragged window's distance, as the left thumb does on the Deck |
+//! | touch and hold | right pad held until the finger lifts: drag a title bar, an edge, or anything in a window -- select text, turn a camera; sliding the finger meanwhile sets a dragged window's distance, as the left thumb does on the Deck |
 //! | two fingers tapped | left pad click: the right mouse button |
 //! | two fingers apart or together | zoom: the ratio is handed out, for the window being pointed at |
 //!
@@ -26,8 +26,6 @@ pub const TAP_MS: u64 = 250;
 pub const SLOP: f32 = 0.03;
 /// How long a finger must rest, unmoved, to be a long press.
 pub const LONG_PRESS_MS: u64 = 550;
-/// How soon after a tap a second touch turns into a held click.
-pub const DOUBLE_MS: u64 = 300;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -70,8 +68,6 @@ pub struct PhoneTouch {
     tap_pending: u32,
     /// A tap delivered as down, owed its up.
     tap_down: bool,
-    /// When the last tap ended, for a second touch that turns into a hold.
-    last_tap: Option<(u64, f32, f32)>,
     /// The current touch began as a held click.
     holding: bool,
     /// The current touch has been taken as a long press already.
@@ -108,14 +104,12 @@ impl PhoneTouch {
                 if self.contacts.is_empty() {
                     self.pinching = false;
                     self.long_pressed = false;
-                    // A second touch soon after a tap, near it, is a held click.
-                    self.holding = self.last_tap.is_some_and(|(at, tx, ty)| {
-                        time_ms.saturating_sub(at) <= DOUBLE_MS && distance((x, y), (tx, ty)) < SLOP * 4.0
-                    });
-                    if self.holding {
-                        // The tap that began it was a click of its own; this one is the hold.
-                        self.last_tap = None;
-                    }
+                    // No hold begins here. A tap and then a hold used to, the way a laptop's pad
+                    // drags -- but the tap had already clicked, so the application was told a
+                    // click and then a press, which it took for a double click. A hold is a
+                    // finger resting instead, and comes long enough after any tap to be a
+                    // click of its own.
+                    self.holding = false;
                 }
                 self.contacts.retain(|c| c.id != id);
                 self.contacts.push(Contact {
@@ -180,7 +174,6 @@ impl PhoneTouch {
                         && !self.long_pressed
                     {
                         self.tap_pending += 1;
-                        self.last_tap = Some((time_ms, c.x, c.y));
                     }
                     self.holding = false;
                 }
@@ -326,21 +319,16 @@ mod tests {
     }
 
     #[test]
-    fn tapping_and_then_holding_holds_the_click_until_the_finger_lifts() {
+    fn a_tap_and_then_a_hold_is_no_double_click() {
         let mut t = PhoneTouch::new();
         t.touch(Phase::Down, 0, 0.5, 0.5, 0);
         t.touch(Phase::Up, 0, 0.5, 0.5, 80);
-        assert!(t.frame(90).right_click);
+        assert!(t.frame(90).right_click, "the tap");
         assert!(!t.frame(100).right_click);
-        t.touch(Phase::Down, 0, 0.51, 0.5, 250);
-        assert!(t.frame(260).right_click);
-        // Held through movement, which is how a window is dragged and pushed away.
-        t.touch(Phase::Move, 0, 0.51, 0.8, 600);
-        assert!(t.frame(610).right_click);
-        assert!(!t.frame(900).left_click, "a hold is not also a long press");
-        t.touch(Phase::Up, 0, 0.51, 0.8, 1000);
-        assert!(!t.frame(1010).right_click);
-        assert!(!t.frame(1020).right_click, "and no tap on the way out");
+        t.touch(Phase::Down, 0, 0.51, 0.5, 200);
+        assert!(!t.frame(210).right_click, "not pressed again at once");
+        assert!(!t.frame(500).right_click);
+        assert!(t.frame(200 + LONG_PRESS_MS + 10).right_click, "held once it has rested");
     }
 
     #[test]

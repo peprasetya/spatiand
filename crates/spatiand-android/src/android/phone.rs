@@ -34,6 +34,11 @@ pub struct PhoneInput {
     pub keys: Vec<Typed>,
     /// Point the laser where the head faces, from now on.
     pub reaim: bool,
+    /// A mouse or a keyboard's trackpad: its travel since the last frame in counts, its
+    /// buttons (Android's `BUTTON_*` bits) and its wheel, in notches.
+    pub mouse_travel: (f32, f32),
+    pub mouse_buttons: i32,
+    pub wheel: (f32, f32),
     /// Milliseconds since the app started, for the gestures.
     pub started: std::time::Instant,
 }
@@ -47,6 +52,9 @@ pub fn input() -> &'static Mutex<PhoneInput> {
             buttons: Vec::new(),
             keys: Vec::new(),
             reaim: false,
+            mouse_travel: (0.0, 0.0),
+            mouse_buttons: 0,
+            wheel: (0.0, 0.0),
             started: std::time::Instant::now(),
         })
     })
@@ -80,6 +88,12 @@ fn phone_direction(rotation: DQuat) -> (f64, f64) {
     (d.y.atan2(d.x), d.z.clamp(-1.0, 1.0).asin())
 }
 
+/// A mouse's travel, in pad units a count: a thousand counts across half the view.
+const MOUSE_GAIN: f32 = 0.001;
+/// Android's `MotionEvent.BUTTON_PRIMARY` and `BUTTON_SECONDARY`.
+const BUTTON_PRIMARY: i32 = 1;
+const BUTTON_SECONDARY: i32 = 2;
+
 /// How long the phone may lie still before its pointer goes.
 const HIDE_AFTER: std::time::Duration = std::time::Duration::from_secs(4);
 /// How far the pointer must be turned, in pad units, to count as moved: about half a degree.
@@ -99,6 +113,7 @@ pub struct PhoneController {
     /// Where the pad was when the phone last counted as moved, and when that was.
     rest: ((f32, f32), std::time::Instant),
     pinch: f32,
+    wheel: (f32, f32),
     keys: Vec<Typed>,
     config: PointerConfig,
 }
@@ -116,6 +131,7 @@ impl PhoneController {
             recentre: false,
             rest: ((0.0, 0.0), std::time::Instant::now()),
             pinch: 1.0,
+            wheel: (0.0, 0.0),
             keys: Vec::new(),
             config: PointerConfig::default(),
         }
@@ -125,17 +141,24 @@ impl PhoneController {
     pub fn poll(&mut self, _head: DQuat) {
         self.pressed.clear();
         self.released.clear();
-        let (frame, rotation, buttons, keys, reaim) = {
+        let (frame, rotation, buttons, keys, reaim, travel, mouse_buttons) = {
             let mut input = input().lock().unwrap();
             let now = input.started.elapsed().as_millis() as u64;
             let frame = input.touch.frame(now);
             let reaim = std::mem::take(&mut input.reaim);
+            let travel = std::mem::take(&mut input.mouse_travel);
+            let wheel = std::mem::take(&mut input.wheel);
+            self.wheel.0 += wheel.0;
+            self.wheel.1 += wheel.1;
+            let mouse_buttons = input.mouse_buttons;
             (
                 frame,
                 input.rotation,
                 std::mem::take(&mut input.buttons),
                 std::mem::take(&mut input.keys),
                 reaim,
+                travel,
+                mouse_buttons,
             )
         };
         self.pinch *= frame.pinch;
@@ -176,13 +199,18 @@ impl PhoneController {
                     self.pad.1 = (self.pad.1 + (raised / self.config.half_fov_y_deg.to_radians()) as f32).clamp(-1.0, 1.0);
                 }
                 self.last = Some((yaw, pitch));
+                if travel != (0.0, 0.0) {
+                    self.pad.0 = (self.pad.0 + travel.0 * MOUSE_GAIN).clamp(-1.0, 1.0);
+                    self.pad.1 = (self.pad.1 - travel.1 * MOUSE_GAIN).clamp(-1.0, 1.0);
+                    self.rest = (self.pad, std::time::Instant::now());
+                }
                 // **The pointer goes after a few seconds still**, as a mouse's does, and comes
                 // back at the first real turn or touch. A thumb leaving the Deck's pad is the
                 // same thing: nothing touched, no laser. A phone put down on the desk drifts by
                 // hundredths of a degree, so only a turn past `WAKE` counts.
                 let (anchor, _) = self.rest;
                 let turned = (self.pad.0 - anchor.0).abs().max((self.pad.1 - anchor.1).abs());
-                if turned > WAKE || frame.left_pad.touched || frame.right_click || frame.left_click || reaim {
+                if turned > WAKE || frame.left_pad.touched || frame.right_click || frame.left_click || reaim || mouse_buttons != 0 {
                     self.rest = (self.pad, std::time::Instant::now());
                 }
                 let shown = self.rest.1.elapsed() < HIDE_AFTER;
@@ -199,8 +227,10 @@ impl PhoneController {
                 ..Pad::default()
             },
         };
+        let mut right_pad = right_pad;
+        right_pad.clicked |= mouse_buttons & BUTTON_PRIMARY != 0;
         let mut left_pad = frame.left_pad;
-        left_pad.clicked = frame.left_click;
+        left_pad.clicked = frame.left_click || mouse_buttons & BUTTON_SECONDARY != 0;
 
         let mut raw = self.held.raw();
         for (on, control) in [
@@ -258,6 +288,20 @@ impl PhoneController {
         std::mem::replace(&mut self.pinch, 1.0)
     }
 
+    /// Move the pointer by this much, in pad units, as another pad's touchpad does: the same
+    /// pointer, held at the same edges. Returns where it is now.
+    pub fn nudge(&mut self, dx: f32, dy: f32) -> (f32, f32) {
+        self.pad.0 = (self.pad.0 + dx).clamp(-1.0, 1.0);
+        self.pad.1 = (self.pad.1 + dy).clamp(-1.0, 1.0);
+        self.rest = (self.pad, std::time::Instant::now());
+        self.pad
+    }
+
+    /// A mouse wheel's turning since this was last asked, in notches: (right, up).
+    pub fn take_wheel(&mut self) -> (f32, f32) {
+        std::mem::take(&mut self.wheel)
+    }
+
     /// Keys typed since this was last asked.
     pub fn take_keys(&mut self) -> Vec<Typed> {
         std::mem::take(&mut self.keys)
@@ -295,4 +339,15 @@ pub fn next_buzz(timeout: std::time::Duration) -> i32 {
         return -1;
     };
     pending.take().unwrap_or(-1)
+}
+
+/// A mouse or a trackpad, captured from Android's pointer: travel in counts (+y down),
+/// Android's button bits, and the wheel in notches (+ up, + right).
+pub fn mouse(dx: f32, dy: f32, buttons: i32, wheel_up: f32, wheel_right: f32) {
+    let mut input = input().lock().unwrap();
+    input.mouse_travel.0 += dx;
+    input.mouse_travel.1 += dy;
+    input.mouse_buttons = buttons;
+    input.wheel.0 += wheel_right;
+    input.wheel.1 += wheel_up;
 }

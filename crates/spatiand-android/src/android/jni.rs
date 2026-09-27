@@ -297,6 +297,20 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_padAxes(
     super::pads::axes(device, lx, ly, rx, ry, lt, rt, hat_x, hat_y);
 }
 
+/// `Native.mouse(dx, dy, buttons, wheelUp, wheelRight)`: a mouse or a keyboard's trackpad.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_mouse(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    dx: jfloat,
+    dy: jfloat,
+    buttons: jint,
+    wheel_up: jfloat,
+    wheel_right: jfloat,
+) {
+    super::phone::mouse(dx, dy, buttons, wheel_up, wheel_right);
+}
+
 /// `Native.padTouch(device, x, y, touched, clicked)`: a gamepad's touchpad, 0..1.
 #[no_mangle]
 pub extern "system" fn Java_id_prasetya_spatiand_Native_padTouch(

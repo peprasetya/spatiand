@@ -333,16 +333,34 @@ public class MainActivity extends Activity implements SensorEventListener {
 
     // ------------------------------------------------------------------ gamepads
 
-    /** A pad with a touchpad: Android makes that a mouse pointer, unless the app captures it. */
+    /**
+     * A pad with a touchpad, a mouse, or a keyboard's trackpad: Android makes each a pointer on
+     * the phone's screen unless the app captures it, and captured each moves the session's.
+     */
     boolean anyPadTouchpad() {
         for (int id : getSystemService(InputManager.class).getInputDeviceIds()) {
             InputDevice d = InputDevice.getDevice(id);
-            if (d != null && fromPad(d.getSources())
-                    && (d.getSources() & InputDevice.SOURCE_MOUSE) == InputDevice.SOURCE_MOUSE) {
+            if (d != null && d.isExternal()
+                    && ((d.getSources() & InputDevice.SOURCE_MOUSE) == InputDevice.SOURCE_MOUSE
+                        || (d.getSources() & InputDevice.SOURCE_TOUCHPAD) == InputDevice.SOURCE_TOUCHPAD)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** A mouse's travel, buttons and wheel, captured: relative, every sample of the event. */
+    boolean mouseEvent(MotionEvent e) {
+        float dx = 0, dy = 0;
+        for (int h = 0; h < e.getHistorySize(); h++) {
+            dx += e.getHistoricalX(h);
+            dy += e.getHistoricalY(h);
+        }
+        dx += e.getX();
+        dy += e.getY();
+        Native.mouse(dx, dy, e.getButtonState(),
+                e.getAxisValue(MotionEvent.AXIS_VSCROLL), e.getAxisValue(MotionEvent.AXIS_HSCROLL));
+        return true;
     }
 
     /**
@@ -362,6 +380,13 @@ public class MainActivity extends Activity implements SensorEventListener {
             }
             InputDevice d = e.getDevice();
             if (d == null) return false;
+            // A mouse or a keyboard's trackpad, not a pad's: it moves by how far it travelled.
+            if (!fromPad(d.getSources())) {
+                if ((e.getSource() & InputDevice.SOURCE_MOUSE_RELATIVE) == InputDevice.SOURCE_MOUSE_RELATIVE) {
+                    return mouseEvent(e);
+                }
+                return false;
+            }
             InputDevice.MotionRange rx = d.getMotionRange(MotionEvent.AXIS_X, e.getSource());
             InputDevice.MotionRange ry = d.getMotionRange(MotionEvent.AXIS_Y, e.getSource());
             float w = rx != null ? rx.getRange() : 1920, h = ry != null ? ry.getRange() : 942;
@@ -387,6 +412,11 @@ public class MainActivity extends Activity implements SensorEventListener {
         @Override
         public void onInputDeviceAdded(int id) {
             InputDevice d = InputDevice.getDevice(id);
+            // A mouse or a trackpad arriving is captured too.
+            if (d != null && !fromPad(d.getSources())) {
+                capturePadTouchpad();
+                return;
+            }
             if (d == null || !fromPad(d.getSources()) || padGyros.containsKey(id)) return;
             Log.i(TAG, "gamepad: " + d.getName());
             // Its own gyro, through its own sensors: what aims on the Deck's pads.

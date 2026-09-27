@@ -219,6 +219,10 @@ pub struct Picture {
     pub output: Arc<Output>,
 }
 
+/// How far behind the newest frame a picture may be and still be shown, microseconds: more
+/// than the codec holds in its pipeline at 30 frames a second, less than any stall.
+const BEHIND_US: i64 = 120_000;
+
 /// One remote window's decoder.
 pub struct Decoder {
     codec: *mut ndk::AMediaCodec,
@@ -403,9 +407,18 @@ impl Decoder {
             };
             let index = unsafe { ndk::AMediaCodec_dequeueOutputBuffer(self.codec, &mut info, 0) };
             if index >= 0 {
-                unsafe { ndk::AMediaCodec_releaseOutputBuffer(self.codec, index as usize, true) };
                 let timestamp = info.presentationTimeUs;
+                // **Behind is thrown away, not played fast.** After the link stalls, frames
+                // arrive together and come out of the codec one after another over the next
+                // frames of the glasses -- shown, that is the stall replayed at speed. A picture
+                // already this far behind the newest frame given is decoded (the next ones are
+                // built on it) and never shown, as the Deck shows only the newest of a burst.
+                let behind = self.queued.back().is_some_and(|newest| newest - timestamp > BEHIND_US);
+                unsafe { ndk::AMediaCodec_releaseOutputBuffer(self.codec, index as usize, !behind) };
                 self.queued.retain(|t| *t > timestamp);
+                if behind {
+                    continue;
+                }
                 if let Some((width, height)) = self.size {
                     pictures.push(Picture {
                         width,

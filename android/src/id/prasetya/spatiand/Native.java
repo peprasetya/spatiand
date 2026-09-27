@@ -77,6 +77,10 @@ final class Native {
 
     static native void padGone(int device);
 
+    /** A mouse or a keyboard's trackpad: travel in counts (+y down), MotionEvent button bits,
+     *  and the wheel in notches. */
+    static native void mouse(float dx, float dy, int buttons, float wheelUp, float wheelRight);
+
     /** What a game asked the pad's motors to do: strong << 16 | weak, or -1 for nothing new. */
     static native long rumble();
 

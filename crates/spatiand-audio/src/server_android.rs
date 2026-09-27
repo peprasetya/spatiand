@@ -281,6 +281,11 @@ const MOST_MS: usize = 250;
 
 /// Read stereo from a queue of network sound, playing only once it has its cushion, and
 /// gathering the cushion again whenever it runs dry.
+/// How often network sound ran dry while playing, and how often too much was waiting and was
+/// dropped: said every ten seconds, to tell a late network from a late phone.
+static RAN_DRY: AtomicU32 = AtomicU32::new(0);
+static TRIMMED: AtomicU32 = AtomicU32::new(0);
+
 fn read_cushioned(ring: &Ring, primed: &AtomicBool, out: &mut [f32], rate: usize) {
     let cushion = rate * 2 * CUSHION_MS / 1000;
     let most = rate * 2 * MOST_MS / 1000;
@@ -293,10 +298,12 @@ fn read_cushioned(ring: &Ring, primed: &AtomicBool, out: &mut [f32], rate: usize
         primed.store(true, Ordering::Relaxed);
     }
     if waiting > most + out.len() {
+        TRIMMED.fetch_add(1, Ordering::Relaxed);
         let mut dropped = vec![0.0f32; (waiting - cushion) & !1];
         ring.read(&mut dropped);
     }
     if ring.read(out) > 0 {
+        RAN_DRY.fetch_add(1, Ordering::Relaxed);
         primed.store(false, Ordering::Relaxed);
     }
 }
@@ -336,12 +343,16 @@ fn open_output(rate: u32, device: i32) -> Option<Output> {
             return None;
         }
         let output = Output(stream);
+        // Four bursts queued at the device rather than the fewest it will run on: a few more
+        // milliseconds of delay, and a callback that is late once in a while is not heard.
+        let burst = ndk::AAudioStream_getFramesPerBurst(stream);
+        let buffer = ndk::AAudioStream_setBufferSizeInFrames(stream, burst * 4);
         if ndk::AAudioStream_requestStart(stream) != ndk::AAUDIO_OK as i32 {
             log::warn!("spatial audio: the output would not start");
             return None;
         }
         log::info!(
-            "spatial audio: playing at {} Hz to {}",
+            "spatial audio: playing at {} Hz ({burst}-frame bursts, {buffer} buffered) to {}",
             ndk::AAudioStream_getSampleRate(stream),
             if device == 0 { "the default output".to_string() } else { format!("device {device}") }
         );
@@ -365,12 +376,30 @@ impl Engine {
             // callback, and a device going away is reported from one.
             let _ = std::thread::Builder::new().name("spatial-audio".into()).spawn(move || {
                 let mut output = open_output(rate, 0);
+                let mut said = std::time::Instant::now();
+                let mut xruns_before = 0;
                 while shared.running.load(Ordering::SeqCst) {
                     std::thread::sleep(std::time::Duration::from_millis(200));
+                    if said.elapsed() >= std::time::Duration::from_secs(10) {
+                        said = std::time::Instant::now();
+                        let dry = RAN_DRY.swap(0, Ordering::Relaxed);
+                        let trimmed = TRIMMED.swap(0, Ordering::Relaxed);
+                        // Late network: the queues run dry. Late phone: the output itself
+                        // underran (AAudio's xruns), with sound waiting to go.
+                        let xruns = output.as_ref().map(|o| unsafe { ndk::AAudioStream_getXRunCount(o.0) }).unwrap_or(0);
+                        let new_xruns = xruns - xruns_before;
+                        xruns_before = xruns;
+                        if dry + trimmed > 0 || new_xruns > 0 {
+                            log::info!(
+                                "spatial audio: in 10 s, network sound ran dry {dry} times and was trimmed {trimmed}; the output underran {new_xruns} times"
+                            );
+                        }
+                    }
                     if shared.reopen.swap(false, Ordering::SeqCst) || output.is_none() {
                         // The old one closes before the new one opens: two on one device fight.
                         drop(output.take());
                         output = open_output(rate, shared.device.load(Ordering::SeqCst));
+                        xruns_before = 0;
                     }
                 }
                 drop(output);

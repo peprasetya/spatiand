@@ -177,6 +177,11 @@ pub fn run(
     let mut menu_click_was = false;
     let mut keyboard_reach: [Option<spatiand_render::ray::Hit>; 2] = [None, None];
     let mut drag_left_y: Option<f32> = None;
+    // Where a thumb was on a pad's touchpad last frame, to move the pointer by the difference.
+    let mut pad_touch_last: Option<(f32, f32)> = None;
+    // The pointer's travel for a thumb's across the whole touchpad, which is 2 wide: about
+    // three quarters of the view, so a corner is a slide and a half away and a word is easy.
+    const PAD_TOUCH_GAIN: f32 = 0.75;
     let mut panel_drawn = Instant::now() - PANEL_EVERY;
 
     // The launcher has only remote applications here: Android's own are not windows yet.
@@ -406,20 +411,33 @@ pub fn run(
             let mut deck_input = Some(*controller.state());
             let snapshot = controls.gather(deck_input.as_ref());
             super::pads::settle();
-            // A PlayStation pad's touchpad is the right trackpad while a thumb is on it, as on
-            // the Deck: it wins over the phone, which is always pointing somewhere. After
-            // `gather`, so the layout still sees the phone exactly as it is.
-            if let Some(touch) = controls.touchpad().filter(|t| t.touched || t.clicked) {
-                if let Some(state) = deck_input.as_mut() {
-                    state.right_pad = spatiand_input::Pad {
-                        x: touch.x,
-                        y: touch.y,
-                        touched: true,
-                        // The phone's own tap or hold still clicks where the pad points.
-                        clicked: touch.clicked || state.right_pad.clicked,
-                        pressure: 8000,
-                    };
+            // **A PlayStation pad's touchpad moves the pointer as a mouse does**: by how far the
+            // thumb slides, held at the edge of the view, and it is the phone's pointer -- one
+            // pointer, whichever moved it last. Absolute, the whole pad was the whole view, and
+            // a millimetre of thumb was a degree. After `gather`, so the layout still sees the
+            // phone exactly as it is.
+            let touch = controls.touchpad().filter(|t| t.touched || t.clicked);
+            match touch {
+                Some(touch) if touch.touched => {
+                    if let Some((x, y)) = pad_touch_last {
+                        let (px, py) = controller.nudge(
+                            (touch.x - x) * PAD_TOUCH_GAIN,
+                            (touch.y - y) * PAD_TOUCH_GAIN,
+                        );
+                        if let Some(state) = deck_input.as_mut() {
+                            state.right_pad.x = px;
+                            state.right_pad.y = py;
+                            state.right_pad.touched = true;
+                        }
+                    }
+                    pad_touch_last = Some((touch.x, touch.y));
                 }
+                _ => pad_touch_last = None,
+            }
+            if let (Some(touch), Some(state)) = (touch, deck_input.as_mut()) {
+                // Pressing the pad clicks where the pointer is, as the phone's tap does.
+                state.right_pad.clicked |= touch.clicked;
+                state.right_pad.touched = true;
             }
             let layout_resting = shell.menu_is_open() || missing.is_some() || calibration.is_some();
             let delivery = controls.step(&snapshot, layout_resting);
@@ -1152,6 +1170,12 @@ pub fn run(
                             }
                         }
                     }
+                }
+
+                // A mouse's wheel scrolls what the pointer is on, as the Deck's pad does.
+                let (wheel_right, wheel_up) = controller.take_wheel();
+                if (wheel_right, wheel_up) != (0.0, 0.0) && pointers.drag.is_none() {
+                    pointers.scroll(&mut runtime.state, wheel_right as f64 * 15.0, -(wheel_up as f64) * 15.0, time_ms);
                 }
 
                 if !shell.menu_is_open()
