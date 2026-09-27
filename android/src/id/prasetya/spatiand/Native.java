@@ -44,7 +44,7 @@ final class Native {
     /** The phone's orientation, from its game rotation vector. */
     static native void rotation(float x, float y, float z, float w);
 
-    /** 0 the orange key (STEAM), 1 home (⋯), 2 back (B). */
+    /** 0 settings (STEAM), 1 the launcher (⋯), 2 back (B). */
     static native void button(int which, boolean down);
 
     /** A key, by KeyEvent code. Returns whether the session takes it. */
@@ -79,6 +79,9 @@ final class Native {
 
     /** What a game asked the pad's motors to do: strong << 16 | weak, or -1 for nothing new. */
     static native long rumble();
+
+    /** The next buzz for the phone: 0 click, 1 tick, 2 alert; waits up to a second, -1 for none. */
+    static native int nextBuzz();
 
     /** A line for the phone's screen. */
     static native String status();

@@ -59,11 +59,13 @@ import java.util.Map;
  * The session is the Deck's own compositor (crates/spatiand-android); this is its controller:
  *
  *   top      the sound's way out and way in, small, side by side
- *   middle   the touch area: the Deck's left pad, with the machine's monitors under the thumb
- *   bottom   ⋯ (the launcher), B (back), the keyboard, and recentre
+ *   middle   the touch area: the Deck's left pad
+ *   bottom   back (B), settings (STEAM: the HUD), ⋯ (the launcher), and Android's keyboard,
+ *            last, so that the button that brings it up and the one that puts it away -- the
+ *            same one, sitting just above it -- are under the same thumb
  *
- * and, without a place on the screen, the orange key as STEAM and the phone itself, pointed,
- * as the right pad. The glasses' display comes and goes -- switching them to 3D removes it and
+ * and, without a place on the screen, the orange key as recentre and the phone itself,
+ * pointed, as the right pad. The glasses' display comes and goes -- switching them to 3D removes it and
  * adds a double-width one -- so their window is put back whenever an XREAL display appears.
  */
 public class MainActivity extends Activity implements SensorEventListener {
@@ -118,20 +120,38 @@ public class MainActivity extends Activity implements SensorEventListener {
         column.addView(status, new LinearLayout.LayoutParams(-1, -2));
 
         touch = new TouchArea(this);
-        column.addView(touch, new LinearLayout.LayoutParams(-1, 0, 1));
+        // The touch area, and over it, while there are no glasses, the reminder to plug them in.
+        android.widget.FrameLayout middle = new android.widget.FrameLayout(this);
+        middle.addView(touch, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        reminder = new TextView(this);
+        reminder.setText("Plug in your XR glasses\n\nConnect XREAL Air glasses over USB-C\nand Spatiand will open on them.");
+        reminder.setTextColor(Color.rgb(222, 228, 240));
+        reminder.setTextSize(18);
+        reminder.setGravity(android.view.Gravity.CENTER);
+        reminder.setBackgroundColor(Color.rgb(9, 10, 14));
+        middle.addView(reminder, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        column.addView(middle, new LinearLayout.LayoutParams(-1, 0, 1));
 
         LinearLayout bar = new LinearLayout(this);
-        bar.addView(pressable("⋯", 1), new LinearLayout.LayoutParams(0, -2, 1));
-        bar.addView(pressable("B", 2), new LinearLayout.LayoutParams(0, -2, 1));
-        Button keys = new Button(this);
-        keys.setText("⌨");
-        keys.setOnClickListener(v -> touch.toggleKeyboard());
-        bar.addView(keys, new LinearLayout.LayoutParams(0, -2, 1));
-        Button recenter = new Button(this);
-        recenter.setText("◎");
-        recenter.setOnClickListener(v -> Native.recenter());
-        bar.addView(recenter, new LinearLayout.LayoutParams(0, -2, 1));
+        bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        bar.setPadding(0, 24, 0, 8);
+        addSpread(bar, pressable(RoundButton.Icon.BACK, 2));
+        addSpread(bar, pressable(RoundButton.Icon.SETTINGS, 0));
+        addSpread(bar, pressable(RoundButton.Icon.MENU, 1));
+        keys = new RoundButton(this, RoundButton.Icon.KEYBOARD);
+        keys.setOnClickListener(v -> {
+            buzz(0);
+            touch.toggleKeyboard();
+        });
+        addSpread(bar, keys);
         column.addView(bar, new LinearLayout.LayoutParams(-1, -2));
+        // Whether Android's keyboard is up, to draw the button that puts it away. The window
+        // is resized above the keyboard, so that button sits just over it.
+        column.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+            android.view.WindowInsets insets = column.getRootWindowInsets();
+            boolean up = insets != null && insets.isVisible(android.view.WindowInsets.Type.ime());
+            keys.setIcon(up ? RoundButton.Icon.KEYBOARD_HIDE : RoundButton.Icon.KEYBOARD);
+        });
 
         if (!Settings.canDrawOverlays(this)) {
             // Once, and kept: what puts the glasses' picture above XREAL's placeholder.
@@ -149,6 +169,8 @@ public class MainActivity extends Activity implements SensorEventListener {
         // While running, plugging in is heard here too.
         registerReceiver(usbAttached, new IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED),
                 Context.RECEIVER_EXPORTED);
+        registerReceiver(usbDetached, new IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED),
+                Context.RECEIVER_EXPORTED);
         IntentFilter orange = new IntentFilter(ORANGE_DOWN);
         orange.addAction(ORANGE_UP);
         registerReceiver(orangeKey, orange, Context.RECEIVER_EXPORTED);
@@ -165,17 +187,66 @@ public class MainActivity extends Activity implements SensorEventListener {
         for (int id : inputs.getInputDeviceIds()) padsListener.onInputDeviceAdded(id);
         showOnGlasses();
         takeGlasses(true);
+        showReminder();
         ui.post(refresh);
         ui.post(rumbler);
+        startBuzzer();
+    }
+
+    // ------------------------------------------------------------------ the phone's own buzz
+
+    android.os.Vibrator phoneMotor;
+
+    /** Buzz the phone: 0 a click, 1 a tick, 2 an alert. As the Deck's pads buzz under a thumb. */
+    void buzz(int feel) {
+        if (phoneMotor == null) {
+            phoneMotor = getSystemService(VibratorManager.class).getDefaultVibrator();
+        }
+        if (!phoneMotor.hasVibrator()) return;
+        VibrationEffect effect;
+        switch (feel) {
+            case 1: effect = VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK); break;
+            case 2: effect = VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK); break;
+            default: effect = VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK); break;
+        }
+        phoneMotor.vibrate(effect);
+    }
+
+    /** A thread that waits on the session for buzzes: a key's is felt as the key goes down. */
+    void startBuzzer() {
+        Thread t = new Thread(() -> {
+            while (true) {
+                int feel = Native.nextBuzz();
+                if (feel >= 0) buzz(feel);
+            }
+        }, "spatiand-buzz");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    RoundButton keys;
+    TextView reminder;
+
+    /** Show the reminder to plug the glasses in while they are not. */
+    void showReminder() {
+        if (reminder != null) reminder.setVisibility(connection == null ? View.VISIBLE : View.GONE);
+    }
+
+    /** A cell of the bar, each as wide as the others, with the button centred in it. */
+    void addSpread(LinearLayout bar, View button) {
+        LinearLayout cell = new LinearLayout(this);
+        cell.setGravity(android.view.Gravity.CENTER);
+        cell.addView(button);
+        bar.addView(cell, new LinearLayout.LayoutParams(0, -2, 1));
     }
 
     /** A bottom-bar button that is held as long as the finger is on it, as a Deck button is. */
-    Button pressable(String label, int which) {
-        Button b = new Button(this);
-        b.setText(label);
+    View pressable(RoundButton.Icon icon, int which) {
+        RoundButton b = new RoundButton(this, icon);
         b.setOnTouchListener((v, e) -> {
             if (e.getActionMasked() == MotionEvent.ACTION_DOWN) {
                 Native.button(which, true);
+                buzz(0);
                 v.setPressed(true);
             } else if (e.getActionMasked() == MotionEvent.ACTION_UP
                     || e.getActionMasked() == MotionEvent.ACTION_CANCEL) {
@@ -218,10 +289,17 @@ public class MainActivity extends Activity implements SensorEventListener {
                 || (source & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK;
     }
 
+    boolean padSeen, padKeySeen;
+
     /** A gamepad's keys go to its pad; a keyboard's to the session, except the phone's own. */
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
         int code = e.getKeyCode();
+        if (!padKeySeen && fromPad(e.getSource())) {
+            padKeySeen = true;
+            Log.i(TAG, "pad key: first " + KeyEvent.keyCodeToString(code) + " from device "
+                    + e.getDeviceId() + ", source 0x" + Integer.toHexString(e.getSource()));
+        }
         if (fromPad(e.getSource()) && e.getAction() != KeyEvent.ACTION_MULTIPLE
                 && Native.padButton(e.getDeviceId(), code, e.getAction() == KeyEvent.ACTION_DOWN)) {
             return true;
@@ -272,9 +350,16 @@ public class MainActivity extends Activity implements SensorEventListener {
      * which is the Deck's right trackpad. Only while this has focus, which is when it can be.
      */
     void capturePadTouchpad() {
-        View root = getWindow().getDecorView();
+        // Captured events go to the focused view, so the listener is the touch area's, and the
+        // touch area keeps the focus (it is also where Android's keyboard types).
+        View root = touch;
         if (!anyPadTouchpad() || !root.hasWindowFocus()) return;
+        if (!root.isFocused()) root.requestFocus();
         root.setOnCapturedPointerListener((v, e) -> {
+            if (!padSeen) {
+                padSeen = true;
+                Log.i(TAG, "pad touchpad: first event from " + e.getDevice());
+            }
             InputDevice d = e.getDevice();
             if (d == null) return false;
             InputDevice.MotionRange rx = d.getMotionRange(MotionEvent.AXIS_X, e.getSource());
@@ -467,7 +552,7 @@ public class MainActivity extends Activity implements SensorEventListener {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         // Plugged in again while already running.
-        if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(intent.getAction())) takeGlasses(false);
+        if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(intent.getAction())) takeGlasses(true);
     }
 
     @Override
@@ -478,6 +563,7 @@ public class MainActivity extends Activity implements SensorEventListener {
         getSystemService(DisplayManager.class).unregisterDisplayListener(displays);
         unregisterReceiver(usbPermission);
         unregisterReceiver(usbAttached);
+        unregisterReceiver(usbDetached);
         unregisterReceiver(orangeKey);
         closeGlassesWindow();
         Native.stop();
@@ -639,12 +725,33 @@ public class MainActivity extends Activity implements SensorEventListener {
             return;
         }
         Native.start(connection.getFileDescriptor());
+        showReminder();
     }
 
+    /**
+     * Plugged in while running. Asked for here if Android has not handed them over: the app is
+     * already in front, so its own question would only come after ours anyway.
+     */
     final BroadcastReceiver usbAttached = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
-            if (connection == null) takeGlasses(false);
+            if (connection == null) takeGlasses(true);
+        }
+    };
+
+    /** Unplugged: let the session go of them, and ask for them back on the phone. */
+    final BroadcastReceiver usbDetached = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context c, Intent i) {
+            UsbDevice d = i.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice.class);
+            if (d == null || d.getVendorId() != VENDOR || d.getProductId() != PRODUCT) return;
+            Log.i(TAG, "glasses unplugged");
+            if (connection != null) {
+                Native.stop();
+                connection.close();
+                connection = null;
+            }
+            showReminder();
         }
     };
 
@@ -658,8 +765,12 @@ public class MainActivity extends Activity implements SensorEventListener {
     final BroadcastReceiver orangeKey = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
-            // STEAM: the HUD. Down and up, as the framework says them.
-            Native.button(0, ORANGE_DOWN.equals(i.getAction()));
+            // Recentre: the one thing wanted without looking, from anywhere. STEAM, the HUD,
+            // has a button of its own on the bar.
+            if (ORANGE_DOWN.equals(i.getAction())) {
+                buzz(0);
+                Native.recenter();
+            }
         }
     };
 

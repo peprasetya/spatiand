@@ -5,9 +5,12 @@
 //!
 //! * its touch area is the left pad, and taps and holds are the clicks
 //!   (`spatiand_input::phone`);
-//! * where the phone points is the right pad: turned into the pad position that aims the Deck's
-//!   ray exactly along the phone, so the laser goes where the phone does in the room and not
-//!   where the head happens to face (`spatiand_render::ray::pad_for_direction`);
+//! * turning the phone moves the right pad, as a thumb does: relative, and held at the pad's
+//!   edge. Turn past the edge and nothing more happens; turn back and the pointer comes back at
+//!   once. So the wearer holds the phone however is comfortable, and re-grips by turning past
+//!   an edge, as a mouse is lifted and put down again. Pointing the phone *at* things in the
+//!   room was tried first: comfortable only while the arm happened to be where it was at the
+//!   last recentre;
 //! * the orange key is STEAM, the button under the touch area is `⋯`, and the back button B.
 //!
 //! So everything above the controller -- menus, the pointer, window drags, the keyboard -- is
@@ -18,7 +21,7 @@ use std::sync::{Mutex, OnceLock};
 use glam::{DQuat, DVec3};
 use spatiand_input::phone::{Phase, PhoneTouch};
 use spatiand_input::{Buttons, Control, ControllerState, Pad};
-use spatiand_render::ray::{pad_for_direction, PointerConfig};
+use spatiand_render::ray::PointerConfig;
 
 /// What the app says about the phone, from its UI thread. Read by the compositor once a frame.
 pub struct PhoneInput {
@@ -71,20 +74,16 @@ pub enum Typed {
     Char(char),
 }
 
-/// Where the phone points, and where that was when the laser was last aimed.
-#[derive(Debug, Clone, Copy)]
-struct Aim {
-    phone_yaw: f64,
-    phone_pitch: f64,
-    world_yaw: f64,
-    world_pitch: f64,
-}
-
 /// The direction the phone's top edge points, as (yaw, pitch) in its own frame.
 fn phone_direction(rotation: DQuat) -> (f64, f64) {
     let d = rotation * DVec3::Y;
     (d.y.atan2(d.x), d.z.clamp(-1.0, 1.0).asin())
 }
+
+/// How long the phone may lie still before its pointer goes.
+const HIDE_AFTER: std::time::Duration = std::time::Duration::from_secs(4);
+/// How far the pointer must be turned, in pad units, to count as moved: about half a degree.
+const WAKE: f32 = 0.025;
 
 pub struct PhoneController {
     state: ControllerState,
@@ -92,8 +91,15 @@ pub struct PhoneController {
     held: Buttons,
     pressed: Vec<Control>,
     released: Vec<Control>,
-    aim: Option<Aim>,
+    /// Where the right pad is, −1..1 each way, moved by the phone turning.
+    pad: (f32, f32),
+    /// The phone's direction when last read, to move the pad by the difference.
+    last: Option<(f64, f64)>,
+    recentre: bool,
+    /// Where the pad was when the phone last counted as moved, and when that was.
+    rest: ((f32, f32), std::time::Instant),
     pinch: f32,
+    long_held: bool,
     keys: Vec<Typed>,
     config: PointerConfig,
 }
@@ -106,15 +112,19 @@ impl PhoneController {
             held: Buttons::default(),
             pressed: Vec::new(),
             released: Vec::new(),
-            aim: None,
+            pad: (0.0, 0.0),
+            last: None,
+            recentre: false,
+            rest: ((0.0, 0.0), std::time::Instant::now()),
             pinch: 1.0,
+            long_held: false,
             keys: Vec::new(),
             config: PointerConfig::default(),
         }
     }
 
     /// Read the phone, for a head facing `head`.
-    pub fn poll(&mut self, head: DQuat) {
+    pub fn poll(&mut self, _head: DQuat) {
         self.pressed.clear();
         self.released.clear();
         let (frame, rotation, buttons, keys, reaim) = {
@@ -131,6 +141,7 @@ impl PhoneController {
             )
         };
         self.pinch *= frame.pinch;
+        self.long_held = frame.long_held;
         self.keys.extend(keys);
 
         // Buttons pressed and released between two frames are still pressed this frame.
@@ -146,30 +157,42 @@ impl PhoneController {
         }
         self.held = Buttons::from_raw(held);
 
-        // The right pad: where the phone points, as the pad position that aims there.
+        // The right pad, moved by how far the phone turned since the last frame, as far as
+        // the pad's edge and no further.
         let right_pad = match rotation {
             Some(rotation) => {
-                let (phone_yaw, phone_pitch) = phone_direction(rotation);
-                if reaim || self.aim.is_none() {
-                    let forward = head * DVec3::X;
-                    self.aim = Some(Aim {
-                        phone_yaw,
-                        phone_pitch,
-                        world_yaw: forward.y.atan2(forward.x),
-                        world_pitch: forward.z.clamp(-1.0, 1.0).asin(),
-                    });
-                    log::info!("the phone aims where the head faces");
+                let (yaw, pitch) = phone_direction(rotation);
+                if reaim || std::mem::take(&mut self.recentre) {
+                    self.pad = (0.0, 0.0);
                 }
-                let aim = self.aim.unwrap();
-                let yaw = aim.world_yaw + (phone_yaw - aim.phone_yaw);
-                let pitch = (aim.world_pitch + (phone_pitch - aim.phone_pitch))
-                    .clamp(-std::f64::consts::FRAC_PI_2 + 0.01, std::f64::consts::FRAC_PI_2 - 0.01);
-                let direction = DVec3::new(pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), pitch.sin());
-                let (x, y) = pad_for_direction(direction, head, &self.config);
+                if let Some((last_yaw, last_pitch)) = self.last {
+                    let mut turned = yaw - last_yaw;
+                    if turned > std::f64::consts::PI {
+                        turned -= std::f64::consts::TAU;
+                    } else if turned < -std::f64::consts::PI {
+                        turned += std::f64::consts::TAU;
+                    }
+                    let raised = pitch - last_pitch;
+                    // The same scale `ray_from_pad` reads with: the pad's edge is the edge of
+                    // the view, so the pointer turns exactly as far as the phone does.
+                    self.pad.0 = (self.pad.0 - (turned / self.config.half_fov_x_deg.to_radians()) as f32).clamp(-1.0, 1.0);
+                    self.pad.1 = (self.pad.1 + (raised / self.config.half_fov_y_deg.to_radians()) as f32).clamp(-1.0, 1.0);
+                }
+                self.last = Some((yaw, pitch));
+                // **The pointer goes after a few seconds still**, as a mouse's does, and comes
+                // back at the first real turn or touch. A thumb leaving the Deck's pad is the
+                // same thing: nothing touched, no laser. A phone put down on the desk drifts by
+                // hundredths of a degree, so only a turn past `WAKE` counts.
+                let (anchor, _) = self.rest;
+                let turned = (self.pad.0 - anchor.0).abs().max((self.pad.1 - anchor.1).abs());
+                if turned > WAKE || frame.left_pad.touched || frame.right_click || frame.left_click || reaim {
+                    self.rest = (self.pad, std::time::Instant::now());
+                }
+                let shown = self.rest.1.elapsed() < HIDE_AFTER;
                 Pad {
-                    x,
-                    y,
-                    touched: true,
+                    x: self.pad.0,
+                    y: self.pad.1,
+                    touched: shown,
                     clicked: frame.right_click,
                     pressure: 0,
                 }
@@ -226,8 +249,10 @@ impl PhoneController {
         self.pressed.contains(&control)
     }
 
-    /// The phone has no pads to buzz; a click is felt as the tap it was.
-    pub fn pulse(&self, _pad: spatiand_input::HapticPad, _feel: spatiand_input::Feel) {}
+    /// Buzz the phone, as the Deck buzzes the pad under the thumb: the phone is both pads.
+    pub fn pulse(&self, _pad: spatiand_input::HapticPad, feel: spatiand_input::Feel) {
+        buzz(feel);
+    }
 
     pub fn rumble(&self, _strong: u16, _weak: u16) {}
 
@@ -236,13 +261,46 @@ impl PhoneController {
         std::mem::replace(&mut self.pinch, 1.0)
     }
 
+    /// Whether a long press is still held down.
+    pub fn long_held(&self) -> bool {
+        self.long_held
+    }
+
     /// Keys typed since this was last asked.
     pub fn take_keys(&mut self) -> Vec<Typed> {
         std::mem::take(&mut self.keys)
     }
 
-    /// Aim the laser where the head faces from the next frame, as recentring does for the room.
+    /// Put the pointer in the middle of the view, as recentring does for the room.
     pub fn reaim(&mut self) {
-        self.aim = None;
+        self.recentre = true;
     }
+}
+
+/// A buzz asked for and not yet played: 0 click, 1 tick, 2 alert.
+static BUZZ: (Mutex<Option<i32>>, std::sync::Condvar) = (Mutex::new(None), std::sync::Condvar::new());
+
+/// Ask the app to buzz the phone. The newest ask wins: two in one frame are felt as one.
+pub fn buzz(feel: spatiand_input::Feel) {
+    let code = match feel {
+        spatiand_input::Feel::Click => 0,
+        spatiand_input::Feel::Tick => 1,
+        spatiand_input::Feel::Alert => 2,
+    };
+    if let Ok(mut pending) = BUZZ.0.lock() {
+        *pending = Some(code);
+        BUZZ.1.notify_one();
+    }
+}
+
+/// The next buzz to play, waiting up to `timeout` for one; −1 for none.
+///
+/// The app's own thread sits here, so a key's buzz is played the moment it is pressed rather
+/// than at the next look of a timer.
+pub fn next_buzz(timeout: std::time::Duration) -> i32 {
+    let Ok(pending) = BUZZ.0.lock() else { return -1 };
+    let Ok((mut pending, _)) = BUZZ.1.wait_timeout_while(pending, timeout, |p| p.is_none()) else {
+        return -1;
+    };
+    pending.take().unwrap_or(-1)
 }

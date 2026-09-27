@@ -11,7 +11,7 @@
 //! | one finger moving | the left pad moving: scroll |
 //! | tap | right pad click: the left mouse button, a menu's accept |
 //! | tap, then touch and hold | right pad held: drag a title bar, select text; sliding the finger meanwhile sets a dragged window's distance, as the left thumb does on the Deck |
-//! | long press | left pad click: the right mouse button |
+//! | long press | left pad click: the right mouse button; on a title bar or an edge, the window, held until the finger lifts |
 //! | two fingers apart or together | zoom: the ratio is handed out, for the window being pointed at |
 //!
 //! Coordinates in are the touch area's, 0..1 from its top-left, as Android reports them divided
@@ -59,6 +59,8 @@ pub struct Frame {
     pub left_click: bool,
     /// How much two fingers have spread since the last frame; 1 when they have not.
     pub pinch: f32,
+    /// A long press whose finger is still down: what holds a window taken by one.
+    pub long_held: bool,
 }
 
 #[derive(Debug, Default)]
@@ -226,11 +228,13 @@ impl PhoneTouch {
             _ => Pad::default(),
         };
         let pinch = std::mem::replace(&mut self.pinch, 1.0);
+        let long_held = self.long_pressed && self.contacts.len() == 1 && !self.pinching;
         Frame {
             left_pad,
             right_click,
             left_click,
             pinch,
+            long_held,
         }
     }
 }
@@ -238,6 +242,20 @@ impl PhoneTouch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_press_is_held_until_the_finger_lifts() {
+        let mut t = PhoneTouch::new();
+        t.touch(Phase::Down, 0, 0.5, 0.5, 0);
+        let f = t.frame(LONG_PRESS_MS + 10);
+        assert!(f.left_click && f.long_held);
+        // Sliding afterwards, for a dragged window's distance, keeps it held.
+        t.touch(Phase::Move, 0, 0.5, 0.8, LONG_PRESS_MS + 50);
+        let f = t.frame(LONG_PRESS_MS + 60);
+        assert!(!f.left_click && f.long_held);
+        t.touch(Phase::Up, 0, 0.5, 0.8, LONG_PRESS_MS + 100);
+        assert!(!t.frame(LONG_PRESS_MS + 110).long_held);
+    }
 
     #[test]
     fn a_tap_is_one_frame_of_click_and_then_one_without() {

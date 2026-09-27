@@ -641,7 +641,7 @@ async fn serve(
 
             let anything_to_decode = streams
                 .values()
-                .any(|s| !s.queue.is_empty() || s.unshown.is_some());
+                .any(|s| !s.queue.is_empty() || s.unshown.is_some() || s.decoder.waiting());
             if !anything_to_decode && worked.elapsed() < Duration::from_millis(4) {
                 continue;
             }
@@ -675,6 +675,13 @@ async fn serve(
                 }
                 if decoded_any {
                     decode_ms.push(began.elapsed().as_secs_f32() * 1000.0);
+                }
+                // A decoder that finishes on its own time (the phone's) is asked again with
+                // nothing new, or a window's last picture waits for a frame that may never come.
+                for picture in stream.decoder.finished() {
+                    if stream.unshown.replace(picture).is_some() {
+                        stream.dropped += 1;
+                    }
                 }
 
                 // While the compositor is still holding two of this window's buffers, another

@@ -12,8 +12,8 @@ import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 
 /**
- * The phone's touch area: the Deck's left pad, with the machine's monitors drawn under it by
- * the session (crates/spatiand-android/src/android/panel.rs).
+ * The phone's touch area: the Deck's left pad, its ground drawn by the session
+ * (crates/spatiand-android/src/android/panel.rs).
  *
  * Touches go to the session raw, in the area's own 0..1 coordinates; what they mean -- scroll,
  * tap, hold, long press, pinch -- is decided there (spatiand-input's phone.rs), where it is
@@ -58,15 +58,41 @@ public class TouchArea extends SurfaceView implements SurfaceHolder.Callback {
         return true;
     }
 
-    /** Bring Android's keyboard up, or put it away. */
+    /** Bring Android's keyboard up, or put it away if it is up. */
     public void toggleKeyboard() {
         InputMethodManager ime = getContext().getSystemService(InputMethodManager.class);
-        requestFocus();
-        if (!ime.isActive(this) || !isFocused()) {
-            ime.showSoftInput(this, 0);
+        android.view.WindowInsets insets = getRootWindowInsets();
+        boolean up = insets != null && insets.isVisible(android.view.WindowInsets.Type.ime());
+        if (up) {
+            ime.hideSoftInputFromWindow(getWindowToken(), 0);
         } else {
-            ime.toggleSoftInput(0, 0);
+            requestFocus();
+            ime.showSoftInput(this, 0);
         }
+    }
+
+    /**
+     * What a keyboard that composes has shown as the word in progress, and already sent.
+     *
+     * Every character goes to the session as it is typed: a terminal on the far side shows
+     * nothing it has not been sent, and a keyboard that holds the word until a space or the
+     * next key made the first letter appear late or not at all. So the composing text is sent
+     * as it changes -- only the difference, with backspaces for what was taken back -- and a
+     * commit sends whatever of it is still new.
+     */
+    private String composing = "";
+
+    private void sendDifference(String before, String after) {
+        int same = 0;
+        while (same < before.length() && same < after.length()
+                && before.charAt(same) == after.charAt(same)) {
+            same++;
+        }
+        for (int i = same; i < before.length(); i++) {
+            Native.key(KeyEvent.KEYCODE_DEL, true);
+            Native.key(KeyEvent.KEYCODE_DEL, false);
+        }
+        if (same < after.length()) Native.text(after.substring(same));
     }
 
     @Override
@@ -78,23 +104,38 @@ public class TouchArea extends SurfaceView implements SurfaceHolder.Callback {
     public InputConnection onCreateInputConnection(EditorInfo info) {
         // Plain text with no suggestions: every character goes straight out as it is typed,
         // since there is nothing here to hold a word while it is being composed.
-        info.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
+        // A visible password is what keyboards take as "no word to compose, no corrections":
+        // keys arrive one at a time, as a terminal wants them.
+        info.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD;
         info.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_FULLSCREEN;
+        composing = "";
         return new BaseInputConnection(this, false) {
             @Override
             public boolean commitText(CharSequence text, int newCursorPosition) {
-                Native.text(text.toString());
+                sendDifference(composing, text.toString());
+                composing = "";
                 return true;
             }
 
             @Override
             public boolean setComposingText(CharSequence text, int newCursorPosition) {
-                // A keyboard that insists on composing: take the word when it is committed.
+                String now = text.toString();
+                sendDifference(composing, now);
+                composing = now;
+                return true;
+            }
+
+            @Override
+            public boolean finishComposingText() {
+                // What was composed has been sent already, and stays.
+                composing = "";
                 return true;
             }
 
             @Override
             public boolean deleteSurroundingText(int before, int after) {
+                composing = "";
                 for (int i = 0; i < before; i++) {
                     Native.key(KeyEvent.KEYCODE_DEL, true);
                     Native.key(KeyEvent.KEYCODE_DEL, false);

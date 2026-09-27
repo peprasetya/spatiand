@@ -337,6 +337,13 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_rumble(_env: *mut JNIEnv
     super::pads::take_rumble()
 }
 
+/// `Native.nextBuzz()`: the next buzz for the phone -- 0 click, 1 tick, 2 alert -- waiting up
+/// to a second for one; −1 for none. Called from a thread of the app's own.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_nextBuzz(_env: *mut JNIEnv, _class: jclass) -> jint {
+    super::phone::next_buzz(std::time::Duration::from_secs(1))
+}
+
 /// `Native.audioInput(id)`: record the microphone sent to hosts from this Android audio
 /// device; 0 for Android's choice.
 #[no_mangle]

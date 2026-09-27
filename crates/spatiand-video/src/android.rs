@@ -326,6 +326,21 @@ impl Decoder {
         Ok(pictures)
     }
 
+    /// Whether a frame was given and its picture has not come out yet.
+    pub fn waiting(&self) -> bool {
+        !self.queued.is_empty()
+    }
+
+    /// Pictures finished since the last look, with no new frame to give.
+    ///
+    /// **The codec works on its own time.** A frame is queued and decoded a few milliseconds
+    /// later, so looking only when the next frame is given finds each picture one frame late --
+    /// and a window that has gone still has no next frame. A key typed into a terminal showed
+    /// only when the next key was, since each keystroke is the only frame the host sends.
+    pub fn finished(&mut self) -> Vec<Picture> {
+        self.drain()
+    }
+
     /// Send every picture the codec has finished on to the reader.
     fn drain(&mut self) -> Vec<Picture> {
         let mut pictures = Vec::new();

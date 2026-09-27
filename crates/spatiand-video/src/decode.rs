@@ -261,6 +261,17 @@ impl Decoder {
         }
     }
 
+    /// Whether a frame was given and its picture has not come out yet: never, since
+    /// [`Decoder::decode`] returns what a frame makes.
+    pub fn waiting(&self) -> bool {
+        false
+    }
+
+    /// Pictures finished since the last look, with no new frame to give: none here.
+    pub fn finished(&mut self) -> Vec<Picture> {
+        Vec::new()
+    }
+
     /// Map a decoded surface out as a dmabuf, without copying it.
     unsafe fn lend(
         &mut self,

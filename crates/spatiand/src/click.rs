@@ -58,6 +58,9 @@
 //! stream held open — warm for every key of the burst it exists to serve, and let go the moment
 //! the keyboard is put away.
 
+// On Android the waveform is all that is used; the `pw-cat` player is the Deck's.
+#![cfg_attr(target_os = "android", allow(dead_code, unused_imports))]
+
 use std::io::Write;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{sync_channel, SyncSender, TryRecvError};
@@ -194,10 +197,14 @@ impl Default for Clicks {
 impl Clicks {
     pub fn new() -> Self {
         let (tx, rx) = sync_channel(QUEUE);
+        // On Android the click goes into the session's one output instead; see `play`.
+        #[cfg(not(target_os = "android"))]
         std::thread::Builder::new()
             .name("spatiand-click".into())
             .spawn(move || run(rx))
             .ok();
+        #[cfg(target_os = "android")]
+        drop(rx);
         Self {
             tx,
             wanted: std::cell::Cell::new(false),
@@ -209,6 +216,12 @@ impl Clicks {
     /// Never blocks and never fails: a click that could not be queued is a click nobody will
     /// miss, and the alternative is stalling the frame.
     pub fn play(&self) {
+        #[cfg(target_os = "android")]
+        {
+            static PCM: std::sync::OnceLock<Vec<i16>> = std::sync::OnceLock::new();
+            spatiand_audio::server::cue(PCM.get_or_init(waveform));
+        }
+        #[cfg(not(target_os = "android"))]
         let _ = self.tx.try_send(Msg::Play);
     }
 

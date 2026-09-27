@@ -158,9 +158,10 @@ pub fn run(
     let mut remotes = crate::remote::Remotes::start(&mut runtime.display_handle, &prefs);
     let mut typed_event: Option<ShellEvent> = None;
     let mut keyboard_for_shell = false;
-    // No key click: it plays through PipeWire, which Android has not got.
+    // The click plays into the session's own output here (see `crate::click`).
+    let clicks = crate::click::Clicks::new();
     let mut keyboard = spatiand_shell::Keyboard {
-        click: false,
+        click: prefs.keyboard_click,
         ..Default::default()
     };
     let mut spatial_audio = crate::audio::Audio::new(prefs.spatial_audio, prefs.directness());
@@ -176,6 +177,8 @@ pub fn run(
     let mut menu_click_was = false;
     let mut keyboard_reach: [Option<spatiand_render::ray::Hit>; 2] = [None, None];
     let mut drag_left_y: Option<f32> = None;
+    // A window taken by a long press, held for as long as the finger stays down.
+    let mut held_drag = false;
     let mut panel_drawn = Instant::now() - PANEL_EVERY;
 
     // The launcher has only remote applications here: Android's own are not windows yet.
@@ -215,6 +218,16 @@ pub fn run(
     // One pass per glasses window. The Wayland state -- clients, windows, the layout -- lives
     // in `runtime` and outlives every pass, as it outlives a rebuild on the Deck.
     while shared.running.load(std::sync::atomic::Ordering::Relaxed) {
+        // The old glasses let go of first, then any new ones opened: replugged, the app says
+        // both at once, and the other way round closed the glasses just opened -- the world
+        // came back as "Plug in your XR glasses".
+        if shared.usb_gone.swap(false, std::sync::atomic::Ordering::SeqCst) && hmd.is_some() {
+            log::info!("the glasses were let go of");
+            if let Some(x) = hmd.as_mut() {
+                let _ = x.set_display_mode(DisplayMode::Mono);
+            }
+            hmd = None;
+        }
         // New glasses on the USB side: open them, in 60 Hz side-by-side.
         if let Some(fd) = shared.usb.lock().unwrap().take() {
             hmd = None;
@@ -237,13 +250,6 @@ pub fn run(
                     *shared.status.lock().unwrap() = format!("could not open the glasses: {e}");
                 }
             }
-        }
-        if shared.usb_gone.swap(false, std::sync::atomic::Ordering::SeqCst) && hmd.is_some() {
-            log::info!("the glasses were let go of");
-            if let Some(x) = hmd.as_mut() {
-                let _ = x.set_display_mode(DisplayMode::Mono);
-            }
-            hmd = None;
         }
 
         glasses = output_for(&shared.glasses, &egl_display, renderer.egl_context(), glasses.take());
@@ -401,6 +407,7 @@ pub fn run(
             }
             let mut deck_input = Some(*controller.state());
             let snapshot = controls.gather(deck_input.as_ref());
+            super::pads::settle();
             // A PlayStation pad's touchpad is the right trackpad while a thumb is on it, as on
             // the Deck: it wins over the phone, which is always pointing somewhere. After
             // `gather`, so the layout still sees the phone exactly as it is.
@@ -410,7 +417,8 @@ pub fn run(
                         x: touch.x,
                         y: touch.y,
                         touched: true,
-                        clicked: touch.clicked,
+                        // The phone's own tap or hold still clicks where the pad points.
+                        clicked: touch.clicked || state.right_pad.clicked,
                         pressure: 8000,
                     };
                 }
@@ -941,7 +949,10 @@ pub fn run(
                     let ray = ray_from_pad(p.right_pad.x, p.right_pad.y, orientation, origin, &pointer_config);
                     let target = scene.menu_target(&shell, &ray, (stereo.h_fov_deg, stereo.v_fov_deg()));
                     if let Some((crate::scene::MenuTarget::Row(index), _)) = target {
-                        shell.point(index);
+                        // A tick per row crossed, as on the Deck.
+                        if shell.point(index) {
+                            controller.pulse(spatiand_input::HapticPad::Right, spatiand_input::Feel::Tick);
+                        }
                     }
                     let aim = pointer::Aim {
                         ray,
@@ -959,6 +970,7 @@ pub fn run(
             menu_click_was = pad_clicked;
             if let Some(target) = menu_pointed {
                 if pad_click {
+                    controller.pulse(spatiand_input::HapticPad::Right, spatiand_input::Feel::Click);
                     let intent = match target {
                         crate::scene::MenuTarget::Row(_) => spatiand_shell::Intent::Accept,
                         crate::scene::MenuTarget::Back => spatiand_shell::Intent::Back,
@@ -1093,8 +1105,38 @@ pub fn run(
                 }
 
                 if let Some(p) = pads.as_ref() {
-                    let right_click = p.right_pad.clicked || controller.just_pressed(spatiand_input::Control::RPadClick);
-                    let left_click = p.left_pad.clicked || controller.just_pressed(spatiand_input::Control::LPadClick);
+                    let mut right_click = p.right_pad.clicked || controller.just_pressed(spatiand_input::Control::RPadClick);
+                    let mut left_click = p.left_pad.clicked || controller.just_pressed(spatiand_input::Control::LPadClick);
+
+                    // **A long press on a title bar or a window's edge takes the window**, and
+                    // holds it for as long as the finger stays: turn the phone to move it or
+                    // pull the edge, and slide the finger meanwhile for its distance. A long
+                    // press is otherwise the right button, which a title bar has no use for,
+                    // and it is the one hold a thumb finds without being taught -- tap, then
+                    // hold (the Deck's held click) does the same for those who know it.
+                    if left_click && !left_was_down && pointers.drag.is_none() && keyboard_resize.is_none() {
+                        held_drag = right_aim.as_ref().is_some_and(|a| {
+                            (a.on_title || matches!(a.zone, Some(Zone::Resize(_))))
+                                && !matches!(a.zone, Some(Zone::Close | Zone::Mute))
+                        });
+                    }
+                    if held_drag {
+                        if controller.long_held() {
+                            right_click = true;
+                            left_click = false;
+                        } else {
+                            held_drag = false;
+                            right_click = false;
+                        }
+                    }
+
+                    // Felt under the thumb, as the Deck's pads are: the press registered.
+                    if right_click && !right_was_down {
+                        controller.pulse(spatiand_input::HapticPad::Right, spatiand_input::Feel::Click);
+                    }
+                    if left_click && !left_was_down {
+                        controller.pulse(spatiand_input::HapticPad::Left, spatiand_input::Feel::Click);
+                    }
 
                     let keyboard_quad = keyboard.open.then(|| {
                         let focus = windows.iter().find(|w| w.focused);
@@ -1155,6 +1197,9 @@ pub fn run(
                                 match keyboard.target_at(hit.u, hit.v) {
                                     Some(spatiand_shell::keyboard::Target::Key(key)) => {
                                         typed = true;
+                                        if keyboard.click {
+                                            clicks.play();
+                                        }
                                         if let Some(stroke) = keyboard.press(key) {
                                             if shell.wants_text() {
                                                 typed_event = typed_event.or(type_into_shell(&mut shell, key, &stroke));
@@ -1167,8 +1212,14 @@ pub fn run(
                                         keyboard_struck.push((key, Instant::now()));
                                     }
                                     Some(spatiand_shell::keyboard::Target::SoundToggle) => {
-                                        // No click sound on Android; the toggle does nothing.
                                         typed = true;
+                                        let on = keyboard.toggle_click();
+                                        prefs.keyboard_click = on;
+                                        prefs.save();
+                                        log::info!("keyboard click {}", if on { "on" } else { "off" });
+                                        if on {
+                                            clicks.play();
+                                        }
                                     }
                                     Some(spatiand_shell::keyboard::Target::Border) => {
                                         typed = true;

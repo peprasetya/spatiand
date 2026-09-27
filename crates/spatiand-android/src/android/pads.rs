@@ -24,8 +24,46 @@ fn with_pad(id: i32, f: impl FnOnce(&mut GamepadState)) {
     pads.push((id, state));
 }
 
+/// Buttons let go of before a frame could see them pressed: (pad, code). Released by
+/// [`settle`], after the frame has read them, so a quick press is never lost between frames.
+static UNSEEN: std::sync::Mutex<Vec<(i32, i32)>> = std::sync::Mutex::new(Vec::new());
+/// Buttons pressed since the last frame, which a release must not overtake.
+static FRESH: std::sync::Mutex<Vec<(i32, i32)>> = std::sync::Mutex::new(Vec::new());
+
 /// A button, by Android's `KeyEvent` code. Returns whether it is a gamepad's.
 pub fn button(id: i32, code: i32, down: bool) -> bool {
+    if !down {
+        if let Ok(fresh) = FRESH.lock() {
+            if fresh.contains(&(id, code)) {
+                if let Ok(mut unseen) = UNSEEN.lock() {
+                    unseen.push((id, code));
+                }
+                return is_pad_button(code);
+            }
+        }
+    } else if let Ok(mut fresh) = FRESH.lock() {
+        fresh.push((id, code));
+    }
+    set_button(id, code, down)
+}
+
+fn is_pad_button(code: i32) -> bool {
+    matches!(code, 96 | 97 | 99 | 100 | 102..=110 | 19..=22)
+}
+
+/// Once a frame, after the pads were read: presses have been seen, and the releases that
+/// waited for that are applied.
+pub fn settle() {
+    if let Ok(mut fresh) = FRESH.lock() {
+        fresh.clear();
+    }
+    let released = UNSEEN.lock().map(|mut u| std::mem::take(&mut *u)).unwrap_or_default();
+    for (id, code) in released {
+        set_button(id, code, false);
+    }
+}
+
+fn set_button(id: i32, code: i32, down: bool) -> bool {
     let mut taken = true;
     with_pad(id, |p| match code {
         96 => p.a = down,              // BUTTON_A: cross

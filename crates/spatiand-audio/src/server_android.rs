@@ -117,6 +117,9 @@ struct Shared {
     slots: Mutex<HashMap<Slot, Arc<SlotState>>>,
     /// Sound with no window to be placed at, or with placing off: played as it came.
     unplaced: Ring,
+    /// The session's own short sounds -- the keyboard's click -- written only by its render
+    /// thread, since a ring has one writer.
+    cues: Ring,
     head: Mutex<Head>,
     directness: Mutex<Directness>,
     rate: AtomicU32,
@@ -132,6 +135,7 @@ fn shared() -> &'static Shared {
     SHARED.get_or_init(|| Shared {
         slots: Mutex::new(HashMap::new()),
         unplaced: Ring::new(QUEUE_FRAMES * 2),
+        cues: Ring::new(QUEUE_FRAMES * 2),
         head: Mutex::new(Head::Measured),
         directness: Mutex::new(Directness::default()),
         rate: AtomicU32::new(48_000),
@@ -203,6 +207,21 @@ pub fn feed(slot: Option<Slot>, pcm: &[i16], channels: usize) {
     state.queue.write(&output);
 }
 
+/// A short sound of the session's own, mono 16-bit at the engine's rate, played at once and
+/// unplaced. From one thread only: the render loop's.
+///
+/// On the Deck the click is its own `pw-cat`; here there is one output, and it is this.
+pub fn cue(pcm: &[i16]) {
+    let stereo: Vec<f32> = pcm
+        .iter()
+        .flat_map(|s| {
+            let v = *s as f32 / 32768.0;
+            [v, v]
+        })
+        .collect();
+    shared().cues.write(&stereo);
+}
+
 /// Play to this Android audio device from now on; 0 for wherever Android routes it.
 pub fn set_output_device(id: i32) {
     let shared = shared();
@@ -222,9 +241,12 @@ unsafe extern "C" fn play(
     out.fill(0.0);
     let mut scratch = vec![0.0f32; out.len()];
     // Short reads come back as silence rather than a stall, as on the Deck.
-    shared.unplaced.read(&mut scratch);
-    for (o, s) in out.iter_mut().zip(&scratch) {
-        *o += *s;
+    for ring in [&shared.unplaced, &shared.cues] {
+        scratch.fill(0.0);
+        ring.read(&mut scratch);
+        for (o, s) in out.iter_mut().zip(&scratch) {
+            *o += *s;
+        }
     }
     if let Ok(slots) = shared.slots.try_lock() {
         for state in slots.values() {
