@@ -57,13 +57,53 @@ uniform vec4 u_uv_range;
 // present, and completely see-through: its alpha bytes were zero.
 uniform float u_opaque;
 out vec4 f_color;
+
+// **Every screen pixel is the average of what it covers.** A window hanging in the room is
+// nearly always drawn smaller than its own pixels -- a 1920-wide terminal a metre and a half
+// away is a few hundred screen pixels across -- and one bilinear sample per screen pixel then
+// reads only the four texels nearest its centre and skips the rest. Thin strokes of text fall
+// between samples, so glyphs came out broken and shimmered as the head moved: "the text quite
+// often pixelated". So a pixel whose footprint spans more than one texel takes a grid of
+// samples across that footprint -- the parallelogram the screen derivatives give, so a
+// window seen at an angle is averaged along its slant -- and a magnified one keeps its single
+// sample. Each bilinear sample already averages four texels, so a 3x3 grid covers a
+// footprint of about six texels, which is further than any readable window is shrunk.
+//
+// Samples stay inside `rect`, half a texel in, so one eye's half of a stereo buffer never
+// bleeds into the other's at its edge.
+vec4 sample_footprint(vec2 uv, vec4 rect) {
+    vec2 size = vec2(textureSize(u_tex, 0));
+    vec2 dx = dFdx(uv);
+    vec2 dy = dFdy(uv);
+    float texels = max(length(dx * size), length(dy * size));
+    if (texels <= 1.0) {
+        return texture(u_tex, uv);
+    }
+    vec2 lo = vec2(min(rect.x, rect.y), min(rect.z, rect.w)) + 0.5 / size;
+    vec2 hi = vec2(max(rect.x, rect.y), max(rect.z, rect.w)) - 0.5 / size;
+    int n = texels <= 2.0 ? 2 : 3;
+    vec4 sum = vec4(0.0);
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            vec2 o = (vec2(float(i), float(j)) + 0.5) / float(n) - 0.5;
+            sum += texture(u_tex, clamp(uv + dx * o.x + dy * o.y, lo, hi));
+        }
+    }
+    return sum / float(n * n);
+}
+
 void main() {
     vec2 uv = vec2(
         u_uv_range.x + v_uv.x * (u_uv_range.y - u_uv_range.x),
         u_uv_range.z + v_uv.y * (u_uv_range.w - u_uv_range.z)
     );
-    f_color = texture(u_tex, uv) * u_tint;
+    f_color = sample_footprint(uv, u_uv_range) * u_tint;
     f_color.a = mix(f_color.a, u_tint.a, u_opaque);
+    // The quad's own outline, softened across one screen pixel: how far this pixel is inside
+    // each edge, in pixels. Without a multisampled target this is the whole of the edge
+    // anti-aliasing, and it costs two derivatives.
+    vec2 inside = min(v_uv, 1.0 - v_uv) / max(fwidth(v_uv), vec2(1e-6));
+    f_color.a *= clamp(min(inside.x, inside.y) + 0.5, 0.0, 1.0);
 }
 "#;
 
