@@ -56,6 +56,21 @@ extern "C" fn picture(signal: libc::c_int) {
     let _ = signal;
 }
 
+/// Set when `SIGUSR2` arrives: start recording, or stop the recording going.
+static RECORD: AtomicBool = AtomicBool::new(false);
+
+/// `SIGUSR2`, the screenshot's moving sibling: `kill -USR2 $(pgrep -x spatiand)` starts a
+/// recording and the same again stops it. See `crate::record`.
+extern "C" fn record(signal: libc::c_int) {
+    RECORD.store(true, Ordering::SeqCst);
+    let _ = signal;
+}
+
+/// Has a recording been started or stopped? Clears the request.
+pub fn record_requested() -> bool {
+    RECORD.swap(false, Ordering::SeqCst)
+}
+
 /// Has a picture been asked for? Clears the request.
 pub fn picture_requested() -> bool {
     PICTURE.swap(false, Ordering::SeqCst)
@@ -76,6 +91,7 @@ pub fn install() {
     // SAFETY: `picture` only stores to an atomic, so it is safe to run from a signal.
     unsafe {
         libc::signal(libc::SIGUSR1, picture as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGUSR2, record as *const () as libc::sighandler_t);
     }
 }
 

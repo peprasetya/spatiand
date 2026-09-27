@@ -417,7 +417,8 @@ pub fn run(
                         HudAction::ToggleKeyboard
                         | HudAction::ReturnToDesktop
                         | HudAction::ControllerLayout
-                        | HudAction::Screenshot => {
+                        | HudAction::Screenshot
+                        | HudAction::Record => {
                             log::info!("{action:?} does nothing in the nested backend");
                         }
                         HudAction::Dismiss => {}

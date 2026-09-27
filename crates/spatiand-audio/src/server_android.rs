@@ -22,6 +22,9 @@ use crate::ring::Ring;
 use crate::stage::{Layout, Speaker};
 
 pub const ROUTING_ENV: &str = "PIPEWIRE_PROPS";
+/// See `server.rs`; nothing is recorded here yet.
+pub const SURROUND_SINK: &str = "spatiand.recording.surround";
+pub const BED_CHANNELS: usize = 12;
 pub const PULSE_ROUTING_ENV: &str = "PULSE_SINK";
 
 /// A quarter of a second of stereo, as the Deck's queue.
@@ -458,6 +461,10 @@ impl Engine {
             state.muted.store(muted, Ordering::Relaxed);
         }
     }
+
+    /// Recording is not built here yet; see `server.rs`. Accepted and ignored, so the session
+    /// drives both engines the same way.
+    pub fn record(&self, _into: Option<Arc<Ring>>) {}
 
     pub fn set_directness(&self, directness: Directness) {
         *shared().directness.lock().unwrap() = directness;

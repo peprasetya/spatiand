@@ -56,7 +56,7 @@ const ANCESTRY_DEPTH: usize = 8;
 /// The rate everything runs at.
 ///
 /// The graph's own rate on this hardware, so nothing is resampled on the way through.
-const RATE: u32 = 48_000;
+pub const RATE: u32 = 48_000;
 
 /// Every window's sound, and where it is.
 pub struct Audio {
@@ -94,6 +94,19 @@ impl Audio {
             keyed: HashMap::new(),
             aimed: HashMap::new(),
             next: 1,
+        }
+    }
+
+    /// Start or stop the recording's surround track; see `Engine::record`. False when spatial
+    /// sound is off, in which case nothing is placed and the track stays silent.
+    #[cfg(not(target_os = "android"))]
+    pub fn record(&self, into: Option<std::sync::Arc<spatiand_audio::ring::Ring>>) -> bool {
+        match &self.engine {
+            Some(engine) => {
+                engine.record(into);
+                true
+            }
+            None => false,
         }
     }
 

@@ -60,6 +60,8 @@ pub enum HudAction {
     Calibrate,
     /// Save what the wearer is looking at, so a problem can be shown rather than described.
     Screenshot,
+    /// Start recording a video of the session, or stop the one going. The row says which.
+    Record,
     /// Open the list of open windows.
     ///
     /// The only way in, on purpose. It had a button for an afternoon -- a back paddle -- and
@@ -134,6 +136,20 @@ pub struct HudItem {
     pub action: HudAction,
 }
 
+/// The recording row while nothing is being recorded.
+const RECORD: HudItem = HudItem {
+    label: "Record a video",
+    detail: "Both eyes and every sound, to your Videos folder. Choose again to stop",
+    action: HudAction::Record,
+};
+
+/// The same row while a recording is going.
+const STOP_RECORDING: HudItem = HudItem {
+    label: "Stop recording",
+    detail: "Finishes the video and saves it to your Videos folder",
+    action: HudAction::Record,
+};
+
 /// The HUD's state.
 #[derive(Debug, Clone)]
 pub struct Hud {
@@ -196,6 +212,7 @@ impl Hud {
                 detail: "Saves what you are looking at to your Pictures folder",
                 action: HudAction::Screenshot,
             },
+            RECORD,
             HudItem {
                 label: "Windows",
                 detail: "Switch to another window and bring it in front of you",
@@ -236,6 +253,15 @@ impl Hud {
             action: HudAction::ReturnToDesktop,
         });
         Self { items, cursor: 0 }
+    }
+
+    /// Show whether a recording is going, on the recording row.
+    pub fn set_recording(&mut self, recording: bool) {
+        for item in &mut self.items {
+            if item.action == HudAction::Record {
+                *item = if recording { STOP_RECORDING } else { RECORD };
+            }
+        }
     }
 
     pub fn items(&self) -> &[HudItem] {
@@ -441,6 +467,17 @@ mod tests {
     }
 
     #[test]
+    fn the_recording_row_says_what_choosing_it_will_do() {
+        let mut hud = Hud::new(DesktopPanels::ALL);
+        let row = |hud: &Hud| hud.items().iter().find(|i| i.action == HudAction::Record).unwrap().label;
+        assert_eq!(row(&hud), "Record a video");
+        hud.set_recording(true);
+        assert_eq!(row(&hud), "Stop recording");
+        hud.set_recording(false);
+        assert_eq!(row(&hud), "Record a video");
+    }
+
+    #[test]
     fn the_rows_are_in_the_order_they_are_reached_for() {
         // Written down because the order is a decision, not an accident: the things done often
         // and the things done in a hurry are at the top, and the two that end something -- a
@@ -457,6 +494,7 @@ mod tests {
                 "Keyboard",
                 "Controller layout",
                 "Take a screenshot",
+                "Record a video",
                 "Windows",
                 "Environment",
                 // Spatiand's own pages before the desktop's panels: this one is where the

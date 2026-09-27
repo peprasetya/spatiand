@@ -661,6 +661,7 @@ pub fn run(
                             shell.set_environments(environments.entries(), environments.choice());
                         }
                         HudAction::Screenshot => screenshot = true,
+                        HudAction::Record => log::info!("recording is not built for this device yet"),
                         HudAction::OpenSwitcher => shell.set_windows(runtime.state.open_windows()),
                         HudAction::ControllerLayout => controls.open_editor(),
                         HudAction::ToggleKeyboard => {

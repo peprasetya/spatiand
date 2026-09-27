@@ -682,6 +682,8 @@ pub fn run(
         let mut pending_flip = false;
         // A screenshot asked for while no frame was being drawn. See the draw below.
         let mut screenshot_owed = false;
+        // A video being recorded of these displays. Belongs to them: rebuilt, it stops.
+        let mut recorder: Option<crate::record::Recorder> = None;
 
         // Present one blank frame before doing anything else.
         //
@@ -1000,6 +1002,8 @@ pub fn run(
             let mut leaving = false;
             // Asked for from the HUD, or over a signal -- see `shutdown::picture_requested`.
             let mut screenshot = crate::shutdown::picture_requested();
+            // Likewise for starting or stopping a recording.
+            let mut record_toggle = crate::shutdown::record_requested();
             if let Some(c) = controller.as_mut() {
                 c.poll();
                 // A button that was already down when this screen appeared does not count.
@@ -1524,6 +1528,7 @@ pub fn run(
                             shell.set_environments(environments.entries(), environments.choice());
                         }
                         HudAction::Screenshot => screenshot = true,
+                        HudAction::Record => record_toggle = true,
                         // The shell has already switched mode; all that is owed is the list,
                         // exactly as for the environment picker.
                         HudAction::OpenSwitcher => {
@@ -3182,6 +3187,30 @@ pub fn run(
 
             // Owed until a frame is actually drawn: a request made on a turn that drew nothing
             // would otherwise read back the previous frame's pixels, or be lost.
+            // --- the recording ---
+            if record_toggle {
+                match recorder.take() {
+                    Some(r) => {
+                        r.stop(&spatial_audio);
+                        shell.set_recording(false);
+                    }
+                    None => match crate::record::Recorder::start((w as u32, h as u32), &spatial_audio) {
+                        Ok(r) => {
+                            recorder = Some(r);
+                            shell.set_recording(true);
+                        }
+                        Err(e) => log::warn!("could not start recording: {e}"),
+                    },
+                }
+            }
+            // A frame drawn this turn, offered to it. After the scene and before the sidecar,
+            // which is the Deck's own screen and not in the glasses.
+            if !flip_waiting {
+                if let Some(r) = recorder.as_mut() {
+                    r.frame(&mut renderer, target_fbo);
+                }
+            }
+
             screenshot_owed |= screenshot;
             if screenshot_owed && !flip_waiting {
                 screenshot_owed = false;

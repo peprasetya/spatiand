@@ -49,6 +49,20 @@ const KEEP_BYTES: usize = bytes_for(60);
 /// end in a fresh `pw-cat` — whose start is itself a glitch — when the sound came back.
 const IDLE: Duration = Duration::from_secs(60);
 
+/// Whether a recording is taking the surround track; see `crate::record`.
+static RECORDING: AtomicBool = AtomicBool::new(false);
+
+/// Say a recording has started or stopped.
+///
+/// A remote application that plays to the default output rather than into a window -- a VR
+/// viewer, whose own mix is already turned with the head -- is in the recording's stereo
+/// track by being on the output, but the surround track is made of windows. So while
+/// recording it also plays into the surround track's sink, where its stereo lands on the
+/// front pair exactly as it was mixed.
+pub fn set_recording(on: bool) {
+    RECORDING.store(on, Ordering::Relaxed);
+}
+
 fn sinks() -> &'static Mutex<HashMap<String, String>> {
     static SINKS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
     SINKS.get_or_init(Default::default)
@@ -267,6 +281,8 @@ fn play(app_id: &str, shared: &Shared) {
 #[cfg(not(target_os = "android"))]
 fn play(app_id: &str, shared: &Shared) {
     let mut output: Option<Output> = None;
+    // A second copy for the recording's surround track; see `set_recording`.
+    let mut surround: Option<Output> = None;
     let mut last_sound = Instant::now();
     let mut checked = Instant::now();
     let mut chunk = Vec::with_capacity(8192);
@@ -320,8 +336,27 @@ fn play(app_id: &str, shared: &Shared) {
             .as_mut()
             .map(|stdin| stdin.write_all(&chunk).is_ok())
             .unwrap_or(false);
+        let straight = out.target.is_none();
         if !written {
             output = None;
+        }
+        if RECORDING.load(Ordering::Relaxed) && straight {
+            if surround.is_none() {
+                surround = Output::start(
+                    app_id,
+                    Some(spatiand_audio::server::SURROUND_SINK.to_string()),
+                );
+            }
+            let written = surround
+                .as_mut()
+                .and_then(|s| s.child.stdin.as_mut())
+                .map(|stdin| stdin.write_all(&chunk).is_ok())
+                .unwrap_or(false);
+            if !written {
+                surround = None;
+            }
+        } else if surround.is_some() {
+            surround = None;
         }
     }
 }

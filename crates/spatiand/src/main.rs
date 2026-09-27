@@ -40,6 +40,8 @@ mod menu;
 mod pointer;
 mod pose;
 mod prefs;
+#[cfg(not(target_os = "android"))]
+mod record;
 mod remote;
 mod scene;
 mod shutdown;

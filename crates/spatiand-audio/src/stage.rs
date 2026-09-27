@@ -202,6 +202,52 @@ impl Channel {
     }
 }
 
+/// The room a recording's surround track is written for: 7.1.4, in [`Layout::Surround714`]'s
+/// channel order.
+pub const BED: Layout = Layout::Surround714;
+
+/// How sharply a sound is gathered onto the speakers nearest it. Higher is tighter: at 6 a
+/// speaker 30 degrees away gets a third of the level of one straight on, and one 60 degrees
+/// away almost nothing, so a sound between two speakers is shared by them and not smeared
+/// round the room.
+const BED_FOCUS: i32 = 6;
+
+/// How loud each of the surround track's speakers plays a sound arriving from `direction`, in
+/// the listener's own frame (+X ahead, +Y left, +Z up), as [`BED`]'s channels.
+///
+/// **The same direction the ears are given.** A window's channels are aimed once, by
+/// [`place`], and that aim goes both to the ears -- the binaural track -- and here; so the
+/// surround track is the room as it was placed round the wearer, not a mix of its own. A
+/// stereo video on a window to the left comes out of the left speakers, front and back; the
+/// same window raised comes out of the tops.
+///
+/// Every gain is from how closely the sound points at a speaker, raised to [`BED_FOCUS`] and
+/// scaled to unit power, so a sound is exactly as loud wherever it is. Nothing is below the
+/// listener, so a sound from below is lifted onto the horizon first. The LFE is never used: it
+/// is for a stream's own LFE, which has no direction.
+pub fn bed_gains(direction: DVec3) -> [f32; 12] {
+    let mut d = direction;
+    d.z = d.z.max(0.0);
+    let d = d.try_normalize().unwrap_or(DVec3::X);
+    let mut gains = [0.0f32; 12];
+    for (gain, channel) in gains.iter_mut().zip(BED.channels()) {
+        let Some((az, el)) = channel.nominal(BED) else { continue };
+        let (sa, ca) = az.sin_cos();
+        let (se, ce) = el.sin_cos();
+        let speaker = DVec3::new(ce * ca, ce * sa, se);
+        *gain = d.dot(speaker).max(0.0).powi(BED_FOCUS) as f32;
+    }
+    let power: f32 = gains.iter().map(|g| g * g).sum();
+    if power > 0.0 {
+        let scale = power.sqrt().recip();
+        gains.iter_mut().for_each(|g| *g *= scale);
+    }
+    gains
+}
+
+/// Where in [`BED`] a stream's LFE goes.
+pub const BED_LFE: usize = 3;
+
 /// The angle a standard front stage puts its main pair at, radians.
 ///
 /// The reference the window's own width is measured against: a window subtending exactly this
@@ -297,6 +343,65 @@ pub fn place(layout: Layout, stage: &Stage, head: DQuat) -> Vec<Speaker> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn loudest(gains: &[f32; 12]) -> Channel {
+        let (i, _) = gains
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .unwrap();
+        BED.channels()[i]
+    }
+
+    #[test]
+    fn a_sound_on_a_speaker_comes_out_of_that_speaker() {
+        let at = |az: f64, el: f64| {
+            let (az, el) = (az.to_radians(), el.to_radians());
+            DVec3::new(el.cos() * az.cos(), el.cos() * az.sin(), el.sin())
+        };
+        assert_eq!(loudest(&bed_gains(at(0.0, 0.0))), Channel::FrontCentre);
+        assert_eq!(loudest(&bed_gains(at(30.0, 0.0))), Channel::FrontLeft);
+        assert_eq!(loudest(&bed_gains(at(-90.0, 0.0))), Channel::SideRight);
+        assert_eq!(loudest(&bed_gains(at(150.0, 0.0))), Channel::RearLeft);
+        assert_eq!(loudest(&bed_gains(at(-45.0, 45.0))), Channel::TopFrontRight);
+        assert_eq!(loudest(&bed_gains(at(135.0, 45.0))), Channel::TopRearLeft);
+    }
+
+    #[test]
+    fn a_sound_is_as_loud_wherever_it_is() {
+        for az in (0..360).step_by(15) {
+            for el in [-60, -20, 0, 20, 45, 80] {
+                let (a, e) = ((az as f64).to_radians(), (el as f64).to_radians());
+                let d = DVec3::new(e.cos() * a.cos(), e.cos() * a.sin(), e.sin());
+                let power: f32 = bed_gains(d).iter().map(|g| g * g).sum();
+                assert!((power - 1.0).abs() < 1e-4, "{az} {el}: {power}");
+                assert_eq!(bed_gains(d)[BED_LFE], 0.0, "the LFE has no direction");
+            }
+        }
+    }
+
+    #[test]
+    fn a_window_to_the_left_plays_from_the_left_and_a_raised_one_from_above() {
+        // Stereo on a window turned 90 degrees to the left: both of its channels land on the
+        // left of the room, one towards the front and one towards the back.
+        let stage = Stage { yaw: 90f64.to_radians(), pitch: 0.0, half_width: NOMINAL_HALF_STAGE };
+        let speakers = place(Layout::Stereo, &stage, DQuat::IDENTITY);
+        let left = bed_gains(speakers[0].direction.unwrap());
+        let right = bed_gains(speakers[1].direction.unwrap());
+        // The window's left channel is at 120 degrees, its right at 60.
+        assert!(matches!(loudest(&left), Channel::SideLeft | Channel::RearLeft));
+        assert!(matches!(loudest(&right), Channel::FrontLeft | Channel::SideLeft));
+        let at = |gains: &[f32; 12], c: Channel| gains[BED.channels().iter().position(|x| *x == c).unwrap()];
+        assert!(at(&left, Channel::RearLeft) > at(&right, Channel::RearLeft));
+        assert!(at(&right, Channel::FrontLeft) > at(&left, Channel::FrontLeft));
+        for c in [Channel::FrontRight, Channel::SideRight, Channel::RearRight] {
+            assert!(at(&left, c) < 1e-3 && at(&right, c) < 1e-3, "{c:?} on the right");
+        }
+
+        let raised = Stage { yaw: 0.0, pitch: 50f64.to_radians(), half_width: NOMINAL_HALF_STAGE };
+        let speakers = place(Layout::Stereo, &raised, DQuat::IDENTITY);
+        assert_eq!(loudest(&bed_gains(speakers[0].direction.unwrap())), Channel::TopFrontLeft);
+    }
 
     /// A window at its default placement: 1.1 m wide at 2.2 m, which is about ±14°.
     fn default_stage() -> Stage {

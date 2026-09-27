@@ -166,6 +166,11 @@ struct Voice {
     /// The direction `current` was fetched for, or `None` for a channel with no direction.
     aimed: Option<DVec3>,
     fold: (f32, f32),
+    /// The same aim as speaker gains for a recording's surround track, and the gains it is
+    /// moving from, so a turn of the head pans rather than steps. See [`Binaural::render_bed`].
+    bed: [f32; 12],
+    bed_was: [f32; 12],
+    lfe: bool,
 }
 
 impl Voice {
@@ -178,6 +183,9 @@ impl Voice {
             crossfading: false,
             aimed: None,
             fold: plain_fold(channel),
+            bed: [0.0; 12],
+            bed_was: [0.0; 12],
+            lfe: channel == Channel::Lfe,
         }
     }
 
@@ -388,6 +396,10 @@ impl Binaural {
                 continue;
             }
             let first = voice.aimed.is_none();
+            voice.bed = crate::stage::bed_gains(direction);
+            if first {
+                voice.bed_was = voice.bed;
+            }
             std::mem::swap(&mut voice.current, &mut voice.fading);
             self.spatialiser.ears_into(direction, &mut voice.current);
             // The first aim has nothing to fade from, and fading up from silence would make
@@ -478,6 +490,59 @@ impl Binaural {
             voice.crossfading = false;
         }
     }
+
+    /// The same block, for a recording's surround track: each channel onto the 7.1.4
+    /// speakers it points at, instead of into two ears.
+    ///
+    /// Called after [`Binaural::render`] on the same input, only while recording. It is the
+    /// room before the head is applied -- what a speaker system in the wearer's place would
+    /// play -- so a film's own surrounds and a stereo song on a window behind you both come
+    /// out of the speakers behind. `out` is interleaved [`crate::stage::BED`] and is written,
+    /// not added to. The level follows mute exactly as the ears do; the LFE goes to the LFE.
+    pub fn render_bed(&mut self, input: &[f32], out: &mut [f32]) {
+        const BED: usize = 12;
+        let channels = self.layout.count();
+        let frames = (input.len() / channels).min(out.len() / BED);
+        out[..frames * BED].fill(0.0);
+        if frames == 0 {
+            return;
+        }
+        let step = (frames as f32).recip();
+        let taps = self.taps();
+        let level = self.level;
+        for (c, voice) in self.voices.iter_mut().enumerate() {
+            if self.quiet_for[c] >= taps {
+                voice.bed_was = voice.bed;
+                continue;
+            }
+            if voice.lfe {
+                for f in 0..frames {
+                    let x = input[f * channels + c];
+                    if x.is_finite() {
+                        out[f * BED + crate::stage::BED_LFE] += level * x;
+                    }
+                }
+                continue;
+            }
+            // Not aimed yet: it has nowhere to be, and is left out rather than guessed at.
+            if voice.aimed.is_none() {
+                continue;
+            }
+            for f in 0..frames {
+                let x = input[f * channels + c];
+                if !x.is_finite() || x == 0.0 {
+                    continue;
+                }
+                // Moved across the block from the last aim to this one.
+                let t = (f + 1) as f32 * step;
+                let frame = &mut out[f * BED..(f + 1) * BED];
+                for ((o, &now), &was) in frame.iter_mut().zip(&voice.bed).zip(&voice.bed_was) {
+                    *o += level * x * (was + (now - was) * t);
+                }
+            }
+            voice.bed_was = voice.bed;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -528,6 +593,46 @@ mod tests {
         let mut out = vec![0.0; frames * 2];
         b.render(input, &mut out);
         out.chunks(2).map(|c| (c[0], c[1])).collect()
+    }
+
+    #[test]
+    fn a_window_behind_on_the_left_is_recorded_from_the_speakers_behind_on_the_left() {
+        let mut b = stereo(Directness::SPATIAL);
+        let behind_left = place(
+            Layout::Stereo,
+            &Stage { yaw: 135f64.to_radians(), pitch: 0.0, half_width: 0.25 },
+            glam::DQuat::IDENTITY,
+        );
+        b.aim(&behind_left, 2.4);
+        let input = vec![0.5f32; 256 * 2];
+        let mut ears = vec![0.0; 256 * 2];
+        b.render(&input, &mut ears);
+        let mut bed = vec![0.0; 256 * 12];
+        b.render_bed(&input, &mut bed);
+        let power = |channel: Channel| -> f32 {
+            let i = crate::stage::BED.channels().iter().position(|c| *c == channel).unwrap();
+            bed.chunks(12).map(|f| f[i] * f[i]).sum()
+        };
+        let back_left = power(Channel::RearLeft) + power(Channel::SideLeft);
+        let front_right = power(Channel::FrontRight) + power(Channel::SideRight);
+        assert!(back_left > 0.1, "nothing reached the left rear: {back_left}");
+        assert!(front_right < back_left * 0.01, "{front_right} vs {back_left}");
+        assert_eq!(power(Channel::Lfe), 0.0);
+    }
+
+    #[test]
+    fn a_muted_window_is_silent_in_the_surround_track_too() {
+        let mut b = stereo(Directness::SPATIAL);
+        b.aim(&ahead(), 0.0);
+        b.set_muted(true);
+        let input = vec![0.5f32; 48_000 * 2];
+        let mut ears = vec![0.0; 48_000 * 2];
+        // A second of muting, so the fade has finished.
+        b.render(&input, &mut ears);
+        let mut bed = vec![0.0; 48_000 * 12];
+        b.render_bed(&input, &mut bed);
+        let loudest = bed[bed.len() - 12..].iter().fold(0.0f32, |m, x| m.max(x.abs()));
+        assert!(loudest < 1e-3, "{loudest}");
     }
 
     #[test]

@@ -211,6 +211,10 @@ struct SlotState {
     /// Bumped every time the app hands over audio, so the output side can tell a window whose
     /// app has gone quiet from one whose sound is not arriving fast enough.
     fed: AtomicU32,
+    /// The same sound as the recording's surround track, waiting to go out; and whether it is
+    /// wanted. See [`Engine::record`].
+    bed: Ring,
+    bed_on: AtomicBool,
 }
 
 impl SlotState {
@@ -226,6 +230,8 @@ impl SlotState {
             dropped: AtomicU32::new(0),
             starved: AtomicU32::new(0),
             fed: AtomicU32::new(0),
+            bed: Ring::new(QUEUE_FRAMES * BED_CHANNELS),
+            bed_on: AtomicBool::new(false),
         }
     }
 
@@ -275,8 +281,17 @@ enum Command {
         muted: bool,
     },
     Directness(Directness),
+    Record(Option<Arc<Ring>>),
     Stop,
 }
+
+/// The sink a recording's surround track is mixed in: every window's sound, placed on 7.1.4
+/// speakers rather than in two ears, summed by PipeWire exactly as their stereo is summed on
+/// its way to the glasses. Present only while recording.
+pub const SURROUND_SINK: &str = "spatiand.recording.surround";
+
+/// Channels in the surround track: 7.1.4.
+pub const BED_CHANNELS: usize = 12;
 
 /// How the head is made: measured if the machine has a dataset, worked out if not.
 #[derive(Debug, Clone, Copy)]
@@ -360,6 +375,16 @@ impl Engine {
         let _ = self.to_loop.send(Command::Directness(directness));
     }
 
+    /// Start or stop the recording's surround track.
+    ///
+    /// With a ring, every window renders its sound a second time, onto the 7.1.4 speakers of
+    /// [`crate::stage::BED`], and [`SURROUND_SINK`] mixes them into `into` as interleaved
+    /// twelve-channel frames. With `None` all of that goes away, and a window costs what it
+    /// did before. The binaural path is not touched either way.
+    pub fn record(&self, into: Option<Arc<Ring>>) {
+        let _ = self.to_loop.send(Command::Record(into));
+    }
+
     /// What a window's sound is doing, for the shell to show. `None` if it has no sink.
     pub fn status(&self, slot: Slot) -> Option<Status> {
         self.slots.lock().ok()?.get(&slot).map(|s| s.status())
@@ -397,6 +422,14 @@ struct Node {
     _sink_listener: pw::stream::StreamListener<SinkData>,
     _out: pw::stream::Stream,
     _out_listener: pw::stream::StreamListener<OutData>,
+    /// The surround sound going out to [`SURROUND_SINK`], while recording.
+    bed: Option<(pw::stream::Stream, pw::stream::StreamListener<BedData>)>,
+}
+
+/// The recording's mixing sink, kept alive by being held.
+struct Surround {
+    _sink: pw::stream::Stream,
+    _listener: pw::stream::StreamListener<Arc<Ring>>,
 }
 
 fn run(
@@ -413,12 +446,14 @@ fn run(
 
     let nodes: Rc<RefCell<HashMap<Slot, Node>>> = Rc::default();
     let directness = Rc::new(RefCell::new(directness));
+    let surround: Rc<RefCell<Option<Surround>>> = Rc::default();
 
     let _receiver = commands.attach(mainloop.loop_(), {
         let mainloop = mainloop.clone();
         let nodes = Rc::clone(&nodes);
         let slots = Arc::clone(&slots);
         let directness = Rc::clone(&directness);
+        let surround = Rc::clone(&surround);
         let core = core.clone();
         move |command| match command {
             Command::Stop => mainloop.quit(),
@@ -427,7 +462,11 @@ fn run(
                     return;
                 }
                 match open_slot(&core, slot, rate, head, *directness.borrow(), width) {
-                    Ok(node) => {
+                    Ok(mut node) => {
+                        // A window opened while recording joins the surround track at once.
+                        if surround.borrow().is_some() {
+                            start_bed(&core, slot, rate, &mut node);
+                        }
                         if let Ok(mut s) = slots.lock() {
                             s.insert(slot, Arc::clone(&node.state));
                         }
@@ -457,6 +496,36 @@ fn run(
             Command::Mute { slot, muted } => {
                 if let Some(node) = nodes.borrow().get(&slot) {
                     node.state.muted.store(muted, Ordering::Relaxed);
+                }
+            }
+            Command::Record(Some(into)) => {
+                // A recording that was never stopped -- its displays rebuilt under it -- is
+                // replaced rather than kept: its ring belongs to a file that is finished.
+                if surround.borrow_mut().take().is_some() {
+                    for node in nodes.borrow_mut().values_mut() {
+                        node.state.bed_on.store(false, Ordering::Relaxed);
+                        node.bed = None;
+                    }
+                }
+                match open_surround(&core, rate, into) {
+                    Ok(sink) => {
+                        *surround.borrow_mut() = Some(sink);
+                        for (slot, node) in nodes.borrow_mut().iter_mut() {
+                            start_bed(&core, *slot, rate, node);
+                        }
+                        log::info!("spatial audio: recording the surround track");
+                    }
+                    Err(e) => log::warn!("spatial audio: no surround track ({e})"),
+                }
+            }
+            Command::Record(None) => {
+                for node in nodes.borrow_mut().values_mut() {
+                    node.state.bed_on.store(false, Ordering::Relaxed);
+                    node.bed = None;
+                    node.state.bed.clear();
+                }
+                if surround.borrow_mut().take().is_some() {
+                    log::info!("spatial audio: the surround track stopped");
                 }
             }
             Command::Directness(d) => {
@@ -527,6 +596,7 @@ struct SinkData {
     /// De-interleaved input and rendered output, sized once the format is known.
     input: Vec<f32>,
     output: Vec<f32>,
+    bed_output: Vec<f32>,
 }
 
 /// Everything the output stream's callbacks own.
@@ -585,6 +655,7 @@ fn open_slot(
             directness,
             input: Vec::new(),
             output: Vec::new(),
+            bed_output: Vec::new(),
         })
         .param_changed(|_, data, id, param| {
             let Some(param) = param else { return };
@@ -659,6 +730,11 @@ fn open_slot(
                     f32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]);
             }
             render.render(&data.input, &mut data.output);
+            if data.state.bed_on.load(Ordering::Relaxed) {
+                data.bed_output.resize(frames * BED_CHANNELS, 0.0);
+                render.render_bed(&data.input, &mut data.bed_output);
+                data.state.bed.write(&data.bed_output);
+            }
             data.state
                 .peak
                 .store(render.peak().to_bits(), Ordering::Relaxed);
@@ -780,7 +856,142 @@ fn open_slot(
         _sink_listener: sink_listener,
         _out: out,
         _out_listener: out_listener,
+        bed: None,
     })
+}
+
+/// What a window's surround stream owns.
+struct BedData {
+    state: Arc<SlotState>,
+    scratch: Vec<f32>,
+}
+
+/// Send a window's surround sound to [`SURROUND_SINK`], for as long as the node holds it.
+fn start_bed(core: &pw::core::Core, slot: Slot, rate: u32, node: &mut Node) {
+    if node.bed.is_some() {
+        return;
+    }
+    node.state.bed.clear();
+    match open_bed(core, slot, rate, Arc::clone(&node.state)) {
+        Ok(bed) => {
+            node.bed = Some(bed);
+            node.state.bed_on.store(true, Ordering::Relaxed);
+        }
+        Err(e) => log::warn!("spatial audio: {} left out of the surround track: {e}", sink_name(slot)),
+    }
+}
+
+fn open_bed(
+    core: &pw::core::Core,
+    slot: Slot,
+    rate: u32,
+    state: Arc<SlotState>,
+) -> Result<(pw::stream::Stream, pw::stream::StreamListener<BedData>), pw::Error> {
+    let name = format!("{}.surround", sink_name(slot));
+    let stream = pw::stream::Stream::new(
+        core,
+        &name,
+        pw::properties::properties! {
+            *pw::keys::MEDIA_TYPE => "Audio",
+            *pw::keys::MEDIA_CATEGORY => "Playback",
+            *pw::keys::NODE_NAME => name.as_str(),
+            *pw::keys::NODE_DESCRIPTION => "Spatiand window, for the recording",
+            // Only ever to the recording's own sink: a surround mix turning up on the glasses
+            // would be the window's sound twice, once of it not placed.
+            "target.object" => SURROUND_SINK,
+            "node.dont-reconnect" => "true",
+        },
+    )?;
+    let listener = stream
+        .add_local_listener_with_user_data(BedData { state, scratch: Vec::new() })
+        .process(|stream, data| {
+            let Some(mut buffer) = stream.dequeue_buffer() else { return };
+            let wanted = buffer.requested() as usize;
+            let datas = buffer.datas_mut();
+            let Some(first) = datas.first_mut() else { return };
+            let stride = 4 * BED_CHANNELS;
+            let frames = match first.data() {
+                Some(slice) => {
+                    let room = slice.len() / stride;
+                    let frames = if wanted > 0 { wanted.min(room) } else { room };
+                    data.scratch.resize(frames * BED_CHANNELS, 0.0);
+                    data.state.bed.read(&mut data.scratch);
+                    for (i, sample) in data.scratch.iter().enumerate() {
+                        slice[i * 4..i * 4 + 4].copy_from_slice(&sample.to_le_bytes());
+                    }
+                    frames
+                }
+                None => 0,
+            };
+            let chunk = first.chunk_mut();
+            *chunk.offset_mut() = 0;
+            *chunk.stride_mut() = stride as _;
+            *chunk.size_mut() = (stride * frames) as _;
+        })
+        .register()?;
+    let format = format_pod(crate::stage::BED, rate);
+    let mut params = [Pod::from_bytes(&format).expect("a serialised format is a pod")];
+    stream.connect(
+        spa::utils::Direction::Output,
+        None,
+        pw::stream::StreamFlags::AUTOCONNECT
+            | pw::stream::StreamFlags::MAP_BUFFERS
+            | pw::stream::StreamFlags::RT_PROCESS,
+        &mut params,
+    )?;
+    Ok((stream, listener))
+}
+
+/// The sink every window's surround stream plays into, which hands the mix to `into`.
+///
+/// Always processed, even with nothing playing into it, so the recording's surround track runs
+/// at the audio clock's pace through the silences too rather than stopping and starting.
+fn open_surround(core: &pw::core::Core, rate: u32, into: Arc<Ring>) -> Result<Surround, pw::Error> {
+    let sink = pw::stream::Stream::new(
+        core,
+        SURROUND_SINK,
+        pw::properties::properties! {
+            *pw::keys::MEDIA_TYPE => "Audio",
+            *pw::keys::MEDIA_CATEGORY => "Capture",
+            *pw::keys::MEDIA_CLASS => "Audio/Sink",
+            *pw::keys::NODE_NAME => SURROUND_SINK,
+            *pw::keys::NODE_DESCRIPTION => "Spatiand recording (7.1.4)",
+            *pw::keys::NODE_VIRTUAL => "true",
+            "node.always-process" => "true",
+            // Not a place for anything else's sound to end up.
+            "priority.session" => "0",
+            "channelmix.upmix" => "false",
+        },
+    )?;
+    let listener = sink
+        .add_local_listener_with_user_data(into)
+        .process(|stream, into| {
+            let Some(mut buffer) = stream.dequeue_buffer() else { return };
+            let datas = buffer.datas_mut();
+            let Some(first) = datas.first_mut() else { return };
+            let size = first.chunk().size() as usize;
+            let Some(bytes) = first.data() else { return };
+            let bytes = &bytes[..size.min(bytes.len())];
+            let mut block = [0.0f32; 1024];
+            for chunk in bytes.chunks(block.len() * 4) {
+                let n = chunk.len() / 4;
+                for (i, slot) in block[..n].iter_mut().enumerate() {
+                    let at = i * 4;
+                    *slot = f32::from_le_bytes([chunk[at], chunk[at + 1], chunk[at + 2], chunk[at + 3]]);
+                }
+                into.write(&block[..n]);
+            }
+        })
+        .register()?;
+    let format = format_pod(crate::stage::BED, rate);
+    let mut params = [Pod::from_bytes(&format).expect("a serialised format is a pod")];
+    sink.connect(
+        spa::utils::Direction::Input,
+        None,
+        pw::stream::StreamFlags::MAP_BUFFERS | pw::stream::StreamFlags::RT_PROCESS,
+        &mut params,
+    )?;
+    Ok(Surround { _sink: sink, _listener: listener })
 }
 
 #[cfg(test)]

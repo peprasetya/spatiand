@@ -30,6 +30,8 @@ pub mod decode;
 #[cfg(not(target_os = "android"))]
 pub mod export;
 #[cfg(not(target_os = "android"))]
+pub mod record;
+#[cfg(not(target_os = "android"))]
 pub mod split;
 #[cfg(not(target_os = "android"))]
 pub mod voice;

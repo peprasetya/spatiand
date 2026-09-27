@@ -188,6 +188,11 @@ impl Shell {
         &self.hud
     }
 
+    /// Say whether a recording is going, so the HUD's row offers the right thing.
+    pub fn set_recording(&mut self, recording: bool) {
+        self.hud.set_recording(recording);
+    }
+
     pub fn launcher(&self) -> &Launcher {
         &self.launcher
     }
