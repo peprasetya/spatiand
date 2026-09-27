@@ -99,7 +99,6 @@ pub struct PhoneController {
     /// Where the pad was when the phone last counted as moved, and when that was.
     rest: ((f32, f32), std::time::Instant),
     pinch: f32,
-    long_held: bool,
     keys: Vec<Typed>,
     config: PointerConfig,
 }
@@ -117,7 +116,6 @@ impl PhoneController {
             recentre: false,
             rest: ((0.0, 0.0), std::time::Instant::now()),
             pinch: 1.0,
-            long_held: false,
             keys: Vec::new(),
             config: PointerConfig::default(),
         }
@@ -141,7 +139,6 @@ impl PhoneController {
             )
         };
         self.pinch *= frame.pinch;
-        self.long_held = frame.long_held;
         self.keys.extend(keys);
 
         // Buttons pressed and released between two frames are still pressed this frame.
@@ -259,11 +256,6 @@ impl PhoneController {
     /// How much two fingers have spread since this was last asked; 1 for not at all.
     pub fn take_pinch(&mut self) -> f32 {
         std::mem::replace(&mut self.pinch, 1.0)
-    }
-
-    /// Whether a long press is still held down.
-    pub fn long_held(&self) -> bool {
-        self.long_held
     }
 
     /// Keys typed since this was last asked.

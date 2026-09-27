@@ -43,13 +43,42 @@ impl std::error::Error for VideoError {}
 
 pub type Result<T> = std::result::Result<T, VideoError>;
 
-/// Pictures the compositor may hold at once: the one on screen, the one before it until the GPU
-/// is surely done with it, and room for the newest to be taken. The codec draws into the rest.
-const MAX_IMAGES: i32 = 5;
+/// Pictures out of the codec at once: the newest waiting, the ones the compositor still draws
+/// from (it keeps each a few frames, until the GPU is surely done), and room for the newest to
+/// be taken. The codec draws into the rest.
+const MAX_IMAGES: i32 = 8;
 
 /// Where one decoder's pictures come out, read by the compositor's thread.
 pub struct Output {
     reader: *mut ndk::AImageReader,
+    /// The newest picture, taken off the reader as soon as it arrives -- see [`on_image`].
+    latest: Mutex<usize>,
+}
+
+/// A picture arrived: take it now, and let go of the one it replaces.
+///
+/// **A picture left on the reader is a buffer the codec cannot decode into.** They used to be
+/// taken only when the glasses drew their window. A window drawn less often than its frames
+/// came filled the reader, the codec stalled with nowhere to put its output and stopped taking
+/// frames, and the session threw everything away until a keyframe: SpatiWorld froze for up to
+/// a second at a time.
+unsafe extern "C" fn on_image(context: *mut std::ffi::c_void, reader: *mut ndk::AImageReader) {
+    let output = &*(context as *const Output);
+    let mut image = ptr::null_mut();
+    if ndk::AImageReader_acquireLatestImage(reader, &mut image) != ndk::media_status_t::AMEDIA_OK
+        || image.is_null()
+    {
+        return;
+    }
+    match output.latest.lock() {
+        Ok(mut latest) => {
+            let before = std::mem::replace(&mut *latest, image as usize);
+            if before != 0 {
+                ndk::AImage_delete(before as *mut ndk::AImage);
+            }
+        }
+        Err(_) => ndk::AImage_delete(image),
+    }
 }
 
 // The reader is read from the compositor's thread only, and deleted when the last owner lets go.
@@ -58,6 +87,10 @@ unsafe impl Sync for Output {}
 
 impl Drop for Output {
     fn drop(&mut self) {
+        let latest = self.latest.get_mut().map(std::mem::take).unwrap_or(0);
+        if latest != 0 {
+            unsafe { ndk::AImage_delete(latest as *mut ndk::AImage) };
+        }
         unsafe { ndk::AImageReader_delete(self.reader) };
     }
 }
@@ -83,9 +116,9 @@ impl Drop for Frame {
 impl Output {
     /// The newest picture, if one has arrived since the last was taken.
     pub fn take_latest(self: &Arc<Self>) -> Option<Frame> {
-        let mut image = ptr::null_mut();
-        let status = unsafe { ndk::AImageReader_acquireLatestImage(self.reader, &mut image) };
-        if status != ndk::media_status_t::AMEDIA_OK || image.is_null() {
+        let image = self.latest.lock().map(|mut l| std::mem::take(&mut *l)).unwrap_or(0)
+            as *mut ndk::AImage;
+        if image.is_null() {
             return None;
         }
         let mut buffer = ptr::null_mut();
@@ -239,7 +272,16 @@ impl Decoder {
         if status != ndk::media_status_t::AMEDIA_OK || reader.is_null() {
             return Err(VideoError::new(format!("no image reader: {status:?}")));
         }
-        let output = Arc::new(Output { reader });
+        let output = Arc::new(Output {
+            reader,
+            latest: Mutex::new(0),
+        });
+        // The context is the `Output` itself, which owns the reader and so outlives every call.
+        let mut listener = ndk::AImageReader_ImageListener {
+            context: Arc::as_ptr(&output) as *mut std::ffi::c_void,
+            onImageAvailable: Some(on_image),
+        };
+        unsafe { ndk::AImageReader_setImageListener(reader, &mut listener) };
         let mut window = ptr::null_mut();
         if unsafe { ndk::AImageReader_getWindow(reader, &mut window) }
             != ndk::media_status_t::AMEDIA_OK
@@ -291,7 +333,15 @@ impl Decoder {
     /// Give the codec one whole frame, and say which pictures it has finished since.
     pub fn decode(&mut self, timestamp: i64, frame: &[u8]) -> Result<Vec<Picture>> {
         let mut pictures = self.drain();
-        let index = unsafe { ndk::AMediaCodec_dequeueInputBuffer(self.codec, 20_000) };
+        // Full, it may only be waiting for its output to be taken: take it and try again.
+        let mut index = unsafe { ndk::AMediaCodec_dequeueInputBuffer(self.codec, 10_000) };
+        for _ in 0..3 {
+            if index >= 0 {
+                break;
+            }
+            pictures.extend(self.drain());
+            index = unsafe { ndk::AMediaCodec_dequeueInputBuffer(self.codec, 10_000) };
+        }
         if index < 0 {
             return Err(VideoError::new("the decoder has no room for another frame"));
         }

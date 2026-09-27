@@ -10,8 +10,8 @@
 //! |---|---|
 //! | one finger moving | the left pad moving: scroll |
 //! | tap | right pad click: the left mouse button, a menu's accept |
-//! | tap, then touch and hold | right pad held: drag a title bar, select text; sliding the finger meanwhile sets a dragged window's distance, as the left thumb does on the Deck |
-//! | long press | left pad click: the right mouse button; on a title bar or an edge, the window, held until the finger lifts |
+//! | touch and hold, or tap and then touch and hold | right pad held until the finger lifts: drag a title bar, an edge, or anything in a window -- select text, turn a camera; sliding the finger meanwhile sets a dragged window's distance, as the left thumb does on the Deck |
+//! | two fingers tapped | left pad click: the right mouse button |
 //! | two fingers apart or together | zoom: the ratio is handed out, for the window being pointed at |
 //!
 //! Coordinates in are the touch area's, 0..1 from its top-left, as Android reports them divided
@@ -83,6 +83,10 @@ pub struct PhoneTouch {
     pinch: f32,
     /// The current touch has been two fingers at some point, so it is no tap or scroll.
     pinching: bool,
+    /// When the second finger of the current touch came down, and whether any finger has
+    /// travelled since: a quick, still pair is a two-finger tap.
+    pair_since: Option<u64>,
+    pair_moved: bool,
 }
 
 fn distance(a: (f32, f32), b: (f32, f32)) -> f32 {
@@ -123,6 +127,10 @@ impl PhoneTouch {
                     moved: false,
                 });
                 if self.contacts.len() >= 2 {
+                    if !self.pinching {
+                        self.pair_since = Some(time_ms);
+                        self.pair_moved = false;
+                    }
                     self.pinching = true;
                     self.holding = false;
                     self.spread = self.spread_now();
@@ -134,6 +142,9 @@ impl PhoneTouch {
                     c.y = y;
                     if distance((x, y), c.start) > SLOP {
                         c.moved = true;
+                        if self.pinching {
+                            self.pair_moved = true;
+                        }
                     }
                 }
                 if self.contacts.len() >= 2 {
@@ -152,6 +163,14 @@ impl PhoneTouch {
                 }
                 let Some(c) = ended else { return };
                 if self.contacts.is_empty() {
+                    // Two fingers down and up together, without travelling: the right button.
+                    if phase == Phase::Up
+                        && !self.pair_moved
+                        && self.pair_since.is_some_and(|at| time_ms.saturating_sub(at) <= TAP_MS * 2)
+                    {
+                        self.long_pending = true;
+                    }
+                    self.pair_since = None;
                     let quick = time_ms.saturating_sub(c.since_ms) <= TAP_MS;
                     if phase == Phase::Up
                         && quick
@@ -177,7 +196,8 @@ impl PhoneTouch {
 
     /// The pads and clicks as of now. Call once a frame.
     pub fn frame(&mut self, now_ms: u64) -> Frame {
-        // A finger resting long enough without moving is a long press, once per touch.
+        // A finger resting long enough without moving holds the button, as a tap and a hold
+        // does: the one hold a thumb finds without being taught.
         if let [c] = self.contacts.as_slice() {
             if !c.moved
                 && !self.holding
@@ -186,7 +206,7 @@ impl PhoneTouch {
                 && now_ms.saturating_sub(c.since_ms) >= LONG_PRESS_MS
             {
                 self.long_pressed = true;
-                self.long_pending = true;
+                self.holding = true;
             }
         }
 
@@ -228,7 +248,7 @@ impl PhoneTouch {
             _ => Pad::default(),
         };
         let pinch = std::mem::replace(&mut self.pinch, 1.0);
-        let long_held = self.long_pressed && self.contacts.len() == 1 && !self.pinching;
+        let long_held = self.long_pressed && self.holding && self.contacts.len() == 1;
         Frame {
             left_pad,
             right_click,
@@ -244,17 +264,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_long_press_is_held_until_the_finger_lifts() {
+    fn a_long_press_holds_the_click_until_the_finger_lifts() {
         let mut t = PhoneTouch::new();
         t.touch(Phase::Down, 0, 0.5, 0.5, 0);
+        assert!(!t.frame(300).right_click);
         let f = t.frame(LONG_PRESS_MS + 10);
-        assert!(f.left_click && f.long_held);
-        // Sliding afterwards, for a dragged window's distance, keeps it held.
+        assert!(f.right_click && f.long_held && !f.left_click);
+        // Sliding afterwards -- dragging, or a dragged window's distance -- keeps it held.
         t.touch(Phase::Move, 0, 0.5, 0.8, LONG_PRESS_MS + 50);
         let f = t.frame(LONG_PRESS_MS + 60);
-        assert!(!f.left_click && f.long_held);
+        assert!(f.right_click && f.long_held);
         t.touch(Phase::Up, 0, 0.5, 0.8, LONG_PRESS_MS + 100);
-        assert!(!t.frame(LONG_PRESS_MS + 110).long_held);
+        let f = t.frame(LONG_PRESS_MS + 110);
+        assert!(!f.right_click && !f.long_held);
+        assert!(!t.frame(LONG_PRESS_MS + 120).right_click, "and no tap on the way out");
+    }
+
+    #[test]
+    fn two_fingers_tapped_are_the_right_button() {
+        let mut t = PhoneTouch::new();
+        t.touch(Phase::Down, 0, 0.4, 0.5, 0);
+        t.touch(Phase::Down, 1, 0.6, 0.5, 20);
+        t.touch(Phase::Up, 1, 0.6, 0.5, 120);
+        t.touch(Phase::Up, 0, 0.4, 0.5, 130);
+        let f = t.frame(140);
+        assert!(f.left_click && !f.right_click);
+        assert!(!t.frame(150).left_click);
+    }
+
+    #[test]
+    fn two_fingers_pinching_are_not_a_tap() {
+        let mut t = PhoneTouch::new();
+        t.touch(Phase::Down, 0, 0.4, 0.5, 0);
+        t.touch(Phase::Down, 1, 0.6, 0.5, 20);
+        t.touch(Phase::Move, 1, 0.8, 0.5, 80);
+        t.touch(Phase::Up, 1, 0.8, 0.5, 120);
+        t.touch(Phase::Up, 0, 0.4, 0.5, 130);
+        assert!(!t.frame(140).left_click);
     }
 
     #[test]
@@ -298,14 +344,12 @@ mod tests {
     }
 
     #[test]
-    fn a_finger_resting_long_enough_is_a_right_click() {
+    fn a_finger_resting_long_enough_is_no_right_click() {
         let mut t = PhoneTouch::new();
         t.touch(Phase::Down, 0, 0.5, 0.5, 0);
-        assert!(!t.frame(300).left_click);
-        assert!(t.frame(600).left_click);
-        assert!(!t.frame(620).left_click);
+        assert!(!t.frame(600).left_click);
         t.touch(Phase::Up, 0, 0.5, 0.5, 700);
-        assert!(!t.frame(710).right_click, "a long press is not also a tap");
+        assert!(!t.frame(710).left_click);
     }
 
     #[test]

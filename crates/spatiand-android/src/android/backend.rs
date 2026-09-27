@@ -177,8 +177,6 @@ pub fn run(
     let mut menu_click_was = false;
     let mut keyboard_reach: [Option<spatiand_render::ray::Hit>; 2] = [None, None];
     let mut drag_left_y: Option<f32> = None;
-    // A window taken by a long press, held for as long as the finger stays down.
-    let mut held_drag = false;
     let mut panel_drawn = Instant::now() - PANEL_EVERY;
 
     // The launcher has only remote applications here: Android's own are not windows yet.
@@ -929,6 +927,70 @@ pub fn run(
                 crate::remote::sound::set_sinks(spatial_audio.keyed_sinks());
             }
 
+            // Where every window's sound is, now, and what it is doing. The head has moved
+            // since the last frame even if nothing else has, so the aim is unconditional --
+            // and cheap when the answer has not changed, because the renderer only fetches
+            // new filters once a direction has moved further than anyone can hear.
+            if spatial_audio.is_on() {
+                let head = tracker.orientation();
+                // Every window that could be what an app's sound is coming from -- including
+                // the one that has become the room, which has no quad to be found among and
+                // so was silently left out of this for as long as environments have existed.
+                // Its sound stopped being pointed the moment it took the room, which meant it
+                // stopped counter-rotating with the head as well.
+                let mut sources: Vec<crate::audio::Source> = Vec::new();
+                for window in runtime.state.space.elements() {
+                    use smithay::wayland::seat::WaylandFocus;
+                    let (Some(id), Some(surface)) =
+                        (runtime.state.layout.id_of(window), window.wl_surface())
+                    else {
+                        continue;
+                    };
+                    let xr = crate::xr::state_of(&surface);
+                    let kind = if xr.is_environment() {
+                        crate::audio::Kind::Environment {
+                            yaw: xr.sky_yaw_urad() as f64 * 1e-6,
+                        }
+                    } else if let Some(placement) = runtime.state.layout.get(window) {
+                        crate::audio::Kind::Window(placement)
+                    } else {
+                        continue;
+                    };
+                    // The window's own picture, which is what decides whose sound this is;
+                    // see `audio::Source::rank`.
+                    let pixels = smithay::backend::renderer::utils::with_renderer_surface_state(
+                        &surface,
+                        |s| s.surface_size(),
+                    )
+                    .flatten()
+                    .map(|size| (size.w.max(0) as u32, size.h.max(0) as u32))
+                    .unwrap_or((0, 0));
+                    sources.push(crate::audio::Source {
+                        window: id,
+                        pixels,
+                        kind,
+                        focused: runtime.state.layout.is_focused(window),
+                    });
+                }
+                spatial_audio.aim_all(&sources, head);
+                for quad in windows.iter_mut() {
+                    let Some(id) = runtime.state.layout.id_of(&quad.window) else {
+                        continue;
+                    };
+                    // A window only grows a speaker once it has actually made a sound, and
+                    // keeps it from then on: one that vanished between tracks would be a
+                    // control that moved out from under a thumb reaching for it.
+                    if let Some(status) = spatial_audio.status(id) {
+                        let ever = quad.sound.is_some() || status.sounding.is_some();
+                        quad.sound = ever.then_some(crate::scene::WindowSound {
+                            muted: status.muted,
+                            sounding: status.sounding,
+                            peak: status.peak,
+                        });
+                    }
+                }
+            }
+
             // --- pointing and clicking ---
             let time_ms = started.elapsed().as_millis() as u32;
             let origin = eye_centre(orientation, &stereo);
@@ -1074,7 +1136,9 @@ pub fn run(
                             if let Some(a) = right_aim.as_ref() {
                                 pointers.motion(&mut runtime.state, a, &windows, time_ms);
                             }
-                            if let Some(p) = pads.as_ref() {
+                            // Not while the button is held: the finger that holds it is on the
+                            // same glass, and a drag that also scrolled would fight itself.
+                            if let Some(p) = pads.as_ref().filter(|p| !p.right_pad.clicked) {
                                 match left_scroll.update(&p.left_pad) {
                                     spatiand_input::Scroll::By { dx, dy } => pointers.scroll(
                                         &mut runtime.state,
@@ -1105,30 +1169,8 @@ pub fn run(
                 }
 
                 if let Some(p) = pads.as_ref() {
-                    let mut right_click = p.right_pad.clicked || controller.just_pressed(spatiand_input::Control::RPadClick);
-                    let mut left_click = p.left_pad.clicked || controller.just_pressed(spatiand_input::Control::LPadClick);
-
-                    // **A long press on a title bar or a window's edge takes the window**, and
-                    // holds it for as long as the finger stays: turn the phone to move it or
-                    // pull the edge, and slide the finger meanwhile for its distance. A long
-                    // press is otherwise the right button, which a title bar has no use for,
-                    // and it is the one hold a thumb finds without being taught -- tap, then
-                    // hold (the Deck's held click) does the same for those who know it.
-                    if left_click && !left_was_down && pointers.drag.is_none() && keyboard_resize.is_none() {
-                        held_drag = right_aim.as_ref().is_some_and(|a| {
-                            (a.on_title || matches!(a.zone, Some(Zone::Resize(_))))
-                                && !matches!(a.zone, Some(Zone::Close | Zone::Mute))
-                        });
-                    }
-                    if held_drag {
-                        if controller.long_held() {
-                            right_click = true;
-                            left_click = false;
-                        } else {
-                            held_drag = false;
-                            right_click = false;
-                        }
-                    }
+                    let right_click = p.right_pad.clicked || controller.just_pressed(spatiand_input::Control::RPadClick);
+                    let left_click = p.left_pad.clicked || controller.just_pressed(spatiand_input::Control::LPadClick);
 
                     // Felt under the thumb, as the Deck's pads are: the press registered.
                     if right_click && !right_was_down {

@@ -81,6 +81,8 @@ pub enum Head {
 /// One window's sound: its renderer, and the stereo waiting to go out.
 struct SlotState {
     queue: Ring,
+    /// Whether the queue has its cushion and is being played; see [`read_cushioned`].
+    primed: AtomicBool,
     render: Mutex<Option<Binaural>>,
     width: Layout,
     aim: Mutex<Option<(Vec<Speaker>, f64)>>,
@@ -117,6 +119,7 @@ struct Shared {
     slots: Mutex<HashMap<Slot, Arc<SlotState>>>,
     /// Sound with no window to be placed at, or with placing off: played as it came.
     unplaced: Ring,
+    unplaced_primed: AtomicBool,
     /// The session's own short sounds -- the keyboard's click -- written only by its render
     /// thread, since a ring has one writer.
     cues: Ring,
@@ -135,6 +138,7 @@ fn shared() -> &'static Shared {
     SHARED.get_or_init(|| Shared {
         slots: Mutex::new(HashMap::new()),
         unplaced: Ring::new(QUEUE_FRAMES * 2),
+        unplaced_primed: AtomicBool::new(false),
         cues: Ring::new(QUEUE_FRAMES * 2),
         head: Mutex::new(Head::Measured),
         directness: Mutex::new(Directness::default()),
@@ -241,17 +245,20 @@ unsafe extern "C" fn play(
     out.fill(0.0);
     let mut scratch = vec![0.0f32; out.len()];
     // Short reads come back as silence rather than a stall, as on the Deck.
-    for ring in [&shared.unplaced, &shared.cues] {
-        scratch.fill(0.0);
-        ring.read(&mut scratch);
-        for (o, s) in out.iter_mut().zip(&scratch) {
-            *o += *s;
-        }
+    let rate = shared.rate.load(Ordering::Relaxed) as usize;
+    read_cushioned(&shared.unplaced, &shared.unplaced_primed, &mut scratch, rate);
+    for (o, s) in out.iter_mut().zip(&scratch) {
+        *o += *s;
+    }
+    // The session's own clicks are made here and never late: straight out.
+    scratch.fill(0.0);
+    shared.cues.read(&mut scratch);
+    for (o, s) in out.iter_mut().zip(&scratch) {
+        *o += *s;
     }
     if let Ok(slots) = shared.slots.try_lock() {
         for state in slots.values() {
-            scratch.fill(0.0);
-            state.queue.read(&mut scratch);
+            read_cushioned(&state.queue, &state.primed, &mut scratch, rate);
             for (o, s) in out.iter_mut().zip(&scratch) {
                 *o += *s;
             }
@@ -261,6 +268,37 @@ unsafe extern "C" fn play(
         *o = o.clamp(-1.0, 1.0);
     }
     ndk::AAUDIO_CALLBACK_RESULT_CONTINUE as ndk::aaudio_data_callback_result_t
+}
+
+/// How much sound from the network waits before it is played: what a burst of WiFi can be
+/// late by without being heard. The Deck's is the pipe into `pw-cat`, 170 ms of it; AAudio
+/// asks for a few milliseconds at a time and a queue read that thinly runs dry at every late
+/// packet, which is heard as a jitter.
+const CUSHION_MS: usize = 80;
+/// More than this waiting and the oldest is dropped, so a stall does not leave the sound
+/// behind the picture for ever after.
+const MOST_MS: usize = 250;
+
+/// Read stereo from a queue of network sound, playing only once it has its cushion, and
+/// gathering the cushion again whenever it runs dry.
+fn read_cushioned(ring: &Ring, primed: &AtomicBool, out: &mut [f32], rate: usize) {
+    let cushion = rate * 2 * CUSHION_MS / 1000;
+    let most = rate * 2 * MOST_MS / 1000;
+    let waiting = ring.available();
+    if !primed.load(Ordering::Relaxed) {
+        if waiting < cushion.max(out.len()) {
+            out.fill(0.0);
+            return;
+        }
+        primed.store(true, Ordering::Relaxed);
+    }
+    if waiting > most + out.len() {
+        let mut dropped = vec![0.0f32; (waiting - cushion) & !1];
+        ring.read(&mut dropped);
+    }
+    if ring.read(out) > 0 {
+        primed.store(false, Ordering::Relaxed);
+    }
 }
 
 unsafe extern "C" fn lost(_stream: *mut ndk::AAudioStream, _user: *mut c_void, error: ndk::aaudio_result_t) {
@@ -360,6 +398,7 @@ impl Engine {
             log::info!("spatial audio: opened {}", sink_name(slot));
             Arc::new(SlotState {
                 queue: Ring::new(QUEUE_FRAMES * 2),
+                primed: AtomicBool::new(false),
                 render: Mutex::new(None),
                 width: width.layout(),
                 aim: Mutex::new(None),
