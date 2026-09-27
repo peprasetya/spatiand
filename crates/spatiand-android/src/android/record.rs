@@ -1,22 +1,24 @@
 //! Recording a video of the session on the Beam Pro: what the glasses show, and what the
 //! wearer hears.
 //!
-//! The Deck's recorder (`crates/spatiand/src/record.rs`) with Android's parts: the phone's
-//! hardware H.264 encoder fed through its own input surface, and Android's MP4 muxer. So:
+//! The Deck's recorder (`crates/spatiand/src/record.rs`) with Android's parts, and the same
+//! file: Matroska, with
 //!
-//! * **the picture** -- the frame sent to the glasses, both eyes side by side, at [`FPS`] and
-//!   40 Mbit/s, as on the Deck. The frame is copied once on the GPU while it is still in the
-//!   glasses' window, and the copy drawn into the encoder's surface after the glasses have
-//!   theirs; the encoder and the file are this module's thread's.
+//! * **the picture** -- the frame sent to the glasses, both eyes side by side, H.264 at
+//!   [`FPS`] and 40 Mbit/s from the phone's hardware encoder. The frame is copied once on the
+//!   GPU while it is still in the glasses' window, and the copy drawn into the encoder's input
+//!   surface after the glasses have theirs.
 //! * **"What you heard"** -- stereo, after the HRTF: exactly what the session's one output was
-//!   given (`spatiand_audio::server::record_heard`), as AAC.
-//! * **"Microphone"** -- the phone's microphone, as AAC.
+//!   given (`spatiand_audio::server::record_heard`).
+//! * **"Surround 7.1.4"** -- before the HRTF: every window's channels on the speakers they
+//!   point at from the wearer's head, unplaced sound on the front pair as it is
+//!   (`spatiand_audio::server::record_surround`).
+//! * **"Microphone"** -- the phone's microphone.
 //!
-//! **No surround track.** The Deck's third track is twelve channels before the HRTF; MP4 on
-//! Android carries AAC, and Android's AAC encoder stops at eight.
-//!
-//! The file is written in the app's own storage and handed to the app when finished, which
-//! puts it in the phone's `Movies/Spatiand`, where a gallery or a computer finds it: Android
+//! The sound is 24-bit PCM, as on the Deck. Android's own muxer writes MP4, which takes sound
+//! only as AAC, and this phone's AAC encoder stops at six channels; so the file is written
+//! here (`super::mkv`), on the recorder's thread. It goes in the app's own storage and is
+//! handed to the app when finished, which puts it in the phone's `Movies/Spatiand`: Android
 //! lets an app write there only through its media store.
 
 use std::ffi::{c_void, CString};
@@ -123,15 +125,13 @@ fn encoder(mime: &str, format: &Format) -> Result<Codec, String> {
     Ok(codec)
 }
 
-/// One sound track: where it comes from, and its encoder.
+/// One sound track: where it comes from, and how much of it has been written.
 struct Sound {
     title: &'static str,
     channels: usize,
     ring: Arc<Ring>,
-    codec: Codec,
-    /// Frames given to the encoder, which is also its clock.
+    /// Frames written, which is also the track's clock.
     frames: u64,
-    ended: bool,
 }
 
 type PresentationTime = unsafe extern "C" fn(*const c_void, *const c_void, i64) -> u32;
@@ -185,29 +185,8 @@ impl Recorder {
 
         // --- the sound ---
         let ring = |channels: usize| Arc::new(Ring::new(RATE as usize * RING_SECONDS * channels));
-        let aac = |channels: usize, kbit: i32| -> Result<Codec, String> {
-            let format = Format::new("audio/mp4a-latm");
-            format.int("sample-rate", RATE as i32);
-            format.int("channel-count", channels as i32);
-            format.int("bitrate", kbit * 1000);
-            format.int("aac-profile", 2); // LC
-            format.int("max-input-size", 16 * 1024);
-            let codec = encoder("audio/mp4a-latm", &format)?;
-            if unsafe { ndk::AMediaCodec_start(codec.0) } != ndk::media_status_t::AMEDIA_OK {
-                return Err("the sound encoder would not start".into());
-            }
-            Ok(codec)
-        };
-        let mut sounds = Vec::new();
         let heard = ring(2);
-        sounds.push(Sound {
-            title: "What you heard (binaural stereo, after the HRTF)",
-            channels: 2,
-            ring: heard.clone(),
-            codec: aac(2, 256)?,
-            frames: 0,
-            ended: false,
-        });
+        let surround = ring(spatiand_audio::server::SURROUND_CHANNELS);
         let mic = ring(1);
         let into = mic.clone();
         let microphone = match spatiand_audio::server::Capture::open(
@@ -224,41 +203,34 @@ impl Recorder {
                 None
             }
         };
-        sounds.push(Sound {
-            title: "Microphone",
-            channels: 1,
-            ring: mic,
-            codec: aac(1, 128)?,
-            frames: 0,
-            ended: false,
-        });
+        let sounds = vec![
+            Sound { title: "What you heard (binaural stereo, after the HRTF)", channels: 2, ring: heard.clone(), frames: 0 },
+            Sound {
+                title: "Surround 7.1.4, before the HRTF (FL FR FC LFE BL BR SL SR TFL TFR TBL TBR)",
+                channels: spatiand_audio::server::SURROUND_CHANNELS,
+                ring: surround.clone(),
+                frames: 0,
+            },
+            Sound { title: "Microphone", channels: 1, ring: mic, frames: 0 },
+        ];
 
         // --- the file ---
         let dir = directory();
         std::fs::create_dir_all(&dir).map_err(|e| format!("could not make {}: {e}", dir.display()))?;
-        let path = dir.join(format!("spatiand-{}.mp4", stamp()));
+        let path = dir.join(format!("spatiand-{}.mkv", stamp()));
         let file = std::fs::File::create(&path).map_err(|e| format!("could not write {}: {e}", path.display()))?;
-        let muxer = unsafe {
-            ndk::AMediaMuxer_new(
-                std::os::fd::AsRawFd::as_raw_fd(&file),
-                ndk::OutputFormat::AMEDIAMUXER_OUTPUT_FORMAT_MPEG_4,
-            )
-        };
-        if muxer.is_null() {
-            return Err("Android would not write an MP4".into());
-        }
         spatiand_audio::server::record_heard(Some(heard));
+        spatiand_audio::server::record_surround(Some(surround));
 
         let stop = Arc::new(AtomicBool::new(false));
         let started = Instant::now();
         let stopping = stop.clone();
         let shown = path.clone();
-        let muxer = Muxer(muxer);
+        let size_now = (size.0 as u32, size.1 as u32);
         std::thread::Builder::new()
             .name("recorder".into())
             .spawn(move || {
-                let result = run(video, sounds, muxer, started, &stopping);
-                drop(file);
+                let result = run(video, sounds, file, size_now, started, &stopping);
                 match result {
                     Ok(seconds) => {
                         log::info!("recording: saved {seconds:.0} s to {}", shown.display());
@@ -391,6 +363,7 @@ impl Recorder {
 impl Drop for Recorder {
     fn drop(&mut self) {
         spatiand_audio::server::record_heard(None);
+        spatiand_audio::server::record_surround(None);
         // Nothing more is drawn into the encoder once its surface is gone; then it is told the
         // stream has ended, and the thread finishes the file.
         self.surface = None;
@@ -398,40 +371,23 @@ impl Drop for Recorder {
     }
 }
 
-struct Muxer(*mut ndk::AMediaMuxer);
-
-unsafe impl Send for Muxer {}
-
-impl Drop for Muxer {
-    fn drop(&mut self) {
-        unsafe { ndk::AMediaMuxer_delete(self.0) };
-    }
-}
-
-/// A coded packet held until the file has all its tracks and can start.
-struct Held {
-    track: usize,
-    bytes: Vec<u8>,
-    pts_us: i64,
-    flags: u32,
-}
-
-/// Where each encoder's packets go: its format once known, and its track in the file.
-struct Output {
-    format: Option<*mut ndk::AMediaFormat>,
-    track: Option<usize>,
-    ended: bool,
-}
-
-/// The recorder's thread: feed the sound in, take coded packets out, write the file.
-fn run(video: Codec, mut sounds: Vec<Sound>, muxer: Muxer, started: Instant, stop: &AtomicBool) -> Result<f64, String> {
-    let codecs: Vec<*mut ndk::AMediaCodec> =
-        std::iter::once(video.0).chain(sounds.iter().map(|s| s.codec.0)).collect();
-    let mut outputs: Vec<Output> = codecs.iter().map(|_| Output { format: None, track: None, ended: false }).collect();
-    let mut held: Vec<Held> = Vec::new();
-    let mut muxing = false;
+/// The recorder's thread: take coded pictures out, write them and the sound as it comes,
+/// finish the file.
+fn run(
+    video: Codec,
+    mut sounds: Vec<Sound>,
+    file: std::fs::File,
+    size: (u32, u32),
+    started: Instant,
+    stop: &AtomicBool,
+) -> Result<f64, String> {
+    let mut file = Some(file);
+    let mut writer: Option<super::mkv::Writer> = None;
+    // Pictures out before the stream's parameter sets, which the file's header needs.
+    let mut held: Vec<(i64, bool, Vec<u8>)> = Vec::new();
     let mut stopping_since: Option<Instant> = None;
     let mut ended_at = Duration::ZERO;
+    let mut video_ended = false;
 
     loop {
         let stopping = stop.load(Ordering::SeqCst);
@@ -441,175 +397,108 @@ fn run(video: Codec, mut sounds: Vec<Sound>, muxer: Muxer, started: Instant, sto
             unsafe { ndk::AMediaCodec_signalEndOfInputStream(video.0) };
         }
 
-        // --- sound in ---
-        let clock = if stopping { ended_at } else { started.elapsed() };
-        for sound in sounds.iter_mut() {
-            if sound.ended {
+        // --- pictures ---
+        loop {
+            let mut info = ndk::AMediaCodecBufferInfo { offset: 0, size: 0, presentationTimeUs: 0, flags: 0 };
+            let index = unsafe { ndk::AMediaCodec_dequeueOutputBuffer(video.0, &mut info, 0) };
+            if index == ndk::AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED as isize {
                 continue;
             }
-            feed(sound, clock, stopping);
-        }
-
-        // --- packets out ---
-        for (i, codec) in codecs.iter().enumerate() {
-            loop {
-                let mut info = ndk::AMediaCodecBufferInfo { offset: 0, size: 0, presentationTimeUs: 0, flags: 0 };
-                let index = unsafe { ndk::AMediaCodec_dequeueOutputBuffer(*codec, &mut info, 0) };
-                if index == ndk::AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED as isize {
-                    outputs[i].format = Some(unsafe { ndk::AMediaCodec_getOutputFormat(*codec) });
-                    continue;
-                }
-                if index < 0 {
-                    break;
-                }
-                let flags = info.flags;
-                if flags & ndk::AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM as u32 != 0 {
-                    outputs[i].ended = true;
-                }
-                let is_config = flags & ndk::AMEDIACODEC_BUFFER_FLAG_CODEC_CONFIG as u32 != 0;
-                if info.size > 0 && !is_config {
-                    let mut size = 0usize;
-                    let buffer = unsafe { ndk::AMediaCodec_getOutputBuffer(*codec, index as usize, &mut size) };
-                    if !buffer.is_null() {
-                        let bytes = unsafe {
-                            std::slice::from_raw_parts(buffer.add(info.offset as usize), info.size as usize)
-                        };
-                        match outputs[i].track {
-                            Some(track) if muxing => write(&muxer, track, bytes, info.presentationTimeUs, flags),
-                            _ => held.push(Held {
-                                track: i,
-                                bytes: bytes.to_vec(),
-                                pts_us: info.presentationTimeUs,
-                                flags,
-                            }),
-                        }
-                    }
-                }
-                unsafe { ndk::AMediaCodec_releaseOutputBuffer(*codec, index as usize, false) };
+            if index < 0 {
+                break;
             }
-        }
-
-        // --- the file starts once every track has said what it is ---
-        if !muxing && outputs.iter().all(|o| o.format.is_some()) {
-            for (i, output) in outputs.iter_mut().enumerate() {
-                let track = unsafe { ndk::AMediaMuxer_addTrack(muxer.0, output.format.unwrap()) };
-                if track < 0 {
-                    // Some muxers take one sound track only: the rest are left out.
-                    log::warn!(
-                        "recording: the file will not hold {}",
-                        if i == 0 { "the picture" } else { sounds[i - 1].title }
-                    );
-                    if i == 0 {
-                        return Err("the file would not take the picture".into());
+            let flags = info.flags;
+            if flags & ndk::AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM as u32 != 0 {
+                video_ended = true;
+            }
+            let mut capacity = 0usize;
+            let buffer = unsafe { ndk::AMediaCodec_getOutputBuffer(video.0, index as usize, &mut capacity) };
+            if info.size > 0 && !buffer.is_null() {
+                let bytes = unsafe { std::slice::from_raw_parts(buffer.add(info.offset as usize), info.size as usize) };
+                if flags & ndk::AMEDIACODEC_BUFFER_FLAG_CODEC_CONFIG as u32 != 0 {
+                    if writer.is_none() {
+                        let private = super::mkv::avc_config(bytes).ok_or("the encoder's stream has no SPS and PPS")?;
+                        let mut tracks = vec![super::mkv::Track::Video { width: size.0, height: size.1, private }];
+                        for (i, sound) in sounds.iter().enumerate() {
+                            tracks.push(super::mkv::Track::Audio {
+                                title: sound.title.into(),
+                                channels: sound.channels,
+                                rate: RATE,
+                                default: i == 0,
+                            });
+                        }
+                        let file = file.take().ok_or("the file is gone")?;
+                        let mut w = super::mkv::Writer::create(file, "Spatiand", &tracks).map_err(|e| e.to_string())?;
+                        for (ms, key, data) in held.drain(..) {
+                            w.video(1, ms, key, &data).map_err(|e| e.to_string())?;
+                        }
+                        writer = Some(w);
                     }
                 } else {
-                    output.track = Some(track as usize);
+                    let ms = info.presentationTimeUs / 1000;
+                    let key = flags & 1 != 0; // BUFFER_FLAG_KEY_FRAME
+                    match writer.as_mut() {
+                        Some(w) => w.video(1, ms, key, bytes).map_err(|e| e.to_string())?,
+                        None => held.push((ms, key, bytes.to_vec())),
+                    }
                 }
             }
-            if unsafe { ndk::AMediaMuxer_start(muxer.0) } != ndk::media_status_t::AMEDIA_OK {
-                return Err("the file would not start".into());
-            }
-            muxing = true;
-            for h in held.drain(..) {
-                if let Some(track) = outputs[h.track].track {
-                    write(&muxer, track, &h.bytes, h.pts_us, h.flags);
-                }
+            unsafe { ndk::AMediaCodec_releaseOutputBuffer(video.0, index as usize, false) };
+        }
+
+        // --- sound ---
+        if let Some(w) = writer.as_mut() {
+            let clock = if stopping { ended_at } else { started.elapsed().saturating_sub(LAG) };
+            for (i, sound) in sounds.iter_mut().enumerate() {
+                pump(w, i + 2, sound, clock, stopping).map_err(|e| e.to_string())?;
             }
         }
 
         if stopping {
-            let done = outputs.iter().all(|o| o.ended);
             let waited = stopping_since.map(|t| t.elapsed()).unwrap_or_default();
-            if done || waited > Duration::from_secs(3) {
+            if video_ended || waited > Duration::from_secs(3) {
                 break;
             }
         }
         std::thread::sleep(Duration::from_millis(5));
     }
 
-    for output in &outputs {
-        if let Some(format) = output.format {
-            unsafe { ndk::AMediaFormat_delete(format) };
-        }
-    }
-    if !muxing {
+    let Some(mut w) = writer else {
         return Err("nothing was recorded".into());
+    };
+    for (i, sound) in sounds.iter_mut().enumerate() {
+        pump(&mut w, i + 2, sound, ended_at, true).map_err(|e| e.to_string())?;
     }
-    if unsafe { ndk::AMediaMuxer_stop(muxer.0) } != ndk::media_status_t::AMEDIA_OK {
-        return Err("the file would not close".into());
-    }
-    drop(muxer);
-    drop(sounds);
+    w.finish(ended_at.as_millis() as i64).map_err(|e| e.to_string())?;
     drop(video);
     Ok(ended_at.as_secs_f64())
 }
 
-fn write(muxer: &Muxer, track: usize, bytes: &[u8], pts_us: i64, flags: u32) {
-    let info = ndk::AMediaCodecBufferInfo {
-        offset: 0,
-        size: bytes.len() as i32,
-        presentationTimeUs: pts_us,
-        flags: flags & !(ndk::AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM as u32),
-    };
-    unsafe { ndk::AMediaMuxer_writeSampleData(muxer.0, track, bytes.as_ptr(), &info) };
-}
-
-/// Give one track's encoder what its ring holds, and silence for a gap longer than [`LAG`]; at
-/// the end, the rest and the end of the stream.
-fn feed(sound: &mut Sound, clock: Duration, ending: bool) {
-    let due = (clock.saturating_sub(if ending { Duration::ZERO } else { LAG }).as_secs_f64() * RATE as f64) as u64;
+/// Write what one track's ring holds, in blocks of at least 20 ms, and silence for any stretch
+/// the clock has passed with nothing in it -- a microphone that started late, an output that
+/// played nothing -- so every track stays with the picture.
+fn pump(w: &mut super::mkv::Writer, track: usize, sound: &mut Sound, clock: Duration, all: bool) -> std::io::Result<()> {
+    let block = RATE as usize / 50;
     loop {
         let waiting = sound.ring.available() / sound.channels;
-        let gap = due.saturating_sub(sound.frames + waiting as u64);
-        if waiting == 0 && gap == 0 {
+        if waiting == 0 || (waiting < block && !all) {
             break;
         }
-        let index = unsafe { ndk::AMediaCodec_dequeueInputBuffer(sound.codec.0, 0) };
-        if index < 0 {
-            return;
-        }
-        let mut capacity = 0usize;
-        let buffer = unsafe { ndk::AMediaCodec_getInputBuffer(sound.codec.0, index as usize, &mut capacity) };
-        if buffer.is_null() {
-            return;
-        }
-        let room = (capacity / (2 * sound.channels)).min(1024);
-        let (frames, samples) = if waiting > 0 {
-            let frames = waiting.min(room);
-            let mut floats = vec![0f32; frames * sound.channels];
-            sound.ring.read(&mut floats);
-            (frames, floats)
-        } else {
-            let frames = (gap as usize).min(room);
-            (frames, vec![0f32; frames * sound.channels])
-        };
-        let out = unsafe { std::slice::from_raw_parts_mut(buffer as *mut i16, frames * sound.channels) };
-        for (o, s) in out.iter_mut().zip(&samples) {
-            *o = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
-        }
-        let pts_us = (sound.frames * 1_000_000 / RATE as u64) as u64;
-        unsafe {
-            ndk::AMediaCodec_queueInputBuffer(sound.codec.0, index as usize, 0, frames * 2 * sound.channels, pts_us, 0);
-        }
+        let frames = waiting.min(RATE as usize / 5);
+        let mut samples = vec![0f32; frames * sound.channels];
+        sound.ring.read(&mut samples);
+        let ms = (sound.frames * 1000 / RATE as u64) as i64;
+        w.audio(track, ms, &samples)?;
         sound.frames += frames as u64;
     }
-    if ending {
-        let index = unsafe { ndk::AMediaCodec_dequeueInputBuffer(sound.codec.0, 0) };
-        if index >= 0 {
-            let pts_us = sound.frames * 1_000_000 / RATE as u64;
-            unsafe {
-                ndk::AMediaCodec_queueInputBuffer(
-                    sound.codec.0,
-                    index as usize,
-                    0,
-                    0,
-                    pts_us,
-                    ndk::AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM as u32,
-                );
-            }
-            sound.ended = true;
-        }
+    let due = (clock.as_secs_f64() * RATE as f64) as u64;
+    while sound.frames < due {
+        let frames = ((due - sound.frames) as usize).min(RATE as usize / 5);
+        let ms = (sound.frames * 1000 / RATE as u64) as i64;
+        w.audio(track, ms, &vec![0f32; frames * sound.channels])?;
+        sound.frames += frames as u64;
     }
+    Ok(())
 }
 
 fn stamp() -> String {

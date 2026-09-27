@@ -84,6 +84,11 @@ pub enum Head {
 /// One window's sound: its renderer, and the stereo waiting to go out.
 struct SlotState {
     queue: Ring,
+    /// The same sound as 7.1.4 speakers before the HRTF, frame for frame with `queue`, while a
+    /// recording wants it; see [`record_surround`].
+    bed: Ring,
+    /// Whether `bed` has been lined up with `queue` since the recording began.
+    bed_lined_up: AtomicBool,
     /// Whether the queue has its cushion and is being played; see [`read_cushioned`].
     primed: AtomicBool,
     render: Mutex<Option<Binaural>>,
@@ -129,6 +134,8 @@ struct Shared {
     /// Where what is played goes as well, while a video is being recorded: "what you heard".
     /// Written only by AAudio's callback.
     heard: Mutex<Option<Arc<Ring>>>,
+    /// Where the 7.1.4 surround mix goes while a recording wants it. Written only by the callback.
+    surround: Mutex<Option<Arc<Ring>>>,
     head: Mutex<Head>,
     directness: Mutex<Directness>,
     rate: AtomicU32,
@@ -147,6 +154,7 @@ fn shared() -> &'static Shared {
         unplaced_primed: AtomicBool::new(false),
         cues: Ring::new(QUEUE_FRAMES * 2),
         heard: Mutex::new(None),
+        surround: Mutex::new(None),
         head: Mutex::new(Head::Measured),
         directness: Mutex::new(Directness::default()),
         rate: AtomicU32::new(48_000),
@@ -215,6 +223,20 @@ pub fn feed(slot: Option<Slot>, pcm: &[i16], channels: usize) {
     state
         .sounding
         .store(render.sounding_layout().map(layout_code).unwrap_or(0), Ordering::Relaxed);
+    // The recording's surround: the same aim, as speakers instead of ears. Lined up first with
+    // what is already waiting in `queue`, so the two come out of the callback together.
+    if SURROUND_ON.load(Ordering::Relaxed) {
+        if !state.bed_lined_up.swap(true, Ordering::Relaxed) {
+            let waiting = state.queue.available() / 2;
+            state.bed.clear();
+            state.bed.write(&vec![0.0; waiting * SURROUND_CHANNELS]);
+        }
+        let mut bed = vec![0.0f32; frames * SURROUND_CHANNELS];
+        render.render_bed(&input[..frames * channels], &mut bed);
+        state.bed.write(&bed);
+    } else {
+        state.bed_lined_up.store(false, Ordering::Relaxed);
+    }
     state.queue.write(&output);
 }
 
@@ -258,9 +280,20 @@ unsafe extern "C" fn play(
     let mut scratch = vec![0.0f32; out.len()];
     // Short reads come back as silence rather than a stall, as on the Deck.
     let rate = shared.rate.load(Ordering::Relaxed) as usize;
-    read_cushioned(&shared.unplaced, &shared.unplaced_primed, &mut scratch, rate);
+    let frames = out.len() / 2;
+    let surround = shared.surround.try_lock().ok().and_then(|s| s.clone());
+    let mut bed = vec![0.0f32; if surround.is_some() { frames * SURROUND_CHANNELS } else { 0 }];
+    let mut bed_scratch = bed.clone();
+    read_cushioned(&shared.unplaced, &shared.unplaced_primed, &mut scratch, rate, None);
     for (o, s) in out.iter_mut().zip(&scratch) {
         *o += *s;
+    }
+    // Unplaced sound -- a VR application's own mix -- is the front pair of the surround, as is.
+    if surround.is_some() {
+        for (f, pair) in scratch.chunks_exact(2).enumerate() {
+            bed[f * SURROUND_CHANNELS] += pair[0];
+            bed[f * SURROUND_CHANNELS + 1] += pair[1];
+        }
     }
     // The session's own clicks are made here and never late: straight out.
     scratch.fill(0.0);
@@ -270,9 +303,13 @@ unsafe extern "C" fn play(
     }
     if let Ok(slots) = shared.slots.try_lock() {
         for state in slots.values() {
-            read_cushioned(&state.queue, &state.primed, &mut scratch, rate);
+            let companion = surround.is_some().then(|| Companion { ring: &state.bed, out: &mut bed_scratch });
+            read_cushioned(&state.queue, &state.primed, &mut scratch, rate, companion);
             for (o, s) in out.iter_mut().zip(&scratch) {
                 *o += *s;
+            }
+            for (b, s) in bed.iter_mut().zip(&bed_scratch) {
+                *b += *s;
             }
         }
     }
@@ -285,6 +322,9 @@ unsafe extern "C" fn play(
         if let Some(ring) = heard.as_ref() {
             ring.write(out);
         }
+    }
+    if let Some(ring) = surround {
+        ring.write(&bed);
     }
     ndk::AAUDIO_CALLBACK_RESULT_CONTINUE as ndk::aaudio_data_callback_result_t
 }
@@ -306,10 +346,19 @@ const MOST_MS: usize = 400;
 static RAN_DRY: AtomicU32 = AtomicU32::new(0);
 static TRIMMED: AtomicU32 = AtomicU32::new(0);
 
-fn read_cushioned(ring: &Ring, primed: &AtomicBool, out: &mut [f32], rate: usize) {
+/// A queue's companion, read frame for frame with it: its 7.1.4 surround while recording.
+struct Companion<'a> {
+    ring: &'a Ring,
+    out: &'a mut [f32],
+}
+
+fn read_cushioned(ring: &Ring, primed: &AtomicBool, out: &mut [f32], rate: usize, mut companion: Option<Companion>) {
     let cushion = rate * 2 * CUSHION_MS / 1000;
     let most = rate * 2 * MOST_MS / 1000;
     let waiting = ring.available();
+    if let Some(c) = companion.as_mut() {
+        c.out.fill(0.0);
+    }
     if !primed.load(Ordering::Relaxed) {
         if waiting < cushion.max(out.len()) {
             out.fill(0.0);
@@ -321,11 +370,31 @@ fn read_cushioned(ring: &Ring, primed: &AtomicBool, out: &mut [f32], rate: usize
         TRIMMED.fetch_add(1, Ordering::Relaxed);
         let mut dropped = vec![0.0f32; (waiting - cushion) & !1];
         ring.read(&mut dropped);
+        if let Some(c) = companion.as_mut() {
+            let mut dropped = vec![0.0f32; dropped.len() / 2 * SURROUND_CHANNELS];
+            c.ring.read(&mut dropped);
+        }
+    }
+    if let Some(c) = companion.as_mut() {
+        c.ring.read(c.out);
     }
     if ring.read(out) > 0 {
         RAN_DRY.fetch_add(1, Ordering::Relaxed);
         primed.store(false, Ordering::Relaxed);
     }
+}
+
+/// Channels in a recording's surround track: the Deck's 7.1.4 bed, in its order --
+/// FL FR FC LFE BL BR SL SR TFL TFR TBL TBR.
+pub const SURROUND_CHANNELS: usize = BED_CHANNELS;
+
+static SURROUND_ON: AtomicBool = AtomicBool::new(false);
+
+/// Mix the 7.1.4 surround -- every window's sound on the speakers it points at, before the HRTF,
+/// and unplaced sound on the front pair as it is -- into `into` from now on, or stop.
+pub fn record_surround(into: Option<Arc<Ring>>) {
+    SURROUND_ON.store(into.is_some(), Ordering::Relaxed);
+    *shared().surround.lock().unwrap() = into;
 }
 
 unsafe extern "C" fn lost(_stream: *mut ndk::AAudioStream, _user: *mut c_void, error: ndk::aaudio_result_t) {
@@ -447,6 +516,8 @@ impl Engine {
             log::info!("spatial audio: opened {}", sink_name(slot));
             Arc::new(SlotState {
                 queue: Ring::new(QUEUE_FRAMES * 2),
+                bed: Ring::new(QUEUE_FRAMES * SURROUND_CHANNELS),
+                bed_lined_up: AtomicBool::new(false),
                 primed: AtomicBool::new(false),
                 render: Mutex::new(None),
                 width: width.layout(),
@@ -478,9 +549,8 @@ impl Engine {
         }
     }
 
-    /// The surround bed is not recorded here -- MP4 carries AAC, and Android's AAC encoder
-    /// stops at eight channels -- so this is accepted and ignored, and the session drives both
-    /// engines the same way. What is heard is recorded; see [`record_heard`].
+    /// Accepted and ignored, so the session drives both engines the same way: the Beam Pro's
+    /// recorder asks for its tracks directly -- [`record_heard`] and [`record_surround`].
     pub fn record(&self, _into: Option<Arc<Ring>>) {}
 
     pub fn set_directness(&self, directness: Directness) {

@@ -208,7 +208,7 @@ public class MainActivity extends Activity implements SensorEventListener {
             android.content.ContentResolver resolver = getContentResolver();
             android.content.ContentValues values = new android.content.ContentValues();
             values.put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, from.getName());
-            values.put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4");
+            values.put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/x-matroska");
             values.put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, "Movies/Spatiand");
             values.put(android.provider.MediaStore.Video.Media.IS_PENDING, 1);
             android.net.Uri uri = resolver.insert(android.provider.MediaStore.Video.Media.getContentUri(
