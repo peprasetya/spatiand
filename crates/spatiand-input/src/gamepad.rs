@@ -501,6 +501,14 @@ impl Gamepad {
 }
 
 /// Every extra controller that is plugged in or paired.
+/// Pads read by something else and handed in whole, by an id of its own: on Android, where
+/// an app cannot open `/dev/input`, the app's `InputDevice` events. [`Gamepads::poll`] returns
+/// them beside the ones it reads itself, so everything after it treats them alike.
+pub fn external() -> &'static std::sync::Mutex<Vec<(i32, GamepadState)>> {
+    static EXTERNAL: std::sync::OnceLock<std::sync::Mutex<Vec<(i32, GamepadState)>>> = std::sync::OnceLock::new();
+    EXTERNAL.get_or_init(Default::default)
+}
+
 pub struct Gamepads {
     pads: Vec<Gamepad>,
     scanned: Option<Instant>,
@@ -537,7 +545,11 @@ impl Gamepads {
             }
             alive
         });
-        self.pads.iter().map(|p| p.state).collect()
+        let mut states: Vec<GamepadState> = self.pads.iter().map(|p| p.state).collect();
+        if let Ok(external) = external().lock() {
+            states.extend(external.iter().map(|(_, state)| *state));
+        }
+        states
     }
 
     pub fn names(&self) -> Vec<String> {

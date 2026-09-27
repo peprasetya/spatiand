@@ -14,12 +14,17 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.hardware.display.DisplayManager;
+import android.hardware.input.InputManager;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbManager;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
 import android.os.Bundle;
+import android.os.CombinedVibration;
+import android.os.VibrationEffect;
+import android.os.VibratorManager;
+import android.view.InputDevice;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
@@ -43,7 +48,9 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The phone: the Beam Pro's controller for the session on the glasses, and the owner of what
@@ -80,6 +87,8 @@ public class MainActivity extends Activity implements SensorEventListener {
     int presentationDisplay = -1;
     UsbDeviceConnection connection;
     SensorManager sensors;
+    /** Each gamepad's gyro listener, so it can be let go of when the pad goes. */
+    final Map<Integer, SensorEventListener> padGyros = new HashMap<>();
 
     @Override
     protected void onCreate(Bundle state) {
@@ -146,9 +155,18 @@ public class MainActivity extends Activity implements SensorEventListener {
         getSystemService(DisplayManager.class).registerDisplayListener(displays, ui);
 
         sensors = getSystemService(SensorManager.class);
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            // Asked once; a host only gets the microphone when one of its apps is listening.
+            requestPermissions(new String[] {android.Manifest.permission.RECORD_AUDIO}, 1);
+        }
+        InputManager inputs = getSystemService(InputManager.class);
+        inputs.registerInputDeviceListener(padsListener, ui);
+        for (int id : inputs.getInputDeviceIds()) padsListener.onInputDeviceAdded(id);
         showOnGlasses();
         takeGlasses(true);
         ui.post(refresh);
+        ui.post(rumbler);
     }
 
     /** A bottom-bar button that is held as long as the finger is on it, as a Deck button is. */
@@ -195,10 +213,19 @@ public class MainActivity extends Activity implements SensorEventListener {
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {}
 
-    /** A keyboard's keys go to the session, except the phone's own volume and back. */
+    static boolean fromPad(int source) {
+        return (source & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
+                || (source & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK;
+    }
+
+    /** A gamepad's keys go to its pad; a keyboard's to the session, except the phone's own. */
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
         int code = e.getKeyCode();
+        if (fromPad(e.getSource()) && e.getAction() != KeyEvent.ACTION_MULTIPLE
+                && Native.padButton(e.getDeviceId(), code, e.getAction() == KeyEvent.ACTION_DOWN)) {
+            return true;
+        }
         boolean system = code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN
                 || code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_HOME
                 || code == 206 /* KEYCODE_3D_MODE: the orange key, the framework's */;
@@ -208,6 +235,131 @@ public class MainActivity extends Activity implements SensorEventListener {
         }
         return super.dispatchKeyEvent(e);
     }
+
+    /** A gamepad's sticks, triggers and hat. */
+    @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent e) {
+        if ((e.getSource() & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK
+                && e.getActionMasked() == MotionEvent.ACTION_MOVE) {
+            float lt = Math.max(e.getAxisValue(MotionEvent.AXIS_LTRIGGER), e.getAxisValue(MotionEvent.AXIS_BRAKE));
+            float rt = Math.max(e.getAxisValue(MotionEvent.AXIS_RTRIGGER), e.getAxisValue(MotionEvent.AXIS_GAS));
+            Native.padAxes(e.getDeviceId(),
+                    e.getAxisValue(MotionEvent.AXIS_X), e.getAxisValue(MotionEvent.AXIS_Y),
+                    e.getAxisValue(MotionEvent.AXIS_Z), e.getAxisValue(MotionEvent.AXIS_RZ),
+                    lt, rt,
+                    e.getAxisValue(MotionEvent.AXIS_HAT_X), e.getAxisValue(MotionEvent.AXIS_HAT_Y));
+            return true;
+        }
+        return super.dispatchGenericMotionEvent(e);
+    }
+
+    // ------------------------------------------------------------------ gamepads
+
+    /** A pad with a touchpad: Android makes that a mouse pointer, unless the app captures it. */
+    boolean anyPadTouchpad() {
+        for (int id : getSystemService(InputManager.class).getInputDeviceIds()) {
+            InputDevice d = InputDevice.getDevice(id);
+            if (d != null && fromPad(d.getSources())
+                    && (d.getSources() & InputDevice.SOURCE_MOUSE) == InputDevice.SOURCE_MOUSE) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Take a pad's touchpad from Android's pointer: captured, it reports where the finger is,
+     * which is the Deck's right trackpad. Only while this has focus, which is when it can be.
+     */
+    void capturePadTouchpad() {
+        View root = getWindow().getDecorView();
+        if (!anyPadTouchpad() || !root.hasWindowFocus()) return;
+        root.setOnCapturedPointerListener((v, e) -> {
+            InputDevice d = e.getDevice();
+            if (d == null) return false;
+            InputDevice.MotionRange rx = d.getMotionRange(MotionEvent.AXIS_X, e.getSource());
+            InputDevice.MotionRange ry = d.getMotionRange(MotionEvent.AXIS_Y, e.getSource());
+            float w = rx != null ? rx.getRange() : 1920, h = ry != null ? ry.getRange() : 942;
+            float x0 = rx != null ? rx.getMin() : 0, y0 = ry != null ? ry.getMin() : 0;
+            int action = e.getActionMasked();
+            boolean touched = action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL
+                    && e.getPointerCount() > 0;
+            boolean clicked = (e.getButtonState() & MotionEvent.BUTTON_PRIMARY) != 0;
+            Native.padTouch(e.getDeviceId(), (e.getX() - x0) / Math.max(1, w),
+                    (e.getY() - y0) / Math.max(1, h), touched, clicked);
+            return true;
+        });
+        root.requestPointerCapture();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (focused) capturePadTouchpad();
+    }
+
+    final InputManager.InputDeviceListener padsListener = new InputManager.InputDeviceListener() {
+        @Override
+        public void onInputDeviceAdded(int id) {
+            InputDevice d = InputDevice.getDevice(id);
+            if (d == null || !fromPad(d.getSources()) || padGyros.containsKey(id)) return;
+            Log.i(TAG, "gamepad: " + d.getName());
+            // Its own gyro, through its own sensors: what aims on the Deck's pads.
+            SensorManager own = d.getSensorManager();
+            Sensor gyro = own.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+            if (gyro != null) {
+                SensorEventListener listener = new SensorEventListener() {
+                    @Override
+                    public void onSensorChanged(SensorEvent e) {
+                        Native.padGyro(id, e.values[0], e.values[1], e.values[2]);
+                    }
+
+                    @Override
+                    public void onAccuracyChanged(Sensor s, int accuracy) {}
+                };
+                own.registerListener(listener, gyro, SensorManager.SENSOR_DELAY_GAME);
+                padGyros.put(id, listener);
+            } else {
+                padGyros.put(id, null);
+            }
+            capturePadTouchpad();
+        }
+
+        @Override
+        public void onInputDeviceRemoved(int id) {
+            if (padGyros.containsKey(id)) {
+                padGyros.remove(id);
+                Native.padGone(id);
+            }
+        }
+
+        @Override
+        public void onInputDeviceChanged(int id) {}
+    };
+
+    /** A game's rumble, played on every pad that has motors. */
+    final Runnable rumbler = new Runnable() {
+        @Override
+        public void run() {
+            long r = Native.rumble();
+            if (r >= 0) {
+                int strong = (int) ((r >> 16) & 0xffff), weak = (int) (r & 0xffff);
+                int amplitude = Math.max(strong, weak) / 257;
+                for (int id : padGyros.keySet()) {
+                    InputDevice d = InputDevice.getDevice(id);
+                    if (d == null) continue;
+                    VibratorManager motors = d.getVibratorManager();
+                    if (amplitude == 0) {
+                        motors.cancel();
+                    } else {
+                        motors.vibrate(CombinedVibration.createParallel(
+                                VibrationEffect.createOneShot(500, Math.max(1, Math.min(255, amplitude)))));
+                    }
+                }
+            }
+            ui.postDelayed(this, 30);
+        }
+    };
 
     /**
      * The keyboard layouts the compositor's keyboard is made from, out of the APK and into the
@@ -259,8 +411,18 @@ public class MainActivity extends Activity implements SensorEventListener {
     void fillSoundPickers() {
         AudioManager audio = getSystemService(AudioManager.class);
         AudioDeviceInfo[] outs = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
+        AudioDeviceInfo[] ins = audio.getDevices(AudioManager.GET_DEVICES_INPUTS);
         fillPicker(output, outs, "Out");
-        fillPicker(input, audio.getDevices(AudioManager.GET_DEVICES_INPUTS), "In");
+        fillPicker(input, ins, "In");
+        input.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                Native.audioInput(position == 0 ? 0 : ins[position - 1].getId());
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
         // The first entry is Android's own choice, which follows whatever is plugged in.
         output.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
@@ -311,6 +473,8 @@ public class MainActivity extends Activity implements SensorEventListener {
     @Override
     protected void onDestroy() {
         ui.removeCallbacks(refresh);
+        ui.removeCallbacks(rumbler);
+        getSystemService(InputManager.class).unregisterInputDeviceListener(padsListener);
         getSystemService(DisplayManager.class).unregisterDisplayListener(displays);
         unregisterReceiver(usbPermission);
         unregisterReceiver(usbAttached);
@@ -505,7 +669,6 @@ public class MainActivity extends Activity implements SensorEventListener {
         @Override
         public void run() {
             status.setText(Native.status());
-            Native.traffic(android.net.TrafficStats.getTotalRxBytes(), android.net.TrafficStats.getTotalTxBytes());
             ui.postDelayed(this, 1000);
         }
     };

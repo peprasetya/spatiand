@@ -97,61 +97,12 @@ async fn send(connection: &quinn::Connection, stop: &AtomicBool) -> Result<(), S
         .await
         .map_err(|e| format!("could not say what it is: {e}"))?;
 
-    // `pw-record` reads whatever the desktop calls the default source. Its output is read on a
-    // thread of its own -- a child's pipe is a blocking read, and blocking here would stop
-    // everything else this runtime is doing.
-    let mut child = Command::new("pw-record")
-        .args([
-            "--raw",
-            "--format",
-            "s16",
-            "--rate",
-            &RATE.to_string(),
-            "--channels",
-            &CHANNELS.to_string(),
-            "--latency",
-            "20ms",
-            "-P",
-            "{ media.name = \"Spatiand (remote)\" }",
-            "-",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("could not start pw-record: {e}"))?;
-    let mut out = child.stdout.take().ok_or("pw-record has no output")?;
     // Four chunks, forty milliseconds. A voice is only worth sending while it is still
     // roughly now: a queue deep enough to ride out a stall is also deep enough to put every
     // word behind it late by the length of the stall, and unlike a file this never catches
     // up. So it is kept short and the overflow is dropped rather than waited on.
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4);
-    std::thread::Builder::new()
-        .name("microphone".into())
-        .spawn(move || {
-            let mut chunk = vec![0u8; CHUNK_BYTES];
-            let mut lost = 0usize;
-            let mut complained = false;
-            while out.read_exact(&mut chunk).is_ok() {
-                match tx.try_send(chunk.clone()) {
-                    Ok(()) => {}
-                    // The link has stopped taking it. Speaking into a queue would only make
-                    // the delay it comes back with longer.
-                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                        lost += 1;
-                        if !complained && lost > 100 {
-                            complained = true;
-                            log::warn!(
-                                "remote: the microphone is going out slower than it comes in; \
-                                 dropping some of it rather than falling behind"
-                            );
-                        }
-                    }
-                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return,
-                }
-            }
-        })
-        .map_err(|e| format!("could not read the microphone: {e}"))?;
+    let capture = record(tx)?;
 
     log::info!("remote: sending the microphone");
     // Whether any of it is sound. A capture that yields nothing but digital silence looks
@@ -210,8 +161,95 @@ async fn send(connection: &quinn::Connection, stop: &AtomicBool) -> Result<(), S
             break Err("the host stopped listening".to_string());
         }
     };
-    let _ = child.kill();
-    let _ = child.wait();
+    drop(capture);
     let _ = stream.finish();
     result
+}
+
+/// What is recording: stopped when dropped.
+#[cfg(not(target_os = "android"))]
+struct Recording(std::process::Child);
+
+#[cfg(not(target_os = "android"))]
+impl Drop for Recording {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Record the microphone in ten-millisecond chunks into `tx`, dropping what the link has no
+/// room for.
+#[cfg(not(target_os = "android"))]
+fn record(tx: tokio::sync::mpsc::Sender<Vec<u8>>) -> Result<Recording, String> {
+    // `pw-record` reads whatever the desktop calls the default source. Its output is read on a
+    // thread of its own -- a child's pipe is a blocking read, and blocking here would stop
+    // everything else this runtime is doing.
+    let mut child = Command::new("pw-record")
+        .args([
+            "--raw",
+            "--format",
+            "s16",
+            "--rate",
+            &RATE.to_string(),
+            "--channels",
+            &CHANNELS.to_string(),
+            "--latency",
+            "20ms",
+            "-P",
+            "{ media.name = \"Spatiand (remote)\" }",
+            "-",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("could not start pw-record: {e}"))?;
+    let mut out = child.stdout.take().ok_or("pw-record has no output")?;
+    std::thread::Builder::new()
+        .name("microphone".into())
+        .spawn(move || {
+            let mut chunk = vec![0u8; CHUNK_BYTES];
+            let mut lost = 0usize;
+            let mut complained = false;
+            while out.read_exact(&mut chunk).is_ok() {
+                match tx.try_send(chunk.clone()) {
+                    Ok(()) => {}
+                    // The link has stopped taking it. Speaking into a queue would only make
+                    // the delay it comes back with longer.
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                        lost += 1;
+                        if !complained && lost > 100 {
+                            complained = true;
+                            log::warn!(
+                                "remote: the microphone is going out slower than it comes in; \
+                                 dropping some of it rather than falling behind"
+                            );
+                        }
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return,
+                }
+            }
+        })
+        .map_err(|e| format!("could not read the microphone: {e}"))?;
+    Ok(Recording(child))
+}
+
+/// On Android: Android's microphone through AAudio, in the same chunks.
+#[cfg(target_os = "android")]
+fn record(tx: tokio::sync::mpsc::Sender<Vec<u8>>) -> Result<spatiand_audio::server::Capture, String> {
+    let mut chunk: Vec<u8> = Vec::with_capacity(CHUNK_BYTES);
+    spatiand_audio::server::Capture::open(
+        RATE,
+        CHANNELS,
+        Box::new(move |samples: &[i16]| {
+            for sample in samples {
+                chunk.extend_from_slice(&sample.to_le_bytes());
+                if chunk.len() == CHUNK_BYTES {
+                    // Full is the link falling behind: dropped, as on the Deck.
+                    let _ = tx.try_send(std::mem::replace(&mut chunk, Vec::with_capacity(CHUNK_BYTES)));
+                }
+            }
+        }),
+    )
 }

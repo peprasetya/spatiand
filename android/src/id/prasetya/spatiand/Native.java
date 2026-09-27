@@ -59,8 +59,26 @@ final class Native {
     /** Play the room's sound to this audio device; 0 for wherever Android routes it. */
     static native void audioOutput(int deviceId);
 
-    /** The network's bytes so far, for the monitors under the thumb. */
-    static native void traffic(long received, long sent);
+    /** Record the microphone sent to hosts from this audio device; 0 for Android's choice. */
+    static native void audioInput(int deviceId);
+
+    /** A gamepad's button, by KeyEvent code. Returns whether it was one. */
+    static native boolean padButton(int device, int code, boolean down);
+
+    /** A gamepad's sticks (+y down), triggers and hat. */
+    static native void padAxes(int device, float lx, float ly, float rx, float ry,
+            float lt, float rt, float hatX, float hatY);
+
+    /** A gamepad's touchpad, 0..1 from its top-left. */
+    static native void padTouch(int device, float x, float y, boolean touched, boolean clicked);
+
+    /** A gamepad's gyro, radians a second. */
+    static native void padGyro(int device, float x, float y, float z);
+
+    static native void padGone(int device);
+
+    /** What a game asked the pad's motors to do: strong << 16 | weak, or -1 for nothing new. */
+    static native long rumble();
 
     /** A line for the phone's screen. */
     static native String status();

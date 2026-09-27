@@ -6,6 +6,7 @@ pub mod egl;
 mod jni;
 mod keys;
 mod logging;
+pub mod pads;
 pub mod panel;
 pub mod phone;
 pub mod remote_video;

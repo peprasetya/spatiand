@@ -266,6 +266,84 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_traffic(_env: *mut JNIEn
     crate::system::ANDROID_TRAFFIC[1].store(tx.max(0) as u64, Ordering::Relaxed);
 }
 
+/// `Native.padButton(device, code, down)`: a gamepad's button. Returns whether it was one.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_padButton(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    device: jint,
+    code: jint,
+    down: jboolean,
+) -> jboolean {
+    if super::pads::button(device, code, down == JNI_TRUE) { JNI_TRUE } else { JNI_FALSE }
+}
+
+/// `Native.padAxes(device, lx, ly, rx, ry, lt, rt, hatX, hatY)`: a gamepad's sticks and triggers.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_padAxes(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    device: jint,
+    lx: jfloat,
+    ly: jfloat,
+    rx: jfloat,
+    ry: jfloat,
+    lt: jfloat,
+    rt: jfloat,
+    hat_x: jfloat,
+    hat_y: jfloat,
+) {
+    super::pads::axes(device, lx, ly, rx, ry, lt, rt, hat_x, hat_y);
+}
+
+/// `Native.padTouch(device, x, y, touched, clicked)`: a gamepad's touchpad, 0..1.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_padTouch(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    device: jint,
+    x: jfloat,
+    y: jfloat,
+    touched: jboolean,
+    clicked: jboolean,
+) {
+    super::pads::touch(device, x, y, touched == JNI_TRUE, clicked == JNI_TRUE);
+}
+
+/// `Native.padGyro(device, x, y, z)`: a gamepad's gyro, radians a second.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_padGyro(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    device: jint,
+    x: jfloat,
+    y: jfloat,
+    z: jfloat,
+) {
+    super::pads::gyro(device, x, y, z);
+}
+
+/// `Native.padGone(device)`: a gamepad went away.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_padGone(_env: *mut JNIEnv, _class: jclass, device: jint) {
+    super::pads::gone(device);
+}
+
+/// `Native.rumble()`: what a game asked the pad's motors to do since the last look, packed
+/// strong << 16 | weak, 0..65535 each; −1 for nothing new.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_rumble(_env: *mut JNIEnv, _class: jclass) -> jni_sys::jlong {
+    super::pads::take_rumble()
+}
+
+/// `Native.audioInput(id)`: record the microphone sent to hosts from this Android audio
+/// device; 0 for Android's choice.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_audioInput(_env: *mut JNIEnv, _class: jclass, id: jint) {
+    spatiand_audio::server::set_input_device(id);
+}
+
 /// `Native.status()`: a line for the phone's screen.
 #[no_mangle]
 pub extern "system" fn Java_id_prasetya_spatiand_Native_status(env: *mut JNIEnv, _class: jclass) -> jstring {

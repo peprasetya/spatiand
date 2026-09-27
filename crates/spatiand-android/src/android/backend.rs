@@ -15,8 +15,8 @@
 //!   the right, the orange key STEAM and the button under the touch area `⋯`. Two fingers
 //!   pinching zoom the window being pointed at.
 //! * **The glasses.** Opened through the usbfs descriptor the app was given, not hidraw.
-//! * **The sidecar.** The phone's touch area shows the monitors (`super::panel`); the audio
-//!   pickers and the buttons are the app's own views around it.
+//! * **The sidecar.** None: the phone's touch area is the pad and nothing else
+//!   (`super::panel`); the audio pickers and the buttons are the app's own views around it.
 //! * **Not here:** XWayland, local applications, PipeWire, BlueZ, the volume keys and the
 //!   screen backlight. Every window on the Beam Pro is a remote one.
 
@@ -54,8 +54,8 @@ const SCROLL_SCALE: f64 = 260.0;
 const IMU_SILENCE_TIMEOUT: Duration = Duration::from_secs(3);
 /// See `backend_drm`'s.
 const POLL_STALL_FORGIVENESS: Duration = Duration::from_millis(500);
-/// How often the phone's panel is redrawn. Its graphs move once a second.
-const PANEL_EVERY: Duration = Duration::from_millis(100);
+/// How often the phone's touch area is redrawn: it only needs to be there.
+const PANEL_EVERY: Duration = Duration::from_secs(1);
 /// The Beam Pro draws every display at the phone's 60 Hz.
 const REFRESH_MHZ: i32 = 60_000;
 
@@ -176,8 +176,6 @@ pub fn run(
     let mut menu_click_was = false;
     let mut keyboard_reach: [Option<spatiand_render::ray::Hit>; 2] = [None, None];
     let mut drag_left_y: Option<f32> = None;
-    let mut monitors = crate::system::Monitors::new();
-    let mut phone_panel = super::panel::PhonePanel::default();
     let mut panel_drawn = Instant::now() - PANEL_EVERY;
 
     // The launcher has only remote applications here: Android's own are not windows yet.
@@ -253,7 +251,7 @@ pub fn run(
         let Some(output) = glasses.as_ref() else {
             // Nowhere to draw the world. Keep the clients answered and the panel drawn.
             if let Some(p) = phone.as_mut() {
-                draw_phone(&mut renderer, p, &scene, &mut text, &mut monitors, &mut phone_panel);
+                draw_phone(&mut renderer, p);
             }
             display.dispatch_clients(&mut runtime.state)?;
             display.flush_clients()?;
@@ -401,8 +399,22 @@ pub fn run(
                     }
                 }
             }
-            let deck_input = Some(*controller.state());
+            let mut deck_input = Some(*controller.state());
             let snapshot = controls.gather(deck_input.as_ref());
+            // A PlayStation pad's touchpad is the right trackpad while a thumb is on it, as on
+            // the Deck: it wins over the phone, which is always pointing somewhere. After
+            // `gather`, so the layout still sees the phone exactly as it is.
+            if let Some(touch) = controls.touchpad().filter(|t| t.touched || t.clicked) {
+                if let Some(state) = deck_input.as_mut() {
+                    state.right_pad = spatiand_input::Pad {
+                        x: touch.x,
+                        y: touch.y,
+                        touched: true,
+                        clicked: touch.clicked,
+                        pressure: 8000,
+                    };
+                }
+            }
             let layout_resting = shell.menu_is_open() || missing.is_some() || calibration.is_some();
             let delivery = controls.step(&snapshot, layout_resting);
             let focused_app_id = runtime
@@ -414,6 +426,10 @@ pub fn run(
                 .or_else(|| crate::pointer::room_window(&runtime.state))
                 .and_then(|w| runtime.state.app_id_of(&w));
             remotes.pad(focused_app_id.as_deref(), pad_state(&controls.report()));
+            // The motors are the pad's; the app plays what is asked for on it.
+            if let Some((strong, weak)) = controls.rumble().or_else(|| remotes.rumble()) {
+                super::pads::set_rumble(strong, weak);
+            }
             for (fired, intent) in [
                 (delivery.guide, spatiand_shell::Intent::ToggleHud),
                 (delivery.guide_held, spatiand_shell::Intent::ToggleLauncher),
@@ -1386,7 +1402,7 @@ pub fn run(
                 panel_drawn = Instant::now();
                 phone = output_for(&shared.phone, &egl_display, renderer.egl_context(), phone.take());
                 if let Some(p) = phone.as_mut() {
-                    draw_phone(&mut renderer, p, &scene, &mut text, &mut monitors, &mut phone_panel);
+                    draw_phone(&mut renderer, p);
                 }
             }
 
@@ -1438,26 +1454,15 @@ pub fn run(
 }
 
 /// Draw the phone's touch area.
-fn draw_phone(
-    renderer: &mut GlesRenderer,
-    output: &mut Output,
-    scene: &Scene,
-    text: &mut TextRenderer,
-    monitors: &mut crate::system::Monitors,
-    panel: &mut super::panel::PhonePanel,
-) {
-    monitors.tick();
-    panel.prepare(text, monitors);
+fn draw_phone(renderer: &mut GlesRenderer, output: &mut Output) {
     let size = output.size;
     let drawn = (|| -> Result<(), Box<dyn std::error::Error>> {
         let mut target = renderer.bind(&mut output.surface)?;
         let mut frame = renderer.render(&mut target, size.into(), Transform::Normal)?;
-        let quads = scene.quads();
-        let white = scene.white_texture();
         frame.with_context(|gl| unsafe {
             gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
             gl.Disable(ffi::SCISSOR_TEST);
-            panel.draw(gl, quads, white, monitors, (size.0 as u32, size.1 as u32));
+            super::panel::draw(gl, (size.0 as u32, size.1 as u32));
         })?;
         let _ = frame.finish()?;
         Ok(())
