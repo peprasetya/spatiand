@@ -271,13 +271,14 @@ unsafe extern "C" fn play(
 }
 
 /// How much sound from the network waits before it is played: what a burst of WiFi can be
-/// late by without being heard. The Deck's is the pipe into `pw-cat`, 170 ms of it; AAudio
+/// late by without being heard -- 80 ms was not enough on the Beam Pro's WiFi, which loses
+/// bursts of packets. The Deck's is the pipe into `pw-cat`, 170 ms of it; AAudio
 /// asks for a few milliseconds at a time and a queue read that thinly runs dry at every late
 /// packet, which is heard as a jitter.
-const CUSHION_MS: usize = 80;
+const CUSHION_MS: usize = 150;
 /// More than this waiting and the oldest is dropped, so a stall does not leave the sound
 /// behind the picture for ever after.
-const MOST_MS: usize = 250;
+const MOST_MS: usize = 400;
 
 /// Read stereo from a queue of network sound, playing only once it has its cushion, and
 /// gathering the cushion again whenever it runs dry.
