@@ -258,9 +258,23 @@ public class MainActivity extends Activity implements SensorEventListener {
         return b;
     }
 
+    /**
+     * WiFi without its power saving, while the session is in front. Saving power, the phone's
+     * WiFi sleeps between beacons and takes packets in bursts: the picture and the sound from a
+     * host arrived late and all at once -- the sound ran dry three times in ten seconds with the
+     * output itself never late -- and the latency was felt more here than on the Deck.
+     */
+    android.net.wifi.WifiManager.WifiLock wifiLock;
+
     @Override
     protected void onResume() {
         super.onResume();
+        if (wifiLock == null) {
+            wifiLock = getSystemService(android.net.wifi.WifiManager.class).createWifiLock(
+                    android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "spatiand");
+            wifiLock.setReferenceCounted(false);
+        }
+        wifiLock.acquire();
         // The game rotation vector: no magnetometer, so no swing near a speaker or a desk lamp;
         // its yaw is its own, which the session aligns with the head at every recentre.
         Sensor rotation = sensors.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
@@ -269,6 +283,7 @@ public class MainActivity extends Activity implements SensorEventListener {
 
     @Override
     protected void onPause() {
+        if (wifiLock != null) wifiLock.release();
         sensors.unregisterListener(this);
         super.onPause();
     }
@@ -283,6 +298,11 @@ public class MainActivity extends Activity implements SensorEventListener {
 
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+
+    /** A gamepad, and not a keyboard whose media keys Android also calls a joystick. */
+    static boolean isGamepad(int sources) {
+        return (sources & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD;
+    }
 
     static boolean fromPad(int source) {
         return (source & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
@@ -380,13 +400,15 @@ public class MainActivity extends Activity implements SensorEventListener {
             }
             InputDevice d = e.getDevice();
             if (d == null) return false;
-            // A mouse or a keyboard's trackpad, not a pad's: it moves by how far it travelled.
-            if (!fromPad(d.getSources())) {
-                if ((e.getSource() & InputDevice.SOURCE_MOUSE_RELATIVE) == InputDevice.SOURCE_MOUSE_RELATIVE) {
-                    return mouseEvent(e);
-                }
-                return false;
+            // By what the event is, not the device: Android merges a keyboard, its trackpad and
+            // its media keys into one device, and media keys call themselves a joystick -- so a
+            // keyboard's trackpad came from "a gamepad", and its travel was read as a pad's
+            // touch positions. Travel is a mouse's; a touchpad's positions are a pad's only
+            // on a real gamepad.
+            if ((e.getSource() & InputDevice.SOURCE_MOUSE_RELATIVE) == InputDevice.SOURCE_MOUSE_RELATIVE) {
+                return mouseEvent(e);
             }
+            if (!isGamepad(d.getSources())) return false;
             InputDevice.MotionRange rx = d.getMotionRange(MotionEvent.AXIS_X, e.getSource());
             InputDevice.MotionRange ry = d.getMotionRange(MotionEvent.AXIS_Y, e.getSource());
             float w = rx != null ? rx.getRange() : 1920, h = ry != null ? ry.getRange() : 942;
@@ -413,11 +435,11 @@ public class MainActivity extends Activity implements SensorEventListener {
         public void onInputDeviceAdded(int id) {
             InputDevice d = InputDevice.getDevice(id);
             // A mouse or a trackpad arriving is captured too.
-            if (d != null && !fromPad(d.getSources())) {
+            if (d != null && !isGamepad(d.getSources())) {
                 capturePadTouchpad();
                 return;
             }
-            if (d == null || !fromPad(d.getSources()) || padGyros.containsKey(id)) return;
+            if (d == null || padGyros.containsKey(id)) return;
             Log.i(TAG, "gamepad: " + d.getName());
             // Its own gyro, through its own sensors: what aims on the Deck's pads.
             SensorManager own = d.getSensorManager();
