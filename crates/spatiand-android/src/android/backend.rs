@@ -179,6 +179,7 @@ pub fn run(
     let mut drag_left_y: Option<f32> = None;
     // Where a finger was when an open menu last moved a row for it. See the menus above.
     let mut menu_swipe: Option<(f32, f32)> = None;
+    super::record::publish_leftovers();
     // How far a finger travels on the touch area, in pad units (2 across), for a menu row.
     const MENU_SWIPE_STEP: f32 = 0.18;
     // Where a thumb was on a pad's touchpad last frame, to move the pointer by the difference.
@@ -1794,7 +1795,11 @@ fn save_screenshot(pixels: Vec<u8>, width: u32, height: u32) {
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join(format!("spatiand-{stamp}.png"));
         match image::save_buffer(&path, &flipped, width, height, image::ColorType::Rgba8) {
-            Ok(()) => log::info!("screenshot saved to {}", path.display()),
+            Ok(()) => {
+                log::info!("screenshot saved to {}", path.display());
+                // To Pictures/Spatiand, where the gallery finds it.
+                super::record::publish(path.display().to_string());
+            }
             Err(e) => log::warn!("could not save a screenshot: {e}"),
         }
     });

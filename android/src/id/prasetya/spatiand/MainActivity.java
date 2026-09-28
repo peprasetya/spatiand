@@ -205,14 +205,18 @@ public class MainActivity extends Activity implements SensorEventListener {
     void publish(String path) {
         new Thread(() -> {
             File from = new File(path);
+            boolean picture = path.endsWith(".png");
             android.content.ContentResolver resolver = getContentResolver();
             android.content.ContentValues values = new android.content.ContentValues();
-            values.put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, from.getName());
-            values.put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/x-matroska");
-            values.put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, "Movies/Spatiand");
-            values.put(android.provider.MediaStore.Video.Media.IS_PENDING, 1);
-            android.net.Uri uri = resolver.insert(android.provider.MediaStore.Video.Media.getContentUri(
-                    android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
+            values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, from.getName());
+            values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, picture ? "image/png" : "video/x-matroska");
+            values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                    picture ? "Pictures/Spatiand" : "Movies/Spatiand");
+            values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1);
+            android.net.Uri uri = resolver.insert(picture
+                    ? android.provider.MediaStore.Images.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    : android.provider.MediaStore.Video.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                    values);
             if (uri == null) {
                 Log.w(TAG, "recording: the media store would not take " + from.getName() + "; it stays at " + path);
                 return;
@@ -228,10 +232,10 @@ public class MainActivity extends Activity implements SensorEventListener {
                 return;
             }
             values.clear();
-            values.put(android.provider.MediaStore.Video.Media.IS_PENDING, 0);
+            values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0);
             resolver.update(uri, values, null, null);
             from.delete();
-            Log.i(TAG, "recording: " + from.getName() + " is in Movies/Spatiand");
+            Log.i(TAG, from.getName() + " is in " + (picture ? "Pictures" : "Movies") + "/Spatiand");
         }, "spatiand-publish").start();
     }
 

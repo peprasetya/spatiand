@@ -53,9 +53,30 @@ fn finished() -> &'static Mutex<Vec<String>> {
     &FINISHED
 }
 
-/// The next finished recording, for the app to publish.
+/// The next finished recording or screenshot, for the app to publish.
 pub fn take_finished() -> Option<String> {
     finished().lock().ok()?.pop()
+}
+
+/// Hand a finished file to the app to publish: a video to `Movies/Spatiand`, a picture to
+/// `Pictures/Spatiand`.
+pub fn publish(path: String) {
+    if let Ok(mut done) = finished().lock() {
+        done.push(path);
+    }
+}
+
+/// Screenshots saved before they were published -- by a build that kept them to itself -- are
+/// handed over now.
+pub fn publish_leftovers() {
+    let dir = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())).join("screenshots");
+    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "png") {
+            publish(path.display().to_string());
+        }
+    }
 }
 
 struct Codec(*mut ndk::AMediaCodec);
