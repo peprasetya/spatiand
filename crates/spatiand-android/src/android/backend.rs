@@ -177,6 +177,10 @@ pub fn run(
     let mut menu_click_was = false;
     let mut keyboard_reach: [Option<spatiand_render::ray::Hit>; 2] = [None, None];
     let mut drag_left_y: Option<f32> = None;
+    // Where a finger was when an open menu last moved a row for it. See the menus above.
+    let mut menu_swipe: Option<(f32, f32)> = None;
+    // How far a finger travels on the touch area, in pad units (2 across), for a menu row.
+    const MENU_SWIPE_STEP: f32 = 0.18;
     // Where a thumb was on a pad's touchpad last frame, to move the pointer by the difference.
     let mut pad_touch_last: Option<(f32, f32)> = None;
     // The pointer's travel for a thumb's across the whole touchpad, which is 2 wide: about
@@ -376,6 +380,33 @@ pub fn run(
                         if let Some(event) = shell.handle(intent) {
                             shell_events.push(event);
                         }
+                    }
+                    // **A finger sliding on the touch area moves through an open menu**, a row
+                    // for every step of travel, the way a phone's list follows the thumb: up
+                    // reveals what is below. The pointer alone could reach only the rows in
+                    // view, and a turned phone is a clumsy way to get to the bottom of the HUD.
+                    use spatiand_shell::grid::Direction;
+                    let pad = c.state().left_pad;
+                    match (shell.menu_is_open() && pad.touched, menu_swipe) {
+                        (true, Some((x0, y0))) => {
+                            let (dx, dy) = (pad.x - x0, pad.y - y0);
+                            let step = if dy.abs() >= dx.abs() && dy.abs() >= MENU_SWIPE_STEP {
+                                Some(if dy > 0.0 { Direction::Down } else { Direction::Up })
+                            } else if dx.abs() > dy.abs() && dx.abs() >= MENU_SWIPE_STEP {
+                                Some(if dx > 0.0 { Direction::Left } else { Direction::Right })
+                            } else {
+                                None
+                            };
+                            if let Some(direction) = step {
+                                menu_swipe = Some((pad.x, pad.y));
+                                c.pulse(spatiand_input::HapticPad::Left, spatiand_input::Feel::Tick);
+                                if let Some(event) = shell.handle(spatiand_shell::Intent::Navigate(direction)) {
+                                    shell_events.push(event);
+                                }
+                            }
+                        }
+                        (true, None) => menu_swipe = Some((pad.x, pad.y)),
+                        (false, _) => menu_swipe = None,
                     }
                     let input = *c.state();
                     let _two_handed = gesture.update(&input.left_pad, &input.right_pad);
