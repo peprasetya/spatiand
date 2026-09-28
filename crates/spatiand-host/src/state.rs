@@ -107,6 +107,9 @@ pub struct Host {
     /// Windows in the order they were mapped, by the id the wire uses.
     pub windows: Vec<Tracked>,
     next_window_id: u32,
+    /// The window the session has its keyboard on: the one being used, which the bandwidth is
+    /// weighted towards. See `crate::budget`.
+    pub session_focus: Option<spatiand_stream::WindowId>,
     /// Which catalogue entry a client belongs to, by process id.
     ///
     /// The host knows what it launched, and a window has to be attributed to an application
@@ -239,6 +242,7 @@ impl Host {
             _decorations: xdg_decoration_state,
             windows: Vec::new(),
             next_window_id: 1,
+            session_focus: None,
             app_of_pid: HashMap::new(),
             sounds: None,
             pose_fd: None,

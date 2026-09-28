@@ -21,6 +21,7 @@
 //! ```
 
 mod apps;
+mod budget;
 mod appcontrol;
 mod audio;
 mod clipboard;
@@ -291,8 +292,16 @@ struct Options {
 }
 
 /// One window's encoder, and what has been done with it.
+/// How often a window's encoder may be rebuilt for a new share of the bandwidth: each rebuild
+/// is a keyframe, and focus moving to and fro should not be a stutter every time.
+const REBUDGET_EVERY: Duration = Duration::from_secs(3);
+
 struct Stream {
     encoder: Encoder,
+    /// The rate the encoder was built for, kbit/s, and when: a new share rebuilds it, and not
+    /// more than every [`REBUDGET_EVERY`].
+    kbit: u32,
+    built: Instant,
     /// The commit count last encoded, so an unchanged window costs nothing.
     encoded_at: u64,
     frame: u32,
@@ -895,6 +904,13 @@ fn run_host(
                     ))
                 })
                 .collect();
+            // Each window's share of the ceiling, for the windows there are now.
+            let budget: HashMap<u32, u32> = {
+                let sized: Vec<(WindowId, (u32, u32))> =
+                    work.iter().map(|(id, _, size, _)| (WindowId(*id), *size)).collect();
+                let shares = budget::shares(library.settings.max_kbit, &sized, host.session_focus);
+                sized.iter().map(|(id, _)| id.0).zip(shares).collect()
+            };
             for (id, window, size, commits) in work {
                 if size.0 == 0 || size.1 == 0 {
                     continue;
@@ -947,7 +963,7 @@ fn run_host(
                     now.as_millis() as i64,
                     (pacer.rates().refresh_mhz / 1000).max(1),
                     // The ceiling is for everything together, so each window gets its share.
-                    library.settings.max_kbit / host.windows.len().max(1) as u32,
+                    budget.get(&id).copied().unwrap_or(library.settings.max_kbit),
                 ) {
                     Ok(packets) => {
                         if let Some(stream) = streams.get_mut(&id) {
@@ -1431,9 +1447,16 @@ fn encode_window(
 ) -> Result<Vec<Coded>, String> {
     // An encoder is fixed to one picture size, so a resized window gets a new one rather than a
     // stretched stream. It also owns the buffer everything is drawn into.
-    let stale = streams
-        .get(&id)
-        .is_some_and(|s| s.encoder.width != size.0 || s.encoder.height != size.1);
+    let stale = streams.get(&id).is_some_and(|s| {
+        s.encoder.width != size.0
+            || s.encoder.height != size.1
+            || (budget::worth_changing(s.kbit, kbit) && s.built.elapsed() >= REBUDGET_EVERY)
+    });
+    if let Some(s) = streams.get(&id).filter(|_| stale) {
+        if s.encoder.width == size.0 && s.encoder.height == size.1 {
+            log::info!("window {id}: {} -> {kbit} kbit/s", s.kbit);
+        }
+    }
     if stale {
         streams.remove(&id);
     }
@@ -1446,6 +1469,8 @@ fn encode_window(
             id,
             Stream {
                 encoder,
+                kbit,
+                built: Instant::now(),
                 encoded_at: 0,
                 frame: 0,
                 wants_keyframe: true,

@@ -52,6 +52,7 @@ pub fn release_everything(host: &mut Host, time_ms: u32) {
 /// nothing. Off all of them is a real state too -- the wearer is typing somewhere else -- and
 /// a window here that still believed itself active would draw a caret nobody is typing into.
 pub fn focus(host: &mut Host, window: Option<WindowId>) {
+    host.session_focus = window;
     let target = window.and_then(|w| {
         host.windows
             .iter()
