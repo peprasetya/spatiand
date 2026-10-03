@@ -12,6 +12,7 @@ members = [
     "crates/spatiand-platform",
     "crates/spatiand-proto",
     "crates/spatiand-stream",
+    "crates/spatiand-mac-core",
     "crates/spatiand-host",
     "crates/spatiand-host-catalog",
     "crates/spatiand-host-config",

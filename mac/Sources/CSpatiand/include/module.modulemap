@@ -1,0 +1,4 @@
+module CSpatiand {
+    header "spatiand_core.h"
+    export *
+}

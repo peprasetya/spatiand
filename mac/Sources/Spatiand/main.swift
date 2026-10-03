@@ -12,6 +12,7 @@ import AppKit
 final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let glasses = GlassesWatcher()
+    private let pairing = PairingUI()
 
     func applicationDidFinishLaunching(_ note: Notification) {
         if let button = item.button {
@@ -23,6 +24,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         glasses.onChange = { [weak self] _ in self?.refreshIcon() }
         glasses.start()
         refreshIcon()
+        pairing.start()
+        Model.shared.onProblem = { PairingUI.alert("Spatiand", $0) }
+        // Back to the computer this Mac was last using, if there is one.
+        if let last = Hosts.all.first { Model.shared.connect(last) }
     }
 
     /// The icon says which world Spatiand is in: dimmed with nothing plugged in, normal with
@@ -42,12 +47,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add(menu, status, enabled: false)
         menu.addItem(.separator())
 
-        // Not built yet. Said plainly rather than left out, so the menu shows the shape it is
-        // going to have.
-        add(menu, "Computers", enabled: false)
-        add(menu, "   None paired yet", enabled: false)
-        add(menu, "Windows", enabled: false)
-        add(menu, "   Nothing open", enabled: false)
+        buildComputers(menu)
         menu.addItem(.separator())
 
         let present = NSMenuItem(title: "Show windows", action: nil, keyEquivalent: "")
@@ -84,6 +84,77 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(quit)
     }
 
+    private func buildComputers(_ menu: NSMenu) {
+        let model = Model.shared
+        add(menu, "Computers", enabled: false)
+        if Hosts.all.isEmpty { add(menu, "   None paired yet", enabled: false) }
+        for host in Hosts.all {
+            let isCurrent = model.host == host
+            let state = isCurrent ? (model.connected ? "  \u{2014} connected" : "  \u{2014} connecting\u{2026}") : ""
+            let entry = NSMenuItem(title: "   " + host.name + state, action: nil, keyEquivalent: "")
+            let sub = NSMenu()
+            if isCurrent {
+                if model.connected {
+                    for app in model.apps {
+                        let open = NSMenuItem(title: "Open " + app.name, action: #selector(openApp(_:)), keyEquivalent: "")
+                        open.target = self
+                        open.representedObject = app.id
+                        sub.addItem(open)
+                    }
+                    sub.addItem(.separator())
+                }
+                let leave = NSMenuItem(title: "Disconnect", action: #selector(disconnect), keyEquivalent: "")
+                leave.target = self
+                sub.addItem(leave)
+            } else {
+                let join = NSMenuItem(title: "Connect", action: #selector(connectHost(_:)), keyEquivalent: "")
+                join.target = self
+                join.representedObject = host.fingerprint
+                sub.addItem(join)
+            }
+            sub.addItem(.separator())
+            let forget = NSMenuItem(title: "Forget this computer", action: #selector(forgetHost(_:)), keyEquivalent: "")
+            forget.target = self
+            forget.representedObject = host.fingerprint
+            sub.addItem(forget)
+            entry.submenu = sub
+            menu.addItem(entry)
+        }
+        let add = NSMenuItem(title: "   Add a computer\u{2026}", action: #selector(addComputer), keyEquivalent: "")
+        add.target = self
+        menu.addItem(add)
+
+        menu.addItem(.separator())
+        self.add(menu, "Windows", enabled: false)
+        let open = model.openWindows
+        if open.isEmpty { self.add(menu, "   Nothing open", enabled: false) }
+        for window in open {
+            let entry = NSMenuItem(title: "   " + window.title, action: #selector(raiseWindow(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.tag = Int(window.id)
+            menu.addItem(entry)
+        }
+    }
+
+    @objc private func addComputer() { pairing.ask() }
+    @objc private func disconnect() { Model.shared.disconnect() }
+    @objc private func openApp(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? String, let app = Model.shared.apps.first(where: { $0.id == id }) {
+            Model.shared.launch(app)
+        }
+    }
+    @objc private func connectHost(_ sender: NSMenuItem) {
+        if let fp = sender.representedObject as? String, let host = Hosts.all.first(where: { $0.fingerprint == fp }) {
+            Model.shared.connect(host)
+        }
+    }
+    @objc private func forgetHost(_ sender: NSMenuItem) {
+        if let fp = sender.representedObject as? String, let host = Hosts.all.first(where: { $0.fingerprint == fp }) {
+            Model.shared.forget(host)
+        }
+    }
+    @objc private func raiseWindow(_ sender: NSMenuItem) { Model.shared.raise(UInt16(sender.tag)) }
+
     private func add(_ menu: NSMenu, _ title: String, enabled: Bool) {
         let entry = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         entry.isEnabled = enabled
@@ -114,6 +185,24 @@ if CommandLine.arguments.contains("--selftest") {
     print("glasses plugged in: \(watcher.isPluggedIn) (\(watcher.count))")
     print("show windows: \(Settings.presentation.title)")
     exit(0)
+}
+
+if let at = CommandLine.arguments.firstIndex(of: "--selftest-session") {
+    // --selftest-session <address> <fingerprint> <app> [seconds]
+    let args = Array(CommandLine.arguments[(at + 1)...])
+    guard args.count >= 3 else { print("usage: --selftest-session <address> <fingerprint> <app> [seconds]"); exit(2) }
+    let dir = NSString("~/Library/Application Support/Spatiand/identity").expandingTildeInPath
+    let test = SessionTest(identityDir: dir, output: "/tmp/spatiand-selftest.png")
+    exit(test.run(address: args[0], fingerprint: args[1], app: args[2], seconds: Double(args.count > 3 ? args[3] : "") ?? 8))
+}
+
+if let at = CommandLine.arguments.firstIndex(of: "--selftest-window") {
+    let args = Array(CommandLine.arguments[(at + 1)...])
+    guard args.count >= 3 else { print("usage: --selftest-window <address> <fingerprint> <app>"); exit(2) }
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    DispatchQueue.main.async { WindowTest.run(address: args[0], fingerprint: args[1], app: args[2]) }
+    application.run()
 }
 
 let application = NSApplication.shared

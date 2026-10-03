@@ -4039,6 +4039,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatiand-mac-core"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "log",
+ "quinn",
+ "serde",
+ "serde_json",
+ "spatiand-stream",
+ "tokio",
+]
+
+[[package]]
 name = "spatiand-mapper"
 version = "0.1.0"
 dependencies = [
