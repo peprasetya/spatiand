@@ -37,6 +37,7 @@ mod imu_record;
 mod input_map;
 mod keyboard_face;
 mod menu;
+mod pip;
 mod pointer;
 mod pose;
 mod prefs;

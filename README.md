@@ -17,8 +17,19 @@ an honest account of which parts do what.
 ## What works
 
 **The desktop.** Stereo at 3840×1080@72 through the glasses, head-tracked, with
-real Wayland clients as windows you can point at, move, resize and close. A 360°
-environment behind them. A launcher, a HUD, and a virtual keyboard.
+real Wayland clients as windows you can point at, move, resize, hide and close.
+Windows curve round you, the nearer the more; a hidden one keeps running and is
+brought back from the window list. A 360° environment behind them. A launcher, a HUD, and a virtual keyboard.
+
+**Picture in picture.** Any window can be pinned to the glass with the pin on its
+title bar, or from the window list (left pins, right lets go): it then stays in
+one corner of your view, tilting with your head, with a hairline frame and its
+buttons showing only while you point at it. Its sound goes with it, whole 7.1.4
+bed included. The corner and one of two sizes are set in the settings and
+remembered; whether a window is pinned is not — a pin is temporary. Wayland has
+no way for an application to ask for this, so a browser's own picture-in-picture
+window is recognised by its title (in the languages the browsers ship in), and
+an X11 application that asks to be kept above the others is pinned too.
 
 **X11 applications run**, through XWayland — VLC, Kodi, Firefox — which matters
 because a great many programs have no Wayland support and never will. They are

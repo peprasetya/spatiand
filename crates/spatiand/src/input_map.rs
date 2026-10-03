@@ -31,6 +31,8 @@ pub fn intent_for(control: Control) -> Option<Intent> {
         // Y closes the selected window in the window list, and does nothing anywhere else --
         // in the world it belongs to the application, like every other button.
         Control::Y => Intent::Close,
+        // X puts the selected window away, or brings it back, in the same list. The same rule.
+        Control::X => Intent::Hide,
         Control::Steam => Intent::ToggleHud,
         Control::Quick => Intent::ToggleLauncher,
         // The right pad's click is the pointer's select, handled by the pointer rather than by
@@ -236,6 +238,7 @@ mod tests {
             Intent::Accept,
             Intent::Back,
             Intent::Close,
+            Intent::Hide,
             Intent::ToggleHud,
             Intent::ToggleLauncher,
             Intent::Navigate(NavDirection::Up),

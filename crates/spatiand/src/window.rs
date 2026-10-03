@@ -9,7 +9,7 @@
 //! vertical lines vertical, which matters a great deal for reading text — on a sphere,
 //! windows away from the horizon have to tilt to face you, and tilted text is tiring.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use glam::{DQuat, DVec3};
 use smithay::desktop::Window;
@@ -28,6 +28,14 @@ pub struct Placement {
     pub radius: f64,
     /// Width of the window in the world, metres. Height follows from the surface's aspect.
     pub width: f64,
+    /// The way the window faces, when it is not turned to face the viewer from where it sits:
+    /// `None` for every window in the room, `Some` only for one pinned to the glass, which is flat
+    /// to the view and so takes the head's own orientation. See [`spatiand_render::pip`].
+    pub facing: Option<DQuat>,
+    /// Set for a window pinned to the glass, which is drawn and aimed at without a title bar
+    /// and is never where the layout last put it: it is worked out afresh from the head every
+    /// frame. See [`crate::pip`].
+    pub pip: bool,
 }
 
 impl Default for Placement {
@@ -46,6 +54,8 @@ impl Default for Placement {
             // window whose extent you cannot see is one you cannot aim a pointer at or judge
             // the size of. It also hid the entire world behind it.
             width: 1.1,
+            facing: None,
+            pip: false,
         }
     }
 }
@@ -75,10 +85,100 @@ impl Placement {
     /// the moment a window can be pinned to something in the room, which is a different
     /// feature and a different placement rule.
     pub fn orientation(&self) -> DQuat {
+        if let Some(facing) = self.facing {
+            return facing;
+        }
         // Yaw about up, then pitch about the rotated left axis, so the window's own up stays
         // as close to world-up as facing the viewer allows.
         DQuat::from_axis_angle(DVec3::Z, self.yaw) * DQuat::from_axis_angle(DVec3::Y, -self.pitch)
     }
+
+    /// The radius of the cylinder the window is bent round, or `None` for a window that is flat.
+    ///
+    /// A window in the room is bent round the wearer, who is the cylinder's axis. One pinned to
+    /// the glass is flat: it is small, and flat to the view, and the wearer is not on any axis
+    /// that passes through it.
+    pub fn bend_radius(&self) -> Option<f64> {
+        (!self.pip).then_some(self.radius)
+    }
+}
+
+/// How far round the wearer one strip of a bent window may turn, radians.
+///
+/// A window is bent by drawing it as flat strips, each tangent to the cylinder, and with no
+/// lighting to show a crease the only thing the strip width has to answer to is the silhouette.
+/// A degree and a half is far inside what the optics resolve -- the width of about seventy
+/// pixels -- and keeps even a wide window to a few dozen strips.
+const STRIP_STEP: f64 = 0.026;
+const MAX_STRIPS: usize = 64;
+
+/// How far each strip reaches over its neighbour, metres.
+///
+/// Strips that meet exactly may not *land* exactly: each has its own transform, so the shared
+/// edge is computed twice from slightly different numbers. This is more than the difference and
+/// a thirtieth of a pixel at two metres, so it cannot show as a doubled edge on glass. (The
+/// larger fault -- both strips fading out over the same pixel -- is the shader's `u_seam`.)
+const STRIP_OVERLAP_M: f64 = 0.00005;
+
+/// A point across a window, put on the cylinder the window is bent round.
+///
+/// `y` is how far across, along the surface, metres and positive to the left like the world's
+/// +Y; `z` is how far up, which a vertical cylinder does not change. The answer is relative to
+/// the middle of the window in the window's own frame -- +X away from the wearer -- along with
+/// the angle the surface has turned there, which is the rotation about the vertical that makes a
+/// flat piece lie along it.
+///
+/// The wearer is the cylinder's axis, `radius` in front of the window's middle, so everything is
+/// the same distance from the eye: `x` comes *towards* the wearer by the cylinder's sagitta.
+pub fn on_cylinder(radius: f64, y: f64, z: f64) -> (DVec3, f64) {
+    let angle = y / radius.max(1e-6);
+    (
+        DVec3::new(radius * (angle.cos() - 1.0), radius * angle.sin(), z),
+        angle,
+    )
+}
+
+/// One flat piece of a bent surface.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Strip {
+    /// Where its middle is across the surface, along it, in the same terms as
+    /// [`on_cylinder`]'s `y`.
+    pub y: f64,
+    /// How wide the flat piece is. A little more than the arc it stands for, which is what
+    /// makes the next strip start exactly where this one stops.
+    pub chord: f64,
+    /// The part of the surface's own width this covers, `0..1` running rightwards, which is
+    /// what a texture is cut by.
+    pub from: f64,
+    pub to: f64,
+}
+
+/// A surface `width` metres across, centred `y` across the window, as the strips it is drawn in.
+///
+/// Rightwards first, so the texture runs the way it does on a flat quad. Each strip's chord is
+/// the full tangent length -- `2 r tan(step / 2)` -- so neighbouring strips meet on the line
+/// where their tangents cross rather than leaving a wedge between them or overlapping into one
+/// another, which on translucent glass shows up as a bright seam.
+pub fn strips(radius: f64, y: f64, width: f64) -> Vec<Strip> {
+    let radius = radius.max(1e-6);
+    let span = width / radius;
+    let count = ((span / STRIP_STEP).ceil() as usize).clamp(1, MAX_STRIPS);
+    let step = span / count as f64;
+    // Only between strips: a surface one strip wide has nothing to overlap.
+    let overlap = if count > 1 { STRIP_OVERLAP_M } else { 0.0 };
+    let share = overlap * 0.5 / width.max(1e-6);
+    (0..count)
+        .map(|i| {
+            let from = i as f64 / count as f64;
+            let to = (i + 1) as f64 / count as f64;
+            Strip {
+                y: y + width * (0.5 - (from + to) * 0.5),
+                chord: 2.0 * radius * (step * 0.5).tan() + overlap,
+                from: (from - share).max(0.0),
+                to: (to + share).min(1.0),
+            }
+        })
+        .collect()
 }
 
 /// How far above or below the horizon anything may be put, in radians: 89 degrees.
@@ -155,6 +255,19 @@ pub struct WindowLayout {
     /// than what it is now. Kept here rather than derived because the previous value is gone
     /// by the time the new buffer has been committed.
     heights: HashMap<usize, f64>,
+    /// Windows put away with the title bar's hide button. They go on running -- a hidden music
+    /// player goes on playing -- and are neither drawn nor pointed at until the window list
+    /// brings them back.
+    hidden: HashSet<usize>,
+    /// Windows pinned to the glass: picture in picture. They are not in the room at all while
+    /// they are -- the layout still remembers where they were, and puts them back there when
+    /// they are let go, because a pin is a temporary thing.
+    pinned: Vec<usize>,
+    /// Windows that have already been taken for picture in picture by what they say about
+    /// themselves, so that letting one go is not undone the next frame by the same title.
+    /// Cleared when the window stops saying it, which is what lets a browser's next one be
+    /// recognised.
+    recognised: HashSet<usize>,
 }
 
 impl WindowLayout {
@@ -244,9 +357,70 @@ impl WindowLayout {
         };
         if let Some(id) = self.ids.remove(&key) {
             self.placements.remove(&id);
+            self.hidden.remove(&id);
+            self.pinned.retain(|p| *p != id);
+            self.recognised.remove(&id);
             if self.focused == Some(id) {
                 self.focused = self.placements.keys().copied().next();
             }
+        }
+    }
+
+    /// Put a window away, or bring it back. Only its visibility: it keeps its place.
+    pub fn set_hidden(&mut self, window: &Window, hidden: bool) {
+        if let Some(id) = self.id_of(window) {
+            if hidden {
+                self.hidden.insert(id);
+            } else {
+                self.hidden.remove(&id);
+            }
+        }
+    }
+
+    pub fn is_hidden(&self, window: &Window) -> bool {
+        self.id_of(window).is_some_and(|id| self.hidden.contains(&id))
+    }
+
+    /// Pin a window to the glass, or let it go back to where it was in the room.
+    ///
+    /// A pinned window is also brought out of hiding: pinning is a way of saying "I want to see
+    /// this", and a pin that stays invisible is not one.
+    pub fn set_pinned(&mut self, window: &Window, pinned: bool) {
+        let Some(id) = self.id_of(window) else {
+            return;
+        };
+        self.pinned.retain(|p| *p != id);
+        if pinned {
+            self.pinned.push(id);
+            self.hidden.remove(&id);
+        }
+    }
+
+    pub fn is_pinned(&self, window: &Window) -> bool {
+        self.id_of(window).is_some_and(|id| self.pinned.contains(&id))
+    }
+
+    /// Which place in the pinned order this window has, if it is pinned: the first to be
+    /// pinned has zero. Windows share the corner in this order.
+    pub fn pin_slot(&self, window: &Window) -> Option<usize> {
+        let id = self.id_of(window)?;
+        self.pinned.iter().position(|p| *p == id)
+    }
+
+    /// Note that a window does or does not currently say it is picture in picture, and report
+    /// whether it has just started to.
+    ///
+    /// Only the *change* is news. A window that says so every frame is pinned once, so that
+    /// letting it go -- which is the wearer's call -- sticks.
+    pub fn note_says_pip(&mut self, window: &Window, says: bool) -> bool {
+        let Some(id) = self.id_of(window) else {
+            return false;
+        };
+        if says {
+            self.recognised.insert(id)
+        } else {
+            self.recognised.remove(&id);
+            false
         }
     }
 
@@ -417,6 +591,82 @@ pub fn apply_resize_anchors(state: &mut crate::state::Spatiand) {
 
 #[cfg(test)]
 mod tests {
+
+    use super::{on_cylinder, strips};
+
+    #[test]
+    fn a_bent_window_is_the_same_distance_from_the_wearer_all_the_way_across() {
+        // The wearer is on the cylinder's axis, `radius` in front of the window's middle.
+        for y in [-1.2, -0.4, 0.0, 0.7, 1.2] {
+            let (at, _) = on_cylinder(2.0, y, 0.3);
+            let from_wearer = (at + glam::DVec3::new(2.0, 0.0, 0.0)).truncate().length();
+            assert!((from_wearer - 2.0).abs() < 1e-12, "y = {y}: {from_wearer}");
+            assert_eq!(at.z, 0.3, "bending is sideways only");
+        }
+    }
+
+    #[test]
+    fn the_nearer_a_window_the_more_it_curves() {
+        // The same metre across, the edge standing off the middle by its sagitta.
+        let sag = |radius: f64| -on_cylinder(radius, 0.5, 0.0).0.x;
+        assert!(sag(1.0) > sag(2.2) && sag(2.2) > sag(5.0));
+        // And the middle of it stays where it is.
+        assert_eq!(on_cylinder(1.0, 0.0, 0.0).0, glam::DVec3::ZERO);
+    }
+
+    #[test]
+    fn strips_cover_the_whole_width_without_gaps_or_overlaps() {
+        let all = strips(2.2, 0.0, 1.1);
+        assert!(all.len() > 4, "{} strips is a polygon, not a curve", all.len());
+        assert_eq!(all.first().unwrap().from, 0.0);
+        assert_eq!(all.last().unwrap().to, 1.0);
+        // Each reaches a hair over the next, never short of it: a gap is a line of the world
+        // showing through the window.
+        for pair in all.windows(2) {
+            assert!(pair[0].to >= pair[1].from, "{pair:?}");
+            assert!(pair[0].to - pair[1].from < 0.01, "{pair:?}");
+        }
+    }
+
+    #[test]
+    fn strips_run_rightwards_so_a_texture_is_not_mirrored() {
+        // The first strip is the leftmost, which is the *largest* y: +Y is left.
+        let all = strips(2.0, 0.0, 1.0);
+        assert!(all.first().unwrap().y > 0.0 && all.last().unwrap().y < 0.0);
+    }
+
+    #[test]
+    fn neighbouring_strips_meet_on_the_line_where_their_tangents_cross() {
+        // The chord of each is the full tangent, so one strip ends exactly where the next
+        // begins: here, by walking out to each strip's near end along its own tangent.
+        let radius = 2.0;
+        let all = strips(radius, 0.0, 1.6);
+        let end = |strip: &super::Strip, sign: f64| {
+            let (at, angle) = on_cylinder(radius, strip.y, 0.0);
+            // The tangent runs along local +Y turned by the angle.
+            let tangent = glam::DVec3::new(-angle.sin(), angle.cos(), 0.0);
+            at + tangent * (sign * strip.chord * 0.5)
+        };
+        for pair in all.windows(2) {
+            // Leftmost first, so this strip's right (-Y) end meets the next one's left (+Y).
+            // Each reaches the overlap past the meeting point, so they pass over one another by
+            // that and no more.
+            let here = end(&pair[0], -1.0);
+            let there = end(&pair[1], 1.0);
+            let gap = (here - there).length();
+            assert!(
+                (gap - super::STRIP_OVERLAP_M).abs() < 1e-6,
+                "{here:?} vs {there:?}: {gap}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wide_window_is_still_a_bounded_number_of_strips() {
+        assert!(strips(0.3, 0.0, 3.0).len() <= 64);
+        assert_eq!(strips(5.0, 0.0, 0.01).len(), 1, "a button stays one piece");
+    }
+
     /// Recentring, as the backend performs it: whatever should end up in front is chosen, the
     /// tracker is re-pegged so the wearer's gaze reads zero, and the room turns by the same
     /// amount the other way.
@@ -788,12 +1038,33 @@ mod facing_tests {
 
     /// "Bring window here", lying down: the window lands in the middle of the view.
     #[test]
+    fn a_pinned_window_faces_as_told_and_is_flat_and_a_room_window_is_neither() {
+        let p = Placement {
+            yaw: 0.7,
+            pitch: 0.2,
+            ..Default::default()
+        };
+        // An ordinary window faces the viewer from where it is, and is bent round them.
+        assert_eq!(Placement::default().facing, None);
+        assert!(!Placement::default().pip);
+        assert_eq!(p.bend_radius(), Some(p.radius));
+        // A pinned one takes the orientation it is given, whatever its place, and is flat.
+        let head = DQuat::from_axis_angle(DVec3::Z, -1.0) * DQuat::from_axis_angle(DVec3::X, 0.4);
+        let pinned = Placement { facing: Some(head), pip: true, ..p };
+        assert!((pinned.orientation().dot(head) - 1.0).abs() < 1e-12);
+        assert_eq!(pinned.bend_radius(), None);
+        // The position is still the place's.
+        assert_eq!(pinned.position(), p.position());
+    }
+
+    #[test]
     fn a_window_brought_here_is_centred_where_you_look() {
         let before = Placement {
             yaw: 2.0,
             pitch: 0.0,
             radius: 1.7,
             width: 0.9,
+            ..Default::default()
         };
         for (yaw, up) in [(0.0, 0.0), (-50.0, 35.0), (120.0, 80.0), (10.0, -45.0)] {
             let h = head(yaw, up);

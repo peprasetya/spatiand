@@ -98,6 +98,25 @@ const MIN_BORDER_RADIANS: f64 = 0.0209;
 /// with a small bar. Nothing real reaches this -- a transport bar lands at about 0.66.
 const MAX_CHROME_OVERHEAD: f64 = 1.5;
 
+/// How thick the frame of a pinned window is, as a fraction of the picture's height.
+///
+/// A hairline: the picture is in the corner of the view to be looked past, and a frame as thick
+/// as an ordinary window's would be a third of what it shows. It is a *border*, not a target --
+/// nothing about a pinned window is grabbed by its edge, because where it sits is a setting.
+pub const PIP_BORDER_FRACTION: f64 = 0.035;
+
+/// How big the buttons on a pinned window are, as a fraction of the picture's height.
+///
+/// They have no bar to sit in, so they float inside the top right corner of the picture and
+/// show only while it is aimed at. Big enough to hit at a metre and a half, which is nearer
+/// than the room's windows and so wants less -- and no bigger, because four of them side by side
+/// are a share of the width of a small picture, and a fifth of its height made them over half.
+const PIP_BUTTON_FRACTION: f64 = 0.17;
+
+/// How far in from the picture's top and right edges the buttons float, as a fraction of its
+/// height.
+const PIP_BUTTON_INSET: f64 = 0.04;
+
 /// How far apart two pieces of furniture sit, as a multiple of their own width.
 ///
 /// A little over one, so they are neighbours with a gap rather than a single wide control.
@@ -139,7 +158,11 @@ pub enum Zone {
     Title,
     /// The button at the right of the bar. Press to ask the window to close.
     Close,
-    /// The speaker, to the left of the close button. Press to silence this window alone.
+    /// The button left of close. Press to put the window away; the window list brings it back.
+    Hide,
+    /// The pin, left of hide. Press to pin the window to the glass, or to let a pinned one go.
+    Pin,
+    /// The speaker, to the left of the pin. Press to silence this window alone.
     ///
     /// Only ever reached when the window is actually making a sound: a button that is not
     /// drawn must not be pressable, or the bar has an invisible dead spot in it.
@@ -193,6 +216,9 @@ pub struct Frame {
     pub content_width: f64,
     pub border: f64,
     pub bar: f64,
+    /// A pinned window: no bar, a hairline frame, and buttons laid over the picture. Nothing
+    /// about it can be dragged or resized, because where it is is a setting.
+    pub overlay: bool,
 }
 
 impl Frame {
@@ -205,6 +231,14 @@ impl Frame {
     /// the hit test.
     pub fn of(pixels: (u32, u32), placement: &crate::window::Placement) -> Self {
         let content_width = pixels.0 as f64 / pixels.1.max(1) as f64;
+        if placement.pip {
+            return Self {
+                content_width,
+                border: PIP_BORDER_FRACTION,
+                bar: 0.0,
+                overlay: true,
+            };
+        }
         let content_height = placement.width / content_width.max(0.01);
         // One radian of arc at this window's distance, in content-height units -- which is
         // what turns an angular floor into a fraction this struct can hold.
@@ -226,6 +260,7 @@ impl Frame {
             content_width,
             border,
             bar,
+            overlay: false,
         }
     }
 
@@ -256,16 +291,29 @@ impl Frame {
 
     /// Furniture `slot` places in from one end of the bar, counting from zero.
     fn furniture_at(&self, from_right: bool, slot: usize) -> Box2 {
-        let side = self.bar * FURNITURE_FRACTION;
+        let side = if self.overlay {
+            PIP_BUTTON_FRACTION
+        } else {
+            self.bar * FURNITURE_FRACTION
+        };
         let (w, h) = (self.width(), self.height());
         // The bar's centre is half a content-height above the quad's centre — the chrome
         // reaches further above the content than below it, so the two centres do not coincide.
-        let v = 0.5 - 0.5 / h;
+        // A pinned window has no bar: its buttons sit inside the picture, just under its top.
+        let v = if self.overlay {
+            (self.border + PIP_BUTTON_INSET + side * 0.5) / h
+        } else {
+            0.5 - 0.5 / h
+        };
         // Spaced by a little more than their own width, so two buttons read as two things
         // rather than as one wide one — which matters more here than on a desktop, because
         // they are aimed at down a ray from across the room.
         let step = side * FURNITURE_SPACING / w;
-        let inset = (self.border + side * 0.5) / w + step * slot as f64;
+        let inset = if self.overlay {
+            (self.border + PIP_BUTTON_INSET + side * 0.5) / w
+        } else {
+            (self.border + side * 0.5) / w
+        } + step * slot as f64;
         Box2 {
             u: if from_right { 1.0 - inset } else { inset },
             v,
@@ -274,13 +322,24 @@ impl Frame {
         }
     }
 
-    /// The mute button, immediately left of the close button.
+    /// The hide button, immediately left of the close button.
     ///
-    /// Next to close rather than anywhere else because the two are the same kind of thing —
-    /// something you do *to* the window rather than with it — and because the right end of
-    /// the bar is where a hand already goes.
-    pub fn mute(&self) -> Box2 {
+    /// Next to close because the two are the same kind of thing — something you do *to* the
+    /// window rather than with it — and because the right end of the bar is where a hand
+    /// already goes. It is the lesser of the two, so it is the one further in: overshooting
+    /// the end of the bar lands on close, which asks politely, rather than the reverse.
+    pub fn hide(&self) -> Box2 {
         self.furniture_at(true, 1)
+    }
+
+    /// The pin, left of hide: the same kind of thing, a state the window is put in.
+    pub fn pin(&self) -> Box2 {
+        self.furniture_at(true, 2)
+    }
+
+    /// The mute button, left of the pin.
+    pub fn mute(&self) -> Box2 {
+        self.furniture_at(true, 3)
     }
 
     /// The application's icon, at the left of the bar. Decoration only — nothing to press.
@@ -303,6 +362,20 @@ impl Frame {
     /// sound has no speaker drawn on it, and passing that through here is what stops the bar
     /// having an invisible dead spot where the button would have been.
     pub fn zone(&self, u: f64, v: f64, sounding: bool) -> Zone {
+        if self.overlay {
+            // Buttons, and otherwise the picture: no bar to grab, no edge to drag.
+            return if self.close().contains(u, v) {
+                Zone::Close
+            } else if self.hide().contains(u, v) {
+                Zone::Hide
+            } else if self.pin().contains(u, v) {
+                Zone::Pin
+            } else if sounding && self.mute().contains(u, v) {
+                Zone::Mute
+            } else {
+                Zone::Content
+            };
+        }
         let (x, y) = self.content_at(u, v);
         // Everything above the content is the bar, including the frame above it: a strip of
         // border one degree tall that behaves differently from the bar it touches would be
@@ -312,6 +385,10 @@ impl Frame {
             // it is simply a piece of the bar that happens to have a cross drawn on it.
             return if self.close().contains(u, v) {
                 Zone::Close
+            } else if self.hide().contains(u, v) {
+                Zone::Hide
+            } else if self.pin().contains(u, v) {
+                Zone::Pin
             } else if sounding && self.mute().contains(u, v) {
                 Zone::Mute
             } else {
@@ -414,6 +491,7 @@ pub fn resize(
             pitch: crate::window::clamp_pitch(start.pitch - shift_down / start.radius),
             radius: start.radius,
             width,
+            ..*start
         },
         pixels: (
             (width * density).round().clamp(160.0, 4096.0) as u32,
@@ -706,6 +784,12 @@ pub fn popup_quad(
         orientation,
         width: popup_pixels.0 as f64 * content_width / w,
         height: popup_pixels.1 as f64 * content_height / h,
+        // Across the window by `local.y`, on the same cylinder as the window itself -- none for
+        // a window pinned to the glass, which is flat.
+        bend: placement.bend_radius().map(|radius| spatiand_render::Bend {
+            radius,
+            offset: local.y,
+        }),
     }
 }
 
@@ -726,6 +810,13 @@ pub fn quad_of(pixels: (u32, u32), placement: &crate::window::Placement) -> Quad
         // before it was included here.
         width: content_height * frame.width(),
         height: content_height * frame.height(),
+        // Curved round the wearer by the window's own distance: see `Bend`. Drawn the same way
+        // in `Scene::draw_windows`, which is what keeps the pointer on what it is aimed at. Not
+        // for a window pinned to the glass, which is flat.
+        bend: placement.bend_radius().map(|radius| spatiand_render::Bend {
+            radius,
+            offset: 0.0,
+        }),
     }
 }
 
@@ -1266,11 +1357,90 @@ mod tests {
         let f = Frame::of(PIXELS, &placement(0.0));
         let close = f.close();
         assert_eq!(f.zone(close.u, close.v, false), Zone::Close);
-        // A little to the left of it is ordinary bar.
-        assert_eq!(
-            f.zone(close.u - close.half_u * 3.0, close.v, false),
-            Zone::Title
-        );
+        // Past the buttons, the middle of the bar is ordinary bar.
+        assert_eq!(f.zone(0.5, close.v, false), Zone::Title);
+    }
+
+    #[test]
+    fn hide_sits_between_close_and_mute_and_is_always_there() {
+        // Always drawn, so always pressable: unlike the speaker it does not depend on the window
+        // making a sound, and a dead spot where it would have been would be a title bar that
+        // starts a drag when pressed.
+        let f = Frame::of(PIXELS, &placement(0.0));
+        let (close, hide, mute) = (f.close(), f.hide(), f.mute());
+        assert!(mute.u < hide.u && hide.u < close.u, "{mute:?} {hide:?} {close:?}");
+        for sounding in [false, true] {
+            assert_eq!(f.zone(hide.u, hide.v, sounding), Zone::Hide);
+        }
+        assert_eq!(f.zone(mute.u, mute.v, true), Zone::Mute);
+        assert_eq!(f.zone(mute.u, mute.v, false), Zone::Title, "no speaker, no button");
+        // None of them touches its neighbour.
+        assert!(hide.u + hide.half_u < close.u - close.half_u);
+        assert!(mute.u + mute.half_u < hide.u - hide.half_u);
+    }
+
+    fn pinned() -> crate::window::Placement {
+        crate::window::Placement {
+            pip: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_pinned_window_has_no_bar_and_nothing_to_grab_but_its_buttons() {
+        let f = Frame::of((1280, 720), &pinned());
+        assert!(f.overlay);
+        assert_eq!(f.bar, 0.0);
+        // Everywhere that is not a button is the picture: no title to move it by, no edge to
+        // resize it by. Where it sits is a setting, so nothing about it can be dragged.
+        for (u, v) in [
+            (0.5, 0.5),
+            (0.5, 0.004),
+            (0.004, 0.5),
+            (0.5, 0.996),
+            (0.996, 0.996),
+            (0.004, 0.004),
+        ] {
+            assert_eq!(f.zone(u, v, true), Zone::Content, "at ({u}, {v})");
+        }
+    }
+
+    #[test]
+    fn a_pinned_windows_buttons_are_inside_the_picture_and_all_reachable() {
+        let f = Frame::of((1280, 720), &pinned());
+        for (name, button, zone) in [
+            ("close", f.close(), Zone::Close),
+            ("hide", f.hide(), Zone::Hide),
+            ("pin", f.pin(), Zone::Pin),
+            ("mute", f.mute(), Zone::Mute),
+        ] {
+            assert_eq!(f.zone(button.u, button.v, true), zone, "{name}");
+            // Over the picture, near its top right, and not over each other.
+            let (x, y) = (button.u * f.width() - f.border, button.v * f.height() - f.border);
+            assert!(x > 0.0 && x < f.content_width, "{name} is off the picture: {x}");
+            assert!(y > 0.0 && y < 1.0, "{name} is off the picture: {y}");
+            assert!(button.u > 0.5, "{name} is not at the right");
+        }
+        // No speaker unless the window makes a sound, as on the bar.
+        let mute = f.mute();
+        assert_eq!(f.zone(mute.u, mute.v, false), Zone::Content);
+    }
+
+    #[test]
+    fn a_pinned_windows_frame_is_a_hairline() {
+        let pin = Frame::of((1280, 720), &pinned());
+        let room = Frame::of((1280, 720), &placement(0.0));
+        assert!(pin.border * 2.0 < room.border, "{} against {}", pin.border, room.border);
+        assert_eq!(pin.height(), 1.0 + pin.border * 2.0);
+    }
+
+    #[test]
+    fn the_pin_button_sits_between_hide_and_mute_on_an_ordinary_bar() {
+        let f = Frame::of(PIXELS, &placement(0.0));
+        let (close, hide, pin, mute) = (f.close(), f.hide(), f.pin(), f.mute());
+        assert!(close.u > hide.u && hide.u > pin.u && pin.u > mute.u);
+        assert_eq!(f.zone(pin.u, pin.v, true), Zone::Pin);
+        assert_eq!(f.zone(mute.u, mute.v, true), Zone::Mute);
     }
 
     #[test]

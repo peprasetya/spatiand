@@ -70,6 +70,10 @@ pub enum HudAction {
     OpenSwitcher,
     /// Show or hide the on-screen keyboard.
     ToggleKeyboard,
+    /// Move pinned windows to the next corner of the view.
+    PipCorner,
+    /// Switch pinned windows between their two sizes.
+    PipSize,
     /// Open the controller layout of whatever is in front of the wearer.
     ControllerLayout,
     /// Open the environment picker.
@@ -150,6 +154,37 @@ const STOP_RECORDING: HudItem = HudItem {
     action: HudAction::Record,
 };
 
+/// The corner row while pinned windows are in each of the four corners, in the order the
+/// compositor numbers them: bottom right, bottom left, top left, top right.
+///
+/// Whole sentences rather than a label with a name spliced in, because a row's text is a
+/// `&'static str` and the corner is a setting.
+const PIP_CORNER_ROWS: [&str; 4] = [
+    "Pinned windows: bottom right",
+    "Pinned windows: bottom left",
+    "Pinned windows: top left",
+    "Pinned windows: top right",
+];
+
+/// The size row, small then large.
+const PIP_SIZE_ROWS: [&str; 2] = ["Pinned size: small", "Pinned size: large"];
+
+fn pip_corner_row(corner: usize) -> HudItem {
+    HudItem {
+        label: PIP_CORNER_ROWS[corner.min(PIP_CORNER_ROWS.len() - 1)],
+        detail: "Where a window pinned to your view sits. Choose to move it to the next corner",
+        action: HudAction::PipCorner,
+    }
+}
+
+fn pip_size_row(large: bool) -> HudItem {
+    HudItem {
+        label: PIP_SIZE_ROWS[large as usize],
+        detail: "How big a pinned window is. Choose to switch between small and large",
+        action: HudAction::PipSize,
+    }
+}
+
 /// The HUD's state.
 #[derive(Debug, Clone)]
 pub struct Hud {
@@ -218,6 +253,8 @@ impl Hud {
                 detail: "Switch to another window and bring it in front of you",
                 action: HudAction::OpenSwitcher,
             },
+            pip_corner_row(0),
+            pip_size_row(false),
             HudItem {
                 label: "Environment",
                 detail: "Choose what surrounds you, or add an image",
@@ -260,6 +297,18 @@ impl Hud {
         for item in &mut self.items {
             if item.action == HudAction::Record {
                 *item = if recording { STOP_RECORDING } else { RECORD };
+            }
+        }
+    }
+
+    /// Show where pinned windows are and how big, on their two rows. `corner` is 0 to 3 in the
+    /// order of [`PIP_CORNER_ROWS`].
+    pub fn set_pip(&mut self, corner: usize, large: bool) {
+        for item in &mut self.items {
+            match item.action {
+                HudAction::PipCorner => *item = pip_corner_row(corner),
+                HudAction::PipSize => *item = pip_size_row(large),
+                _ => {}
             }
         }
     }
@@ -478,6 +527,24 @@ mod tests {
     }
 
     #[test]
+    fn the_pinned_window_rows_say_where_and_how_big() {
+        let mut hud = Hud::new(DesktopPanels::ALL);
+        let rows = |hud: &Hud| -> Vec<&'static str> {
+            hud.items()
+                .iter()
+                .filter(|i| matches!(i.action, HudAction::PipCorner | HudAction::PipSize))
+                .map(|i| i.label)
+                .collect()
+        };
+        assert_eq!(rows(&hud), ["Pinned windows: bottom right", "Pinned size: small"]);
+        hud.set_pip(2, true);
+        assert_eq!(rows(&hud), ["Pinned windows: top left", "Pinned size: large"]);
+        // Out of range is the last corner rather than a panic: it is a setting from a file.
+        hud.set_pip(9, false);
+        assert_eq!(rows(&hud)[0], "Pinned windows: top right");
+    }
+
+    #[test]
     fn the_rows_are_in_the_order_they_are_reached_for() {
         // Written down because the order is a decision, not an accident: the things done often
         // and the things done in a hurry are at the top, and the two that end something -- a
@@ -496,6 +563,9 @@ mod tests {
                 "Take a screenshot",
                 "Record a video",
                 "Windows",
+                // Next to the window list: a pinned window is a way of arranging windows.
+                "Pinned windows: bottom right",
+                "Pinned size: small",
                 "Environment",
                 // Spatiand's own pages before the desktop's panels: this one is where the
                 // launcher's remote tabs come from, and it is reached for more than Bluetooth.

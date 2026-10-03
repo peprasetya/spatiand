@@ -359,6 +359,29 @@ pub struct Source {
     /// Whether this is the window the wearer is working in. Breaks a tie between windows of
     /// the same size — see [`Source::rank`].
     pub focused: bool,
+    /// Whether this is a game store's own window -- Steam's -- rather than anything an app of
+    /// its own is showing. See [`is_launcher`].
+    pub launcher: bool,
+}
+
+/// Whether an app id is a game store's client: the window that shares an app's sink without
+/// being what makes its sound.
+///
+/// A Steam game is two programs on one sink -- Steam, and the game it started -- and Steam's
+/// window is as big as any other and, whenever the wearer clicks on it, focused. By the rules
+/// below that is enough for the *store's* window to take the game's sound: focus Steam to look
+/// something up and Stumble Guys moves to wherever Steam is standing. So the store never wins
+/// over another window of the same sink, however big or focused. On its own -- nothing else
+/// there -- it still has the sink, as anything must.
+pub fn is_launcher(app_id: Option<&str>) -> bool {
+    let Some(id) = app_id else {
+        return false;
+    };
+    let id = id.to_ascii_lowercase();
+    matches!(
+        id.as_str(),
+        "steam" | "steamwebhelper" | "com.valvesoftware.steam" | "valve.steam"
+    )
 }
 
 /// What kind of thing a window is, for the purpose of deciding where its app's sound is.
@@ -371,6 +394,26 @@ pub enum Kind {
     /// yaw is in, so the sound and the picture agree by construction and a recentre that turns
     /// one turns the other.
     Environment { yaw: f64 },
+    /// A window pinned to the glass, whose sound goes where the head goes.
+    ///
+    /// Not placed in the room and not placed at the corner the picture is in: the whole stage,
+    /// seven-one-four and all, rides on the head, as the picture does, so turning round leaves
+    /// it exactly where it was. The yaw and pitch are the head's own, in the room's frame --
+    /// which is what a stage is placed in -- because [`spatiand_audio::stage::place`] turns a
+    /// stage into speakers *relative to the head* and a stage that is always where the head
+    /// points comes out in the same place in the ears whichever way that is.
+    Glass { yaw: f64, pitch: f64 },
+}
+
+impl Kind {
+    /// The kind for a window pinned to the glass, for a head pointing along `head`.
+    pub fn glass(head: DQuat) -> Self {
+        let ahead = head * glam::DVec3::X;
+        Kind::Glass {
+            yaw: ahead.y.atan2(ahead.x),
+            pitch: ahead.z.clamp(-1.0, 1.0).asin(),
+        }
+    }
 }
 
 impl Source {
@@ -406,10 +449,16 @@ impl Source {
     ///
     /// Ties that survive all of that go to the lower window id, purely so that two identical
     /// windows do not make the aim depend on the order a hash map happened to yield.
-    fn rank(&self) -> (u8, i32, bool, OrderedSize, std::cmp::Reverse<usize>) {
+    fn rank(&self) -> (i8, i32, bool, OrderedSize, std::cmp::Reverse<usize>) {
         let side = ((self.pixels.0 as f64) * (self.pixels.1 as f64)).sqrt();
         let (tier, size) = match self.kind {
+            // Below every other window of its sink: a store's client is not what makes the
+            // sound, whatever its size and whether or not it has focus. See [`is_launcher`].
+            Kind::Window(_) if self.launcher => (-1, side),
             Kind::Environment { .. } => (1, 0.0),
+            // Above even an environment: the wearer put this in the corner of their view to
+            // hear it, and what they pinned is what they are attending to.
+            Kind::Glass { .. } => (2, side),
             Kind::Window(_) => (0, side),
         };
         (
@@ -432,6 +481,11 @@ impl Source {
             Kind::Environment { yaw } => Stage {
                 yaw,
                 pitch: 0.0,
+                half_width: NOMINAL_HALF_STAGE,
+            },
+            Kind::Glass { yaw, pitch } => Stage {
+                yaw,
+                pitch,
                 half_width: NOMINAL_HALF_STAGE,
             },
             Kind::Window(p) => Stage {
@@ -548,6 +602,7 @@ mod tests {
                 ..Default::default()
             }),
             focused: false,
+            launcher: false,
         }
     }
 
@@ -564,7 +619,68 @@ mod tests {
             pixels: (1920, 1080),
             kind: Kind::Environment { yaw },
             focused: false,
+            launcher: false,
         }
+    }
+
+    #[test]
+    fn a_pinned_windows_sound_is_where_the_head_points_and_wins_its_app() {
+        // Turned right a quarter, and tipped up: the stage goes wherever that is.
+        let head = DQuat::from_axis_angle(glam::DVec3::Z, -1.2)
+            * DQuat::from_axis_angle(glam::DVec3::Y, -0.3);
+        let Kind::Glass { yaw, pitch } = Kind::glass(head) else {
+            panic!("not the glass's kind");
+        };
+        assert!((yaw + 1.2).abs() < 1e-9 && (pitch - 0.3).abs() < 1e-9, "{yaw} {pitch}");
+        let stage = Source {
+            window: 1,
+            pixels: (640, 360),
+            kind: Kind::glass(head),
+            focused: false,
+            launcher: false,
+        }
+        .stage();
+        assert_eq!((stage.yaw, stage.pitch), (yaw, pitch));
+        // The whole bed, as for the room, rather than the narrow image a small window has.
+        assert_eq!(stage.half_width, NOMINAL_HALF_STAGE);
+        // And it is the one an app's sound comes from, over a bigger window and over the room.
+        let pinned = Source {
+            window: 1,
+            pixels: (640, 360),
+            kind: Kind::glass(head),
+            focused: false,
+            launcher: false,
+        };
+        assert!(pinned.rank() > win(2, 0.0, 3.0).rank());
+        assert!(pinned.rank() > sky(3, 0.0).rank());
+    }
+
+    #[test]
+    fn steam_never_takes_a_games_sound_however_big_or_focused() {
+        // The report: focus Steam, and the game's sound moves to it. Both windows are the same
+        // size, and Steam is the one with focus -- which is exactly what used to win.
+        let game = win(1, 0.0, 1.1);
+        let steam = Source {
+            launcher: true,
+            focused: true,
+            ..win(2, 1.5, 1.1)
+        };
+        assert!(game.rank() > steam.rank());
+        // Nor by being bigger.
+        let big_steam = Source {
+            launcher: true,
+            focused: true,
+            ..win(3, 1.5, 3.0)
+        };
+        assert!(game.rank() > big_steam.rank());
+        // Alone, it is still the only claim there is.
+        assert!(steam.rank() > (i8::MIN, i32::MIN, false, OrderedSize(0.0), std::cmp::Reverse(usize::MAX)));
+        assert!(is_launcher(Some("steam")));
+        assert!(is_launcher(Some("com.valvesoftware.Steam")));
+        // The game itself, which Proton names by its app id, is not the store.
+        assert!(!is_launcher(Some("steam_app_1234")));
+        assert!(!is_launcher(Some("firefox")));
+        assert!(!is_launcher(None));
     }
 
     #[test]

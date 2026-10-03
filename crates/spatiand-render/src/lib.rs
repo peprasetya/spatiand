@@ -8,11 +8,12 @@
 pub mod camera;
 pub mod openxr;
 pub mod panel;
+pub mod pip;
 pub mod ray;
 pub mod sky;
 pub mod text;
 
 pub use camera::{eye_for, eyes_for, sbs_viewport, Eye, EyeSide, StereoConfig};
-pub use ray::{intersect_quad, pick, Hit, PointerConfig, Quad, Ray};
+pub use ray::{intersect_quad, pick, Bend, Hit, PointerConfig, Quad, Ray};
 pub use sky::{Sky, SkyEye, SkyProjection, SkySource, SkyStereo};
 pub use text::{TextAlign, TextImage, TextRenderer};

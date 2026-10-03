@@ -148,6 +148,13 @@ pub struct WindowQuad {
     pub icon: Option<TitleTexture>,
     /// True while a pointer is over the close button, which is the only thing that colours it.
     pub close_hot: bool,
+    /// True while a pointer is over the hide button.
+    pub hide_hot: bool,
+    /// True while a pointer is over the pin button.
+    pub pin_hot: bool,
+    /// True while a pointer is anywhere over this window. A pinned window has no bar to keep
+    /// its buttons on, so it shows them only then: the picture is the point.
+    pub aimed: bool,
     /// What this window's sound is doing, if it has any.
     ///
     /// `None` means the window has never made a sound, and it then has no speaker on its bar
@@ -168,6 +175,26 @@ pub struct WindowQuad {
     /// the request is that the window gets out of the way, and a frame with a title bar around
     /// an invisible surface is a black-bordered hole in the middle of a film.
     pub fade: f32,
+}
+
+/// The radius of the cylinder a flat window is "bent" round: so large that nothing a window can
+/// be wide enough to span turns by a hair, which draws as the one strip it is.
+const FLAT_RADIUS_M: f64 = 1.0e6;
+
+/// The part of a texture rectangle `(u0, u1, v0, v1)` that lies between `from` and `to` of its
+/// width, which is how one strip of a bent window picks out its share of the picture.
+fn cut(rect: [f32; 4], from: f32, to: f32) -> [f32; 4] {
+    let width = rect[1] - rect[0];
+    [rect[0] + width * from, rect[0] + width * to, rect[2], rect[3]]
+}
+
+/// One strip of a bent piece: where it goes, which part of the piece's picture it shows, and
+/// whether its left and right edges are joins with the strips beside it.
+struct Cut {
+    model: Mat4,
+    from: f32,
+    to: f32,
+    seams: (bool, bool),
 }
 
 /// What a window is playing, as far as its title bar is concerned.
@@ -353,6 +380,10 @@ pub struct Scene {
     resize_cursor: u32,
     /// The cross on a window's close button.
     close_glyph: u32,
+    /// The dash on a window's hide button.
+    hide_glyph: u32,
+    /// The small picture in a bigger one, on a window's pin button.
+    pin_glyph: u32,
     /// The speaker on a window's mute button, sounding and silenced.
     speaker_glyph: u32,
     speaker_off_glyph: u32,
@@ -495,6 +526,8 @@ impl Scene {
             reticle_left,
             resize_cursor,
             close_glyph,
+            hide_glyph,
+            pin_glyph,
             speaker_glyph,
             speaker_off_glyph,
             glass,
@@ -520,6 +553,14 @@ impl Scene {
                     {
                         let c = close_glyph_image(64);
                         upload_raw(gl, 64, 64, &c, false)
+                    },
+                    {
+                        let h = hide_glyph_image(64);
+                        upload_raw(gl, 64, 64, &h, false)
+                    },
+                    {
+                        let g = pin_glyph_image(64);
+                        upload_raw(gl, 64, 64, &g, false)
                     },
                     {
                         let g = speaker_glyph_image(64, false);
@@ -554,6 +595,8 @@ impl Scene {
             reticle_left,
             resize_cursor,
             close_glyph,
+            hide_glyph,
+            pin_glyph,
             speaker_glyph,
             speaker_off_glyph,
             glass,
@@ -1198,6 +1241,7 @@ impl Scene {
             pitch: crate::window::clamp_pitch(window.pitch - drop),
             radius: window.radius,
             width: width as f64,
+            ..Default::default()
         };
         let o = placement.orientation();
         let facing = Quat::from_xyzw(o.x as f32, o.y as f32, o.z as f32, o.w as f32);
@@ -1760,7 +1804,16 @@ impl Scene {
         // Furthest first. Everything here is a flat quad at a known distance, so a plain sort
         // is exact and costs nothing -- see the note at the top about there being no depth
         // buffer.
-        order.sort_by(|a, b| b.placement.radius.total_cmp(&a.placement.radius));
+        //
+        // Windows pinned to the glass go last, whatever their distance: they are the wearer's
+        // view, not the room's, and a window dragged in front of one in the room must not
+        // paint over it.
+        order.sort_by(|a, b| {
+            a.placement
+                .pip
+                .cmp(&b.placement.pip)
+                .then(b.placement.radius.total_cmp(&a.placement.radius))
+        });
 
         for window in order {
             // Faded all the way out. Skipped rather than drawn at zero: a transport bar that
@@ -1786,8 +1839,52 @@ impl Scene {
             // undo that for the drawing while leaving the hit-test spherical.
             let o = window.placement.orientation();
             let orientation = Quat::from_xyzw(o.x as f32, o.y as f32, o.z as f32, o.w as f32);
-            let model = self.panel_model(centre, orientation, width, height);
-            let mvp = eye.view_projection() * model;
+
+            // **The window is bent round the wearer**, as a piece of a vertical cylinder with the
+            // wearer on its axis, so it is as curved as it is near: a window a metre away wraps
+            // well round the head and one across the room is nearly flat, and every part of it
+            // is the same distance from the eye.
+            //
+            // Drawn as flat strips laid along the cylinder, because every piece of a window is
+            // an ordinary textured quad and bending each in a shader would mean giving each
+            // pipeline the window's frame. `bent` is where a point of the flat window goes --
+            // `y` across it, `z` up -- and the turn that lays a flat piece along the surface
+            // there. The pointer is tested against the same cylinder (`Quad::bend`), so what is
+            // drawn and what is aimed at cannot part company.
+            // A window pinned to the glass is flat, which is a cylinder of such a radius that a
+            // window's width is nothing on it: one strip, no sag.
+            let radius = window.placement.bend_radius().unwrap_or(FLAT_RADIUS_M);
+            let bent = |y: f32, z: f32, lift: f32| -> (Vec3, Quat) {
+                let (local, angle) = crate::window::on_cylinder(radius, y as f64, z as f64);
+                let turned = orientation * Quat::from_rotation_z(angle as f32);
+                (
+                    centre + orientation * local.as_vec3() + turned * Vec3::X * lift,
+                    turned,
+                )
+            };
+            // A flat piece that is small enough to stay flat: a button, an icon.
+            let piece = |y: f32, z: f32, w: f32, h: f32| -> Mat4 {
+                let (at, turned) = bent(y, z, 0.0);
+                self.panel_model(at, turned, w, h)
+            };
+            // A piece too wide to stay flat, as the strips it is drawn in: each strip's model,
+            // and the part of the piece's width it covers.
+            let across = |y: f32, z: f32, w: f32, h: f32, lift: f32| -> Vec<Cut> {
+                let all = crate::window::strips(radius, y as f64, w as f64);
+                let last = all.len().saturating_sub(1);
+                all.into_iter()
+                    .enumerate()
+                    .map(|(i, strip)| {
+                        let (at, turned) = bent(strip.y as f32, z, lift);
+                        Cut {
+                            model: self.panel_model(at, turned, strip.chord as f32, h),
+                            from: strip.from as f32,
+                            to: strip.to as f32,
+                            seams: (i > 0, i < last),
+                        }
+                    })
+                    .collect()
+            };
 
             // Frame and title bar are ONE pane of glass behind everything, not a border with
             // a bar resting on it. Two rectangles with different fills read as two objects
@@ -1805,38 +1902,39 @@ impl Scene {
             let bar_height = height * frame.bar as f32;
             let chrome_height = height + bar_height + border * 2.0;
             // The sheet covers the content and the bar, so its centre sits above the content's.
-            let chrome_centre = centre + (orientation * Vec3::Z) * (bar_height * 0.5);
-            let chrome = self.panel_model(
-                chrome_centre,
-                orientation,
-                width + border * 2.0,
-                chrome_height,
-            );
+            let chrome_z = bar_height * 0.5;
             let chrome_tint = if window.focused {
                 [0.62, 0.76, 1.0, 0.92]
             } else {
                 [0.42, 0.47, 0.60, 0.60]
             };
-            self.quads.draw(
-                gl,
-                self.glass,
-                &(eye.view_projection() * chrome),
-                dim(chrome_tint),
-                (0.0, 1.0),
-            );
-
-            let bar_centre = centre + (orientation * Vec3::Z) * (height + bar_height) * 0.5;
-            if let Some(title) = window.title {
-                let label_height = bar_height * 0.62;
-                let label_width = label_height * title.aspect.max(0.01);
-                let label = self.panel_model(bar_centre, orientation, label_width, label_height);
+            for cut in across(0.0, chrome_z, width + border * 2.0, chrome_height, 0.0) {
+                self.quads.seams(gl, cut.seams.0, cut.seams.1);
                 self.quads.draw(
                     gl,
-                    title.id,
-                    &(eye.view_projection() * label),
-                    dim([1.0, 1.0, 1.0, if window.focused { 1.0 } else { 0.7 }]),
-                    (0.0, 1.0),
+                    self.glass,
+                    &(eye.view_projection() * cut.model),
+                    dim(chrome_tint),
+                    (cut.from, cut.to),
                 );
+            }
+            self.quads.seams(gl, false, false);
+
+            let bar_z = (height + bar_height) * 0.5;
+            if let Some(title) = window.title.filter(|_| !frame.overlay) {
+                let label_height = bar_height * 0.62;
+                let label_width = label_height * title.aspect.max(0.01);
+                for cut in across(0.0, bar_z, label_width, label_height, 0.0) {
+                    self.quads.seams(gl, cut.seams.0, cut.seams.1);
+                    self.quads.draw(
+                        gl,
+                        title.id,
+                        &(eye.view_projection() * cut.model),
+                        dim([1.0, 1.0, 1.0, if window.focused { 1.0 } else { 0.7 }]),
+                        (cut.from, cut.to),
+                    );
+                }
+                self.quads.seams(gl, false, false);
             }
 
             // The bar's furniture: the application's icon at one end, the close button at the
@@ -1851,21 +1949,15 @@ impl Scene {
             // A box on the chrome, as a model matrix. `v` runs down from the top, the world's
             // z runs up, hence the sign.
             let furniture = |b: crate::pointer::Box2| {
-                let offset = orientation
-                    * Vec3::new(
-                        0.0,
-                        -((b.u as f32 - 0.5) * quad.0),
-                        (0.5 - b.v as f32) * quad.1,
-                    );
-                self.panel_model(
-                    chrome_centre + offset,
-                    orientation,
+                piece(
+                    -((b.u as f32 - 0.5) * quad.0),
+                    chrome_z + (0.5 - b.v as f32) * quad.1,
                     b.half_u as f32 * 2.0 * quad.0,
                     b.half_v as f32 * 2.0 * quad.1,
                 )
             };
 
-            if let Some(icon) = window.icon {
+            if let Some(icon) = window.icon.filter(|_| !frame.overlay) {
                 // Inset a little inside its box: an icon drawn to the full square touches the
                 // glass around it, and the whole point of the furniture being smaller than the
                 // bar is that it reads as sitting *in* the bar.
@@ -1881,6 +1973,12 @@ impl Scene {
                 );
             }
 
+            // A window pinned to the glass has no bar, so its buttons float over the picture and
+            // are there only while it is aimed at -- which makes them the one thing on a window
+            // that must be drawn *after* its surface rather than before, or the picture covers
+            // them. An ordinary window's sit on its glass, outside the surface, and go first.
+            let draw_buttons = || {
+            if !frame.overlay || window.aimed {
             // The close button. A disc of brighter glass with a cross on it, rather than a
             // bare glyph: a cross alone on a transparent bar is hard to find and impossible to
             // judge the extent of, and the extent is what has to be aimed at.
@@ -1898,6 +1996,12 @@ impl Scene {
                 [0.86, 0.92, 1.0, 0.28]
             } else {
                 [0.80, 0.86, 1.0, 0.15]
+            };
+            let disc = if frame.overlay && !hot {
+                // Over a picture there is no glass to light a disc, so it is dark instead.
+                [0.04, 0.06, 0.09, 0.62]
+            } else {
+                disc
             };
             let disc_px = 64.0f32;
             self.rounded.draw(
@@ -1922,6 +2026,87 @@ impl Scene {
                 (0.0, 1.0),
             );
 
+            // The hide button, beside close. A dash on a disc, like the others; it puts the
+            // window away rather than ending it, so it is not red under the pointer -- the one
+            // colour on the bar that means "this destroys something" is close's.
+            {
+                let hide = frame.hide();
+                let hot = window.hide_hot;
+                let disc = if hot {
+                    [0.86, 0.94, 1.0, 0.60]
+                } else if window.focused {
+                    [0.86, 0.92, 1.0, 0.28]
+                } else {
+                    [0.80, 0.86, 1.0, 0.15]
+                };
+                let disc = if frame.overlay && !hot {
+                    [0.04, 0.06, 0.09, 0.62]
+                } else {
+                    disc
+                };
+                self.rounded.draw(
+                    gl,
+                    &(eye.view_projection() * furniture(hide)),
+                    dim(disc),
+                    (disc_px, disc_px),
+                    disc_px * 0.5,
+                );
+                let mut dash = hide;
+                dash.half_u *= 0.46;
+                dash.half_v *= 0.46;
+                self.quads.draw(
+                    gl,
+                    self.hide_glyph,
+                    &(eye.view_projection() * furniture(dash)),
+                    dim(if hot {
+                        [1.0, 1.0, 1.0, 1.0]
+                    } else {
+                        [0.92, 0.95, 1.0, if window.focused { 0.90 } else { 0.55 }]
+                    }),
+                    (0.0, 1.0),
+                );
+            }
+
+            // The pin, beside hide. A small picture inside a larger one; lit while the window
+            // is pinned, so the one control says both what it does and what state it is in.
+            {
+                let pin = frame.pin();
+                let hot = window.pin_hot;
+                let pinned = window.placement.pip;
+                let disc = if hot {
+                    [0.86, 0.94, 1.0, 0.60]
+                } else if pinned {
+                    [0.45, 0.68, 1.0, 0.80]
+                } else if frame.overlay {
+                    [0.04, 0.06, 0.09, 0.62]
+                } else if window.focused {
+                    [0.86, 0.92, 1.0, 0.28]
+                } else {
+                    [0.80, 0.86, 1.0, 0.15]
+                };
+                self.rounded.draw(
+                    gl,
+                    &(eye.view_projection() * furniture(pin)),
+                    dim(disc),
+                    (disc_px, disc_px),
+                    disc_px * 0.5,
+                );
+                let mut icon = pin;
+                icon.half_u *= 0.52;
+                icon.half_v *= 0.52;
+                self.quads.draw(
+                    gl,
+                    self.pin_glyph,
+                    &(eye.view_projection() * furniture(icon)),
+                    dim(if hot || pinned {
+                        [1.0, 1.0, 1.0, 1.0]
+                    } else {
+                        [0.92, 0.95, 1.0, if window.focused { 0.90 } else { 0.55 }]
+                    }),
+                    (0.0, 1.0),
+                );
+            }
+
             // The speaker, and only on windows that make a sound. A mute button on a text
             // editor is a control that does nothing, and there would be one on every window
             // in the room -- so the bar stays as bare as the window's behaviour allows.
@@ -1939,6 +2124,11 @@ impl Scene {
                     [0.86, 0.94, 1.0, 0.60]
                 } else {
                     [0.80, 0.90, 1.0, 0.16 + 0.34 * live]
+                };
+                let disc = if frame.overlay && !hot && !sound.muted {
+                    [0.04, 0.06, 0.09, 0.62]
+                } else {
+                    disc
                 };
                 self.rounded.draw(
                     gl,
@@ -1965,6 +2155,12 @@ impl Scene {
                     }),
                     (0.0, 1.0),
                 );
+            }
+
+            }
+            };
+            if !frame.overlay {
+                draw_buttons();
             }
 
             // Client textures arrive with GL's *default* sampler state, which is
@@ -2004,15 +2200,24 @@ impl Scene {
             // The tint's alpha *replaces* the texture's here rather than scaling it -- see
             // `u_opaque` -- so a fade of 1.0 is the opaque draw this has always been, and
             // anything less is a straight crossfade to whatever is behind the window.
-            self.quads.draw_opaque_rect(
-                gl,
-                window.texture,
-                &mvp,
-                [1.0, 1.0, 1.0, window.fade],
-                window
-                    .xr
-                    .eye_rect_within(window.crop, matches!(eye.side, EyeSide::Left)),
-            );
+            let rect = window
+                .xr
+                .eye_rect_within(window.crop, matches!(eye.side, EyeSide::Left));
+            for strip in across(0.0, 0.0, width, height, 0.0) {
+                self.quads.seams(gl, strip.seams.0, strip.seams.1);
+                self.quads.draw_opaque_rect(
+                    gl,
+                    window.texture,
+                    &(eye.view_projection() * strip.model),
+                    [1.0, 1.0, 1.0, window.fade],
+                    cut(rect, strip.from, strip.to),
+                );
+            }
+            self.quads.seams(gl, false, false);
+
+            if frame.overlay {
+                draw_buttons();
+            }
 
             // Menus and dropdowns, on the window's own plane and a hair in front of it.
             //
@@ -2021,7 +2226,6 @@ impl Scene {
             // depth test. A millimetre is far too little to see as a gap at arm's length and
             // far more than enough to stop the two coplanar quads fighting over which pixel
             // belongs to whom, which shows up as the menu flickering as the head moves.
-            let normal = orientation * Vec3::X;
             let per_pixel = (
                 width / window.pixels.0.max(1) as f32,
                 height / window.pixels.1.max(1) as f32,
@@ -2037,10 +2241,15 @@ impl Scene {
                     / window.pixels.0.max(1) as f32;
                 let v = (popup.offset.1 as f32 + popup.pixels.1 as f32 * 0.5)
                     / window.pixels.1.max(1) as f32;
-                let offset = orientation * Vec3::new(0.0, -(u - 0.5) * width, (0.5 - v) * height);
                 // Submenus stack, so each one steps a little further forward than the last.
-                let lift = normal * (POPUP_LIFT_M * (depth as f32 + 1.0));
-                let model = self.panel_model(centre + offset + lift, orientation, popup_w, popup_h);
+                let lift = POPUP_LIFT_M * (depth as f32 + 1.0);
+                let strips = across(
+                    -(u - 0.5) * width,
+                    (0.5 - v) * height,
+                    popup_w,
+                    popup_h,
+                    lift,
+                );
                 gl.BindTexture(ffi::TEXTURE_2D, popup.texture);
                 gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MIN_FILTER, ffi::LINEAR as i32);
                 gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MAG_FILTER, ffi::LINEAR as i32);
@@ -2063,14 +2272,18 @@ impl Scene {
                 } else {
                     QuadPipeline::draw_rect
                 };
-                draw(
-                    &self.quads,
-                    gl,
-                    popup.texture,
-                    &(eye.view_projection() * model),
-                    [1.0, 1.0, 1.0, window.fade],
-                    popup.crop,
-                );
+                for strip in strips {
+                    self.quads.seams(gl, strip.seams.0, strip.seams.1);
+                    draw(
+                        &self.quads,
+                        gl,
+                        popup.texture,
+                        &(eye.view_projection() * strip.model),
+                        [1.0, 1.0, 1.0, window.fade],
+                        cut(popup.crop, strip.from, strip.to),
+                    );
+                }
+                self.quads.seams(gl, false, false);
             }
         }
     }
@@ -2145,6 +2358,7 @@ impl Scene {
             orientation: quat.as_dquat(),
             width: card_width as f64,
             height: (layout.height * metres) as f64,
+            bend: None,
         };
         let hit = spatiand_render::intersect_quad(ray, &card)?;
         let (x, y) = (hit.u as f32 * panel::WIDTH, hit.v as f32 * layout.height);
@@ -2179,6 +2393,7 @@ impl Scene {
                     orientation: orientation.as_dquat(),
                     width: size,
                     height: size,
+                    bend: None,
                 };
                 let hit = spatiand_render::intersect_quad(ray, &disc)?;
                 // A bubble is round; the corners of its square are sky.
@@ -3014,6 +3229,71 @@ mod glyph_tests {
     }
 }
 
+/// A short horizontal bar, a little below the middle: the hide button's "put it away".
+fn hide_glyph_image(size: u32) -> Vec<u8> {
+    let mut out = vec![0u8; (size * size * 4) as usize];
+    let centre = (size as f32 - 1.0) * 0.5;
+    let radius = centre;
+    let (half_stroke, reach, drop) = (0.10f32, 0.80f32, 0.28f32);
+    let feather = 1.5 / radius;
+    for y in 0..size {
+        for x in 0..size {
+            let dx = (x as f32 - centre) / radius;
+            let dy = (y as f32 - centre) / radius - drop;
+            // Distance to a segment with round ends.
+            let beyond = (dx.abs() - reach).max(0.0);
+            let d = (beyond * beyond + dy * dy).sqrt();
+            let a = (1.0 - (d - half_stroke) / feather).clamp(0.0, 1.0);
+            if a <= 0.0 {
+                continue;
+            }
+            let i = ((y * size + x) * 4) as usize;
+            out[i] = 255;
+            out[i + 1] = 255;
+            out[i + 2] = 255;
+            out[i + 3] = (a * 255.0) as u8;
+        }
+    }
+    out
+}
+
+/// A small picture sitting in the corner of a larger one: the pin button's "keep this on the
+/// glass".
+fn pin_glyph_image(size: u32) -> Vec<u8> {
+    let mut out = vec![0u8; (size * size * 4) as usize];
+    let centre = (size as f32 - 1.0) * 0.5;
+    let radius = centre;
+    let feather = 1.5 / radius;
+    // Distance to a rectangle's outline, and to its inside, both from the signed distance of a
+    // box: `half` is the half extent, `at` its centre.
+    let sd_box = |x: f32, y: f32, at: (f32, f32), half: (f32, f32)| {
+        let (dx, dy) = ((x - at.0).abs() - half.0, (y - at.1).abs() - half.1);
+        (dx.max(0.0).powi(2) + dy.max(0.0).powi(2)).sqrt() + dx.max(dy).min(0.0)
+    };
+    for y in 0..size {
+        for x in 0..size {
+            let fx = (x as f32 - centre) / radius;
+            let fy = (y as f32 - centre) / radius;
+            // The outer picture: an outline. The inner: a filled block in its lower right.
+            let outer = sd_box(fx, fy, (0.0, 0.0), (0.86, 0.62)).abs() - 0.075;
+            let inner = sd_box(fx, fy, (0.30, 0.20), (0.36, 0.26));
+            let a = [outer, inner]
+                .into_iter()
+                .map(|d| (1.0 - d / feather).clamp(0.0, 1.0))
+                .fold(0.0f32, f32::max);
+            if a <= 0.0 {
+                continue;
+            }
+            let i = ((y * size + x) * 4) as usize;
+            out[i] = 255;
+            out[i + 1] = 255;
+            out[i + 2] = 255;
+            out[i + 3] = (a * 255.0) as u8;
+        }
+    }
+    out
+}
+
 fn close_glyph_image(size: u32) -> Vec<u8> {
     let mut out = vec![0u8; (size * size * 4) as usize];
     let centre = (size as f32 - 1.0) * 0.5;
@@ -3192,6 +3472,12 @@ pub fn collect_windows(
         if crate::xr::state_of(&surface).is_environment() {
             continue;
         }
+        // Put away with the hide button. Left out here rather than faded, so there is nothing
+        // to draw and nothing to point at -- the same list feeds both -- while the application
+        // itself carries on, sound and all.
+        if state.layout.is_hidden(&window) {
+            continue;
+        }
         let Some(placement) = state.layout.get(&window) else {
             // In the space but with nowhere to be. An X11 window adopted before its placement
             // existed would sit here silently for the rest of the session.
@@ -3344,6 +3630,9 @@ pub fn collect_windows(
             title: None,
             icon: None,
             close_hot: false,
+            hide_hot: false,
+            pin_hot: false,
+            aimed: false,
             // Both filled in by the backend, which is where the audio engine lives.
             sound: None,
             mute_hot: false,
@@ -3351,6 +3640,11 @@ pub fn collect_windows(
             xr,
             fade: crate::xr::fade_of(&surface, &state.attention),
         });
+    }
+    // Windows pinned to the glass are put where the head says, now, from the pose the eyes are
+    // about to be built from. See `crate::pip`.
+    if let Some((head, view)) = &state.pip_head {
+        crate::pip::lock(&mut out, state.pip, &state.layout, *head, view);
     }
     out
 }
@@ -3625,6 +3919,7 @@ pub fn window_quad(placement: &crate::window::Placement, aspect: f64) -> Quad {
         orientation: placement.orientation(),
         width: placement.width,
         height: placement.width / aspect.max(0.01),
+        bend: None,
     }
 }
 

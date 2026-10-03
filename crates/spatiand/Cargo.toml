@@ -35,6 +35,9 @@ env_logger.workspace = true
 thiserror.workspace = true
 # localtime_r for the status clock, and nothing else.
 libc = "0.2"
+# One property read from the X server: whether a window asked to be kept above the others.
+# Already in the tree through smithay, so it costs nothing to build.
+x11rb = "0.13"
 
 # Only the two codecs panoramas and app icons actually come in. The default feature set drags
 # in a dozen more decoders that would never be reached and are not free to build on the Deck.

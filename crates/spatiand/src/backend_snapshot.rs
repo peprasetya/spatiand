@@ -188,6 +188,17 @@ pub fn run(
     // every immersive layer was still placed at world zero -- which is not a picture of
     // anything the session would ever show, and hid exactly the fault this exists to catch.
     runtime.state.spawn_yaw = yaw_deg.to_radians();
+    // Pinned windows are placed from the head, which a snapshot has: the one it is taken from.
+    // `SPATIAND_PIN_ALL=1` pins every window, the way to look at one without a hand to press the
+    // pin button with.
+    runtime.state.pip_head = Some((
+        DQuat::from_axis_angle(DVec3::Z, yaw_deg.to_radians())
+            * DQuat::from_axis_angle(DVec3::Y, pitch_deg.to_radians()),
+        crate::pip::view_of(&StereoConfig {
+            per_eye: (width, height),
+            ..Default::default()
+        }),
+    ));
 
     // --- a GL context with no display attached ---
     let node =
@@ -753,7 +764,11 @@ pub fn run(
     // where they go -- which would be a picture of something the session never looks like.
     scene.wait_for_icons(&mut renderer, std::time::Duration::from_secs(10));
     scene.sync_apps(&mut renderer, &mut text, &shell, ppd)?;
+    // `SPATIAND_PIN_ALL=hover` also draws every window as if it were being pointed at, which is
+    // the only way to see a pinned window's buttons without a hand to point with.
+    let hovering = std::env::var(crate::pip::PIN_ALL_ENV).as_deref() == Ok("hover");
     for quad in windows.iter_mut() {
+        quad.aimed = hovering;
         if let Some(app_id) = runtime.state.app_id_of(&quad.window) {
             quad.icon = scene.window_icon(&mut renderer, &app_id);
         }

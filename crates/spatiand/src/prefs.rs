@@ -56,6 +56,16 @@ pub struct Prefs {
     #[serde(default = "yes")]
     pub remote_microphone: bool,
 
+    /// Which corner of the view a window pinned to it sits in. See [`crate::pip`].
+    ///
+    /// Remembered because it is where the wearer's eye has learned to look. Whether a window is
+    /// pinned is *not*: a pin is temporary, and the next window starts in the room.
+    #[serde(default)]
+    pub pip_corner: spatiand_render::pip::Corner,
+    /// And how big it is: small or large.
+    #[serde(default)]
+    pub pip_size: spatiand_render::pip::Size,
+
     /// Hosts running applications elsewhere, shown here as windows.
     ///
     /// Empty by default, and a session with none behaves exactly as it always has. Each entry
@@ -88,6 +98,8 @@ impl Default for Prefs {
             audio_directness_centred: DEFAULT_DIRECTNESS.centred,
             audio_directness_off_axis: DEFAULT_DIRECTNESS.off_axis,
             remote_microphone: true,
+            pip_corner: Default::default(),
+            pip_size: Default::default(),
             remotes: Vec::new(),
         }
     }
@@ -98,6 +110,14 @@ pub fn path() -> PathBuf {
 }
 
 impl Prefs {
+    /// Where pinned windows go and how big, as the compositor holds them.
+    pub fn pip(&self) -> crate::pip::Settings {
+        crate::pip::Settings {
+            corner: self.pip_corner,
+            size: self.pip_size,
+        }
+    }
+
     /// Read the stored preferences, falling back to the defaults for anything missing.
     pub fn load() -> Self {
         let path = path();

@@ -28,6 +28,14 @@ pub struct WindowEntry {
     pub title: String,
     /// True for the window that has focus right now.
     pub current: bool,
+    /// Put away with the title bar's hide button: running, but not drawn.
+    pub hidden: bool,
+    /// Pinned to the glass: a picture in picture, in a corner of the view.
+    pub pinned: bool,
+    /// An application that is the room rather than a thing in it -- a VR application, an
+    /// immersive film. It has no title bar to press close on, so this list is the only way to
+    /// end one, which is why it is listed at all.
+    pub room: bool,
 }
 
 /// The switcher's state.
@@ -48,6 +56,19 @@ impl Switcher {
             Some(i) if !entries.is_empty() => (i + 1) % entries.len(),
             _ => 0,
         };
+        self.entries = entries;
+    }
+
+    /// Hand it a fresh list while it stays open, keeping the highlight on the same window.
+    ///
+    /// [`Self::show`] is for opening, and puts the cursor on the *next* window; doing that
+    /// after every close or hide would send the highlight skipping down the list from under
+    /// the thumb that is working through it.
+    pub fn refresh(&mut self, entries: Vec<WindowEntry>) {
+        let was = self.activate();
+        self.cursor = was
+            .and_then(|id| entries.iter().position(|e| e.id == id))
+            .unwrap_or_else(|| self.cursor.min(entries.len().saturating_sub(1)));
         self.entries = entries;
     }
 
@@ -108,6 +129,9 @@ mod tests {
                 id: i * 10,
                 title: format!("window {i}"),
                 current: i == current,
+                hidden: false,
+                pinned: false,
+                room: false,
             })
             .collect()
     }
@@ -145,6 +169,24 @@ mod tests {
         let s = Switcher::default();
         assert!(s.is_empty());
         assert_eq!(s.activate(), None);
+    }
+
+    #[test]
+    fn a_refreshed_list_keeps_the_highlight_on_the_same_window() {
+        // Closing or hiding one window must not send the highlight skipping down the list.
+        let mut s = Switcher::default();
+        s.show(windows(4, 0));
+        s.step(Direction::Down);
+        assert_eq!(s.activate(), Some(20));
+        let mut fresh = windows(4, 0);
+        fresh.remove(0);
+        s.refresh(fresh);
+        assert_eq!(s.activate(), Some(20), "the highlight moved");
+        // And a window that is gone leaves it on its neighbour, not past the end.
+        let mut fewer = windows(4, 0);
+        fewer.truncate(2);
+        s.refresh(fewer);
+        assert_eq!(s.activate(), Some(10));
     }
 
     #[test]

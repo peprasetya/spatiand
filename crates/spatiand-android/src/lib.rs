@@ -58,6 +58,8 @@ mod input_map;
 mod keyboard_face;
 #[path = "../../spatiand/src/menu.rs"]
 mod menu;
+#[path = "../../spatiand/src/pip.rs"]
+mod pip;
 #[path = "../../spatiand/src/pointer.rs"]
 mod pointer;
 #[path = "../../spatiand/src/pose.rs"]

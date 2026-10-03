@@ -56,6 +56,11 @@ uniform vec4 u_uv_range;
 // sensible in them. Blending against those bits is why a video played in VLC was audible,
 // present, and completely see-through: its alpha bytes were zero.
 uniform float u_opaque;
+// Whether the left and right edges of this quad are seams with a neighbour rather than the
+// outside of the picture. A bent window is drawn as strips side by side; each strip's edge is
+// softened like any quad's, and where two meet that softening is a faint line down the window
+// -- both fading out over the same pixel, the world showing through between them.
+uniform vec2 u_seam;
 out vec4 f_color;
 
 // **Every screen pixel is the average of what it covers.** A window hanging in the room is
@@ -102,8 +107,11 @@ void main() {
     // The quad's own outline, softened across one screen pixel: how far this pixel is inside
     // each edge, in pixels. Without a multisampled target this is the whole of the edge
     // anti-aliasing, and it costs two derivatives.
-    vec2 inside = min(v_uv, 1.0 - v_uv) / max(fwidth(v_uv), vec2(1e-6));
-    f_color.a *= clamp(min(inside.x, inside.y) + 0.5, 0.0, 1.0);
+    vec2 width = max(fwidth(v_uv), vec2(1e-6));
+    float left = mix(v_uv.x / width.x, 1e6, u_seam.x);
+    float right = mix((1.0 - v_uv.x) / width.x, 1e6, u_seam.y);
+    float inside = min(min(left, right), min(v_uv.y, 1.0 - v_uv.y) / width.y);
+    f_color.a *= clamp(inside + 0.5, 0.0, 1.0);
 }
 "#;
 
@@ -442,6 +450,7 @@ pub struct QuadPipeline {
     loc_tint: i32,
     loc_uv_range: i32,
     loc_opaque: i32,
+    loc_seam: i32,
 }
 
 /// A horizontal span over the whole height, which is what every non-stereo caller means.
@@ -468,7 +477,19 @@ impl QuadPipeline {
             loc_tint: gl.GetUniformLocation(program, name("u_tint").as_ptr()),
             loc_uv_range: gl.GetUniformLocation(program, name("u_uv_range").as_ptr()),
             loc_opaque: gl.GetUniformLocation(program, name("u_opaque").as_ptr()),
+            loc_seam: gl.GetUniformLocation(program, name("u_seam").as_ptr()),
         })
+    }
+
+    /// Say whether the next quads' left and right edges join a neighbour, so they are not
+    /// softened. **Sticky**: it holds until it is set again, so whoever sets it must put it
+    /// back to `(false, false)` afterwards, which is what every other draw assumes.
+    ///
+    /// # Safety
+    /// Must be called with the GL context current.
+    pub unsafe fn seams(&self, gl: &ffi::Gles2, left: bool, right: bool) {
+        gl.UseProgram(self.program);
+        gl.Uniform2f(self.loc_seam, left as u32 as f32, right as u32 as f32);
     }
 
     /// Draw one textured quad. `mvp` already contains the eye's view-projection.

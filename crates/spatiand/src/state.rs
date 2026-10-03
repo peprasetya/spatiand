@@ -206,6 +206,18 @@ pub struct Spatiand {
     /// Lives here because `new_toplevel` needs it and has no access to the tracker: a window
     /// has to be placed the moment it is mapped, which is deep inside a protocol callback.
     pub spawn_yaw: f64,
+    /// Where pinned windows go and how big, from the preferences. See [`crate::pip`].
+    pub pip: crate::pip::Settings,
+    /// Which way the head points this frame and how the glasses see, set by the backend before
+    /// it collects the windows, so a pinned window is placed from the pose the eyes are built
+    /// from. `None` until there is a head: nothing is pinned then, because there is no view to
+    /// pin it to.
+    pub pip_head: Option<(glam::DQuat, spatiand_render::pip::View)>,
+    /// When windows were last looked at for saying they are picture in picture.
+    pub pip_looked: Option<std::time::Instant>,
+    /// The X server's display number, once it is up. The one thing that is read from it is
+    /// whether a window asked to be kept above the others.
+    pub x11_display: Option<u32>,
 }
 
 impl Spatiand {
@@ -343,6 +355,10 @@ impl Spatiand {
             attention: crate::attention::Attention::default(),
             screen,
             spawn_yaw: 0.0,
+            pip: Default::default(),
+            pip_head: None,
+            pip_looked: None,
+            x11_display: None,
         }
     }
 
@@ -577,12 +593,15 @@ impl Spatiand {
     }
 
     pub fn settle_keyboard_focus(&mut self) {
+        // Run every frame by every backend, which makes it the one place that is certain to be
+        // reached: windows that have started saying they are picture in picture are pinned here.
+        crate::pip::auto_pin(self);
         let focus = self.seat.get_keyboard().and_then(|k| k.current_focus());
         self.sync_activation(focus.as_ref());
         let focused = self
             .space
             .elements()
-            .find(|w| self.layout.is_focused(w))
+            .find(|w| self.layout.is_focused(w) && !self.layout.is_hidden(w))
             .cloned();
         let wanted = focused.as_ref().and_then(Self::keyboard_target);
         if wanted == self.focus_settled {
@@ -748,10 +767,14 @@ impl Spatiand {
     /// Titles rather than handles: the shell has no window type and is not being given one.
     /// A window that has not named itself is listed by what it is rather than left blank --
     /// an unlabelled row in a switcher is indistinguishable from a bug.
+    ///
+    /// **Everything, hidden windows and rooms included.** A hidden window has nothing on screen
+    /// to press, so this list is how it comes back; and a VR application that fills the view
+    /// has no title bar, so this list is how it is ended. Leaving either out is leaving it
+    /// running with no way to reach it.
     pub fn open_windows(&self) -> Vec<spatiand_shell::WindowEntry> {
         self.space
             .elements()
-            .filter(|w| !Self::is_environment(w))
             .filter_map(|window| {
                 let id = self.layout.id_of(window)?;
                 let title = self.display_title(window);
@@ -759,9 +782,58 @@ impl Spatiand {
                     id,
                     title,
                     current: self.layout.is_focused(window),
+                    hidden: self.layout.is_hidden(window),
+                    pinned: self.layout.is_pinned(window),
+                    room: Self::is_environment(window),
                 })
             })
             .collect()
+    }
+
+    /// Put a window away: not drawn, not pointed at, still running. Its sound goes on too.
+    ///
+    /// If it had the keyboard, that goes to the nearest window still showing -- a keystroke
+    /// typed into something nobody can see is worse than one that goes nowhere.
+    pub fn hide_window(&mut self, window: &smithay::desktop::Window) {
+        self.layout.set_hidden(window, true);
+        if !self.layout.is_focused(window) {
+            return;
+        }
+        let next = self
+            .space
+            .elements()
+            .find(|w| *w != window && !self.layout.is_hidden(w) && !Self::is_environment(w))
+            .cloned();
+        match next {
+            Some(next) => self.focus_window(&next),
+            None => {
+                if let Some(keyboard) = self.seat.get_keyboard() {
+                    self.focus_settled = None;
+                    keyboard.set_focus(self, None, smithay::utils::SERIAL_COUNTER.next_serial());
+                }
+            }
+        }
+    }
+
+    /// Bring a hidden window back where it was.
+    pub fn show_window(&mut self, window: &smithay::desktop::Window) {
+        self.layout.set_hidden(window, false);
+    }
+
+    /// Pin a window to the glass, or let it go back to where it was in the room.
+    ///
+    /// A room cannot be pinned: it has no picture to put in a corner, and it is the one window
+    /// the wearer cannot point at to undo it.
+    pub fn pin_window(&mut self, window: &smithay::desktop::Window, pinned: bool) {
+        if pinned && Self::is_environment(window) {
+            return;
+        }
+        self.layout.set_pinned(window, pinned);
+        log::info!(
+            "{} {:?}",
+            if pinned { "pinned" } else { "unpinned" },
+            self.title_of(window).unwrap_or_default()
+        );
     }
 
     /// Whether this window has become the room rather than a thing in it.

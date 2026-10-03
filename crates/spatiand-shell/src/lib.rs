@@ -62,6 +62,9 @@ pub enum Intent {
     /// Only the window list has anything to close, and elsewhere this does nothing rather than
     /// something surprising. Y is otherwise the focused application's, like every other button.
     Close,
+    /// Put away the window the list has selected, or bring it back — the X button, in the
+    /// window list. Like [`Intent::Close`] it does nothing anywhere else.
+    Hide,
 }
 
 /// Which surface owns the wearer's attention.
@@ -120,6 +123,12 @@ pub enum ShellEvent {
     /// Ask this window to close itself, politely. The list stays open: closing several is one
     /// press each, and the compositor hands back a fresh list as they go.
     CloseWindow(usize),
+    /// Put this window away (`true`) or bring it back (`false`). It keeps running either way.
+    /// The list stays open and is refreshed, as for [`ShellEvent::CloseWindow`].
+    HideWindow { id: usize, hidden: bool },
+    /// Pin this window to the glass (`true`) or let it go back to where it was in the room
+    /// (`false`). The list stays open and is refreshed.
+    PinWindow { id: usize, pinned: bool },
     /// Start this application on that computer.
     LaunchRemote { host: String, app: String },
     /// Start pairing with a computer at this address.
@@ -193,6 +202,12 @@ impl Shell {
         self.hud.set_recording(recording);
     }
 
+    /// Say where pinned windows are and how big, so the HUD's two rows show it. `corner` is 0
+    /// to 3, bottom right first; see `Hud::set_pip`.
+    pub fn set_pip(&mut self, corner: usize, large: bool) {
+        self.hud.set_pip(corner, large);
+    }
+
     pub fn launcher(&self) -> &Launcher {
         &self.launcher
     }
@@ -264,6 +279,11 @@ impl Shell {
     /// switcher opens, because the list is stale the moment anything is launched or closed.
     pub fn set_windows(&mut self, windows: Vec<WindowEntry>) {
         self.switcher.show(windows);
+    }
+
+    /// The same list, rebuilt while the switcher is open. The highlight stays on its window.
+    pub fn refresh_windows(&mut self, windows: Vec<WindowEntry>) {
+        self.switcher.refresh(windows);
     }
 
     pub fn set_apps(&mut self, apps: Vec<AppEntry>) {
@@ -369,6 +389,16 @@ impl Shell {
                 Mode::Bluetooth => bluetooth_event(self.bluetooth.forget()),
                 _ => None,
             },
+            Intent::Hide => match self.mode {
+                Mode::Switcher => {
+                    let entry = self.switcher.entries().get(self.switcher.cursor())?;
+                    Some(ShellEvent::HideWindow {
+                        id: entry.id,
+                        hidden: !entry.hidden,
+                    })
+                }
+                _ => None,
+            },
             Intent::Back => match self.mode {
                 // B in the world is deliberately inert. The way out of Spatiand is an explicit
                 // row in the HUD, because a stray press of B closing the whole session — with
@@ -396,6 +426,23 @@ impl Shell {
             Intent::Navigate(direction) => {
                 if self.mode == Mode::Controller {
                     return Some(ShellEvent::Controller(ControllerIntent::Navigate(direction)));
+                }
+                // Left and right have nowhere to go in a single column, so in the window list
+                // they pin and unpin: left is "pin", right is "let go". Two directions rather
+                // than one toggle because a held direction repeats, and a toggle repeated is a
+                // window flickering between corner and room.
+                if self.mode == Mode::Switcher {
+                    let pinned = match direction {
+                        Direction::Left => Some(true),
+                        Direction::Right => Some(false),
+                        _ => None,
+                    };
+                    if let Some(pinned) = pinned {
+                        let entry = self.switcher.entries().get(self.switcher.cursor())?;
+                        // A room has no picture to put in a corner.
+                        return (entry.pinned != pinned && !entry.room)
+                            .then_some(ShellEvent::PinWindow { id: entry.id, pinned });
+                    }
                 }
                 match self.mode {
                     Mode::Hud => self.hud.step(direction),
@@ -499,6 +546,76 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
+    fn listed(hidden: bool) -> Vec<WindowEntry> {
+        vec![
+            WindowEntry { id: 3, title: "a".into(), current: true, hidden: false, pinned: false, room: false },
+            WindowEntry { id: 7, title: "b".into(), current: false, hidden, pinned: false, room: false },
+        ]
+    }
+
+    #[test]
+    fn x_in_the_window_list_hides_the_selected_window_and_brings_it_back() {
+        let mut s = Shell::new(vec![], DesktopPanels::ALL, true);
+        s.set_windows(listed(false));
+        s.handle(Intent::ToggleSwitcher);
+        // Opened on the window after the current one.
+        assert_eq!(
+            s.handle(Intent::Hide),
+            Some(ShellEvent::HideWindow { id: 7, hidden: true })
+        );
+        // The list as the compositor hands it back: that window now hidden.
+        s.refresh_windows(listed(true));
+        assert_eq!(
+            s.handle(Intent::Hide),
+            Some(ShellEvent::HideWindow { id: 7, hidden: false })
+        );
+        // Still on the same window, and the list is still open.
+        assert_eq!(s.mode(), Mode::Switcher);
+    }
+
+    #[test]
+    fn left_pins_and_right_lets_go_in_the_window_list() {
+        let mut s = Shell::new(vec![], DesktopPanels::ALL, true);
+        s.set_windows(listed(false));
+        s.handle(Intent::ToggleSwitcher);
+        let left = Intent::Navigate(Direction::Left);
+        let right = Intent::Navigate(Direction::Right);
+        // Letting go of what is not pinned is nothing: a held direction must not repeat events.
+        assert_eq!(s.handle(right), None);
+        assert_eq!(
+            s.handle(left),
+            Some(ShellEvent::PinWindow { id: 7, pinned: true })
+        );
+        // The list as the compositor hands it back: that window now pinned. Pinning it again
+        // is nothing, and letting go is something.
+        let mut pinned = listed(false);
+        pinned[1].pinned = true;
+        s.refresh_windows(pinned);
+        assert_eq!(s.handle(left), None);
+        assert_eq!(
+            s.handle(right),
+            Some(ShellEvent::PinWindow { id: 7, pinned: false })
+        );
+        assert_eq!(s.mode(), Mode::Switcher);
+    }
+
+    #[test]
+    fn a_room_cannot_be_pinned() {
+        let mut s = Shell::new(vec![], DesktopPanels::ALL, true);
+        let mut list = listed(false);
+        list[1].room = true;
+        s.set_windows(list);
+        s.handle(Intent::ToggleSwitcher);
+        assert_eq!(s.handle(Intent::Navigate(Direction::Left)), None);
+    }
+
+    #[test]
+    fn x_means_nothing_outside_the_window_list() {
+        // In the world it belongs to the application, like Y.
+        let mut s = Shell::new(vec![], DesktopPanels::ALL, true);
+        assert_eq!(s.handle(Intent::Hide), None);
+    }
+
     use super::*;
 
     fn app(name: &str) -> AppEntry {

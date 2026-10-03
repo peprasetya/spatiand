@@ -365,7 +365,36 @@ pub fn run(
                             .find(|w| runtime.state.layout.id_of(w) == Some(id))
                             .cloned();
                         if let Some(window) = window {
+                            runtime.state.show_window(&window);
                             runtime.state.focus_window(&window);
+                        }
+                    }
+                    ShellEvent::PinWindow { id, pinned } => {
+                        let window = runtime
+                            .state
+                            .space
+                            .elements()
+                            .find(|w| runtime.state.layout.id_of(w) == Some(id))
+                            .cloned();
+                        if let Some(window) = window {
+                            runtime.state.pin_window(&window, pinned);
+                            shell.refresh_windows(runtime.state.open_windows());
+                        }
+                    }
+                    ShellEvent::HideWindow { id, hidden } => {
+                        let window = runtime
+                            .state
+                            .space
+                            .elements()
+                            .find(|w| runtime.state.layout.id_of(w) == Some(id))
+                            .cloned();
+                        if let Some(window) = window {
+                            if hidden {
+                                runtime.state.hide_window(&window);
+                            } else {
+                                runtime.state.show_window(&window);
+                            }
+                            shell.refresh_windows(runtime.state.open_windows());
                         }
                     }
                     // The layout engine and its editor belong to the real session: this
@@ -415,6 +444,8 @@ pub fn run(
                         }
                         // Nothing to hand back in a window on someone else's desktop.
                         HudAction::ToggleKeyboard
+                        | HudAction::PipCorner
+                        | HudAction::PipSize
                         | HudAction::ReturnToDesktop
                         | HudAction::ControllerLayout
                         | HudAction::Screenshot

@@ -40,6 +40,9 @@ toml.workspace = true
 env_logger.workspace = true
 thiserror.workspace = true
 libc = "0.2"
+# See `crates/spatiand`: one property read from the X server, which never runs here but whose
+# module is shared.
+x11rb = "0.13"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 resvg = "0.45"
 usvg = "0.45"

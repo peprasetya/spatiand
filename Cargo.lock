@@ -3915,6 +3915,7 @@ dependencies = [
  "usvg",
  "wayland-client",
  "wayland-protocols",
+ "x11rb",
 ]
 
 [[package]]
@@ -3950,6 +3951,7 @@ dependencies = [
  "usvg",
  "wayland-client",
  "wayland-protocols",
+ "x11rb",
 ]
 
 [[package]]

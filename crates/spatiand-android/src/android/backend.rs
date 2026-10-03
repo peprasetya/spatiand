@@ -197,6 +197,8 @@ pub fn run(
     };
     let calibrated = spatiand_track::config::load_axes().is_some();
     let mut shell = Shell::new(shell_apps, panels, calibrated);
+    // Where windows pinned to the view go and how big: the wearer's, from last time.
+    crate::pip::adopt(&mut runtime.state, &prefs, &mut shell);
     let mut environments = Environments::discover();
     shell.set_environments(environments.entries(), environments.choice());
     let mut browser = crate::environment::Browser::new();
@@ -636,11 +638,16 @@ pub fn run(
                             .find(|w| runtime.state.layout.id_of(w) == Some(id))
                             .cloned();
                         if let Some(window) = window {
-                            if let Some(placement) = runtime.state.layout.get(&window) {
+                            // A pinned window has no place in the room to be brought from.
+                            let in_room = !runtime.state.layout.is_pinned(&window);
+                            if let Some(placement) =
+                                runtime.state.layout.get(&window).filter(|_| in_room)
+                            {
                                 let placement =
                                     crate::window::brought_here(placement, tracker.recentred_orientation());
                                 runtime.state.layout.set(&window, placement);
                             }
+                            runtime.state.show_window(&window);
                             runtime.state.focus_window(&window);
                         }
                     }
@@ -654,6 +661,43 @@ pub fn run(
                         if let Some(window) = window {
                             log::info!("closing {}", runtime.state.display_title(&window));
                             runtime.state.close_window(&window);
+                        }
+                    }
+                    // Pinning moves a window from the room to the corner of the view, or back,
+                    // and changes nothing about it running. The list stays open, refreshed.
+                    ShellEvent::PinWindow { id, pinned } => {
+                        let window = runtime
+                            .state
+                            .space
+                            .elements()
+                            .find(|w| runtime.state.layout.id_of(w) == Some(id))
+                            .cloned();
+                        if let Some(window) = window {
+                            runtime.state.pin_window(&window, pinned);
+                            shell.refresh_windows(runtime.state.open_windows());
+                        }
+                    }
+                    // Hiding keeps the application running and its sound going; it only stops
+                    // being drawn or pointed at. The list stays open, refreshed in place.
+                    ShellEvent::HideWindow { id, hidden } => {
+                        let window = runtime
+                            .state
+                            .space
+                            .elements()
+                            .find(|w| runtime.state.layout.id_of(w) == Some(id))
+                            .cloned();
+                        if let Some(window) = window {
+                            log::info!(
+                                "{} {}",
+                                if hidden { "hiding" } else { "showing" },
+                                runtime.state.display_title(&window)
+                            );
+                            if hidden {
+                                runtime.state.hide_window(&window);
+                            } else {
+                                runtime.state.show_window(&window);
+                            }
+                            shell.refresh_windows(runtime.state.open_windows());
                         }
                     }
                     ShellEvent::Controller(intent) => {
@@ -699,6 +743,12 @@ pub fn run(
                         }
                         HudAction::Screenshot => screenshot = true,
                         HudAction::Record => record_toggle = true,
+                        HudAction::PipCorner => {
+                            crate::pip::next_corner(&mut runtime.state, &mut prefs, &mut shell)
+                        }
+                        HudAction::PipSize => {
+                            crate::pip::toggle_size(&mut runtime.state, &mut prefs, &mut shell)
+                        }
                         HudAction::OpenSwitcher => shell.set_windows(runtime.state.open_windows()),
                         HudAction::ControllerLayout => controls.open_editor(),
                         HudAction::ToggleKeyboard => {
@@ -936,6 +986,8 @@ pub fn run(
             let projection = crate::scene::projection_surface(&mut renderer, &runtime.state, crate::pose::eye_fovs(&stereo));
             scene.set_projection(projection);
             pointers.set_room(crate::pointer::room(&runtime.state, orientation, crate::pose::eye_fovs(&stereo)[0]));
+            // Where pinned windows go is worked out from this frame's head, inside the collect.
+            runtime.state.pip_head = Some((orientation, crate::pip::view_of(&stereo)));
             let mut windows = crate::scene::collect_windows(&mut renderer, &runtime.state);
             for quad in windows.iter_mut() {
                 let title = runtime.state.display_title(&quad.window);
@@ -948,13 +1000,13 @@ pub fn run(
             if shell.mode() == Mode::Switcher
                 && !(runtime.state.arrived_windows.is_empty() && runtime.state.departed_windows.is_empty())
             {
-                shell.set_windows(runtime.state.open_windows());
+                shell.refresh_windows(runtime.state.open_windows());
             }
             let mut sinks_changed = false;
             for (id, pid, app_id) in std::mem::take(&mut runtime.state.arrived_windows) {
                 match app_id {
                     Some(app_id) if app_id.starts_with("remote.") => {
-                        spatial_audio.adopt_keyed(id, &app_id, spatiand_audio::server::Width::Stereo);
+                        spatial_audio.adopt_keyed(id, &app_id, crate::remote::sound_width(&app_id));
                         sinks_changed = true;
                     }
                     Some(_) => spatial_audio.adopt(id, pid),
@@ -967,7 +1019,7 @@ pub fn run(
             awaiting_app_id.retain(|(id, since)| match runtime.state.app_id_of_id(*id) {
                 Some(app_id) => {
                     if app_id.starts_with("remote.") {
-                        spatial_audio.adopt_keyed(*id, &app_id, spatiand_audio::server::Width::Stereo);
+                        spatial_audio.adopt_keyed(*id, &app_id, crate::remote::sound_width(&app_id));
                         sinks_changed = true;
                     }
                     false
@@ -1007,6 +1059,8 @@ pub fn run(
                         crate::audio::Kind::Environment {
                             yaw: xr.sky_yaw_urad() as f64 * 1e-6,
                         }
+                    } else if runtime.state.layout.is_pinned(window) {
+                        crate::audio::Kind::glass(head)
                     } else if let Some(placement) = runtime.state.layout.get(window) {
                         crate::audio::Kind::Window(placement)
                     } else {
@@ -1026,6 +1080,7 @@ pub fn run(
                         pixels,
                         kind,
                         focused: runtime.state.layout.is_focused(window),
+                        launcher: crate::audio::is_launcher(runtime.state.app_id_of(window).as_deref()),
                     });
                 }
                 spatial_audio.aim_all(&sources, head);
@@ -1114,8 +1169,12 @@ pub fn run(
             for aim in [right_aim.as_ref()].into_iter().flatten() {
                 let Some((index, _)) = aim.hit else { continue };
                 let Some(quad) = windows.get_mut(index) else { continue };
+                // Over the window at all: a pinned window shows its buttons only then.
+                quad.aimed = true;
                 match aim.zone {
+                    Some(Zone::Pin) => quad.pin_hot = true,
                     Some(Zone::Close) => quad.close_hot = true,
+                    Some(Zone::Hide) => quad.hide_hot = true,
                     Some(Zone::Mute) => quad.mute_hot = true,
                     _ => {}
                 }
@@ -1256,6 +1315,7 @@ pub fn run(
                             orientation: facing.as_dquat(),
                             width: width as f64,
                             height: height as f64,
+                            bend: None,
                         }
                     });
 
@@ -1346,6 +1406,26 @@ pub fn run(
                                         let now = quad.sound.map(|s| s.muted).unwrap_or(false);
                                         spatial_audio.set_muted(id, !now);
                                     }
+                                }
+                            }
+                            // Pinned to the glass or let go, whichever the window is not.
+                            Some(a) if a.zone == Some(Zone::Pin) => {
+                                if let Some(quad) = a.hit.and_then(|(i, _)| windows.get(i)) {
+                                    let pinned = !quad.placement.pip;
+                                    runtime.state.pin_window(&quad.window, pinned);
+                                }
+                            }
+                            // Before the title bar, for the same reason as mute and close.
+                            Some(a) if a.zone == Some(Zone::Hide) => {
+                                if let Some(quad) = a.hit.and_then(|(i, _)| windows.get(i)) {
+                                    log::info!(
+                                        "hiding {}",
+                                        runtime
+                                            .state
+                                            .title_of(&quad.window)
+                                            .unwrap_or_else(|| "a window".into())
+                                    );
+                                    runtime.state.hide_window(&quad.window);
                                 }
                             }
                             Some(a) if a.zone == Some(Zone::Close) => {

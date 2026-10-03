@@ -102,6 +102,7 @@ pub fn start(
             Ok(wm) => {
                 log::info!("X server ready on :{display_number}");
                 runtime.state.xwm = Some(wm);
+                runtime.state.x11_display = Some(display_number);
             }
             Err(e) => log::warn!("could not manage the X server's windows: {e}"),
         },
@@ -114,6 +115,77 @@ pub fn start(
         return None;
     }
     Some(number)
+}
+
+/// Whether an X11 window has asked to be kept above the others: `_NET_WM_STATE_ABOVE` among its
+/// `_NET_WM_STATE` atoms.
+///
+/// Smithay's window manager reads the state atoms it acts on -- fullscreen, maximised, hidden --
+/// and keeps the rest to itself, so this reads the property straight from the X server over a
+/// connection of its own. It is the only request an application *can* make that means "keep me
+/// in front", and a browser's picture-in-picture window, run as an X11 program, makes it.
+///
+/// Read from the property the application set when it mapped. A request made later, by message
+/// to the window manager, is ours to act on and write back, and nothing here does.
+///
+/// A failure -- no server, a window that has gone -- is `false`: not asking.
+pub fn asks_to_stay_above(display: u32, window: u32) -> bool {
+    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
+    use x11rb::rust_connection::RustConnection;
+
+    struct Probe {
+        display: u32,
+        connection: RustConnection,
+        state: u32,
+        above: u32,
+    }
+
+    impl Probe {
+        fn connect(display: u32) -> Option<Self> {
+            let (connection, _) = RustConnection::connect(Some(&format!(":{display}"))).ok()?;
+            let state = connection.intern_atom(false, b"_NET_WM_STATE").ok()?.reply().ok()?.atom;
+            let above = connection
+                .intern_atom(false, b"_NET_WM_STATE_ABOVE")
+                .ok()?
+                .reply()
+                .ok()?
+                .atom;
+            Some(Self { display, connection, state, above })
+        }
+
+        fn above(&self, window: u32) -> Option<bool> {
+            let reply = self
+                .connection
+                .get_property(false, window, self.state, AtomEnum::ATOM, 0, 64)
+                .ok()?
+                .reply()
+                .ok()?;
+            Some(reply.value32().is_some_and(|mut atoms| atoms.any(|a| a == self.above)))
+        }
+    }
+
+    // One connection for the session, opened on first use and kept: opening one is a handshake
+    // and this is asked about every window a few times a second.
+    thread_local! {
+        static PROBE: std::cell::RefCell<Option<Probe>> = const { std::cell::RefCell::new(None) };
+    }
+    PROBE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.as_ref().map(|p| p.display) != Some(display) {
+            *slot = Probe::connect(display);
+        }
+        let Some(probe) = slot.as_ref() else {
+            return false;
+        };
+        match probe.above(window) {
+            Some(answer) => answer,
+            // The connection is bad, or the window is gone. Start afresh next time.
+            None => {
+                *slot = None;
+                false
+            }
+        }
+    })
 }
 
 /// The Wayland side: XWayland tells us which surface belongs to which X11 window through a

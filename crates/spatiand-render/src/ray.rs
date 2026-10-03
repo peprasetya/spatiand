@@ -106,6 +106,28 @@ pub struct Quad {
     pub orientation: DQuat,
     pub width: f64,
     pub height: f64,
+    /// Set when the quad is a piece of a window that curves round the wearer. See [`Bend`].
+    pub bend: Option<Bend>,
+}
+
+/// A window curved horizontally round the wearer, as a piece of a cylinder.
+///
+/// The cylinder's axis is vertical in the quad's own frame and runs through the wearer, which
+/// is `radius` metres in front of the window's middle. So a window is bent as far as it is near:
+/// at two metres a window a metre wide is barely off flat, at half a metre it wraps well round
+/// the head, and in every case it stays the same distance from the eye all the way across --
+/// which is also what keeps its edges from being further away than its middle.
+///
+/// A quad that is only *part* of a window -- a menu hanging off its side -- is flat in its own
+/// frame, so `offset` says how far across the window its middle is, and the same cylinder
+/// serves every piece.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Bend {
+    /// The cylinder's radius: the window's distance from the wearer.
+    pub radius: f64,
+    /// Where this quad's middle is across the window, metres, positive to the left. Zero for
+    /// the window itself.
+    pub offset: f64,
 }
 
 /// Where a ray met a quad.
@@ -141,6 +163,9 @@ pub fn intersect_quad(ray: &Ray, quad: &Quad) -> Option<Hit> {
 /// immediately, because dragging an edge outward means aiming past where the window used to
 /// be. Clamping there would let a window grow and never shrink.
 pub fn intersect_plane(ray: &Ray, quad: &Quad) -> Option<Hit> {
+    if let Some(bend) = quad.bend {
+        return intersect_cylinder(ray, quad, bend);
+    }
     let normal = quad.orientation * DVec3::X;
     let denominator = ray.direction.dot(normal);
     // Parallel, or near enough that the division would explode into a hit kilometres away.
@@ -161,6 +186,58 @@ pub fn intersect_plane(ray: &Ray, quad: &Quad) -> Option<Hit> {
         v: 0.5 - local.z / quad.height,
         point,
     })
+}
+
+/// The same, for a quad that is bent round the wearer.
+///
+/// In the quad's own frame the window's cross-section is a circle about the axis `radius`
+/// behind its middle, and the ray is a line: a quadratic. The surface coordinate across is then
+/// the *arc* length round the circle rather than the distance along a plane, which is what the
+/// drawing's strips are laid out by -- one number for both, or the pointer lands beside what it
+/// is aimed at, and by more the nearer the window is to the edge.
+///
+/// Like the flat version this runs past 0..1 for a hit beyond the edge, because a resize drag
+/// depends on it. It stops at a quarter turn either side of the middle: past that the ray is
+/// on the far wall of a cylinder the wearer is inside, which is not the window.
+fn intersect_cylinder(ray: &Ray, quad: &Quad, bend: Bend) -> Option<Hit> {
+    let inverse = quad.orientation.inverse();
+    let origin = inverse * (ray.origin - quad.centre);
+    let direction = inverse * ray.direction;
+    // Relative to the axis, in the plane the circle lies in.
+    let (ox, oy) = (origin.x + bend.radius, origin.y + bend.offset);
+    let a = direction.x * direction.x + direction.y * direction.y;
+    // Running along the axis: it never meets the cylinder.
+    if a < 1e-12 {
+        return None;
+    }
+    let b = ox * direction.x + oy * direction.y;
+    let c = ox * ox + oy * oy - bend.radius * bend.radius;
+    let discriminant = b * b - a * c;
+    if discriminant < 0.0 {
+        return None;
+    }
+    let root = discriminant.sqrt();
+    // Nearest first: from inside only the far one is ahead, and from outside the near one is
+    // the side facing the wearer.
+    [(-b - root) / a, (-b + root) / a]
+        .into_iter()
+        .filter(|t| *t > 0.0)
+        .find_map(|t| {
+            let local = origin + direction * t;
+            let (x, y) = (local.x + bend.radius, local.y + bend.offset);
+            let angle = y.atan2(x);
+            if x <= 0.0 {
+                return None;
+            }
+            Some(Hit {
+                distance: t,
+                // Arc length across the window, less where this quad's own middle is. +Y is
+                // left, so u runs against it, as for a flat quad.
+                u: 0.5 - (angle * bend.radius - bend.offset) / quad.width,
+                v: 0.5 - local.z / quad.height,
+                point: quad.centre + quad.orientation * local,
+            })
+        })
 }
 
 /// The nearest quad a ray meets, as an index into `quads`.
@@ -201,6 +278,7 @@ mod tests {
             orientation: DQuat::IDENTITY,
             width: 1.6,
             height: 0.9,
+            bend: None,
         }
     }
 
@@ -366,6 +444,7 @@ mod tests {
             orientation,
             width: 1.6,
             height: 0.9,
+            bend: None,
         };
         let ray = Ray {
             origin: DVec3::ZERO,
@@ -376,5 +455,115 @@ mod tests {
             close(hit.u, 0.5, 1e-9) && close(hit.v, 0.5, 1e-9),
             "{hit:?}"
         );
+    }
+
+    /// A window bent round the wearer, two metres off, a metre and a half wide.
+    fn bent_ahead() -> Quad {
+        Quad {
+            bend: Some(Bend {
+                radius: 2.0,
+                offset: 0.0,
+            }),
+            ..ahead()
+        }
+    }
+
+    #[test]
+    fn straight_ahead_a_bent_window_is_hit_in_the_middle_at_its_radius() {
+        let hit = intersect_quad(&forward_ray(), &bent_ahead()).expect("should hit");
+        assert!(close(hit.u, 0.5, 1e-9) && close(hit.v, 0.5, 1e-9), "{hit:?}");
+        assert!(close(hit.distance, 2.0, 1e-9), "{}", hit.distance);
+    }
+
+    #[test]
+    fn across_a_bent_window_the_pointer_follows_the_arc_not_the_plane() {
+        // 0.5 rad to the left of straight ahead. On the arc that is 1.0 m from the middle; on a
+        // flat window it would be 2 tan 0.5 = 1.09 m. The drawing lays its strips out along the
+        // arc, so this is the number that has to be right.
+        let angle = 0.5f64;
+        let ray = Ray {
+            origin: DVec3::ZERO,
+            direction: DVec3::new(angle.cos(), angle.sin(), 0.0),
+        };
+        let quad = Quad {
+            width: 3.0,
+            ..bent_ahead()
+        };
+        let hit = intersect_quad(&ray, &quad).expect("should hit");
+        assert!(close(hit.distance, 2.0, 1e-9), "{}", hit.distance);
+        let across = 0.5 - hit.u;
+        assert!(close(across * 3.0, 1.0, 1e-9), "{} m across", across * 3.0);
+        // Left of the middle is the low side of u, as on a flat quad.
+        assert!(hit.u < 0.5);
+    }
+
+    #[test]
+    fn every_point_of_a_bent_window_is_the_same_distance_from_the_wearer() {
+        let quad = Quad {
+            width: 3.0,
+            ..bent_ahead()
+        };
+        for degrees in [-40.0f64, -10.0, 0.0, 25.0, 40.0] {
+            let a = degrees.to_radians();
+            let ray = Ray {
+                origin: DVec3::ZERO,
+                direction: DVec3::new(a.cos(), a.sin(), 0.0),
+            };
+            let hit = intersect_quad(&ray, &quad).expect("should hit");
+            assert!(close(hit.point.length(), 2.0, 1e-9), "{degrees}: {}", hit.point.length());
+        }
+    }
+
+    #[test]
+    fn a_bent_window_still_has_edges() {
+        let quad = bent_ahead();
+        // 1.6 m wide at 2 m is 0.8 rad of arc, 0.4 either side.
+        let ray = |a: f64| Ray {
+            origin: DVec3::ZERO,
+            direction: DVec3::new(a.cos(), a.sin(), 0.0),
+        };
+        assert!(intersect_quad(&ray(0.39), &quad).is_some());
+        assert!(intersect_quad(&ray(0.41), &quad).is_none());
+        // And behind the wearer is the far side of the cylinder, which is nothing.
+        assert!(intersect_quad(&ray(std::f64::consts::PI), &quad).is_none());
+    }
+
+    #[test]
+    fn a_piece_off_to_the_side_is_measured_from_its_own_middle() {
+        // A menu hanging 1 m to the left of a window's middle, 0.4 m wide. A ray at the arc
+        // length 1.0 m lands in the middle of it.
+        let quad = Quad {
+            centre: DVec3::new(2.0, 1.0, 0.0),
+            width: 0.4,
+            bend: Some(Bend {
+                radius: 2.0,
+                offset: 1.0,
+            }),
+            ..ahead()
+        };
+        let a: f64 = 1.0 / 2.0;
+        let ray = Ray {
+            origin: DVec3::ZERO,
+            direction: DVec3::new(a.cos(), a.sin(), 0.0),
+        };
+        let hit = intersect_quad(&ray, &quad).expect("should hit");
+        assert!(close(hit.u, 0.5, 1e-9), "u = {}", hit.u);
+    }
+
+    #[test]
+    fn a_ray_up_the_axis_never_meets_the_window() {
+        let ray = Ray {
+            origin: DVec3::ZERO,
+            direction: DVec3::Z,
+        };
+        assert!(intersect_quad(&ray, &bent_ahead()).is_none());
+    }
+
+    #[test]
+    fn a_flat_window_is_unchanged_by_the_bend_existing() {
+        let ray = forward_ray();
+        let flat = intersect_quad(&ray, &ahead()).unwrap();
+        let bent = intersect_quad(&ray, &bent_ahead()).unwrap();
+        assert!(close(flat.u, bent.u, 1e-9) && close(flat.v, bent.v, 1e-9));
     }
 }

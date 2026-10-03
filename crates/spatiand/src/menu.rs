@@ -218,21 +218,29 @@ fn card(shell: &Shell) -> Option<MenuModel> {
                     .entries()
                     .iter()
                     .map(|w| {
-                        if w.current {
-                            // Spelt out rather than marked, for the same reason as the
-                            // environment list: a glyph read through optics at an angle is a
-                            // box as often as it is a tick.
+                        // Spelt out rather than marked, for the same reason as the
+                        // environment list: a glyph read through optics at an angle is a
+                        // box as often as it is a tick.
+                        if w.hidden {
+                            MenuRow::with(w.title.clone(), "Hidden")
+                        } else if w.pinned {
+                            MenuRow::with(w.title.clone(), "Pinned to your view")
+                        } else if w.current {
                             MenuRow::with(w.title.clone(), "In front of you")
+                        } else if w.room {
+                            MenuRow::with(w.title.clone(), "Fills your view")
                         } else {
                             MenuRow::plain(w.title.clone())
                         }
                     })
                     .collect(),
                 cursor: switcher.cursor(),
-                detail: "Choosing a window brings it to the centre of your view. Y closes one; \
-                         hold Y to force an application that will not close to quit."
+                detail: "Choosing a window brings it to the centre of your view, hidden or not. \
+                         X hides one or shows it again; left pins one to the corner of your \
+                         view and right lets it go; Y closes one, and holding Y forces an \
+                         application that will not close to quit."
                     .into(),
-                footer: "A select    Y close    B back".into(),
+                footer: "A select   X hide   Y close   Left pin   B back".into(),
             })
         }
         Mode::Launcher => None,
