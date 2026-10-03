@@ -88,9 +88,16 @@ builds both. This Mac is paired with the owner's host and everything below was r
   host told Firestorm `set_glasses 0` as it launched. **No application acts on it yet**:
   honouring it -- drawing an ordinary flat view -- is up to the viewer (SpatiWorld first).
 
-**Written but not seen working:** menus and tooltips as child panels (a menu was not seen
-opening in the harness, so the placement is unproven); the cursor shape; the sound itself (the
-fold is tested, nothing was played at the owner's sleeping house).
+* The keyboard, seen: Down three times and Return, sent as evdev codes the way a key press is,
+  moved the host's settings app to another page.
+
+**Written but not seen working:** the cursor shape; the sound itself (the fold is tested, nothing
+was played); the pointer capture. **Menus:** the host composites a window's menus into that
+window's own picture and never announces them as windows (`parent` is always `None`), so they
+appear with the window and the Mac's popup panels (`RemotePopup`) are unused until a host
+announces one. A Qt menu did not open from a synthetic click in the harness, and the terminal
+(an X11 Qt program) did not take synthetic keys -- both look like that application's behaviour on
+the host, and the Deck would see the same.
 
 **Not built:**
 

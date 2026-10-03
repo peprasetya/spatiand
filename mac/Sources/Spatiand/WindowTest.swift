@@ -30,7 +30,25 @@ enum WindowTest {
             func say(_ input: Any) { w.view.send?(["InputAt": ["window": Int(w.id), "input": input, "time_ms": now()]]) }
             // The settings page's Network button; in a terminal, a right click where text would be.
             let button = 0x110
-            // The terminal's "Session" menu, otherwise the settings page's Network button.
+            if app == "qterminal" || ProcessInfo.processInfo.environment["SPATIAND_TEST_KEYS"] != nil {
+                // The keyboard: "ls" and Return, as evdev codes, the way VideoView sends them.
+                // This process is not the frontmost app, so the window loses key status at once and
+                // would tell the host nobody has the keyboard. The test says who has it instead.
+                w.onFocus = nil
+                w.view.send?(["Focus": ["window": Int(w.id)]])
+                var delay = 0.4
+                // "ls" and Return in a terminal; Down three times and Return in the settings app.
+                let codes = app == "qterminal" ? [38, 31, 28] : [108, 108, 108, 28]
+                for code in codes {
+                    after(delay) { say(["Key": ["code": code, "pressed": true]]) }
+                    after(delay + 0.08) { say(["Key": ["code": code, "pressed": false]]) }
+                    delay += 0.25
+                }
+                return
+            }
+            // The settings page's Network button.
+            // Keyboard focus first, as a window the owner had clicked would have.
+            w.view.send?(["Focus": ["window": Int(w.id)]])
             say(["Motion": app == "qterminal" ? ["x": 32.0, "y": 13.0] : ["x": 80.0, "y": 316.0]])
             after(0.3) {
                 say(["Button": ["button": button, "pressed": true]])

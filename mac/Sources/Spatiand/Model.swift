@@ -169,6 +169,7 @@ final class Model {
 
     private func handle(_ message: [String: Any]) {
         guard let (name, body) = message.first else { return }
+        if debug, name != "Catalog", name != "Cursor" { print("host: \(name) \(body)") }
         let fields = body as? [String: Any] ?? [:]
         func window() -> UInt16? { (fields["window"] as? NSNumber).map { UInt16(truncatingIfNeeded: $0.intValue) } }
         switch name {
