@@ -100,6 +100,19 @@ around you and turns it with your head, while local windows float in front of it
 If its host goes quiet, the room is taken away within three seconds rather than
 left frozen round you. See [docs/remote.md](docs/remote.md).
 
+An application's sound is carried as wide as its catalogue entry says — stereo
+unless it asks for 5.1, 7.1 or 7.1.4, which the session then places at the
+window like a local one's. A session also says whether glasses are on, so a
+virtual-reality application can be asked to be an ordinary window when they are
+not.
+
+**On a Mac** (work in progress, in [mac/](mac/); see [docs/mac-plan.md](docs/mac-plan.md)).
+A menu-bar app that needs no glasses: a paired host's applications open as
+ordinary Mac windows, with the mouse, keyboard, clipboard (text and images) and
+sound (folded to stereo, played into the output you choose) going with them.
+Ctrl-Space opens its menu and Ctrl-Tab its settings. With glasses plugged in the
+windows are meant to move into the room; that part is not built yet.
+
 **Recording.** The HUD's *Record a video* saves what the glasses show, both
 eyes side by side, remote pictures included, as Matroska in `~/Videos/Spatiand`
 — H.264, 36 fps, marked left/right stereo. It carries three sound tracks, so an

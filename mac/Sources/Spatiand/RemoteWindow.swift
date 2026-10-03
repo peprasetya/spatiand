@@ -233,7 +233,6 @@ final class RemoteWindow: NSObject, NSWindowDelegate, RemoteSurface {
         view.windowID = id
         view.hostSize = size
         window.contentView = view
-        window.contentAspectRatio = size
         window.title = title
         window.delegate = self
         window.isReleasedWhenClosed = false
@@ -241,7 +240,17 @@ final class RemoteWindow: NSObject, NSWindowDelegate, RemoteSurface {
         window.center()
     }
 
-    func setSize(_ size: CGSize) { view.hostSize = size }
+    /// The application changed the size of its own window: the Mac's follows, unless it is
+    /// already that size (which is what a resize the owner asked for comes back as).
+    func setSize(_ size: CGSize) {
+        view.hostSize = size
+        let scale = window.backingScaleFactor
+        let wanted = NSSize(width: size.width / scale, height: size.height / scale)
+        let have = view.bounds.size
+        if abs(have.width - wanted.width) > 2 || abs(have.height - wanted.height) > 2 {
+            window.setContentSize(wanted)
+        }
+    }
 
     func show() {
         window.makeKeyAndOrderFront(nil)

@@ -222,6 +222,15 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-session") {
     exit(test.run(address: args[0], fingerprint: args[1], app: args[2], seconds: Double(args.count > 3 ? args[3] : "") ?? 8))
 }
 
+if let at = CommandLine.arguments.firstIndex(of: "--add-host") {
+    // --add-host <name> <address> <fingerprint>: a computer this Mac is already paired with.
+    let args = Array(CommandLine.arguments[(at + 1)...])
+    guard args.count >= 3 else { print("usage: --add-host <name> <address> <fingerprint>"); exit(2) }
+    Hosts.add(PairedHost(name: args[0], address: args[1], fingerprint: args[2]))
+    print("known computers: \(Hosts.all.map(\.name).joined(separator: ", "))")
+    exit(0)
+}
+
 if CommandLine.arguments.contains("--selftest-local") {
     exit(LocalTests.run())
 }

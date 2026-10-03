@@ -73,8 +73,14 @@ final class Model {
 
     // MARK: asking
 
+    /// Whether the owner has asked to be connected, so a link that drops is brought back and one
+    /// the owner ended is not.
+    private var wantConnection = false
+    private var retry: Timer?
+
     func connect(_ host: PairedHost) {
         closeAll()
+        wantConnection = true
         self.host = host
         connected = false
         link.connect(address: host.address, fingerprint: host.fingerprint)
@@ -82,6 +88,8 @@ final class Model {
     }
 
     func disconnect() {
+        wantConnection = false
+        retry?.invalidate()
         link.disconnect()
         closeAll()
         connected = false
@@ -129,7 +137,20 @@ final class Model {
             connected = false
             clipboard.connected = false
             closeAll()
-            if let reason = detail as? String, !reason.isEmpty, host != nil { onProblem?(reason) }
+            // Brought back every few seconds for as long as it is wanted: a host that restarts, a
+            // laptop that woke up, a Wi-Fi that blinked. Said once, not each time it fails.
+            if wantConnection, let host {
+                if retry == nil, let reason = detail as? String, !reason.isEmpty {
+                    print("lost \(host.name): \(reason); trying again")
+                }
+                retry?.invalidate()
+                retry = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [unowned self] _ in
+                    retry = nil
+                    if wantConnection, !connected, let host = self.host {
+                        link.connect(address: host.address, fingerprint: host.fingerprint)
+                    }
+                }
+            }
         case "compare":
             if let d = detail as? [String: Any], let code = d["code"] as? String, let fp = d["fingerprint"] as? String {
                 onCompare?(code, fp)

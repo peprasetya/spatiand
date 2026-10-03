@@ -15,12 +15,12 @@ enum Hosts {
 
     static var all: [PairedHost] {
         get {
-            guard let data = UserDefaults.standard.data(forKey: key),
+            guard let data = Defaults.store.data(forKey: key),
                   let hosts = try? JSONDecoder().decode([PairedHost].self, from: data) else { return [] }
             return hosts
         }
         set {
-            UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: key)
+            Defaults.store.set(try? JSONEncoder().encode(newValue), forKey: key)
         }
     }
 

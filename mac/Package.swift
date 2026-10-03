@@ -1,5 +1,9 @@
 // swift-tools-version:5.9
+import Foundation
 import PackageDescription
+
+// `debug` while developing, `release` for the app bundle (see make-app.sh).
+let core = ProcessInfo.processInfo.environment["SPATIAND_CORE"] ?? "debug"
 
 // Spatiand on the Mac: a menu-bar app. See ../docs/mac-plan.md.
 //
@@ -15,7 +19,7 @@ let package = Package(
             dependencies: ["CSpatiand"],
             path: "Sources/Spatiand",
             linkerSettings: [
-                .unsafeFlags(["-L../target/debug", "-lspatiand_mac_core"]),
+                .unsafeFlags(["-L../target/\(core)", "-lspatiand_mac_core"]),
                 .linkedFramework("Security"),
                 .linkedFramework("CoreFoundation"),
                 .linkedFramework("SystemConfiguration"),

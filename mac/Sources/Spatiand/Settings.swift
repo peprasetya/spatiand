@@ -17,8 +17,14 @@ enum Presentation: String, CaseIterable {
     }
 }
 
+/// One place for the app's saved choices, under its own name rather than the executable's, so the
+/// copy run from the build folder and the one in Spatiand.app see the same ones.
+enum Defaults {
+    static let store = UserDefaults(suiteName: "com.peprasetya.spatiand") ?? .standard
+}
+
 enum Settings {
-    private static let defaults = UserDefaults.standard
+    private static let defaults = Defaults.store
 
     static var presentation: Presentation {
         get { Presentation(rawValue: defaults.string(forKey: "presentation") ?? "") ?? .automatic }

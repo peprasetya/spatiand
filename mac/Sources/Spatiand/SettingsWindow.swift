@@ -4,10 +4,10 @@ import AppKit
 import SwiftUI
 
 struct SettingsView: View {
-    @AppStorage("presentation") private var presentation = Presentation.automatic.rawValue
-    @AppStorage("audioOutputUID") private var output = ""
-    @AppStorage("commandIsControl") private var commandIsControl = true
-    @AppStorage("hotkeys") private var hotkeys = true
+    @AppStorage("presentation", store: Defaults.store) private var presentation = Presentation.automatic.rawValue
+    @AppStorage("audioOutputUID", store: Defaults.store) private var output = ""
+    @AppStorage("commandIsControl", store: Defaults.store) private var commandIsControl = true
+    @AppStorage("hotkeys", store: Defaults.store) private var hotkeys = true
     let hotkeyStatus: () -> String
 
     var body: some View {
