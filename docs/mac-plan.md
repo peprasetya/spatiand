@@ -79,13 +79,22 @@ builds both. This Mac is paired with the owner's host and everything below was r
   Ctrl-Space is the system's input-source switch if that is turned on, and Ctrl-Tab is taken
   from every other application while Spatiand runs, so both can be switched off.
 
+* **The glasses message.** The Mac tells the host whether the wearer has glasses on
+  (`ClientMessage::Glasses { on }`, last in the enum), when it connects and whenever they are
+  plugged or unplugged, or the "Show windows" choice changes. A host assumes `on` until told, so
+  the Deck and the Beam Pro are unaffected. When it is `off` the host tells each virtual-reality
+  application on its control socket, in the same words it uses for the render size:
+  `set_glasses 0`, and `set_glasses 1` when they come back (see `appcontrol.rs`). Seen: the
+  host told Firestorm `set_glasses 0` as it launched. **No application acts on it yet**:
+  honouring it -- drawing an ordinary flat view -- is up to the viewer (SpatiWorld first).
+
 **Written but not seen working:** menus and tooltips as child panels (a menu was not seen
 opening in the harness, so the placement is unproven); the cursor shape; the sound itself (the
 fold is tested, nothing was played at the owner's sleeping house).
 
 **Not built:**
 
-1. The two-mode message for VR applications (see below), and per-app audio at the source.
+1. Applications honouring `set_glasses`, and per-app audio at the source.
 2. The glasses path: with glasses plugged in the windows should be in the 3D world. Today the
    "Show windows" setting is stored and nothing reads it.
 3. Taking the mouse and trackpad away from macOS, and the three-to-five-finger gestures.

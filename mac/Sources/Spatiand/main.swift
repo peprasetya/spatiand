@@ -34,6 +34,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         glasses.onChange = { [weak self] _ in self?.refreshIcon() }
         glasses.start()
         refreshIcon()
+        Model.shared.glassesOn = glassesWanted()
         pairing.start()
         hotkeys.onMenu = { [weak self] in self?.item.button?.performClick(nil) }
         hotkeys.onSettings = { [weak self] in self?.settings.show() }
@@ -47,6 +48,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// glasses.
     private func refreshIcon() {
         item.button?.appearsDisabled = !glasses.isPluggedIn
+        Model.shared.glassesOn = glassesWanted()
+    }
+
+    /// Glasses plugged in, and the owner has not said to keep everything on the Mac.
+    private func glassesWanted() -> Bool {
+        glasses.isPluggedIn && Settings.presentation == .automatic
     }
 
     // MARK: the menu, rebuilt each time it opens so it is never out of date
@@ -181,6 +188,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func choosePresentation(_ sender: NSMenuItem) {
         if let raw = sender.representedObject as? String, let choice = Presentation(rawValue: raw) {
             Settings.presentation = choice
+            Model.shared.glassesOn = glassesWanted()
         }
     }
 

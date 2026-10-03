@@ -91,6 +91,19 @@ final class Model {
 
     func launch(_ app: RemoteApp) { link.launch(app.id) }
 
+    /// Whether the wearer has glasses on: whether windows are in the room, and so whether a
+    /// virtual-reality application should draw the world or an ordinary view. Told to the host
+    /// when it changes and again each time a session begins, because a host forgets with the
+    /// session.
+    var glassesOn = false {
+        didSet { if glassesOn != oldValue { sendGlasses() } }
+    }
+
+    private func sendGlasses() {
+        guard connected else { return }
+        link.say(["Glasses": ["on": glassesOn]])
+    }
+
     func pair(address: String) { link.pair(address: address) }
 
     func forget(_ host: PairedHost) {
@@ -111,6 +124,7 @@ final class Model {
         case "connected":
             connected = true
             clipboard.connected = true
+            sendGlasses()
         case "disconnected":
             connected = false
             clipboard.connected = false

@@ -201,9 +201,56 @@ pub fn tell_render_size(host: &mut Host, size: Option<(u32, u32)>) {
     }
 }
 
+/// What to tell an application about the glasses, if anything.
+///
+/// **Nothing unless the answer is not the default.** Every application here was written for a
+/// session with a head, so `on` is what it already assumes, and a message it has never heard of
+/// is a line in its log at best. Only a session without glasses is told, and told again if the
+/// glasses come back.
+pub fn glasses_word(now: bool, told: Option<bool>) -> Option<&'static str> {
+    (now != told.unwrap_or(true)).then_some(if now { "set_glasses 1" } else { "set_glasses 0" })
+}
+
+/// Tell every view-taking application whether the wearer has glasses on, where it has not been.
+pub fn tell_glasses(host: &mut Host) {
+    let now = host.glasses;
+    for (app, (fd, _)) in host.app_controls.iter() {
+        let Some(message) = glasses_word(now, host.told_glasses.get(app).copied()) else {
+            continue;
+        };
+        // SAFETY: as for `tell_render_size`.
+        let sent = unsafe {
+            libc::send(
+                fd.as_raw_fd(),
+                message.as_ptr() as *const libc::c_void,
+                message.len(),
+                libc::MSG_NOSIGNAL | libc::MSG_DONTWAIT,
+            )
+        };
+        if sent == message.len() as isize {
+            log::info!("told {app}: {message}");
+            host.told_glasses.insert(app.clone(), now);
+        }
+    }
+    // An application that has gone takes what it was told with it.
+    host.told_glasses.retain(|app, _| host.app_controls.contains_key(app));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_session_without_glasses_is_told_and_then_only_when_it_changes() {
+        // The default, never told: nothing to say.
+        assert_eq!(glasses_word(true, None), None);
+        // Glasses off: tell it, once.
+        assert_eq!(glasses_word(false, None), Some("set_glasses 0"));
+        assert_eq!(glasses_word(false, Some(false)), None);
+        // Back on after being told off: tell it so.
+        assert_eq!(glasses_word(true, Some(false)), Some("set_glasses 1"));
+        assert_eq!(glasses_word(true, Some(true)), None);
+    }
 
     #[test]
     fn it_understands_the_protocols_own_words() {

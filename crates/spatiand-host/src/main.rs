@@ -845,6 +845,9 @@ fn run_host(
             }
         }
 
+        // --- whether the wearer has glasses on, for applications that can be either ---
+        appcontrol::tell_glasses(&mut host);
+
         // --- the size the session wants, for applications drawing two eyes ---
         if let Some(size) = &render_size {
             appcontrol::tell_render_size(
@@ -1294,6 +1297,12 @@ fn said(
     use spatiand_stream::ClientMessage as Says;
     match message {
         Says::Clipboard(what) => clipboard_said(host, what),
+        Says::Glasses { on } => {
+            if host.glasses != on {
+                log::info!("the session {} glasses on", if on { "has" } else { "has no" });
+            }
+            host.glasses = on;
+        }
         Says::Hello {
             version, session, ..
         } => {

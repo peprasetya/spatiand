@@ -135,6 +135,12 @@ pub struct Host {
     /// Our end of each view-taking application's control socket, for saying things to it, and
     /// the render size it was last told. See `appcontrol`.
     pub app_controls: HashMap<String, (std::os::fd::OwnedFd, Option<(u32, u32)>)>,
+    /// Whether the session has glasses on, as it last said. True until told otherwise: every
+    /// session that has a head is the one this host was written for.
+    pub glasses: bool,
+    /// What each view-taking application has been told about the glasses, so each is told once
+    /// and again only when it changes.
+    pub told_glasses: HashMap<String, bool>,
     /// The X11 window manager, once XWayland is ready. See `xwayland`.
     pub xwm: Option<smithay::xwayland::X11Wm>,
     pub xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
@@ -251,6 +257,8 @@ impl Host {
             cursor_drawn: std::collections::HashSet::new(),
             cursor_changed: Vec::new(),
             app_controls: HashMap::new(),
+            glasses: true,
+            told_glasses: HashMap::new(),
             xwm: None,
             xwayland_shell_state,
             x11_display: None,

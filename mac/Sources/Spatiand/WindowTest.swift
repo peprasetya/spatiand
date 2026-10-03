@@ -49,7 +49,14 @@ enum WindowTest {
                 }
             }
             print("surfaces: \(model.windows.count)")
-            exit(0)
+            // `SPATIAND_TEST_QUIT=1` ends the application again, so a test of a heavy one leaves
+            // the host as it found it.
+            if ProcessInfo.processInfo.environment["SPATIAND_TEST_QUIT"] != nil {
+                model.link.say(["ForceQuit": ["app": app]])
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { exit(0) }
+            } else {
+                exit(0)
+            }
         }
     }
 

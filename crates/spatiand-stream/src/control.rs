@@ -105,6 +105,18 @@ pub enum ClientMessage {
         input: Input,
         time_ms: u32,
     },
+    /// Whether the wearer has glasses on, and so whether an application that can be either a
+    /// world or a window should be the world.
+    ///
+    /// A session with a head -- the Deck, the Beam Pro, a Mac with glasses plugged in -- is
+    /// `on`, which is also what a host assumes until it is told otherwise. A Mac with nothing
+    /// plugged in says `off`, and a VR application is then asked to draw an ordinary flat view
+    /// it can be pointed at with a mouse. Said again when it changes: unplugging is the same
+    /// message as never having plugged in.
+    ///
+    /// Last in this enum, and must stay so: a host built before it reads an unknown variant
+    /// rather than mistaking it for something else. See `crate::VERSION`.
+    Glasses { on: bool },
 }
 
 /// What the host sends.
@@ -427,6 +439,8 @@ mod tests {
                 }],
             },
             ClientMessage::Bandwidth(Bandwidth::default()),
+            ClientMessage::Glasses { on: false },
+            ClientMessage::Glasses { on: true },
             ClientMessage::Viewport(Viewport {
                 seq: 9,
                 time_us: 1_234_567,
