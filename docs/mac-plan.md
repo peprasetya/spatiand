@@ -58,15 +58,39 @@ with two ways of showing what arrives.
 
 ## Status
 
-* **Done:** `mac/` is a Swift package with the menu-bar skeleton: the icon, glasses detection
-  (USB HID vendor `0x3318`, the way HoloFrame does it), the "Show windows" choice (in the glasses
-  when plugged in / always on this Mac) and the sound-output picker, which lists the Mac's real
-  outputs. Computers and Windows are placeholders. `swift build && .build/debug/Spatiand
-  --selftest` checks it without a screen.
-* **Next, in order:** (1) the C interface over `spatiand-stream` and pairing from the menu;
-  (2) a remote window as an `NSWindow` with decoded video, pointer and keyboard; (3) sound into
-  the chosen device; (4) the clipboard; (5) the two-mode message for VR applications; (6) the
-  glasses path; (7) Ctrl-Space / Ctrl-Tab and taking the pointer.
+`mac/` is a Swift package; `crates/spatiand-mac-core` is the Rust link it calls. `mac/build.sh`
+builds both. This Mac is paired with the owner's host and everything below was run against it.
+
+**Works (each checked end to end with a headless self-test, `Spatiand --selftest-*`):**
+
+* Pairing from the menu (this Mac shows the code, the host is asked, and the host is written
+  down only after both have said yes).
+* A host's applications as ordinary Mac windows: HEVC/H.264 decoded by VideoToolbox and shown by
+  an `AVSampleBufferDisplayLayer`; the mouse, wheel and keyboard go back (Command stands in for
+  Control, switchable); resizing asks the host's window to resize; closing asks the application
+  to close.
+* A window that was already running when the session arrived is shown (its first keyframe is
+  kept if it beats the window, and a window with no picture asks again each second).
+* The clipboard both ways: text (small travels with the offer) and PNG images (fetched when
+  announced, up to 8 MB). Mac to host was seen arriving in the host's log.
+* Sound from a host, folded to flat stereo and played into the chosen output device.
+* The host's cursor shape; the menu-bar menu; a settings window; Ctrl-Space (the menu) and
+  Ctrl-Tab (the settings) as global hot keys. Both chords were granted on the owner's Mac;
+  Ctrl-Space is the system's input-source switch if that is turned on, and Ctrl-Tab is taken
+  from every other application while Spatiand runs, so both can be switched off.
+
+**Written but not seen working:** menus and tooltips as child panels (a menu was not seen
+opening in the harness, so the placement is unproven); the cursor shape; the sound itself (the
+fold is tested, nothing was played at the owner's sleeping house).
+
+**Not built:**
+
+1. The two-mode message for VR applications (see below), and per-app audio at the source.
+2. The glasses path: with glasses plugged in the windows should be in the 3D world. Today the
+   "Show windows" setting is stored and nothing reads it.
+3. Taking the mouse and trackpad away from macOS, and the three-to-five-finger gestures.
+4. The Mac as a *host* (its own windows out to a Deck or Beam Pro).
+5. A signed `.app` bundle; today it runs from `.build/`.
 
 ## Where the code to start from is
 

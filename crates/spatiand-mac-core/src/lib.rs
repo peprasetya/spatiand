@@ -55,7 +55,7 @@ pub struct Core {
 /// A host message as JSON for the Swift side.
 ///
 /// The one change from what serde writes: bytes -- an application's icon (a PNG), a pasted image
-/// -- are as a JSON array of numbers ten times their size and slow to read. They go as base64,
+/// -- or a cursor's pixels -- are as a JSON array of numbers ten times their size and slow to read. They go as base64,
 /// and [`client_json`] reads them back the same way.
 pub fn host_json(message: &HostMessage) -> Value {
     let mut value = serde_json::to_value(message).unwrap_or(Value::Null);
@@ -63,7 +63,7 @@ pub fn host_json(message: &HostMessage) -> Value {
         match value {
             Value::Object(map) => {
                 for (key, inner) in map.iter_mut() {
-                    if key == "icon_png" || key == "bytes" {
+                    if key == "icon_png" || key == "bytes" || key == "pixels" {
                         if let Value::Array(bytes) = inner {
                             let raw: Vec<u8> =
                                 bytes.iter().filter_map(|b| b.as_u64().map(|b| b as u8)).collect();

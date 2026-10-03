@@ -16,7 +16,11 @@ final class VideoView: NSView {
     var needKeyframe: (() -> Void)?
     /// The size of the host's picture, in its pixels; what pointer positions are measured in.
     var hostSize = CGSize(width: 1280, height: 800)
-    var commandIsControl = true
+    /// What the pointer looks like over this window: the host's own, when it has said.
+    var cursor: NSCursor? { didSet { window?.invalidateCursorRects(for: self) } }
+    override func resetCursorRects() {
+        if let cursor { addCursorRect(bounds, cursor: cursor) }
+    }
     /// Popups are never the key window, and still have to see the pointer.
     var trackAlways = false {
         didSet {
@@ -113,7 +117,7 @@ final class VideoView: NSView {
     // MARK: the keyboard
 
     private func key(_ event: NSEvent, pressed: Bool) {
-        guard let code = KeyMap.code(for: event.keyCode, commandIsControl: commandIsControl) else { return }
+        guard let code = KeyMap.code(for: event.keyCode, commandIsControl: Settings.commandIsControl) else { return }
         input(["Key": ["code": Int(code), "pressed": pressed]])
     }
     override func keyDown(with event: NSEvent) { if !event.isARepeat { key(event, pressed: true) } }

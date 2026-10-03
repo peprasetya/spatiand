@@ -13,6 +13,16 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let glasses = GlassesWatcher()
     private let pairing = PairingUI()
+    private let hotkeys = Hotkeys()
+    private lazy var settings = SettingsWindow(hotkeyStatus: { [unowned self] in
+        let menu = hotkeys.status[.menu] == true
+        let tab = hotkeys.status[.settings] == true
+        if menu && tab { return "Both chords are active." }
+        var problems: [String] = []
+        if !menu { problems.append("Ctrl-Space is taken by macOS (Keyboard \u{2192} Keyboard Shortcuts \u{2192} Input Sources)") }
+        if !tab { problems.append("Ctrl-Tab could not be registered") }
+        return problems.joined(separator: "; ") + "."
+    })
 
     func applicationDidFinishLaunching(_ note: Notification) {
         if let button = item.button {
@@ -25,6 +35,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         glasses.start()
         refreshIcon()
         pairing.start()
+        hotkeys.onMenu = { [weak self] in self?.item.button?.performClick(nil) }
+        hotkeys.onSettings = { [weak self] in self?.settings.show() }
+        if Settings.hotkeys { hotkeys.enable() }
         Model.shared.onProblem = { PairingUI.alert("Spatiand", $0) }
         // Back to the computer this Mac was last using, if there is one.
         if let last = Hosts.all.first { Model.shared.connect(last) }
@@ -80,6 +93,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(audio)
 
         menu.addItem(.separator())
+        let preferences = NSMenuItem(title: "Settings\u{2026}", action: #selector(openSettings), keyEquivalent: ",")
+        preferences.target = self
+        menu.addItem(preferences)
         let quit = NSMenuItem(title: "Quit Spatiand", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
     }
@@ -136,6 +152,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func openSettings() { settings.show() }
     @objc private func addComputer() { pairing.ask() }
     @objc private func disconnect() { Model.shared.disconnect() }
     @objc private func openApp(_ sender: NSMenuItem) {

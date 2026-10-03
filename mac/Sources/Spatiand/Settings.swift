@@ -25,6 +25,16 @@ enum Settings {
         set { defaults.set(newValue.rawValue, forKey: "presentation") }
     }
 
+    /// Whether Command stands in for Control in a remote window: a Mac user's copy and paste are
+    /// Command, and on the other end they are Control.
+    static var commandIsControl: Bool {
+        defaults.object(forKey: "commandIsControl") as? Bool ?? true
+    }
+
+    static var hotkeys: Bool {
+        defaults.object(forKey: "hotkeys") as? Bool ?? true
+    }
+
     /// The UID of the device Spatiand's sound plays into; `nil` follows the Mac's own output.
     static var audioOutputUID: String? {
         get { defaults.string(forKey: "audioOutputUID") }

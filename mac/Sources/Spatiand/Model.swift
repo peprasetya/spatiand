@@ -178,6 +178,8 @@ final class Model {
             }
         case "Clipboard":
             clipboard.fromHost(fields)
+        case "Cursor":
+            cursor(fields)
         case "Refused":
             onProblem?((fields["reason"] as? String) ?? "the computer refused this session")
         default: break
@@ -211,6 +213,26 @@ final class Model {
         windows[id] = popup
         feedEarly(id)
         popup.show()
+    }
+
+    /// The host drew the pointer this way: premultiplied BGRA, with a hotspot, in its pixels.
+    private func cursor(_ fields: [String: Any]) {
+        guard let w = (fields["width"] as? NSNumber)?.intValue, let h = (fields["height"] as? NSNumber)?.intValue,
+              w > 0, h > 0, let encoded = fields["pixels"] as? String, let pixels = Data(base64Encoded: encoded),
+              pixels.count >= w * h * 4,
+              let provider = CGDataProvider(data: pixels as CFData),
+              let image = CGImage(
+                width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+        else { return }
+        let hot = (fields["hotspot"] as? [NSNumber]) ?? [0, 0]
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let size = NSSize(width: CGFloat(w) / scale, height: CGFloat(h) / scale)
+        let picture = NSImage(cgImage: image, size: size)
+        let cursor = NSCursor(image: picture, hotSpot: NSPoint(x: hot[0].doubleValue / scale, y: hot[1].doubleValue / scale))
+        for surface in windows.values { surface.view.cursor = cursor }
     }
 
     private func feedEarly(_ id: UInt16) {

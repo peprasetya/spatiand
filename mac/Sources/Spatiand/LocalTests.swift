@@ -59,6 +59,12 @@ enum LocalTests {
         check("a paste is answered with the text",
               (data?["bytes"] as? String).flatMap { Data(base64Encoded: $0) }.flatMap { String(data: $0, encoding: .utf8) } == "from the mac")
 
+        // --- hot keys: whether the chords can be had here is a fact about this Mac, not a pass/fail
+        let keys = Hotkeys()
+        keys.enable()
+        print("note  Ctrl-Space registered: \(keys.status[.menu] == true), Ctrl-Tab registered: \(keys.status[.settings] == true)")
+        keys.disable()
+
         board.clearContents()
         if let before { board.setString(before, forType: .string) }
         print(failures == 0 ? "all passed" : "\(failures) failed")
