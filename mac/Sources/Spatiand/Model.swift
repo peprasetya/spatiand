@@ -10,15 +10,28 @@ final class Model {
     static let shared = Model()
 
     struct RemoteApp { let id: String; let name: String }
-    struct WindowInfo { var app: String; var title: String; var hasParent: Bool }
+    struct WindowInfo {
+        var app: String
+        var title: String
+        /// Set for a menu or a tooltip: the window it hangs off, and where on its picture.
+        var parent: (id: UInt16, x: Double, y: Double)?
+    }
 
     let link: Link
+    /// `SPATIAND_DEBUG=1` says what arrives, for working out why a window is black.
+    let debug = ProcessInfo.processInfo.environment["SPATIAND_DEBUG"] != nil
+    let clipboard = ClipboardSync()
     private(set) var host: PairedHost?
     private(set) var connected = false
     private(set) var apps: [RemoteApp] = []
-    private(set) var windows: [UInt16: RemoteWindow] = [:]
+    private(set) var windows: [UInt16: RemoteSurface] = [:]
     private var infos: [UInt16: WindowInfo] = [:]
     private var sizes: [UInt16: CGSize] = [:]
+    /// A keyframe that arrived before its window did. The window's announcement and its first
+    /// picture travel on different paths and either can win; a window must not wait for the
+    /// next keyframe -- which, for one that is not changing, may be never -- because it lost.
+    private var earlyKeyframes: [UInt16: (codec: Int32, captured: UInt64, data: Data)] = [:]
+    private var watchdog: Timer?
 
     /// The menu rebuilds itself when it opens, so most changes need no notice; this is for the
     /// ones that should show without it (the icon, a pairing in progress).
@@ -34,9 +47,28 @@ final class Model {
         link = Link(identityDir: dir)!
         link.onHost = { [unowned self] in handle($0) }
         link.onCore = { [unowned self] what, detail in core(what, detail) }
-        link.onVideo = { [unowned self] window, codec, _, captured, data in
-            windows[window]?.video(data, codec: codec, captured: captured)
+        link.onVideo = { [unowned self] window, codec, keyframe, captured, data in
+            if debug {
+                let sets = VideoSamples.nalUnits(data).map { Int($0.first ?? 0) }
+                print("video: window \(window) codec \(codec) key \(keyframe) \(data.count) bytes, nal headers \(sets.prefix(6)), surface \(windows[window] != nil)")
+            }
+            if let surface = windows[window] {
+                surface.video(data, codec: codec, captured: captured)
+            } else if keyframe {
+                earlyKeyframes[window] = (codec, captured, data)
+            }
         }
+        // Until a picture has been shown, ask again every second.
+        watchdog = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [unowned self] _ in
+            for (id, surface) in windows where surface.view.pictures == 0 {
+                link.say(["WantKeyframe": ["window": Int(id)]])
+            }
+        }
+        link.onAudio = { app, channels, data in
+            AudioOut.shared.feed(app: app, channels: Int(channels), data: data)
+        }
+        clipboard.send = { [unowned self] in link.say($0) }
+        clipboard.start()
     }
 
     // MARK: asking
@@ -67,7 +99,7 @@ final class Model {
     }
 
     var openWindows: [(id: UInt16, title: String)] {
-        windows.keys.sorted().map { ($0, infos[$0]?.title ?? "Window") }
+        windows.keys.sorted().filter { infos[$0]?.parent == nil }.map { ($0, infos[$0]?.title ?? "Window") }
     }
 
     func raise(_ id: UInt16) { windows[id]?.show() }
@@ -78,8 +110,10 @@ final class Model {
         switch what {
         case "connected":
             connected = true
+            clipboard.connected = true
         case "disconnected":
             connected = false
+            clipboard.connected = false
             closeAll()
             if let reason = detail as? String, !reason.isEmpty, host != nil { onProblem?(reason) }
         case "compare":
@@ -110,9 +144,13 @@ final class Model {
             }
         case "Opened":
             guard let id = window() else { return }
-            infos[id] = WindowInfo(
-                app: fields["app"] as? String ?? "", title: fields["title"] as? String ?? "",
-                hasParent: !(fields["parent"] is NSNull) && fields["parent"] != nil)
+            var parent: (id: UInt16, x: Double, y: Double)?
+            if let p = fields["parent"] as? [Any], p.count == 3,
+               let pid = (p[0] as? NSNumber)?.intValue, let x = (p[1] as? NSNumber)?.doubleValue,
+               let y = (p[2] as? NSNumber)?.doubleValue {
+                parent = (UInt16(truncatingIfNeeded: pid), x, y)
+            }
+            infos[id] = WindowInfo(app: fields["app"] as? String ?? "", title: fields["title"] as? String ?? "", parent: parent)
         case "Stream":
             guard let id = window(), let w = fields["width"] as? NSNumber, let h = fields["height"] as? NSNumber else { return }
             let size = CGSize(width: w.doubleValue, height: h.doubleValue)
@@ -122,13 +160,15 @@ final class Model {
             link.say(["WantKeyframe": ["window": Int(id)]])
             if let existing = windows[id] {
                 existing.setSize(size)
-            } else if infos[id]?.hasParent != true {
+            } else if let parent = infos[id]?.parent {
+                openPopup(id, parent: parent, size: size)
+            } else {
                 open(id, size: size)
             }
         case "Retitled":
             if let id = window(), let title = fields["title"] as? String {
                 infos[id]?.title = title
-                windows[id]?.window.title = title
+                (windows[id] as? RemoteWindow)?.window.title = title
             }
         case "Closed":
             if let id = window() {
@@ -136,6 +176,8 @@ final class Model {
                 infos[id] = nil
                 sizes[id] = nil
             }
+        case "Clipboard":
+            clipboard.fromHost(fields)
         case "Refused":
             onProblem?((fields["reason"] as? String) ?? "the computer refused this session")
         default: break
@@ -157,11 +199,28 @@ final class Model {
             link.say(["Configure": ["window": Int(id), "width": w, "height": h]])
         }
         windows[id] = remote
+        feedEarly(id)
         remote.show()
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func openPopup(_ id: UInt16, parent: (id: UInt16, x: Double, y: Double), size: CGSize) {
+        guard let owner = windows[parent.id] as? RemoteWindow else { return }
+        let popup = RemotePopup(id: id, parent: owner, offset: CGPoint(x: parent.x, y: parent.y), size: size)
+        popup.view.needKeyframe = { [unowned self] in link.say(["WantKeyframe": ["window": Int(id)]]) }
+        windows[id] = popup
+        feedEarly(id)
+        popup.show()
+    }
+
+    private func feedEarly(_ id: UInt16) {
+        if let early = earlyKeyframes.removeValue(forKey: id) {
+            windows[id]?.video(early.data, codec: early.codec, captured: early.captured)
+        }
+    }
+
     private func closeAll() {
+        earlyKeyframes = [:]
         for window in windows.values { window.closeForReal() }
         windows = [:]
         infos = [:]

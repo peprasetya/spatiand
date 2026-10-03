@@ -169,6 +169,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func chooseOutput(_ sender: NSMenuItem) {
         Settings.audioOutputUID = sender.representedObject as? String
+        AudioOut.shared.applyDevice()
     }
 }
 
@@ -194,6 +195,10 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-session") {
     let dir = NSString("~/Library/Application Support/Spatiand/identity").expandingTildeInPath
     let test = SessionTest(identityDir: dir, output: "/tmp/spatiand-selftest.png")
     exit(test.run(address: args[0], fingerprint: args[1], app: args[2], seconds: Double(args.count > 3 ? args[3] : "") ?? 8))
+}
+
+if CommandLine.arguments.contains("--selftest-local") {
+    exit(LocalTests.run())
 }
 
 if let at = CommandLine.arguments.firstIndex(of: "--selftest-window") {

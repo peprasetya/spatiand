@@ -18,29 +18,52 @@ enum WindowTest {
             DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body)
         }
         after(2) { if let a = model.apps.first(where: { $0.id == app }) { model.launch(a) } else { print("no such app: \(model.apps.map(\.id))") } }
+        after(4) {
+            // Mac to host: the host's log says whether it took the offer.
+            model.link.say(["Clipboard": ["Offer": ["mime_types": ["text/plain;charset=utf-8"], "text": "mac-to-host-clipboard-test", "bytes": 26]]])
+        }
         after(6) { snapshot("/tmp/spatiand-window-1.png", model) }
         after(7) {
             // The "Network" button of the host's settings, in the picture's own pixels.
-            guard let w = model.windows.values.first else { return }
+            guard let w = model.windows.values.compactMap({ $0 as? RemoteWindow }).max(by: { $0.id < $1.id }) else { return }
             func now() -> Int { Int(ProcessInfo.processInfo.systemUptime * 1000) }
             func say(_ input: Any) { w.view.send?(["InputAt": ["window": Int(w.id), "input": input, "time_ms": now()]]) }
-            say(["Motion": ["x": 80.0, "y": 316.0]])
+            // The settings page's Network button; in a terminal, a right click where text would be.
+            let button = 0x110
+            // The terminal's "Session" menu, otherwise the settings page's Network button.
+            say(["Motion": app == "qterminal" ? ["x": 32.0, "y": 13.0] : ["x": 80.0, "y": 316.0]])
             after(0.3) {
-                say(["Button": ["button": 0x110, "pressed": true]])
-                after(0.15) { say(["Button": ["button": 0x110, "pressed": false]]) }
+                say(["Button": ["button": button, "pressed": true]])
+                after(0.15) { say(["Button": ["button": button, "pressed": false]]) }
             }
         }
-        after(10.5) { snapshot("/tmp/spatiand-window-2.png", model); exit(0) }
+        after(10.5) {
+            snapshot("/tmp/spatiand-window-2.png", model)
+            // A menu, if the click opened one: its own panel, hung off the window.
+            for (id, surface) in model.windows where surface is RemotePopup {
+                if let number = surface.view.window?.windowNumber,
+                   let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(number), [.boundsIgnoreFraming]) {
+                    let rep = NSBitmapImageRep(cgImage: image)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/spatiand-popup-\(id).png"))
+                    print("popup \(id): \(image.width)x\(image.height)")
+                }
+            }
+            print("surfaces: \(model.windows.count)")
+            exit(0)
+        }
     }
 
+    /// Every window, named by its host id, so a session that already had windows open is no
+    /// surprise.
     private static func snapshot(_ path: String, _ model: Model) {
-        guard let w = model.windows.values.first else { print("no window to photograph"); return }
-        let id = CGWindowID(w.window.windowNumber)
-        guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, id, [.boundsIgnoreFraming]) else {
-            print("could not capture the window"); return
+        for (id, surface) in model.windows {
+            guard let number = surface.view.window?.windowNumber,
+                  let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(number), [.boundsIgnoreFraming])
+            else { continue }
+            let rep = NSBitmapImageRep(cgImage: image)
+            let name = path.replacingOccurrences(of: ".png", with: "-id\(id).png")
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: name))
+            print("wrote \(name): \(image.width)x\(image.height)\(surface is RemotePopup ? " (popup)" : "")")
         }
-        let rep = NSBitmapImageRep(cgImage: image)
-        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
-        print("wrote \(path): \(image.width)x\(image.height)")
     }
 }

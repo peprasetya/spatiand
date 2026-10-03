@@ -54,15 +54,16 @@ pub struct Core {
 
 /// A host message as JSON for the Swift side.
 ///
-/// The one change from what serde writes: an application's icon is a PNG, and as a JSON array of
-/// numbers it is ten times its size and slow to read. It goes as base64.
+/// The one change from what serde writes: bytes -- an application's icon (a PNG), a pasted image
+/// -- are as a JSON array of numbers ten times their size and slow to read. They go as base64,
+/// and [`client_json`] reads them back the same way.
 pub fn host_json(message: &HostMessage) -> Value {
     let mut value = serde_json::to_value(message).unwrap_or(Value::Null);
     fn icons(value: &mut Value) {
         match value {
             Value::Object(map) => {
                 for (key, inner) in map.iter_mut() {
-                    if key == "icon_png" {
+                    if key == "icon_png" || key == "bytes" {
                         if let Value::Array(bytes) = inner {
                             let raw: Vec<u8> =
                                 bytes.iter().filter_map(|b| b.as_u64().map(|b| b as u8)).collect();
@@ -81,6 +82,21 @@ pub fn host_json(message: &HostMessage) -> Value {
     }
     icons(&mut value);
     json!({ "host": value })
+}
+
+/// What the Swift side writes, put back as serde reads it: the one place a message carries bytes
+/// from this end -- the answer to a paste -- arrives as base64 and goes on as an array.
+pub fn client_json(text: &str) -> Result<ClientMessage, String> {
+    let mut value: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    if let Some(data) = value.pointer_mut("/Clipboard/Data/bytes") {
+        if let Value::String(encoded) = data {
+            let raw = base64::engine::general_purpose::STANDARD
+                .decode(encoded.as_bytes())
+                .map_err(|e| e.to_string())?;
+            *data = Value::Array(raw.into_iter().map(|b| Value::from(b)).collect());
+        }
+    }
+    serde_json::from_value(value).map_err(|e| e.to_string())
 }
 
 fn codec_number(codec: Codec) -> i32 {
@@ -347,7 +363,7 @@ pub unsafe extern "C" fn sp_connect(core: *mut Core, address: *const c_char, fin
 #[no_mangle]
 pub unsafe extern "C" fn sp_say(core: *mut Core, message: *const c_char) {
     let (Some(core), Some(text)) = (core.as_ref(), string(message)) else { return };
-    match serde_json::from_str::<ClientMessage>(&text) {
+    match client_json(&text) {
         Ok(message) => {
             if let Some(tx) = core.session.lock().unwrap().as_ref() {
                 let _ = tx.send(message);
@@ -399,6 +415,23 @@ mod tests {
         let value = host_json(&message);
         let icon = &value["host"]["Catalog"]["apps"][0]["icon_png"];
         assert_eq!(icon, &json!("iVBORw=="));
+    }
+
+    #[test]
+    fn a_pasted_image_crosses_as_base64_both_ways() {
+        let data = ClientMessage::Clipboard(spatiand_stream::control::Clipboard::Data {
+            mime_type: "image/png".into(),
+            bytes: vec![137, 80, 78, 71, 13, 10],
+        });
+        // As the host would say it to us: bytes as base64.
+        let said = host_json(&HostMessage::Clipboard(spatiand_stream::control::Clipboard::Data {
+            mime_type: "image/png".into(),
+            bytes: vec![137, 80, 78, 71, 13, 10],
+        }));
+        assert_eq!(said["host"]["Clipboard"]["Data"]["bytes"], json!("iVBORw0K"));
+        // And as we say it to the host.
+        let text = r#"{"Clipboard":{"Data":{"mime_type":"image/png","bytes":"iVBORw0K"}}}"#;
+        assert_eq!(client_json(text).unwrap(), data);
     }
 
     #[test]

@@ -17,6 +17,16 @@ final class VideoView: NSView {
     /// The size of the host's picture, in its pixels; what pointer positions are measured in.
     var hostSize = CGSize(width: 1280, height: 800)
     var commandIsControl = true
+    /// Popups are never the key window, and still have to see the pointer.
+    var trackAlways = false {
+        didSet {
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(
+                rect: .zero,
+                options: [.mouseMoved, .mouseEnteredAndExited, trackAlways ? .activeAlways : .activeInKeyWindow, .inVisibleRect],
+                owner: self, userInfo: nil))
+        }
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -37,7 +47,12 @@ final class VideoView: NSView {
 
     // MARK: pictures
 
+    /// How many pictures have been shown: none means the window is still black and should not
+    /// be left that way.
+    private(set) var pictures = 0
+
     func show(_ sample: CMSampleBuffer) {
+        pictures += 1
         if display.status == .failed {
             display.flush()
             needKeyframe?()
@@ -115,11 +130,87 @@ final class VideoView: NSView {
     }
 }
 
-final class RemoteWindow: NSObject, NSWindowDelegate {
+/// Anything the host draws that has a picture and takes input: a window, or a menu hanging off one.
+protocol RemoteSurface: AnyObject {
+    var view: VideoView { get }
+    func setSize(_ size: CGSize)
+    func closeForReal()
+    func show()
+}
+
+extension RemoteSurface {
+    func video(_ data: Data, codec: Int32, captured: UInt64) {
+        let samples = (self as? RemoteWindow)?.samples ?? (self as? RemotePopup)?.samples
+        if let sample = samples?.sample(data, codec: codec, capturedMicros: captured) { view.show(sample) }
+    }
+}
+
+/// A menu, a dropdown or a tooltip: a panel with no frame, hung off its window where the host
+/// says. It never takes the keyboard -- the window it belongs to keeps that, as in any desktop.
+final class RemotePopup: NSObject, RemoteSurface {
+    let id: UInt16
+    let view = VideoView(frame: .zero)
+    let samples = VideoSamples()
+    private let panel: NSPanel
+    private weak var parent: RemoteWindow?
+    /// Where on the parent's picture it hangs, in the host's pixels.
+    private let offset: CGPoint
+
+    init(id: UInt16, parent: RemoteWindow, offset: CGPoint, size: CGSize) {
+        self.id = id
+        self.parent = parent
+        self.offset = offset
+        let scale = parent.window.backingScaleFactor
+        panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: size.width / scale, height: size.height / scale),
+            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        super.init()
+        view.windowID = id
+        view.hostSize = size
+        view.trackAlways = true
+        view.send = { [weak parent] in parent?.view.send?($0) }
+        panel.contentView = view
+        panel.isOpaque = true
+        panel.hasShadow = true
+        panel.level = .popUpMenu
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        place(size: size)
+    }
+
+    private func place(size: CGSize) {
+        guard let parent else { return }
+        let scale = parent.window.backingScaleFactor
+        let content = parent.window.contentLayoutRect
+        let origin = parent.window.convertToScreen(content).origin
+        // The host's y runs down; the screen's runs up.
+        let x = origin.x + offset.x / scale
+        let y = origin.y + content.height - (offset.y + size.height) / scale
+        panel.setFrame(NSRect(x: x, y: y, width: size.width / scale, height: size.height / scale), display: false)
+    }
+
+    func setSize(_ size: CGSize) {
+        view.hostSize = size
+        place(size: size)
+    }
+
+    func show() {
+        guard let parent else { return }
+        if panel.parent == nil { parent.window.addChildWindow(panel, ordered: .above) }
+        panel.orderFront(nil)
+    }
+
+    func closeForReal() {
+        parent?.window.removeChildWindow(panel)
+        panel.close()
+    }
+}
+
+final class RemoteWindow: NSObject, NSWindowDelegate, RemoteSurface {
     let id: UInt16
     let window: NSWindow
     let view = VideoView(frame: .zero)
-    private let samples = VideoSamples()
+    let samples = VideoSamples()
     private var resizeTimer: Timer?
     var onClose: ((UInt16) -> Void)?
     var onFocus: ((UInt16, Bool) -> Void)?
@@ -147,10 +238,6 @@ final class RemoteWindow: NSObject, NSWindowDelegate {
     }
 
     func setSize(_ size: CGSize) { view.hostSize = size }
-
-    func video(_ data: Data, codec: Int32, captured: UInt64) {
-        if let sample = samples.sample(data, codec: codec, capturedMicros: captured) { view.show(sample) }
-    }
 
     func show() {
         window.makeKeyAndOrderFront(nil)
