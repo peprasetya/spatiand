@@ -101,6 +101,42 @@ fold is tested, nothing was played at the owner's sleeping house).
 4. The Mac as a *host* (its own windows out to a Deck or Beam Pro).
 5. A signed `.app` bundle; today it runs from `.build/`.
 
+## The glasses path, as far as it is understood
+
+What is needed to put the windows into the room when glasses are plugged in, and what already
+exists for it:
+
+* **Head tracking.** `spatiand-track` (the filter) and `spatiand-render` (the maths, the ray, the
+  stereo cameras), `spatiand-shell` (the menus) and `spatiand-mapper` all build on the Mac today.
+  What does not exist there is the *reading* of the glasses' IMU: `spatiand-hmd` is the Linux
+  device code. HoloFrame's `XRealDevice.swift` already does it over IOKit HID on the Mac, so the
+  likely shape is Swift reading the IMU and handing samples to the Rust tracker through the C
+  interface -- or the tracker's own port being used from HoloFrame's side.
+* **Drawing.** The Deck's renderer is OpenGL ES inside a smithay compositor; none of that carries
+  over. A Mac needs its own: Metal, one textured quad per window (decoded frames arrive as
+  `CVPixelBuffer`s, which `CVMetalTextureCache` turns into textures with no copy), drawn twice
+  for the two eyes into the glasses' side-by-side display, curved and placed by the same
+  `Placement`/pointer maths. HoloFrame is the Metal reference for putting a picture on the glasses.
+* **Windows.** Where a window goes -- the fan, the curve, picture in picture, the pointer ray --
+  is logic in `crates/spatiand/src/window.rs` and `pointer.rs`, which today are welded to smithay
+  types. Reusing it means lifting it into a crate with no smithay in it (a worthwhile refactor on
+  its own, since the Beam Pro has the same problem).
+* **Switching.** `Model.glassesOn` already says which world to be in; the windows would move
+  between `NSWindow`s and the room as it changes, and the host is already told.
+
+This is the biggest piece left, and the part that most needs the glasses on a head to judge.
+
+## The Mac as a host (later)
+
+The same protocol the other way round, for sending a Mac's windows to a Deck or a Beam Pro. It
+would be a *capture* host rather than a compositor: choose a window or an app from the menu,
+capture it with ScreenCaptureKit (zero-copy `IOSurface`), encode with VideoToolbox's hardware
+encoder, and serve it through `spatiand-stream`'s transport, pairing and catalogue exactly as
+`spatiand-host` does. Input comes back as `CGEvent`s (needs Accessibility permission), sound is
+the app's own, captured by ScreenCaptureKit as stereo, and the clipboard is the same pasteboard
+code this client already has. None of `spatiand-host`'s code applies (it is a Wayland
+compositor); the protocol, the pairing and the clipboard rules do.
+
 ## Where the code to start from is
 
 * HoloFrame (a separate Swift project of the owner's): the macOS XREAL head tracker the Rust
