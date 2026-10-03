@@ -520,6 +520,12 @@ async fn serve(
                                 }
                                 HostMessage::Catalog { apps } => {
                                     log::info!("remote: {} application(s) offered", apps.len());
+                                    for a in &apps {
+                                        super::set_sound_channels(
+                                            &super::app_id(&config.host, &a.id),
+                                            spatiand_stream::audio::channels_for(a.audio),
+                                        );
+                                    }
                                     let listed: Vec<RemoteApp> = apps
                                         .iter()
                                         .map(|a| RemoteApp {

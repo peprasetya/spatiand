@@ -99,6 +99,40 @@ fn app_id_prefix(host: &str) -> String {
     format!("remote.{host}.")
 }
 
+/// How wide each remote application's sound is, by app id, as its host's catalogue said.
+fn sound_widths() -> &'static std::sync::Mutex<std::collections::HashMap<String, u16>> {
+    static WIDTHS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u16>>> =
+        std::sync::OnceLock::new();
+    WIDTHS.get_or_init(Default::default)
+}
+
+/// Remember how many channels a host's application sends. Called as its catalogue arrives, which
+/// is before any of its windows do.
+pub fn set_sound_channels(app_id: &str, channels: u16) {
+    if let Ok(mut widths) = sound_widths().lock() {
+        widths.insert(app_id.to_string(), channels);
+    }
+}
+
+/// The width of sink a remote application's window should get.
+///
+/// **Stereo unless its host's catalogue asked for a surround layout.** A remote application's
+/// sound is placed at its window by its sink, so a stereo one is given the stereo sink it always
+/// had, and a VR viewer -- which plays its own head-turned mix and is not placed at all -- never
+/// reaches here. Only an application set to 5.1, 7.1 or 7.1.4 is given the full sink.
+pub fn sound_width(app_id: &str) -> spatiand_audio::server::Width {
+    let channels = sound_widths()
+        .lock()
+        .ok()
+        .and_then(|w| w.get(app_id).copied())
+        .unwrap_or(2);
+    if channels > 2 {
+        spatiand_audio::server::Width::Full
+    } else {
+        spatiand_audio::server::Width::Stereo
+    }
+}
+
 /// A remote window's icon, for its title bar: the latest picture its host sent for it.
 pub fn icon_for(app_id: &str) -> Option<std::path::PathBuf> {
     let path = icon_dir().join(format!("{}.png", file_safe(app_id)));
@@ -623,5 +657,25 @@ impl Remotes {
 impl Drop for Remote {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spatiand_audio::server::Width;
+
+    #[test]
+    fn a_remote_application_is_stereo_unless_its_catalogue_asked_for_more() {
+        // Nothing said: the sink it always had, which is what a VR viewer's own mix needs.
+        assert_eq!(sound_width("remote.nobody.never-heard-of"), Width::Stereo);
+        set_sound_channels("remote.test.stereo", 2);
+        set_sound_channels("remote.test.five", 6);
+        set_sound_channels("remote.test.seven", 8);
+        set_sound_channels("remote.test.atmos", 12);
+        assert_eq!(sound_width("remote.test.stereo"), Width::Stereo);
+        for app in ["five", "seven", "atmos"] {
+            assert_eq!(sound_width(&format!("remote.test.{app}")), Width::Full, "{app}");
+        }
     }
 }

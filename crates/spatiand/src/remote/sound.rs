@@ -31,18 +31,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use spatiand_stream::audio::{AudioHeader, CHANNELS, FRAME_BYTES, RATE};
+use spatiand_stream::audio::{channel_map, frame_bytes, is_supported, AudioHeader, RATE};
 
 /// The most sound that may wait to be played, in milliseconds.
 const MAX_QUEUED_MS: usize = 250;
 /// What a burst may leave waiting in the pipe: 170 ms, rounded to whole pages.
 const PIPE_BYTES: i32 = 32 * 1024;
-const fn bytes_for(ms: usize) -> usize {
-    RATE as usize * FRAME_BYTES * ms / 1000 / FRAME_BYTES * FRAME_BYTES
+/// Whole frames of `ms` milliseconds of `channels`-wide sound.
+const fn bytes_for(ms: usize, channels: u16) -> usize {
+    let frame = frame_bytes(channels);
+    RATE as usize * frame * ms / 1000 / frame * frame
 }
-const MAX_QUEUED_BYTES: usize = bytes_for(MAX_QUEUED_MS);
 /// Kept back when the queue is trimmed, so trimming does not leave it empty.
-const KEEP_BYTES: usize = bytes_for(60);
+const KEEP_MS: usize = 60;
 /// A player with nothing to play for this long lets go of its output.
 ///
 /// Long, because the host sends nothing during silence, and every pause in a video used to
@@ -97,7 +98,7 @@ pub async fn receive(mut stream: quinn::RecvStream, host: String) {
         log::warn!("remote {host}: a sound stream with an unreadable header");
         return;
     };
-    if header.rate != RATE || header.channels != CHANNELS {
+    if header.rate != RATE || !is_supported(header.channels) {
         log::warn!(
             "remote {host}: {} sends {} Hz × {}, which this cannot play yet",
             header.app,
@@ -108,7 +109,9 @@ pub async fn receive(mut stream: quinn::RecvStream, host: String) {
     }
     let app_id = super::app_id(&host, &header.app);
     log::info!("remote {host}: sound from {}", header.app);
-    let player = Player::start(app_id);
+    let channels = header.channels;
+    let frame = frame_bytes(channels);
+    let player = Player::start(app_id, channels);
     let mut buffer = vec![0u8; 8192];
     // Bytes of an incomplete frame, held until the rest arrives: dropping or queueing half a
     // frame would swap left and right from then on.
@@ -117,7 +120,7 @@ pub async fn receive(mut stream: quinn::RecvStream, host: String) {
         match stream.read(&mut buffer).await {
             Ok(Some(n)) => {
                 carry.extend_from_slice(&buffer[..n]);
-                let whole = carry.len() / FRAME_BYTES * FRAME_BYTES;
+                let whole = carry.len() / frame * frame;
                 if whole > 0 {
                     player.push(&carry[..whole]);
                     carry.drain(..whole);
@@ -132,6 +135,9 @@ pub async fn receive(mut stream: quinn::RecvStream, host: String) {
 struct Shared {
     queue: Mutex<VecDeque<u8>>,
     stop: AtomicBool,
+    /// How wide the sound is: stereo, or a surround layout for an application whose sink was
+    /// asked to be one. Every size and every frame below is in terms of it.
+    channels: u16,
 }
 
 /// One application's sound, on its way out through `pw-cat`.
@@ -140,10 +146,11 @@ struct Player {
 }
 
 impl Player {
-    fn start(app_id: String) -> Player {
+    fn start(app_id: String, channels: u16) -> Player {
         let shared = Arc::new(Shared {
-            queue: Mutex::new(VecDeque::with_capacity(MAX_QUEUED_BYTES * 2)),
+            queue: Mutex::new(VecDeque::with_capacity(bytes_for(MAX_QUEUED_MS, channels) * 2)),
             stop: AtomicBool::new(false),
+            channels,
         });
         let thread = shared.clone();
         let spawned = std::thread::Builder::new()
@@ -160,9 +167,9 @@ impl Player {
             return;
         };
         queue.extend(pcm);
-        if queue.len() > MAX_QUEUED_BYTES {
+        if queue.len() > bytes_for(MAX_QUEUED_MS, self.shared.channels) {
             // The oldest goes, in whole frames.
-            let excess = queue.len() - KEEP_BYTES;
+            let excess = queue.len() - bytes_for(KEEP_MS, self.shared.channels);
             queue.drain(..excess);
         }
     }
@@ -182,7 +189,7 @@ struct Output {
 
 #[cfg(not(target_os = "android"))]
 impl Output {
-    fn start(app_id: &str, target: Option<String>) -> Option<Output> {
+    fn start(app_id: &str, target: Option<String>, channels: u16) -> Option<Output> {
         let mut command = Command::new("pw-cat");
         command.args([
             "--playback",
@@ -192,7 +199,11 @@ impl Output {
             "--rate",
             &RATE.to_string(),
             "--channels",
-            &CHANNELS.to_string(),
+            &channels.to_string(),
+            // Said outright for anything wider than stereo: without it the channels are
+            // whatever a default layout of that count is, which is not always this one.
+            "--channel-map",
+            channel_map(channels),
             // What pw-cat itself holds. Together with the pipe this is the jitter budget.
             "--latency",
             "40ms",
@@ -214,7 +225,13 @@ impl Output {
                 if let Some(stdin) = child.stdin.as_ref() {
                     use std::os::fd::AsRawFd;
                     unsafe {
-                        libc::fcntl(stdin.as_raw_fd(), libc::F_SETPIPE_SZ, PIPE_BYTES);
+                        // Scaled to the width, so a surround stream's pipe holds as many
+                        // milliseconds as a stereo one's.
+                        libc::fcntl(
+                            stdin.as_raw_fd(),
+                            libc::F_SETPIPE_SZ,
+                            PIPE_BYTES * (channels as i32 / 2).max(1),
+                        );
                     }
                 }
                 log::info!(
@@ -248,10 +265,11 @@ fn play(app_id: &str, shared: &Shared) {
     let mut samples: Vec<i16> = Vec::with_capacity(4096);
     let mut slot = None;
     let mut checked: Option<Instant> = None;
+    let frame = frame_bytes(shared.channels);
     while !shared.stop.load(Ordering::Relaxed) {
         let chunk: Vec<u8> = match shared.queue.lock() {
             Ok(mut queue) => {
-                let n = queue.len().min(8192) / FRAME_BYTES * FRAME_BYTES;
+                let n = queue.len().min(8192) / frame * frame;
                 queue.drain(..n).collect()
             }
             Err(_) => return,
@@ -274,7 +292,7 @@ fn play(app_id: &str, shared: &Shared) {
         }
         samples.clear();
         samples.extend(chunk.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])));
-        spatiand_audio::server::feed(slot, &samples, CHANNELS as usize);
+        spatiand_audio::server::feed(slot, &samples, shared.channels as usize);
     }
 }
 
@@ -290,10 +308,14 @@ fn play(app_id: &str, shared: &Shared) {
     let mut dropouts = 0u32;
     let mut said = Instant::now();
     let mut playing = false;
+    let channels = shared.channels;
+    let frame = frame_bytes(channels);
     while !shared.stop.load(Ordering::Relaxed) {
         chunk.clear();
         if let Ok(mut queue) = shared.queue.lock() {
-            let n = queue.len().min(8192);
+            // Whole frames: 8192 bytes is not a multiple of a surround frame, and a chunk that
+            // ends inside one moves every channel after it by one place for good.
+            let n = queue.len().min(8192) / frame * frame;
             chunk.extend(queue.drain(..n));
         }
         if dropouts > 0 && said.elapsed() > Duration::from_secs(10) {
@@ -322,7 +344,7 @@ fn play(app_id: &str, shared: &Shared) {
             checked = Instant::now();
             let target = sink_for(app_id);
             if output.as_ref().map(|o| &o.target) != Some(&target) {
-                output = Output::start(app_id, target);
+                output = Output::start(app_id, target, channels);
             }
         }
         let Some(out) = output.as_mut() else {
@@ -345,6 +367,7 @@ fn play(app_id: &str, shared: &Shared) {
                 surround = Output::start(
                     app_id,
                     Some(spatiand_audio::server::SURROUND_SINK.to_string()),
+                    channels,
                 );
             }
             let written = surround

@@ -47,7 +47,12 @@ pub enum ToSession {
         bytes: Vec<u8>,
     },
     /// Ten milliseconds of one application's sound. See `audio`.
-    Audio { app: String, pcm: Vec<u8> },
+    Audio {
+        app: String,
+        /// How many channels the samples are, which is how wide the application's sink is.
+        channels: u16,
+        pcm: Vec<u8>,
+    },
 }
 
 /// What arrives.
@@ -224,7 +229,9 @@ async fn session(
     let mut dropped: u64 = 0;
     // One stream per application's sound, each written by a task of its own so that a sound
     // stream held up by flow control can never hold up pictures.
-    let mut sounds: HashMap<String, tokio::sync::mpsc::Sender<Vec<u8>>> = HashMap::new();
+    // Each application's stream and the width it was opened at: a stream is one shape for its
+    // whole life, so an application whose sink changed shape is given a new one.
+    let mut sounds: HashMap<String, (u16, tokio::sync::mpsc::Sender<Vec<u8>>)> = HashMap::new();
     let mut sound_dropped: u64 = 0;
     loop {
         tokio::select! {
@@ -246,16 +253,21 @@ async fn session(
                             break;
                         }
                     }
-                    ToSession::Audio { app, pcm } => {
-                        let alive = sounds.get(&app).is_some_and(|s| !s.is_closed());
+                    ToSession::Audio { app, channels, pcm } => {
+                        let alive = sounds
+                            .get(&app)
+                            .is_some_and(|(width, s)| *width == channels && !s.is_closed());
                         if !alive {
-                            sounds.insert(app.clone(), sound_stream(connection, app.clone()));
+                            sounds.insert(
+                                app.clone(),
+                                (channels, sound_stream(connection, app.clone(), channels)),
+                            );
                         }
                         // A third of a second may wait; past that the listener is hearing the
                         // past, and the oldest is what should go — but a bounded queue can only
                         // refuse the newest, which at this size is the same few milliseconds.
                         if let Some(Err(tokio::sync::mpsc::error::TrySendError::Full(_))) =
-                            sounds.get(&app).map(|s| s.try_send(pcm))
+                            sounds.get(&app).map(|(_, s)| s.try_send(pcm))
                         {
                             sound_dropped += 1;
                             if sound_dropped.is_power_of_two() {
@@ -502,7 +514,11 @@ async fn listen(mut stream: quinn::RecvStream, first: &[u8]) {
 }
 
 /// Open a stream for one application's sound and keep writing to it, from a task of its own.
-fn sound_stream(connection: &Connection, app: String) -> tokio::sync::mpsc::Sender<Vec<u8>> {
+fn sound_stream(
+    connection: &Connection,
+    app: String,
+    channels: u16,
+) -> tokio::sync::mpsc::Sender<Vec<u8>> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(32);
     let connection = connection.clone();
     tokio::spawn(async move {
@@ -516,7 +532,7 @@ fn sound_stream(connection: &Connection, app: String) -> tokio::sync::mpsc::Send
         let header = spatiand_stream::audio::AudioHeader {
             app: app.clone(),
             rate: spatiand_stream::audio::RATE,
-            channels: spatiand_stream::audio::CHANNELS,
+            channels,
             // An application's sound stays raw: it is the downlink, which has room, and a
             // codec there would cost delay on every window that makes a noise.
             coding: spatiand_stream::audio::Coding::Pcm,

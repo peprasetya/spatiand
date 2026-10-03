@@ -25,10 +25,67 @@ use serde::{Deserialize, Serialize};
 
 /// Samples per second, per channel.
 pub const RATE: u32 = 48_000;
-/// Stereo, for now. Wider sound is a matter of the header, not the stream.
+/// Stereo: what an application is sent unless its catalogue entry asks for a wider sink.
+/// Wider sound is a matter of the header, not the stream -- see [`channels_for`].
 pub const CHANNELS: u16 = 2;
-/// Bytes of one frame (one sample for every channel).
+/// Bytes of one stereo frame (one sample for every channel).
 pub const FRAME_BYTES: usize = CHANNELS as usize * 2;
+
+/// The channel counts a stream may carry: stereo, 5.1, 7.1 and 7.1.4. The same layouts, in the
+/// same order, as `spatiand_audio::stage::Layout`, which is what makes the sink at the other end
+/// able to place them.
+pub const WIDTHS: [u16; 4] = [2, 6, 8, 12];
+
+/// Whether this end can play a stream of that many channels.
+pub fn is_supported(channels: u16) -> bool {
+    WIDTHS.contains(&channels)
+}
+
+/// Bytes of one frame of that many channels.
+pub const fn frame_bytes(channels: u16) -> usize {
+    channels as usize * 2
+}
+
+/// How many channels an application's sound is carried in, by what its catalogue entry asks.
+///
+/// **Stereo unless it asked for more.** That is the whole of "do not break the applications that
+/// already work": a VR viewer mixes its own head-turned stereo and has to arrive as exactly that,
+/// to be played as it is and not placed in the room, and an application that did not say
+/// anything gets what it always got. Only an entry that names a surround layout is given a
+/// surround sink, and the session then places it at its window like any local one.
+///
+/// Ambisonics is not a channel layout this can carry yet, and is stereo here.
+pub fn channels_for(mode: crate::catalog::AudioMode) -> u16 {
+    use crate::catalog::AudioMode::*;
+    match mode {
+        Auto | Stereo | Ambisonic => 2,
+        Surround51 => 6,
+        Surround71 => 8,
+        Surround714 => 12,
+    }
+}
+
+/// The names PipeWire gives the channels of a sink of that many, in wire order -- the order the
+/// samples are interleaved in, which is `spatiand_audio::stage::Layout`'s. Space-separated, for
+/// a sink's `audio.position`.
+pub fn positions(channels: u16) -> &'static str {
+    match channels {
+        6 => "FL FR FC LFE RL RR",
+        8 => "FL FR FC LFE RL RR SL SR",
+        12 => "FL FR FC LFE RL RR SL SR TFL TFR TRL TRR",
+        _ => "FL FR",
+    }
+}
+
+/// The same, comma-separated, for `pw-cat --channel-map`.
+pub fn channel_map(channels: u16) -> &'static str {
+    match channels {
+        6 => "FL,FR,FC,LFE,RL,RR",
+        8 => "FL,FR,FC,LFE,RL,RR,SL,SR",
+        12 => "FL,FR,FC,LFE,RL,RR,SL,SR,TFL,TFR,TRL,TRR",
+        _ => "FL,FR",
+    }
+}
 
 /// What every sound stream starts with, before its header, so a stream of anything else is
 /// recognised and left alone.
@@ -155,6 +212,52 @@ mod tests {
         let bytes = header.encode();
         let length = AudioHeader::length(bytes[..8].try_into().unwrap()).unwrap();
         assert_eq!(AudioHeader::decode(&bytes[8..8 + length]), Some(header));
+    }
+
+    #[test]
+    fn a_surround_header_round_trips() {
+        for channels in WIDTHS {
+            let header = AudioHeader {
+                app: "game".into(),
+                rate: RATE,
+                channels,
+                coding: Coding::Pcm,
+            };
+            let bytes = header.encode();
+            let length = AudioHeader::length(bytes[..8].try_into().unwrap()).unwrap();
+            assert_eq!(AudioHeader::decode(&bytes[8..8 + length]), Some(header));
+        }
+    }
+
+    #[test]
+    fn only_a_catalogue_entry_that_asks_for_more_gets_more_than_stereo() {
+        use crate::catalog::AudioMode::*;
+        // The applications that already work -- anything that said nothing, and a viewer mixing
+        // its own stereo -- are exactly as they were.
+        for mode in [Auto, Stereo, Ambisonic] {
+            assert_eq!(channels_for(mode), 2, "{mode:?}");
+        }
+        assert_eq!(channels_for(Surround51), 6);
+        assert_eq!(channels_for(Surround71), 8);
+        assert_eq!(channels_for(Surround714), 12);
+        for mode in [Auto, Stereo, Surround51, Surround71, Surround714, Ambisonic] {
+            assert!(is_supported(channels_for(mode)));
+        }
+        assert!(!is_supported(3) && !is_supported(0) && !is_supported(16));
+    }
+
+    #[test]
+    fn the_channel_names_are_as_many_as_the_channels_and_in_wire_order() {
+        for channels in WIDTHS {
+            assert_eq!(positions(channels).split(' ').count(), channels as usize);
+            assert_eq!(channel_map(channels).split(',').count(), channels as usize);
+            assert_eq!(positions(channels).replace(' ', ","), channel_map(channels));
+            assert_eq!(frame_bytes(channels), channels as usize * 2);
+        }
+        // Front pair first, then centre and LFE, then the rest, as `Layout` has them: getting
+        // this wrong swaps somebody's surrounds, and nothing fails loudly.
+        assert!(positions(8).starts_with("FL FR FC LFE RL RR SL SR"));
+        assert!(positions(12).ends_with("TFL TFR TRL TRR"));
     }
 
     #[test]

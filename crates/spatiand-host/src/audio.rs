@@ -22,14 +22,16 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use spatiand_stream::audio::{is_silent, CHANNELS, FRAME_BYTES, RATE};
+use spatiand_stream::audio::{channels_for, frame_bytes, is_silent, positions, RATE};
 use spatiand_stream::App;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::net::ToSession;
 
 /// Ten milliseconds of sound: what is read and sent at a time.
-const CHUNK_BYTES: usize = (RATE as usize / 100) * FRAME_BYTES;
+fn chunk_bytes(channels: u16) -> usize {
+    (RATE as usize / 100) * frame_bytes(channels)
+}
 
 pub struct Sounds {
     out: UnboundedSender<ToSession>,
@@ -102,9 +104,14 @@ impl Sounds {
 
     fn start(&self, app: &App, node: &str) -> std::io::Result<Child> {
         let description = format!("{} (Spatiand)", app.name.replace('"', "'"));
+        // As wide as the catalogue entry says, and stereo when it says nothing: an application
+        // that mixes for however many speakers it is told about is given the speakers it was
+        // asked to be, and the session places them. See `spatiand_stream::audio::channels_for`.
+        let channels = channels_for(app.audio);
         let properties = format!(
             "{{ media.class = Audio/Sink node.name = \"{node}\" node.description = \
-             \"{description}\" audio.position = [ FL FR ] }}"
+             \"{description}\" audio.position = [ {} ] }}",
+            positions(channels)
         );
         let mut child = Command::new("pw-record")
             .args([
@@ -114,7 +121,7 @@ impl Sounds {
                 "--rate",
                 &RATE.to_string(),
                 "--channels",
-                &CHANNELS.to_string(),
+                &channels.to_string(),
                 "--latency",
                 "10ms",
                 "-P",
@@ -132,7 +139,7 @@ impl Sounds {
         std::thread::Builder::new()
             .name(format!("sound-{id}"))
             .spawn(move || {
-                let mut chunk = vec![0u8; CHUNK_BYTES];
+                let mut chunk = vec![0u8; chunk_bytes(channels)];
                 loop {
                     if stdout.read_exact(&mut chunk).is_err() {
                         log::info!("sound: {id}'s sink has closed");
@@ -143,6 +150,7 @@ impl Sounds {
                     }
                     let sent = out.send(ToSession::Audio {
                         app: id.clone(),
+                        channels,
                         pcm: chunk.clone(),
                     });
                     if sent.is_err() {
@@ -150,7 +158,7 @@ impl Sounds {
                     }
                 }
             })?;
-        log::info!("sound: {} plays into {node}", app.id);
+        log::info!("sound: {} plays into {node}, {channels} channel(s)", app.id);
         Ok(child)
     }
 }
