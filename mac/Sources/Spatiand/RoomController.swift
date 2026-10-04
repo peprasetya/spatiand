@@ -37,7 +37,7 @@ final class RoomController {
     private(set) lazy var menu = RoomMenu(controller: self)
     private(set) lazy var hint = RoomHint(controller: self)
     /// Whether any application window is in the room.
-    var hasWindows: Bool { !known.isEmpty }
+    var hasWindows: Bool { !known.isEmpty || !macCaptures.isEmpty }
     /// Where pinned windows sit and how big, as the wearer left them: kept here because the room
     /// only knows how to step on to the next corner.
     var cornerIndex = Settings.pinnedCorner % 4 { didSet { Settings.pinnedCorner = cornerIndex } }
@@ -83,6 +83,7 @@ final class RoomController {
             // Each window needs a picture to start from, and one that is not changing sends none.
             for id in known.keys { model.link.say(["WantKeyframe": ["window": Int(id)]]) }
             for case let window as RemoteWindow in model.windows.values { window.hideForRoom() }
+            startWatchingMacWindows()
             if drivesGlasses {
                 output.onChange = { [weak self] in self?.onChange?() }
                 input.onChange = { [weak self] in self?.onChange?() }
@@ -91,6 +92,7 @@ final class RoomController {
             }
         } else {
             menu.close()
+            stopWatchingMacWindows()
             if drivesGlasses {
                 input.stop()
                 output.stop()
@@ -138,7 +140,7 @@ final class RoomController {
         shown.remove(id)
         core.remove(id)
         renderer?.drop(id)
-        if active, let now = core.focused { sendFocus(now) }
+        if active, let now = core.focused, !MacWindows.isMac(now) { sendFocus(now) }
     }
 
     func sessionEnded() {
@@ -194,15 +196,19 @@ final class RoomController {
             if aim.window == RoomMenu.panelID { return }
         }
         if let down = pressed {
-            if let at = core.aim(at: down) { send(down, ["Motion": ["x": at.x, "y": at.y]]) }
+            if let at = core.aim(at: down) {
+                if MacWindows.isMac(down) { macMouse(down, held: true, at.x, at.y) } else { send(down, ["Motion": ["x": at.x, "y": at.y]]) }
+            }
             return
         }
         let aim = core.aim()
         if aim.window != hovered {
-            if let old = hovered { send(old, "Leave") }
+            if let old = hovered, !MacWindows.isMac(old), old < 0xFFF0 { send(old, "Leave") }
             hovered = aim.window
         }
-        if let id = aim.window { send(id, ["Motion": ["x": aim.x, "y": aim.y]]) }
+        if let id = aim.window, id < 0xFFF0 {
+            if MacWindows.isMac(id) { macMouse(id, held: false, aim.x, aim.y) } else { send(id, ["Motion": ["x": aim.x, "y": aim.y]]) }
+        }
     }
 
     func buttonDown(_ button: Int, grab: Bool) {
@@ -211,16 +217,22 @@ final class RoomController {
             if aim.window == RoomMenu.panelID { menu.click(aim.x, aim.y) } else { menu.close() }
             return
         }
-        guard let id = aim.window else { return }
+        guard let id = aim.window, id < 0xFFF0 else { return }
         if core.focused != id {
             core.focused = id
-            sendFocus(id)
+            // The keyboard is one window's at a time: a Mac window's, and the host has none.
+            sendFocus(MacWindows.isMac(id) ? nil : id)
         }
         if grab {
             core.beginGrab(id)
             return
         }
         pressed = id
+        pressedButton = button
+        if MacWindows.isMac(id) {
+            macClick(id, button: button, down: true, aim.x, aim.y)
+            return
+        }
         send(id, ["Motion": ["x": aim.x, "y": aim.y]])
         send(id, ["Button": ["button": button, "pressed": true]])
     }
@@ -231,15 +243,157 @@ final class RoomController {
             return
         }
         guard let id = pressed else { return }
-        if let at = core.aim(at: id) { send(id, ["Motion": ["x": at.x, "y": at.y]]) }
-        send(id, ["Button": ["button": button, "pressed": false]])
         pressed = nil
+        let at = core.aim(at: id)
+        if MacWindows.isMac(id) {
+            macClick(id, button: pressedButton, down: false, at?.x ?? 0, at?.y ?? 0)
+            return
+        }
+        if let at { send(id, ["Motion": ["x": at.x, "y": at.y]]) }
+        send(id, ["Button": ["button": button, "pressed": false]])
     }
 
     func scrolled(dx: Double, dy: Double, precise: Bool) {
-        guard !menu.isOpen, let id = core.aim().window ?? core.focused else { return }
+        guard !menu.isOpen, let id = core.aim().window ?? core.focused, id < 0xFFF0 else { return }
         let unit: Double = precise ? 1 : 10
+        if MacWindows.isMac(id), let capture = macCaptures[id], let at = core.aim(at: id) {
+            MacInput.scroll(dx: Int32(dx * unit), dy: Int32(dy * unit), at: capture.screenPoint(x: at.x, y: at.y),
+                            window: capture.info.windowID, pid: capture.info.pid)
+            return
+        }
         send(id, ["Scroll": ["horizontal": -dx * unit, "vertical": -dy * unit]])
+    }
+
+    // MARK: this Mac's own windows
+
+    private var macCaptures: [UInt16: MacCapture] = [:]
+    private var macShown: Set<UInt16> = []
+    private var nextMac = MacWindows.firstID
+    private(set) var macList: [MacWindowInfo] = []
+    private var macTimer: Timer?
+    private var pressedButton = 0x110
+    private var lastClick: (at: Date, window: UInt16, point: CGPoint, count: Int)?
+
+    /// What could be brought in, looked up again every few seconds while the room is in use.
+    func startWatchingMacWindows() {
+        macTimer?.invalidate()
+        let t = Timer(timeInterval: 3, repeats: true) { [weak self] _ in self?.refreshMacList() }
+        RunLoop.main.add(t, forMode: .common)
+        macTimer = t
+        refreshMacList()
+    }
+
+    func stopWatchingMacWindows() {
+        macTimer?.invalidate()
+        macTimer = nil
+        for id in Array(macCaptures.keys) { removeMacWindow(id) }
+    }
+
+    func refreshMacList() {
+        guard active, MacWindows.allowed(ask: false) else { return }
+        Task { [weak self] in
+            let list = await MacWindows.list()
+            await MainActor.run {
+                self?.macList = list
+                self?.menu.macListChanged()
+            }
+        }
+    }
+
+    /// A window of this Mac, into the room beside the host's.
+    func bringMacWindow(_ info: MacWindowInfo) {
+        guard active, let renderer else { return }
+        if let have = macCaptures.first(where: { $0.value.info.windowID == info.windowID })?.key {
+            core.bringHere(have)
+            core.focused = have
+            return
+        }
+        guard MacWindows.allowed(ask: true) else {
+            model.onProblem?("Spatiand needs Screen Recording to show a Mac window in the glasses. Allow it in System Settings \u{2192} Privacy & Security \u{2192} Screen Recording, then choose the window again.")
+            return
+        }
+        if !MacInput.allowed(ask: true) {
+            print("room: no Accessibility yet; the window will show but cannot be clicked or typed into")
+        }
+        let id = nextMac
+        nextMac = nextMac &+ 1 < 0xFFF0 ? nextMac + 1 : MacWindows.firstID
+        let capture = MacCapture(info)
+        macCaptures[id] = capture
+        renderer.decoders[id] = capture
+        capture.onSize = { [weak self] size in DispatchQueue.main.async { self?.macSized(id, size) } }
+        capture.onEnded = { [weak self] in self?.removeMacWindow(id) }
+        Task { [weak self] in
+            do { try await capture.start() } catch {
+                await MainActor.run {
+                    self?.removeMacWindow(id)
+                    print("room: could not capture \(info.app): \(error)")
+                }
+            }
+        }
+    }
+
+    private func macSized(_ id: UInt16, _ size: CGSize) {
+        guard macCaptures[id] != nil else { return }
+        core.setWindow(id, width: Int(size.width), height: Int(size.height))
+        if macShown.insert(id).inserted {
+            core.show(id)
+            core.focused = id
+            sendFocus(nil)
+            hint.update()
+        }
+    }
+
+    func removeMacWindow(_ id: UInt16) {
+        guard let capture = macCaptures.removeValue(forKey: id) else { return }
+        capture.invalidate()
+        macShown.remove(id)
+        renderer?.drop(id)
+        core.remove(id)
+        hint.update()
+    }
+
+    private func macMouse(_ id: UInt16, held: Bool, _ x: Double, _ y: Double) {
+        guard let capture = macCaptures[id] else { return }
+        let type: CGEventType = held ? (pressedButton == 0x111 ? .rightMouseDragged : .leftMouseDragged) : .mouseMoved
+        MacInput.mouse(type, button: pressedButton == 0x111 ? .right : .left, at: capture.screenPoint(x: x, y: y),
+                       clicks: 1, window: capture.info.windowID, pid: capture.info.pid)
+    }
+
+    private func macClick(_ id: UInt16, button: Int, down: Bool, _ x: Double, _ y: Double) {
+        guard let capture = macCaptures[id] else { return }
+        let point = capture.screenPoint(x: x, y: y)
+        var clicks = 1
+        if down {
+            if let last = lastClick, last.window == id, Date().timeIntervalSince(last.at) < 0.4,
+               abs(last.point.x - point.x) < 6, abs(last.point.y - point.y) < 6 {
+                clicks = last.count + 1
+            }
+            lastClick = (Date(), id, point, clicks)
+        } else {
+            clicks = lastClick?.count ?? 1
+        }
+        let right = button == 0x111
+        let type: CGEventType = down ? (right ? .rightMouseDown : .leftMouseDown) : (right ? .rightMouseUp : .leftMouseUp)
+        MacInput.mouse(type, button: right ? .right : .left, at: point, clicks: clicks,
+                       window: capture.info.windowID, pid: capture.info.pid)
+    }
+
+    /// A key meant for a Mac window, if that is what has the keyboard: posted at its application.
+    func macKey(_ event: NSEvent) -> Bool {
+        guard let id = core.focused, MacWindows.isMac(id), let capture = macCaptures[id] else { return false }
+        switch event.type {
+        case .keyDown:
+            MacInput.key(event, down: true, pid: capture.info.pid)
+            // The Mac never says a key chorded with Command was let go of; so it is let go of here.
+            if event.modifierFlags.contains(.command) {
+                let (code, flags, pid) = (event.keyCode, event.modifierFlags, capture.info.pid)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { MacInput.key(code: code, flags: flags, down: false, pid: pid) }
+            }
+        case .keyUp: MacInput.key(event, down: false, pid: capture.info.pid)
+        case .flagsChanged: MacInput.modifier(event, pid: capture.info.pid)
+        default: return false
+        }
+        return true
     }
 
     /// The window a key goes to: the one with the keyboard.
@@ -261,6 +415,7 @@ final class RoomController {
 
     func closeAimed() {
         guard let id = core.aim().window ?? core.focused, id < 0xFFF0 else { return }
+        if MacWindows.isMac(id) { removeMacWindow(id); return }
         model.link.say(["Close": ["window": Int(id)]])
     }
 

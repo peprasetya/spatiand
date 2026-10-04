@@ -315,7 +315,7 @@ impl Room {
         // To the right of whatever is in the way first, then to the left, a step at a time.
         let half = |w: f64| w / DEFAULT_RADIUS * 0.5;
         let taken = |yaw: f64, windows: &[Win]| {
-            windows.iter().filter(|w| !w.place.pinned).any(|w| {
+            windows.iter().filter(|w| !w.place.pinned && !Room::is_panel(w.id)).any(|w| {
                 let apart = (yaw - w.place.yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
                 apart.abs() < half(width) + half(w.place.width) + GAP
             })
@@ -963,5 +963,23 @@ mod tests {
         r2.render_audio("film", 6, &bytes, &mut b);
         assert_eq!(a.len(), b.len());
         assert!(a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-4), "the split changed what was heard");
+    }
+
+    #[test]
+    fn a_menu_or_hint_in_the_way_does_not_push_a_window_aside() {
+        let mut r = Room::new();
+        r.set_fixed_head(Some(DQuat::IDENTITY));
+        r.set_panel(PANEL_FIRST + 3, (1000, 300), 0.8, 1.6);
+        r.set_window(7, (1280, 800));
+        assert!(r.windows().iter().find(|w| w.id == 7).unwrap().place.yaw.abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_small_window_is_aimed_at_like_any_other() {
+        let mut r = Room::new();
+        r.set_fixed_head(Some(DQuat::IDENTITY));
+        r.set_window(0x8000, (594, 421));
+        r.show(0x8000);
+        assert_eq!(r.aim().window, Some(0x8000), "{:?}", r.windows());
     }
 }

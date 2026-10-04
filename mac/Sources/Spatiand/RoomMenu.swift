@@ -26,6 +26,8 @@ final class RoomMenu {
     private var hovered: Int?
     private var target: UInt16?
     private var texture: MTLTexture?
+    private enum Page { case main, macWindows }
+    private var page = Page.main
 
     // The panel's pixels and its size in the room: 1200 px across at 0.9 m is a pixel to about
     // 1.5 mm, which at the distance it floats is a little finer than the glasses can show.
@@ -48,6 +50,8 @@ final class RoomMenu {
     func open() {
         guard !isOpen else { return }
         isOpen = true
+        page = .main
+        controller.refreshMacList()
         controller.hint.update()
         hovered = nil
         // What it acts on is what was being pointed at, or failing that, what has the keyboard.
@@ -75,11 +79,40 @@ final class RoomMenu {
             CGRect(x: 24 + CGFloat(column) * (columnWidth + 24), y: top + CGFloat(index) * rowHeight, width: columnWidth, height: rowHeight - 6)
         }
 
-        // Left: what the host can run.
-        for (i, app) in model.apps.prefix(9).enumerated() {
-            rows.append(Row(title: "Open " + app.name, detail: nil, rect: place(0, i)) {
-                model.launch(app)
-                return true
+        // Left: what the host can run, or the windows of this Mac.
+        switch page {
+        case .main:
+            for (i, app) in model.apps.prefix(7).enumerated() {
+                rows.append(Row(title: "Open " + app.name, detail: nil, rect: place(0, i)) {
+                    model.launch(app)
+                    return true
+                })
+            }
+            rows.append(Row(title: "Windows of this Mac\u{2026}", detail: nil, rect: place(0, min(model.apps.count, 7))) { [weak self] in
+                self?.page = .macWindows
+                self?.controller.refreshMacList()
+                self?.rebuild()
+                return false
+            })
+        case .macWindows:
+            if !MacWindows.allowed(ask: false) {
+                rows.append(Row(title: "Allow Screen Recording\u{2026}", detail: nil, rect: place(0, 0)) {
+                    _ = MacWindows.allowed(ask: true)
+                    return true
+                })
+            }
+            let listed = controller.macList.prefix(7)
+            for (i, info) in listed.enumerated() {
+                let row = (MacWindows.allowed(ask: false) ? 0 : 1) + i
+                rows.append(Row(title: info.app, detail: String(info.title.prefix(24)), rect: place(0, row)) { [weak self] in
+                    self?.controller.bringMacWindow(info)
+                    return true
+                })
+            }
+            rows.append(Row(title: "Back", detail: nil, rect: place(0, 8)) { [weak self] in
+                self?.page = .main
+                self?.rebuild()
+                return false
             })
         }
 
@@ -141,6 +174,11 @@ final class RoomMenu {
         })
         self.rows = rows
         redraw()
+    }
+
+    /// The list of Mac windows has changed, and is on show.
+    func macListChanged() {
+        if isOpen, page == .macWindows { rebuild() }
     }
 
     // MARK: the pointer

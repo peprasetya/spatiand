@@ -28,5 +28,23 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
-codesign --force --sign - "$app" >/dev/null 2>&1 || echo "warning: could not sign"
+
+# Signing identity. Ad-hoc signing gives the bundle a new code hash on every build, and macOS binds
+# Screen Recording and Accessibility to that hash, so each rebuild would silently take both away.
+# HoloFrame's self-signed "HoloFrame Dev" certificate is used when it is in the keychain: the
+# permission is then bound to the bundle's name and that certificate, which do not change. See
+# HoloFrame's Tools/make-app.sh for how such a certificate is made, and why it is searched for
+# without `-v` (a self-signed root is never "valid" to the trust policy, and signs fine).
+IDENTITY_NAME="${SPATIAND_SIGN_NAME:-HoloFrame Dev}"
+IDENTITY=$(security find-identity -p codesigning 2>/dev/null | grep -F "\"$IDENTITY_NAME" \
+  | sed -E 's/^[[:space:]]*[0-9]+\)[[:space:]]*([0-9A-F]+)[[:space:]]+.*$/\1/' | head -1)
+if [ -n "$IDENTITY" ]; then
+  codesign --force --sign "$IDENTITY" --identifier com.peprasetya.spatiand "$app" >/dev/null 2>&1 \
+    && echo "signed with \"$IDENTITY_NAME\" ($IDENTITY): permissions survive rebuilds" \
+    || { echo "warning: could not sign with \"$IDENTITY_NAME\"; signing ad hoc"; codesign --force --sign - "$app" >/dev/null 2>&1 || true; }
+else
+  codesign --force --sign - "$app" >/dev/null 2>&1 || echo "warning: could not sign"
+  echo "note: signed ad hoc, so each rebuild asks for Screen Recording and Accessibility again;"
+  echo "      create the \"$IDENTITY_NAME\" certificate (see HoloFrame) to stop that"
+fi
 echo "built $(pwd)/$app"

@@ -96,12 +96,21 @@ final class InputView: NSView {
             controller?.menu.close()
             return
         }
+        if controller?.macKey(event) == true { return }
         controller?.keyTarget?.keyDown(with: event)
     }
-    override func keyUp(with event: NSEvent) { controller?.keyTarget?.keyUp(with: event) }
-    override func flagsChanged(with event: NSEvent) { controller?.keyTarget?.flagsChanged(with: event) }
+    override func keyUp(with event: NSEvent) {
+        if controller?.macKey(event) == true { return }
+        controller?.keyTarget?.keyUp(with: event)
+    }
+    override func flagsChanged(with event: NSEvent) {
+        if controller?.macKey(event) == true { return }
+        controller?.keyTarget?.flagsChanged(with: event)
+    }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if chord(event) { return true }
+        // A Command-key shortcut reaches here first; it is the window's, not the menu's.
+        if controller?.macKey(event) == true { return true }
         guard let target = controller?.keyTarget else { return false }
         return target.performKeyEquivalent(with: event)
     }

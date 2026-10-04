@@ -140,6 +140,28 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         buildComputers(menu)
+        if room.active {
+            let macs = NSMenuItem(title: "Bring a window of this Mac into the glasses", action: nil, keyEquivalent: "")
+            let sub = NSMenu()
+            if !MacWindows.allowed(ask: false) {
+                let ask = NSMenuItem(title: "Allow Screen Recording\u{2026}", action: #selector(allowCapture), keyEquivalent: "")
+                ask.target = self
+                sub.addItem(ask)
+            } else if room.macList.isEmpty {
+                let none = NSMenuItem(title: "No windows to show", action: nil, keyEquivalent: "")
+                none.isEnabled = false
+                sub.addItem(none)
+            }
+            for (i, info) in room.macList.prefix(30).enumerated() {
+                let entry = NSMenuItem(title: info.app + (info.title.isEmpty ? "" : " \u{2014} " + String(info.title.prefix(40))),
+                                       action: #selector(bringMacWindow(_:)), keyEquivalent: "")
+                entry.target = self
+                entry.tag = i
+                sub.addItem(entry)
+            }
+            macs.submenu = sub
+            menu.addItem(macs)
+        }
         menu.addItem(.separator())
 
         let present = NSMenuItem(title: "Show windows", action: nil, keyEquivalent: "")
@@ -234,6 +256,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             entry.tag = Int(window.id)
             menu.addItem(entry)
         }
+    }
+
+    @objc private func allowCapture() { _ = MacWindows.allowed(ask: true) }
+    @objc private func bringMacWindow(_ sender: NSMenuItem) {
+        let room = Model.shared.room
+        guard sender.tag < room.macList.count else { return }
+        room.bringMacWindow(room.macList[sender.tag])
     }
 
     @objc private func toggleCapture() {

@@ -10,7 +10,15 @@ import CoreVideo
 import Foundation
 import VideoToolbox
 
-final class RoomDecoder {
+/// Anything that has a newest picture the room can draw: a decoded stream from a host, or a Mac
+/// window being captured here.
+protocol PictureSource: AnyObject {
+    /// The newest picture, and a number that changes when there is another.
+    func current() -> (CVPixelBuffer, Int)?
+    func invalidate()
+}
+
+final class RoomDecoder: PictureSource {
     private var session: VTDecompressionSession?
     private var format: CMFormatDescription?
     private let lock = NSLock()

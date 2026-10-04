@@ -15,7 +15,7 @@ enum RoomTest {
         let room = model.room
         model.onProblem = { print("problem: \($0)") }
         // The hint test is of an empty room, so it has no computer to take windows from.
-        if ProcessInfo.processInfo.environment["SPATIAND_TEST_HINT"] == nil {
+        if ProcessInfo.processInfo.environment["SPATIAND_TEST_HINT"] == nil, ProcessInfo.processInfo.environment["SPATIAND_TEST_MAC"] == nil {
             model.connect(PairedHost(name: "test", address: address, fingerprint: fingerprint))
         }
 
@@ -25,6 +25,29 @@ enum RoomTest {
         let env = ProcessInfo.processInfo.environment
         let head = (env["SPATIAND_TEST_HEAD"] ?? "0,0").split(separator: ",").compactMap { Double($0) }
 
+        if let appName = env["SPATIAND_TEST_MAC"] {
+            // A window of this Mac, in the room: the first one of the named application.
+            after(1) {
+                room.core.holdHead(yaw: 0, pitch: 0)
+                room.core.perEye(1920, 1080)
+                room.setActive(true)
+            }
+            after(2) {
+                Task {
+                    let list = await MacWindows.list()
+                    print("mac windows: \(list.count) listed")
+                    guard let info = list.first(where: { $0.app == appName }) else { print("no window of \(appName)"); exit(1) }
+                    await MainActor.run { room.bringMacWindow(info) }
+                }
+            }
+            after(6) {
+                let a = room.core.aim()
+                print("aim: window \(a.window.map { String($0, radix: 16) } ?? "none") at \(Int(a.x)),\(Int(a.y))")
+                if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-mac.png") }
+                exit(0)
+            }
+            return
+        }
         if env["SPATIAND_TEST_HINT"] != nil {
             after(4) {
                 room.core.holdHead(yaw: 0, pitch: 0)

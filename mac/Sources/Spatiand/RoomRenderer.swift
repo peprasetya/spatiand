@@ -22,7 +22,7 @@ final class RoomRenderer {
     private let core: RoomCore
 
     /// Decoded pictures by window; owned by the main thread.
-    var decoders: [UInt16: RoomDecoder] = [:]
+    var decoders: [UInt16: PictureSource] = [:]
     /// Spatiand's own panels, which draw themselves: the menu.
     var panels: [UInt16: MTLTexture] = [:]
     private var cached: [UInt16: (generation: Int, texture: CVMetalTexture)] = [:]
@@ -90,7 +90,7 @@ final class RoomRenderer {
     // MARK: the decoders
 
     func decoder(for id: UInt16, onTrouble: @escaping () -> Void) -> RoomDecoder {
-        if let existing = decoders[id] { return existing }
+        if let existing = decoders[id] as? RoomDecoder { return existing }
         let d = RoomDecoder()
         d.onTrouble = onTrouble
         decoders[id] = d
