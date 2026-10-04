@@ -1,6 +1,7 @@
 //  SettingsWindow.swift — what the owner can change, opened by Ctrl-Tab or from the menu.
 
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 struct SettingsView: View {
@@ -11,6 +12,8 @@ struct SettingsView: View {
     @AppStorage("glassesStereo", store: Defaults.store) private var glassesStereo = true
     @AppStorage("captureInput", store: Defaults.store) private var captureInput = true
     @AppStorage("hotkeys", store: Defaults.store) private var hotkeys = true
+    @State private var atLogin = SMAppService.mainApp.status == .enabled
+    @State private var loginProblem = ""
     let hotkeyStatus: () -> String
 
     var body: some View {
@@ -35,6 +38,17 @@ struct SettingsView: View {
             Toggle("Show the glasses in 3D (applies the next time they are plugged in)", isOn: $glassesStereo)
             Toggle("This Mac's mouse and keyboard steer the glasses when they are on", isOn: $captureInput)
             Text("Ctrl-Option-G gives them back to the Mac at any time.").font(.caption).foregroundColor(.secondary)
+            Toggle("Start Spatiand when I log in", isOn: $atLogin)
+                .onChange(of: atLogin) { wanted in
+                    do {
+                        if wanted { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                        loginProblem = ""
+                    } catch {
+                        loginProblem = "Could not change it: \(error.localizedDescription)"
+                        atLogin = SMAppService.mainApp.status == .enabled
+                    }
+                }
+            if !loginProblem.isEmpty { Text(loginProblem).font(.caption).foregroundColor(.red) }
             Toggle("Command works as Control in remote windows", isOn: $commandIsControl)
             Toggle("Ctrl-Space opens the menu, Ctrl-Tab opens these settings", isOn: $hotkeys)
             if hotkeys {

@@ -11,6 +11,26 @@ import AppKit
 
 setvbuf(stdout, nil, _IOLBF, 0)
 
+// Run from its bundle, Spatiand has no terminal, so what it says goes to a log, kept to a size that
+// does not matter: ~/Library/Logs/Spatiand/spatiand.log. Run from a shell it still says it there.
+if Bundle.main.bundleURL.pathExtension == "app", isatty(STDOUT_FILENO) == 0 {
+    let dir = NSString("~/Library/Logs/Spatiand").expandingTildeInPath
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    let path = dir + "/spatiand.log"
+    if let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int, size > 2_000_000 {
+        try? FileManager.default.removeItem(atPath: path + ".old")
+        try? FileManager.default.moveItem(atPath: path, toPath: path + ".old")
+    }
+    var info = stat()
+    // Only when stdout is nowhere useful: `open --stdout` or a shell redirect is left alone.
+    if fstat(STDOUT_FILENO, &info) == 0, (info.st_mode & S_IFMT) != S_IFREG {
+        freopen(path, "a", stdout)
+        freopen(path, "a", stderr)
+        setvbuf(stdout, nil, _IOLBF, 0)
+        print("--- Spatiand started \(Date())")
+    }
+}
+
 final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let glasses = GlassesWatcher()
