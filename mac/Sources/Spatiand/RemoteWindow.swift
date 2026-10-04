@@ -140,28 +140,38 @@ final class VideoView: NSView {
         input(["Key": ["code": Int(code), "pressed": pressed]])
     }
 
-    private func key(_ event: NSEvent, pressed: Bool) {
-        // A terminal copies and pastes with Control-Shift-C and -V, because Control-C already
-        // means something there. Command stands in for Control, so add the Shift.
-        if Settings.commandIsControl, isTerminal, event.modifierFlags.contains(.command),
-           event.keyCode == 8 || event.keyCode == 9 {
-            if pressed {
-                swallowed.insert(event.keyCode)
-                send(code: 42, pressed: true)
-                send(code: KeyMap.evdev[event.keyCode] ?? 0, pressed: true)
-            } else if swallowed.remove(event.keyCode) != nil {
-                send(code: KeyMap.evdev[event.keyCode] ?? 0, pressed: false)
-                send(code: 42, pressed: false)
-            }
-            return
-        }
-        if !pressed, swallowed.remove(event.keyCode) != nil {
-            send(code: KeyMap.evdev[event.keyCode] ?? 0, pressed: false)
+    /// Keys sent down and not yet let go, so a release is sent once and only for a press.
+    private var down: Set<UInt16> = []
+
+    private func release(_ keyCode: UInt16) {
+        guard down.remove(keyCode) != nil else { return }
+        if swallowed.remove(keyCode) != nil {
+            send(code: KeyMap.evdev[keyCode] ?? 0, pressed: false)
             send(code: 42, pressed: false)
-            return
+        } else if let code = KeyMap.code(for: keyCode, commandIsControl: Settings.commandIsControl) {
+            send(code: code, pressed: false)
         }
-        guard let code = KeyMap.code(for: event.keyCode, commandIsControl: Settings.commandIsControl) else { return }
-        send(code: code, pressed: pressed)
+    }
+
+    private func key(_ event: NSEvent, pressed: Bool) {
+        let keyCode = event.keyCode
+        guard pressed else { release(keyCode); return }
+        guard down.insert(keyCode).inserted else { return }
+        if Settings.commandIsControl, isTerminal, event.modifierFlags.contains(.command),
+           keyCode == 8 || keyCode == 9 {
+            // A terminal copies and pastes with Control-Shift-C and -V, because Control-C already
+            // means something there. Command stands in for Control, so add the Shift.
+            swallowed.insert(keyCode)
+            send(code: 42, pressed: true)
+            send(code: KeyMap.evdev[keyCode] ?? 0, pressed: true)
+        } else if let code = KeyMap.code(for: keyCode, commandIsControl: Settings.commandIsControl) {
+            send(code: code, pressed: true)
+        }
+        // macOS never delivers the release of a key pressed while Command is held, so the host
+        // would hold it down and repeat it for ever. Let it go here, a moment later.
+        if event.modifierFlags.contains(.command), KeyMap.modifierMask(keyCode) == nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { [weak self] in self?.release(keyCode) }
+        }
     }
 
     /// A paste is the host's own, so what is on this Mac's pasteboard must be there first.
