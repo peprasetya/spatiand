@@ -537,6 +537,65 @@ impl Room {
         self.raise(id);
     }
 
+    /// Move a window round the room by this much: `yaw` to the left and `pitch` up, radians.
+    pub fn nudge(&mut self, id: u32, yaw: f64, pitch: f64) {
+        if let Some(w) = self.windows.iter_mut().find(|w| w.id == id && !w.place.pinned) {
+            w.place.yaw = (w.place.yaw + yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+            w.place.pitch = (w.place.pitch + pitch).clamp(-PITCH_LIMIT, PITCH_LIMIT);
+        }
+    }
+
+    /// Move the keyboard on to the next window round the room, from the left or the right (`step` is
+    /// +1 for the one to the left, -1 for the one to the right), and say which. Panels and windows
+    /// pinned to the glass are not in the round.
+    pub fn focus_step(&mut self, step: i32) -> Option<u32> {
+        let mut round: Vec<(f64, u32)> = self
+            .windows
+            .iter()
+            .filter(|w| w.shown && !w.place.pinned && !Room::is_panel(w.id))
+            .map(|w| (w.place.yaw, w.id))
+            .collect();
+        if round.is_empty() {
+            return None;
+        }
+        // From the right (most negative yaw) to the left.
+        round.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let at = self.focus.and_then(|f| round.iter().position(|(_, id)| *id == f));
+        let next = match at {
+            Some(i) => (i as i32 + step).rem_euclid(round.len() as i32) as usize,
+            None => 0,
+        };
+        let id = round[next].1;
+        self.set_focus(Some(id));
+        Some(id)
+    }
+
+    /// Gather the windows into a row in front of the wearer, side by side. `spread` is how much
+    /// room is left between them: 1 is a little, and larger is more.
+    pub fn arrange(&mut self, spread: f64) {
+        let forward = self.head() * DVec3::X;
+        let heading = forward.y.atan2(forward.x);
+        let level = (self.stereo.neck_up_m / DEFAULT_RADIUS).atan();
+        let mut ids: Vec<(u32, f64)> = self
+            .windows
+            .iter()
+            .filter(|w| w.shown && !w.place.pinned && !Room::is_panel(w.id))
+            .map(|w| (w.id, w.place.width / w.place.radius))
+            .collect();
+        ids.sort_by_key(|(id, _)| *id);
+        let gap = GAP * spread.max(0.0);
+        let total: f64 = ids.iter().map(|(_, w)| w).sum::<f64>() + gap * ids.len().saturating_sub(1) as f64;
+        // Left to right means from the biggest yaw down, so the first window is the leftmost.
+        let mut yaw = heading + total / 2.0;
+        for (id, angle) in ids {
+            if let Some(w) = self.windows.iter_mut().find(|w| w.id == id) {
+                w.place.yaw = yaw - angle / 2.0;
+                w.place.pitch = level;
+            }
+            yaw -= angle + gap;
+        }
+    }
+
     /// Make a window bigger or smaller, from where it stands.
     pub fn scale(&mut self, id: u32, factor: f64) {
         if let Some(w) = self.windows.iter_mut().find(|w| w.id == id) {
@@ -1127,5 +1186,49 @@ mod tests {
         r.show(1);
         r.set_pinned(1, true);
         assert!(r.frame().draws.iter().all(|d| d.window & TITLE_FLAG == 0));
+    }
+
+    #[test]
+    fn the_focus_steps_round_the_windows_from_one_side_to_the_other() {
+        let mut r = room();
+        for id in 1..=3 {
+            r.set_window(id, (800, 600));
+            r.show(id);
+        }
+        // They stand side by side, the newest to the right of the one before.
+        r.set_focus(Some(1));
+        let a = r.focus_step(-1).expect("a window");
+        let b = r.focus_step(-1).expect("a window");
+        assert_ne!(a, b);
+        assert_eq!(r.focus_step(1), Some(a), "and back again");
+    }
+
+    #[test]
+    fn gathering_puts_the_windows_side_by_side_across_the_middle_of_the_view() {
+        let mut r = room();
+        for id in 1..=3 {
+            r.set_window(id, (800, 600));
+            r.show(id);
+            r.nudge(id, 1.0 * id as f64, 0.3);
+        }
+        r.arrange(1.0);
+        let yaws: Vec<f64> = r.windows().iter().map(|w| w.place.yaw).collect();
+        let mid = yaws.iter().sum::<f64>() / 3.0;
+        assert!(mid.abs() < 1e-9, "they are centred on where the head looks: {yaws:?}");
+        let mut sorted = yaws.clone();
+        sorted.sort_by(|a, b| a.total_cmp(b));
+        assert!(sorted.windows(2).all(|p| p[1] - p[0] > 0.3), "and not on top of one another: {sorted:?}");
+        assert!(r.windows().iter().all(|w| (w.place.pitch - r.windows()[0].place.pitch).abs() < 1e-9), "all at eye level");
+    }
+
+    #[test]
+    fn a_nudge_turns_a_window_round_and_up_and_stops_at_the_vertical() {
+        let mut r = room();
+        r.set_window(1, (800, 600));
+        let before = r.windows()[0].place;
+        r.nudge(1, 0.2, 0.1);
+        assert!((r.windows()[0].place.yaw - before.yaw - 0.2).abs() < 1e-9);
+        r.nudge(1, 0.0, 10.0);
+        assert!(r.windows()[0].place.pitch <= PITCH_LIMIT);
     }
 }

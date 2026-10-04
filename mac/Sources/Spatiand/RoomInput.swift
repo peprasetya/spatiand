@@ -20,7 +20,11 @@
 //    Ctrl-Option-S   how big a pinned window is
 //    Ctrl-Option-W   close the window you are pointing at
 //    Ctrl-Space      the menu, in the glasses
-//  and, with Option held, dragging a window moves it and the wheel (or a pinch) resizes it.
+//  and, with Option held, dragging a window moves it and the wheel (or a pinch) resizes it. On the
+//  trackpad, three fingers swipe sideways to bring the next window here, up for the menu and down
+//  to put it away, and tap to recentre; four fingers swipe to move the window pointed at round the
+//  room, and pinch to resize it; five fingers pinch to gather every window in front of you and
+//  spread to give them room.
 
 import AppKit
 import Carbon.HIToolbox
@@ -37,11 +41,38 @@ final class InputView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    // MARK: the trackpad's fingers
+
+    private var recognizer = GestureRecognizer()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        // The raw touches of a trackpad, not of a screen, and not the ones merely resting on it.
+        allowedTouchTypes = [.indirect]
+        wantsRestingTouches = false
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Whether three or more fingers are down, in which case the pointer is the gesture's and does not move.
+    var gesturing: Bool { recognizer.active }
+
+    private func touched(_ event: NSEvent) {
+        let touches = event.touches(matching: .touching, in: self).map {
+            GestureRecognizer.Touch(id: $0.identity.hash, x: Double($0.normalizedPosition.x), y: Double($0.normalizedPosition.y))
+        }
+        if let gesture = recognizer.update(touches, at: event.timestamp) { controller?.gesture(gesture) }
+    }
+    override func touchesBegan(with event: NSEvent) { touched(event) }
+    override func touchesMoved(with event: NSEvent) { touched(event) }
+    override func touchesEnded(with event: NSEvent) { touched(event) }
+    override func touchesCancelled(with event: NSEvent) { touched(event) }
+
     // MARK: the mouse
 
     private static let trace = ProcessInfo.processInfo.environment["SPATIAND_DEBUG_INPUT"] != nil
 
     private func moved(_ event: NSEvent) {
+        if gesturing { return }
         if Self.trace { print("input: move \(event.deltaX), \(event.deltaY)") }
         controller?.pointerMoved(dx: Double(event.deltaX), dy: Double(event.deltaY))
     }
@@ -50,14 +81,20 @@ final class InputView: NSView {
     override func rightMouseDragged(with event: NSEvent) { moved(event) }
     override func otherMouseDragged(with event: NSEvent) { moved(event) }
 
+    // With three fingers down the trackpad is making a gesture, and macOS's own three-finger drag turns
+    // that into a mouse press as well: the press is the gesture's, and not a click in a window.
     override func mouseDown(with event: NSEvent) {
+        if gesturing { return }
         if Self.trace { print("input: left down") }
         controller?.buttonDown(0x110, grab: event.modifierFlags.contains(.option))
     }
-    override func mouseUp(with event: NSEvent) { controller?.buttonUp(0x110) }
-    override func rightMouseDown(with event: NSEvent) { controller?.buttonDown(0x111, grab: false) }
+    override func mouseUp(with event: NSEvent) {
+        // A release is always let through, or a button pressed just before the fingers came down would stay down.
+        controller?.buttonUp(0x110)
+    }
+    override func rightMouseDown(with event: NSEvent) { if !gesturing { controller?.buttonDown(0x111, grab: false) } }
     override func rightMouseUp(with event: NSEvent) { controller?.buttonUp(0x111) }
-    override func otherMouseDown(with event: NSEvent) { controller?.buttonDown(0x112, grab: false) }
+    override func otherMouseDown(with event: NSEvent) { if !gesturing { controller?.buttonDown(0x112, grab: false) } }
     override func otherMouseUp(with event: NSEvent) { controller?.buttonUp(0x112) }
 
     override func scrollWheel(with event: NSEvent) {
@@ -139,6 +176,7 @@ final class RoomInput: NSObject, NSWindowDelegate {
         w.delegate = self
         let view = InputView(frame: NSRect(origin: .zero, size: screen.frame.size))
         view.controller = controller
+        view.allowedTouchTypes = [.indirect]
         view.onRelease = { [weak self] in self?.stop() }
         // A word on the Mac's own screen, so a Mac whose pointer has stopped answering says why.
         let note = NSTextField(labelWithString: "Spatiand has this Mac\u{2019}s mouse and keyboard for the glasses.   Ctrl-Option-G gives them back.")

@@ -103,6 +103,21 @@ enum RoomTest {
                 }
                 input.stop()
             }
+            if env["SPATIAND_TEST_GESTURE"] != nil {
+                room.gesture(.swipe(.up, fingers: 3))
+                print("three fingers up: menu open \(room.menu.isOpen)")
+                room.gesture(.swipe(.down, fingers: 3))
+                print("three fingers down: menu open \(room.menu.isOpen)")
+                let before = room.core.aim().window
+                room.gesture(.swipe(.left, fingers: 4))
+                room.gesture(.swipe(.left, fingers: 4))
+                let after = room.core.aim()
+                print("four fingers left twice: aimed window \(before.map(String.init) ?? "none") -> \(after.window.map(String.init) ?? "none")")
+                room.gesture(.pinch(fingers: 5, spreading: false))
+                let gathered = room.core.aim()
+                print("five fingers together: aimed window \(gathered.window.map(String.init) ?? "none") at \(Int(gathered.x)),\(Int(gathered.y))")
+                exit(0)
+            }
             if env["SPATIAND_TEST_BAR"] != nil {
                 // Onto the title bar's close button, to see it lit; then the middle of the bar, to take
                 // the window and carry it to the right.

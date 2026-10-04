@@ -39,6 +39,16 @@ struct SettingsView: View {
             Toggle("Show the glasses in 3D (applies the next time they are plugged in)", isOn: $glassesStereo)
             Toggle("This Mac's mouse and keyboard steer the glasses when they are on", isOn: $captureInput)
             Text("Ctrl-Option-G gives them back to the Mac at any time.").font(.caption).foregroundColor(.secondary)
+            Text("On the trackpad, in the glasses: three fingers swipe sideways to bring the next window here, up for the menu, down to put it away, and tap to recentre. Four fingers swipe to move the window you point at, and pinch to resize it. Five fingers pinch to gather every window in front of you, and spread to give them room.")
+                .font(.caption).foregroundColor(.secondary)
+            let system = SystemGestures.enabled()
+            if !system.isEmpty {
+                Text("macOS is also using these on the trackpad: " + system.joined(separator: "; ") + ". They happen on the Mac as well, so turn them off if they get in the way.")
+                    .font(.caption).foregroundColor(.orange)
+                Button("Open Trackpad settings\u{2026}") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.Trackpad-Settings") { NSWorkspace.shared.open(url) }
+                }
+            }
             Toggle("Start Spatiand when I log in", isOn: $atLogin)
                 .onChange(of: atLogin) { wanted in
                     do {

@@ -81,6 +81,13 @@ final class RoomCore {
     func endGrab() { sp_room_end_grab(room) }
     var isGrabbing: Bool { sp_room_grabbed(room) >= 0 }
     func scale(_ id: UInt16, by factor: Double) { sp_room_scale(room, UInt32(id), factor) }
+    func nudge(_ id: UInt16, yaw: Double, pitch: Double) { sp_room_nudge(room, UInt32(id), yaw, pitch) }
+    /// Move the keyboard to the next window round the room: +1 to the left, -1 to the right.
+    func focusStep(_ step: Int) -> UInt16? {
+        let id = sp_room_focus_step(room, Int32(step))
+        return id >= 0 ? UInt16(id) : nil
+    }
+    func arrange(spread: Double) { sp_room_arrange(room, spread) }
     func bringHere(_ id: UInt16) { sp_room_bring_here(room, UInt32(id)) }
     func setPinned(_ id: UInt16, _ pinned: Bool) { sp_room_set_pinned(room, UInt32(id), pinned ? 1 : 0) }
     func isPinned(_ id: UInt16) -> Bool { sp_room_is_pinned(room, UInt32(id)) != 0 }

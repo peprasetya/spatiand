@@ -670,6 +670,24 @@ pub extern "C" fn sp_room_grabbed(room: *mut RoomHandle) -> i32 {
 }
 
 #[no_mangle]
+pub extern "C" fn sp_room_nudge(room: *mut RoomHandle, id: u32, yaw_deg: f64, pitch_deg: f64) {
+    with_room(room, (), |r| r.nudge(id, yaw_deg.to_radians(), pitch_deg.to_radians()));
+}
+
+/// Move the keyboard to the next window round the room: +1 to the left, -1 to the right.
+/// Returns its id, or -1 if there is none.
+#[no_mangle]
+pub extern "C" fn sp_room_focus_step(room: *mut RoomHandle, step: i32) -> i32 {
+    with_room(room, -1, |r| r.focus_step(step).map_or(-1, |i| i as i32))
+}
+
+/// Gather the windows side by side in front of the wearer; `spread` is the room between them.
+#[no_mangle]
+pub extern "C" fn sp_room_arrange(room: *mut RoomHandle, spread: f64) {
+    with_room(room, (), |r| r.arrange(spread));
+}
+
+#[no_mangle]
 pub extern "C" fn sp_room_scale(room: *mut RoomHandle, id: u32, factor: f64) {
     with_room(room, (), |r| r.scale(id, factor));
 }

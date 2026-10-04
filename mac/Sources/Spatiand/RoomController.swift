@@ -473,6 +473,42 @@ final class RoomController {
         core.cursorShape(hotX: hotX, hotY: hotY, width: Double(width), height: Double(height))
     }
 
+    // MARK: gestures
+
+    /// Three, four and five fingers on the trackpad. Three work the room as a whole, four the
+    /// window being pointed at, and five all the windows at once.
+    func gesture(_ event: GestureRecognizer.Event) {
+        let target = core.aim().window.flatMap { $0 < 0xFFF0 ? $0 : nil } ?? core.focused
+        switch event {
+        case .swipe(.left, 3), .swipe(.right, 3):
+            // The next window round, brought to where you are looking.
+            if case .swipe(let direction, _) = event, let id = core.focusStep(direction == .left ? 1 : -1) {
+                core.bringHere(id)
+                focus(id)
+            }
+        case .swipe(.up, 3):
+            menu.open()
+        case .swipe(.down, 3):
+            menu.close()
+        case .tap(3):
+            recentre()
+        case .swipe(let direction, 4):
+            guard let id = target else { return }
+            switch direction {
+            case .left: core.nudge(id, yaw: 14, pitch: 0)
+            case .right: core.nudge(id, yaw: -14, pitch: 0)
+            case .up: core.nudge(id, yaw: 0, pitch: 8)
+            case .down: core.nudge(id, yaw: 0, pitch: -8)
+            }
+        case .pinch(4, let spreading):
+            if let id = target { core.scale(id, by: spreading ? 1.2 : 0.83) }
+        case .pinch(5, let spreading):
+            core.arrange(spread: spreading ? 2.4 : 1.0)
+        default:
+            break
+        }
+    }
+
     func recentre() {
         core.recentre()
         core.centrePointer()

@@ -34,6 +34,48 @@ enum LocalTests {
         let loud = Downmix.stereo(pcm(frame), channels: 12)
         check("everything at full scale stays under clipping", loud.allSatisfy { abs($0) <= 1.0 })
 
+        // --- trackpad gestures
+        func fingers(_ n: Int, centre: (Double, Double), spread: Double) -> [GestureRecognizer.Touch] {
+            (0..<n).map { i in
+                let a = Double(i) / Double(n) * 2 * .pi
+                return .init(id: i, x: centre.0 + cos(a) * spread, y: centre.1 + sin(a) * spread)
+            }
+        }
+        func run(_ frames: [[GestureRecognizer.Touch]]) -> GestureRecognizer.Event? {
+            var g = GestureRecognizer()
+            var t = 0.0
+            var result: GestureRecognizer.Event?
+            for frame in frames {
+                if let e = g.update(frame, at: t) { result = e }
+                t += 0.03
+            }
+            return result
+        }
+        let lift: [GestureRecognizer.Touch] = []
+        let swipeRight3 = (0...12).map { fingers(3, centre: (0.3 + Double($0) * 0.03, 0.5), spread: 0.08) } + [lift]
+        check("three fingers swiped right is a swipe right", run(swipeRight3) == .swipe(.right, fingers: 3))
+        let swipeUp4 = (0...12).map { fingers(4, centre: (0.5, 0.3 + Double($0) * 0.03), spread: 0.08) } + [lift]
+        check("four fingers swiped up is a swipe up", run(swipeUp4) == .swipe(.up, fingers: 4))
+        let swipeLeft5 = (0...12).map { fingers(5, centre: (0.7 - Double($0) * 0.03, 0.5), spread: 0.1) } + [lift]
+        check("five fingers swiped left is a swipe left", run(swipeLeft5) == .swipe(.left, fingers: 5))
+        let pinch4 = (0...10).map { fingers(4, centre: (0.5, 0.5), spread: 0.16 - Double($0) * 0.01) } + [lift]
+        check("four fingers drawn together is a pinch", run(pinch4) == .pinch(fingers: 4, spreading: false))
+        let spread5 = (0...10).map { fingers(5, centre: (0.5, 0.5), spread: 0.08 + Double($0) * 0.01) } + [lift]
+        check("five fingers spread is a spread", run(spread5) == .pinch(fingers: 5, spreading: true))
+        let tap3 = (0...4).map { _ in fingers(3, centre: (0.5, 0.5), spread: 0.08) } + [lift]
+        check("three fingers touched and lifted is a tap", run(tap3) == .tap(fingers: 3))
+        let resting3 = (0...20).map { _ in fingers(3, centre: (0.5, 0.5), spread: 0.08) } + [lift]
+        check("three fingers resting a while is nothing", run(resting3) == nil)
+        let two = (0...12).map { fingers(2, centre: (0.3 + Double($0) * 0.03, 0.5), spread: 0.08) } + [lift]
+        check("two fingers are not for this", run(two) == nil)
+        let pinch3 = (0...10).map { fingers(3, centre: (0.5, 0.5), spread: 0.16 - Double($0) * 0.01) } + [lift]
+        check("three fingers pinching is not a gesture", run(pinch3) == nil)
+        // Fingers landing one after another, the fifth last, are judged as five.
+        let staggered = (0...3).map { _ in fingers(3, centre: (0.5, 0.5), spread: 0.1) }
+            + (0...3).map { _ in fingers(4, centre: (0.5, 0.5), spread: 0.1) }
+            + (0...10).map { fingers(5, centre: (0.5, 0.5), spread: 0.1 + Double($0) * 0.01) } + [lift]
+        check("fingers landing one by one are judged as the most that were down", run(staggered) == .pinch(fingers: 5, spreading: true))
+
         // --- clipboard
         let board = NSPasteboard.general
         let before = board.string(forType: .string)

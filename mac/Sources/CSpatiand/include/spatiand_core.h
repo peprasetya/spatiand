@@ -111,6 +111,12 @@ void sp_room_begin_grab(sp_room *room, uint32_t id);
 void sp_room_drag(sp_room *room);
 void sp_room_end_grab(sp_room *room);
 int32_t sp_room_grabbed(sp_room *room);
+// Move a window round the room: degrees to the left and up.
+void sp_room_nudge(sp_room *room, uint32_t id, double yaw_deg, double pitch_deg);
+// Move the keyboard to the next window round the room (+1 left, -1 right); its id, or -1.
+int32_t sp_room_focus_step(sp_room *room, int32_t step);
+// Gather the windows side by side in front of the wearer; `spread` is the room between them.
+void sp_room_arrange(sp_room *room, double spread);
 void sp_room_scale(sp_room *room, uint32_t id, double factor);
 void sp_room_bring_here(sp_room *room, uint32_t id);
 void sp_room_set_pinned(sp_room *room, uint32_t id, int32_t pinned);

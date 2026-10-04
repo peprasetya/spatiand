@@ -145,16 +145,28 @@ back: three Terminal windows arrived with real pictures. **Not tried:** a real D
 (they need Accessibility, which the tool that built it does not have). A session's Control key is made Command
 (not in terminals), so copy and paste feel native; sound from the Mac's applications is not sent.
 
+**Added afterwards the same week:**
+
+* **Title bars.** Every window in the room has a bar above it (`RoomTitles.swift`; the room's maths gives it a hit
+  zone of its own): the window's name, a button to pin it to the glass and one to close it. Taking the bar carries
+  the window round the room. A window pinned to the glass has none.
+* **Trackpad gestures** (`GestureRecognizer.swift`, tested in `LocalTests`; the raw touches come from the key window,
+  no private interface). Three fingers: swipe sideways brings the next window here, up opens the menu, down puts it
+  away, a tap recentres. Four: swipe moves the window pointed at, pinch resizes it. Five: pinch gathers every window
+  in front of you, spread gives them room. macOS keeps its own meanings for these (and has three-finger drag on here),
+  so while three fingers are down the pointer and its button presses are the gesture's, and the settings list which
+  system gestures are on, for the owner to turn off.
+* **A measured head.** The app carries libmysofa and the KEMAR dataset it ships (`tools/build-hrtf.sh`, built once
+  and put in the bundle by `make-app.sh`; licences in `Resources/hrtf/NOTICE.txt`), so a sound can be put behind you.
+  Without them, or when run from the build folder, it falls back to the parametric head.
+
 **Not built:**
 
-1. Applications honouring `set_glasses` (SpatiWorld first: see `spatiworld-glasses.md`), and per-app
-   audio at the source on the Mac.
-2. Three-to-five-finger gestures on the projected screen (macOS keeps them for itself; they need
-   the private multitouch interface), and a measured head-related dataset (the parametric panner is
-   used: libmysofa is not on this Mac).
-3. Window frames in the room (title bars, close and resize handles): windows are moved, resized and
-   closed with chords and the menu. The host window's own size does not follow the wearer's resizing.
-5. Notarisation: `mac/make-app.sh` installs `~/Applications/Spatiand.app`, signed with HoloFrame's self-signed
+1. Applications honouring `set_glasses` (SpatiWorld first: see `spatiworld-glasses.md`), and per-app audio at the
+   source on the Mac.
+2. A way to resize the host window itself from the room (the picture's size follows the application, not the
+   wearer), and sound from the Mac's own applications when the Mac is the host.
+3. Notarisation: `mac/make-app.sh` installs `~/Applications/Spatiand.app`, signed with HoloFrame's self-signed
    "HoloFrame Dev" certificate when it is in the keychain (so the Screen Recording and Accessibility grants survive
    rebuilds), ad hoc otherwise. Not notarised, so for this Mac only.
 
