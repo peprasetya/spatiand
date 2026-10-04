@@ -3,7 +3,7 @@
 # The result is ./Spatiand.app. Not notarised, so it is for this Mac, not for handing out.
 set -e
 cd "$(dirname "$0")"
-MACOSX_DEPLOYMENT_TARGET=13.0 cargo build -p spatiand-mac-core --release --manifest-path ../Cargo.toml
+MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p spatiand-mac-core --release --manifest-path ../Cargo.toml
 SPATIAND_CORE=release swift build -c release
 app=Spatiand.app
 rm -rf "$app"
@@ -21,7 +21,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1</string>
     <key>CFBundleVersion</key><string>1</string>
-    <key>LSMinimumSystemVersion</key><string>13.0</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
     <!-- A menu-bar app: no Dock icon, no main window. -->
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>

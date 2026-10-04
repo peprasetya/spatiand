@@ -11,7 +11,7 @@ let core = ProcessInfo.processInfo.environment["SPATIAND_CORE"] ?? "debug"
 // ../target and linked here as a static library.
 let package = Package(
     name: "Spatiand",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     targets: [
         .target(name: "CSpatiand", path: "Sources/CSpatiand"),
         .executableTarget(
