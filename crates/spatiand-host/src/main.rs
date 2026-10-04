@@ -1106,7 +1106,8 @@ fn start_app(host: &mut state::Host, catalog: &Catalog, app: &str) -> Result<(),
     }
     // A viewer started for a session with no glasses on should start as an ordinary window, not
     // start as a room and be told a moment later; see `appcontrol::glasses_word`.
-    if !host.glasses && entry.kind == spatiand_stream::AppKind::Vr {
+    let started_without_glasses = !host.glasses && entry.kind == spatiand_stream::AppKind::Vr;
+    if started_without_glasses {
         sound.push(("SPATIAND_GLASSES".into(), "0".into()));
     }
     let pose = host.pose_fd.as_ref().map(std::os::fd::AsFd::as_fd);
@@ -1115,6 +1116,12 @@ fn start_app(host: &mut state::Host, catalog: &Catalog, app: &str) -> Result<(),
     host.app_of_pid.insert(launched.pid as i32, entry.id.clone());
     if let Some(control) = launched.control {
         appcontrol::watch(host, entry.id.clone(), control);
+        // It was told at launch, in its environment. Recorded, because otherwise the host takes
+        // it for an application that assumes glasses and says nothing when they are plugged in:
+        // a viewer started on a bare Mac would stay a window for good.
+        if started_without_glasses {
+            host.told_glasses.insert(entry.id.clone(), false);
+        }
     }
     Ok(())
 }
