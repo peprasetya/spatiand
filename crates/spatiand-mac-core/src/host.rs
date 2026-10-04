@@ -255,6 +255,10 @@ async fn serve(
             gate.set_paired(list);
             gate.set_open(false);
         }
+        // Whatever is queued was meant for the session before this one; this one hears its windows
+        // from the start, after its own hello, which the app sends when it hears `attached`.
+        while outbox.try_recv().is_ok() {}
+        callbacks.say(&json!({ "attached": { "who": who.to_string() } }));
         tokio::select! {
             _ = session(&connection, &mut outbox, callbacks) => {}
             arrived = arrival(&endpoint) => {
@@ -268,8 +272,6 @@ async fn serve(
 }
 
 async fn session(connection: &quinn::Connection, outbox: &mut UnboundedReceiver<ToSession>, callbacks: Callbacks) {
-    // Whatever is queued was meant for the session before this one.
-    while outbox.try_recv().is_ok() {}
     let mut control = match connection.open_uni().await {
         Ok(stream) => stream,
         Err(e) => {
@@ -546,5 +548,12 @@ mod tests {
         save_paired(&path, &[who]);
         assert_eq!(load_paired(&path), vec![who]);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_stream_announcement_is_understood() {
+        let text = json!({ "Stream": { "window": 1, "codec": "H265", "width": 594, "height": 421, "eyes": "mono" }}).to_string();
+        let message = from_app_json(&text);
+        assert!(matches!(message, Ok(HostMessage::Stream { .. })), "{message:?}");
     }
 }

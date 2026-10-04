@@ -84,6 +84,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         glasses.onChange = { [weak self] _ in self?.refreshIcon() }
         glasses.start()
         refreshIcon()
+        if Settings.hostEnabled { MacHost.shared.start() }
         Model.shared.room.drivesGlasses = true
         Model.shared.room.onChange = { [weak self] in self?.item.button?.appearsDisabled = !(self?.glasses.isPluggedIn ?? false) }
         wasPlugged = glasses.isPluggedIn
@@ -196,6 +197,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         present.submenu = presentMenu
         menu.addItem(present)
 
+        buildHost(menu)
+
         let audio = NSMenuItem(title: "Sound output", action: nil, keyEquivalent: "")
         let audioMenu = NSMenu()
         let follow = NSMenuItem(title: "Same as this Mac", action: #selector(chooseOutput(_:)), keyEquivalent: "")
@@ -220,6 +223,46 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let quit = NSMenuItem(title: "Quit Spatiand", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
     }
+
+    /// This Mac as a computer other devices can use the windows of.
+    private func buildHost(_ menu: NSMenu) {
+        let host = MacHost.shared
+        let top = NSMenuItem(title: "Let other devices use this Mac\u{2019}s windows", action: #selector(toggleHost), keyEquivalent: "")
+        top.target = self
+        top.state = host.running ? .on : .off
+        menu.addItem(top)
+        guard host.running else { return }
+        add(menu, "   \(host.status) \u{2014} \(host.address)", enabled: false)
+        if !MacWindows.allowed(ask: false) {
+            let ask = NSMenuItem(title: "   Allow Screen Recording\u{2026}", action: #selector(allowCapture), keyEquivalent: "")
+            ask.target = self
+            menu.addItem(ask)
+        }
+        if !MacInput.allowed(ask: false) {
+            let ask = NSMenuItem(title: "   Allow Accessibility, to be clicked and typed into\u{2026}", action: #selector(allowControl), keyEquivalent: "")
+            ask.target = self
+            menu.addItem(ask)
+        }
+        let pairing = NSMenuItem(title: host.pairing ? "   Stop letting a new device pair" : "   Let a new device pair (two minutes)",
+                                 action: #selector(togglePairing), keyEquivalent: "")
+        pairing.target = self
+        menu.addItem(pairing)
+        if host.pairedCount > 0 {
+            let forget = NSMenuItem(title: "   Forget the \(host.pairedCount) paired device\(host.pairedCount == 1 ? "" : "s")", action: #selector(forgetDevices), keyEquivalent: "")
+            forget.target = self
+            menu.addItem(forget)
+        }
+    }
+
+    @objc private func toggleHost() {
+        Settings.hostEnabled.toggle()
+        if Settings.hostEnabled { MacHost.shared.start() } else { MacHost.shared.stop() }
+    }
+    @objc private func togglePairing() {
+        if MacHost.shared.pairing { MacHost.shared.closePairing() } else { MacHost.shared.openPairing() }
+    }
+    @objc private func forgetDevices() { MacHost.shared.forgetAllDevices() }
+    @objc private func allowControl() { _ = MacInput.allowed(ask: true) }
 
     private func buildComputers(_ menu: NSMenu) {
         let model = Model.shared
@@ -364,6 +407,14 @@ if let at = CommandLine.arguments.firstIndex(of: "--add-host") {
 
 if CommandLine.arguments.contains("--selftest-local") {
     exit(LocalTests.run())
+}
+
+if let at = CommandLine.arguments.firstIndex(of: "--selftest-host") {
+    let args = Array(CommandLine.arguments[(at + 1)...])
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    DispatchQueue.main.async { HostTest.run(bundle: args.first ?? "com.apple.Terminal") }
+    application.run()
 }
 
 if let at = CommandLine.arguments.firstIndex(of: "--selftest-room") {

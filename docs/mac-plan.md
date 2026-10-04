@@ -134,6 +134,17 @@ the host, and the Deck would see the same.
 (`/tmp/spatiand-room*.png`); `SPATIAND_DEBUG_SNAPSHOT=/tmp/g.png` on the app writes what the glasses
 are showing every few seconds.
 
+**The Mac as a host (built 2026-10-05, tried over loopback only).** The menu's "Let other devices use this
+Mac's windows" makes this Mac listen on port 47600, speaking the Linux host's protocol, so a Deck or a Beam Pro can
+pair with it (the menu opens pairing for two minutes; this Mac asks to confirm the six digits) and open its running
+applications: the transport is Rust (`host.rs`: QUIC, a gate for paired devices, the control stream, packetised
+pictures), the rest is Swift (`MacHost.swift`: ScreenCaptureKit capture, `HostEncoder.swift` hardware HEVC, input posted
+back at the application, close and resize through Accessibility, the clipboard). `Spatiand --selftest-host
+[bundle id]` has the client half of the same app connect to the host half over 127.0.0.1 and photograph what comes
+back: three Terminal windows arrived with real pictures. **Not tried:** a real Deck or Beam Pro, and clicking or typing
+(they need Accessibility, which the tool that built it does not have). A session's Control key is made Command
+(not in terminals), so copy and paste feel native; sound from the Mac's applications is not sent.
+
 **Not built:**
 
 1. Applications honouring `set_glasses` (SpatiWorld first: see `spatiworld-glasses.md`), and per-app
@@ -143,7 +154,6 @@ are showing every few seconds.
    used: libmysofa is not on this Mac).
 3. Window frames in the room (title bars, close and resize handles): windows are moved, resized and
    closed with chords and the menu. The host window's own size does not follow the wearer's resizing.
-4. The Mac as a *host* (its own windows out to a Deck or Beam Pro).
 5. Notarisation: `mac/make-app.sh` installs `~/Applications/Spatiand.app`, signed with HoloFrame's self-signed
    "HoloFrame Dev" certificate when it is in the keychain (so the Screen Recording and Accessibility grants survive
    rebuilds), ad hoc otherwise. Not notarised, so for this Mac only.

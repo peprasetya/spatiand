@@ -66,6 +66,12 @@ enum Settings {
         set { defaults.set(newValue, forKey: "pinnedLarge") }
     }
 
+    /// Whether other devices may use this Mac's windows: it listens on a port, so it is off until asked for.
+    static var hostEnabled: Bool {
+        get { defaults.bool(forKey: "hostEnabled") }
+        set { defaults.set(newValue, forKey: "hostEnabled") }
+    }
+
     static var hotkeys: Bool {
         defaults.object(forKey: "hotkeys") as? Bool ?? true
     }

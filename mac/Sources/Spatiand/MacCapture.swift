@@ -16,6 +16,7 @@ import ScreenCaptureKit
 struct MacWindowInfo: Equatable {
     let windowID: CGWindowID
     let pid: pid_t
+    let bundle: String
     let app: String
     let title: String
     /// In points, in the global space with its origin at the top left of the main display.
@@ -43,7 +44,7 @@ enum MacWindows {
         return content.windows.compactMap { w in
             guard w.windowLayer == 0, w.isOnScreen, w.frame.width >= 160, w.frame.height >= 100,
                   let app = w.owningApplication, app.processID != mine, !app.applicationName.isEmpty else { return nil }
-            return MacWindowInfo(windowID: w.windowID, pid: app.processID, app: app.applicationName,
+            return MacWindowInfo(windowID: w.windowID, pid: app.processID, bundle: app.bundleIdentifier, app: app.applicationName,
                                  title: w.title ?? "", frame: w.frame)
         }
         .sorted { ($0.app, $0.title) < ($1.app, $1.title) }
@@ -62,6 +63,11 @@ final class MacCapture: NSObject, PictureSource, SCStreamOutput, SCStreamDelegat
     /// Said, off the main thread, when the first picture and each change of size arrives.
     var onSize: ((CGSize) -> Void)?
     var onEnded: (() -> Void)?
+    /// Every complete picture, off the main thread, with its time in microseconds.
+    var onFrame: ((CVPixelBuffer, UInt64) -> Void)?
+    private var config: SCStreamConfiguration?
+    private var configuredSize = CGSize.zero
+    private var lastResize = Date.distantPast
     private var lastSize = CGSize.zero
 
     init(_ info: MacWindowInfo) { self.info = info }
@@ -79,6 +85,8 @@ final class MacCapture: NSObject, PictureSource, SCStreamOutput, SCStreamDelegat
         config.showsCursor = false
         config.queueDepth = 3
         config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        self.config = config
+        configuredSize = window.frame.size
         let s = SCStream(filter: filter, configuration: config, delegate: self)
         try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "spatiand.maccapture", qos: .userInteractive))
         try await s.startCapture()
@@ -136,11 +144,26 @@ final class MacCapture: NSObject, PictureSource, SCStreamOutput, SCStreamDelegat
         newest = pixels
         generation += 1
         lock.unlock()
+        let seconds = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
+        onFrame?(pixels, UInt64(max(0, seconds) * 1_000_000))
+        followResize()
         let size = CGSize(width: CVPixelBufferGetWidth(pixels), height: CVPixelBufferGetHeight(pixels))
         if size != lastSize {
             lastSize = size
             onSize?(size)
         }
+    }
+
+    /// A window that has been resized is captured at its new size, or it would be scaled to the old.
+    private func followResize() {
+        guard let stream, let config, Date().timeIntervalSince(lastResize) > 0.4 else { return }
+        let now = frame().size
+        guard abs(now.width - configuredSize.width) > 1 || abs(now.height - configuredSize.height) > 1, now.width >= 50, now.height >= 50 else { return }
+        lastResize = Date()
+        configuredSize = now
+        config.width = Int(now.width * scale)
+        config.height = Int(now.height * scale)
+        Task { try? await stream.updateConfiguration(config) }
     }
 
     // MARK: SCStreamDelegate

@@ -11,6 +11,7 @@ struct SettingsView: View {
     @AppStorage("maxKbit", store: Defaults.store) private var maxKbit = 10_000
     @AppStorage("glassesStereo", store: Defaults.store) private var glassesStereo = true
     @AppStorage("captureInput", store: Defaults.store) private var captureInput = true
+    @AppStorage("hostControlIsCommand", store: Defaults.store) private var hostControlIsCommand = true
     @AppStorage("hotkeys", store: Defaults.store) private var hotkeys = true
     @State private var atLogin = SMAppService.mainApp.status == .enabled
     @State private var loginProblem = ""
@@ -49,6 +50,7 @@ struct SettingsView: View {
                     }
                 }
             if !loginProblem.isEmpty { Text(loginProblem).font(.caption).foregroundColor(.red) }
+            Toggle("When this Mac is used from another device, its Control key works as Command", isOn: $hostControlIsCommand)
             Toggle("Command works as Control in remote windows", isOn: $commandIsControl)
             Toggle("Ctrl-Space opens the menu, Ctrl-Tab opens these settings", isOn: $hotkeys)
             if hotkeys {

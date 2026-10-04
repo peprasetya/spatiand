@@ -86,6 +86,9 @@ final class ClipboardSync {
         if let offer = body["Offer"] as? [String: Any] {
             let types = (offer["mime_types"] as? [String]) ?? []
             if let text = offer["text"] as? String {
+                // Already what is there: writing it again would only tell the next end it changed, and two
+                // ends of one pasteboard (a client and a host on one Mac) would pass it back and forth for ever.
+                if board.string(forType: .string) == text { return }
                 put { board.setString(text, forType: .string) }
             } else if types.contains(where: { $0.lowercased() == "image/png" }),
                       ((offer["bytes"] as? NSNumber)?.intValue ?? Int.max) <= eagerImage {
