@@ -106,12 +106,15 @@ window like a local one's. A session also says whether glasses are on, so a
 virtual-reality application can be asked to be an ordinary window when they are
 not.
 
-**On a Mac** (work in progress, in [mac/](mac/); see [docs/mac-plan.md](docs/mac-plan.md)).
+**On a Mac** (in [mac/](mac/); see [docs/mac-plan.md](docs/mac-plan.md)).
 A menu-bar app that needs no glasses: a paired host's applications open as
 ordinary Mac windows, with the mouse, keyboard, clipboard (text and images) and
 sound (folded to stereo, played into the output you choose) going with them.
-Ctrl-Space opens its menu and Ctrl-Tab its settings. With glasses plugged in the
-windows are meant to move into the room; that part is not built yet.
+Plug the glasses in and the same windows go into the room instead: the glasses
+switch to 3D and show windows bent round you, head-tracked by the Deck's own
+tracker, each one's sound placed where it is by the Deck's own renderer. The
+Mac's mouse, trackpad and keyboard steer a pointer in the room until
+Ctrl-Option-G gives them back, and Ctrl-Space opens a menu in the glasses.
 
 **Recording.** The HUD's *Record a video* saves what the glasses show, both
 eyes side by side, remote pictures included, as Matroska in `~/Videos/Spatiand`
