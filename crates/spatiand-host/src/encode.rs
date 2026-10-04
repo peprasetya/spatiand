@@ -232,6 +232,14 @@ impl Encoder {
             };
             (*codec_ctx).bit_rate = bitrate_kbit as i64 * 1000;
             (*codec_ctx).rc_max_rate = bitrate_kbit as i64 * 1000;
+            // **How far a picture may overshoot.** Left unset the rate controller's buffer is a
+            // whole second of the bitrate, so a scene change was free to be a single picture
+            // of a hundred kilobytes -- more than a Wi-Fi link behind the host could take in the
+            // time -- and the link backed up behind it, which showed as stutter and as dropped
+            // sound whenever the picture moved a lot. About three pictures' worth keeps the
+            // worst burst small, at the price of a softer picture for a moment.
+            (*codec_ctx).rc_buffer_size =
+                ((bitrate_kbit as i64 * 1000 * 3) / i64::from(fps.max(1))).clamp(60_000, i32::MAX as i64) as i32;
             // No B-frames, ever. A B-frame refers forwards, so it cannot be sent until the
             // frame after it exists — a whole frame of latency bought for a few percent of
             // bitrate, which is the wrong trade for something a head is attached to.

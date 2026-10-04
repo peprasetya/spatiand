@@ -529,6 +529,9 @@ fn sound_stream(
                 return;
             }
         };
+        // Sound goes ahead of anything else queued on the connection: a gap in it is heard, and
+        // a late picture is only seen.
+        let _ = stream.set_priority(10);
         let header = spatiand_stream::audio::AudioHeader {
             app: app.clone(),
             rate: spatiand_stream::audio::RATE,
