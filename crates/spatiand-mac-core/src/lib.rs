@@ -192,7 +192,7 @@ async fn run_session(
     loop {
         tokio::select! {
             heard = &mut control => {
-                let Some((message, rest)) = heard else { return Ok("the host closed the session".into()) };
+                let Some((message, rest)) = heard else { return Ok(why(&connection, "the host closed the session")) };
                 if let HostMessage::Stream { window, codec, .. } = &message {
                     codecs.insert(window.0 as u16, *codec);
                 }
@@ -203,11 +203,11 @@ async fn run_session(
                 control = Box::pin(link::hear(rest));
             }
             incoming = connection.accept_uni() => {
-                let Ok(stream) = incoming else { return Ok("the connection closed".into()) };
+                let Ok(stream) = incoming else { return Ok(why(&connection, "the connection closed")) };
                 tokio::spawn(receive_sound(stream, callbacks));
             }
             datagram = connection.read_datagram() => {
-                let Ok(datagram) = datagram else { return Ok("the connection closed".into()) };
+                let Ok(datagram) = datagram else { return Ok(why(&connection, "the connection closed")) };
                 let Some(packet) = Packet::read(&datagram) else { continue };
                 let window = packet.window;
                 match windows.entry(window).or_default().accept(&packet) {
@@ -234,6 +234,23 @@ async fn run_session(
         }
     }
 }
+
+/// Why a session ended, in words: and when the host closed it because another device took its
+/// windows, the one fixed sentence [`TAKEN_OVER`], which the app knows not to answer by calling
+/// straight back.
+fn why(connection: &quinn::Connection, otherwise: &str) -> String {
+    match connection.close_reason() {
+        Some(quinn::ConnectionError::ApplicationClosed(ref closed))
+            if closed.error_code == spatiand_stream::transport::CLOSE_TAKEN_OVER.into() =>
+        {
+            TAKEN_OVER.into()
+        }
+        _ => otherwise.into(),
+    }
+}
+
+/// What `disconnected` says when another device took the host's windows over.
+const TAKEN_OVER: &str = "taken over";
 
 async fn receive_sound(mut stream: quinn::RecvStream, callbacks: Callbacks) {
     use spatiand_stream::audio::{frame_bytes, is_supported, AudioHeader};

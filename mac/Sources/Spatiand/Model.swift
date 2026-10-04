@@ -23,6 +23,9 @@ final class Model {
     let clipboard = ClipboardSync()
     private(set) var host: PairedHost?
     private(set) var connected = false
+    /// Another device took this host's windows over. Not answered by taking them straight back:
+    /// two devices doing that would pass the windows between them for ever.
+    private(set) var takenOver = false
     private(set) var apps: [RemoteApp] = []
     private(set) var windows: [UInt16: RemoteSurface] = [:]
     private var infos: [UInt16: WindowInfo] = [:]
@@ -81,6 +84,7 @@ final class Model {
     func connect(_ host: PairedHost) {
         closeAll()
         wantConnection = true
+        takenOver = false
         self.host = host
         connected = false
         link.connect(address: host.address, fingerprint: host.fingerprint)
@@ -97,7 +101,16 @@ final class Model {
         onChange?()
     }
 
-    func launch(_ app: RemoteApp) { link.launch(app.id) }
+    /// Starting an application here is asking for the windows back, as it is on the Deck.
+    func launch(_ app: RemoteApp) {
+        if !connected, takenOver, let host {
+            pendingLaunch = app
+            connect(host)
+        } else {
+            link.launch(app.id)
+        }
+    }
+    private var pendingLaunch: RemoteApp?
 
     /// Whether the wearer has glasses on: whether windows are in the room, and so whether a
     /// virtual-reality application should draw the world or an ordinary view. Told to the host
@@ -140,10 +153,16 @@ final class Model {
             clipboard.connected = true
             sendGlasses()
             sendBandwidth()
+            if let app = pendingLaunch { pendingLaunch = nil; link.launch(app.id) }
         case "disconnected":
             connected = false
             clipboard.connected = false
             closeAll()
+            if (detail as? String) == "taken over" {
+                wantConnection = false
+                takenOver = true
+                print("another device took \(host?.name ?? "the host")'s windows; not taking them back")
+            }
             // Brought back every few seconds for as long as it is wanted: a host that restarts, a
             // laptop that woke up, a Wi-Fi that blinked. Said once, not each time it fails.
             if wantConnection, let host {

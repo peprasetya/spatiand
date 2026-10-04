@@ -113,10 +113,15 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if Hosts.all.isEmpty { add(menu, "   None paired yet", enabled: false) }
         for host in Hosts.all {
             let isCurrent = model.host == host
-            let state = isCurrent ? (model.connected ? "  \u{2014} connected" : "  \u{2014} connecting\u{2026}") : ""
+            let state = isCurrent ? (model.connected ? "  \u{2014} connected" : model.takenOver ? "  \u{2014} in use on another device" : "  \u{2014} connecting\u{2026}") : ""
             let entry = NSMenuItem(title: "   " + host.name + state, action: nil, keyEquivalent: "")
             let sub = NSMenu()
-            if isCurrent {
+            if isCurrent, model.takenOver, !model.connected {
+                let join = NSMenuItem(title: "Take the windows back", action: #selector(connectHost(_:)), keyEquivalent: "")
+                join.target = self
+                join.representedObject = host.fingerprint
+                sub.addItem(join)
+            } else if isCurrent {
                 if model.connected {
                     for app in model.apps {
                         let open = NSMenuItem(title: "Open " + app.name, action: #selector(openApp(_:)), keyEquivalent: "")
