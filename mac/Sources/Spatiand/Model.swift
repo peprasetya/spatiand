@@ -149,7 +149,15 @@ final class Model {
         windows.keys.sorted().filter { infos[$0]?.parent == nil }.map { ($0, infos[$0]?.title ?? "Window") }
     }
 
-    func raise(_ id: UInt16) { windows[id]?.show() }
+    func raise(_ id: UInt16) {
+        // In the room, raising a window is bringing it to where the wearer is looking.
+        if room.active {
+            room.core.bringHere(id)
+            room.core.focused = id
+        } else {
+            windows[id]?.show()
+        }
+    }
 
     // MARK: hearing
 

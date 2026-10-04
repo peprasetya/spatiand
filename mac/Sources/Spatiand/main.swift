@@ -9,6 +9,8 @@
 
 import AppKit
 
+setvbuf(stdout, nil, _IOLBF, 0)
+
 final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let glasses = GlassesWatcher()
@@ -24,7 +26,35 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return problems.joined(separator: "; ") + "."
     })
 
+    private var signalSources: [DispatchSourceSignal] = []
+
+    /// The glasses go back to their ordinary mode and the Mac gets its mouse back, however the app
+    /// is ended: from the menu, by `kill`, or with Ctrl-C.
+    func applicationWillTerminate(_ note: Notification) { giveEverythingBack() }
+
+    private func giveEverythingBack() {
+        let room = Model.shared.room
+        room.input.stop()
+        room.output.stop(restoreMode: true)
+    }
+
+    private func handleSignals() {
+        for number in [SIGTERM, SIGINT, SIGHUP] {
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+            source.setEventHandler { [weak self] in
+                self?.giveEverythingBack()
+                // A moment for the glasses to hear it before the cable's other end goes quiet.
+                RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+                exit(0)
+            }
+            source.resume()
+            signalSources.append(source)
+        }
+    }
+
     func applicationDidFinishLaunching(_ note: Notification) {
+        handleSignals()
         if let button = item.button {
             button.image = NSImage(systemSymbolName: "eyeglasses", accessibilityDescription: "Spatiand")
         }
@@ -34,6 +64,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         glasses.onChange = { [weak self] _ in self?.refreshIcon() }
         glasses.start()
         refreshIcon()
+        Model.shared.room.drivesGlasses = true
+        Model.shared.room.onChange = { [weak self] in self?.item.button?.appearsDisabled = !(self?.glasses.isPluggedIn ?? false) }
+        wasPlugged = glasses.isPluggedIn
         Model.shared.glassesOn = glassesWanted()
         pairing.start()
         hotkeys.onMenu = { [weak self] in self?.item.button?.performClick(nil) }
@@ -48,7 +81,28 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// glasses.
     private func refreshIcon() {
         item.button?.appearsDisabled = !glasses.isPluggedIn
+        let unplugged = wasPlugged && !glasses.isPluggedIn
+        wasPlugged = glasses.isPluggedIn
         Model.shared.glassesOn = glassesWanted()
+        // A display that has gone leaves a ghost of the glasses' window in the window server for
+        // as long as this process lives, so the next plug-in starts from a fresh one.
+        if unplugged, Model.shared.room.output.hasHadAWindow { relaunchForNextPlugIn() }
+    }
+
+    private var wasPlugged = false
+
+    /// Start over as a new process, once this one has gone. Through `open`, so macOS treats the
+    /// new one as the app and not as a child of whatever started this.
+    private func relaunchForNextPlugIn() {
+        let bundle = Bundle.main.bundleURL
+        guard bundle.pathExtension == "app" else { print("glasses unplugged; not running from an app, staying up"); return }
+        let relauncher = Process()
+        relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
+        relauncher.arguments = ["-c", "while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done; exec /usr/bin/open \"$1\"", "sh", bundle.path]
+        do { try relauncher.run() } catch { print("could not relaunch: \(error)"); return }
+        print("glasses unplugged; restarting so the next plug-in starts clean")
+        Model.shared.room.output.stop(restoreMode: false)
+        exit(0)
     }
 
     /// Glasses plugged in, and the owner has not said to keep everything on the Mac.
@@ -61,10 +115,20 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
+        let room = Model.shared.room
         let status = glasses.isPluggedIn
-            ? "Glasses connected — windows are in the room"
+            ? (room.active ? "Glasses: " + room.output.status : "Glasses connected — windows are on this Mac")
             : "No glasses — windows are on this Mac"
         add(menu, status, enabled: false)
+        if room.active {
+            let hold = NSMenuItem(title: room.input.capturing ? "Give the mouse and keyboard back to this Mac" : "Use this Mac's mouse and keyboard in the glasses",
+                                  action: #selector(toggleCapture), keyEquivalent: "")
+            hold.target = self
+            menu.addItem(hold)
+            let centre = NSMenuItem(title: "Recentre the view (Ctrl-Option-R)", action: #selector(recentre), keyEquivalent: "")
+            centre.target = self
+            menu.addItem(centre)
+        }
         menu.addItem(.separator())
 
         buildComputers(menu)
@@ -164,6 +228,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func toggleCapture() {
+        let room = Model.shared.room
+        if room.input.capturing { room.input.stop() } else { room.input.start() }
+    }
+    @objc private func recentre() { Model.shared.room.recentre() }
     @objc private func openSettings() { settings.show() }
     @objc private func addComputer() { pairing.ask() }
     @objc private func disconnect() { Model.shared.disconnect() }

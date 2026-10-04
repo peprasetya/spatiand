@@ -44,6 +44,18 @@ enum Settings {
         set { defaults.set(newValue, forKey: "maxKbit") }
     }
 
+    /// Whether the glasses are put into their 3D mode, each eye with a half of the picture.
+    static var glassesStereo: Bool {
+        get { defaults.object(forKey: "glassesStereo") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "glassesStereo") }
+    }
+
+    /// Whether this Mac's mouse, trackpad and keyboard steer the room while the glasses are on.
+    static var captureInput: Bool {
+        get { defaults.object(forKey: "captureInput") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "captureInput") }
+    }
+
     static var hotkeys: Bool {
         defaults.object(forKey: "hotkeys") as? Bool ?? true
     }

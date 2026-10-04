@@ -109,7 +109,7 @@ final class RoomRenderer {
 
     /// Draw the room into `target`. `sideBySide` is two eyes across it, else one eye over it all.
     /// Returns once the commands are queued; `done` is called when the GPU has finished.
-    func render(into target: MTLTexture, sideBySide: Bool, done: (() -> Void)? = nil) {
+    func render(into target: MTLTexture, sideBySide: Bool, present: CAMetalDrawable? = nil, done: (() -> Void)? = nil) {
         inFlight.wait()
         let buffer = buffers[next]
         next = (next + 1) % buffers.count
@@ -164,6 +164,7 @@ final class RoomRenderer {
             }
         }
         encoder.endEncoding()
+        if let present { commands.present(present) }
         commands.addCompletedHandler { [inFlight] _ in
             _ = keep.count
             inFlight.signal()

@@ -506,6 +506,16 @@ pub extern "C" fn sp_room_set_head(room: *mut RoomHandle, enable: i32, yaw_deg: 
     });
 }
 
+/// The head's heading, pitch and roll, degrees, into three doubles.
+#[no_mangle]
+pub extern "C" fn sp_room_head_euler(room: *mut RoomHandle, out: *mut f64) {
+    let (y, p, r) = with_room(room, (0.0, 0.0, 0.0), |r| r.euler_degrees());
+    if !out.is_null() {
+        // SAFETY: three writable doubles, by the contract.
+        unsafe { std::slice::from_raw_parts_mut(out, 3).copy_from_slice(&[y, p, r]) };
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn sp_room_set_per_eye(room: *mut RoomHandle, width: u32, height: u32) {
     with_room(room, (), |r| r.set_per_eye(width, height));

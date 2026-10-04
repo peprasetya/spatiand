@@ -27,6 +27,12 @@ final class RoomController {
 
     private var model: Model { Model.shared }
 
+    /// The glasses, and this Mac's mouse and keyboard while they are in use. Left out of the
+    /// offscreen tests, which have no glasses to drive.
+    var drivesGlasses = false
+    private(set) lazy var output = GlassesOutput(room: self)
+    private(set) lazy var input = RoomInput(controller: self)
+
     init() {
         renderer = RoomRenderer(core: core)
         if renderer == nil { print("room: no Metal device; the glasses cannot be used") }
@@ -46,7 +52,17 @@ final class RoomController {
             // Each window needs a picture to start from, and one that is not changing sends none.
             for id in known.keys { model.link.say(["WantKeyframe": ["window": Int(id)]]) }
             for case let window as RemoteWindow in model.windows.values { window.hideForRoom() }
+            if drivesGlasses {
+                output.onChange = { [weak self] in self?.onChange?() }
+                input.onChange = { [weak self] in self?.onChange?() }
+                output.start()
+                if Settings.captureInput { input.start() }
+            }
         } else {
+            if drivesGlasses {
+                input.stop()
+                output.stop()
+            }
             core.clear()
             shown = []
             renderer?.dropAll()
@@ -179,6 +195,17 @@ final class RoomController {
     func zoom(by factor: Double) {
         guard let id = core.aim().window ?? core.focused else { return }
         core.scale(id, by: factor)
+    }
+
+    /// Pin the window being pointed at to the glass, or let it go.
+    func togglePin() {
+        guard let id = core.aim().window ?? core.focused else { return }
+        core.setPinned(id, !core.isPinned(id))
+    }
+
+    func bringAimedHere() {
+        guard let id = core.aim().window ?? core.focused else { return }
+        core.bringHere(id)
     }
 
     func recentre() {

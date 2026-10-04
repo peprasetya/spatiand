@@ -220,6 +220,12 @@ impl Room {
         self.fixed_head.is_some() || self.tracker.has_samples()
     }
 
+    /// The head's heading, pitch and roll in degrees, for a log line.
+    pub fn euler_degrees(&self) -> (f64, f64, f64) {
+        let e = self.tracker.euler_degrees();
+        (e.yaw, e.pitch, e.roll)
+    }
+
     /// Where the head will be when the photons arrive: one frame ahead.
     pub fn head(&self) -> DQuat {
         self.fixed_head.unwrap_or_else(|| {

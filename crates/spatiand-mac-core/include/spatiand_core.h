@@ -80,6 +80,8 @@ int32_t sp_room_has_head(sp_room *room);
 // For a preview with no sensors: hold the head at this heading and pitch, in degrees.
 void sp_room_set_head(sp_room *room, int32_t enable, double yaw_deg, double pitch_deg);
 void sp_room_set_per_eye(sp_room *room, uint32_t width, uint32_t height);
+// The head's heading, pitch and roll, degrees.
+void sp_room_head_euler(sp_room *room, double *out);
 
 void sp_room_set_window(sp_room *room, uint32_t id, uint32_t width, uint32_t height);
 void sp_room_show(sp_room *room, uint32_t id);

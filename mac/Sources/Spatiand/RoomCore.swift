@@ -24,6 +24,11 @@ final class RoomCore {
     var hasHead: Bool { sp_room_has_head(room) != 0 }
     /// For a preview with no sensors.
     func holdHead(yaw: Double, pitch: Double) { sp_room_set_head(room, 1, yaw, pitch) }
+    var headDegrees: (yaw: Double, pitch: Double, roll: Double) {
+        var out = [0.0, 0.0, 0.0]
+        sp_room_head_euler(room, &out)
+        return (out[0], out[1], out[2])
+    }
     func perEye(_ width: Int, _ height: Int) { sp_room_set_per_eye(room, UInt32(width), UInt32(height)) }
 
     // The windows.
