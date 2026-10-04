@@ -970,7 +970,16 @@ fn run_host(
                 ) {
                     Ok(packets) => {
                         if let Some(stream) = streams.get_mut(&id) {
-                            stream.encoded_at = commits;
+                            if packets.is_empty() {
+                                log::debug!("window {id}: the encoder gave nothing back yet");
+                                // A new encoder can take a call or two to give anything back.
+                                // Counting this window as sent would leave a still page -- one
+                                // that has just been resized, say -- showing the old picture
+                                // for ever, since nothing would ever make it be encoded again.
+                                stream.wants_keyframe = true;
+                            } else {
+                                stream.encoded_at = commits;
+                            }
                             stream.sent_at = Some(now);
                         }
                         if is_new {
@@ -1466,9 +1475,14 @@ fn encode_window(
             log::info!("window {id}: {} -> {kbit} kbit/s", s.kbit);
         }
     }
-    if stale {
-        streams.remove(&id);
-    }
+    // The frame number carries on across a new encoder. A session drops any frame numbered at or
+    // below the last one it showed, so starting again from 0 made every picture after a resize
+    // -- or a change of bit rate -- "stale" until the count had caught up with the old one.
+    let carried = if stale {
+        streams.remove(&id).map_or(0, |s| s.frame)
+    } else {
+        0
+    };
     if !streams.contains_key(&id) {
         // The rate the session's display runs at, which is what the ceiling is shared out
         // over. Not how often this window will actually draw.
@@ -1481,7 +1495,7 @@ fn encode_window(
                 kbit,
                 built: Instant::now(),
                 encoded_at: 0,
-                frame: 0,
+                frame: carried,
                 wants_keyframe: true,
                 sent_at: None,
             },

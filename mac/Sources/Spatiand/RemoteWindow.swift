@@ -82,7 +82,10 @@ final class VideoView: NSView {
         if let format = CMSampleBufferGetFormatDescription(sample) {
             let d = CMVideoFormatDescriptionGetDimensions(format)
             let size = CGSize(width: Int(d.width), height: Int(d.height))
-            if size.width > 0, size != hostSize { hostSize = size }
+            if size.width > 0, size != hostSize {
+                if ProcessInfo.processInfo.environment["SPATIAND_DEBUG"] != nil { print("picture \(size) (was \(hostSize)), layer \(display.frame), bounds \(bounds)") }
+                hostSize = size
+            }
         }
         display.enqueue(sample)
     }
@@ -137,6 +140,7 @@ final class VideoView: NSView {
     // MARK: the keyboard
 
     private func send(code: UInt32, pressed: Bool) {
+        if ProcessInfo.processInfo.environment["SPATIAND_DEBUG"] != nil { print("key \(code) \(pressed ? "down" : "up")") }
         input(["Key": ["code": Int(code), "pressed": pressed]])
     }
 

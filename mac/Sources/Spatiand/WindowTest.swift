@@ -23,19 +23,64 @@ enum WindowTest {
             model.link.say(["Clipboard": ["Offer": ["mime_types": ["text/plain;charset=utf-8"], "text": "mac-to-host-clipboard-test", "bytes": 26]]])
         }
         after(6) { snapshot("/tmp/spatiand-window-1.png", model) }
+        if ProcessInfo.processInfo.environment["SPATIAND_TEST_FORCEQUIT"] != nil {
+            after(3) { model.link.say(["ForceQuit": ["app": app]]) }
+            after(5) { exit(0) }
+            return
+        }
+        if let spec = ProcessInfo.processInfo.environment["SPATIAND_TEST_RAWKEYS"] {
+            // "ctrl,t,40": Control down, T down, T up after that many ms, then Control up.
+            let parts = spec.split(separator: ",").map(String.init)
+            let hold = Double(parts[2]) ?? 40
+            after(7) {
+                guard let w = model.windows.values.compactMap({ $0 as? RemoteWindow }).max(by: { $0.id < $1.id }) else { return }
+                w.onFocus = nil
+                w.view.send?(["Focus": ["window": Int(w.id)]])
+                func say(_ code: Int, _ pressed: Bool) {
+                    w.view.send?(["InputAt": ["window": Int(w.id), "input": ["Key": ["code": code, "pressed": pressed]],
+                                              "time_ms": Int(ProcessInfo.processInfo.systemUptime * 1000)]])
+                }
+                let mod = parts[0] == "ctrl" ? 29 : 0
+                if mod != 0 { say(mod, true) }
+                after(0.05) { say(20, true) }
+                after(0.05 + hold / 1000) { say(20, false) }
+                after(0.6 + hold / 1000) { if mod != 0 { say(mod, false) } }
+            }
+            after(9) { snapshot("/tmp/spatiand-cmdt.png", model) }
+            after(10) { exit(0) }
+            return
+        }
+        if ProcessInfo.processInfo.environment["SPATIAND_TEST_CMDT"] != nil {
+            // Command-T the way the Mac delivers it: the press, flags with Command, and no release.
+            after(7) {
+                guard let w = model.windows.values.compactMap({ $0 as? RemoteWindow }).max(by: { $0.id < $1.id }) else { return }
+                w.onFocus = nil
+                w.view.send?(["Focus": ["window": Int(w.id)]])
+                func event(_ type: NSEvent.EventType, _ code: UInt16, _ flags: NSEvent.ModifierFlags, _ chars: String) -> NSEvent {
+                    NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: w.window.windowNumber,
+                                     context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!
+                }
+                w.view.flagsChanged(with: NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: .command, timestamp: 0,
+                    windowNumber: w.window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 55)!)
+                _ = w.view.performKeyEquivalent(with: event(.keyDown, 17, .command, "t"))
+                after(0.5) {
+                    w.view.flagsChanged(with: NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: [], timestamp: 0,
+                        windowNumber: w.window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 55)!)
+                }
+            }
+            after(9) { snapshot("/tmp/spatiand-cmdt.png", model) }
+            after(10) { exit(0) }
+            return
+        }
         if ProcessInfo.processInfo.environment["SPATIAND_TEST_RESIZE"] != nil {
             // Drag the frame bigger, the way a person does, and say what each end then believes.
             after(7) {
                 guard let w = model.windows.values.compactMap({ $0 as? RemoteWindow }).max(by: { $0.id < $1.id }) else { return }
                 print("before: view \(w.view.bounds.size) host \(w.view.hostSize)")
-                // A drag: many small steps, a tenth of a second or less apart.
-                for step in 1...12 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(step) * 0.08) {
-                        var frame = w.window.frame
-                        frame.size.width += 25; frame.size.height += 15
-                        w.window.setFrame(frame, display: true)
-                    }
-                }
+                let target = (ProcessInfo.processInfo.environment["SPATIAND_TEST_SIZE"] ?? "1280x700").split(separator: "x").compactMap { Double($0) }
+                var frame = w.window.frame
+                frame.size = NSSize(width: target[0], height: target[1] + (frame.height - w.view.bounds.height))
+                w.window.setFrame(frame, display: true)
             }
             after(11) {
                 guard let w = model.windows.values.compactMap({ $0 as? RemoteWindow }).max(by: { $0.id < $1.id }) else { return }
