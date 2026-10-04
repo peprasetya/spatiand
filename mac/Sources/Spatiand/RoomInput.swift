@@ -140,11 +140,26 @@ final class RoomInput: NSObject, NSWindowDelegate {
         let view = InputView(frame: NSRect(origin: .zero, size: screen.frame.size))
         view.controller = controller
         view.onRelease = { [weak self] in self?.stop() }
+        // A word on the Mac's own screen, so a Mac whose pointer has stopped answering says why.
+        let note = NSTextField(labelWithString: "Spatiand has this Mac\u{2019}s mouse and keyboard for the glasses.   Ctrl-Option-G gives them back.")
+        note.font = .systemFont(ofSize: 13, weight: .medium)
+        note.textColor = .white
+        note.alignment = .center
+        note.wantsLayer = true
+        note.layer?.backgroundColor = NSColor(white: 0.1, alpha: 0.88).cgColor
+        note.layer?.cornerRadius = 8
+        note.sizeToFit()
+        note.frame = NSRect(x: (screen.frame.width - note.frame.width - 24) / 2, y: 14, width: note.frame.width + 24, height: note.frame.height + 14)
+        view.addSubview(note)
         w.contentView = view
         window = w
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
         w.makeFirstResponder(view)
+        // The pointer is brought onto the screen this window covers first: a mouse that is held still
+        // over the glasses' display would be heard by nothing at all.
+        let main = CGDisplayBounds(CGMainDisplayID())
+        CGWarpMouseCursorPosition(CGPoint(x: main.midX, y: main.midY))
         CGAssociateMouseAndMouseCursorPosition(0)
         CGDisplayHideCursor(CGMainDisplayID())
         capturing = true

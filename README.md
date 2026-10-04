@@ -114,7 +114,9 @@ Plug the glasses in and the same windows go into the room instead: the glasses
 switch to 3D and show windows bent round you, head-tracked by the Deck's own
 tracker, each one's sound placed where it is by the Deck's own renderer. The
 Mac's mouse, trackpad and keyboard steer a pointer in the room until
-Ctrl-Option-G gives them back, and Ctrl-Space opens a menu in the glasses.
+Ctrl-Option-G gives them back, and Ctrl-Space opens a menu in the glasses. Windows of the
+Mac itself can be brought into the room too, and the Mac can be a host in its own right: a
+Deck or a Beam Pro pairs with it and opens its applications like a Linux host's.
 
 **Recording.** The HUD's *Record a video* saves what the glasses show, both
 eyes side by side, remote pictures included, as Matroska in `~/Videos/Spatiand`
