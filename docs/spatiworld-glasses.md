@@ -1,8 +1,10 @@
 # SpatiWorld: being a window when there are no glasses
 
 A hand-off for the session that works on SpatiWorld (the Firestorm fork at
-`/media/shared/Linux/App/SpatiWorld` on deepmagpie). Nothing in this file is done on the viewer's
-side yet; the host and the Mac client are finished and tested up to the viewer's door.
+`/media/shared/Linux/App/SpatiWorld` on deepmagpie). **Done since this was written:** the viewer side is in the SpatiWorld tree (commits "Be an ordinary window when the
+session has no glasses on" and "Remember a set_glasses that arrives before login"). Checked from the Mac app on
+2026-10-04: a session with no glasses launched SpatiWorld and its log said "the session has no glasses on; starting as
+a window". The text below is the design it was built from.
 
 ## What is wanted
 

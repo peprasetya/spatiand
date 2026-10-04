@@ -317,6 +317,8 @@ final class RoomController {
 
     private var macCaptures: [UInt16: MacCapture] = [:]
     private var macShown: Set<UInt16> = []
+    var macWindowIDs: [UInt16] { macCaptures.keys.sorted() }
+    func macInfo(_ id: UInt16) -> MacWindowInfo? { macCaptures[id]?.info }
     private var nextMac = MacWindows.firstID
     private(set) var macList: [MacWindowInfo] = []
     private var macTimer: Timer?

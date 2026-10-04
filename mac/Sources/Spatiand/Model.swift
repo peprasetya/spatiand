@@ -30,7 +30,7 @@ final class Model {
     private(set) var takenOver = false
     private(set) var apps: [RemoteApp] = []
     private(set) var windows: [UInt16: RemoteSurface] = [:]
-    private var infos: [UInt16: WindowInfo] = [:]
+    private(set) var infos: [UInt16: WindowInfo] = [:]
     private var sizes: [UInt16: CGSize] = [:]
     /// A keyframe that arrived before its window did. The window's announcement and its first
     /// picture travel on different paths and either can win; a window must not wait for the

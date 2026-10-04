@@ -169,9 +169,7 @@ plays that sound itself too: there is no way to take it from the speakers and le
 
 **Not built:**
 
-1. Applications honouring `set_glasses` (SpatiWorld first: see `spatiworld-glasses.md`). That is work in the viewer,
-   which is not in this repository.
-2. Notarisation: `mac/make-app.sh` installs `~/Applications/Spatiand.app`, signed with HoloFrame's self-signed
+1. Notarisation: `mac/make-app.sh` installs `~/Applications/Spatiand.app`, signed with HoloFrame's self-signed
    "HoloFrame Dev" certificate when it is in the keychain (so the Screen Recording and Accessibility grants survive
    rebuilds), ad hoc otherwise. Not notarised, so for this Mac only.
 

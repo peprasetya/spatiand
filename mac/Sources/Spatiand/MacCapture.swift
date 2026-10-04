@@ -63,6 +63,31 @@ enum MacWindows {
         return AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value) == .success
     }
 
+    /// A window's size now, in points, for tests.
+    static func currentFrame(_ info: MacWindowInfo) -> CGRect? {
+        guard let window = axWindow(info) else { return nil }
+        var v: CFTypeRef?
+        var size = CGSize.zero
+        guard AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &v) == .success, let v,
+              AXValueGetValue(v as! AXValue, .cgSize, &size) else { return nil }
+        return CGRect(origin: .zero, size: size)
+    }
+
+    /// The text in a window's text area, for tests.
+    static func text(_ info: MacWindowInfo) -> String? {
+        guard let window = axWindow(info) else { return nil }
+        func find(_ e: AXUIElement, _ depth: Int) -> String? {
+            var v: CFTypeRef?
+            if AXUIElementCopyAttributeValue(e, kAXRoleAttribute as CFString, &v) == .success, (v as? String) == "AXTextArea",
+               AXUIElementCopyAttributeValue(e, kAXValueAttribute as CFString, &v) == .success { return v as? String }
+            guard depth < 6, AXUIElementCopyAttributeValue(e, kAXChildrenAttribute as CFString, &v) == .success,
+                  let kids = v as? [AXUIElement] else { return nil }
+            for k in kids { if let t = find(k, depth + 1) { return t } }
+            return nil
+        }
+        return find(window, 0)
+    }
+
     /// The windows worth offering: ordinary, on screen, big enough to be a window and not one of
     /// Spatiand's own.
     static func list() async -> [MacWindowInfo] {

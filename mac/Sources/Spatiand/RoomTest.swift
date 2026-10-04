@@ -36,11 +36,25 @@ enum RoomTest {
                 Task {
                     let list = await MacWindows.list()
                     print("mac windows: \(list.count) listed")
-                    guard let info = list.first(where: { $0.app == appName }) else { print("no window of \(appName)"); exit(1) }
+                    guard let info = list.first(where: { $0.app == appName && $0.title.contains(env["SPATIAND_TEST_TITLE"] ?? "") }) else { print("no window of \(appName)"); exit(1) }
                     await MainActor.run { room.bringMacWindow(info) }
                 }
             }
-            after(6) {
+            after(4) {
+                print("accessibility trusted: \(AXIsProcessTrusted())")
+                guard env["SPATIAND_TEST_MACINPUT"] != nil, let id = room.macWindowIDs.first, let info = room.macInfo(id) else { return }
+                // Click the window, type into it, and make it bigger: all through the room's own paths.
+                room.core.centrePointer()
+                room.buttonDown(0x110, grab: false); room.buttonUp(0x110)
+                for code: CGKeyCode in [4, 34] { MacInput.key(code: code, flags: [], down: true, pid: info.pid); MacInput.key(code: code, flags: [], down: false, pid: info.pid) }
+                let before = MacWindows.currentFrame(info)
+                room.fit(id)
+                _ = room.core.requestSize(id, width: 1500, height: 900)
+                MacWindows.resize(info, toPoints: CGSize(width: 820, height: 500))
+                after(1) { print("mac window size: \(before.map { "\(Int($0.width))x\(Int($0.height))" } ?? "?") -> \(MacWindows.currentFrame(info).map { "\(Int($0.width))x\(Int($0.height))" } ?? "?")") }
+                after(1.5) { print("text now: \(MacWindows.text(info) ?? "?")") }
+            }
+            after(8) {
                 let a = room.core.aim()
                 print("aim: window \(a.window.map { String($0, radix: 16) } ?? "none") at \(Int(a.x)),\(Int(a.y))")
                 room.tick(); if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-mac.png") }

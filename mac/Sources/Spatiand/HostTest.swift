@@ -35,6 +35,18 @@ enum HostTest {
         if let command = ProcessInfo.processInfo.environment["SPATIAND_TEST_PLAY"] {
             after(5) { let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/sh"); p.arguments = ["-c", command]; try? p.run() }
         }
+        // For the input test: click the window whose title has this in it, type "ok", and ask for a size.
+        if let title = ProcessInfo.processInfo.environment["SPATIAND_TEST_TYPE"] {
+            after(6) {
+                guard let id = model.infos.first(where: { $0.value.title.contains(title) })?.key else { print("host input: no such window"); return }
+                func say(_ input: Any) { model.link.say(["InputAt": ["window": Int(id), "input": input, "time_ms": Int(ProcessInfo.processInfo.systemUptime * 1000)]]) }
+                model.link.say(["Focus": ["window": Int(id)]])
+                say(["Motion": ["x": 200.0, "y": 200.0]])
+                say(["Button": ["button": 0x110, "pressed": true]]); say(["Button": ["button": 0x110, "pressed": false]])
+                for code in [24, 37] { say(["Key": ["code": code, "pressed": true]]); say(["Key": ["code": code, "pressed": false]]) }   // o, k
+                model.link.say(["Configure": ["window": Int(id), "width": 1700, "height": 1000]])
+            }
+        }
         after(11) {
             print("client: \(model.windows.count) windows")
             for (id, surface) in model.windows {
@@ -44,6 +56,16 @@ enum HostTest {
                 let path = "/tmp/spatiand-host-test-\(id).png"
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
                 print("wrote \(path): \(image.width)x\(image.height), \(surface.view.pictures) pictures shown")
+            }
+            if ProcessInfo.processInfo.environment["SPATIAND_TEST_TYPE"] != nil {
+                Task {
+                    let list = await MacWindows.list()
+                    if let info = list.first(where: { $0.title.contains(ProcessInfo.processInfo.environment["SPATIAND_TEST_TYPE"]!) }) {
+                        print("host input: text now \(MacWindows.text(info) ?? "?"), size \(MacWindows.currentFrame(info).map { "\(Int($0.width))x\(Int($0.height))" } ?? "?")")
+                    }
+                    exit(0)
+                }
+                return
             }
             print("client: \(model.audioHeard) bytes of sound heard")
             exit(0)
