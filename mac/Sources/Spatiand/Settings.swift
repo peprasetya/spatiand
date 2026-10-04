@@ -56,6 +56,16 @@ enum Settings {
         set { defaults.set(newValue, forKey: "captureInput") }
     }
 
+    /// Where a window pinned to the glass sits (0 bottom right, then round) and how big.
+    static var pinnedCorner: Int {
+        get { defaults.integer(forKey: "pinnedCorner") }
+        set { defaults.set(newValue, forKey: "pinnedCorner") }
+    }
+    static var pinnedLarge: Bool {
+        get { defaults.bool(forKey: "pinnedLarge") }
+        set { defaults.set(newValue, forKey: "pinnedLarge") }
+    }
+
     static var hotkeys: Bool {
         defaults.object(forKey: "hotkeys") as? Bool ?? true
     }

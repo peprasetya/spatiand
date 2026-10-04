@@ -526,6 +526,52 @@ pub extern "C" fn sp_room_set_window(room: *mut RoomHandle, id: u32, width: u32,
     with_room(room, (), |r| r.set_window(id, (width, height)));
 }
 
+/// A panel of Spatiand's own, like the menu, `width` metres across at `radius` metres, put where
+/// the wearer is looking. Ids from 0xFFF0 up. Its picture is the app's to draw.
+#[no_mangle]
+pub extern "C" fn sp_room_set_panel(room: *mut RoomHandle, id: u32, width_px: u32, height_px: u32, width_m: f64, radius_m: f64) {
+    with_room(room, (), |r| r.set_panel(id, (width_px, height_px), width_m, radius_m));
+}
+
+/// Say which application a window belongs to, so its sound is put where the window is.
+#[no_mangle]
+pub extern "C" fn sp_room_set_app(room: *mut RoomHandle, id: u32, app: *const c_char) {
+    if app.is_null() {
+        return;
+    }
+    // SAFETY: a NUL-terminated string, by the contract.
+    let app = unsafe { CStr::from_ptr(app) }.to_string_lossy().into_owned();
+    with_room(room, (), |r| r.set_app(id, &app));
+}
+
+/// An application's sound, placed in the room and folded to two ears. `pcm` is signed 16-bit
+/// little-endian, `channels` interleaved. Writes interleaved stereo floats into `out`, which
+/// has room for `capacity` floats, and returns how many; 0 if it would not fit.
+#[no_mangle]
+pub extern "C" fn sp_room_audio(
+    room: *mut RoomHandle,
+    app: *const c_char,
+    channels: u16,
+    pcm: *const u8,
+    length: usize,
+    out: *mut f32,
+    capacity: usize,
+) -> usize {
+    if app.is_null() || pcm.is_null() || out.is_null() {
+        return 0;
+    }
+    // SAFETY: a NUL-terminated string and buffers of the lengths given, by the contract.
+    let (app, pcm) = unsafe { (CStr::from_ptr(app).to_string_lossy().into_owned(), std::slice::from_raw_parts(pcm, length)) };
+    let mut rendered = Vec::new();
+    with_room(room, (), |r| r.render_audio(&app, channels as usize, pcm, &mut rendered));
+    if rendered.len() > capacity {
+        return 0;
+    }
+    // SAFETY: `capacity` writable floats.
+    unsafe { std::slice::from_raw_parts_mut(out, rendered.len()).copy_from_slice(&rendered) };
+    rendered.len()
+}
+
 #[no_mangle]
 pub extern "C" fn sp_room_show(room: *mut RoomHandle, id: u32) {
     with_room(room, (), |r| r.show(id));

@@ -84,6 +84,15 @@ void sp_room_set_per_eye(sp_room *room, uint32_t width, uint32_t height);
 void sp_room_head_euler(sp_room *room, double *out);
 
 void sp_room_set_window(sp_room *room, uint32_t id, uint32_t width, uint32_t height);
+// A panel of Spatiand's own (ids 0xFFF0 and up): where the wearer looks, no keyboard focus.
+void sp_room_set_panel(sp_room *room, uint32_t id, uint32_t width_px, uint32_t height_px,
+                       double width_m, double radius_m);
+// Which application a window belongs to, so its sound is put where the window is.
+void sp_room_set_app(sp_room *room, uint32_t id, const char *app);
+// An application's sound (signed 16-bit little-endian, interleaved) placed in the room and folded
+// to two ears: interleaved stereo floats into `out`. Returns how many; 0 if it would not fit.
+size_t sp_room_audio(sp_room *room, const char *app, uint16_t channels, const uint8_t *pcm,
+                     size_t length, float *out, size_t capacity);
 void sp_room_show(sp_room *room, uint32_t id);
 void sp_room_remove(sp_room *room, uint32_t id);
 void sp_room_clear(sp_room *room);

@@ -38,6 +38,16 @@ enum RoomTest {
             if let image = room.renderer?.snapshot(width: 1920, height: 1080, sideBySide: false) {
                 write(image, "/tmp/spatiand-room-mono.png")
             }
+            if env["SPATIAND_TEST_MENU"] != nil {
+                room.menu.open()
+                // Up and to the left a little, onto the first rows.
+                room.core.centrePointer()
+                room.pointerMoved(dx: 150, dy: -50)
+                let a = room.core.aim()
+                print("menu aim: window \(a.window.map { String($0, radix: 16) } ?? "none") at \(Int(a.x)),\(Int(a.y))")
+                if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-menu.png") }
+                exit(0)
+            }
             // Move the cursor right and down and look again.
             room.pointerMoved(dx: -300, dy: 120)
             let moved = room.core.aim()

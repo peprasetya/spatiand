@@ -1924,17 +1924,43 @@ impl Scene {
             if let Some(title) = window.title.filter(|_| !frame.overlay) {
                 let label_height = bar_height * 0.62;
                 let label_width = label_height * title.aspect.max(0.01);
-                for cut in across(0.0, bar_z, label_width, label_height, 0.0) {
-                    self.quads.seams(gl, cut.seams.0, cut.seams.1);
-                    self.quads.draw(
-                        gl,
-                        title.id,
-                        &(eye.view_projection() * cut.model),
-                        dim([1.0, 1.0, 1.0, if window.focused { 1.0 } else { 0.7 }]),
-                        (cut.from, cut.to),
-                    );
+                // The title lives between the icon and the nearest button, and a long one is
+                // cut off there rather than drawn over them. Cut, not shrunk: a title made to
+                // fit would be unreadably small, and what identifies a window is how it starts.
+                // Centred when it fits, which is what a short title always did.
+                let bar_width = height * frame.width() as f32;
+                let icon_box = frame.icon();
+                let left_edge = (icon_box.u + icon_box.half_u) as f32;
+                let outer = if window.sound.is_some() {
+                    frame.mute()
+                } else {
+                    frame.pin()
+                };
+                let right_edge = (outer.u - outer.half_u) as f32;
+                // A little air either side, so the text does not touch the furniture.
+                let gap = (icon_box.half_u as f32) * 0.5;
+                let room = ((right_edge - left_edge - gap * 2.0) * bar_width).max(0.0);
+                let (shown_width, shift, uv_end) = if label_width <= room {
+                    (label_width, 0.0, 1.0)
+                } else {
+                    // Left-aligned in the space there is. `y` runs the way the furniture's does:
+                    // positive towards the left of the bar.
+                    let centre_u = left_edge + gap + room / bar_width * 0.5;
+                    (room, -(centre_u - 0.5) * bar_width, room / label_width)
+                };
+                if shown_width > 0.0 {
+                    for cut in across(shift, bar_z, shown_width, label_height, 0.0) {
+                        self.quads.seams(gl, cut.seams.0, cut.seams.1);
+                        self.quads.draw(
+                            gl,
+                            title.id,
+                            &(eye.view_projection() * cut.model),
+                            dim([1.0, 1.0, 1.0, if window.focused { 1.0 } else { 0.7 }]),
+                            (cut.from * uv_end, cut.to * uv_end),
+                        );
+                    }
+                    self.quads.seams(gl, false, false);
                 }
-                self.quads.seams(gl, false, false);
             }
 
             // The bar's furniture: the application's icon at one end, the close button at the

@@ -654,6 +654,9 @@ pub fn run(
         let mut sidecar_ui = sidecar_surface
             .as_ref()
             .map(|s| crate::sidecar::Sidecar::new(scene.white_texture(), s.size));
+        // Whether the panel is asleep. Made here, inside the rebuild loop, so a panel that is
+        // rebuilt -- which lights it -- is never one this still believes is dark.
+        let mut screen_sleep = crate::screen_sleep::ScreenSleep::new();
 
         // From here the panel says what is happening. Six seconds of two black screens reads
         // as a machine that has hung, and the first thing anyone does with a hung machine is
@@ -1633,6 +1636,11 @@ pub fn run(
                     leaving = true;
                 }
             }
+            // The power button, held. A tap is the screen's business, below.
+            if screen_sleep.held_to_quit(std::time::Instant::now()) {
+                log::info!("power button held — returning to the desktop");
+                leaving = true;
+            }
             // A signal is a request to leave, handled exactly like the button that means the
             // same thing -- so the controller gets handed back and the glasses go back to 2D.
             if crate::shutdown::requested() {
@@ -2128,6 +2136,10 @@ pub fn run(
                             }
                             let now = started.elapsed().as_millis() as u32;
                             send_key_state(&mut runtime.state, code, pressed, now);
+                        }
+                        crate::desk::DeskEvent::Power { pressed } => {
+                            log::info!("power button {}", if pressed { "down" } else { "up" });
+                            screen_sleep.power(pressed, std::time::Instant::now());
                         }
                         other => mouse_events.push(other),
                     }
@@ -2638,7 +2650,8 @@ pub fn run(
                                 // reports it in the same terms, so this is passed on as it comes.
                                 pointers.scroll(&mut runtime.state, dx, dy, time_ms);
                             }
-                            crate::desk::DeskEvent::Key { .. } => {}
+                            crate::desk::DeskEvent::Key { .. }
+                            | crate::desk::DeskEvent::Power { .. } => {}
                         }
                     }
                 }
@@ -3335,7 +3348,10 @@ pub fn run(
                 // where it was for up to two seconds while the thumb is already elsewhere,
                 // which feels like the control has stuck.
                 if let Some(touch) = touchscreen.as_mut() {
-                    let events = touch.poll();
+                    // Read whether or not the panel is lit, because a touch is what wakes it.
+                    // What comes out is nothing while it sleeps, and nothing for the finger
+                    // that woke it.
+                    let events = screen_sleep.touches(touch.poll(), std::time::Instant::now());
                     if !events.is_empty() {
                         for action in ui.touch(&events, levels, &audio) {
                             let knob = match action {
@@ -3434,10 +3450,37 @@ pub fn run(
                         }
                     }
                 }
+                // Bring the panel into line with what the wearer asked for.
+                //
+                // Going dark waits for the frame in flight to land, because clearing the
+                // surface drops its pending flip and the vblank for it would then be
+                // acknowledged against nothing. Waking is just drawing again: the first
+                // frame queued after a clear is a full modeset, which relights the panel.
+                if screen_sleep.want_off() && !side.dark && !side.pending {
+                    match side.compositor.clear() {
+                        Ok(()) => {
+                            side.dark = true;
+                            // The sidecar is told its fingers have lifted, or a thumb on the
+                            // exit button would finish its two-second hold in the dark.
+                            ui.touch(&screen_sleep.lifts(), levels, &audio);
+                            log::info!("sidecar asleep");
+                        }
+                        Err(e) => {
+                            // Nothing to wait for and nothing to retry at frame rate: the
+                            // wearer gets a lit screen, which is the safe way to be wrong.
+                            log::warn!("could not blank the sidecar: {e}");
+                            screen_sleep.cancel();
+                        }
+                    }
+                } else if !screen_sleep.want_off() && side.dark {
+                    side.dark = false;
+                    log::info!("sidecar awake");
+                }
                 // Drawn only on a turn that can present it, for the same reason as the
                 // glasses' scene: a panel drawn while its last frame is still flipping is
-                // thrown away, and this loop turns several times a frame.
-                if !side.pending {
+                // thrown away, and this loop turns several times a frame. Not at all while
+                // it is dark: queueing a frame is what would light it.
+                if !side.pending && !side.dark {
                     let prepared = ui.prepare(
                         &mut renderer,
                         &mut text,
@@ -3891,6 +3934,9 @@ struct SidecarSurface {
     size: (u32, u32),
     name: String,
     pending: bool,
+    /// Blanked by the power button: no frames are queued, so nothing relights it.
+    /// See `crate::screen_sleep`.
+    dark: bool,
     /// Consecutive failed presents. See [`SIDECAR_FAILURE_LIMIT`].
     failures: u32,
     /// Held so the wayland global lives as long as the surface.
@@ -4101,6 +4147,7 @@ fn build_sidecar(
             size: (w as u32, h as u32),
             name,
             pending: false,
+            dark: false,
             failures: 0,
             _output: output,
         }));

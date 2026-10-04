@@ -19,6 +19,7 @@ final class RoomController {
     private(set) var active = false
     /// Windows the host has told us of, so a room started late can take them in.
     private(set) var known: [UInt16: CGSize] = [:]
+    private var apps: [UInt16: String] = [:]
     private var shown: Set<UInt16> = []
 
     /// Said when the world changes in a way the rest of the app should show: a window arriving, a
@@ -33,10 +34,34 @@ final class RoomController {
     private(set) lazy var output = GlassesOutput(room: self)
     private(set) lazy var input = RoomInput(controller: self)
 
+    private(set) lazy var menu = RoomMenu(controller: self)
+    /// Where pinned windows sit and how big, as the wearer left them: kept here because the room
+    /// only knows how to step on to the next corner.
+    var cornerIndex = Settings.pinnedCorner % 4 { didSet { Settings.pinnedCorner = cornerIndex } }
+    var pinnedLarge = Settings.pinnedLarge { didSet { Settings.pinnedLarge = pinnedLarge } }
+
     init() {
         renderer = RoomRenderer(core: core)
         if renderer == nil { print("room: no Metal device; the glasses cannot be used") }
+        for _ in 0..<cornerIndex { core.nextCorner() }
+        if pinnedLarge { core.toggleSize() }
     }
+
+    func nextCorner() {
+        cornerIndex = (cornerIndex + 1) % 4
+        core.nextCorner()
+    }
+
+    func toggleSize() {
+        pinnedLarge.toggle()
+        core.toggleSize()
+    }
+
+    /// The keyboard has moved to this window.
+    func focusChanged(_ id: UInt16?) { sendFocus(id) }
+
+    /// Ctrl-Space: the menu, in the glasses when they are what is being looked at.
+    func toggleMenu() { menu.toggle() }
 
     var available: Bool { renderer != nil }
 
@@ -48,7 +73,10 @@ final class RoomController {
         guard !wanted || available else { return }
         active = wanted
         if wanted {
-            for (id, size) in known.sorted(by: { $0.key < $1.key }) { core.setWindow(id, width: Int(size.width), height: Int(size.height)) }
+            for (id, size) in known.sorted(by: { $0.key < $1.key }) {
+                core.setWindow(id, width: Int(size.width), height: Int(size.height))
+                if let app = apps[id] { core.setApp(id, app) }
+            }
             // Each window needs a picture to start from, and one that is not changing sends none.
             for id in known.keys { model.link.say(["WantKeyframe": ["window": Int(id)]]) }
             for case let window as RemoteWindow in model.windows.values { window.hideForRoom() }
@@ -59,6 +87,7 @@ final class RoomController {
                 if Settings.captureInput { input.start() }
             }
         } else {
+            menu.close()
             if drivesGlasses {
                 input.stop()
                 output.stop()
@@ -74,12 +103,22 @@ final class RoomController {
 
     // MARK: windows, as the session tells of them
 
-    func windowOpened(_ id: UInt16, size: CGSize) {
+    func windowOpened(_ id: UInt16, size: CGSize, app: String) {
         known[id] = size
+        apps[id] = app
+        core.setApp(id, app)
         if active {
             core.setWindow(id, width: Int(size.width), height: Int(size.height))
+            core.setApp(id, app)
             sendFocus(id)
         }
+    }
+
+    /// An application's sound, placed where its window is in the room. Nil when the room is not
+    /// in use, and the sound is plain stereo.
+    func place(app: String, channels: Int, pcm: Data) -> [Float]? {
+        guard active else { return nil }
+        return core.audio(app: app, channels: channels, pcm: pcm)
     }
 
     func windowSized(_ id: UInt16, size: CGSize) {
@@ -89,6 +128,7 @@ final class RoomController {
 
     func windowClosed(_ id: UInt16) {
         known[id] = nil
+        apps[id] = nil
         shown.remove(id)
         core.remove(id)
         renderer?.drop(id)
@@ -141,6 +181,11 @@ final class RoomController {
     /// Where the pointer is may change without the mouse moving: the head turns.
     func pointerChanged() {
         if core.isGrabbing { core.drag(); return }
+        if menu.isOpen {
+            let aim = core.aim()
+            if aim.window == RoomMenu.panelID { menu.hover(aim.x, aim.y) } else { menu.hover(-1, -1) }
+            if aim.window == RoomMenu.panelID { return }
+        }
         if let down = pressed {
             if let at = core.aim(at: down) { send(down, ["Motion": ["x": at.x, "y": at.y]]) }
             return
@@ -155,6 +200,10 @@ final class RoomController {
 
     func buttonDown(_ button: Int, grab: Bool) {
         let aim = core.aim()
+        if menu.isOpen {
+            if aim.window == RoomMenu.panelID { menu.click(aim.x, aim.y) } else { menu.close() }
+            return
+        }
         guard let id = aim.window else { return }
         if core.focused != id {
             core.focused = id
@@ -181,7 +230,7 @@ final class RoomController {
     }
 
     func scrolled(dx: Double, dy: Double, precise: Bool) {
-        guard let id = core.aim().window ?? core.focused else { return }
+        guard !menu.isOpen, let id = core.aim().window ?? core.focused else { return }
         let unit: Double = precise ? 1 : 10
         send(id, ["Scroll": ["horizontal": -dx * unit, "vertical": -dy * unit]])
     }
@@ -201,6 +250,11 @@ final class RoomController {
     func togglePin() {
         guard let id = core.aim().window ?? core.focused else { return }
         core.setPinned(id, !core.isPinned(id))
+    }
+
+    func closeAimed() {
+        guard let id = core.aim().window ?? core.focused, id < 0xFFF0 else { return }
+        model.link.say(["Close": ["window": Int(id)]])
     }
 
     func bringAimedHere() {

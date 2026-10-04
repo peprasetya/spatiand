@@ -12,6 +12,10 @@
 //! Frame convention throughout, as everywhere else in Spatiand: **+X forward, +Y left, +Z up**.
 
 use glam::{DQuat, DVec3, Mat4};
+use std::collections::HashMap;
+
+use spatiand_audio::stage::{place, Layout, Stage, NOMINAL_HALF_STAGE};
+use spatiand_audio::{Binaural, Directness, Panner};
 use spatiand_hmd::ImuSample;
 use spatiand_render::camera::{eyes_for, StereoConfig};
 use spatiand_render::pip::{self, Corner, Size};
@@ -20,6 +24,8 @@ use spatiand_track::{AxisMap, HeadTracker, TrackerConfig, DEFAULT_PREDICTION_MAX
 
 /// A window's id on the wire, or the cursor.
 pub const CURSOR: u32 = 0xFFFF;
+/// Ids from here up are Spatiand's own panels, not an application's windows.
+pub const PANEL_FIRST: u32 = 0xFFF0;
 
 /// How far from the wearer a window is put, and how wide, until it is moved. The Deck's own.
 const DEFAULT_RADIUS: f64 = 2.2;
@@ -164,8 +170,21 @@ struct Grab {
     pitch: f64,
 }
 
+/// One application's sound, being placed.
+struct Voice {
+    layout: Layout,
+    binaural: Binaural,
+    /// What was left of the last chunk after the last whole frame.
+    carry: Vec<u8>,
+}
+
+const AUDIO_RATE: u32 = 48_000;
+
 pub struct Room {
     tracker: HeadTracker,
+    /// Which application each window belongs to, so its sound can be put where the window is.
+    app_of: HashMap<u32, String>,
+    voices: HashMap<String, Voice>,
     stereo: StereoConfig,
     /// Back to front: the last is the one drawn over the rest.
     windows: Vec<Win>,
@@ -190,6 +209,8 @@ impl Room {
         let axes = spatiand_track::config::load_axes().unwrap_or(AxisMap::XREAL_AIR);
         Room {
             tracker: HeadTracker::new(axes, TrackerConfig::default()),
+            app_of: HashMap::new(),
+            voices: HashMap::new(),
             stereo: StereoConfig::default(),
             windows: Vec::new(),
             focus: None,
@@ -249,7 +270,7 @@ impl Room {
     }
 
     pub fn set_focus(&mut self, id: Option<u32>) {
-        self.focus = id.filter(|i| self.windows.iter().any(|w| w.id == *i));
+        self.focus = id.filter(|i| !Self::is_panel(*i) && self.windows.iter().any(|w| w.id == *i));
         if let Some(id) = self.focus {
             self.raise(id);
         }
@@ -260,6 +281,11 @@ impl Room {
             let w = self.windows.remove(at);
             self.windows.push(w);
         }
+    }
+
+    /// A panel is Spatiand's own, not an application's.
+    fn is_panel(id: u32) -> bool {
+        id >= PANEL_FIRST && id != CURSOR
     }
 
     /// A window's picture is this big now. A window not yet here is put where the wearer is
@@ -307,6 +333,94 @@ impl Room {
         self.focus = Some(id);
     }
 
+    /// A panel Spatiand draws itself -- a menu -- put where the wearer is looking. It takes no
+    /// keyboard focus and is always drawn over the windows. `width` and `radius` are metres.
+    pub fn set_panel(&mut self, id: u32, size: (u32, u32), width: f64, radius: f64) {
+        if let Some(w) = self.windows.iter_mut().find(|w| w.id == id) {
+            w.size = size;
+            return;
+        }
+        let forward = self.head() * DVec3::X;
+        let place = Placement {
+            yaw: forward.y.atan2(forward.x),
+            pitch: forward.z.clamp(-1.0, 1.0).asin().clamp(-PITCH_LIMIT, PITCH_LIMIT),
+            radius,
+            width,
+            ..Placement::default()
+        };
+        self.windows.push(Win { id, size, place, shown: true });
+    }
+
+    // MARK: sound
+
+    pub fn set_app(&mut self, id: u32, app: &str) {
+        self.app_of.insert(id, app.to_string());
+    }
+
+    /// Where an application's sound is from: its window, as the head sees it. The focused
+    /// window of the application if there is one, else any; with none, straight ahead of the head.
+    fn stage_for(&self, app: &str, head: DQuat) -> (Stage, f64) {
+        let mut best: Option<&Win> = None;
+        for w in &self.windows {
+            if self.app_of.get(&w.id).is_some_and(|a| a == app) && best.is_none_or(|b| self.focus == Some(w.id) || b.id != self.focus.unwrap_or(u32::MAX)) {
+                best = Some(w);
+            }
+        }
+        let placed = self.placed(head);
+        let (yaw, pitch, half_width) = match best.and_then(|w| placed.iter().find(|(i, _)| self.windows[*i].id == w.id)) {
+            Some((_, p)) => (p.yaw, p.pitch, (p.width * 0.5).atan2(p.radius)),
+            None => {
+                let forward = head * DVec3::X;
+                (forward.y.atan2(forward.x), forward.z.clamp(-1.0, 1.0).asin(), NOMINAL_HALF_STAGE)
+            }
+        };
+        // How far off straight ahead the head is looking from it.
+        let direction = DVec3::new(pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), pitch.sin());
+        let off_axis = (head.inverse() * direction).x.clamp(-1.0, 1.0).acos();
+        (Stage { yaw, pitch, half_width }, off_axis)
+    }
+
+    /// An application's sound, signed 16-bit little-endian and interleaved, placed in the room and
+    /// folded to two ears: interleaved stereo floats, appended to `out`. A chunk that ends part
+    /// way through a frame keeps the rest for the next, or every channel after it would be out of place.
+    pub fn render_audio(&mut self, app: &str, channels: usize, pcm: &[u8], out: &mut Vec<f32>) {
+        let Some(layout) = Layout::from_count(channels) else { return };
+        let head = self.head();
+        let (stage, off_axis) = self.stage_for(app, head);
+        let voice = self.voices.entry(app.to_string()).or_insert_with(|| Voice {
+            layout,
+            binaural: Binaural::new(layout, Box::new(Panner::new(AUDIO_RATE)), Directness::default(), AUDIO_RATE),
+            carry: Vec::new(),
+        });
+        if voice.layout != layout {
+            *voice = Voice {
+                layout,
+                binaural: Binaural::new(layout, Box::new(Panner::new(AUDIO_RATE)), Directness::default(), AUDIO_RATE),
+                carry: Vec::new(),
+            };
+        }
+        voice.carry.extend_from_slice(pcm);
+        let frame_bytes = channels * 2;
+        let whole = voice.carry.len() / frame_bytes * frame_bytes;
+        if whole == 0 {
+            return;
+        }
+        let input: Vec<f32> = voice.carry[..whole]
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+            .collect();
+        voice.carry.drain(..whole);
+        voice.binaural.aim(&place(layout, &stage, head), off_axis);
+        let start = out.len();
+        out.resize(start + input.len() / channels * 2, 0.0);
+        voice.binaural.render(&input, &mut out[start..]);
+    }
+
+    /// Forget an application's sound, when it has stopped.
+    pub fn drop_voice(&mut self, app: &str) {
+        self.voices.remove(app);
+    }
+
     pub fn show(&mut self, id: u32) {
         if let Some(w) = self.windows.iter_mut().find(|w| w.id == id) {
             w.shown = true;
@@ -315,8 +429,9 @@ impl Room {
 
     pub fn remove_window(&mut self, id: u32) {
         self.windows.retain(|w| w.id != id);
+        self.app_of.remove(&id);
         if self.focus == Some(id) {
-            self.focus = self.windows.last().map(|w| w.id);
+            self.focus = self.windows.iter().rev().find(|w| !Self::is_panel(w.id)).map(|w| w.id);
         }
         if self.grab.is_some_and(|g| g.id == id) {
             self.grab = None;
@@ -435,7 +550,7 @@ impl Room {
         let placed = self.placed(head);
         // Pinned windows are in front of the room, then the room's own, the last drawn first.
         let mut order: Vec<usize> = placed.iter().map(|(i, _)| *i).collect();
-        order.sort_by_key(|i| (!self.windows[*i].place.pinned, std::cmp::Reverse(*i)));
+        order.sort_by_key(|i| (!Self::is_panel(self.windows[*i].id), !self.windows[*i].place.pinned, std::cmp::Reverse(*i)));
         for i in order {
             let (_, place) = placed[i];
             let w = &self.windows[i];
@@ -533,7 +648,7 @@ impl Room {
 
         // The room's windows first, in order, then the pinned ones over them.
         let mut order: Vec<usize> = placed.iter().map(|(i, _)| *i).collect();
-        order.sort_by_key(|i| (self.windows[*i].place.pinned, *i));
+        order.sort_by_key(|i| (Self::is_panel(self.windows[*i].id), self.windows[*i].place.pinned, *i));
         for i in order {
             let (_, place) = placed[i];
             let w = &self.windows[i];
@@ -757,5 +872,82 @@ mod tests {
         assert_eq!(r.focus(), Some(2));
         r.remove_window(2);
         assert_eq!(r.focus(), Some(1));
+    }
+
+    #[test]
+    fn a_panel_is_aimed_at_before_the_windows_behind_it_and_takes_no_focus() {
+        let mut r = room();
+        r.set_window(1, (1280, 800));
+        r.show(1);
+        r.set_panel(PANEL_FIRST + 2, (1000, 500), 0.9, 1.6);
+        assert_eq!(r.aim().window, Some(PANEL_FIRST + 2));
+        assert_eq!(r.focus(), Some(1), "a panel is not where the keyboard goes");
+        r.set_focus(Some(PANEL_FIRST + 2));
+        assert_eq!(r.focus(), None, "and cannot be given it");
+        let frame = r.frame();
+        let order: Vec<u32> = frame.draws.iter().map(|d| d.window).collect();
+        assert_eq!(order, vec![1, PANEL_FIRST + 2, CURSOR], "drawn over the window, under the cursor");
+        r.remove_window(PANEL_FIRST + 2);
+        assert_eq!(r.aim().window, Some(1));
+    }
+
+    fn tone(channels: usize, frames: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        for n in 0..frames {
+            let v = ((n as f32 * 0.1).sin() * 12000.0) as i16;
+            for _ in 0..channels {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        out
+    }
+
+    fn loudness(stereo: &[f32]) -> (f32, f32) {
+        let (mut l, mut r) = (0.0f32, 0.0f32);
+        for f in stereo.chunks_exact(2) {
+            l += f[0] * f[0];
+            r += f[1] * f[1];
+        }
+        (l, r)
+    }
+
+    #[test]
+    fn a_window_to_the_left_is_heard_on_the_left_and_follows_the_head() {
+        let mut r = room();
+        r.set_window(1, (1280, 800));
+        r.show(1);
+        r.set_app(1, "chrome");
+        // Put it a quarter turn to the left.
+        r.windows[0].place.yaw = 80f64.to_radians();
+        let mut out = Vec::new();
+        // A few blocks, for the filters to settle after the first aim.
+        for _ in 0..4 {
+            out.clear();
+            r.render_audio("chrome", 2, &tone(2, 480), &mut out);
+        }
+        let (l, rt) = loudness(&out);
+        assert!(l > rt * 1.5, "a window on the left should be louder in the left ear: {l} against {rt}");
+        // Turn to face it: now it is ahead, and the two ears are close.
+        r.set_fixed_head(Some(DQuat::from_axis_angle(DVec3::Z, 80f64.to_radians())));
+        for _ in 0..4 {
+            out.clear();
+            r.render_audio("chrome", 2, &tone(2, 480), &mut out);
+        }
+        let (l, rt) = loudness(&out);
+        assert!((l / rt - 1.0).abs() < 0.5, "facing it, the ears should be about equal: {l} against {rt}");
+    }
+
+    #[test]
+    fn a_chunk_that_stops_mid_frame_does_not_shift_the_channels() {
+        let mut r = room();
+        let bytes = tone(6, 100);
+        let mut a = Vec::new();
+        r.render_audio("film", 6, &bytes[..bytes.len() / 2 + 3], &mut a);
+        r.render_audio("film", 6, &bytes[bytes.len() / 2 + 3..], &mut a);
+        let mut r2 = room();
+        let mut b = Vec::new();
+        r2.render_audio("film", 6, &bytes, &mut b);
+        assert_eq!(a.len(), b.len());
+        assert!(a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-4), "the split changed what was heard");
     }
 }

@@ -69,8 +69,16 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         wasPlugged = glasses.isPluggedIn
         Model.shared.glassesOn = glassesWanted()
         pairing.start()
-        hotkeys.onMenu = { [weak self] in self?.item.button?.performClick(nil) }
-        hotkeys.onSettings = { [weak self] in self?.settings.show() }
+        // With the glasses on and the mouse and keyboard theirs, the menu is the glasses' own: the
+        // Mac's is out of sight. Otherwise it is the usual one.
+        hotkeys.onMenu = { [weak self] in
+            let room = Model.shared.room
+            if room.active, room.input.capturing { room.toggleMenu() } else { self?.item.button?.performClick(nil) }
+        }
+        hotkeys.onSettings = { [weak self] in
+            let room = Model.shared.room
+            if room.active, room.input.capturing { room.toggleMenu() } else { self?.settings.show() }
+        }
         if Settings.hotkeys { hotkeys.enable() }
         Model.shared.onProblem = { PairingUI.alert("Spatiand", $0) }
         // Back to the computer this Mac was last using, if there is one.

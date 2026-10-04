@@ -103,8 +103,8 @@ final class AudioOut {
     private var started = false
 
     /// Called from the link's threads, as sound arrives.
-    func feed(app: String, channels: Int, data: Data) {
-        let stereo = Downmix.stereo(data, channels: channels)
+    func feed(app: String, channels: Int, data: Data, placed: [Float]? = nil) {
+        let stereo = placed ?? Downmix.stereo(data, channels: channels)
         lock.lock()
         rings[app, default: SoundRing()].push(stereo)
         lock.unlock()

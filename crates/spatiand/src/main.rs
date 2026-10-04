@@ -45,6 +45,7 @@ mod prefs;
 mod record;
 mod remote;
 mod scene;
+mod screen_sleep;
 mod shutdown;
 mod startup;
 mod sidecar;

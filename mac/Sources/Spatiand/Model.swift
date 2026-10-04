@@ -69,8 +69,9 @@ final class Model {
                 link.say(["WantKeyframe": ["window": Int(id)]])
             }
         }
-        link.onAudio = { app, channels, data in
-            AudioOut.shared.feed(app: app, channels: Int(channels), data: data)
+        link.onAudio = { [unowned self] app, channels, data in
+            // In the room the sound is placed where its window is, and follows the head.
+            AudioOut.shared.feed(app: app, channels: Int(channels), data: data, placed: room.place(app: app, channels: Int(channels), pcm: data))
         }
         clipboard.send = { [unowned self] in link.say($0) }
         clipboard.start()
@@ -281,7 +282,7 @@ final class Model {
             link.say(["Configure": ["window": Int(id), "width": w, "height": h]])
         }
         windows[id] = remote
-        room.windowOpened(id, size: size)
+        room.windowOpened(id, size: size, app: infos[id]?.app ?? "")
         feedEarly(id)
         if !room.active {
             remote.show()

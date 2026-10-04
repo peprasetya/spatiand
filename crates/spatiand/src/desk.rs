@@ -44,11 +44,26 @@ const LINGER: Duration = Duration::from_millis(1800);
 /// How long it then takes to fade away.
 const FADE: Duration = Duration::from_millis(600);
 
+/// `KEY_POWER`, from `linux/input-event-codes.h`.
+const KEY_POWER: u32 = 116;
+
+/// What the kernel calls the two ACPI power-button devices.
+///
+/// On a Steam Deck the button is reported three times: by these two, which send the key down
+/// and up in the same instant whatever the finger does, and by the embedded controller's
+/// keyboard, which sends them when the button actually goes down and comes up. Only the last
+/// can tell a tap from a hold, so these are not passed on -- SteamOS's own power daemon marks
+/// them `STEAMOS_POWER_BUTTON_IGNORE` for the same reason.
+const ACPI_POWER_BUTTON: &str = "Power Button";
+
 /// What a key or a button did.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DeskEvent {
     /// A key went down or came up, as an evdev code.
     Key { code: u32, pressed: bool },
+    /// The machine's power button went down or came up, with its real timing. See
+    /// [`KEY_POWER`] for which device that comes from.
+    Power { pressed: bool },
     /// A mouse button went down or came up, as an evdev button code.
     Button { code: u32, pressed: bool },
     /// The wheel turned. Positive is away from the hand.
@@ -128,12 +143,21 @@ impl Desk {
             }
             match event {
                 Event::Keyboard(k) => {
+                    let pressed = matches!(
+                        k.key_state(),
+                        libinput::event::keyboard::KeyState::Pressed
+                    );
+                    // The machine's, not an application's: it never reaches the focused
+                    // window, whichever device it came from.
+                    if k.key() == KEY_POWER {
+                        if k.device().name() != ACPI_POWER_BUTTON {
+                            out.push(DeskEvent::Power { pressed });
+                        }
+                        continue;
+                    }
                     out.push(DeskEvent::Key {
                         code: k.key(),
-                        pressed: matches!(
-                            k.key_state(),
-                            libinput::event::keyboard::KeyState::Pressed
-                        ),
+                        pressed,
                     });
                 }
                 Event::Pointer(PointerEvent::Motion(m)) => {

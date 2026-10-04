@@ -33,6 +33,21 @@ final class RoomCore {
 
     // The windows.
     func setWindow(_ id: UInt16, width: Int, height: Int) { sp_room_set_window(room, UInt32(id), UInt32(width), UInt32(height)) }
+    func setPanel(_ id: UInt16, widthPx: Int, heightPx: Int, widthM: Double, radiusM: Double) {
+        sp_room_set_panel(room, UInt32(id), UInt32(widthPx), UInt32(heightPx), widthM, radiusM)
+    }
+    func setApp(_ id: UInt16, _ app: String) { sp_room_set_app(room, UInt32(id), app) }
+
+    /// An application's sound placed in the room and folded to two ears, interleaved stereo.
+    func audio(app: String, channels: Int, pcm: Data) -> [Float] {
+        let capacity = pcm.count / 2 / max(1, channels) * 2 + 16
+        var out = [Float](repeating: 0, count: capacity)
+        let written = pcm.withUnsafeBytes { raw -> Int in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return 0 }
+            return sp_room_audio(room, app, UInt16(channels), base, pcm.count, &out, capacity)
+        }
+        return Array(out.prefix(written))
+    }
     func show(_ id: UInt16) { sp_room_show(room, UInt32(id)) }
     func remove(_ id: UInt16) { sp_room_remove(room, UInt32(id)) }
     func clear() { sp_room_clear(room) }

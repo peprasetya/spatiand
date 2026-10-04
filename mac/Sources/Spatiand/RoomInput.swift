@@ -18,6 +18,8 @@
 //    Ctrl-Option-B   bring the window you are pointing at to where you are looking
 //    Ctrl-Option-C   which corner a pinned window sits in
 //    Ctrl-Option-S   how big a pinned window is
+//    Ctrl-Option-W   close the window you are pointing at
+//    Ctrl-Space      the menu, in the glasses
 //  and, with Option held, dragging a window moves it and the wheel (or a pinch) resizes it.
 
 import AppKit
@@ -71,8 +73,9 @@ final class InputView: NSView {
         case kVK_ANSI_R: controller?.recentre()
         case kVK_ANSI_P: controller?.togglePin()
         case kVK_ANSI_B: controller?.bringAimedHere()
-        case kVK_ANSI_C: controller?.core.nextCorner()
-        case kVK_ANSI_S: controller?.core.toggleSize()
+        case kVK_ANSI_C: controller?.nextCorner()
+        case kVK_ANSI_S: controller?.toggleSize()
+        case kVK_ANSI_W: controller?.closeAimed()
         default: return false
         }
         return true
@@ -80,6 +83,10 @@ final class InputView: NSView {
 
     override func keyDown(with event: NSEvent) {
         if chord(event) { return }
+        if Int(event.keyCode) == kVK_Escape, controller?.menu.isOpen == true {
+            controller?.menu.close()
+            return
+        }
         controller?.keyTarget?.keyDown(with: event)
     }
     override func keyUp(with event: NSEvent) { controller?.keyTarget?.keyUp(with: event) }
