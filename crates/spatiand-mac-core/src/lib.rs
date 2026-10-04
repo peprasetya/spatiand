@@ -572,6 +572,12 @@ pub extern "C" fn sp_room_audio(
     rendered.len()
 }
 
+/// What the pointer looks like: its picture's size and hot spot in pixels; all zero for the arrow.
+#[no_mangle]
+pub extern "C" fn sp_room_set_cursor_shape(room: *mut RoomHandle, hot_x: f64, hot_y: f64, width: f64, height: f64) {
+    with_room(room, (), |r| r.set_cursor_shape(hot_x, hot_y, width, height));
+}
+
 #[no_mangle]
 pub extern "C" fn sp_room_show(room: *mut RoomHandle, id: u32) {
     with_room(room, (), |r| r.show(id));

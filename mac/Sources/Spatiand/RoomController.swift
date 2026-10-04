@@ -269,6 +269,12 @@ final class RoomController {
         core.bringHere(id)
     }
 
+    /// How the host drew the pointer: the room's pointer takes the same shape.
+    func hostCursor(pixels: Data, width: Int, height: Int, hotX: Double, hotY: Double) {
+        renderer?.setCursorPicture(pixels, width: width, height: height)
+        core.cursorShape(hotX: hotX, hotY: hotY, width: Double(width), height: Double(height))
+    }
+
     func recentre() {
         core.recentre()
         core.centrePointer()

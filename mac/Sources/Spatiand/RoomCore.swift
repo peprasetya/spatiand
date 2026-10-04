@@ -29,6 +29,9 @@ final class RoomCore {
         sp_room_head_euler(room, &out)
         return (out[0], out[1], out[2])
     }
+    func cursorShape(hotX: Double, hotY: Double, width: Double, height: Double) {
+        sp_room_set_cursor_shape(room, hotX, hotY, width, height)
+    }
     func perEye(_ width: Int, _ height: Int) { sp_room_set_per_eye(room, UInt32(width), UInt32(height)) }
 
     // The windows.

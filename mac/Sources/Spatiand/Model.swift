@@ -325,6 +325,7 @@ final class Model {
         let picture = NSImage(cgImage: image, size: size)
         let cursor = NSCursor(image: picture, hotSpot: NSPoint(x: hot[0].doubleValue / scale, y: hot[1].doubleValue / scale))
         for surface in windows.values { surface.view.cursor = cursor }
+        room.hostCursor(pixels: pixels, width: w, height: h, hotX: hot[0].doubleValue, hotY: hot[1].doubleValue)
     }
 
     private func feedEarly(_ id: UInt16) {

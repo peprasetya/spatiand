@@ -17,7 +17,8 @@ final class RoomRenderer {
     private let windowPipeline: MTLRenderPipelineState
     private let cursorPipeline: MTLRenderPipelineState
     private var cache: CVMetalTextureCache?
-    private let cursorTexture: MTLTexture
+    private var cursorTexture: MTLTexture
+    private let arrowTexture: MTLTexture
     private let core: RoomCore
 
     /// Decoded pictures by window; owned by the main thread.
@@ -65,10 +66,25 @@ final class RoomRenderer {
         CVMetalTextureCacheCreate(nil, nil, device, nil, &cache)
         guard let cursor = Self.makeCursor(device) else { return nil }
         cursorTexture = cursor
+        arrowTexture = cursor
         for _ in 0..<3 {
             guard let b = device.makeBuffer(length: Self.capacity * 4, options: .storageModeShared) else { return nil }
             buffers.append(b)
         }
+    }
+
+    /// The host's own pointer picture (premultiplied BGRA), or the plain arrow when there is none.
+    func setCursorPicture(_ pixels: Data?, width: Int, height: Int) {
+        guard let pixels, width > 0, height > 0, pixels.count >= width * height * 4 else {
+            cursorTexture = arrowTexture
+            return
+        }
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
+        guard let texture = device.makeTexture(descriptor: d) else { return }
+        pixels.withUnsafeBytes {
+            texture.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: $0.baseAddress!, bytesPerRow: width * 4)
+        }
+        cursorTexture = texture
     }
 
     // MARK: the decoders

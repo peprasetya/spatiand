@@ -93,6 +93,8 @@ void sp_room_set_app(sp_room *room, uint32_t id, const char *app);
 // to two ears: interleaved stereo floats into `out`. Returns how many; 0 if it would not fit.
 size_t sp_room_audio(sp_room *room, const char *app, uint16_t channels, const uint8_t *pcm,
                      size_t length, float *out, size_t capacity);
+// What the pointer looks like: its picture size and hot spot in pixels; all zero is the arrow.
+void sp_room_set_cursor_shape(sp_room *room, double hot_x, double hot_y, double width, double height);
 void sp_room_show(sp_room *room, uint32_t id);
 void sp_room_remove(sp_room *room, uint32_t id);
 void sp_room_clear(sp_room *room);

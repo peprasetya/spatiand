@@ -196,6 +196,8 @@ pub struct Room {
     size: Size,
     /// A head to use before the glasses have said anything, for the preview and tests.
     fixed_head: Option<DQuat>,
+    /// The pointer's picture: its size and where its hot spot is, in the picture's pixels.
+    cursor_shape: (f64, f64, f64, f64),
 }
 
 impl Default for Room {
@@ -219,7 +221,14 @@ impl Room {
             corner: Corner::default(),
             size: Size::default(),
             fixed_head: None,
+            cursor_shape: (0.0, 0.0, 0.0, 0.0),
         }
+    }
+
+    /// What the pointer looks like: the picture's width and height and its hot spot, in pixels. All
+    /// zero is the plain arrow, whose tip is its top left corner.
+    pub fn set_cursor_shape(&mut self, hot_x: f64, hot_y: f64, width: f64, height: f64) {
+        self.cursor_shape = (hot_x, hot_y, width, height);
     }
 
     /// Hold the head where it is, whatever the sensors say. For the preview.
@@ -696,17 +705,21 @@ impl Room {
         let eye = self.eye_centre(head);
         let to_eye = (eye - aim.point).normalize_or_zero();
         let distance = (aim.point - eye).length().max(0.3);
-        // About a degree and a half across at any distance, so it reads as the same size.
-        let size = distance * 0.026;
+        // About a degree and a half for a pointer 32 pixels tall, at any distance, so it reads as
+        // the same size wherever it is.
+        let (hot_x, hot_y, shape_w, shape_h) = self.cursor_shape;
+        let (w_px, h_px) = if shape_w > 0.0 && shape_h > 0.0 { (shape_w, shape_h) } else { (32.0, 32.0) };
+        let unit = distance * 0.026 / 32.0;
+        let (width, height) = ((w_px * unit).clamp(0.0, distance * 0.2), (h_px * unit).clamp(0.0, distance * 0.2));
         let right = to_eye.cross(DVec3::Z).normalize_or_zero();
         let right = if right == DVec3::ZERO { DVec3::Y } else { right };
         let up = right.cross(to_eye).normalize_or_zero();
-        // The arrow's tip is the point itself: the square hangs down and to the right of it.
+        // The hot spot is the point itself, a little in front of the surface so it is not buried in it.
         let tip = aim.point + to_eye * 0.01;
-        let tl = tip;
-        let tr = tip + right * size;
-        let bl = tip - up * size;
-        let br = tip + right * size - up * size;
+        let tl = tip - right * (hot_x * unit) + up * (hot_y * unit);
+        let tr = tl + right * width;
+        let bl = tl - up * height;
+        let br = tr - up * height;
         let first = (verts.len() / 5) as u32;
         let corner = |p: DVec3, u: f32, v: f32| [p.x as f32, p.y as f32, p.z as f32, u, v];
         for v in [
