@@ -9,6 +9,7 @@
 //! It is `probe-session` made into a library: the same Hello, the same control stream, the same
 //! reassembly of frames, with callbacks where the probe printed.
 
+pub mod host;
 pub mod room;
 
 use std::ffi::{c_char, c_void, CStr, CString};

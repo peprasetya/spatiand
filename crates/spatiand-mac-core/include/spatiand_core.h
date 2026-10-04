@@ -122,6 +122,30 @@ void sp_room_toggle_size(sp_room *room);
 uint32_t sp_room_frame(sp_room *room, float *matrices, float *vertices, uint32_t vertex_capacity,
                        sp_draw *draws, uint32_t draw_capacity, uint32_t *draw_count);
 
+// ---- the Mac as a host. See crates/spatiand-mac-core/src/host.rs. ----
+
+typedef struct HostCore sp_host;
+
+// What the app hears, as one JSON object per call: {"joined": {who, short, address, code, known}},
+// {"said": <a ClientMessage as serde writes it, bytes as base64>}, {"left": {refused}}.
+// Start listening on `port` with the identity in `identity_dir`. NULL if it could not.
+sp_host *sp_host_start(const char *identity_dir, uint16_t port, void *user, sp_event_fn on_event);
+void sp_host_stop(sp_host *host);
+// This host's fingerprint, in full. Free with sp_free_string.
+char *sp_host_fingerprint(sp_host *host);
+// Say something to the session: a HostMessage as JSON (bytes as base64).
+void sp_host_say(sp_host *host, const char *json);
+// One picture of one window: an Annex B access unit, parameter sets first on a keyframe.
+void sp_host_video(sp_host *host, uint16_t window, int32_t keyframe, uint64_t captured_us,
+                   const uint8_t *data, size_t length);
+// Let a device that has never been here pair, or stop.
+void sp_host_open_pairing(sp_host *host, int32_t open);
+// The owner's answer about the device waiting to be let in.
+void sp_host_decide(sp_host *host, int32_t admit);
+void sp_host_trust(sp_host *host, const char *fingerprint);
+int32_t sp_host_paired_count(sp_host *host);
+void sp_host_forget_all(sp_host *host);
+
 #ifdef __cplusplus
 }
 #endif
