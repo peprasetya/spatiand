@@ -227,6 +227,7 @@ final class Model {
         let title = infos[id]?.title ?? "Window"
         let remote = RemoteWindow(id: id, title: title, size: size)
         remote.view.send = { [unowned self] in link.say($0) }
+        remote.view.isTerminal = Self.isTerminal(infos[id]?.app ?? "")
         remote.view.needKeyframe = { [unowned self] in link.say(["WantKeyframe": ["window": Int(id)]]) }
         remote.onClose = { [unowned self] id in link.say(["Close": ["window": Int(id)]]) }
         remote.onFocus = { [unowned self] id, focused in
@@ -240,6 +241,13 @@ final class Model {
         feedEarly(id)
         remote.show()
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Terminals, where Control-C is an interrupt and copy is Control-Shift-C.
+    private static func isTerminal(_ app: String) -> Bool {
+        let name = app.lowercased()
+        return ["terminal", "konsole", "xterm", "alacritty", "kitty", "foot", "wezterm", "tilix",
+                "terminator", "urxvt", "rxvt", "st-256color", "ghostty", "lxterminal"].contains { name.contains($0) }
     }
 
     private func openPopup(_ id: UInt16, parent: (id: UInt16, x: Double, y: Double), size: CGSize) {

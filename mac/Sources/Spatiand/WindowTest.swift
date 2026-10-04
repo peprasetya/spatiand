@@ -23,6 +23,23 @@ enum WindowTest {
             model.link.say(["Clipboard": ["Offer": ["mime_types": ["text/plain;charset=utf-8"], "text": "mac-to-host-clipboard-test", "bytes": 26]]])
         }
         after(6) { snapshot("/tmp/spatiand-window-1.png", model) }
+        if ProcessInfo.processInfo.environment["SPATIAND_TEST_RESIZE"] != nil {
+            // Drag the frame bigger, the way a person does, and say what each end then believes.
+            after(7) {
+                guard let w = model.windows.values.compactMap({ $0 as? RemoteWindow }).max(by: { $0.id < $1.id }) else { return }
+                print("before: view \(w.view.bounds.size) host \(w.view.hostSize)")
+                var frame = w.window.frame
+                frame.size.width += 300; frame.size.height += 200
+                w.window.setFrame(frame, display: true)
+            }
+            after(10) {
+                guard let w = model.windows.values.compactMap({ $0 as? RemoteWindow }).max(by: { $0.id < $1.id }) else { return }
+                print("after: view \(w.view.bounds.size) host \(w.view.hostSize)")
+                snapshot("/tmp/spatiand-window-resized.png", model)
+                exit(0)
+            }
+            return
+        }
         after(7) {
             // The "Network" button of the host's settings, in the picture's own pixels.
             guard let w = model.windows.values.compactMap({ $0 as? RemoteWindow }).max(by: { $0.id < $1.id }) else { return }

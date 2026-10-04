@@ -15,7 +15,11 @@ final class VideoView: NSView {
     /// The decoder lost its place; ask the host for a fresh start.
     var needKeyframe: (() -> Void)?
     /// The size of the host's picture, in its pixels; what pointer positions are measured in.
-    var hostSize = CGSize(width: 1280, height: 800)
+    var hostSize = CGSize(width: 1280, height: 800) { didSet { needsLayout = true } }
+    /// Whether the application in this window is a terminal, where copy and paste are Control-Shift.
+    var isTerminal = false
+    /// Keys whose release is ours to swallow because their press was sent as something else.
+    private var swallowed: Set<UInt16> = []
     /// What the pointer looks like over this window: the host's own, when it has said.
     var cursor: NSCursor? { didSet { window?.invalidateCursorRects(for: self) } }
     override func resetCursorRects() {
@@ -35,7 +39,7 @@ final class VideoView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        display.videoGravity = .resizeAspect
+        display.videoGravity = .resize
         display.backgroundColor = NSColor.black.cgColor
         layer?.addSublayer(display)
         addTrackingArea(NSTrackingArea(
@@ -47,7 +51,19 @@ final class VideoView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func layout() { super.layout(); display.frame = bounds }
+    private var scale: CGFloat { window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2 }
+
+    /// The picture is shown at its own size, against the top left, as the application's pixels
+    /// are: while the host catches up with a resize it is neither stretched nor squeezed, and the
+    /// pointer needs no letterbox arithmetic.
+    override func layout() {
+        super.layout()
+        let w = hostSize.width / scale, h = hostSize.height / scale
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        display.frame = CGRect(x: 0, y: bounds.height - h, width: w, height: h)
+        CATransaction.commit()
+    }
 
     // MARK: pictures
 
@@ -57,7 +73,7 @@ final class VideoView: NSView {
 
     func show(_ sample: CMSampleBuffer) {
         pictures += 1
-        if display.status == .failed {
+        if display.status == .failed || display.requiresFlushToResumeDecoding {
             display.flush()
             needKeyframe?()
         }
@@ -72,16 +88,13 @@ final class VideoView: NSView {
         send?(["InputAt": ["window": Int(windowID), "input": input, "time_ms": Int(now())]])
     }
 
-    /// Where in the host's picture a point of this view is. The picture is letterboxed to keep
-    /// its shape, so the box it occupies is worked out rather than assumed to be the view.
+    /// Where in the host's picture a point of this view is: the picture sits at the top left, one
+    /// of its pixels to a pixel of the screen.
     private func hostPoint(_ event: NSEvent) -> CGPoint? {
         let p = convert(event.locationInWindow, from: nil)
-        let scale = min(bounds.width / hostSize.width, bounds.height / hostSize.height)
-        guard scale > 0 else { return nil }
-        let box = CGSize(width: hostSize.width * scale, height: hostSize.height * scale)
-        let origin = CGPoint(x: (bounds.width - box.width) / 2, y: (bounds.height - box.height) / 2)
-        let x = (p.x - origin.x) / scale
-        let y = (box.height - (p.y - origin.y)) / scale    // the host's y runs down
+        let k = scale
+        let x = p.x * k
+        let y = (bounds.height - p.y) * k    // the host's y runs down
         return CGPoint(x: max(0, min(hostSize.width, x)), y: max(0, min(hostSize.height, y)))
     }
 
@@ -116,11 +129,44 @@ final class VideoView: NSView {
 
     // MARK: the keyboard
 
-    private func key(_ event: NSEvent, pressed: Bool) {
-        guard let code = KeyMap.code(for: event.keyCode, commandIsControl: Settings.commandIsControl) else { return }
+    private func send(code: UInt32, pressed: Bool) {
         input(["Key": ["code": Int(code), "pressed": pressed]])
     }
-    override func keyDown(with event: NSEvent) { if !event.isARepeat { key(event, pressed: true) } }
+
+    private func key(_ event: NSEvent, pressed: Bool) {
+        // A terminal copies and pastes with Control-Shift-C and -V, because Control-C already
+        // means something there. Command stands in for Control, so add the Shift.
+        if Settings.commandIsControl, isTerminal, event.modifierFlags.contains(.command),
+           event.keyCode == 8 || event.keyCode == 9 {
+            if pressed {
+                swallowed.insert(event.keyCode)
+                send(code: 42, pressed: true)
+                send(code: KeyMap.evdev[event.keyCode] ?? 0, pressed: true)
+            } else if swallowed.remove(event.keyCode) != nil {
+                send(code: KeyMap.evdev[event.keyCode] ?? 0, pressed: false)
+                send(code: 42, pressed: false)
+            }
+            return
+        }
+        if !pressed, swallowed.remove(event.keyCode) != nil {
+            send(code: KeyMap.evdev[event.keyCode] ?? 0, pressed: false)
+            send(code: 42, pressed: false)
+            return
+        }
+        guard let code = KeyMap.code(for: event.keyCode, commandIsControl: Settings.commandIsControl) else { return }
+        send(code: code, pressed: pressed)
+    }
+
+    /// A paste is the host's own, so what is on this Mac's pasteboard must be there first.
+    private func paste(_ event: NSEvent, pressed: Bool) {
+        if pressed, event.modifierFlags.contains(.command), event.keyCode == 9, Model.shared.clipboard.flush() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.key(event, pressed: true) }
+        } else {
+            key(event, pressed: pressed)
+        }
+    }
+
+    override func keyDown(with event: NSEvent) { if !event.isARepeat { paste(event, pressed: true) } }
     override func keyUp(with event: NSEvent) { key(event, pressed: false) }
     override func flagsChanged(with event: NSEvent) {
         guard let mask = KeyMap.modifierMask(event.keyCode) else { return }
@@ -129,7 +175,8 @@ final class VideoView: NSView {
     // Command-key shortcuts would otherwise be taken by the menu before the application sees them.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard event.modifierFlags.contains(.command) else { return false }
-        key(event, pressed: event.type == .keyDown)
+        if event.type == .keyDown, event.isARepeat { return true }
+        paste(event, pressed: event.type == .keyDown)
         return true
     }
 }
@@ -216,6 +263,9 @@ final class RemoteWindow: NSObject, NSWindowDelegate, RemoteSurface {
     let view = VideoView(frame: .zero)
     let samples = VideoSamples()
     private var resizeTimer: Timer?
+    /// When the host was last asked for a size: the pictures that come back in the next moment
+    /// are answers, and must not resize the window the person is still dragging.
+    private var askedAt = Date.distantPast
     var onClose: ((UInt16) -> Void)?
     var onFocus: ((UInt16, Bool) -> Void)?
     var onResize: ((UInt16, Int, Int) -> Void)?
@@ -247,6 +297,7 @@ final class RemoteWindow: NSObject, NSWindowDelegate, RemoteSurface {
         let scale = window.backingScaleFactor
         let wanted = NSSize(width: size.width / scale, height: size.height / scale)
         let have = view.bounds.size
+        if window.inLiveResize || Date().timeIntervalSince(askedAt) < 1.0 { return }
         if abs(have.width - wanted.width) > 2 || abs(have.height - wanted.height) > 2 {
             window.setContentSize(wanted)
         }
@@ -273,15 +324,30 @@ final class RemoteWindow: NSObject, NSWindowDelegate, RemoteSurface {
     func windowDidBecomeKey(_ note: Notification) { onFocus?(id, true) }
     func windowDidResignKey(_ note: Notification) { onFocus?(id, false) }
 
-    /// Resizing asks the host for that many pixels, once the dragging has settled: a request
-    /// per frame of a drag would have the application redrawing at a size nobody ends up seeing.
+    /// Resizing asks the host for that many pixels as the frame is dragged, not once it is let
+    /// go: the application lays itself out for the shape it is given, which is what makes this a
+    /// window and not a video of one. A request every tenth of a second keeps an encoder restart
+    /// from landing on every frame of the drag.
     func windowDidResize(_ note: Notification) {
-        resizeTimer?.invalidate()
-        resizeTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in
-            guard let self else { return }
-            let scale = self.window.backingScaleFactor
-            let size = self.view.bounds.size
-            self.onResize?(self.id, Int(size.width * scale), Int(size.height * scale))
+        guard resizeTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.1, repeats: false) { [weak self] _ in
+            self?.resizeTimer = nil
+            self?.askForSize()
         }
+        RunLoop.main.add(timer, forMode: .common)   // a drag runs the loop in its own mode
+        resizeTimer = timer
+    }
+
+    func windowDidEndLiveResize(_ note: Notification) {
+        resizeTimer?.invalidate()
+        resizeTimer = nil
+        askForSize()
+    }
+
+    private func askForSize() {
+        let scale = window.backingScaleFactor
+        let size = view.bounds.size
+        askedAt = Date()
+        onResize?(id, Int(size.width * scale), Int(size.height * scale))
     }
 }

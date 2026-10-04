@@ -41,6 +41,7 @@ enum LocalTests {
         var said: [[String: Any]] = []
         sync.send = { said.append($0) }
         sync.connected = true
+        said.removeAll()   // connecting offers what is already on the pasteboard
         sync.fromHost(["Offer": ["mime_types": ["text/plain;charset=utf-8"], "text": "from the host", "bytes": 13]])
         check("a host's text lands on the pasteboard", board.string(forType: .string) == "from the host")
         sync.fromHost(["Offer": ["mime_types": ["image/png"], "text": NSNull(), "bytes": 100]])

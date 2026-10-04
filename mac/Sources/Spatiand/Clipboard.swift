@@ -24,7 +24,9 @@ final class ClipboardSync {
     /// Say something to the host.
     var send: (([String: Any]) -> Void)?
     var connected = false {
-        didSet { if connected { lastChange = board.changeCount } }
+        // What is already on the pasteboard is offered at once: a person copies, then connects,
+        // then pastes, and the host would otherwise have nothing to paste.
+        didSet { if connected { lastChange = board.changeCount; offer() } }
     }
 
     init() { lastChange = NSPasteboard.general.changeCount }
@@ -34,6 +36,15 @@ final class ClipboardSync {
     }
 
     // MARK: the Mac's clipboard changed
+
+    /// Say now if the pasteboard changed since last said, instead of at the next tick. True when
+    /// something was said, so the caller can let it arrive before a paste.
+    @discardableResult
+    func flush() -> Bool {
+        let before = lastChange
+        poll()
+        return lastChange != before
+    }
 
     private func poll() {
         let count = board.changeCount
