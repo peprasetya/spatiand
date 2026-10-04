@@ -12,6 +12,10 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 spatiand-stream = { path = "../spatiand-stream" }
+spatiand-render = { path = "../spatiand-render" }
+spatiand-track = { path = "../spatiand-track" }
+spatiand-hmd = { path = "../spatiand-hmd" }
+glam.workspace = true
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros"] }
 serde.workspace = true

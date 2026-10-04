@@ -9,6 +9,8 @@
 //! It is `probe-session` made into a library: the same Hello, the same control stream, the same
 //! reassembly of frames, with callbacks where the probe printed.
 
+pub mod room;
+
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -417,6 +419,263 @@ pub unsafe extern "C" fn sp_stop(core: *mut Core) {
         core.disconnect();
         core.runtime.shutdown_background();
     }
+}
+
+
+// MARK: the room
+
+/// The glasses' world, behind a lock: the glasses' sensor thread feeds it and the drawing thread
+/// reads it. See [`room`].
+pub struct RoomHandle(Mutex<room::Room>);
+
+#[repr(C)]
+pub struct SpAim {
+    /// The window's id, or -1 for none.
+    pub window: i32,
+    pub x: f64,
+    pub y: f64,
+    pub point: [f64; 3],
+}
+
+#[repr(C)]
+pub struct SpDraw {
+    pub window: u32,
+    pub first: u32,
+    pub count: u32,
+    /// Bit 0 focused, bit 1 aimed at, bit 2 pinned to the glass.
+    pub flags: u32,
+}
+
+fn with_room<R>(room: *mut RoomHandle, default: R, f: impl FnOnce(&mut room::Room) -> R) -> R {
+    // SAFETY: the pointer came from `sp_room_new` and has not been freed, or it is null.
+    match unsafe { room.as_ref() } {
+        Some(handle) => f(&mut handle.0.lock().unwrap()),
+        None => default,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_new() -> *mut RoomHandle {
+    Box::into_raw(Box::new(RoomHandle(Mutex::new(room::Room::new()))))
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_free(room: *mut RoomHandle) {
+    if !room.is_null() {
+        // SAFETY: from `sp_room_new`, freed once.
+        drop(unsafe { Box::from_raw(room) });
+    }
+}
+
+/// One sample from the glasses: angular rate in degrees a second, acceleration in g, field in gauss.
+#[no_mangle]
+pub extern "C" fn sp_room_imu(room: *mut RoomHandle, timestamp_ns: u64, gyro: *const f64, accel: *const f64, mag: *const f64) {
+    if gyro.is_null() || accel.is_null() || mag.is_null() {
+        return;
+    }
+    // SAFETY: three readable arrays of three, by the contract.
+    let (g, a, m) = unsafe { (std::slice::from_raw_parts(gyro, 3), std::slice::from_raw_parts(accel, 3), std::slice::from_raw_parts(mag, 3)) };
+    let sample = spatiand_hmd::ImuSample {
+        timestamp_ns,
+        gyro: glam::DVec3::new(g[0], g[1], g[2]),
+        accel: glam::DVec3::new(a[0], a[1], a[2]),
+        mag: glam::DVec3::new(m[0], m[1], m[2]),
+        temperature_c: None,
+    };
+    with_room(room, (), |r| r.imu(&sample));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_recentre(room: *mut RoomHandle) {
+    with_room(room, (), |r| r.recentre());
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_has_head(room: *mut RoomHandle) -> i32 {
+    with_room(room, 0, |r| r.has_head() as i32)
+}
+
+/// For the preview, where there are no sensors: hold the head at this heading and pitch, in degrees.
+#[no_mangle]
+pub extern "C" fn sp_room_set_head(room: *mut RoomHandle, enable: i32, yaw_deg: f64, pitch_deg: f64) {
+    use glam::{DQuat, DVec3};
+    with_room(room, (), |r| {
+        r.set_fixed_head((enable != 0).then(|| {
+            DQuat::from_axis_angle(DVec3::Z, yaw_deg.to_radians()) * DQuat::from_axis_angle(DVec3::Y, -pitch_deg.to_radians())
+        }))
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_set_per_eye(room: *mut RoomHandle, width: u32, height: u32) {
+    with_room(room, (), |r| r.set_per_eye(width, height));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_set_window(room: *mut RoomHandle, id: u32, width: u32, height: u32) {
+    with_room(room, (), |r| r.set_window(id, (width, height)));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_show(room: *mut RoomHandle, id: u32) {
+    with_room(room, (), |r| r.show(id));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_remove(room: *mut RoomHandle, id: u32) {
+    with_room(room, (), |r| r.remove_window(id));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_clear(room: *mut RoomHandle) {
+    with_room(room, (), |r| r.clear());
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_focus(room: *mut RoomHandle, id: i32) {
+    with_room(room, (), |r| r.set_focus((id >= 0).then_some(id as u32)));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_focused(room: *mut RoomHandle) -> i32 {
+    with_room(room, -1, |r| r.focus().map_or(-1, |i| i as i32))
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_move_pointer(room: *mut RoomHandle, dx: f64, dy: f64) {
+    with_room(room, (), |r| r.move_pointer(dx, dy));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_centre_pointer(room: *mut RoomHandle) {
+    with_room(room, (), |r| r.centre_pointer());
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_aim(room: *mut RoomHandle, out: *mut SpAim) {
+    let aim = with_room(room, None, |r| Some(r.aim()));
+    // SAFETY: a writable `SpAim`, by the contract.
+    if let (Some(aim), Some(out)) = (aim, unsafe { out.as_mut() }) {
+        out.window = aim.window.map_or(-1, |w| w as i32);
+        out.x = aim.x;
+        out.y = aim.y;
+        out.point = aim.point.to_array();
+    }
+}
+
+/// Where the cursor is in one window's pixels, even off its edge. 1 if there is such a window.
+#[no_mangle]
+pub extern "C" fn sp_room_aim_at(room: *mut RoomHandle, id: u32, x: *mut f64, y: *mut f64) -> i32 {
+    match with_room(room, None, |r| r.aim_at(id)) {
+        Some((ax, ay)) => {
+            // SAFETY: writable doubles, by the contract.
+            unsafe {
+                if let Some(x) = x.as_mut() {
+                    *x = ax;
+                }
+                if let Some(y) = y.as_mut() {
+                    *y = ay;
+                }
+            }
+            1
+        }
+        None => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_begin_grab(room: *mut RoomHandle, id: u32) {
+    with_room(room, (), |r| r.begin_grab(id));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_drag(room: *mut RoomHandle) {
+    with_room(room, (), |r| r.drag());
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_end_grab(room: *mut RoomHandle) {
+    with_room(room, (), |r| r.end_grab());
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_grabbed(room: *mut RoomHandle) -> i32 {
+    with_room(room, -1, |r| r.grabbed().map_or(-1, |i| i as i32))
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_scale(room: *mut RoomHandle, id: u32, factor: f64) {
+    with_room(room, (), |r| r.scale(id, factor));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_bring_here(room: *mut RoomHandle, id: u32) {
+    with_room(room, (), |r| r.bring_here(id));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_set_pinned(room: *mut RoomHandle, id: u32, pinned: i32) {
+    with_room(room, (), |r| r.set_pinned(id, pinned != 0));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_is_pinned(room: *mut RoomHandle, id: u32) -> i32 {
+    with_room(room, 0, |r| r.is_pinned(id) as i32)
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_next_corner(room: *mut RoomHandle) {
+    with_room(room, (), |r| r.next_corner());
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_toggle_size(room: *mut RoomHandle) {
+    with_room(room, (), |r| r.toggle_size());
+}
+
+/// What to draw. `matrices` takes 32 floats: the left eye's view-projection then the right's,
+/// column-major. Vertices are `x y z u v`; the number of floats written is returned (0 if they
+/// would not fit), and `draw_count` says how many of `draws` are filled.
+#[no_mangle]
+pub extern "C" fn sp_room_frame(
+    room: *mut RoomHandle,
+    matrices: *mut f32,
+    vertices: *mut f32,
+    vertex_capacity: u32,
+    draws: *mut SpDraw,
+    draw_capacity: u32,
+    draw_count: *mut u32,
+) -> u32 {
+    let Some(frame) = with_room(room, None, |r| Some(r.frame())) else { return 0 };
+    if frame.vertices.len() > vertex_capacity as usize || frame.draws.len() > draw_capacity as usize {
+        return 0;
+    }
+    // SAFETY: buffers of the sizes given, by the contract.
+    unsafe {
+        if !matrices.is_null() {
+            let out = std::slice::from_raw_parts_mut(matrices, 32);
+            out[..16].copy_from_slice(&frame.eyes[0].to_cols_array());
+            out[16..].copy_from_slice(&frame.eyes[1].to_cols_array());
+        }
+        if !vertices.is_null() {
+            std::slice::from_raw_parts_mut(vertices, frame.vertices.len()).copy_from_slice(&frame.vertices);
+        }
+        if !draws.is_null() {
+            let out = std::slice::from_raw_parts_mut(draws, frame.draws.len());
+            for (slot, d) in out.iter_mut().zip(&frame.draws) {
+                *slot = SpDraw {
+                    window: d.window,
+                    first: d.first,
+                    count: d.count,
+                    flags: d.focused as u32 | (d.aimed as u32) << 1 | (d.pinned as u32) << 2,
+                };
+            }
+        }
+        if let Some(n) = draw_count.as_mut() {
+            *n = frame.draws.len() as u32;
+        }
+    }
+    frame.vertices.len() as u32
 }
 
 #[cfg(test)]

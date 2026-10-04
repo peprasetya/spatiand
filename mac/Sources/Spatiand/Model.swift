@@ -21,6 +21,8 @@ final class Model {
     /// `SPATIAND_DEBUG=1` says what arrives, for working out why a window is black.
     let debug = ProcessInfo.processInfo.environment["SPATIAND_DEBUG"] != nil
     let clipboard = ClipboardSync()
+    /// The glasses' world, which windows go into when there are glasses.
+    let room = RoomController()
     private(set) var host: PairedHost?
     private(set) var connected = false
     /// Another device took this host's windows over. Not answered by taking them straight back:
@@ -117,7 +119,12 @@ final class Model {
     /// when it changes and again each time a session begins, because a host forgets with the
     /// session.
     var glassesOn = false {
-        didSet { if glassesOn != oldValue { sendGlasses() } }
+        didSet {
+            if glassesOn != oldValue {
+                sendGlasses()
+                room.setActive(glassesOn)
+            }
+        }
     }
 
     /// Tell the host how much this link can carry; it lowers its own ceiling to it.
@@ -220,6 +227,7 @@ final class Model {
             // A picture to start from. A window that is not changing sends nothing by itself, so
             // one that was already there when this session arrived would stay black for ever.
             link.say(["WantKeyframe": ["window": Int(id)]])
+            room.windowSized(id, size: size)
             if let existing = windows[id] {
                 existing.setSize(size)
             } else if let parent = infos[id]?.parent {
@@ -235,6 +243,7 @@ final class Model {
         case "Closed":
             if let id = window() {
                 windows.removeValue(forKey: id)?.closeForReal()
+                room.windowClosed(id)
                 infos[id] = nil
                 sizes[id] = nil
             }
@@ -264,9 +273,12 @@ final class Model {
             link.say(["Configure": ["window": Int(id), "width": w, "height": h]])
         }
         windows[id] = remote
+        room.windowOpened(id, size: size)
         feedEarly(id)
-        remote.show()
-        NSApp.activate(ignoringOtherApps: true)
+        if !room.active {
+            remote.show()
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     /// Terminals, where Control-C is an interrupt and copy is Control-Shift-C.
@@ -312,6 +324,7 @@ final class Model {
     }
 
     private func closeAll() {
+        room.sessionEnded()
         earlyKeyframes = [:]
         for window in windows.values { window.closeForReal() }
         windows = [:]

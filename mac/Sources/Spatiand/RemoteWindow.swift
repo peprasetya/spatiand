@@ -204,6 +204,7 @@ final class VideoView: NSView {
 
 /// Anything the host draws that has a picture and takes input: a window, or a menu hanging off one.
 protocol RemoteSurface: AnyObject {
+    var id: UInt16 { get }
     var view: VideoView { get }
     func setSize(_ size: CGSize)
     func closeForReal()
@@ -213,7 +214,15 @@ protocol RemoteSurface: AnyObject {
 extension RemoteSurface {
     func video(_ data: Data, codec: Int32, captured: UInt64) {
         let samples = (self as? RemoteWindow)?.samples ?? (self as? RemotePopup)?.samples
-        if let sample = samples?.sample(data, codec: codec, capturedMicros: captured) { view.show(sample) }
+        guard let sample = samples?.sample(data, codec: codec, capturedMicros: captured) else { return }
+        // In the room the picture is decoded for drawing there, and the window on this Mac,
+        // which is not on show, is left alone.
+        let room = Model.shared.room
+        if room.active {
+            if self is RemoteWindow { room.picture(id, sample) }
+        } else {
+            view.show(sample)
+        }
     }
 }
 
@@ -326,6 +335,19 @@ final class RemoteWindow: NSObject, NSWindowDelegate, RemoteSurface {
 
     func show() {
         window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(view)
+    }
+
+    /// The glasses have the windows now: this one leaves the desktop without closing.
+    func hideForRoom() {
+        let was = onFocus
+        onFocus = nil    // leaving is not the wearer moving the keyboard
+        window.orderOut(nil)
+        onFocus = was
+    }
+
+    func showAgain() {
+        window.orderFront(nil)
         window.makeFirstResponder(view)
     }
 

@@ -240,6 +240,15 @@ if CommandLine.arguments.contains("--selftest-local") {
     exit(LocalTests.run())
 }
 
+if let at = CommandLine.arguments.firstIndex(of: "--selftest-room") {
+    let args = Array(CommandLine.arguments[(at + 1)...])
+    guard args.count >= 3 else { print("usage: --selftest-room <address> <fingerprint> <app>"); exit(2) }
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    DispatchQueue.main.async { RoomTest.run(address: args[0], fingerprint: args[1], app: args[2]) }
+    application.run()
+}
+
 if let at = CommandLine.arguments.firstIndex(of: "--selftest-window") {
     let args = Array(CommandLine.arguments[(at + 1)...])
     guard args.count >= 3 else { print("usage: --selftest-window <address> <fingerprint> <app>"); exit(2) }
