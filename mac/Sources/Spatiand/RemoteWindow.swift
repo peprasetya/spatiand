@@ -77,6 +77,13 @@ final class VideoView: NSView {
             display.flush()
             needKeyframe?()
         }
+        // The picture's own size is the truth about the picture; a message about it can come
+        // late, or not at all for a restart, and the picture would be stretched meanwhile.
+        if let format = CMSampleBufferGetFormatDescription(sample) {
+            let d = CMVideoFormatDescriptionGetDimensions(format)
+            let size = CGSize(width: Int(d.width), height: Int(d.height))
+            if size.width > 0, size != hostSize { hostSize = size }
+        }
         display.enqueue(sample)
     }
 

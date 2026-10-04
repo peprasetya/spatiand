@@ -28,11 +28,16 @@ enum WindowTest {
             after(7) {
                 guard let w = model.windows.values.compactMap({ $0 as? RemoteWindow }).max(by: { $0.id < $1.id }) else { return }
                 print("before: view \(w.view.bounds.size) host \(w.view.hostSize)")
-                var frame = w.window.frame
-                frame.size.width += 300; frame.size.height += 200
-                w.window.setFrame(frame, display: true)
+                // A drag: many small steps, a tenth of a second or less apart.
+                for step in 1...12 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(step) * 0.08) {
+                        var frame = w.window.frame
+                        frame.size.width += 25; frame.size.height += 15
+                        w.window.setFrame(frame, display: true)
+                    }
+                }
             }
-            after(10) {
+            after(11) {
                 guard let w = model.windows.values.compactMap({ $0 as? RemoteWindow }).max(by: { $0.id < $1.id }) else { return }
                 print("after: view \(w.view.bounds.size) host \(w.view.hostSize)")
                 snapshot("/tmp/spatiand-window-resized.png", model)
