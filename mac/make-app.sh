@@ -35,6 +35,8 @@ PLIST
 # permission is then bound to the bundle's name and that certificate, which do not change. See
 # HoloFrame's Tools/make-app.sh for how such a certificate is made, and why it is searched for
 # without `-v` (a self-signed root is never "valid" to the trust policy, and signs fine).
+# A signature refuses a bundle with extended attributes on it (a copied binary carries some).
+xattr -cr "$app" 2>/dev/null || true
 IDENTITY_NAME="${SPATIAND_SIGN_NAME:-HoloFrame Dev}"
 IDENTITY=$(security find-identity -p codesigning 2>/dev/null | grep -F "\"$IDENTITY_NAME" \
   | sed -E 's/^[[:space:]]*[0-9]+\)[[:space:]]*([0-9A-F]+)[[:space:]]+.*$/\1/' | head -1)
