@@ -253,6 +253,7 @@ final class GlassesOutput: NSObject {
         let aim = room.core.aim()
         let now = (aim.window, Int(aim.x), Int(aim.y))
         if now != lastAim { lastAim = now; room.pointerChanged() }
+        room.tick()
         renderer.render(into: drawable.texture, sideBySide: sideBySide, present: drawable)
     }
 

@@ -63,11 +63,11 @@ final class RoomCore {
     func movePointer(dx: Double, dy: Double) { sp_room_move_pointer(room, dx, dy) }
     func centrePointer() { sp_room_centre_pointer(room) }
 
-    struct Aim { var window: UInt16?; var x: Double; var y: Double }
+    struct Aim { var window: UInt16?; var x: Double; var y: Double; var title = false }
     func aim() -> Aim {
         var out = sp_aim()
         sp_room_aim(room, &out)
-        return Aim(window: out.window >= 0 ? UInt16(out.window) : nil, x: out.x, y: out.y)
+        return Aim(window: out.window >= 0 ? UInt16(out.window) : nil, x: out.x, y: out.y, title: out.title != 0)
     }
     /// Where the pointer is in one window's own pixels, even off its edge.
     func aim(at id: UInt16) -> (x: Double, y: Double)? {

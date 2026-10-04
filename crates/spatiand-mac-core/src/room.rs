@@ -26,6 +26,13 @@ use spatiand_track::{AxisMap, HeadTracker, TrackerConfig, DEFAULT_PREDICTION_MAX
 pub const CURSOR: u32 = 0xFFFF;
 /// Ids from here up are Spatiand's own panels, not an application's windows.
 pub const PANEL_FIRST: u32 = 0xFFF0;
+/// Added to a window's id for its title bar, in what is drawn.
+pub const TITLE_FLAG: u32 = 0x10000;
+/// A title bar's picture, in pixels: the same shape whatever the window's size, so the picture needs
+/// drawing only once for each state.
+pub const BAR_PX: (u32, u32) = (1024, 46);
+/// How far above its window a title bar floats, metres.
+const BAR_GAP: f64 = 0.006;
 
 /// How far from the wearer a window is put, and how wide, until it is moved. The Deck's own.
 const DEFAULT_RADIUS: f64 = 2.2;
@@ -120,6 +127,34 @@ fn strips(radius: f64, width: f64) -> Vec<Strip> {
         .collect()
 }
 
+/// A window's strips, as triangles, appended to `verts`: a flat piece for each, standing on the
+/// window's own cylinder, `rise` metres up the window's own vertical from its middle.
+fn push_strips(verts: &mut Vec<f32>, place: &Placement, height: f64, rise: f64) {
+    let origin = place.position();
+    let turn = place.orientation();
+    let pieces = if place.pinned { vec![Strip { y: 0.0, chord: place.width, from: 0.0, to: 1.0 }] } else { strips(place.radius, place.width) };
+    for s in pieces {
+        // The flat piece's middle on the window's own cylinder, and which way it runs.
+        let (centre, angle) = if place.pinned { (DVec3::new(0.0, s.y, 0.0), 0.0) } else { on_cylinder(place.radius, s.y, 0.0) };
+        let centre = centre + DVec3::Z * rise;
+        let along = DVec3::new(-angle.sin(), angle.cos(), 0.0) * (s.chord * 0.5);
+        let up = DVec3::Z * (height * 0.5);
+        // Left, right, top, bottom.
+        let tl = origin + turn * (centre + along + up);
+        let tr = origin + turn * (centre - along + up);
+        let bl = origin + turn * (centre + along - up);
+        let br = origin + turn * (centre - along - up);
+        let (u0, u1) = (s.from as f32, s.to as f32);
+        let corner = |p: DVec3, u: f32, v: f32| [p.x as f32, p.y as f32, p.z as f32, u, v];
+        for v in [
+            corner(tl, u0, 0.0), corner(bl, u0, 1.0), corner(tr, u1, 0.0),
+            corner(tr, u1, 0.0), corner(bl, u0, 1.0), corner(br, u1, 1.0),
+        ] {
+            verts.extend_from_slice(&v);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Win {
     pub id: u32,
@@ -137,6 +172,23 @@ impl Win {
 
     fn height(&self, place: &Placement) -> f64 {
         place.width / self.aspect()
+    }
+
+    /// The title bar above this window: its quad, how high above the window's middle it is, and how tall.
+    fn bar(&self, place: &Placement) -> Option<(Quad, f64, f64)> {
+        if place.pinned || Room::is_panel(self.id) {
+            return None;
+        }
+        let height = place.width * BAR_PX.1 as f64 / BAR_PX.0 as f64;
+        let rise = self.height(place) * 0.5 + BAR_GAP + height * 0.5;
+        let quad = Quad {
+            centre: place.position() + place.orientation() * DVec3::new(0.0, 0.0, rise),
+            orientation: place.orientation(),
+            width: place.width,
+            height,
+            bend: place.bend(),
+        };
+        Some((quad, rise, height))
     }
 
     fn quad(&self, place: &Placement) -> Quad {
@@ -159,6 +211,8 @@ pub struct Aim {
     pub y: f64,
     /// Where in the room: the point the cursor is drawn at.
     pub point: DVec3,
+    /// Set when what is aimed at is the window's title bar, whose pixels are [`BAR_PX`].
+    pub title: bool,
 }
 
 /// Something being dragged about the room with the mouse.
@@ -590,10 +644,22 @@ impl Room {
                     x: (hit.u * w.size.0 as f64).clamp(0.0, w.size.0 as f64),
                     y: (hit.v * w.size.1 as f64).clamp(0.0, w.size.1 as f64),
                     point: hit.point,
+                    title: false,
                 };
             }
+            if let Some((bar, _, _)) = w.bar(&place) {
+                if let Some(hit) = intersect_quad(&ray, &bar) {
+                    return Aim {
+                        window: Some(w.id),
+                        x: (hit.u * BAR_PX.0 as f64).clamp(0.0, BAR_PX.0 as f64),
+                        y: (hit.v * BAR_PX.1 as f64).clamp(0.0, BAR_PX.1 as f64),
+                        point: hit.point,
+                        title: true,
+                    };
+                }
+            }
         }
-        Aim { window: None, x: 0.0, y: 0.0, point: ray.at(DEFAULT_RADIUS) }
+        Aim { window: None, x: 0.0, y: 0.0, point: ray.at(DEFAULT_RADIUS), title: false }
     }
 
     /// Where the cursor is in one window's own pixels, even when it has left it: a drag that
@@ -672,6 +738,7 @@ impl Room {
         let aim = self.aim();
         let mut verts: Vec<f32> = Vec::new();
         let mut draws: Vec<Draw> = Vec::new();
+        let mut bars: Vec<Draw> = Vec::new();
 
         // The room's windows first, in order, then the pinned ones over them.
         let mut order: Vec<usize> = placed.iter().map(|(i, _)| *i).collect();
@@ -684,30 +751,9 @@ impl Room {
             }
             let first = (verts.len() / 5) as u32;
             let height = w.height(&place);
-            let origin = place.position();
-            let turn = place.orientation();
-            let pieces = if place.pinned { vec![Strip { y: 0.0, chord: place.width, from: 0.0, to: 1.0 }] } else { strips(place.radius, place.width) };
-            for s in pieces {
-                // The flat piece's middle on the window's own cylinder, and which way it runs.
-                let (centre, angle) = if place.pinned { (DVec3::new(0.0, s.y, 0.0), 0.0) } else { on_cylinder(place.radius, s.y, 0.0) };
-                let along = DVec3::new(-angle.sin(), angle.cos(), 0.0) * (s.chord * 0.5);
-                let up = DVec3::Z * (height * 0.5);
-                // Left, right, top, bottom.
-                let tl = origin + turn * (centre + along + up);
-                let tr = origin + turn * (centre - along + up);
-                let bl = origin + turn * (centre + along - up);
-                let br = origin + turn * (centre - along - up);
-                let (u0, u1) = (s.from as f32, s.to as f32);
-                let corner = |p: DVec3, u: f32, v: f32| [p.x as f32, p.y as f32, p.z as f32, u, v];
-                for v in [
-                    corner(tl, u0, 0.0), corner(bl, u0, 1.0), corner(tr, u1, 0.0),
-                    corner(tr, u1, 0.0), corner(bl, u0, 1.0), corner(br, u1, 1.0),
-                ] {
-                    verts.extend_from_slice(&v);
-                }
-            }
+            push_strips(&mut verts, &place, height, 0.0);
             let count = (verts.len() / 5) as u32 - first;
-            let aimed = aim.window == Some(w.id);
+            let aimed = aim.window == Some(w.id) && !aim.title;
             draws.push(Draw {
                 window: w.id,
                 first,
@@ -716,6 +762,24 @@ impl Room {
                 aimed,
                 pinned: place.pinned,
             });
+            if let Some((_, rise, bar_height)) = w.bar(&place) {
+                let first = (verts.len() / 5) as u32;
+                push_strips(&mut verts, &place, bar_height, rise);
+                let count = (verts.len() / 5) as u32 - first;
+                bars.push(Draw {
+                    window: w.id | TITLE_FLAG,
+                    first,
+                    count,
+                    focused: self.focus == Some(w.id),
+                    aimed: aim.window == Some(w.id) && aim.title,
+                    pinned: false,
+                });
+            }
+        }
+        // The bars over the windows, and Spatiand's own panels over those.
+        let panels_at = draws.iter().position(|d| Self::is_panel(d.window)).unwrap_or(draws.len());
+        for (n, bar) in bars.into_iter().enumerate() {
+            draws.insert(panels_at + n, bar);
         }
 
         // The cursor: a small flat square at the hit, turned to face the eye.
@@ -862,7 +926,7 @@ mod tests {
         r.set_window(1, (1280, 800));
         r.show(1);
         let frame = r.frame();
-        assert_eq!(frame.draws.len(), 2);
+        assert_eq!(frame.draws.len(), 3, "the window, its title bar and the cursor");
         assert_eq!(frame.draws[0].window, 1);
         assert!(frame.draws[0].count >= 12, "a bent window is several strips");
         assert_eq!(frame.draws.last().unwrap().window, CURSOR);
@@ -917,7 +981,7 @@ mod tests {
         assert_eq!(r.focus(), None, "and cannot be given it");
         let frame = r.frame();
         let order: Vec<u32> = frame.draws.iter().map(|d| d.window).collect();
-        assert_eq!(order, vec![1, PANEL_FIRST + 2, CURSOR], "drawn over the window, under the cursor");
+        assert_eq!(order, vec![1, 1 | TITLE_FLAG, PANEL_FIRST + 2, CURSOR], "drawn over the window and its bar, under the cursor");
         r.remove_window(PANEL_FIRST + 2);
         assert_eq!(r.aim().window, Some(1));
     }
@@ -1035,5 +1099,33 @@ mod tests {
         let ahead = energy(0.0);
         let behind = energy(180.0);
         assert!((ahead - behind).abs() / ahead.max(behind) > 0.15, "behind and ahead should differ: {ahead} and {behind}");
+    }
+
+    #[test]
+    fn a_title_bar_floats_above_a_window_and_is_aimed_at_on_its_own() {
+        let mut r = room();
+        r.set_window(1, (1280, 800));
+        r.show(1);
+        // The window is 0.69 m tall at 2.2 m: about 9 degrees up from its middle is its bar.
+        r.cursor = (0.0, 10.0f64.to_radians());
+        let aim = r.aim();
+        assert_eq!(aim.window, Some(1));
+        assert!(aim.title, "that is the title bar: {aim:?}");
+        assert!((0.0..=BAR_PX.0 as f64).contains(&aim.x) && (0.0..=BAR_PX.1 as f64).contains(&aim.y));
+        // And below it, the window.
+        r.cursor = (0.0, 0.0);
+        assert!(!r.aim().title);
+        let frame = r.frame();
+        let ids: Vec<u32> = frame.draws.iter().map(|d| d.window).collect();
+        assert_eq!(ids, vec![1, 1 | TITLE_FLAG, CURSOR], "the bar is drawn over the window, under the cursor");
+    }
+
+    #[test]
+    fn a_pinned_window_has_no_title_bar() {
+        let mut r = room();
+        r.set_window(1, (1280, 720));
+        r.show(1);
+        r.set_pinned(1, true);
+        assert!(r.frame().draws.iter().all(|d| d.window & TITLE_FLAG == 0));
     }
 }

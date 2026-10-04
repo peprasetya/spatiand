@@ -24,7 +24,7 @@ final class RoomRenderer {
     /// Decoded pictures by window; owned by the main thread.
     var decoders: [UInt16: PictureSource] = [:]
     /// Spatiand's own panels, which draw themselves: the menu.
-    var panels: [UInt16: MTLTexture] = [:]
+    var panels: [UInt32: MTLTexture] = [:]
     private var cached: [UInt16: (generation: Int, texture: CVMetalTexture)] = [:]
 
     private static let capacity = 600_000
@@ -107,8 +107,11 @@ final class RoomRenderer {
         for id in Array(decoders.keys) { drop(id) }
     }
 
-    private func texture(for id: UInt16, keep: inout [CVMetalTexture]) -> MTLTexture? {
-        if let panel = panels[id] { return panel }
+    private func texture(for key: UInt32, keep: inout [CVMetalTexture]) -> MTLTexture? {
+        if let panel = panels[key] { return panel }
+        // A title bar that has no picture yet is not drawn; a window's id is 16 bits.
+        guard key < 0x10000 else { return nil }
+        let id = UInt16(key)
         guard let cache, let (buffer, generation) = decoders[id]?.current() else { return nil }
         if let hit = cached[id], hit.generation == generation {
             keep.append(hit.texture)
@@ -155,7 +158,7 @@ final class RoomRenderer {
         // Textures are looked up once per window, not once per eye.
         var textures: [UInt32: MTLTexture] = [:]
         for draw in frame.draws where draw.window != RoomCore.cursor {
-            if let t = texture(for: UInt16(draw.window), keep: &keep) { textures[draw.window] = t }
+            if let t = texture(for: draw.window, keep: &keep) { textures[draw.window] = t }
         }
 
         for eye in 0..<eyes {
@@ -170,7 +173,7 @@ final class RoomRenderer {
             for draw in frame.draws where draw.window != RoomCore.cursor {
                 guard let texture = textures[draw.window] else { continue }
                 // The one being looked at is as the host drew it; the rest are a little dimmer.
-                var brightness: Float = (draw.focused || draw.aimed || draw.window >= 0xFFF0) ? 1.0 : 0.82
+                var brightness: Float = (draw.focused || draw.aimed || draw.window >= 0xFFF0 || draw.window & 0x10000 != 0) ? 1.0 : 0.82
                 encoder.setFragmentBytes(&brightness, length: 4, index: 0)
                 encoder.setFragmentTexture(texture, index: 0)
                 encoder.drawPrimitives(type: .triangle, vertexStart: draw.first, vertexCount: draw.count)

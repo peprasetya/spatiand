@@ -65,7 +65,7 @@ final class RoomMenu {
         isOpen = false
         controller.core.remove(UInt16(Self.panelID))
         texture = nil
-        controller.renderer?.panels[Self.panelID] = nil
+        controller.renderer?.panels[UInt32(Self.panelID)] = nil
         controller.hint.update()
     }
 
@@ -261,6 +261,6 @@ final class RoomMenu {
             texture = renderer.device.makeTexture(descriptor: d)
         }
         texture?.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0, withBytes: data, bytesPerRow: w * 4)
-        renderer.panels[Self.panelID] = texture
+        renderer.panels[UInt32(Self.panelID)] = texture
     }
 }

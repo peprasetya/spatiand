@@ -436,6 +436,8 @@ pub struct SpAim {
     pub x: f64,
     pub y: f64,
     pub point: [f64; 3],
+    /// 1 when what is aimed at is the window's title bar.
+    pub title: i32,
 }
 
 #[repr(C)]
@@ -623,6 +625,7 @@ pub extern "C" fn sp_room_aim(room: *mut RoomHandle, out: *mut SpAim) {
         out.x = aim.x;
         out.y = aim.y;
         out.point = aim.point.to_array();
+        out.title = aim.title as i32;
     }
 }
 

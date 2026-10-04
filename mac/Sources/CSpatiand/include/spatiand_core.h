@@ -60,10 +60,11 @@ typedef struct {
     int32_t window;      // the window's id, or -1 for none
     double x, y;         // where in that window, in the host's pixels
     double point[3];     // where in the room: +X forward, +Y left, +Z up
+    int32_t title;       // 1 when it is the window's title bar (1024 by 46 pixels)
 } sp_aim;
 
 typedef struct {
-    uint32_t window;     // 0xFFFF is the cursor
+    uint32_t window;     // 0xFFFF is the cursor; 0x10000 added is a window's title bar
     uint32_t first;      // first vertex
     uint32_t count;      // vertices
     uint32_t flags;      // bit 0 focused, bit 1 aimed at, bit 2 pinned to the glass

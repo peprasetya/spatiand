@@ -248,6 +248,7 @@ final class Model {
         case "Retitled":
             if let id = window(), let title = fields["title"] as? String {
                 infos[id]?.title = title
+                room.retitled(id, title)
                 (windows[id] as? RemoteWindow)?.window.title = title
             }
         case "Closed":
@@ -283,7 +284,7 @@ final class Model {
             link.say(["Configure": ["window": Int(id), "width": w, "height": h]])
         }
         windows[id] = remote
-        room.windowOpened(id, size: size, app: infos[id]?.app ?? "")
+        room.windowOpened(id, size: size, app: infos[id]?.app ?? "", title: infos[id]?.title ?? "")
         feedEarly(id)
         if !room.active {
             remote.show()

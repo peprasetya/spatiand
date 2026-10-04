@@ -36,6 +36,7 @@ final class RoomController {
 
     private(set) lazy var menu = RoomMenu(controller: self)
     private(set) lazy var hint = RoomHint(controller: self)
+    private(set) lazy var titles = RoomTitles(controller: self)
     /// Whether any application window is in the room.
     var hasWindows: Bool { !known.isEmpty || !macCaptures.isEmpty }
     /// Where pinned windows sit and how big, as the wearer left them: kept here because the room
@@ -109,8 +110,9 @@ final class RoomController {
 
     // MARK: windows, as the session tells of them
 
-    func windowOpened(_ id: UInt16, size: CGSize, app: String) {
+    func windowOpened(_ id: UInt16, size: CGSize, app: String, title: String) {
         known[id] = size
+        titles.set(id, title: title)
         defer { hint.update() }
         apps[id] = app
         core.setApp(id, app)
@@ -135,6 +137,7 @@ final class RoomController {
 
     func windowClosed(_ id: UInt16) {
         defer { hint.update() }
+        titles.drop(id)
         known[id] = nil
         apps[id] = nil
         shown.remove(id)
@@ -143,12 +146,21 @@ final class RoomController {
         if active, let now = core.focused, !MacWindows.isMac(now) { sendFocus(now) }
     }
 
+    /// A window has a new name.
+    func retitled(_ id: UInt16, _ title: String) {
+        if titles.titles[id] != nil { titles.set(id, title: title) }
+    }
+
+    /// Once a frame: what the bars say, if that has changed.
+    func tick() { titles.update() }
+
     /// The host's windows are gone with the session; this Mac's own stay.
     func sessionEnded() {
         defer { hint.update() }
         for id in known.keys {
             core.remove(id)
             renderer?.drop(id)
+            titles.drop(id)
         }
         known = [:]
         apps = [:]
@@ -208,11 +220,18 @@ final class RoomController {
             return
         }
         let aim = core.aim()
-        if aim.window != hovered {
-            if let old = hovered, !MacWindows.isMac(old), old < 0xFFF0 { send(old, "Leave") }
-            hovered = aim.window
+        // A title bar is Spatiand's, not the application's: the application is told the pointer left.
+        if aim.title, let id = aim.window {
+            titles.hover = (id, RoomTitles.zone(atX: aim.x))
+        } else {
+            titles.hover = nil
         }
-        if let id = aim.window, id < 0xFFF0 {
+        let over = aim.title ? nil : aim.window
+        if over != hovered {
+            if let old = hovered, !MacWindows.isMac(old), old < 0xFFF0 { send(old, "Leave") }
+            hovered = over
+        }
+        if let id = over, id < 0xFFF0 {
             if MacWindows.isMac(id) { macMouse(id, held: false, aim.x, aim.y) } else { send(id, ["Motion": ["x": aim.x, "y": aim.y]]) }
         }
     }
@@ -224,10 +243,14 @@ final class RoomController {
             return
         }
         guard let id = aim.window, id < 0xFFF0 else { return }
-        if core.focused != id {
-            core.focused = id
-            // The keyboard is one window's at a time: a Mac window's, and the host has none.
-            sendFocus(MacWindows.isMac(id) ? nil : id)
+        focus(id)
+        if aim.title {
+            switch RoomTitles.zone(atX: aim.x) {
+            case .close: closeWindow(id)
+            case .pin: core.setPinned(id, !core.isPinned(id))
+            case .drag: core.beginGrab(id)
+            }
+            return
         }
         if grab {
             core.beginGrab(id)
@@ -325,6 +348,7 @@ final class RoomController {
         nextMac = nextMac &+ 1 < 0xFFF0 ? nextMac + 1 : MacWindows.firstID
         let capture = MacCapture(info)
         macCaptures[id] = capture
+        titles.set(id, title: info.title.isEmpty ? info.app : info.app + " \u{2014} " + info.title)
         renderer.decoders[id] = capture
         capture.onSize = { [weak self] size in DispatchQueue.main.async { self?.macSized(id, size) } }
         capture.onEnded = { [weak self] in self?.removeMacWindow(id) }
@@ -354,6 +378,7 @@ final class RoomController {
         capture.invalidate()
         macShown.remove(id)
         renderer?.drop(id)
+        titles.drop(id)
         core.remove(id)
         hint.update()
     }
@@ -421,8 +446,20 @@ final class RoomController {
 
     func closeAimed() {
         guard let id = core.aim().window ?? core.focused, id < 0xFFF0 else { return }
+        closeWindow(id)
+    }
+
+    /// A host's window is asked to close; one of this Mac's simply leaves the room.
+    func closeWindow(_ id: UInt16) {
         if MacWindows.isMac(id) { removeMacWindow(id); return }
         model.link.say(["Close": ["window": Int(id)]])
+    }
+
+    /// The keyboard goes to this window: a Mac window's, and then the host has none.
+    private func focus(_ id: UInt16) {
+        guard core.focused != id else { return }
+        core.focused = id
+        sendFocus(MacWindows.isMac(id) ? nil : id)
     }
 
     func bringAimedHere() {

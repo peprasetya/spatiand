@@ -43,7 +43,7 @@ enum RoomTest {
             after(6) {
                 let a = room.core.aim()
                 print("aim: window \(a.window.map { String($0, radix: 16) } ?? "none") at \(Int(a.x)),\(Int(a.y))")
-                if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-mac.png") }
+                room.tick(); if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-mac.png") }
                 exit(0)
             }
             return
@@ -55,7 +55,7 @@ enum RoomTest {
                 room.setActive(true)
             }
             after(6) {
-                if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-hint.png") }
+                room.tick(); if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-hint.png") }
                 exit(0)
             }
             return
@@ -70,10 +70,10 @@ enum RoomTest {
         after(8) {
             let aim = room.core.aim()
             print("aim: window \(aim.window.map(String.init) ?? "none") at \(Int(aim.x)),\(Int(aim.y))")
-            if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) {
+            room.tick(); if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) {
                 write(image, "/tmp/spatiand-room.png")
             }
-            if let image = room.renderer?.snapshot(width: 1920, height: 1080, sideBySide: false) {
+            room.tick(); if let image = room.renderer?.snapshot(width: 1920, height: 1080, sideBySide: false) {
                 write(image, "/tmp/spatiand-room-mono.png")
             }
             if env["SPATIAND_TEST_INPUT"] != nil {
@@ -103,6 +103,25 @@ enum RoomTest {
                 }
                 input.stop()
             }
+            if env["SPATIAND_TEST_BAR"] != nil {
+                // Onto the title bar's close button, to see it lit; then the middle of the bar, to take
+                // the window and carry it to the right.
+                room.core.centrePointer()
+                room.pointerMoved(dx: 318, dy: -226)
+                let a = room.core.aim()
+                print("bar aim: window \(a.window.map(String.init) ?? "none") title \(a.title) at \(Int(a.x)),\(Int(a.y))")
+                room.tick()
+                if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-bar1.png") }
+                room.pointerMoved(dx: -250, dy: 0)
+                room.buttonDown(0x110, grab: false)
+                print("grabbing: \(room.core.isGrabbing)")
+                room.pointerMoved(dx: 200, dy: 0)
+                room.core.centrePointer()
+                room.buttonUp(0x110)
+                room.tick()
+                if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-bar2.png") }
+                exit(0)
+            }
             if env["SPATIAND_TEST_MENU"] != nil {
                 room.menu.open()
                 // Up and to the left a little, onto the first rows.
@@ -110,7 +129,7 @@ enum RoomTest {
                 room.pointerMoved(dx: 150, dy: -50)
                 let a = room.core.aim()
                 print("menu aim: window \(a.window.map { String($0, radix: 16) } ?? "none") at \(Int(a.x)),\(Int(a.y))")
-                if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-menu.png") }
+                room.tick(); if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-menu.png") }
                 exit(0)
             }
             // Move the cursor right and down and look again.
@@ -135,7 +154,7 @@ enum RoomTest {
             }
         }
         after(11) {
-            if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) {
+            room.tick(); if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) {
                 write(image, "/tmp/spatiand-room-2.png")
             }
             exit(0)

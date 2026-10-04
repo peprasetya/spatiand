@@ -47,7 +47,7 @@ final class RoomHint {
         shown = false
         lastText = ""
         controller.core.remove(Self.panelID)
-        controller.renderer?.panels[Self.panelID] = nil
+        controller.renderer?.panels[UInt32(Self.panelID)] = nil
     }
 
     private func redraw(_ second: String) {
@@ -84,12 +84,12 @@ final class RoomHint {
              y: 232, size: 22, weight: .regular, colour: NSColor(white: 0.55, alpha: 1), lines: 1)
 
         guard let data = context.data else { return }
-        var texture = renderer.panels[Self.panelID]
+        var texture = renderer.panels[UInt32(Self.panelID)]
         if texture == nil {
             let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)
             texture = renderer.device.makeTexture(descriptor: d)
         }
         texture?.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0, withBytes: data, bytesPerRow: w * 4)
-        renderer.panels[Self.panelID] = texture
+        renderer.panels[UInt32(Self.panelID)] = texture
     }
 }
