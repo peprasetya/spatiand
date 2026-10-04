@@ -8,6 +8,8 @@ struct SettingsView: View {
     @AppStorage("audioOutputUID", store: Defaults.store) private var output = ""
     @AppStorage("commandIsControl", store: Defaults.store) private var commandIsControl = true
     @AppStorage("maxKbit", store: Defaults.store) private var maxKbit = 10_000
+    @AppStorage("glassesStereo", store: Defaults.store) private var glassesStereo = true
+    @AppStorage("captureInput", store: Defaults.store) private var captureInput = true
     @AppStorage("hotkeys", store: Defaults.store) private var hotkeys = true
     let hotkeyStatus: () -> String
 
@@ -30,6 +32,9 @@ struct SettingsView: View {
                 Text("40 Mbit/s (wired)").tag(40_000)
             }
             .onChange(of: maxKbit) { _ in Model.shared.sendBandwidth() }
+            Toggle("Show the glasses in 3D (applies the next time they are plugged in)", isOn: $glassesStereo)
+            Toggle("This Mac's mouse and keyboard steer the glasses when they are on", isOn: $captureInput)
+            Text("Ctrl-Option-G gives them back to the Mac at any time.").font(.caption).foregroundColor(.secondary)
             Toggle("Command works as Control in remote windows", isOn: $commandIsControl)
             Toggle("Ctrl-Space opens the menu, Ctrl-Tab opens these settings", isOn: $hotkeys)
             if hotkeys {

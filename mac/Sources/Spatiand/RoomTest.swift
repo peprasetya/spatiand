@@ -52,7 +52,19 @@ enum RoomTest {
             room.pointerMoved(dx: -300, dy: 120)
             let moved = room.core.aim()
             print("aim after moving: window \(moved.window.map(String.init) ?? "none") at \(Int(moved.x)),\(Int(moved.y))")
-            if env["SPATIAND_TEST_CLICK"] != nil {
+            if let spec = env["SPATIAND_TEST_CLICK"] {
+                // "x,y" in the window's pixels: steer the pointer there, as a mouse would, and click.
+                let target = spec.split(separator: ",").compactMap { Double($0) }
+                if target.count == 2 {
+                    room.core.centrePointer()
+                    for _ in 0..<6 {
+                        let a = room.core.aim()
+                        guard a.window != nil else { break }
+                        room.pointerMoved(dx: (target[0] - a.x) * 0.49, dy: (target[1] - a.y) * 0.49)
+                    }
+                    let a = room.core.aim()
+                    print("click at \(Int(a.x)),\(Int(a.y)) in window \(a.window.map(String.init) ?? "none")")
+                }
                 room.buttonDown(0x110, grab: false)
                 room.buttonUp(0x110)
             }

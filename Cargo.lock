@@ -4043,11 +4043,16 @@ name = "spatiand-mac-core"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "glam",
  "log",
  "quinn",
  "serde",
  "serde_json",
+ "spatiand-audio",
+ "spatiand-hmd",
+ "spatiand-render",
  "spatiand-stream",
+ "spatiand-track",
  "tokio",
 ]
 

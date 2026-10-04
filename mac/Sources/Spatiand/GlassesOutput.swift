@@ -72,6 +72,7 @@ final class GlassesOutput: NSObject {
         guard !starting, window == nil else { return }
         starting = true
         modeAsked = false
+        stereoWanted = Settings.glassesStereo
         connectDevice()
         beginMode(attempt: 0)
     }
@@ -275,12 +276,39 @@ final class GlassesOutput: NSObject {
 
     // MARK: the display going away
 
+    private var lastModeTry = Date.distantPast
+    private var stereoWanted = false
+
     private func check() {
         guard window != nil else { return }
         let here = Self.findDisplay() != nil && CGDisplayIsActive(displayID) != 0
         if !here {
             hideNow()
             onLost?()
+            return
+        }
+        // macOS puts the display back to its remembered one-eye mode when it feels like it, and
+        // keeps it there until asked again; so a display that is not the width we are drawn for is
+        // put right, and a window drawn for another width is drawn again.
+        let width = CGDisplayBounds(displayID).width
+        if stereoWanted, width < 3000, Date().timeIntervalSince(lastModeTry) > 1.0, let wide = Self.wideMode(of: displayID) {
+            lastModeTry = Date()
+            var config: CGDisplayConfigRef?
+            CGBeginDisplayConfiguration(&config)
+            CGConfigureDisplayWithDisplayMode(config, displayID, wide, nil)
+            CGCompleteDisplayConfiguration(config, .forSession)
+        }
+        if let frame = window?.frame, abs(frame.width - width) > 1 {
+            print("glasses: the display is now \(Int(width)) wide; drawing again")
+            let id = displayID
+            hideNow()
+            if let captured { CGDisplayRelease(captured) }
+            captured = nil
+            starting = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                guard let self, self.starting else { return }
+                self.open(on: Self.findDisplay() ?? id, stereo: self.stereoWanted)
+            }
         }
     }
 

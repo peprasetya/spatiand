@@ -1,7 +1,6 @@
 # Spatiand on macOS: where the idea stands
 
-A hand-off for a fresh session. Nothing here is built; it is what was decided and what was
-learned while deciding, so the next session starts from it instead of from nothing.
+A hand-off for a fresh session: what was decided, what was learned, and what is built.
 
 ## What the owner wants
 
@@ -99,39 +98,48 @@ announces one. A Qt menu did not open from a synthetic click in the harness, and
 (an X11 Qt program) did not take synthetic keys -- both look like that application's behaviour on
 the host, and the Deck would see the same.
 
+**The glasses path (built 2026-10-05, tried on the real glasses).** With glasses plugged in and
+"Show windows" on its default, the windows leave the desktop and go into the room:
+
+* The glasses are put into their side-by-side mode (3840x1080) -- they re-enumerate, offer the
+  mode, and macOS has to be asked for it for the session -- and their display is taken over with a
+  Metal window, a frame every refresh. If no 3D mode turns up it falls back to one eye.
+* The head comes from the glasses' own IMU over USB HID (`XRealDevice.swift`, from HoloFrame) into
+  the **same tracker the Deck uses** (`spatiand-track`, via `crates/spatiand-mac-core/src/room.rs`).
+  The temple button recentres.
+* Where windows are, what the pointer is over, what to draw, and the pinned-to-the-glass window
+  are Rust (`room.rs`, reusing `spatiand-render`'s ray, bend and picture-in-picture maths) and are
+  unit-tested. Each window is decoded with VideoToolbox, textured onto strips bent round the
+  wearer (the Deck's own geometry), and drawn once per eye.
+* The Mac's mouse, trackpad and keyboard are taken (a transparent window; no Accessibility
+  permission) to steer a cursor in the room: clicks, the wheel and keys go to the window pointed at.
+  Option-drag moves a window, Option-wheel or a pinch resizes it. Ctrl-Option-G gives the Mac its
+  input back, and so does switching to another app. Other chords: R recentre, P pin to the glass,
+  B bring here, C and S the pinned corner and size, W close the window.
+* Ctrl-Space (Ctrl-Tab too) opens a menu *in the glasses*: what the host can open, which windows to
+  bring here, recentre, pin, close, the pinned corner and size, the video limit.
+* Sound is placed where its window is, by the Deck's own binaural renderer (`spatiand-audio`:
+  stage directions, the head-related filters or the parametric panner, the plain blend), following
+  the head; 5.1, 7.1 and 7.1.4 from the host are placed channel by channel.
+* Unplugging, quitting, and `kill` all give the glasses their ordinary mode back and the Mac its
+  pointer; unplugging restarts the app so the next plug-in starts clean (HoloFrame's lesson: a
+  vanished display leaves a ghost window in the window server).
+
+`Spatiand --selftest-room <address> <fingerprint> <app>` draws the room offscreen with no glasses
+(`/tmp/spatiand-room*.png`); `SPATIAND_DEBUG_SNAPSHOT=/tmp/g.png` on the app writes what the glasses
+are showing every few seconds.
+
 **Not built:**
 
-1. Applications honouring `set_glasses`, and per-app audio at the source.
-2. The glasses path: with glasses plugged in the windows should be in the 3D world. Today the
-   "Show windows" setting is stored and nothing reads it.
-3. Taking the mouse and trackpad away from macOS, and the three-to-five-finger gestures.
+1. Applications honouring `set_glasses` (SpatiWorld first: see `spatiworld-glasses.md`), and per-app
+   audio at the source on the Mac.
+2. Three-to-five-finger gestures on the projected screen (macOS keeps them for itself; they need
+   the private multitouch interface), and a measured head-related dataset (the parametric panner is
+   used: libmysofa is not on this Mac).
+3. Window frames in the room (title bars, close and resize handles): windows are moved, resized and
+   closed with chords and the menu. The host window's own size does not follow the wearer's resizing.
 4. The Mac as a *host* (its own windows out to a Deck or Beam Pro).
-5. A signed `.app` bundle; today it runs from `.build/`.
-
-## The glasses path, as far as it is understood
-
-What is needed to put the windows into the room when glasses are plugged in, and what already
-exists for it:
-
-* **Head tracking.** `spatiand-track` (the filter) and `spatiand-render` (the maths, the ray, the
-  stereo cameras), `spatiand-shell` (the menus) and `spatiand-mapper` all build on the Mac today.
-  What does not exist there is the *reading* of the glasses' IMU: `spatiand-hmd` is the Linux
-  device code. HoloFrame's `XRealDevice.swift` already does it over IOKit HID on the Mac, so the
-  likely shape is Swift reading the IMU and handing samples to the Rust tracker through the C
-  interface -- or the tracker's own port being used from HoloFrame's side.
-* **Drawing.** The Deck's renderer is OpenGL ES inside a smithay compositor; none of that carries
-  over. A Mac needs its own: Metal, one textured quad per window (decoded frames arrive as
-  `CVPixelBuffer`s, which `CVMetalTextureCache` turns into textures with no copy), drawn twice
-  for the two eyes into the glasses' side-by-side display, curved and placed by the same
-  `Placement`/pointer maths. HoloFrame is the Metal reference for putting a picture on the glasses.
-* **Windows.** Where a window goes -- the fan, the curve, picture in picture, the pointer ray --
-  is logic in `crates/spatiand/src/window.rs` and `pointer.rs`, which today are welded to smithay
-  types. Reusing it means lifting it into a crate with no smithay in it (a worthwhile refactor on
-  its own, since the Beam Pro has the same problem).
-* **Switching.** `Model.glassesOn` already says which world to be in; the windows would move
-  between `NSWindow`s and the room as it changes, and the host is already told.
-
-This is the biggest piece left, and the part that most needs the glasses on a head to judge.
+5. A signed `.app` bundle; today it runs from `mac/Spatiand.app`, ad hoc signed.
 
 ## The Mac as a host (later)
 
