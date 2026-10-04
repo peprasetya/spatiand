@@ -15,7 +15,7 @@ use glam::{DQuat, DVec3, Mat4};
 use std::collections::HashMap;
 
 use spatiand_audio::stage::{place, Layout, Stage, NOMINAL_HALF_STAGE};
-use spatiand_audio::{Binaural, Directness, Panner};
+use spatiand_audio::{Binaural, Directness, Panner, Spatialise};
 use spatiand_hmd::ImuSample;
 use spatiand_render::camera::{eyes_for, StereoConfig};
 use spatiand_render::pip::{self, Corner, Size};
@@ -179,6 +179,23 @@ struct Voice {
 }
 
 const AUDIO_RATE: u32 = 48_000;
+
+/// A measured head when this Mac has the library and a dataset (the app carries both), the
+/// parametric one when it does not: a sound is placed either way, but only a measured head puts one
+/// convincingly behind you. Said once, in the log, which it is.
+fn make_head() -> Box<dyn Spatialise> {
+    static SAID: std::sync::Once = std::sync::Once::new();
+    match spatiand_audio::hrtf::Hrtf::system(AUDIO_RATE) {
+        Ok(measured) => {
+            SAID.call_once(|| log::info!("spatial audio: a measured head"));
+            Box::new(measured)
+        }
+        Err(e) => {
+            SAID.call_once(|| log::info!("spatial audio: no measured head ({e}); using the parametric one"));
+            Box::new(Panner::new(AUDIO_RATE))
+        }
+    }
+}
 
 pub struct Room {
     tracker: HeadTracker,
@@ -399,13 +416,13 @@ impl Room {
         let (stage, off_axis) = self.stage_for(app, head);
         let voice = self.voices.entry(app.to_string()).or_insert_with(|| Voice {
             layout,
-            binaural: Binaural::new(layout, Box::new(Panner::new(AUDIO_RATE)), Directness::default(), AUDIO_RATE),
+            binaural: Binaural::new(layout, make_head(), Directness::default(), AUDIO_RATE),
             carry: Vec::new(),
         });
         if voice.layout != layout {
             *voice = Voice {
                 layout,
-                binaural: Binaural::new(layout, Box::new(Panner::new(AUDIO_RATE)), Directness::default(), AUDIO_RATE),
+                binaural: Binaural::new(layout, make_head(), Directness::default(), AUDIO_RATE),
                 carry: Vec::new(),
             };
         }
@@ -981,5 +998,42 @@ mod tests {
         r.set_window(0x8000, (594, 421));
         r.show(0x8000);
         assert_eq!(r.aim().window, Some(0x8000), "{:?}", r.windows());
+    }
+
+    /// With `SPATIAND_MYSOFA_LIBRARY` and `SPATIAND_HRTF_DATASET` set (the app's bundle has both), a
+    /// measured head is used, and a sound behind is not the same as the same sound ahead -- which
+    /// the parametric one can hardly say.
+    #[test]
+    fn a_measured_head_tells_behind_from_ahead() {
+        if std::env::var_os("SPATIAND_HRTF_DATASET").is_none() || std::env::var_os("SPATIAND_MYSOFA_LIBRARY").is_none() {
+            eprintln!("skipped: no measured head given");
+            return;
+        }
+        assert!(spatiand_audio::hrtf::Hrtf::system(AUDIO_RATE).is_ok(), "the library and dataset should open");
+        let mut high = Vec::new();
+        for n in 0..4800 {
+            // Something bright, which is what a head's folds colour most.
+            let v = ((n as f32 * 1.9).sin() * 9000.0) as i16;
+            high.extend_from_slice(&v.to_le_bytes());
+            high.extend_from_slice(&v.to_le_bytes());
+        }
+        let energy = |yaw_deg: f64| {
+            let mut r = Room::new();
+            r.set_fixed_head(Some(DQuat::IDENTITY));
+            r.set_window(1, (1280, 800));
+            r.show(1);
+            r.set_app(1, "x");
+            r.windows[0].place.yaw = yaw_deg.to_radians();
+            let mut out = Vec::new();
+            for _ in 0..3 {
+                out.clear();
+                r.render_audio("x", 2, &high, &mut out);
+            }
+            let (l, rt) = loudness(&out);
+            (l + rt) as f64
+        };
+        let ahead = energy(0.0);
+        let behind = energy(180.0);
+        assert!((ahead - behind).abs() / ahead.max(behind) > 0.15, "behind and ahead should differ: {ahead} and {behind}");
     }
 }

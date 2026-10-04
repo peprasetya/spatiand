@@ -13,6 +13,13 @@ app="$stage/Spatiand.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
 cp .build/release/Spatiand "$app/Contents/MacOS/Spatiand"
+# The measured head: the library that reads SOFA files and the dataset (built once; see tools/build-hrtf.sh).
+./tools/build-hrtf.sh || echo "warning: no measured head; sound will be placed by the parametric one"
+if [ -f Resources/hrtf/libmysofa.1.dylib ]; then
+  mkdir -p "$app/Contents/Frameworks" "$app/Contents/Resources"
+  cp Resources/hrtf/libmysofa.1.dylib "$app/Contents/Frameworks/"
+  cp Resources/hrtf/default.sofa Resources/hrtf/NOTICE.txt "$app/Contents/Resources/"
+fi
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -45,10 +52,13 @@ IDENTITY_NAME="${SPATIAND_SIGN_NAME:-HoloFrame Dev}"
 IDENTITY=$(security find-identity -p codesigning 2>/dev/null | grep -F "\"$IDENTITY_NAME" \
   | sed -E 's/^[[:space:]]*[0-9]+\)[[:space:]]*([0-9A-F]+)[[:space:]]+.*$/\1/' | head -1)
 if [ -n "$IDENTITY" ]; then
+  # What is inside is signed first, with the same certificate.
+  for lib in "$app"/Contents/Frameworks/*.dylib; do [ -f "$lib" ] && codesign --force --sign "$IDENTITY" "$lib" >/dev/null 2>&1; done
   codesign --force --sign "$IDENTITY" --identifier com.peprasetya.spatiand "$app" >/dev/null 2>&1 \
     && echo "signed with \"$IDENTITY_NAME\" ($IDENTITY): permissions survive rebuilds" \
     || { echo "warning: could not sign with \"$IDENTITY_NAME\"; signing ad hoc"; codesign --force --sign - "$app" >/dev/null 2>&1 || true; }
 else
+  for lib in "$app"/Contents/Frameworks/*.dylib; do [ -f "$lib" ] && codesign --force --sign - "$lib" >/dev/null 2>&1; done
   codesign --force --sign - "$app" >/dev/null 2>&1 || echo "warning: could not sign"
   echo "note: signed ad hoc, so each rebuild asks for Screen Recording and Accessibility again;"
   echo "      create the \"$IDENTITY_NAME\" certificate (see HoloFrame) to stop that"

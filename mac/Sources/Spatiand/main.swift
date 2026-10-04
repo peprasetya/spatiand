@@ -11,6 +11,15 @@ import AppKit
 
 setvbuf(stdout, nil, _IOLBF, 0)
 
+// The measured head the app carries, if it does: told to the audio code by the environment, which is
+// all it reads. A copy run from the build folder has none and uses the parametric head.
+if let frameworks = Bundle.main.privateFrameworksPath, let resources = Bundle.main.resourcePath,
+   FileManager.default.fileExists(atPath: frameworks + "/libmysofa.1.dylib"),
+   FileManager.default.fileExists(atPath: resources + "/default.sofa") {
+    setenv("SPATIAND_MYSOFA_LIBRARY", frameworks + "/libmysofa.1.dylib", 0)
+    setenv("SPATIAND_HRTF_DATASET", resources + "/default.sofa", 0)
+}
+
 // Run from its bundle, Spatiand has no terminal, so what it says goes to a log, kept to a size that
 // does not matter: ~/Library/Logs/Spatiand/spatiand.log. Run from a shell it still says it there.
 if Bundle.main.bundleURL.pathExtension == "app", isatty(STDOUT_FILENO) == 0 {

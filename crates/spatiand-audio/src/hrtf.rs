@@ -41,11 +41,19 @@ use crate::ears::Ears;
 pub const SYSTEM_DATASET: &str = "/usr/share/libmysofa/default.sofa";
 
 /// The library's own name, as the loader will look for it.
-#[cfg(not(target_os = "android"))]
+#[cfg(all(not(target_os = "android"), not(target_os = "macos")))]
 const LIBRARY: &str = "libmysofa.so.1";
+/// On a Mac, where nothing ships one: the app carries its own copy in its bundle, and says where
+/// with [`LIBRARY_ENV`]; this is what is tried after that, for a machine that has installed one.
+#[cfg(target_os = "macos")]
+const LIBRARY: &str = "libmysofa.1.dylib";
 /// On Android, as the app ships it: Android's build gives it no version in its name.
 #[cfg(target_os = "android")]
 const LIBRARY: &str = "libmysofa.so";
+
+/// Names the library itself, by path, for a machine where it is not somewhere the loader looks:
+/// the Mac app, which carries one in its bundle.
+pub const LIBRARY_ENV: &str = "SPATIAND_MYSOFA_LIBRARY";
 
 /// Names a dataset to use instead of [`SYSTEM_DATASET`]: for a machine that keeps its measured
 /// head somewhere else -- the Android app, which unpacks one into its own files.
@@ -138,8 +146,13 @@ impl Hrtf {
         }
         // SAFETY: loading a shared library, whose symbols are then checked one by one below.
         // Anything the loader does not have, we do not call.
-        let library = unsafe { libloading::Library::new(LIBRARY) }
-            .map_err(|e| Error::NoLibrary(e.to_string()))?;
+        let library = unsafe {
+            match std::env::var_os(LIBRARY_ENV) {
+                Some(path) => libloading::Library::new(path).or_else(|_| libloading::Library::new(LIBRARY)),
+                None => libloading::Library::new(LIBRARY),
+            }
+        }
+        .map_err(|e| Error::NoLibrary(e.to_string()))?;
 
         // SAFETY: each signature is transcribed from `mysofa.h`, checked against the installed
         // header rather than from memory. The pointers stay valid while `library` is alive,
