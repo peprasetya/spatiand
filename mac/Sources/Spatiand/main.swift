@@ -409,6 +409,20 @@ if CommandLine.arguments.contains("--selftest-local") {
     exit(LocalTests.run())
 }
 
+if let at = CommandLine.arguments.firstIndex(of: "--serve-host") {
+    // --serve-host <seconds>: this Mac as a host and nothing else, for another program to connect to.
+    let seconds = Double(CommandLine.arguments.dropFirst(at + 1).first ?? "") ?? 60
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    DispatchQueue.main.async {
+        MacHost.shared.start()
+        MacHost.shared.openPairing()
+        print("serving as \(MacHost.shared.address), fingerprint \(MacHost.shared.link?.fingerprint ?? "?")")
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { exit(0) }
+    }
+    application.run()
+}
+
 if let at = CommandLine.arguments.firstIndex(of: "--selftest-host") {
     let args = Array(CommandLine.arguments[(at + 1)...])
     let application = NSApplication.shared

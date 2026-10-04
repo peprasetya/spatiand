@@ -134,6 +134,12 @@ final class MacHost {
             onChange?()
             return
         }
+        // For tests with no one at the Mac to press the button: the environment has to say so.
+        if ProcessInfo.processInfo.environment["SPATIAND_HOST_AUTO_ALLOW"] != nil {
+            link?.decide(true)
+            closePairing()
+            return
+        }
         let code = info["code"] as? String ?? "??? ???"
         let address = info["address"] as? String ?? ""
         let alert = NSAlert()
