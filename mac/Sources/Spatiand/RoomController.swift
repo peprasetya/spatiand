@@ -143,12 +143,18 @@ final class RoomController {
         if active, let now = core.focused, !MacWindows.isMac(now) { sendFocus(now) }
     }
 
+    /// The host's windows are gone with the session; this Mac's own stay.
     func sessionEnded() {
         defer { hint.update() }
+        for id in known.keys {
+            core.remove(id)
+            renderer?.drop(id)
+        }
         known = [:]
+        apps = [:]
         shown = []
-        core.clear()
-        renderer?.dropAll()
+        pressed = nil
+        hovered = nil
     }
 
     /// One picture of a window, as the session sent it. Decoded here when the room is in use.

@@ -18,6 +18,57 @@ enum WindowTest {
             DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body)
         }
         after(2) { if let a = model.apps.first(where: { $0.id == app }) { model.launch(a) } else { print("no such app: \(model.apps.map(\.id))") } }
+        if ProcessInfo.processInfo.environment["SPATIAND_TEST_CLIP"] != nil {
+            // The clipboard both ways, with the keys a person would press, as evdev codes.
+            func window() -> RemoteWindow? { model.windows.values.compactMap { $0 as? RemoteWindow }.max(by: { $0.id < $1.id }) }
+            func say(_ input: Any) {
+                guard let w = window() else { return }
+                w.view.send?(["InputAt": ["window": Int(w.id), "input": input, "time_ms": Int(ProcessInfo.processInfo.systemUptime * 1000)]])
+            }
+            func chord(_ key: Int) {
+                say(["Key": ["code": 29, "pressed": true]])
+                say(["Key": ["code": key, "pressed": true]])
+                say(["Key": ["code": key, "pressed": false]])
+                say(["Key": ["code": 29, "pressed": false]])
+            }
+            after(5) {
+                guard let w = window() else { print("clip: no window"); exit(1) }
+                w.onFocus = nil
+                w.view.send?(["Focus": ["window": Int(w.id)]])
+                // The pasteboard starts as something the host cannot have.
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("mac-sentinel", forType: .string)
+                // Click the page, select it all, copy.
+                say(["Motion": ["x": 640.0, "y": 500.0]])
+            }
+            after(5.5) { say(["Button": ["button": 0x110, "pressed": true]]); say(["Button": ["button": 0x110, "pressed": false]]) }
+            after(6.5) { chord(30) }   // Ctrl-A
+            after(7.0) { chord(46) }   // Ctrl-C
+            after(9) {
+                let got = NSPasteboard.general.string(forType: .string) ?? "(nothing)"
+                print("clip host to Mac: pasteboard now \(got.count) characters: \(got.prefix(60).replacingOccurrences(of: "\n", with: " "))")
+                print("clip host to Mac: \(got != "mac-sentinel" && got != "(nothing)" ? "PASS" : "FAIL")")
+                // The other way: put something on this Mac, focus the address bar, paste.
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("hello-from-the-mac", forType: .string)
+            }
+            after(10) { chord(38) }    // Ctrl-L
+            after(10.6) { chord(47) }  // Ctrl-V
+            after(12) {
+                // Now the address bar holds what was pasted: copy that, and it should come back.
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("second-sentinel", forType: .string)
+                chord(30)
+            }
+            after(12.6) { chord(46) }
+            after(14.5) {
+                let got = NSPasteboard.general.string(forType: .string) ?? "(nothing)"
+                print("clip host to Mac, from the address bar: \(got.count) characters: \(got.prefix(40))")
+                print("clip round trip: \(got.contains("hello-from-the-mac") ? "PASS" : "FAIL")")
+                exit(0)
+            }
+            return
+        }
         after(4) {
             // Mac to host: the host's log says whether it took the offer.
             model.link.say(["Clipboard": ["Offer": ["mime_types": ["text/plain;charset=utf-8"], "text": "mac-to-host-clipboard-test", "bytes": 26]]])
