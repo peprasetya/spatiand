@@ -9,8 +9,14 @@
 //  `MacInput`.
 
 import AppKit
+import ApplicationServices
 import CoreMedia
 import ScreenCaptureKit
+
+/// The window of an accessibility element, by number: not in any header, and what every tool that
+/// maps one kind of window to the other uses.
+@_silgen_name("_AXUIElementGetWindow")
+private func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
 
 /// A window of this Mac that could be brought into the room.
 struct MacWindowInfo: Equatable {
@@ -34,6 +40,27 @@ enum MacWindows {
         if CGPreflightScreenCaptureAccess() { return true }
         if ask { CGRequestScreenCaptureAccess() }
         return false
+    }
+
+    /// The accessibility element of a window, for closing it and sizing it. Needs Accessibility.
+    static func axWindow(_ info: MacWindowInfo) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(info.pid)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
+              let windows = value as? [AXUIElement] else { return nil }
+        return windows.first { w in
+            var id: CGWindowID = 0
+            return _AXUIElementGetWindow(w, &id) == .success && id == info.windowID
+        }
+    }
+
+    /// Ask a window to be this size, in points. It may decline: a window has its own limits.
+    @discardableResult
+    static func resize(_ info: MacWindowInfo, toPoints size: CGSize) -> Bool {
+        guard let window = axWindow(info) else { return false }
+        var wanted = size
+        guard let value = AXValueCreate(.cgSize, &wanted) else { return false }
+        return AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value) == .success
     }
 
     /// The windows worth offering: ordinary, on screen, big enough to be a window and not one of

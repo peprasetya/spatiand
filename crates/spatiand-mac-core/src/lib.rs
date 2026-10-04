@@ -438,6 +438,8 @@ pub struct SpAim {
     pub point: [f64; 3],
     /// 1 when what is aimed at is the window's title bar.
     pub title: i32,
+    /// 1 when what is aimed at is a window's bottom right corner, where a press resizes it.
+    pub corner: i32,
 }
 
 #[repr(C)]
@@ -626,6 +628,69 @@ pub extern "C" fn sp_room_aim(room: *mut RoomHandle, out: *mut SpAim) {
         out.y = aim.y;
         out.point = aim.point.to_array();
         out.title = aim.title as i32;
+        out.corner = aim.corner as i32;
+    }
+}
+
+/// Where the cursor is in one window's pixels, off its edge as well as on it. 1 if there is such a window.
+#[no_mangle]
+pub extern "C" fn sp_room_aim_free(room: *mut RoomHandle, id: u32, x: *mut f64, y: *mut f64) -> i32 {
+    match with_room(room, None, |r| r.aim_free(id)) {
+        Some((ax, ay)) => {
+            // SAFETY: writable doubles, by the contract.
+            unsafe {
+                if let Some(x) = x.as_mut() {
+                    *x = ax;
+                }
+                if let Some(y) = y.as_mut() {
+                    *y = ay;
+                }
+            }
+            1
+        }
+        None => 0,
+    }
+}
+
+/// The picture size a window would have at the pixel density windows start with, at its width now.
+/// 1 if there is such a window.
+#[no_mangle]
+pub extern "C" fn sp_room_native_size(room: *mut RoomHandle, id: u32, w: *mut u32, h: *mut u32) -> i32 {
+    match with_room(room, None, |r| r.native_size(id)) {
+        Some((nw, nh)) => {
+            // SAFETY: writable integers, by the contract.
+            unsafe {
+                if let Some(w) = w.as_mut() {
+                    *w = nw;
+                }
+                if let Some(h) = h.as_mut() {
+                    *h = nh;
+                }
+            }
+            1
+        }
+        None => 0,
+    }
+}
+
+/// The host is being asked to resize this window to about this many pixels; writes the size after
+/// limits, which is what to ask it. 1 if there is such a window.
+#[no_mangle]
+pub extern "C" fn sp_room_request_size(room: *mut RoomHandle, id: u32, width: f64, height: f64, w: *mut u32, h: *mut u32) -> i32 {
+    match with_room(room, None, |r| r.request_size(id, (width, height))) {
+        Some((nw, nh)) => {
+            // SAFETY: writable integers, by the contract.
+            unsafe {
+                if let Some(w) = w.as_mut() {
+                    *w = nw;
+                }
+                if let Some(h) = h.as_mut() {
+                    *h = nh;
+                }
+            }
+            1
+        }
+        None => 0,
     }
 }
 

@@ -63,16 +63,32 @@ final class RoomCore {
     func movePointer(dx: Double, dy: Double) { sp_room_move_pointer(room, dx, dy) }
     func centrePointer() { sp_room_centre_pointer(room) }
 
-    struct Aim { var window: UInt16?; var x: Double; var y: Double; var title = false }
+    struct Aim { var window: UInt16?; var x: Double; var y: Double; var title = false; var corner = false }
     func aim() -> Aim {
         var out = sp_aim()
         sp_room_aim(room, &out)
-        return Aim(window: out.window >= 0 ? UInt16(out.window) : nil, x: out.x, y: out.y, title: out.title != 0)
+        return Aim(window: out.window >= 0 ? UInt16(out.window) : nil, x: out.x, y: out.y, title: out.title != 0, corner: out.corner != 0)
     }
     /// Where the pointer is in one window's own pixels, even off its edge.
     func aim(at id: UInt16) -> (x: Double, y: Double)? {
         var x = 0.0, y = 0.0
         return sp_room_aim_at(room, UInt32(id), &x, &y) != 0 ? (x, y) : nil
+    }
+
+    /// Where the pointer is in a window's pixels, past its edge as well.
+    func aimFree(_ id: UInt16) -> (x: Double, y: Double)? {
+        var x = 0.0, y = 0.0
+        return sp_room_aim_free(room, UInt32(id), &x, &y) != 0 ? (x, y) : nil
+    }
+    /// The size to ask the host for to keep a window's pixel density at the width it has now.
+    func nativeSize(_ id: UInt16) -> (w: Int, h: Int)? {
+        var w: UInt32 = 0, h: UInt32 = 0
+        return sp_room_native_size(room, UInt32(id), &w, &h) != 0 ? (Int(w), Int(h)) : nil
+    }
+    /// Note that the host is being asked for about this size; the size to ask for, as limited.
+    func requestSize(_ id: UInt16, width: Double, height: Double) -> (w: Int, h: Int)? {
+        var w: UInt32 = 0, h: UInt32 = 0
+        return sp_room_request_size(room, UInt32(id), width, height, &w, &h) != 0 ? (Int(w), Int(h)) : nil
     }
 
     // Moving windows about.

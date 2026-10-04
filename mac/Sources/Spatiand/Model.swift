@@ -46,6 +46,8 @@ final class Model {
     var onPaired: ((PairedHost) -> Void)?
     var onPairFailed: ((String) -> Void)?
     var onProblem: ((String) -> Void)?
+    /// Bytes of sound that have arrived this run, for the tests.
+    var audioHeard = 0
 
     private init() {
         let dir = NSString("~/Library/Application Support/Spatiand/identity").expandingTildeInPath
@@ -70,6 +72,7 @@ final class Model {
             }
         }
         link.onAudio = { [unowned self] app, channels, data in
+            audioHeard += data.count
             // In the room the sound is placed where its window is, and follows the head.
             AudioOut.shared.feed(app: app, channels: Int(channels), data: data, placed: room.place(app: app, channels: Int(channels), pcm: data))
         }

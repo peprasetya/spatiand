@@ -70,6 +70,16 @@ final class HostLink {
         }
     }
 
+    /// Sound of one application, as interleaved 16-bit samples.
+    func audio(app: String, channels: Int, _ pcm: Data) {
+        guard let core else { return }
+        pcm.withUnsafeBytes { raw in
+            if let base = raw.bindMemory(to: UInt8.self).baseAddress {
+                sp_host_audio(core, app, UInt16(channels), base, pcm.count)
+            }
+        }
+    }
+
     func openPairing(_ open: Bool) { if let core { sp_host_open_pairing(core, open ? 1 : 0) } }
     func decide(_ admit: Bool) { if let core { sp_host_decide(core, admit ? 1 : 0) } }
     func trust(_ fingerprint: String) { if let core { sp_host_trust(core, fingerprint) } }

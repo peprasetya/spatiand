@@ -47,6 +47,13 @@ pub const DEGREES_PER_POINT: f64 = 0.045;
 const PITCH_LIMIT: f64 = 89.0 * std::f64::consts::PI / 180.0;
 /// The most a window may grow to, and the least it may shrink to, metres across.
 const WIDTH_RANGE: (f64, f64) = (0.3, 4.0);
+/// How many of the host's pixels go across a metre of window when it is first opened, and so when
+/// it is resized from here: a window made bigger gets more pixels, not the same ones blown up.
+const DENSITY: f64 = 1280.0 / DEFAULT_WIDTH;
+/// The smallest and largest picture a window is asked to be resized to.
+const SIZE_RANGE: ((u32, u32), (u32, u32)) = ((240, 150), (3840, 2160));
+/// How far in from the bottom right corner of a window, metres, a press starts a resize.
+const CORNER_M: f64 = 0.07;
 
 /// How far round the wearer one strip of a bent window may turn, radians.
 const STRIP_STEP: f64 = 0.026;
@@ -163,6 +170,9 @@ pub struct Win {
     pub place: Placement,
     /// Whether it has a picture yet; a window that has none is not drawn.
     pub shown: bool,
+    /// A size the host has been asked to make this window, and how wide it is to be in the room
+    /// once the host has done it: the width follows the answer, not the question.
+    pending: Option<((u32, u32), f64)>,
 }
 
 impl Win {
@@ -211,6 +221,8 @@ pub struct Aim {
     pub y: f64,
     /// Where in the room: the point the cursor is drawn at.
     pub point: DVec3,
+    /// Set when what is aimed at is the window's bottom right corner, where a press resizes it.
+    pub corner: bool,
     /// Set when what is aimed at is the window's title bar, whose pixels are [`BAR_PX`].
     pub title: bool,
 }
@@ -372,6 +384,16 @@ impl Room {
     /// looking, beside whatever is there.
     pub fn set_window(&mut self, id: u32, size: (u32, u32)) {
         if let Some(w) = self.windows.iter_mut().find(|w| w.id == id) {
+            if let Some((asked, width)) = w.pending {
+                // The host has answered a resize asked for here: the window keeps its pixel
+                // density, which is what makes it bigger and not just blown up.
+                if size != w.size {
+                    w.place.width = (width * size.0 as f64 / asked.0.max(1) as f64).clamp(WIDTH_RANGE.0, WIDTH_RANGE.1);
+                }
+                if size.0.abs_diff(asked.0) <= 2 {
+                    w.pending = None;
+                }
+            }
             w.size = size;
             return;
         }
@@ -409,7 +431,7 @@ impl Room {
             }
             place.yaw = found.unwrap_or(heading);
         }
-        self.windows.push(Win { id, size, place, shown: false });
+        self.windows.push(Win { id, size, place, shown: false, pending: None });
         self.focus = Some(id);
     }
 
@@ -429,7 +451,7 @@ impl Room {
             width,
             ..Placement::default()
         };
-        self.windows.push(Win { id, size, place, shown: true });
+        self.windows.push(Win { id, size, place, shown: true, pending: None });
     }
 
     // MARK: sound
@@ -596,6 +618,40 @@ impl Room {
         }
     }
 
+    /// The picture size at which this window's pixels are the density a new window starts with, at
+    /// the width it has now: what "fit" asks the host for.
+    pub fn native_size(&self, id: u32) -> Option<(u32, u32)> {
+        let w = self.windows.iter().find(|w| w.id == id)?;
+        let width = (w.place.width * DENSITY).round();
+        Some(Self::clamp_size(width, width / w.aspect()))
+    }
+
+    fn clamp_size(width: f64, height: f64) -> (u32, u32) {
+        let even = |v: f64, lo: u32, hi: u32| ((v.round() as u32).clamp(lo, hi)) & !1;
+        (even(width, SIZE_RANGE.0 .0, SIZE_RANGE.1 .0), even(height, SIZE_RANGE.0 .1, SIZE_RANGE.1 .1))
+    }
+
+    /// The host is being asked to make this window this many pixels. Returns what was asked after
+    /// limits, to send; the window's width in the room follows when the host answers.
+    pub fn request_size(&mut self, id: u32, size: (f64, f64)) -> Option<(u32, u32)> {
+        let w = self.windows.iter_mut().find(|w| w.id == id && !Self::is_panel(w.id))?;
+        let asked = Self::clamp_size(size.0, size.1);
+        let width = w.place.width * asked.0 as f64 / w.size.0.max(1) as f64;
+        w.pending = Some((asked, width.clamp(WIDTH_RANGE.0, WIDTH_RANGE.1)));
+        Some(asked)
+    }
+
+    /// Where the cursor is in one window's own pixels, off its edge as well as on it.
+    pub fn aim_free(&self, id: u32) -> Option<(f64, f64)> {
+        let head = self.head();
+        let ray = self.ray(head);
+        let placed = self.placed(head);
+        let (i, place) = placed.iter().find(|(i, _)| self.windows[*i].id == id).copied()?;
+        let w = &self.windows[i];
+        let hit = intersect_plane(&ray, &w.quad(&place))?;
+        Some((hit.u * w.size.0 as f64, hit.v * w.size.1 as f64))
+    }
+
     /// Make a window bigger or smaller, from where it stands.
     pub fn scale(&mut self, id: u32, factor: f64) {
         if let Some(w) = self.windows.iter_mut().find(|w| w.id == id) {
@@ -704,6 +760,9 @@ impl Room {
                     y: (hit.v * w.size.1 as f64).clamp(0.0, w.size.1 as f64),
                     point: hit.point,
                     title: false,
+                    corner: !Self::is_panel(w.id) && !place.pinned
+                        && (1.0 - hit.u) * place.width < CORNER_M
+                        && (1.0 - hit.v) * w.height(&place) < CORNER_M,
                 };
             }
             if let Some((bar, _, _)) = w.bar(&place) {
@@ -714,11 +773,12 @@ impl Room {
                         y: (hit.v * BAR_PX.1 as f64).clamp(0.0, BAR_PX.1 as f64),
                         point: hit.point,
                         title: true,
+                        corner: false,
                     };
                 }
             }
         }
-        Aim { window: None, x: 0.0, y: 0.0, point: ray.at(DEFAULT_RADIUS), title: false }
+        Aim { window: None, x: 0.0, y: 0.0, point: ray.at(DEFAULT_RADIUS), title: false, corner: false }
     }
 
     /// Where the cursor is in one window's own pixels, even when it has left it: a drag that
@@ -899,6 +959,25 @@ mod tests {
         let mut r = Room::new();
         r.set_fixed_head(Some(DQuat::IDENTITY));
         r
+    }
+
+    #[test]
+    fn a_resize_asked_of_the_host_keeps_the_pixel_density_when_it_answers() {
+        let mut r = room();
+        r.set_window(1, (1280, 800));
+        let before = r.windows()[0].place.width;
+        // Twice the pixels across: asked, limited, and nothing changes in the room until the answer.
+        let asked = r.request_size(1, (2560.0, 1600.0)).unwrap();
+        assert_eq!(asked, (2560, 1600));
+        assert_eq!(r.windows()[0].place.width, before);
+        r.set_window(1, (2560, 1600));
+        let after = r.windows()[0].place.width;
+        assert!((after / before - 2.0).abs() < 1e-9 || after == WIDTH_RANGE.1.min(before * 2.0));
+        // A silly request is limited.
+        assert_eq!(r.request_size(1, (50.0, 20_000.0)).unwrap(), (240, 2160));
+        // Fit gives the density a new window starts with.
+        let (w, _) = r.native_size(1).unwrap();
+        assert_eq!(w, ((after * DENSITY).round() as u32) & !1);
     }
 
     #[test]

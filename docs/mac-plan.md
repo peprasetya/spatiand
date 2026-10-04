@@ -160,13 +160,18 @@ back: three Terminal windows arrived with real pictures. **Not tried:** a real D
   and put in the bundle by `make-app.sh`; licences in `Resources/hrtf/NOTICE.txt`), so a sound can be put behind you.
   Without them, or when run from the build folder, it falls back to the parametric head.
 
+**Added after that:** resizing a host's window from the room (drag its bottom right corner, press the fit button on its
+title bar or in the menu, or make it bigger with the four-finger pinch: the host is asked for that many pixels at the
+density windows start with, and the window grows with the answer rather than stretching; a Mac window is resized through
+Accessibility), and sound from the Mac's own applications when the Mac is the host (ScreenCaptureKit captures one
+application's sound, sent as the same raw stereo stream the Linux host sends; tested over loopback). The Mac still
+plays that sound itself too: there is no way to take it from the speakers and leave it in the capture.
+
 **Not built:**
 
-1. Applications honouring `set_glasses` (SpatiWorld first: see `spatiworld-glasses.md`), and per-app audio at the
-   source on the Mac.
-2. A way to resize the host window itself from the room (the picture's size follows the application, not the
-   wearer), and sound from the Mac's own applications when the Mac is the host.
-3. Notarisation: `mac/make-app.sh` installs `~/Applications/Spatiand.app`, signed with HoloFrame's self-signed
+1. Applications honouring `set_glasses` (SpatiWorld first: see `spatiworld-glasses.md`). That is work in the viewer,
+   which is not in this repository.
+2. Notarisation: `mac/make-app.sh` installs `~/Applications/Spatiand.app`, signed with HoloFrame's self-signed
    "HoloFrame Dev" certificate when it is in the keychain (so the Screen Recording and Accessibility grants survive
    rebuilds), ad hoc otherwise. Not notarised, so for this Mac only.
 

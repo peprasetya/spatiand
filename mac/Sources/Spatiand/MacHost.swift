@@ -15,11 +15,6 @@ import ApplicationServices
 import CoreMedia
 import ScreenCaptureKit
 
-/// The window of an accessibility element, by number: not in any header, and what every tool that
-/// maps one kind of window to the other uses.
-@_silgen_name("_AXUIElementGetWindow")
-private func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
-
 final class MacHost {
     static let shared = MacHost()
     static let port: UInt16 = 47600
@@ -50,6 +45,9 @@ final class MacHost {
     }
 
     private var shared: [UInt16: Shared] = [:]
+    /// The sound of each application that has a window being shared, by bundle.
+    private var sounds: [String: MacAudio] = [:]
+    private var soundFailed: [String: Date] = [:]
     private var nextID: UInt16 = 1
     /// The applications a session has launched: their windows are shared, now and when they open.
     private var launched: Set<String> = []
@@ -179,6 +177,8 @@ final class MacHost {
         clipboard.connected = false
         for s in shared.values { s.capture.invalidate(); s.encoder?.invalidate() }
         shared = [:]
+        for a in sounds.values { a.invalidate() }
+        sounds = [:]
         held = []
         focus = nil
     }
@@ -257,6 +257,12 @@ final class MacHost {
             }
             share(info)
         }
+        // Sound for the applications with a window, and none for the ones that have none left.
+        let bundles = Set(shared.values.map { $0.info.bundle })
+        for (bundle, a) in sounds where !bundles.contains(bundle) { a.invalidate(); sounds[bundle] = nil }
+        for bundle in bundles where sounds[bundle] == nil && Date().timeIntervalSince(soundFailed[bundle] ?? .distantPast) > 30 {
+            listen(to: bundle)
+        }
     }
 
     private func share(_ info: MacWindowInfo) {
@@ -279,6 +285,24 @@ final class MacHost {
                     print("host: could not capture \(info.app): \(error)")
                     self?.shared[id] = nil
                     self?.link?.say(["Closed": ["window": Int(id)]])
+                }
+            }
+        }
+    }
+
+    private func listen(to bundle: String) {
+        let audio = MacAudio(bundle: bundle)
+        sounds[bundle] = audio
+        audio.onSound = { [weak self] pcm in self?.link?.audio(app: bundle, channels: 2, pcm) }
+        audio.onEnded = { [weak self] in
+            if self?.sounds[bundle] === audio { self?.sounds[bundle] = nil }
+        }
+        Task {
+            do { try await audio.start() } catch {
+                await MainActor.run {
+                    print("host: could not capture the sound of \(bundle): \(error)")
+                    self.soundFailed[bundle] = Date()
+                    if self.sounds[bundle] === audio { self.sounds[bundle] = nil }
                 }
             }
         }
@@ -368,19 +392,8 @@ final class MacHost {
         reconcile()
     }
 
-    private func accessibilityWindow(_ info: MacWindowInfo) -> AXUIElement? {
-        let app = AXUIElementCreateApplication(info.pid)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
-              let windows = value as? [AXUIElement] else { return nil }
-        return windows.first { w in
-            var id: CGWindowID = 0
-            return _AXUIElementGetWindow(w, &id) == .success && id == info.windowID
-        }
-    }
-
     private func close(_ info: MacWindowInfo) {
-        guard let window = accessibilityWindow(info) else { return }
+        guard let window = MacWindows.axWindow(info) else { return }
         var button: CFTypeRef?
         if AXUIElementCopyAttributeValue(window, kAXCloseButtonAttribute as CFString, &button) == .success, let button {
             AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString)
@@ -388,12 +401,8 @@ final class MacHost {
     }
 
     private func resize(_ s: Shared, pixelsWide: Double, high: Double) {
-        guard let window = accessibilityWindow(s.info) else { return }
         let scale = s.capture.scale
-        var size = CGSize(width: pixelsWide / scale, height: high / scale)
-        if let value = AXValueCreate(.cgSize, &size) {
-            AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value)
-        }
+        MacWindows.resize(s.info, toPoints: CGSize(width: pixelsWide / scale, height: high / scale))
     }
 
     // MARK: input

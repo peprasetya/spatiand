@@ -118,6 +118,33 @@ enum RoomTest {
                 print("five fingers together: aimed window \(gathered.window.map(String.init) ?? "none") at \(Int(gathered.x)),\(Int(gathered.y))")
                 exit(0)
             }
+            if env["SPATIAND_TEST_RESIZE"] != nil {
+                // Take the bottom right corner of the window and pull it out and down; the host is
+                // asked for more pixels, and the window grows with them rather than stretching.
+                guard let id = room.known.keys.min() else { print("no window"); exit(1) }
+                room.core.centrePointer()
+                var a = room.core.aim()
+                for _ in 0..<12 {
+                    // Towards the corner, a step at a time (pixels of the window, about two to the point).
+                    let size = room.known[id] ?? .zero
+                    room.pointerMoved(dx: (size.width - 4 - a.x) * 0.45, dy: (size.height - 4 - a.y) * 0.45)
+                    a = room.core.aim()
+                }
+                print("corner aim: window \(a.window.map(String.init) ?? "none") corner \(a.corner) at \(Int(a.x)),\(Int(a.y)) of \(room.known[id].map { "\(Int($0.width))x\(Int($0.height))" } ?? "?")")
+                room.buttonDown(0x110, grab: false)
+                for _ in 0..<10 { room.pointerMoved(dx: 14, dy: 8); Thread.sleep(forTimeInterval: 0.15) }
+                room.buttonUp(0x110)
+                after(2) {
+                    print("after the pull: \(room.known[id].map { "\(Int($0.width))x\(Int($0.height))" } ?? "?")")
+                    room.fit(id)
+                }
+                after(4) {
+                    print("after fit: \(room.known[id].map { "\(Int($0.width))x\(Int($0.height))" } ?? "?")")
+                    room.tick(); if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-resize.png") }
+                    exit(0)
+                }
+                return
+            }
             if env["SPATIAND_TEST_BAR"] != nil {
                 // Onto the title bar's close button, to see it lit; then the middle of the bar, to take
                 // the window and carry it to the right.
@@ -168,7 +195,7 @@ enum RoomTest {
                 room.buttonUp(0x110)
             }
         }
-        after(11) {
+        after(env["SPATIAND_TEST_RESIZE"] != nil ? 40 : 11) {
             room.tick(); if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) {
                 write(image, "/tmp/spatiand-room-2.png")
             }

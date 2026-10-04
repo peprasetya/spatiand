@@ -49,6 +49,8 @@ impl Callbacks {
 enum ToSession {
     Control(HostMessage),
     Video { window: u16, frame: u32, keyframe: bool, captured_us: u64, bytes: Vec<u8> },
+    /// A little of one application's sound: signed 16-bit little-endian, interleaved.
+    Audio { app: String, channels: u16, pcm: Vec<u8> },
 }
 
 pub struct HostCore {
@@ -177,6 +179,10 @@ impl HostCore {
         let _ = self.out.send(ToSession::Video { window, frame, keyframe, captured_us, bytes });
     }
 
+    fn audio(&self, app: String, channels: u16, pcm: Vec<u8>) {
+        let _ = self.out.send(ToSession::Audio { app, channels, pcm });
+    }
+
     fn next_frame(&self, window: u16) -> u32 {
         let mut frames = self.frames.lock().unwrap();
         let n = frames.entry(window).or_insert(0);
@@ -287,11 +293,22 @@ async fn session(connection: &quinn::Connection, outbox: &mut UnboundedReceiver<
             }
         }
     });
+    let mut sounds: HashMap<String, (u16, tokio::sync::mpsc::Sender<Vec<u8>>)> = HashMap::new();
     loop {
         tokio::select! {
             out = outbox.recv() => {
                 let Some(out) = out else { break };
                 match out {
+                    ToSession::Audio { app, channels, pcm } => {
+                        let alive = sounds.get(&app).is_some_and(|(width, s)| *width == channels && !s.is_closed());
+                        if !alive {
+                            let stream = sound_stream(connection, app.clone(), channels);
+                            sounds.insert(app.clone(), (channels, stream));
+                        }
+                        if let Some((_, s)) = sounds.get(&app) {
+                            let _ = s.try_send(pcm);
+                        }
+                    }
                     ToSession::Control(message) => {
                         let Ok(bytes) = spatiand_stream::to_bytes(&message) else { continue };
                         let length = (bytes.len() as u32).to_le_bytes();
@@ -312,6 +329,36 @@ async fn session(connection: &quinn::Connection, outbox: &mut UnboundedReceiver<
         }
     }
     reading.abort();
+}
+
+/// One application's sound, on a stream of its own, opened the first time it plays. A third of a
+/// second may wait in the queue; past that the listener would be hearing the past, so what does
+/// not fit is dropped.
+fn sound_stream(connection: &quinn::Connection, app: String, channels: u16) -> tokio::sync::mpsc::Sender<Vec<u8>> {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(40);
+    let connection = connection.clone();
+    tokio::spawn(async move {
+        let Ok(mut stream) = connection.open_uni().await else { return };
+        // A gap in sound is heard and a late picture is only seen.
+        let _ = stream.set_priority(10);
+        let header = spatiand_stream::audio::AudioHeader {
+            app: app.clone(),
+            rate: spatiand_stream::audio::RATE,
+            channels,
+            coding: spatiand_stream::audio::Coding::Pcm,
+        };
+        if stream.write_all(&header.encode()).await.is_err() {
+            return;
+        }
+        log::info!("sound: sending {app}");
+        while let Some(pcm) = rx.recv().await {
+            if stream.write_all(&pcm).await.is_err() {
+                return;
+            }
+        }
+        let _ = stream.finish();
+    });
+    tx
 }
 
 fn send_picture(connection: &quinn::Connection, window: u16, frame: u32, keyframe: bool, captured_us: u64, bytes: &[u8]) {
@@ -447,6 +494,15 @@ pub extern "C" fn sp_host_video(core: *mut HostCore, window: u16, keyframe: i32,
     let (Some(core), false) = (unsafe { core.as_ref() }, data.is_null()) else { return };
     let bytes = unsafe { std::slice::from_raw_parts(data, length) }.to_vec();
     core.video(window, keyframe != 0, captured_us, bytes);
+}
+
+/// A little of one application's sound: signed 16-bit little-endian samples, interleaved, at 48 kHz.
+#[no_mangle]
+pub extern "C" fn sp_host_audio(core: *mut HostCore, app: *const c_char, channels: u16, data: *const u8, length: usize) {
+    // SAFETY: as above, a NUL-terminated name and `length` readable bytes.
+    let (Some(core), false, false) = (unsafe { core.as_ref() }, data.is_null(), app.is_null()) else { return };
+    let app = unsafe { CStr::from_ptr(app) }.to_string_lossy().into_owned();
+    core.audio(app, channels, unsafe { std::slice::from_raw_parts(data, length) }.to_vec());
 }
 
 /// Let a device that has never been here pair, for as long as this is on, or stop.

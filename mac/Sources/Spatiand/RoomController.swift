@@ -198,6 +198,10 @@ final class RoomController {
 
     /// The window a button went down on, so the matching release and any drag go to it too.
     private var pressed: UInt16?
+    /// The window whose corner is being dragged, and when the host was last asked for a size.
+    private var resizing: UInt16?
+    private var lastAsk = Date.distantPast
+    private var fitTimer: Timer?
     private var hovered: UInt16?
 
     func pointerMoved(dx: Double, dy: Double) {
@@ -208,6 +212,11 @@ final class RoomController {
     /// Where the pointer is may change without the mouse moving: the head turns.
     func pointerChanged() {
         if core.isGrabbing { core.drag(); return }
+        if let id = resizing {
+            // The host's window keeps its top left corner; where the pointer is, is where the bottom right goes.
+            if Date().timeIntervalSince(lastAsk) > 0.12, let at = core.aimFree(id) { ask(id, width: at.x, height: at.y) }
+            return
+        }
         if menu.isOpen {
             let aim = core.aim()
             if aim.window == RoomMenu.panelID { menu.hover(aim.x, aim.y) } else { menu.hover(-1, -1) }
@@ -248,8 +257,14 @@ final class RoomController {
             switch RoomTitles.zone(atX: aim.x) {
             case .close: closeWindow(id)
             case .pin: core.setPinned(id, !core.isPinned(id))
+            case .fit: fit(id)
             case .drag: core.beginGrab(id)
             }
+            return
+        }
+        if aim.corner, button == 0x110 {
+            resizing = id
+            lastAsk = .distantPast
             return
         }
         if grab {
@@ -267,6 +282,11 @@ final class RoomController {
     }
 
     func buttonUp(_ button: Int) {
+        if let id = resizing {
+            resizing = nil
+            if let at = core.aimFree(id) { ask(id, width: at.x, height: at.y) }
+            return
+        }
         if core.isGrabbing {
             core.endGrab()
             return
@@ -435,7 +455,34 @@ final class RoomController {
 
     func zoom(by factor: Double) {
         guard let id = core.aim().window ?? core.focused else { return }
+        scaled(id, by: factor)
+    }
+
+    /// A window made bigger or smaller by the wearer: once they have stopped, the host is asked for
+    /// that many pixels, so what is shown is sharper or sparer and not a picture stretched.
+    func scaled(_ id: UInt16, by factor: Double) {
         core.scale(id, by: factor)
+        guard id < 0xFFF0, !core.isPinned(id) else { return }
+        fitTimer?.invalidate()
+        fitTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { [weak self] _ in self?.fit(id) }
+    }
+
+    /// Ask the host for as many pixels as the window's width in the room calls for.
+    func fit(_ id: UInt16) {
+        guard id < 0xFFF0, let size = core.nativeSize(id) else { return }
+        ask(id, width: Double(size.w), height: Double(size.h))
+    }
+
+    /// Ask the application to make its window about this size, in its own pixels.
+    private func ask(_ id: UInt16, width: Double, height: Double) {
+        guard let size = core.requestSize(id, width: width, height: height) else { return }
+        lastAsk = Date()
+        if MacWindows.isMac(id) {
+            guard let capture = macCaptures[id] else { return }
+            MacWindows.resize(capture.info, toPoints: CGSize(width: Double(size.w) / capture.scale, height: Double(size.h) / capture.scale))
+        } else {
+            model.link.say(["Configure": ["window": Int(id), "width": size.w, "height": size.h]])
+        }
     }
 
     /// Pin the window being pointed at to the glass, or let it go.
@@ -501,7 +548,7 @@ final class RoomController {
             case .down: core.nudge(id, yaw: 0, pitch: -8)
             }
         case .pinch(4, let spreading):
-            if let id = target { core.scale(id, by: spreading ? 1.2 : 0.83) }
+            if let id = target { scaled(id, by: spreading ? 1.2 : 0.83) }
         case .pinch(5, let spreading):
             core.arrange(spread: spreading ? 2.4 : 1.0)
         default:

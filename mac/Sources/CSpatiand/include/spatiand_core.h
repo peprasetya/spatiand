@@ -61,6 +61,7 @@ typedef struct {
     double x, y;         // where in that window, in the host's pixels
     double point[3];     // where in the room: +X forward, +Y left, +Z up
     int32_t title;       // 1 when it is the window's title bar (1024 by 46 pixels)
+    int32_t corner;      // 1 when it is a window's bottom right corner, where a press resizes it
 } sp_aim;
 
 typedef struct {
@@ -106,6 +107,12 @@ void sp_room_move_pointer(sp_room *room, double dx, double dy);
 void sp_room_centre_pointer(sp_room *room);
 void sp_room_aim(sp_room *room, sp_aim *out);
 int32_t sp_room_aim_at(sp_room *room, uint32_t id, double *x, double *y);
+// The same, off the window's edge as well as on it.
+int32_t sp_room_aim_free(sp_room *room, uint32_t id, double *x, double *y);
+// The picture size at the density windows start with, at the width the window has now.
+int32_t sp_room_native_size(sp_room *room, uint32_t id, uint32_t *w, uint32_t *h);
+// The host is being asked for this size; writes it as limited, and the width follows the answer.
+int32_t sp_room_request_size(sp_room *room, uint32_t id, double width, double height, uint32_t *w, uint32_t *h);
 
 void sp_room_begin_grab(sp_room *room, uint32_t id);
 void sp_room_drag(sp_room *room);
@@ -145,6 +152,8 @@ void sp_host_say(sp_host *host, const char *json);
 // One picture of one window: an Annex B access unit, parameter sets first on a keyframe.
 void sp_host_video(sp_host *host, uint16_t window, int32_t keyframe, uint64_t captured_us,
                    const uint8_t *data, size_t length);
+// A little of one application's sound: signed 16-bit little-endian, interleaved, 48 kHz.
+void sp_host_audio(sp_host *host, const char *app, uint16_t channels, const uint8_t *data, size_t length);
 // Let a device that has never been here pair, or stop.
 void sp_host_open_pairing(sp_host *host, int32_t open);
 // The owner's answer about the device waiting to be let in.

@@ -31,7 +31,7 @@ final class RoomMenu {
 
     // The panel's pixels and its size in the room: 1200 px across at 0.9 m is a pixel to about
     // 1.5 mm, which at the distance it floats is a little finer than the glasses can show.
-    private let size = CGSize(width: 1200, height: 600)
+    private let size = CGSize(width: 1200, height: 660)
     private let rowHeight: CGFloat = 56
     private let columnWidth: CGFloat = 552
     private let top: CGFloat = 92
@@ -137,6 +137,11 @@ final class RoomMenu {
         r += 1
         rows.append(Row(title: pinned ? "Let the window go" : "Pin the window to the glass", detail: nil, rect: place(1, r), enabled: hasTarget) { [weak self] in
             if let id = self?.target { core.setPinned(id, !core.isPinned(id)) }
+            return true
+        })
+        r += 1
+        rows.append(Row(title: "Resize the window to fit", detail: "drag its corner", rect: place(1, r), enabled: hasTarget) { [weak self] in
+            if let id = self?.target { self?.controller.fit(id) }
             return true
         })
         r += 1

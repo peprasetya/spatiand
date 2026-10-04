@@ -11,7 +11,7 @@ import AppKit
 import Metal
 
 final class RoomTitles {
-    enum Zone { case close, pin, drag }
+    enum Zone { case close, pin, fit, drag }
 
     /// The bar's picture size, as the room's maths has it.
     static let size = CGSize(width: 1024, height: 46)
@@ -36,6 +36,7 @@ final class RoomTitles {
     static func zone(atX x: Double) -> Zone {
         if x >= Double(size.width - button) { return .close }
         if x >= Double(size.width - 2 * button) { return .pin }
+        if x >= Double(size.width - 3 * button) { return .fit }
         return .drag
     }
 
@@ -97,7 +98,7 @@ final class RoomTitles {
             .paragraphStyle: style,
         ]
         NSAttributedString(string: state.title, attributes: attributes)
-            .draw(in: CGRect(x: 16, y: 9, width: Self.size.width - 2 * Self.button - 32, height: 30))
+            .draw(in: CGRect(x: 16, y: 9, width: Self.size.width - 3 * Self.button - 32, height: 30))
 
         func box(_ index: Int, _ zone: Zone, _ glyph: String, hot: NSColor) {
             let rect = CGRect(x: Self.size.width - CGFloat(index + 1) * Self.button, y: 0, width: Self.button, height: Self.size.height - 3)
@@ -112,6 +113,7 @@ final class RoomTitles {
             NSAttributedString(string: glyph, attributes: g).draw(in: CGRect(x: rect.minX, y: rect.minY + 8, width: rect.width, height: 30))
         }
         box(0, .close, "\u{2715}", hot: NSColor(calibratedRed: 0.85, green: 0.2, blue: 0.2, alpha: 1))
+        box(2, .fit, "\u{2922}", hot: NSColor(calibratedRed: 0.18, green: 0.42, blue: 0.85, alpha: 1))
         box(1, .pin, "\u{25C9}", hot: NSColor(calibratedRed: 0.18, green: 0.42, blue: 0.85, alpha: 1))
 
         guard let data = context.data else { return }

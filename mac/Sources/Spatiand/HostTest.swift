@@ -31,7 +31,11 @@ enum HostTest {
                 exit(1)
             }
         }
-        after(8) {
+        // For the sound test: something playing in the application's own name.
+        if let command = ProcessInfo.processInfo.environment["SPATIAND_TEST_PLAY"] {
+            after(5) { let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/sh"); p.arguments = ["-c", command]; try? p.run() }
+        }
+        after(11) {
             print("client: \(model.windows.count) windows")
             for (id, surface) in model.windows {
                 guard let number = surface.view.window?.windowNumber,
@@ -41,6 +45,7 @@ enum HostTest {
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
                 print("wrote \(path): \(image.width)x\(image.height), \(surface.view.pictures) pictures shown")
             }
+            print("client: \(model.audioHeard) bytes of sound heard")
             exit(0)
         }
     }
