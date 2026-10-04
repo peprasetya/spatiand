@@ -5,7 +5,11 @@ set -e
 cd "$(dirname "$0")"
 MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p spatiand-mac-core --release --manifest-path ../Cargo.toml
 SPATIAND_CORE=release swift build -c release
-app=Spatiand.app
+# Put together in a scratch folder and installed at ~/Applications afterwards. ~/Documents is
+# synced by iCloud, which puts attributes on every file that a signature refuses, and an app that
+# lives at a fixed place outside it is also what macOS wants for a permission it is to remember.
+stage=$(mktemp -d)
+app="$stage/Spatiand.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
 cp .build/release/Spatiand "$app/Contents/MacOS/Spatiand"
@@ -49,4 +53,11 @@ else
   echo "note: signed ad hoc, so each rebuild asks for Screen Recording and Accessibility again;"
   echo "      create the \"$IDENTITY_NAME\" certificate (see HoloFrame) to stop that"
 fi
-echo "built $(pwd)/$app"
+dest="$HOME/Applications/Spatiand.app"
+mkdir -p "$HOME/Applications"
+rm -rf "$dest"
+ditto --noextattr --norsrc "$app" "$dest"
+rm -rf "$stage"
+codesign --verify --deep --strict "$dest" 2>/dev/null && echo "signature verified" || echo "warning: the installed app's signature does not verify"
+echo "built $dest"
+echo "run:  open -a $dest"
