@@ -72,7 +72,7 @@ host, nothing sends `set_glasses` unless a session says so; the Mac app does (it
 `Glasses { on: false }` when it connects, because "Show windows" is "always on this Mac" or no
 glasses are plugged in). So the shortest loop is:
 
-1. Open Spatiand on the Mac (`open mac/Spatiand.app` in this repo), launch SpatiWorld from its
+1. Open Spatiand on the Mac (`mac/make-app.sh`, then `open -a ~/Applications/Spatiand.app`), launch SpatiWorld from its
    menu. The host log (`journalctl --user -u spatiand-host`) shows `the session has no glasses on`
    and `told spatiworld: set_glasses 0`.
 2. The viewer's log should show it acting on it. Before the change: the unknown-message warning.

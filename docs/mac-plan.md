@@ -121,6 +121,11 @@ the host, and the Deck would see the same.
 * Sound is placed where its window is, by the Deck's own binaural renderer (`spatiand-audio`:
   stage directions, the head-related filters or the parametric panner, the plain blend), following
   the head; 5.1, 7.1 and 7.1.4 from the host are placed channel by channel.
+* Windows of this Mac can be brought into the room too (the menu: "Windows of this Mac"): captured with
+  ScreenCaptureKit and drawn like any other, with no encode or network. Clicks, the wheel and keys are posted at the
+  window's application with `CGEvent.postToPid` and the window named in the event, so the window need not be in
+  front. **Needs Screen Recording to show and Accessibility to click; the click path is untested** (the tool that
+  built it is not trusted to post events).
 * Unplugging, quitting, and `kill` all give the glasses their ordinary mode back and the Mac its
   pointer; unplugging restarts the app so the next plug-in starts clean (HoloFrame's lesson: a
   vanished display leaves a ghost window in the window server).
@@ -139,7 +144,9 @@ are showing every few seconds.
 3. Window frames in the room (title bars, close and resize handles): windows are moved, resized and
    closed with chords and the menu. The host window's own size does not follow the wearer's resizing.
 4. The Mac as a *host* (its own windows out to a Deck or Beam Pro).
-5. A signed `.app` bundle; today it runs from `mac/Spatiand.app`, ad hoc signed.
+5. Notarisation: `mac/make-app.sh` installs `~/Applications/Spatiand.app`, signed with HoloFrame's self-signed
+   "HoloFrame Dev" certificate when it is in the keychain (so the Screen Recording and Accessibility grants survive
+   rebuilds), ad hoc otherwise. Not notarised, so for this Mac only.
 
 ## The Mac as a host (later)
 
