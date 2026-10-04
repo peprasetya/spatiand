@@ -37,6 +37,13 @@ enum Settings {
         defaults.object(forKey: "commandIsControl") as? Bool ?? true
     }
 
+    /// The most video the host may send, in kbit/s: what this Mac's link to it can carry. A host
+    /// that sends more than the link takes makes the picture stutter and drops the sound.
+    static var maxKbit: Int {
+        get { defaults.object(forKey: "maxKbit") as? Int ?? 10_000 }
+        set { defaults.set(newValue, forKey: "maxKbit") }
+    }
+
     static var hotkeys: Bool {
         defaults.object(forKey: "hotkeys") as? Bool ?? true
     }

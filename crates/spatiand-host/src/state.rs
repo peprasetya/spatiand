@@ -138,6 +138,9 @@ pub struct Host {
     /// Whether the session has glasses on, as it last said. True until told otherwise: every
     /// session that has a head is the one this host was written for.
     pub glasses: bool,
+    /// The most the session says it can take, in kbit/s, when it has said. The host's own
+    /// ceiling still applies: this can only lower it.
+    pub session_max_kbit: Option<u32>,
     /// What each view-taking application has been told about the glasses, so each is told once
     /// and again only when it changes.
     pub told_glasses: HashMap<String, bool>,
@@ -258,6 +261,7 @@ impl Host {
             cursor_changed: Vec::new(),
             app_controls: HashMap::new(),
             glasses: true,
+            session_max_kbit: None,
             told_glasses: HashMap::new(),
             xwm: None,
             xwayland_shell_state,

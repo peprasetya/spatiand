@@ -907,11 +907,15 @@ fn run_host(
                     ))
                 })
                 .collect();
+            // The host's own ceiling, lowered to what the session says its link can take.
+            let ceiling = host
+                .session_max_kbit
+                .map_or(library.settings.max_kbit, |s| s.min(library.settings.max_kbit));
             // Each window's share of the ceiling, for the windows there are now.
             let budget: HashMap<u32, u32> = {
                 let sized: Vec<(WindowId, (u32, u32))> =
                     work.iter().map(|(id, _, size, _)| (WindowId(*id), *size)).collect();
-                let shares = budget::shares(library.settings.max_kbit, &sized, host.session_focus);
+                let shares = budget::shares(ceiling, &sized, host.session_focus);
                 sized.iter().map(|(id, _)| id.0).zip(shares).collect()
             };
             for (id, window, size, commits) in work {
@@ -966,7 +970,7 @@ fn run_host(
                     now.as_millis() as i64,
                     (pacer.rates().refresh_mhz / 1000).max(1),
                     // The ceiling is for everything together, so each window gets its share.
-                    budget.get(&id).copied().unwrap_or(library.settings.max_kbit),
+                    budget.get(&id).copied().unwrap_or(ceiling),
                 ) {
                     Ok(packets) => {
                         if let Some(stream) = streams.get_mut(&id) {
@@ -1306,6 +1310,13 @@ fn said(
     use spatiand_stream::ClientMessage as Says;
     match message {
         Says::Clipboard(what) => clipboard_said(host, what),
+        Says::Bandwidth(b) => {
+            let kbit = b.max_kbit.clamp(1_000, 400_000);
+            if host.session_max_kbit != Some(kbit) {
+                log::info!("the session can take {kbit} kbit/s");
+            }
+            host.session_max_kbit = Some(kbit);
+        }
         Says::Glasses { on } => {
             if host.glasses != on {
                 log::info!("the session {} glasses on", if on { "has" } else { "has no" });
@@ -1317,6 +1328,7 @@ fn said(
         } => {
             log::info!("session {session} speaks version {version}");
             // A session's event times are its own clock; a new one starts a new mapping.
+            host.session_max_kbit = None;
             host.event_clock = spatiand_stream::EventClock::default();
         }
         Says::Launch { app } => {

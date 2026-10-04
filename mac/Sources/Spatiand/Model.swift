@@ -107,6 +107,12 @@ final class Model {
         didSet { if glassesOn != oldValue { sendGlasses() } }
     }
 
+    /// Tell the host how much this link can carry; it lowers its own ceiling to it.
+    func sendBandwidth() {
+        guard connected else { return }
+        link.say(["Bandwidth": ["max_kbit": Settings.maxKbit, "max_fps": 60, "idle_fps": 0, "idle_after_ms": 250]])
+    }
+
     private func sendGlasses() {
         guard connected else { return }
         link.say(["Glasses": ["on": glassesOn]])
@@ -133,6 +139,7 @@ final class Model {
             connected = true
             clipboard.connected = true
             sendGlasses()
+            sendBandwidth()
         case "disconnected":
             connected = false
             clipboard.connected = false
