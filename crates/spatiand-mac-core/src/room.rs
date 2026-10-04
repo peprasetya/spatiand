@@ -343,7 +343,8 @@ impl Room {
         let forward = self.head() * DVec3::X;
         let place = Placement {
             yaw: forward.y.atan2(forward.x),
-            pitch: forward.z.clamp(-1.0, 1.0).asin().clamp(-PITCH_LIMIT, PITCH_LIMIT),
+            // Level with the eyes, which are a little above the pivot the room is centred on.
+            pitch: (forward.z.clamp(-1.0, 1.0).asin() + (self.stereo.neck_up_m / radius).atan()).clamp(-PITCH_LIMIT, PITCH_LIMIT),
             radius,
             width,
             ..Placement::default()

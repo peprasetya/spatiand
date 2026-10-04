@@ -35,6 +35,9 @@ final class RoomController {
     private(set) lazy var input = RoomInput(controller: self)
 
     private(set) lazy var menu = RoomMenu(controller: self)
+    private(set) lazy var hint = RoomHint(controller: self)
+    /// Whether any application window is in the room.
+    var hasWindows: Bool { !known.isEmpty }
     /// Where pinned windows sit and how big, as the wearer left them: kept here because the room
     /// only knows how to step on to the next corner.
     var cornerIndex = Settings.pinnedCorner % 4 { didSet { Settings.pinnedCorner = cornerIndex } }
@@ -98,6 +101,7 @@ final class RoomController {
             for case let window as RemoteWindow in model.windows.values { window.showAgain() }
             for id in known.keys { model.link.say(["WantKeyframe": ["window": Int(id)]]) }
         }
+        hint.update()
         onChange?()
     }
 
@@ -105,6 +109,7 @@ final class RoomController {
 
     func windowOpened(_ id: UInt16, size: CGSize, app: String) {
         known[id] = size
+        defer { hint.update() }
         apps[id] = app
         core.setApp(id, app)
         if active {
@@ -127,6 +132,7 @@ final class RoomController {
     }
 
     func windowClosed(_ id: UInt16) {
+        defer { hint.update() }
         known[id] = nil
         apps[id] = nil
         shown.remove(id)
@@ -136,6 +142,7 @@ final class RoomController {
     }
 
     func sessionEnded() {
+        defer { hint.update() }
         known = [:]
         shown = []
         core.clear()

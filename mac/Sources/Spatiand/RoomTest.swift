@@ -14,7 +14,10 @@ enum RoomTest {
         let model = Model.shared
         let room = model.room
         model.onProblem = { print("problem: \($0)") }
-        model.connect(PairedHost(name: "test", address: address, fingerprint: fingerprint))
+        // The hint test is of an empty room, so it has no computer to take windows from.
+        if ProcessInfo.processInfo.environment["SPATIAND_TEST_HINT"] == nil {
+            model.connect(PairedHost(name: "test", address: address, fingerprint: fingerprint))
+        }
 
         func after(_ seconds: Double, _ body: @escaping () -> Void) {
             DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body)
@@ -22,6 +25,18 @@ enum RoomTest {
         let env = ProcessInfo.processInfo.environment
         let head = (env["SPATIAND_TEST_HEAD"] ?? "0,0").split(separator: ",").compactMap { Double($0) }
 
+        if env["SPATIAND_TEST_HINT"] != nil {
+            after(4) {
+                room.core.holdHead(yaw: 0, pitch: 0)
+                room.core.perEye(1920, 1080)
+                room.setActive(true)
+            }
+            after(6) {
+                if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-hint.png") }
+                exit(0)
+            }
+            return
+        }
         after(2) { if let a = model.apps.first(where: { $0.id == app }) { model.launch(a) } else { print("no such app: \(model.apps.map(\.id))") } }
         after(5) {
             room.core.holdHead(yaw: head.first ?? 0, pitch: head.count > 1 ? head[1] : 0)
@@ -37,6 +52,33 @@ enum RoomTest {
             }
             if let image = room.renderer?.snapshot(width: 1920, height: 1080, sideBySide: false) {
                 write(image, "/tmp/spatiand-room-mono.png")
+            }
+            if env["SPATIAND_TEST_INPUT"] != nil {
+                // Real NSEvents through the room's own input window, as the OS would hand them.
+                room.drivesGlasses = false
+                let input = room.input
+                input.start()
+                func post(_ cg: CGEvent?) { if let cg, let e = NSEvent(cgEvent: cg) { NSApp.sendEvent(e) } }
+                let src = CGEventSource(stateID: .privateState)
+                room.core.centrePointer()
+                // The page's address bar is near the top of the window: steer there by mouse deltas.
+                for _ in 0..<8 {
+                    let a = room.core.aim()
+                    guard a.window != nil else { break }
+                    let e = CGEvent(mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: .zero, mouseButton: .left)
+                    e?.setIntegerValueField(.mouseEventDeltaX, value: Int64((400 - a.x) * 0.49))
+                    e?.setIntegerValueField(.mouseEventDeltaY, value: Int64((86 - a.y) * 0.49))
+                    post(e)
+                }
+                let a = room.core.aim()
+                print("input test: aiming at \(Int(a.x)),\(Int(a.y))")
+                post(CGEvent(mouseEventSource: src, mouseType: .leftMouseDown, mouseCursorPosition: .zero, mouseButton: .left))
+                post(CGEvent(mouseEventSource: src, mouseType: .leftMouseUp, mouseCursorPosition: .zero, mouseButton: .left))
+                for code: CGKeyCode in [4, 34] {   // h, i
+                    post(CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true))
+                    post(CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false))
+                }
+                input.stop()
             }
             if env["SPATIAND_TEST_MENU"] != nil {
                 room.menu.open()

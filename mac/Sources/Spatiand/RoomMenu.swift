@@ -48,6 +48,7 @@ final class RoomMenu {
     func open() {
         guard !isOpen else { return }
         isOpen = true
+        controller.hint.update()
         hovered = nil
         // What it acts on is what was being pointed at, or failing that, what has the keyboard.
         target = controller.core.aim().window.flatMap { $0 < 0xFFF0 ? $0 : nil } ?? controller.core.focused
@@ -61,6 +62,7 @@ final class RoomMenu {
         controller.core.remove(UInt16(Self.panelID))
         texture = nil
         controller.renderer?.panels[Self.panelID] = nil
+        controller.hint.update()
     }
 
     // MARK: what is in it

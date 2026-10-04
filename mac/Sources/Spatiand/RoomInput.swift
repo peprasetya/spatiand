@@ -39,13 +39,21 @@ final class InputView: NSView {
 
     // MARK: the mouse
 
-    private func moved(_ event: NSEvent) { controller?.pointerMoved(dx: Double(event.deltaX), dy: Double(event.deltaY)) }
+    private static let trace = ProcessInfo.processInfo.environment["SPATIAND_DEBUG_INPUT"] != nil
+
+    private func moved(_ event: NSEvent) {
+        if Self.trace { print("input: move \(event.deltaX), \(event.deltaY)") }
+        controller?.pointerMoved(dx: Double(event.deltaX), dy: Double(event.deltaY))
+    }
     override func mouseMoved(with event: NSEvent) { moved(event) }
     override func mouseDragged(with event: NSEvent) { moved(event) }
     override func rightMouseDragged(with event: NSEvent) { moved(event) }
     override func otherMouseDragged(with event: NSEvent) { moved(event) }
 
-    override func mouseDown(with event: NSEvent) { controller?.buttonDown(0x110, grab: event.modifierFlags.contains(.option)) }
+    override func mouseDown(with event: NSEvent) {
+        if Self.trace { print("input: left down") }
+        controller?.buttonDown(0x110, grab: event.modifierFlags.contains(.option))
+    }
     override func mouseUp(with event: NSEvent) { controller?.buttonUp(0x110) }
     override func rightMouseDown(with event: NSEvent) { controller?.buttonDown(0x111, grab: false) }
     override func rightMouseUp(with event: NSEvent) { controller?.buttonUp(0x111) }
@@ -82,6 +90,7 @@ final class InputView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if Self.trace { print("input: key \(event.keyCode)") }
         if chord(event) { return }
         if Int(event.keyCode) == kVK_Escape, controller?.menu.isOpen == true {
             controller?.menu.close()

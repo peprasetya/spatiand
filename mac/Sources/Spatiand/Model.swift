@@ -206,6 +206,7 @@ final class Model {
             onPairFailed?((detail as? String) ?? "pairing failed")
         default: break
         }
+        room.hint.update()
         onChange?()
     }
 
