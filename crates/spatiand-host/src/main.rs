@@ -1104,6 +1104,11 @@ fn start_app(host: &mut state::Host, catalog: &Catalog, app: &str) -> Result<(),
     if !sound.is_empty() {
         sound.extend(microphone::environment());
     }
+    // A viewer started for a session with no glasses on should start as an ordinary window, not
+    // start as a room and be told a moment later; see `appcontrol::glasses_word`.
+    if !host.glasses && entry.kind == spatiand_stream::AppKind::Vr {
+        sound.push(("SPATIAND_GLASSES".into(), "0".into()));
+    }
     let pose = host.pose_fd.as_ref().map(std::os::fd::AsFd::as_fd);
     let launched = apps::launch(entry, &host.socket_name, host.x11_display, &sound, pose)
         .map_err(|e| format!("could not start {app}: {e}"))?;
