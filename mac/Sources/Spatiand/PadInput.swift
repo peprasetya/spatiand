@@ -146,6 +146,8 @@ final class PadInput {
             any = true
             if t.touched { input.touch_x = t.x; input.touch_y = t.y; input.touched = 1 }
             if t.clicked { input.clicked = 1 }
+            // The PS button, which macOS does not always pass on through GameController.
+            if t.ps { input.buttons |= 1 << 14 }
         }
         return any ? input : nil
     }

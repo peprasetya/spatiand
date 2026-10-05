@@ -15,11 +15,11 @@ import IOKit.hid
 final class PadTouchpad {
     static let shared = PadTouchpad()
 
-    struct Touch { var x: Float; var y: Float; var touched: Bool; var clicked: Bool }
+    struct Touch { var x: Float; var y: Float; var touched: Bool; var clicked: Bool; var ps = false }
 
     private var manager: IOHIDManager?
     private let lock = NSLock()
-    private var newest = Touch(x: 0, y: 0, touched: false, clicked: false)
+    private var newest = Touch(x: 0, y: 0, touched: false, clicked: false, ps: false)
     private var buffers: [UnsafeMutablePointer<UInt8>] = []
     private(set) var reports = 0
     private(set) var devices = 0
@@ -66,7 +66,7 @@ final class PadTouchpad {
     private func detached(_ device: IOHIDDevice) {
         lock.lock()
         devices = max(0, devices - 1)
-        newest = Touch(x: 0, y: 0, touched: false, clicked: false)
+        newest = Touch(x: 0, y: 0, touched: false, clicked: false, ps: false)
         lock.unlock()
         print("pad: PlayStation controller detached")
     }
@@ -89,13 +89,14 @@ final class PadTouchpad {
         let touch = base + 34
         guard touch + 3 < n else { return }
         let click = report[base + 6] & 0x02 != 0
+        let ps = report[base + 6] & 0x01 != 0
         // The finger's id, with bit 7 set when it is not touching; then its position as two 12-bit numbers.
         let down = report[touch] & 0x80 == 0
         let x = Int(report[touch + 1]) | (Int(report[touch + 2] & 0x0F) << 8)
         let y = Int(report[touch + 2] >> 4) | (Int(report[touch + 3]) << 4)
         lock.lock()
         reports += 1
-        newest = Touch(x: Float(x) / 1919 * 2 - 1, y: 1 - Float(y) / 941 * 2, touched: down, clicked: click)
+        newest = Touch(x: Float(x) / 1919 * 2 - 1, y: 1 - Float(y) / 941 * 2, touched: down, clicked: click, ps: ps)
         lock.unlock()
     }
 }
