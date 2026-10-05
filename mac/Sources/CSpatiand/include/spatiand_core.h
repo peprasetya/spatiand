@@ -162,6 +162,38 @@ void sp_host_trust(sp_host *host, const char *fingerprint);
 int32_t sp_host_paired_count(sp_host *host);
 void sp_host_forget_all(sp_host *host);
 
+// --- game controllers, run through the same layouts as the Deck's ---
+typedef struct PadsHandle sp_pads;
+typedef struct {
+    uint32_t buttons;   // bit 0 A, 1 B, 2 X, 3 Y, 4 up, 5 down, 6 left, 7 right, 8 L1, 9 R1, 10 L2, 11 R2,
+                        // 12 select, 13 start, 14 guide, 15 left stick click, 16 right stick click
+    float lx, ly, rx, ry, lt, rt;       // sticks -1..1 with +y up; triggers 0..1
+    float touch_x, touch_y;             // the touchpad, -1..1 with +y up
+    int32_t touched, clicked;
+    int32_t has_gyro;
+    float gyro[3];                      // degrees a second about the pad's X, Y and Z
+    int32_t suspended;                  // a menu is over the world
+} sp_pad_in;
+typedef struct {
+    uint16_t pad_buttons;               // for a host: bit i is spatiand_pad::BUTTON_CODES[i]
+    uint8_t dpad;                       // bits 0..3 up, down, left, right
+    float left[2], right[2], triggers[2];
+    int32_t key_count;
+    uint32_t key_code[32];              // evdev codes, the keys that changed
+    uint8_t key_down[32];
+    uint32_t pointer;                   // buttons held: 1 left, 2 right, 4 middle
+    float motion_x, motion_y;           // points, +y down
+    int32_t wheel_x, wheel_y;
+    uint32_t commands;                  // 1 menu, 2 launcher, 4 keyboard, 8 screenshot, 16 recentre
+    int32_t guide, guide_held;
+    uint32_t menu_presses;              // bits 0..3 up, down, left, right, 4 A, 5 B, 6 Y
+} sp_pad_out;
+sp_pads *sp_pads_new(const char *layouts_dir);
+void sp_pads_free(sp_pads *pads);
+void sp_pads_focus(sp_pads *pads, const char *app);
+void sp_pads_step(sp_pads *pads, const sp_pad_in *input, sp_pad_out *out);
+char *sp_pads_layout_name(sp_pads *pads);
+
 #ifdef __cplusplus
 }
 #endif

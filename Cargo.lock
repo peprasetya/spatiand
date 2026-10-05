@@ -4050,6 +4050,7 @@ dependencies = [
  "serde_json",
  "spatiand-audio",
  "spatiand-hmd",
+ "spatiand-mapper",
  "spatiand-render",
  "spatiand-stream",
  "spatiand-track",

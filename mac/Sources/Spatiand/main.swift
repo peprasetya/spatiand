@@ -95,6 +95,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshIcon()
         if Settings.hostEnabled { MacHost.shared.start() }
         Model.shared.room.drivesGlasses = true
+        PadInput.shared.start()
         Model.shared.room.onChange = { [weak self] in self?.item.button?.appearsDisabled = !(self?.glasses.isPluggedIn ?? false) }
         wasPlugged = glasses.isPluggedIn
         Model.shared.glassesOn = glassesWanted()
@@ -412,6 +413,24 @@ if let at = CommandLine.arguments.firstIndex(of: "--add-host") {
     Hosts.add(PairedHost(name: args[0], address: args[1], fingerprint: args[2]))
     print("known computers: \(Hosts.all.map(\.name).joined(separator: ", "))")
     exit(0)
+}
+
+if let at = CommandLine.arguments.firstIndex(of: "--selftest-pad") {
+    // --selftest-pad <seconds>: watch the game controllers for a while, printing what they say.
+    let seconds = Double(CommandLine.arguments.dropFirst(at + 1).first ?? "") ?? 15
+    _ = NSApplication.shared
+    PadInput.shared.start()
+    var last = ""
+    let t = Timer(timeInterval: 0.2, repeats: true) { _ in
+        let line = PadInput.shared.debugLine
+        if line != last { last = line; print("pad: \(line)") }
+    }
+    RunLoop.main.add(t, forMode: .common)
+    DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+        print("pad: \(PadInput.shared.names.count) controllers \(PadInput.shared.names), \(PadTouchpad.shared.reports) touchpad reports from \(PadTouchpad.shared.devices) device(s)")
+        exit(0)
+    }
+    RunLoop.main.run()
 }
 
 if CommandLine.arguments.contains("--selftest-local") {

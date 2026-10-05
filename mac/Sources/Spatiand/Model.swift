@@ -265,6 +265,10 @@ final class Model {
             clipboard.fromHost(fields)
         case "Cursor":
             cursor(fields)
+        case "Rumble":
+            if let strong = (fields["strong"] as? NSNumber)?.intValue, let weak = (fields["weak"] as? NSNumber)?.intValue {
+                PadInput.shared.rumble(strong: strong, weak: weak)
+            }
         case "Refused":
             onProblem?((fields["reason"] as? String) ?? "the computer refused this session")
         default: break

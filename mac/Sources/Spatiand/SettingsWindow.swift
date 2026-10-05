@@ -13,6 +13,7 @@ struct SettingsView: View {
     @AppStorage("captureInput", store: Defaults.store) private var captureInput = true
     @AppStorage("hostControlIsCommand", store: Defaults.store) private var hostControlIsCommand = true
     @AppStorage("hotkeys", store: Defaults.store) private var hotkeys = true
+    @AppStorage("gamepads", store: Defaults.store) private var gamepads = true
     @State private var atLogin = SMAppService.mainApp.status == .enabled
     @State private var loginProblem = ""
     let hotkeyStatus: () -> String
@@ -49,6 +50,9 @@ struct SettingsView: View {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.Trackpad-Settings") { NSWorkspace.shared.open(url) }
                 }
             }
+            Toggle("Game controllers work as they do on the Deck (cable or Bluetooth)", isOn: $gamepads)
+            Text("A pad's touchpad slides the pointer in the glasses and its press clicks; the PS button opens the menu, which the D-pad, X and O then work. Each window has the controller layout it has on the Deck: copy ~/.config/spatiand/layouts from a Deck into ~/Library/Application Support/Spatiand/layouts to use the same ones.")
+                .font(.caption).foregroundColor(.secondary)
             Toggle("Start Spatiand when I log in", isOn: $atLogin)
                 .onChange(of: atLogin) { wanted in
                     do {

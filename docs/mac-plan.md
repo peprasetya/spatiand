@@ -167,6 +167,18 @@ Accessibility), and sound from the Mac's own applications when the Mac is the ho
 application's sound, sent as the same raw stereo stream the Linux host sends; tested over loopback). The Mac still
 plays that sound itself too: there is no way to take it from the speakers and leave it in the capture.
 
+**Game controllers** (a DualShock 4 over a cable or Bluetooth, a DualSense, an Xbox pad) work as they do on the Deck and
+the Beam Pro: `mac/Sources/Spatiand/PadInput.swift` reads them with GameController, and `spatiand-mac-core/src/pads.rs`
+runs them through the same `spatiand-mapper` engine and layout files. A host window gets the pad as a gamepad (and
+rumble comes back); the desktop layout types the D-pad as arrows, A as Enter and B as Escape; in the room the touchpad
+slides the pointer and its press clicks, the triggers click (right is the left button), A, B and X click while a thumb is
+on the touchpad and the layout has not claimed them, the sticks scroll, and the PS button opens the menu, which the D-pad,
+A and B then work. GameController gave no touchpad on this Mac, so `PadTouchpad.swift` reads the DualShock 4's own
+reports through IOHID beside it (checked with a pad on a cable; Bluetooth is switched to the long report the way drivers
+do, unchecked). `Spatiand --selftest-pad <seconds>` prints what a pad says. Layouts saved on a Deck work when copied to
+`~/Library/Application Support/Spatiand/layouts`; there is no layout editor here. Not done: the glasses' gyro as a source
+for layouts, the on-screen keyboard and screenshot commands, and the layout editor.
+
 **Not built:**
 
 1. Notarisation: `mac/make-app.sh` installs `~/Applications/Spatiand.app`, signed with HoloFrame's self-signed

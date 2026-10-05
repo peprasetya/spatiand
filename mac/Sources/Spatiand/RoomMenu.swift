@@ -203,6 +203,23 @@ final class RoomMenu {
         if row.action() { close() }
     }
 
+    /// A game controller's D-pad, A and B (see `PadInput`): up and left step back through the rows,
+    /// down and right forward, A does the row and B closes the menu.
+    func padPress(_ bits: UInt32) {
+        guard isOpen else { return }
+        let usable = rows.indices.filter { rows[$0].enabled }
+        guard !usable.isEmpty else { if bits & 0x20 != 0 { close() }; return }
+        let at = hovered.flatMap { usable.firstIndex(of: $0) }
+        var next = at
+        if bits & 0b0101 != 0 { next = at.map { max(0, $0 - 1) } ?? usable.count - 1 }
+        if bits & 0b1010 != 0 { next = at.map { min(usable.count - 1, $0 + 1) } ?? 0 }
+        if let next, next != at { hovered = usable[next]; redraw() }
+        if bits & 0x10 != 0, let h = hovered, rows.indices.contains(h), rows[h].enabled {
+            if rows[h].action() { close() }
+        }
+        if bits & 0x20 != 0 { close() }
+    }
+
     // MARK: drawing
 
     private func redraw() {
