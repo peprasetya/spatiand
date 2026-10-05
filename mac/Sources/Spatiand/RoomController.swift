@@ -10,6 +10,7 @@
 //  When the glasses go, the windows come back to the desktop exactly as they were.
 
 import AppKit
+import CSpatiand
 import CoreMedia
 
 final class RoomController {
@@ -34,7 +35,7 @@ final class RoomController {
     private(set) lazy var output = GlassesOutput(room: self)
     private(set) lazy var input = RoomInput(controller: self)
 
-    private(set) lazy var menu = RoomMenu(controller: self)
+    private(set) lazy var menu = RoomShell(controller: self)
     private(set) lazy var hint = RoomHint(controller: self)
     private(set) lazy var titles = RoomTitles(controller: self)
     /// Whether any application window is in the room.
@@ -61,11 +62,124 @@ final class RoomController {
         core.toggleSize()
     }
 
+    // MARK: what the menus ask of the app
+
+    /// An image's pixels, straight RGBA, drawn into a square.
+    static func pixels(of image: NSImage, side: Int) -> [UInt8]? {
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        let drawn = pixels.withUnsafeMutableBytes { raw -> Bool in
+            guard let context = CGContext(data: raw.baseAddress, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+            image.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+            NSGraphicsContext.restoreGraphicsState()
+            return true
+        }
+        guard drawn else { return nil }
+        // Straight alpha is what the room takes.
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            let a = Int(pixels[i + 3])
+            if a > 0 && a < 255 { for c in 0..<3 { pixels[i + c] = UInt8(min(255, Int(pixels[i + c]) * 255 / a)) } }
+        }
+        return pixels
+    }
+
+    /// The computers, and what each offers, for the launcher and the computers page: every one this Mac has
+    /// paired with, the one in use online with its applications, and this Mac itself.
+    func syncHosts() {
+        var rows: [[String: Any]] = []
+        var tabs: [[String: Any]] = []
+        for host in Hosts.all {
+            let current = model.connected && model.host == host
+            rows.append(["label": host.name, "address": host.address, "status": current ? "online" : "offline"])
+            var apps: [[String: Any]] = []
+            if current {
+                for app in model.apps {
+                    apps.append(["id": app.id, "name": app.name])
+                    if let icon = app.icon, let pixels = Self.pixels(of: icon, side: 128) { sp_shell_set_icon(core.handle, app.name, 128, 128, pixels) }
+                }
+            }
+            tabs.append(["label": host.name, "address": host.address, "online": current, "apps": apps])
+        }
+        var mac: [[String: Any]] = []
+        for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular && app.bundleIdentifier != Bundle.main.bundleIdentifier {
+            guard let id = app.bundleIdentifier, let name = app.localizedName else { continue }
+            mac.append(["id": id, "name": name])
+            if let icon = app.icon, let pixels = Self.pixels(of: icon, side: 128) { sp_shell_set_icon(core.handle, name, 128, 128, pixels) }
+        }
+        mac.sort { ($0["name"] as? String ?? "") < ($1["name"] as? String ?? "") }
+        tabs.append(["label": "This Mac", "address": "mac", "online": true, "apps": mac])
+        if let data = try? JSONSerialization.data(withJSONObject: ["rows": rows, "tabs": tabs]), let text = String(data: data, encoding: .utf8) {
+            sp_shell_set_hosts(core.handle, text)
+        }
+    }
+
+    /// Start an application on a computer: a host's, or one of this Mac's, whose window comes into the room.
+    func launch(app id: String, on host: String) {
+        if host == "mac" {
+            Task { [weak self] in
+                let list = await MacWindows.list()
+                await MainActor.run {
+                    if let info = list.first(where: { $0.bundle == id }) {
+                        self?.bringMacWindow(info)
+                    } else if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+                        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+                    }
+                }
+            }
+            return
+        }
+        guard let paired = Hosts.all.first(where: { $0.address == host }) else { return }
+        if model.connected, model.host == paired {
+            if let app = model.apps.first(where: { $0.id == id }) { model.launch(app) }
+        } else {
+            model.connect(paired)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                if let app = self?.model.apps.first(where: { $0.id == id }) { self?.model.launch(app) }
+            }
+        }
+    }
+
+    func forgetHost(address: String) {
+        guard let paired = Hosts.all.first(where: { $0.address == address }) else { return }
+        model.forget(paired)
+        syncHosts()
+    }
+
+    /// The window chosen in the list has been brought here and has the keyboard.
+    func focusFromList(_ id: UInt16) {
+        sendFocus(MacWindows.isMac(id) ? nil : id)
+        hint.update()
+    }
+
+    /// What the wearer is looking at, to the Pictures folder.
+    func screenshot() {
+        guard let renderer, let image = renderer.snapshot(width: 3840, height: 1080, sideBySide: true) else { return }
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Pictures/Spatiand \(stamp).png")
+        let rep = NSBitmapImageRep(cgImage: image)
+        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+        hint.say("Saved to your Pictures folder.")
+    }
+
+    /// "Leave Spatiand": the windows go back to this Mac's screen.
+    func leave() {
+        NotificationCenter.default.post(name: .spatiandLeave, object: nil)
+    }
+
+    /// An application's icon, drawn small in its window's title bar.
+    func setIcon(_ id: UInt16, _ image: NSImage) {
+        guard let pixels = Self.pixels(of: image, side: 96) else { return }
+        core.setIcon(id, width: 96, height: 96, rgba: pixels)
+    }
+
     /// The keyboard has moved to this window.
     func focusChanged(_ id: UInt16?) { sendFocus(id) }
 
     /// Ctrl-Space: the menu, in the glasses when they are what is being looked at.
-    func toggleMenu() { menu.toggle() }
+    func toggleMenu() { menu.toggleLauncher() }
+    func toggleSettings() { menu.toggleSettings() }
 
     var available: Bool { renderer != nil }
 
@@ -113,6 +227,7 @@ final class RoomController {
     func windowOpened(_ id: UInt16, size: CGSize, app: String, title: String) {
         known[id] = size
         titles.set(id, title: title)
+        if let icon = model.apps.first(where: { $0.id == app })?.icon { setIcon(id, icon) }
         defer { hint.update() }
         apps[id] = app
         core.setApp(id, app)
@@ -152,7 +267,7 @@ final class RoomController {
     }
 
     /// Once a frame: what the bars say, if that has changed.
-    func tick() { titles.update() }
+    func tick() { updateSound(); titles.update(); menu.update() }
 
     /// The host's windows are gone with the session; this Mac's own stay.
     func sessionEnded() {
@@ -198,11 +313,11 @@ final class RoomController {
 
     /// The window a button went down on, so the matching release and any drag go to it too.
     private var pressed: UInt16?
-    /// The window whose corner is being dragged, and when the host was last asked for a size.
-    private var resizing: UInt16?
+    /// When the application was last asked for a size while an edge is being dragged.
     private var lastAsk = Date.distantPast
-    private var fitTimer: Timer?
     private var hovered: UInt16?
+    /// A pinch's worth of zoom not yet sent on to the application.
+    private var pinchSum = 0.0
 
     func pointerMoved(dx: Double, dy: Double) {
         core.movePointer(dx: dx, dy: dy)
@@ -212,16 +327,11 @@ final class RoomController {
     /// Where the pointer is may change without the mouse moving: the head turns.
     func pointerChanged() {
         if core.isGrabbing { core.drag(); return }
-        if let id = resizing {
-            // The host's window keeps its top left corner; where the pointer is, is where the bottom right goes.
-            if Date().timeIntervalSince(lastAsk) > 0.12, let at = core.aimFree(id) { ask(id, width: at.x, height: at.y) }
+        if core.isSizing {
+            if let drag = core.dragResize(), Date().timeIntervalSince(lastAsk) > 0.12 { askSize(drag.id, drag.width, drag.height) }
             return
         }
-        if menu.isOpen {
-            let aim = core.aim()
-            if aim.window == RoomMenu.panelID { menu.hover(aim.x, aim.y) } else { menu.hover(-1, -1) }
-            if aim.window == RoomMenu.panelID { return }
-        }
+        if menu.isOpen { menu.hover(); return }
         if let down = pressed {
             if let at = core.aim(at: down) {
                 if MacWindows.isMac(down) { macMouse(down, held: true, at.x, at.y) } else { send(down, ["Motion": ["x": at.x, "y": at.y]]) }
@@ -229,43 +339,41 @@ final class RoomController {
             return
         }
         let aim = core.aim()
-        // A title bar is Spatiand's, not the application's: the application is told the pointer left.
-        if aim.title, let id = aim.window {
-            titles.hover = (id, RoomTitles.zone(atX: aim.x))
+        // The frame is Spatiand's, not the application's: the application is told the pointer left it, and the
+        // button under the pointer lights.
+        if let id = aim.window, id < RoomCore.panelFirst, aim.zone != .content, aim.zone != .none {
+            core.setHover(id, aim.zone)
         } else {
-            titles.hover = nil
+            core.setHover(0, .none)
         }
-        let over = aim.title ? nil : aim.window
+        let over = aim.zone == .content ? aim.window : nil
         if over != hovered {
-            if let old = hovered, !MacWindows.isMac(old), old < 0xFFF0 { send(old, "Leave") }
+            if let old = hovered, !MacWindows.isMac(old), old < RoomCore.panelFirst { send(old, "Leave") }
             hovered = over
         }
-        if let id = over, id < 0xFFF0 {
+        if let id = over, id < RoomCore.panelFirst {
             if MacWindows.isMac(id) { macMouse(id, held: false, aim.x, aim.y) } else { send(id, ["Motion": ["x": aim.x, "y": aim.y]]) }
         }
     }
 
     func buttonDown(_ button: Int, grab: Bool) {
         let aim = core.aim()
-        if menu.isOpen {
-            if aim.window == RoomMenu.panelID { menu.click(aim.x, aim.y) } else { menu.close() }
-            return
-        }
-        guard let id = aim.window, id < 0xFFF0 else { return }
+        if menu.isOpen { menu.click(); return }
+        guard let id = aim.window, id < RoomCore.panelFirst else { return }
         focus(id)
-        if aim.title {
-            switch RoomTitles.zone(atX: aim.x) {
-            case .close: closeWindow(id)
-            case .pin: core.setPinned(id, !core.isPinned(id))
-            case .fit: fit(id)
-            case .drag: core.beginGrab(id)
+        switch aim.zone {
+        case .close: closeWindow(id); return
+        case .hide: hideWindow(id); return
+        case .pin: core.setPinned(id, !core.isPinned(id)); return
+        case .mute: toggleMute(id); return
+        case .title: core.beginGrab(id); return
+        case .left, .right, .bottom, .bottomLeft, .bottomRight:
+            if button == 0x110 {
+                core.beginResize(id, aim.zone)
+                lastAsk = .distantPast
             }
             return
-        }
-        if aim.corner, button == 0x110 {
-            resizing = id
-            lastAsk = .distantPast
-            return
+        default: break
         }
         if grab {
             core.beginGrab(id)
@@ -282,9 +390,9 @@ final class RoomController {
     }
 
     func buttonUp(_ button: Int) {
-        if let id = resizing {
-            resizing = nil
-            if let at = core.aimFree(id) { ask(id, width: at.x, height: at.y) }
+        if core.isSizing {
+            if let drag = core.dragResize() { askSize(drag.id, drag.width, drag.height) }
+            core.endResize()
             return
         }
         if core.isGrabbing {
@@ -303,7 +411,7 @@ final class RoomController {
     }
 
     func scrolled(dx: Double, dy: Double, precise: Bool) {
-        guard !menu.isOpen, let id = core.aim().window ?? core.focused, id < 0xFFF0 else { return }
+        guard !menu.isOpen, let id = core.aim().window ?? core.focused, id < RoomCore.panelFirst else { return }
         let unit: Double = precise ? 1 : 10
         if MacWindows.isMac(id), let capture = macCaptures[id], let at = core.aim(at: id) {
             MacInput.scroll(dx: Int32(dx * unit), dy: Int32(dy * unit), at: capture.screenPoint(x: at.x, y: at.y),
@@ -346,7 +454,7 @@ final class RoomController {
             let list = await MacWindows.list()
             await MainActor.run {
                 self?.macList = list
-                self?.menu.macListChanged()
+                self?.syncHosts()
             }
         }
     }
@@ -367,10 +475,11 @@ final class RoomController {
             print("room: no Accessibility yet; the window will show but cannot be clicked or typed into")
         }
         let id = nextMac
-        nextMac = nextMac &+ 1 < 0xFFF0 ? nextMac + 1 : MacWindows.firstID
+        nextMac = nextMac &+ 1 < RoomCore.panelFirst ? nextMac + 1 : MacWindows.firstID
         let capture = MacCapture(info)
         macCaptures[id] = capture
         titles.set(id, title: info.title.isEmpty ? info.app : info.app + " \u{2014} " + info.title)
+        if let icon = NSRunningApplication(processIdentifier: info.pid)?.icon { setIcon(id, icon) }
         renderer.decoders[id] = capture
         capture.onSize = { [weak self] size in DispatchQueue.main.async { self?.macSized(id, size) } }
         capture.onEnded = { [weak self] in self?.removeMacWindow(id) }
@@ -455,35 +564,86 @@ final class RoomController {
         return (model.windows[id] as? RemoteWindow)?.view
     }
 
-    func zoom(by factor: Double) {
-        guard let id = core.aim().window ?? core.focused else { return }
-        scaled(id, by: factor)
+    /// Nearer or further, by this many metres: the window is moved, not resized.
+    func push(_ id: UInt16, metres: Double) { core.pushPull(id, metres: metres) }
+
+    /// A pinch on the trackpad. On a window's frame or title bar it brings the window nearer or puts it
+    /// further away, in front of the others or behind them; over what the application draws it is the
+    /// application's, which zooms its own contents.
+    func pinched(by magnification: Double) {
+        let aim = core.aim()
+        guard let id = aim.window, id < RoomCore.panelFirst, !menu.isOpen else { return }
+        if aim.zone == .content {
+            pinchSum += magnification
+            while abs(pinchSum) >= 0.12 {
+                zoomContents(id, in: pinchSum > 0)
+                pinchSum -= pinchSum > 0 ? 0.12 : -0.12
+            }
+        } else if aim.zone != .none {
+            pinchSum = 0
+            push(id, metres: -magnification * 3.0)
+        }
     }
 
-    /// A window made bigger or smaller by the wearer: once they have stopped, the host is asked for
-    /// that many pixels, so what is shown is sharper or sparer and not a picture stretched.
-    func scaled(_ id: UInt16, by factor: Double) {
-        core.scale(id, by: factor)
-        guard id < 0xFFF0, !core.isPinned(id) else { return }
-        fitTimer?.invalidate()
-        fitTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { [weak self] _ in self?.fit(id) }
+    /// One step of zoom in an application: Control and the wheel, as a browser takes it, or Command and
+    /// plus or minus for a window of this Mac.
+    private func zoomContents(_ id: UInt16, in zoomIn: Bool) {
+        if MacWindows.isMac(id) {
+            guard let capture = macCaptures[id] else { return }
+            // = and - (ANSI), with Command.
+            let code: UInt16 = zoomIn ? 24 : 27
+            MacInput.key(code: code, flags: .command, down: true, pid: capture.info.pid)
+            MacInput.key(code: code, flags: .command, down: false, pid: capture.info.pid)
+            return
+        }
+        let at = Int(ProcessInfo.processInfo.systemUptime * 1000)
+        func say(_ input: Any) { send(id, input) }
+        _ = at
+        model.link.say(["InputAt": ["window": Int(id), "input": ["Key": ["code": 29, "pressed": true]], "time_ms": at]])
+        model.link.say(["InputAt": ["window": Int(id), "input": ["Scroll": ["horizontal": 0.0, "vertical": zoomIn ? -10.0 : 10.0]], "time_ms": at + 1]])
+        model.link.say(["InputAt": ["window": Int(id), "input": ["Key": ["code": 29, "pressed": false]], "time_ms": at + 2]])
     }
 
-    /// Ask the host for as many pixels as the window's width in the room calls for.
-    func fit(_ id: UInt16) {
-        guard id < 0xFFF0, let size = core.nativeSize(id) else { return }
-        ask(id, width: Double(size.w), height: Double(size.h))
-    }
-
-    /// Ask the application to make its window about this size, in its own pixels.
-    private func ask(_ id: UInt16, width: Double, height: Double) {
-        guard let size = core.requestSize(id, width: width, height: height) else { return }
+    /// Ask the application to make its window about this many pixels.
+    private func askSize(_ id: UInt16, _ width: Int, _ height: Int) {
         lastAsk = Date()
         if MacWindows.isMac(id) {
             guard let capture = macCaptures[id] else { return }
-            MacWindows.resize(capture.info, toPoints: CGSize(width: Double(size.w) / capture.scale, height: Double(size.h) / capture.scale))
+            MacWindows.resize(capture.info, toPoints: CGSize(width: Double(width) / capture.scale, height: Double(height) / capture.scale))
         } else {
-            model.link.say(["Configure": ["window": Int(id), "width": size.w, "height": size.h]])
+            model.link.say(["Configure": ["window": Int(id), "width": width, "height": height]])
+        }
+    }
+
+    /// Put a window away; the menu brings it back.
+    func hideWindow(_ id: UInt16) {
+        core.setHidden(id, true)
+        if core.focused == id { core.focused = nil; sendFocus(nil) }
+        hint.update()
+    }
+
+    func showWindow(_ id: UInt16) {
+        core.setHidden(id, false)
+        core.bringHere(id)
+        focus(id)
+        hint.update()
+    }
+
+    /// The windows put away, for the menu.
+    var hiddenWindows: [(id: UInt16, title: String)] {
+        (Array(known.keys) + macWindowIDs).filter { core.isHidden($0) }.sorted().map { ($0, titles.titles[$0] ?? "Window") }
+    }
+
+    func toggleMute(_ id: UInt16) {
+        guard let app = apps[id] ?? macInfo(id)?.bundle else { return }
+        AudioOut.shared.toggleMute(app)
+    }
+
+    /// What each window's frame says about sound, once a frame.
+    func updateSound() {
+        for id in Array(known.keys) + macWindowIDs {
+            guard let app = apps[id] ?? macInfo(id)?.bundle else { continue }
+            core.setSound(id, sounding: AudioOut.shared.isSounding(app), muted: AudioOut.shared.isMuted(app))
         }
     }
 
@@ -494,7 +654,7 @@ final class RoomController {
     }
 
     func closeAimed() {
-        guard let id = core.aim().window ?? core.focused, id < 0xFFF0 else { return }
+        guard let id = core.aim().window ?? core.focused, id < RoomCore.panelFirst else { return }
         closeWindow(id)
     }
 
@@ -527,7 +687,7 @@ final class RoomController {
     /// Three, four and five fingers on the trackpad. Three work the room as a whole, four the
     /// window being pointed at, and five all the windows at once.
     func gesture(_ event: GestureRecognizer.Event) {
-        let target = core.aim().window.flatMap { $0 < 0xFFF0 ? $0 : nil } ?? core.focused
+        let target = core.aim().window.flatMap { $0 < RoomCore.panelFirst ? $0 : nil } ?? core.focused
         switch event {
         case .swipe(.left, 3), .swipe(.right, 3):
             // The next window round, brought to where you are looking.
@@ -536,7 +696,7 @@ final class RoomController {
                 focus(id)
             }
         case .swipe(.up, 3):
-            menu.open()
+            if !menu.isOpen { menu.toggleLauncher() }
         case .swipe(.down, 3):
             menu.close()
         case .tap(3):
@@ -550,7 +710,7 @@ final class RoomController {
             case .down: core.nudge(id, yaw: 0, pitch: -8)
             }
         case .pinch(4, let spreading):
-            if let id = target { scaled(id, by: spreading ? 1.2 : 0.83) }
+            if let id = target { push(id, metres: spreading ? -0.5 : 0.5) }
         case .pinch(5, let spreading):
             core.arrange(spread: spreading ? 2.4 : 1.0)
         default:

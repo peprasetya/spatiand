@@ -20,19 +20,16 @@ use spatiand_hmd::ImuSample;
 use spatiand_render::camera::{eyes_for, StereoConfig};
 use spatiand_render::pip::{self, Corner, Size};
 use spatiand_render::ray::{intersect_plane, intersect_quad, Bend, Quad, Ray};
+use crate::chrome::{self, Edge, Frame as ChromeFrame, Look, Zone};
+use crate::shell_ui::{self, ShellUi, Target};
 use spatiand_track::{AxisMap, HeadTracker, TrackerConfig, DEFAULT_PREDICTION_MAX_DEGREES, DEFAULT_PREDICTION_SECONDS};
 
 /// A window's id on the wire, or the cursor.
 pub const CURSOR: u32 = 0xFFFF;
 /// Ids from here up are Spatiand's own panels, not an application's windows.
-pub const PANEL_FIRST: u32 = 0xFFF0;
+pub const PANEL_FIRST: u32 = 0xFF00;
 /// Added to a window's id for its title bar, in what is drawn.
 pub const TITLE_FLAG: u32 = 0x10000;
-/// A title bar's picture, in pixels: the same shape whatever the window's size, so the picture needs
-/// drawing only once for each state.
-pub const BAR_PX: (u32, u32) = (1024, 46);
-/// How far above its window a title bar floats, metres.
-const BAR_GAP: f64 = 0.006;
 
 /// How far from the wearer a window is put, and how wide, until it is moved. The Deck's own.
 const DEFAULT_RADIUS: f64 = 2.2;
@@ -47,13 +44,8 @@ pub const DEGREES_PER_POINT: f64 = 0.045;
 const PITCH_LIMIT: f64 = 89.0 * std::f64::consts::PI / 180.0;
 /// The most a window may grow to, and the least it may shrink to, metres across.
 const WIDTH_RANGE: (f64, f64) = (0.3, 4.0);
-/// How many of the host's pixels go across a metre of window when it is first opened, and so when
-/// it is resized from here: a window made bigger gets more pixels, not the same ones blown up.
-const DENSITY: f64 = 1280.0 / DEFAULT_WIDTH;
-/// The smallest and largest picture a window is asked to be resized to.
-const SIZE_RANGE: ((u32, u32), (u32, u32)) = ((240, 150), (3840, 2160));
-/// How far in from the bottom right corner of a window, metres, a press starts a resize.
-const CORNER_M: f64 = 0.07;
+/// How near and how far a window may be put, metres, as on the Deck.
+const DISTANCE_RANGE: (f64, f64) = (0.8, 8.0);
 
 /// How far round the wearer one strip of a bent window may turn, radians.
 const STRIP_STEP: f64 = 0.026;
@@ -113,12 +105,12 @@ struct Strip {
     to: f64,
 }
 
-fn strips(radius: f64, width: f64) -> Vec<Strip> {
+fn strips(radius: f64, width: f64, overlap: f64) -> Vec<Strip> {
     let radius = radius.max(1e-6);
     let span = width / radius;
     let count = ((span / STRIP_STEP).ceil() as usize).clamp(1, MAX_STRIPS);
     let step = span / count as f64;
-    let overlap = if count > 1 { STRIP_OVERLAP_M } else { 0.0 };
+    let overlap = if count > 1 { overlap } else { 0.0 };
     let share = overlap * 0.5 / width.max(1e-6);
     (0..count)
         .map(|i| {
@@ -136,10 +128,10 @@ fn strips(radius: f64, width: f64) -> Vec<Strip> {
 
 /// A window's strips, as triangles, appended to `verts`: a flat piece for each, standing on the
 /// window's own cylinder, `rise` metres up the window's own vertical from its middle.
-fn push_strips(verts: &mut Vec<f32>, place: &Placement, height: f64, rise: f64) {
+fn push_strips(verts: &mut Vec<f32>, place: &Placement, width: f64, height: f64, rise: f64, blended: bool) {
     let origin = place.position();
     let turn = place.orientation();
-    let pieces = if place.pinned { vec![Strip { y: 0.0, chord: place.width, from: 0.0, to: 1.0 }] } else { strips(place.radius, place.width) };
+    let pieces = if place.pinned { vec![Strip { y: 0.0, chord: width, from: 0.0, to: 1.0 }] } else { strips(place.radius, width, if blended { 0.0 } else { STRIP_OVERLAP_M }) };
     for s in pieces {
         // The flat piece's middle on the window's own cylinder, and which way it runs.
         let (centre, angle) = if place.pinned { (DVec3::new(0.0, s.y, 0.0), 0.0) } else { on_cylinder(place.radius, s.y, 0.0) };
@@ -170,9 +162,8 @@ pub struct Win {
     pub place: Placement,
     /// Whether it has a picture yet; a window that has none is not drawn.
     pub shown: bool,
-    /// A size the host has been asked to make this window, and how wide it is to be in the room
-    /// once the host has done it: the width follows the answer, not the question.
-    pending: Option<((u32, u32), f64)>,
+    /// Put away: not drawn and not aimed at, until the menu brings it back.
+    pub hidden: bool,
 }
 
 impl Win {
@@ -184,21 +175,21 @@ impl Win {
         place.width / self.aspect()
     }
 
-    /// The title bar above this window: its quad, how high above the window's middle it is, and how tall.
-    fn bar(&self, place: &Placement) -> Option<(Quad, f64, f64)> {
-        if place.pinned || Room::is_panel(self.id) {
-            return None;
-        }
-        let height = place.width * BAR_PX.1 as f64 / BAR_PX.0 as f64;
-        let rise = self.height(place) * 0.5 + BAR_GAP + height * 0.5;
+    /// The window with its frame and title bar: the quad the chrome is drawn on and aimed at, and the
+    /// frame's own measures. The bar reaches further above the content than the frame does below it,
+    /// so the quad's middle is above the content's.
+    fn chrome(&self, place: &Placement) -> (Quad, ChromeFrame, f64) {
+        let frame = ChromeFrame::of(self.size, place.width, place.radius, place.pinned);
+        let content_height = self.height(place);
+        let rise = frame.bar * content_height * 0.5;
         let quad = Quad {
             centre: place.position() + place.orientation() * DVec3::new(0.0, 0.0, rise),
             orientation: place.orientation(),
-            width: place.width,
-            height,
+            width: frame.width() * content_height,
+            height: frame.height() * content_height,
             bend: place.bend(),
         };
-        Some((quad, rise, height))
+        (quad, frame, rise)
     }
 
     fn quad(&self, place: &Placement) -> Quad {
@@ -216,15 +207,14 @@ impl Win {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Aim {
     pub window: Option<u32>,
-    /// Where in that window, in the host's pixels, clamped to it.
+    /// Where in that window's surface, in the host's pixels, clamped to it.
     pub x: f64,
     pub y: f64,
     /// Where in the room: the point the cursor is drawn at.
     pub point: DVec3,
-    /// Set when what is aimed at is the window's bottom right corner, where a press resizes it.
-    pub corner: bool,
-    /// Set when what is aimed at is the window's title bar, whose pixels are [`BAR_PX`].
-    pub title: bool,
+    /// What part of the window: its surface, its title bar, a button, an edge to resize by. Always
+    /// [`Zone::Content`] for a panel.
+    pub zone: Option<Zone>,
 }
 
 /// Something being dragged about the room with the mouse.
@@ -234,6 +224,17 @@ struct Grab {
     /// Where the window's middle was, in angles from where the pointer was, when it was taken.
     yaw: f64,
     pitch: f64,
+}
+
+/// A window's edge being dragged: where the window was and where the pointer was on its plane.
+#[derive(Debug, Clone, Copy)]
+struct Sizing {
+    id: u32,
+    edge: Edge,
+    start: Placement,
+    start_pixels: (u32, u32),
+    /// Where the pointer was on the window's plane, as fractions of it.
+    from: (f64, f64),
 }
 
 /// One application's sound, being placed.
@@ -265,6 +266,9 @@ fn make_head() -> Box<dyn Spatialise> {
 
 pub struct Room {
     tracker: HeadTracker,
+    /// What the tracker has learned about the glasses' sensors, kept between runs.
+    memory: spatiand_track::SensorMemory,
+    device: Option<String>,
     /// Which application each window belongs to, so its sound can be put where the window is.
     app_of: HashMap<u32, String>,
     voices: HashMap<String, Voice>,
@@ -275,6 +279,16 @@ pub struct Room {
     /// Where the cursor is in the view, radians: `(left, up)`.
     cursor: (f64, f64),
     grab: Option<Grab>,
+    /// The Deck's menus: the shell, and what they look like.
+    pub ui: ShellUi,
+    /// An edge of a window being dragged to resize it.
+    sizing: Option<Sizing>,
+    titles: HashMap<u32, String>,
+    icons: HashMap<u32, (u32, u32, std::sync::Arc<Vec<u8>>)>,
+    /// Per window: whether its application is making a sound, and whether the wearer has silenced it.
+    sound: HashMap<u32, (bool, bool)>,
+    /// What the pointer is over on a window's chrome, so the button under it can light.
+    hover: Option<(u32, Zone)>,
     corner: Corner,
     size: Size,
     /// A head to use before the glasses have said anything, for the preview and tests.
@@ -294,6 +308,8 @@ impl Room {
         let axes = spatiand_track::config::load_axes().unwrap_or(AxisMap::XREAL_AIR);
         Room {
             tracker: HeadTracker::new(axes, TrackerConfig::default()),
+            memory: spatiand_track::SensorMemory::new(),
+            device: None,
             app_of: HashMap::new(),
             voices: HashMap::new(),
             stereo: StereoConfig::default(),
@@ -301,6 +317,12 @@ impl Room {
             focus: None,
             cursor: (0.0, 0.0),
             grab: None,
+            ui: ShellUi::new(),
+            sizing: None,
+            titles: HashMap::new(),
+            icons: HashMap::new(),
+            sound: HashMap::new(),
+            hover: None,
             corner: Corner::default(),
             size: Size::default(),
             fixed_head: None,
@@ -321,8 +343,23 @@ impl Room {
 
     // MARK: the head
 
+    /// Which glasses these are. What the tracker learned about their sensors last time is handed
+    /// back now: the Deck and the Beam Pro do the same, and without it the gyro starts from a
+    /// bias that was never measured and the magnetic anchor that holds yaw has nothing to hold
+    /// to -- which is a slow turning of the whole room.
+    pub fn set_device(&mut self, name: &str) {
+        if self.device.as_deref() != Some(name) {
+            self.device = Some(name.to_string());
+            self.memory.restore(name, &mut self.tracker);
+        }
+    }
+
     pub fn imu(&mut self, sample: &ImuSample) {
+        if self.device.is_none() {
+            self.set_device("XREAL Air");
+        }
         self.tracker.integrate(sample);
+        self.memory.tick(&self.tracker);
     }
 
     pub fn recentre(&mut self) {
@@ -384,16 +421,6 @@ impl Room {
     /// looking, beside whatever is there.
     pub fn set_window(&mut self, id: u32, size: (u32, u32)) {
         if let Some(w) = self.windows.iter_mut().find(|w| w.id == id) {
-            if let Some((asked, width)) = w.pending {
-                // The host has answered a resize asked for here: the window keeps its pixel
-                // density, which is what makes it bigger and not just blown up.
-                if size != w.size {
-                    w.place.width = (width * size.0 as f64 / asked.0.max(1) as f64).clamp(WIDTH_RANGE.0, WIDTH_RANGE.1);
-                }
-                if size.0.abs_diff(asked.0) <= 2 {
-                    w.pending = None;
-                }
-            }
             w.size = size;
             return;
         }
@@ -431,7 +458,7 @@ impl Room {
             }
             place.yaw = found.unwrap_or(heading);
         }
-        self.windows.push(Win { id, size, place, shown: false, pending: None });
+        self.windows.push(Win { id, size, place, shown: false, hidden: false });
         self.focus = Some(id);
     }
 
@@ -451,7 +478,7 @@ impl Room {
             width,
             ..Placement::default()
         };
-        self.windows.push(Win { id, size, place, shown: true, pending: None });
+        self.windows.push(Win { id, size, place, shown: true, hidden: false });
     }
 
     // MARK: sound
@@ -618,29 +645,6 @@ impl Room {
         }
     }
 
-    /// The picture size at which this window's pixels are the density a new window starts with, at
-    /// the width it has now: what "fit" asks the host for.
-    pub fn native_size(&self, id: u32) -> Option<(u32, u32)> {
-        let w = self.windows.iter().find(|w| w.id == id)?;
-        let width = (w.place.width * DENSITY).round();
-        Some(Self::clamp_size(width, width / w.aspect()))
-    }
-
-    fn clamp_size(width: f64, height: f64) -> (u32, u32) {
-        let even = |v: f64, lo: u32, hi: u32| ((v.round() as u32).clamp(lo, hi)) & !1;
-        (even(width, SIZE_RANGE.0 .0, SIZE_RANGE.1 .0), even(height, SIZE_RANGE.0 .1, SIZE_RANGE.1 .1))
-    }
-
-    /// The host is being asked to make this window this many pixels. Returns what was asked after
-    /// limits, to send; the window's width in the room follows when the host answers.
-    pub fn request_size(&mut self, id: u32, size: (f64, f64)) -> Option<(u32, u32)> {
-        let w = self.windows.iter_mut().find(|w| w.id == id && !Self::is_panel(w.id))?;
-        let asked = Self::clamp_size(size.0, size.1);
-        let width = w.place.width * asked.0 as f64 / w.size.0.max(1) as f64;
-        w.pending = Some((asked, width.clamp(WIDTH_RANGE.0, WIDTH_RANGE.1)));
-        Some(asked)
-    }
-
     /// Where the cursor is in one window's own pixels, off its edge as well as on it.
     pub fn aim_free(&self, id: u32) -> Option<(f64, f64)> {
         let head = self.head();
@@ -739,46 +743,56 @@ impl Room {
         Ray { origin: self.eye_centre(head), direction: (head * (aim * DVec3::X)).normalize() }
     }
 
-    /// What the cursor is over, front first.
+    /// The windows nearest first, panels and then pinned ones before the room's.
+    fn nearest_first(&self, placed: &[(usize, Placement)]) -> Vec<usize> {
+        let mut order: Vec<usize> = placed.iter().map(|(i, _)| *i).collect();
+        order.sort_by(|a, b| {
+            let (wa, wb) = (&self.windows[*a], &self.windows[*b]);
+            (!Self::is_panel(wa.id), !wa.place.pinned)
+                .cmp(&(!Self::is_panel(wb.id), !wb.place.pinned))
+                .then(placed[*a].1.radius.total_cmp(&placed[*b].1.radius))
+                .then(b.cmp(a))
+        });
+        order
+    }
+
+    /// What the cursor is over, front first: a window's surface, or its title bar, a button or an edge.
     pub fn aim(&self) -> Aim {
         let head = self.head();
         let ray = self.ray(head);
         let placed = self.placed(head);
-        // Pinned windows are in front of the room, then the room's own, the last drawn first.
-        let mut order: Vec<usize> = placed.iter().map(|(i, _)| *i).collect();
-        order.sort_by_key(|i| (!Self::is_panel(self.windows[*i].id), !self.windows[*i].place.pinned, std::cmp::Reverse(*i)));
-        for i in order {
+        for i in self.nearest_first(&placed) {
             let (_, place) = placed[i];
             let w = &self.windows[i];
-            if !w.shown {
+            if !w.shown || w.hidden {
                 continue;
             }
-            if let Some(hit) = intersect_quad(&ray, &w.quad(&place)) {
-                return Aim {
-                    window: Some(w.id),
-                    x: (hit.u * w.size.0 as f64).clamp(0.0, w.size.0 as f64),
-                    y: (hit.v * w.size.1 as f64).clamp(0.0, w.size.1 as f64),
-                    point: hit.point,
-                    title: false,
-                    corner: !Self::is_panel(w.id) && !place.pinned
-                        && (1.0 - hit.u) * place.width < CORNER_M
-                        && (1.0 - hit.v) * w.height(&place) < CORNER_M,
-                };
-            }
-            if let Some((bar, _, _)) = w.bar(&place) {
-                if let Some(hit) = intersect_quad(&ray, &bar) {
+            if Self::is_panel(w.id) {
+                if let Some(hit) = intersect_quad(&ray, &w.quad(&place)) {
                     return Aim {
                         window: Some(w.id),
-                        x: (hit.u * BAR_PX.0 as f64).clamp(0.0, BAR_PX.0 as f64),
-                        y: (hit.v * BAR_PX.1 as f64).clamp(0.0, BAR_PX.1 as f64),
+                        x: (hit.u * w.size.0 as f64).clamp(0.0, w.size.0 as f64),
+                        y: (hit.v * w.size.1 as f64).clamp(0.0, w.size.1 as f64),
                         point: hit.point,
-                        title: true,
-                        corner: false,
+                        zone: Some(Zone::Content),
                     };
                 }
+                continue;
+            }
+            let (quad, frame, _) = w.chrome(&place);
+            if let Some(hit) = intersect_quad(&ray, &quad) {
+                let zone = frame.zone(hit.u, hit.v, self.sounding(w.id));
+                let (cx, cy) = frame.content_at(hit.u, hit.v);
+                return Aim {
+                    window: Some(w.id),
+                    x: (cx * w.size.0 as f64).clamp(0.0, w.size.0 as f64),
+                    y: (cy * w.size.1 as f64).clamp(0.0, w.size.1 as f64),
+                    point: hit.point,
+                    zone: Some(zone),
+                };
             }
         }
-        Aim { window: None, x: 0.0, y: 0.0, point: ray.at(DEFAULT_RADIUS), title: false, corner: false }
+        Aim { window: None, x: 0.0, y: 0.0, point: ray.at(DEFAULT_RADIUS), zone: None }
     }
 
     /// Where the cursor is in one window's own pixels, even when it has left it: a drag that
@@ -794,6 +808,240 @@ impl Room {
             (hit.u * w.size.0 as f64).clamp(0.0, w.size.0 as f64),
             (hit.v * w.size.1 as f64).clamp(0.0, w.size.1 as f64),
         ))
+    }
+
+    // MARK: the menus
+
+    /// Hang the menu's panels where the shell says: each placed round the way the wearer was facing when
+    /// the menu opened, and any that are no longer wanted taken down.
+    pub fn install_shell_panels(&mut self) {
+        let ours = |id: u32| id == shell_ui::CARD_ID || (shell_ui::BUBBLE_FIRST..shell_ui::BUBBLE_FIRST + 16).contains(&id) || (shell_ui::DOT_FIRST..shell_ui::DOT_FIRST + 8).contains(&id);
+        let wanted: Vec<u32> = self.ui.images.keys().copied().collect();
+        self.windows.retain(|w| !ours(w.id) || wanted.contains(&w.id));
+        let (yaw, pitch) = self.ui.anchor;
+        let specs: Vec<shell_ui::PanelSpec> = self.ui.images.values().cloned().collect();
+        for spec in specs {
+            let place = Placement {
+                yaw: yaw + spec.yaw,
+                pitch: (pitch + spec.pitch).clamp(-PITCH_LIMIT, PITCH_LIMIT),
+                radius: spec.radius,
+                width: spec.width_m,
+                ..Placement::default()
+            };
+            let size = (spec.image.width, spec.image.height);
+            match self.windows.iter_mut().find(|w| w.id == spec.id) {
+                Some(w) => {
+                    w.size = size;
+                    w.place = place;
+                }
+                None => self.windows.push(Win { id: spec.id, size, place, shown: true, hidden: false }),
+            }
+        }
+    }
+
+    /// The way the wearer is facing, for a menu to be hung where they are looking.
+    fn facing(&self) -> (f64, f64) {
+        let forward = self.head() * DVec3::X;
+        let level = (self.stereo.neck_up_m / shell_ui::MENU_DISTANCE).atan();
+        (forward.y.atan2(forward.x), (forward.z.clamp(-1.0, 1.0).asin() + level).clamp(-PITCH_LIMIT, PITCH_LIMIT))
+    }
+
+    /// The windows, for the list.
+    fn window_entries(&self) -> Vec<spatiand_shell::WindowEntry> {
+        let mut ids: Vec<u32> = self.windows.iter().filter(|w| !Self::is_panel(w.id) && w.shown).map(|w| w.id).collect();
+        ids.sort();
+        ids.into_iter()
+            .map(|id| {
+                let w = self.windows.iter().find(|w| w.id == id).unwrap();
+                spatiand_shell::WindowEntry {
+                    id: id as usize,
+                    title: self.titles.get(&id).cloned().unwrap_or_else(|| "Window".into()),
+                    current: self.focus == Some(id),
+                    hidden: w.hidden,
+                    pinned: w.place.pinned,
+                    room: false,
+                }
+            })
+            .collect()
+    }
+
+    /// Feed the shell an intent, and act on what it says about windows; anything else is returned.
+    pub fn shell_intent(&mut self, intent: spatiand_shell::Intent) -> Option<spatiand_shell::ShellEvent> {
+        use spatiand_shell::{Intent, ShellEvent};
+        if matches!(intent, Intent::ToggleSwitcher) {
+            let entries = self.window_entries();
+            self.ui.set_windows(entries, true);
+        }
+        let before = self.ui.mode();
+        let event = self.ui.handle(intent);
+        if self.ui.mode() != before && self.ui.open() {
+            self.ui.anchor = self.facing();
+        }
+        match event {
+            Some(ShellEvent::FocusWindow(id)) => {
+                let id = id as u32;
+                self.set_hidden(id, false);
+                self.bring_here(id);
+                self.set_focus(Some(id));
+                Some(ShellEvent::FocusWindow(id as usize))
+            }
+            Some(ShellEvent::HideWindow { id, hidden }) => {
+                self.set_hidden(id as u32, hidden);
+                let entries = self.window_entries();
+                self.ui.set_windows(entries, false);
+                Some(ShellEvent::HideWindow { id, hidden })
+            }
+            Some(ShellEvent::PinWindow { id, pinned }) => {
+                self.set_pinned(id as u32, pinned);
+                let entries = self.window_entries();
+                self.ui.set_windows(entries, false);
+                Some(ShellEvent::PinWindow { id, pinned })
+            }
+            Some(ShellEvent::Hud(spatiand_shell::HudAction::OpenSwitcher)) => {
+                // The list is stale the moment anything opens or closes, so it is filled as it opens.
+                let entries = self.window_entries();
+                self.ui.set_windows(entries, true);
+                Some(ShellEvent::Hud(spatiand_shell::HudAction::OpenSwitcher))
+            }
+            other => other,
+        }
+    }
+
+    /// What the pointer is on of an open menu.
+    pub fn shell_target(&self) -> Option<Target> {
+        if !self.ui.open() {
+            return None;
+        }
+        let aim = self.aim();
+        match aim.window {
+            Some(id) if Self::is_panel(id) => self.ui.target(id, aim.x, aim.y),
+            // The launcher's empty sky is the way back.
+            None if self.ui.mode() == spatiand_shell::Mode::Launcher => Some(Target::Back),
+            _ => None,
+        }
+    }
+
+    // MARK: the chrome
+
+    pub fn set_title(&mut self, id: u32, title: &str) {
+        self.titles.insert(id, title.to_string());
+    }
+
+    /// The application's icon: straight RGBA, at most 128 by 128.
+    pub fn set_icon(&mut self, id: u32, width: u32, height: u32, rgba: Vec<u8>) {
+        if width > 0 && height > 0 && rgba.len() >= (width * height * 4) as usize {
+            self.icons.insert(id, (width, height, std::sync::Arc::new(rgba)));
+        }
+    }
+
+    /// Whether this window's application is making a sound now, and whether the wearer has silenced it.
+    pub fn set_sound(&mut self, id: u32, sounding: bool, muted: bool) {
+        self.sound.insert(id, (sounding, muted));
+    }
+
+    /// A speaker is drawn on a window only while its application makes a sound, or is silenced.
+    fn sounding(&self, id: u32) -> bool {
+        self.sound.get(&id).is_some_and(|(sounding, muted)| *sounding || *muted)
+    }
+
+    /// What the pointer is over on a window's chrome, so the button under it lights.
+    pub fn set_hover(&mut self, hover: Option<(u32, Zone)>) {
+        self.hover = hover.filter(|(_, z)| *z != Zone::Content);
+    }
+
+    /// What a window's chrome shows now; `None` for a panel, which has none.
+    pub fn look_of(&self, id: u32) -> Option<Look> {
+        if Self::is_panel(id) {
+            return None;
+        }
+        let head = self.head();
+        let placed = self.placed(head);
+        let (i, place) = placed.iter().find(|(i, _)| self.windows[*i].id == id).copied()?;
+        let w = &self.windows[i];
+        Some(Look {
+            title: self.titles.get(&id).cloned().unwrap_or_default(),
+            focused: self.focus == Some(id),
+            hot: self.hover.filter(|(h, _)| *h == id).map(|(_, z)| z),
+            pinned: place.pinned,
+            sound: self.sound.get(&id).and_then(|(sounding, muted)| (*sounding || *muted).then_some(*muted)),
+            icon: self.icons.get(&id).cloned(),
+            pixels: w.size,
+            width_m: place.width,
+            radius_m: place.radius,
+        })
+    }
+
+    // MARK: size and distance
+
+    /// Take a window by an edge or a corner of its frame to resize it.
+    pub fn begin_resize(&mut self, id: u32, edge: Edge) {
+        let head = self.head();
+        let placed = self.placed(head);
+        let Some((i, place)) = placed.iter().find(|(i, _)| self.windows[*i].id == id).copied() else { return };
+        let w = &self.windows[i];
+        if place.pinned || Self::is_panel(id) {
+            return;
+        }
+        if let Some(from) = self.plane_fractions(id) {
+            self.sizing = Some(Sizing { id, edge, start: w.place, start_pixels: w.size, from });
+            self.raise(id);
+        }
+    }
+
+    /// Where the pointer is on a window's plane, as fractions of its content, off its edges as well.
+    fn plane_fractions(&self, id: u32) -> Option<(f64, f64)> {
+        let head = self.head();
+        let ray = self.ray(head);
+        let placed = self.placed(head);
+        let (i, place) = placed.iter().find(|(i, _)| self.windows[*i].id == id).copied()?;
+        let w = &self.windows[i];
+        let hit = intersect_plane(&ray, &w.quad(&place))?;
+        Some((hit.u, hit.v))
+    }
+
+    pub fn is_sizing(&self) -> Option<u32> {
+        self.sizing.map(|s| s.id)
+    }
+
+    /// Carry the edge along with the pointer: the window is changed now, and the size the application
+    /// should be asked for is returned.
+    pub fn drag_resize(&mut self) -> Option<(u32, (u32, u32))> {
+        let sizing = self.sizing?;
+        let now = self.plane_fractions(sizing.id)?;
+        let aspect = sizing.start_pixels.0 as f64 / sizing.start_pixels.1.max(1) as f64;
+        let start_height = sizing.start.width / aspect.max(0.01);
+        let dx = (now.0 - sizing.from.0) * sizing.start.width;
+        let dy = (now.1 - sizing.from.1) * start_height;
+        let out = chrome::resize(sizing.edge, &sizing.start, sizing.start_pixels, dx, dy);
+        let w = self.windows.iter_mut().find(|w| w.id == sizing.id)?;
+        w.place = out.placement;
+        Some((sizing.id, out.pixels))
+    }
+
+    pub fn end_resize(&mut self) {
+        self.sizing = None;
+    }
+
+    /// Put a window nearer or further, by this many metres, keeping where it is in the view. Nearer
+    /// is in front of the rest; further is behind.
+    pub fn push_pull(&mut self, id: u32, metres: f64) {
+        if let Some(w) = self.windows.iter_mut().find(|w| w.id == id && !w.place.pinned && !Room::is_panel(id)) {
+            w.place.radius = (w.place.radius + metres).clamp(DISTANCE_RANGE.0, DISTANCE_RANGE.1);
+        }
+    }
+
+    /// Put a window away, or bring it back.
+    pub fn set_hidden(&mut self, id: u32, hidden: bool) {
+        if let Some(w) = self.windows.iter_mut().find(|w| w.id == id) {
+            w.hidden = hidden;
+            if hidden && self.focus == Some(id) {
+                self.focus = None;
+            }
+        }
+    }
+
+    pub fn is_hidden(&self, id: u32) -> bool {
+        self.windows.iter().any(|w| w.id == id && w.hidden)
     }
 
     // MARK: moving a window
@@ -842,6 +1090,20 @@ impl Room {
         self.stereo.per_eye = (width.max(1), height.max(1));
     }
 
+    /// For the environment: each eye's clip space back to a direction, left then right. Built from
+    /// a view with the translation taken out -- the sky is at infinity, and letting the eyes' offset
+    /// through makes the background slide as the head turns.
+    pub fn sky_matrices(&self) -> [Mat4; 2] {
+        let head = self.head();
+        let [l, r] = eyes_for(head, DVec3::ZERO, &self.stereo);
+        let bare = |eye: spatiand_render::camera::Eye| {
+            let mut view = eye.view;
+            view.w_axis = glam::Vec4::new(0.0, 0.0, 0.0, 1.0);
+            (eye.projection * view).inverse()
+        };
+        [bare(l), bare(r)]
+    }
+
     /// Each eye's view-projection, left then right, in column-major order.
     pub fn eye_matrices(&self) -> [Mat4; 2] {
         let head = self.head();
@@ -857,48 +1119,61 @@ impl Room {
         let aim = self.aim();
         let mut verts: Vec<f32> = Vec::new();
         let mut draws: Vec<Draw> = Vec::new();
-        let mut bars: Vec<Draw> = Vec::new();
 
-        // The room's windows first, in order, then the pinned ones over them.
+        // The room's windows first, furthest to nearest so the nearer is over the further, then the
+        // pinned ones over them, then Spatiand's own panels.
         let mut order: Vec<usize> = placed.iter().map(|(i, _)| *i).collect();
-        order.sort_by_key(|i| (Self::is_panel(self.windows[*i].id), self.windows[*i].place.pinned, *i));
+        order.sort_by(|a, b| {
+            let (wa, wb) = (&self.windows[*a], &self.windows[*b]);
+            (Self::is_panel(wa.id), wa.place.pinned)
+                .cmp(&(Self::is_panel(wb.id), wb.place.pinned))
+                .then(placed[*b].1.radius.total_cmp(&placed[*a].1.radius))
+                .then(a.cmp(b))
+        });
         for i in order {
             let (_, place) = placed[i];
             let w = &self.windows[i];
-            if !w.shown {
+            if !w.shown || w.hidden {
                 continue;
             }
-            let first = (verts.len() / 5) as u32;
             let height = w.height(&place);
-            push_strips(&mut verts, &place, height, 0.0);
-            let count = (verts.len() / 5) as u32 - first;
-            let aimed = aim.window == Some(w.id) && !aim.title;
-            draws.push(Draw {
-                window: w.id,
-                first,
-                count,
-                focused: self.focus == Some(w.id),
-                aimed,
-                pinned: place.pinned,
-            });
-            if let Some((_, rise, bar_height)) = w.bar(&place) {
+            let focused = self.focus == Some(w.id);
+            let content = |verts: &mut Vec<f32>| {
                 let first = (verts.len() / 5) as u32;
-                push_strips(&mut verts, &place, bar_height, rise);
-                let count = (verts.len() / 5) as u32 - first;
-                bars.push(Draw {
-                    window: w.id | TITLE_FLAG,
+                push_strips(verts, &place, place.width, height, 0.0, Self::is_panel(w.id));
+                Draw {
+                    window: w.id,
                     first,
-                    count,
-                    focused: self.focus == Some(w.id),
-                    aimed: aim.window == Some(w.id) && aim.title,
-                    pinned: false,
-                });
+                    count: (verts.len() / 5) as u32 - first,
+                    focused,
+                    aimed: aim.window == Some(w.id) && aim.zone == Some(Zone::Content),
+                    pinned: place.pinned,
+                }
+            };
+            if Self::is_panel(w.id) {
+                draws.push(content(&mut verts));
+                continue;
             }
-        }
-        // The bars over the windows, and Spatiand's own panels over those.
-        let panels_at = draws.iter().position(|d| Self::is_panel(d.window)).unwrap_or(draws.len());
-        for (n, bar) in bars.into_iter().enumerate() {
-            draws.insert(panels_at + n, bar);
+            // Frame, title bar and buttons are one picture on one quad. Behind the surface for a window
+            // in the room; over it for one pinned to the glass, which has only a hairline and buttons.
+            let (_, frame, rise) = w.chrome(&place);
+            let first = (verts.len() / 5) as u32;
+            push_strips(&mut verts, &place, frame.width() * height, frame.height() * height, rise, true);
+            let chrome = Draw {
+                window: w.id | TITLE_FLAG,
+                first,
+                count: (verts.len() / 5) as u32 - first,
+                focused,
+                aimed: false,
+                pinned: place.pinned,
+            };
+            if place.pinned {
+                draws.push(content(&mut verts));
+                draws.push(chrome);
+            } else {
+                draws.push(chrome);
+                draws.push(content(&mut verts));
+            }
         }
 
         // The cursor: a small flat square at the hit, turned to face the eye.
@@ -962,22 +1237,41 @@ mod tests {
     }
 
     #[test]
-    fn a_resize_asked_of_the_host_keeps_the_pixel_density_when_it_answers() {
+    fn dragging_a_windows_edge_resizes_it_at_constant_density_and_asks_for_the_pixels() {
         let mut r = room();
         r.set_window(1, (1280, 800));
+        r.show(1);
         let before = r.windows()[0].place.width;
-        // Twice the pixels across: asked, limited, and nothing changes in the room until the answer.
-        let asked = r.request_size(1, (2560.0, 1600.0)).unwrap();
-        assert_eq!(asked, (2560, 1600));
-        assert_eq!(r.windows()[0].place.width, before);
-        r.set_window(1, (2560, 1600));
-        let after = r.windows()[0].place.width;
-        assert!((after / before - 2.0).abs() < 1e-9 || after == WIDTH_RANGE.1.min(before * 2.0));
-        // A silly request is limited.
-        assert_eq!(r.request_size(1, (50.0, 20_000.0)).unwrap(), (240, 2160));
-        // Fit gives the density a new window starts with.
-        let (w, _) = r.native_size(1).unwrap();
-        assert_eq!(w, ((after * DENSITY).round() as u32) & !1);
+        // Aim at the right edge of the frame, a little out from the surface.
+        let half = before / 2.0 / DEFAULT_RADIUS;
+        r.cursor = (-(half + 0.02), 0.0);
+        let aim = r.aim();
+        assert_eq!(aim.zone, Some(Zone::Resize(Edge::Right)), "{aim:?}");
+        r.begin_resize(1, Edge::Right);
+        r.cursor = (-(half + 0.12), 0.0);
+        let (id, pixels) = r.drag_resize().expect("a resize is going on");
+        assert_eq!(id, 1);
+        assert!(pixels.0 > 1280, "the application is asked for more pixels: {pixels:?}");
+        assert!(r.windows()[0].place.width > before);
+        r.end_resize();
+        assert!(r.is_sizing().is_none());
+    }
+
+    #[test]
+    fn a_window_pushed_away_is_behind_one_pulled_near() {
+        let mut r = room();
+        r.set_window(1, (1280, 800));
+        r.show(1);
+        r.set_window(2, (1280, 800));
+        r.show(2);
+        r.windows.iter_mut().for_each(|w| w.place.yaw = 0.0);
+        r.push_pull(2, 1.5);
+        let ids: Vec<u32> = r.frame().draws.iter().filter(|d| d.window & TITLE_FLAG == 0 && d.window != CURSOR).map(|d| d.window).collect();
+        assert_eq!(ids, vec![2, 1], "the further is drawn first, so the nearer is over it");
+        r.cursor = (0.0, 0.0);
+        assert_eq!(r.aim().window, Some(1), "and the nearer is the one aimed at");
+        r.push_pull(2, -10.0);
+        assert!(r.windows().iter().find(|w| w.id == 2).unwrap().place.radius >= DISTANCE_RANGE.0);
     }
 
     #[test]
@@ -1064,9 +1358,10 @@ mod tests {
         r.set_window(1, (1280, 800));
         r.show(1);
         let frame = r.frame();
-        assert_eq!(frame.draws.len(), 3, "the window, its title bar and the cursor");
-        assert_eq!(frame.draws[0].window, 1);
-        assert!(frame.draws[0].count >= 12, "a bent window is several strips");
+        assert_eq!(frame.draws.len(), 3, "the window's frame, the window and the cursor");
+        assert_eq!(frame.draws[0].window, 1 | TITLE_FLAG);
+        assert_eq!(frame.draws[1].window, 1);
+        assert!(frame.draws[1].count >= 12, "a bent window is several strips");
         assert_eq!(frame.draws.last().unwrap().window, CURSOR);
         assert_eq!(frame.vertices.len() % 5, 0);
     }
@@ -1119,7 +1414,7 @@ mod tests {
         assert_eq!(r.focus(), None, "and cannot be given it");
         let frame = r.frame();
         let order: Vec<u32> = frame.draws.iter().map(|d| d.window).collect();
-        assert_eq!(order, vec![1, 1 | TITLE_FLAG, PANEL_FIRST + 2, CURSOR], "drawn over the window and its bar, under the cursor");
+        assert_eq!(order, vec![1 | TITLE_FLAG, 1, PANEL_FIRST + 2, CURSOR], "drawn over the window and its frame, under the cursor");
         r.remove_window(PANEL_FIRST + 2);
         assert_eq!(r.aim().window, Some(1));
     }
@@ -1240,7 +1535,7 @@ mod tests {
     }
 
     #[test]
-    fn a_title_bar_floats_above_a_window_and_is_aimed_at_on_its_own() {
+    fn a_title_bar_is_part_of_the_frame_and_is_aimed_at_as_such() {
         let mut r = room();
         r.set_window(1, (1280, 800));
         r.show(1);
@@ -1248,14 +1543,13 @@ mod tests {
         r.cursor = (0.0, 10.0f64.to_radians());
         let aim = r.aim();
         assert_eq!(aim.window, Some(1));
-        assert!(aim.title, "that is the title bar: {aim:?}");
-        assert!((0.0..=BAR_PX.0 as f64).contains(&aim.x) && (0.0..=BAR_PX.1 as f64).contains(&aim.y));
-        // And below it, the window.
+        assert_eq!(aim.zone, Some(Zone::Title), "that is the title bar: {aim:?}");
+        // And in the middle, the surface.
         r.cursor = (0.0, 0.0);
-        assert!(!r.aim().title);
+        assert_eq!(r.aim().zone, Some(Zone::Content));
         let frame = r.frame();
         let ids: Vec<u32> = frame.draws.iter().map(|d| d.window).collect();
-        assert_eq!(ids, vec![1, 1 | TITLE_FLAG, CURSOR], "the bar is drawn over the window, under the cursor");
+        assert_eq!(ids, vec![1 | TITLE_FLAG, 1, CURSOR], "the frame is behind the window, under the cursor");
     }
 
     #[test]
@@ -1264,7 +1558,8 @@ mod tests {
         r.set_window(1, (1280, 720));
         r.show(1);
         r.set_pinned(1, true);
-        assert!(r.frame().draws.iter().all(|d| d.window & TITLE_FLAG == 0));
+        let ids: Vec<u32> = r.frame().draws.iter().map(|d| d.window).collect();
+        assert_eq!(ids[..2], [1, 1 | TITLE_FLAG], "a pinned window has its buttons over the picture, not a bar behind it");
     }
 
     #[test]

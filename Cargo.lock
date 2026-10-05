@@ -4052,6 +4052,7 @@ dependencies = [
  "spatiand-hmd",
  "spatiand-mapper",
  "spatiand-render",
+ "spatiand-shell",
  "spatiand-stream",
  "spatiand-track",
  "tokio",

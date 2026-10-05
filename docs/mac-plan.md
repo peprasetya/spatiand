@@ -167,6 +167,32 @@ Accessibility), and sound from the Mac's own applications when the Mac is the ho
 application's sound, sent as the same raw stereo stream the Linux host sends; tested over loopback). The Mac still
 plays that sound itself too: there is no way to take it from the speakers and leave it in the capture.
 
+**In the glasses, as on the Deck** (after the first real use of the glasses showed the room was a different program from
+the Deck's). The same look and the same controls, taken from the Deck's code rather than invented again:
+
+* **The environment.** The room was black, which on the glasses reads as flat: nothing said how far away a window was. It
+  now has the Deck's generated studio (`Sky::studio`: a dark sky, a key light, a horizon and a floor grid) behind it.
+  Settings has `studio` on by default; "Environment" in the settings list switches it to black.
+* **Window frames.** `crates/spatiand-mac-core/src/chrome.rs` is the Deck's `pointer.rs` `Frame`/`Zone`/`resize` and the
+  drawing of `scene.rs` (`look.rs` holds the copied glyphs): a pane of glass round the window with the application's icon,
+  its title, and buttons for close, put away, pin to the glass and (only for a window making a sound) mute. A press on
+  an edge resizes the window at constant pixel density with the opposite edge fixed; the title bar moves it.
+* **Distance.** A pinch over a window's frame or title bar brings it nearer or pushes it further (0.8 to 8 m), and the
+  nearer one is drawn over the further and is the one aimed at. A pinch over its contents is the application's: Control
+  and the wheel to a host window, Command and plus or minus to a Mac window. Option and the wheel, and the
+  four-finger pinch, also move the window in distance.
+* **Menus.** `spatiand-shell` runs unchanged inside the room (`shell_ui.rs`, with the Deck's `menu.rs` copied as
+  `menu_model.rs`): Ctrl-Space is the launcher (the Deck's ⋯), Ctrl-Tab the settings list (STEAM), a pad's PS button the
+  settings and held the launcher. The arrows and Return, the D-pad and A, or the pointer work them. The launcher has a
+  bubble for each computer, and one for This Mac whose applications bring their windows into the room. Rows the Mac
+  cannot do (recording, the on-screen keyboard, the controller layout editor, calibration) say so in a panel.
+* **Yaw drift.** The Deck and the Beam Pro hand the tracker what it learned about the glasses' sensors last time (the
+  gyro's resting offset and the magnetometer's own field, `SensorMemory`) and the Mac never did, so it started without a
+  bias and without the magnetic anchor that holds yaw. It does now, kept in `~/.config/spatiand/sensors.toml`. The Rust
+  half also had no logger, so the tracker's own account of the anchor went nowhere: it writes to the app's log now
+  (`~/Library/Logs/Spatiand/spatiand.log`, a `tracker:` line every thirty seconds). The anchor needs a minute or two of
+  looking up, down and round the first time.
+
 **Game controllers** (a DualShock 4 over a cable or Bluetooth, a DualSense, an Xbox pad) work as they do on the Deck and
 the Beam Pro: `mac/Sources/Spatiand/PadInput.swift` reads them with GameController, and `spatiand-mac-core/src/pads.rs`
 runs them through the same `spatiand-mapper` engine and layout files. A host window gets the pad as a gamepad (and

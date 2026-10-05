@@ -42,6 +42,12 @@ final class PairingUI {
         showWaiting(address)
     }
 
+    /// Begin pairing with an address chosen elsewhere (the glasses' computers page).
+    func begin(address: String) {
+        Model.shared.pair(address: address)
+        showWaiting(address)
+    }
+
     private func showWaiting(_ address: String) {
         close()
         let text = NSTextField(wrappingLabelWithString: "Connecting to \(address)\u{2026}")

@@ -33,7 +33,7 @@ enum MacWindows {
     /// The ids of Mac windows in the room start here, clear of the host's (which are small) and of
     /// Spatiand's own panels (which are at the top).
     static let firstID: UInt16 = 0x8000
-    static func isMac(_ id: UInt16) -> Bool { id >= firstID && id < 0xFFF0 }
+    static func isMac(_ id: UInt16) -> Bool { id >= firstID && id < RoomCore.panelFirst }
 
     /// Whether the permission to capture is in hand, asking for it if it is not.
     static func allowed(ask: Bool) -> Bool {

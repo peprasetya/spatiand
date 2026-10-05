@@ -99,14 +99,14 @@ final class InputView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         if event.modifierFlags.contains(.option) {
-            controller?.zoom(by: exp(Double(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.004 : 0.04)))
+            if let id = controller?.core.aim().window ?? controller?.core.focused { controller?.push(id, metres: -Double(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.01 : 0.1)) }
         } else {
             controller?.scrolled(dx: Double(event.scrollingDeltaX), dy: Double(event.scrollingDeltaY), precise: event.hasPreciseScrollingDeltas)
         }
     }
 
-    /// A pinch on the trackpad resizes the window being pointed at.
-    override func magnify(with event: NSEvent) { controller?.zoom(by: 1 + Double(event.magnification)) }
+    /// A pinch on the trackpad: nearer or further on a window's frame, the application's own zoom over its contents.
+    override func magnify(with event: NSEvent) { controller?.pinched(by: Double(event.magnification)) }
 
     // MARK: the keyboard
 
@@ -129,10 +129,8 @@ final class InputView: NSView {
     override func keyDown(with event: NSEvent) {
         if Self.trace { print("input: key \(event.keyCode)") }
         if chord(event) { return }
-        if Int(event.keyCode) == kVK_Escape, controller?.menu.isOpen == true {
-            controller?.menu.close()
-            return
-        }
+        // A menu takes the keyboard: the arrows and Return work it, as a D-pad and A do.
+        if controller?.menu.key(event) == true { return }
         if controller?.macKey(event) == true { return }
         controller?.keyTarget?.keyDown(with: event)
     }

@@ -9,10 +9,18 @@ import Foundation
 
 final class RoomCore {
     private let room: OpaquePointer
+    /// The room itself, for the menus' own calls.
+    var handle: OpaquePointer { room }
     /// A window's id that stands for the cursor in what is drawn.
     static let cursor: UInt32 = 0xFFFF
+    /// Ids from here up are Spatiand's own panels: the menus, the hint.
+    static let panelFirst: UInt16 = 0xFF00
 
-    init() { room = sp_room_new() }
+    init() {
+        room = sp_room_new()
+        // Finding the machine's fonts takes a moment, which is better spent now than when the first title is drawn.
+        sp_text_warm_up()
+    }
     deinit { sp_room_free(room) }
 
     // The head.
@@ -20,6 +28,14 @@ final class RoomCore {
         var g = [gyro.x, gyro.y, gyro.z], a = [accel.x, accel.y, accel.z], m = [mag.x, mag.y, mag.z]
         sp_room_imu(room, timestamp, &g, &a, &m)
     }
+    /// Both eyes' clip space back to a direction, for the environment: 16 floats each.
+    func skyMatrices() -> [Float] {
+        var out = [Float](repeating: 0, count: 32)
+        sp_room_sky_matrices(room, &out)
+        return out
+    }
+    func markShellDirty() { sp_shell_dirty(room) }
+    func setDevice(_ name: String) { sp_room_set_device(room, name) }
     func recentre() { sp_room_recentre(room) }
     var hasHead: Bool { sp_room_has_head(room) != 0 }
     /// For a preview with no sensors.
@@ -63,11 +79,16 @@ final class RoomCore {
     func movePointer(dx: Double, dy: Double) { sp_room_move_pointer(room, dx, dy) }
     func centrePointer() { sp_room_centre_pointer(room) }
 
-    struct Aim { var window: UInt16?; var x: Double; var y: Double; var title = false; var corner = false }
+    /// What part of a window is aimed at.
+    enum Zone: Int32 {
+        case none = 0, content, title, close, hide, pin, mute, left, right, bottom, bottomLeft, bottomRight
+        var isEdge: Bool { rawValue >= Zone.left.rawValue }
+    }
+    struct Aim { var window: UInt16?; var x: Double; var y: Double; var zone = Zone.none }
     func aim() -> Aim {
         var out = sp_aim()
         sp_room_aim(room, &out)
-        return Aim(window: out.window >= 0 ? UInt16(out.window) : nil, x: out.x, y: out.y, title: out.title != 0, corner: out.corner != 0)
+        return Aim(window: out.window >= 0 ? UInt16(out.window) : nil, x: out.x, y: out.y, zone: Zone(rawValue: out.zone) ?? .none)
     }
     /// Where the pointer is in one window's own pixels, even off its edge.
     func aim(at id: UInt16) -> (x: Double, y: Double)? {
@@ -80,15 +101,31 @@ final class RoomCore {
         var x = 0.0, y = 0.0
         return sp_room_aim_free(room, UInt32(id), &x, &y) != 0 ? (x, y) : nil
     }
-    /// The size to ask the host for to keep a window's pixel density at the width it has now.
-    func nativeSize(_ id: UInt16) -> (w: Int, h: Int)? {
-        var w: UInt32 = 0, h: UInt32 = 0
-        return sp_room_native_size(room, UInt32(id), &w, &h) != 0 ? (Int(w), Int(h)) : nil
+
+    // A window's chrome, and its size and distance.
+    func setTitle(_ id: UInt16, _ title: String) { sp_room_set_title(room, UInt32(id), title) }
+    func setIcon(_ id: UInt16, width: Int, height: Int, rgba: [UInt8]) { sp_room_set_icon(room, UInt32(id), UInt32(width), UInt32(height), rgba) }
+    func setSound(_ id: UInt16, sounding: Bool, muted: Bool) { sp_room_set_sound(room, UInt32(id), sounding ? 1 : 0, muted ? 1 : 0) }
+    func setHover(_ id: UInt16, _ zone: Zone) { sp_room_set_hover(room, UInt32(id), zone.rawValue) }
+    func beginResize(_ id: UInt16, _ zone: Zone) { sp_room_begin_resize(room, UInt32(id), zone.rawValue) }
+    /// The window being resized and the size to ask its application for, while one is.
+    func dragResize() -> (id: UInt16, width: Int, height: Int)? {
+        var id: UInt32 = 0, w: UInt32 = 0, h: UInt32 = 0
+        return sp_room_drag_resize(room, &id, &w, &h) != 0 ? (UInt16(truncatingIfNeeded: id), Int(w), Int(h)) : nil
     }
-    /// Note that the host is being asked for about this size; the size to ask for, as limited.
-    func requestSize(_ id: UInt16, width: Double, height: Double) -> (w: Int, h: Int)? {
+    func endResize() { sp_room_end_resize(room) }
+    var isSizing: Bool { sp_room_is_sizing(room) >= 0 }
+    /// Nearer (negative) or further (positive), in metres.
+    func pushPull(_ id: UInt16, metres: Double) { sp_room_push_pull(room, UInt32(id), metres) }
+    func setHidden(_ id: UInt16, _ hidden: Bool) { sp_room_set_hidden(room, UInt32(id), hidden ? 1 : 0) }
+    func isHidden(_ id: UInt16) -> Bool { sp_room_is_hidden(room, UInt32(id)) != 0 }
+    func chromeVersion(_ id: UInt16) -> UInt64 { sp_room_chrome_version(room, UInt32(id)) }
+    private static let chromeBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 2048 * 2048 * 4)
+    /// A window's chrome as premultiplied BGRA.
+    func chromeImage(_ id: UInt16, width: Int) -> (width: Int, height: Int, pixels: Data)? {
         var w: UInt32 = 0, h: UInt32 = 0
-        return sp_room_request_size(room, UInt32(id), width, height, &w, &h) != 0 ? (Int(w), Int(h)) : nil
+        guard sp_room_chrome_render(room, UInt32(id), UInt32(width), &w, &h, Self.chromeBuffer, 2048 * 2048 * 4) != 0 else { return nil }
+        return (Int(w), Int(h), Data(bytes: Self.chromeBuffer, count: Int(w * h * 4)))
     }
 
     // Moving windows about.

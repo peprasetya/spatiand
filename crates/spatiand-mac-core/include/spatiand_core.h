@@ -60,8 +60,8 @@ typedef struct {
     int32_t window;      // the window's id, or -1 for none
     double x, y;         // where in that window, in the host's pixels
     double point[3];     // where in the room: +X forward, +Y left, +Z up
-    int32_t title;       // 1 when it is the window's title bar (1024 by 46 pixels)
-    int32_t corner;      // 1 when it is a window's bottom right corner, where a press resizes it
+    int32_t zone;        // 0 nothing, 1 surface, 2 title bar, 3 close, 4 hide, 5 pin, 6 speaker,
+                         // 7 left edge, 8 right edge, 9 bottom edge, 10 bottom left, 11 bottom right
 } sp_aim;
 
 typedef struct {
@@ -77,6 +77,12 @@ void sp_room_free(sp_room *room);
 // One sample from the glasses: degrees a second, g, gauss.
 void sp_room_imu(sp_room *room, uint64_t timestamp_ns, const double *gyro, const double *accel,
                  const double *mag);
+// Which glasses these are, by the Deck's name for them: what is remembered of their sensors is kept under it.
+void sp_room_set_device(sp_room *room, const char *name);
+// Both eyes' matrices for the environment: 32 floats.
+void sp_room_sky_matrices(sp_room *room, float *out);
+// The Deck's studio environment, generated: width * height * 4 bytes of RGBA, equirectangular.
+void sp_sky_studio(uint32_t width, uint32_t height, uint8_t *out);
 void sp_room_recentre(sp_room *room);
 int32_t sp_room_has_head(sp_room *room);
 // For a preview with no sensors: hold the head at this heading and pitch, in degrees.
@@ -109,10 +115,42 @@ void sp_room_aim(sp_room *room, sp_aim *out);
 int32_t sp_room_aim_at(sp_room *room, uint32_t id, double *x, double *y);
 // The same, off the window's edge as well as on it.
 int32_t sp_room_aim_free(sp_room *room, uint32_t id, double *x, double *y);
-// The picture size at the density windows start with, at the width the window has now.
-int32_t sp_room_native_size(sp_room *room, uint32_t id, uint32_t *w, uint32_t *h);
-// The host is being asked for this size; writes it as limited, and the width follows the answer.
-int32_t sp_room_request_size(sp_room *room, uint32_t id, double width, double height, uint32_t *w, uint32_t *h);
+// A window's chrome: its frame, title bar and buttons, drawn the way the Deck draws them.
+void sp_room_set_title(sp_room *room, uint32_t id, const char *title);
+void sp_room_set_icon(sp_room *room, uint32_t id, uint32_t width, uint32_t height, const uint8_t *rgba);
+void sp_room_set_sound(sp_room *room, uint32_t id, int32_t sounding, int32_t muted);
+void sp_room_set_hover(sp_room *room, uint32_t id, int32_t zone);
+void sp_room_begin_resize(sp_room *room, uint32_t id, int32_t zone);
+int32_t sp_room_drag_resize(sp_room *room, uint32_t *id, uint32_t *w, uint32_t *h);
+void sp_room_end_resize(sp_room *room);
+int32_t sp_room_is_sizing(sp_room *room);
+void sp_room_push_pull(sp_room *room, uint32_t id, double metres);
+void sp_room_set_hidden(sp_room *room, uint32_t id, int32_t hidden);
+int32_t sp_room_is_hidden(sp_room *room, uint32_t id);
+uint64_t sp_room_chrome_version(sp_room *room, uint32_t id);
+int32_t sp_room_chrome_render(sp_room *room, uint32_t id, uint32_t width_px, uint32_t *w, uint32_t *h, uint8_t *out, size_t capacity);
+void sp_text_warm_up(void);
+// --- the Deck's menus: settings, launcher, windows, environment, computers ---
+// Intents: 0 up, 1 down, 2 left, 3 right, 4 accept, 5 back, 6 settings, 7 launcher, 8 windows, 9 close, 10 hide.
+// Each returns what the shell asks the app to do, as JSON, or NULL. Free it with sp_free_string.
+char *sp_shell_intent(sp_room *room, int32_t intent);
+// Bit 0: a menu covers the world. Bit 1: it wants the keyboard's text.
+int32_t sp_shell_open(sp_room *room);
+// Draws the menus again if they changed and hangs them in the room; a number that changes with them.
+uint64_t sp_shell_sync(sp_room *room);
+size_t sp_shell_panel_ids(sp_room *room, uint32_t *out, size_t capacity);
+int32_t sp_shell_panel_image(sp_room *room, uint32_t id, uint32_t *w, uint32_t *h, uint8_t *out, size_t capacity);
+void sp_shell_hover(sp_room *room);
+char *sp_shell_click(sp_room *room);
+void sp_shell_set_hosts(sp_room *room, const char *json);
+void sp_shell_set_icon(sp_room *room, const char *name, uint32_t width, uint32_t height, const uint8_t *rgba);
+void sp_shell_set_studio(sp_room *room, int32_t studio);
+void sp_shell_dirty(sp_room *room);
+void sp_shell_set_pip(sp_room *room, int32_t corner, int32_t large);
+char *sp_shell_type(sp_room *room, const char *text, int32_t backspace, int32_t enter);
+
+// The Deck's pointer: a dot in a ring, white, size * size * 4 bytes of straight RGBA.
+void sp_reticle(uint32_t size, uint8_t *out);
 
 void sp_room_begin_grab(sp_room *room, uint32_t id);
 void sp_room_drag(sp_room *room);

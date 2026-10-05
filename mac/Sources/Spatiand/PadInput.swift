@@ -227,7 +227,9 @@ final class PadInput {
             }
             lastPointer = out.pointer
             if out.wheel_x != 0 || out.wheel_y != 0 { room.scrolled(dx: Double(out.wheel_x) * 40, dy: Double(out.wheel_y) * 40, precise: true) }
-            if out.guide != 0 || out.guide_held != 0 || out.commands & 3 != 0 { room.menu.toggle() }
+            // The PS button is the Deck's STEAM: the settings; held, its ⋯: the launcher.
+            if out.guide != 0 || out.commands & 1 != 0 { room.toggleSettings() }
+            if out.guide_held != 0 || out.commands & 2 != 0 { room.toggleMenu() }
             if out.commands & 16 != 0 { room.recentre() }
             if out.menu_presses != 0 { room.menu.padPress(out.menu_presses) }
         }

@@ -9,7 +9,7 @@ import AppKit
 final class Model {
     static let shared = Model()
 
-    struct RemoteApp { let id: String; let name: String }
+    struct RemoteApp { let id: String; let name: String; var icon: NSImage? = nil }
     struct WindowInfo {
         var app: String
         var title: String
@@ -222,7 +222,8 @@ final class Model {
         case "Catalog":
             apps = ((fields["apps"] as? [[String: Any]]) ?? []).compactMap {
                 guard let id = $0["id"] as? String, let name = $0["name"] as? String else { return nil }
-                return RemoteApp(id: id, name: name)
+                let icon = ($0["icon_png"] as? String).flatMap { Data(base64Encoded: $0) }.flatMap { NSImage(data: $0) }
+                return RemoteApp(id: id, name: name, icon: icon)
             }
         case "Opened":
             guard let id = window() else { return }

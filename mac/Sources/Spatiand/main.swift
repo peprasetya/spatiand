@@ -100,6 +100,14 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         wasPlugged = glasses.isPluggedIn
         Model.shared.glassesOn = glassesWanted()
         pairing.start()
+        NotificationCenter.default.addObserver(forName: .spatiandPair, object: nil, queue: .main) { [weak self] note in
+            if let address = note.object as? String { self?.pairing.begin(address: address) }
+        }
+        NotificationCenter.default.addObserver(forName: .spatiandLeave, object: nil, queue: .main) { [weak self] _ in
+            Settings.presentation = .onThisMac
+            Model.shared.glassesOn = self?.glassesWanted() ?? false
+            Model.shared.room.setActive(false)
+        }
         // With the glasses on and the mouse and keyboard theirs, the menu is the glasses' own: the
         // Mac's is out of sight. Otherwise it is the usual one.
         hotkeys.onMenu = { [weak self] in
@@ -108,7 +116,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         hotkeys.onSettings = { [weak self] in
             let room = Model.shared.room
-            if room.active, room.input.capturing { room.toggleMenu() } else { self?.settings.show() }
+            if room.active, room.input.capturing { room.toggleSettings() } else { self?.settings.show() }
         }
         if Settings.hotkeys { hotkeys.enable() }
         Model.shared.onProblem = { PairingUI.alert("Spatiand", $0) }

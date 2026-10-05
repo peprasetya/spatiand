@@ -104,6 +104,9 @@ final class AudioOut {
 
     /// Called from the link's threads, as sound arrives.
     func feed(app: String, channels: Int, data: Data, placed: [Float]? = nil) {
+        heard(app)
+        // A window whose speaker has been pressed is silent.
+        if isMuted(app) { return }
         let stereo = placed ?? Downmix.stereo(data, channels: channels)
         lock.lock()
         rings[app, default: SoundRing()].push(stereo)
@@ -144,4 +147,34 @@ final class AudioOut {
         AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
                              kAudioUnitScope_Global, 0, &id, UInt32(MemoryLayout<AudioDeviceID>.size))
     }
+}
+
+// MARK: what a window's speaker button says
+
+extension AudioOut {
+    private static let state = AudioState()
+
+    /// Silence an application's sound, or let it be heard again.
+    func toggleMute(_ app: String) { Self.state.toggle(app) }
+    func isMuted(_ app: String) -> Bool { Self.state.isMuted(app) }
+    /// Whether the application has made a sound in the last couple of seconds.
+    func isSounding(_ app: String) -> Bool { Self.state.isSounding(app) }
+    func heard(_ app: String) { Self.state.heard(app) }
+}
+
+private final class AudioState {
+    private let lock = NSLock()
+    private var muted: Set<String> = []
+    private var lastHeard: [String: Date] = [:]
+
+    func toggle(_ app: String) {
+        lock.lock(); defer { lock.unlock() }
+        if muted.contains(app) { muted.remove(app) } else { muted.insert(app) }
+    }
+    func isMuted(_ app: String) -> Bool { lock.lock(); defer { lock.unlock() }; return muted.contains(app) }
+    func isSounding(_ app: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return lastHeard[app].map { Date().timeIntervalSince($0) < 2 } ?? false
+    }
+    func heard(_ app: String) { lock.lock(); lastHeard[app] = Date(); lock.unlock() }
 }

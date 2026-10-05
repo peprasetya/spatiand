@@ -9,9 +9,14 @@
 //! It is `probe-session` made into a library: the same Hello, the same control stream, the same
 //! reassembly of frames, with callbacks where the probe printed.
 
+pub mod chrome;
 pub mod host;
+pub mod logging;
+pub mod menu_model;
+pub mod look;
 pub mod pads;
 pub mod room;
+pub mod shell_ui;
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::PathBuf;
@@ -437,10 +442,9 @@ pub struct SpAim {
     pub x: f64,
     pub y: f64,
     pub point: [f64; 3],
-    /// 1 when what is aimed at is the window's title bar.
-    pub title: i32,
-    /// 1 when what is aimed at is a window's bottom right corner, where a press resizes it.
-    pub corner: i32,
+    /// What part of the window: 0 nothing, 1 its surface, 2 title bar, 3 close, 4 hide, 5 pin, 6 speaker,
+    /// 7 left edge, 8 right edge, 9 bottom edge, 10 bottom left corner, 11 bottom right corner.
+    pub zone: i32,
 }
 
 #[repr(C)]
@@ -462,6 +466,7 @@ fn with_room<R>(room: *mut RoomHandle, default: R, f: impl FnOnce(&mut room::Roo
 
 #[no_mangle]
 pub extern "C" fn sp_room_new() -> *mut RoomHandle {
+    logging::init();
     Box::into_raw(Box::new(RoomHandle(Mutex::new(room::Room::new()))))
 }
 
@@ -489,6 +494,46 @@ pub extern "C" fn sp_room_imu(room: *mut RoomHandle, timestamp_ns: u64, gyro: *c
         temperature_c: None,
     };
     with_room(room, (), |r| r.imu(&sample));
+}
+
+/// Which glasses these are, by the name the Deck knows them by ("XREAL Air"): what the tracker's
+/// remembered sensor calibration is kept under.
+#[no_mangle]
+pub extern "C" fn sp_room_set_device(room: *mut RoomHandle, name: *const c_char) {
+    if name.is_null() {
+        return;
+    }
+    // SAFETY: a NUL-terminated string, by the contract.
+    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    with_room(room, (), |r| r.set_device(&name));
+}
+
+/// Both eyes' matrices for drawing the environment: 32 floats, left then right.
+#[no_mangle]
+pub extern "C" fn sp_room_sky_matrices(room: *mut RoomHandle, out: *mut f32) {
+    if out.is_null() {
+        return;
+    }
+    let [l, r] = with_room(room, [glam::Mat4::IDENTITY; 2], |r| r.sky_matrices());
+    // SAFETY: room for 32 floats, by the contract.
+    let out = unsafe { std::slice::from_raw_parts_mut(out, 32) };
+    out[..16].copy_from_slice(&l.to_cols_array());
+    out[16..].copy_from_slice(&r.to_cols_array());
+}
+
+/// The studio the Deck starts in, generated: a dark sky with a key light, a horizon and a floor
+/// grid. RGBA, `width * height * 4` bytes, equirectangular, top row first. Without it the room is a
+/// black void and nothing says how far away anything is.
+#[no_mangle]
+pub extern "C" fn sp_sky_studio(width: u32, height: u32, out: *mut u8) {
+    if out.is_null() || width == 0 || height == 0 {
+        return;
+    }
+    let sky = spatiand_render::Sky::studio(width, height);
+    // SAFETY: room for `width * height * 4` bytes, by the contract.
+    let out = unsafe { std::slice::from_raw_parts_mut(out, (width as usize) * (height as usize) * 4) };
+    let n = out.len().min(sky.rgba.len());
+    out[..n].copy_from_slice(&sky.rgba[..n]);
 }
 
 #[no_mangle]
@@ -628,8 +673,7 @@ pub extern "C" fn sp_room_aim(room: *mut RoomHandle, out: *mut SpAim) {
         out.x = aim.x;
         out.y = aim.y;
         out.point = aim.point.to_array();
-        out.title = aim.title as i32;
-        out.corner = aim.corner as i32;
+        out.zone = aim.zone.map_or(0, |z| z.code());
     }
 }
 
@@ -653,19 +697,286 @@ pub extern "C" fn sp_room_aim_free(room: *mut RoomHandle, id: u32, x: *mut f64, 
     }
 }
 
-/// The picture size a window would have at the pixel density windows start with, at its width now.
-/// 1 if there is such a window.
+// MARK: the Deck's menus
+
+fn event_json(event: &spatiand_shell::ShellEvent) -> String {
+    use spatiand_shell::ShellEvent as E;
+    let value = match event {
+        E::Hud(action) => serde_json::json!({ "hud": format!("{action:?}") }),
+        E::Launch(app) => serde_json::json!({ "launch_local": app.name }),
+        E::ModeChanged(mode) => serde_json::json!({ "mode": format!("{mode:?}") }),
+        E::ChooseEnvironment(choice) => serde_json::json!({ "environment": match choice {
+            spatiand_shell::EnvironmentChoice::Blank => serde_json::json!("blank"),
+            spatiand_shell::EnvironmentChoice::Studio => serde_json::json!("studio"),
+            spatiand_shell::EnvironmentChoice::File(i) => serde_json::json!(i),
+        }}),
+        E::ListDirectory(dir) => serde_json::json!({ "list_directory": dir }),
+        E::AddEnvironment(name) => serde_json::json!({ "add_environment": name }),
+        E::FocusWindow(id) => serde_json::json!({ "focus": id }),
+        E::Controller(_) => serde_json::json!({ "controller": true }),
+        E::CloseWindow(id) => serde_json::json!({ "close": id }),
+        E::HideWindow { id, hidden } => serde_json::json!({ "hide": { "id": id, "hidden": hidden } }),
+        E::PinWindow { id, pinned } => serde_json::json!({ "pin": { "id": id, "pinned": pinned } }),
+        E::LaunchRemote { host, app } => serde_json::json!({ "launch_remote": { "host": host, "app": app } }),
+        E::PairHost(address) => serde_json::json!({ "pair": address }),
+        E::ConfirmPairing => serde_json::json!({ "confirm_pairing": true }),
+        E::CancelPairing => serde_json::json!({ "cancel_pairing": true }),
+        E::ForgetHost(address) => serde_json::json!({ "forget": address }),
+        E::Bluetooth(_) => serde_json::json!({ "bluetooth": true }),
+    };
+    value.to_string()
+}
+
+fn json_out(text: Option<String>) -> *mut c_char {
+    match text.and_then(|t| CString::new(t).ok()) {
+        Some(c) => c.into_raw(),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Feed the menus an intent: 0 up, 1 down, 2 left, 3 right, 4 accept, 5 back, 6 settings, 7 launcher,
+/// 8 windows, 9 close, 10 hide. Returns what the shell asks the app to do, as JSON, or null; free it with
+/// `sp_free_string`.
 #[no_mangle]
-pub extern "C" fn sp_room_native_size(room: *mut RoomHandle, id: u32, w: *mut u32, h: *mut u32) -> i32 {
-    match with_room(room, None, |r| r.native_size(id)) {
-        Some((nw, nh)) => {
+pub extern "C" fn sp_shell_intent(room: *mut RoomHandle, intent: i32) -> *mut c_char {
+    use spatiand_shell::{Intent, NavDirection};
+    let intent = match intent {
+        0 => Intent::Navigate(NavDirection::Up),
+        1 => Intent::Navigate(NavDirection::Down),
+        2 => Intent::Navigate(NavDirection::Left),
+        3 => Intent::Navigate(NavDirection::Right),
+        4 => Intent::Accept,
+        5 => Intent::Back,
+        6 => Intent::ToggleHud,
+        7 => Intent::ToggleLauncher,
+        8 => Intent::ToggleSwitcher,
+        9 => Intent::Close,
+        10 => Intent::Hide,
+        _ => return std::ptr::null_mut(),
+    };
+    json_out(with_room(room, None, |r| r.shell_intent(intent)).map(|e| event_json(&e)))
+}
+
+/// Whether a menu is covering the world, and whether it wants the keyboard's text.
+#[no_mangle]
+pub extern "C" fn sp_shell_open(room: *mut RoomHandle) -> i32 {
+    with_room(room, 0, |r| r.ui.open() as i32 | ((r.ui.shell.wants_text() as i32) << 1))
+}
+
+/// Draw the menus again if they changed, and hang them in the room. Returns a number that changes when
+/// their pictures did. Slow (it sets text), so it works on the menus off the room's lock.
+#[no_mangle]
+pub extern "C" fn sp_shell_sync(room: *mut RoomHandle) -> u64 {
+    let (mut ui, fov) = with_room(room, (shell_ui::ShellUi::new(), (40.0, 22.5)), |r| {
+        let fov = (r.stereo().h_fov_deg, r.stereo().v_fov_deg());
+        (std::mem::take(&mut r.ui), fov)
+    });
+    let changed = ui.render(fov);
+    with_room(room, 0, move |r| {
+        let version = ui.version;
+        r.ui = ui;
+        if changed {
+            r.install_shell_panels();
+        }
+        version
+    })
+}
+
+/// The ids of the panels the menus have, into `out`; how many there are.
+#[no_mangle]
+pub extern "C" fn sp_shell_panel_ids(room: *mut RoomHandle, out: *mut u32, capacity: usize) -> usize {
+    let mut ids: Vec<u32> = with_room(room, Vec::new(), |r| r.ui.images.keys().copied().collect());
+    ids.sort();
+    ids.truncate(capacity);
+    if !out.is_null() {
+        // SAFETY: `capacity` writable integers, by the contract.
+        unsafe { std::slice::from_raw_parts_mut(out, ids.len()).copy_from_slice(&ids) };
+    }
+    ids.len()
+}
+
+/// A menu panel's picture, premultiplied BGRA, into `out`. Returns whether it was there and fitted.
+#[no_mangle]
+pub extern "C" fn sp_shell_panel_image(room: *mut RoomHandle, id: u32, w: *mut u32, h: *mut u32, out: *mut u8, capacity: usize) -> i32 {
+    let Some(image) = with_room(room, None, |r| r.ui.images.get(&id).map(|s| s.image.clone())) else { return 0 };
+    // SAFETY: writable integers and `capacity` writable bytes, by the contract.
+    unsafe {
+        if let (Some(w), Some(h)) = (w.as_mut(), h.as_mut()) {
+            *w = image.width;
+            *h = image.height;
+        }
+        if out.is_null() || image.rgba.len() > capacity {
+            return 0;
+        }
+        std::slice::from_raw_parts_mut(out, image.rgba.len()).copy_from_slice(&image.rgba);
+    }
+    1
+}
+
+/// The pointer is moving over an open menu: the shell's cursor goes to the row or bubble it is on.
+#[no_mangle]
+pub extern "C" fn sp_shell_hover(room: *mut RoomHandle) {
+    with_room(room, (), |r| {
+        if let Some(shell_ui::Target::Row(index)) = r.shell_target() {
+            r.ui.point(index);
+        }
+    });
+}
+
+/// A press on an open menu. Returns what the shell asks the app to do, or null.
+#[no_mangle]
+pub extern "C" fn sp_shell_click(room: *mut RoomHandle) -> *mut c_char {
+    json_out(with_room(room, None, |r| match r.shell_target() {
+        Some(shell_ui::Target::Row(index)) => {
+            r.ui.point(index);
+            r.shell_intent(spatiand_shell::Intent::Accept)
+        }
+        Some(shell_ui::Target::Back) => r.shell_intent(spatiand_shell::Intent::Back),
+        None => None,
+    })
+    .map(|e| event_json(&e)))
+}
+
+/// The computers: `{"rows": [{label, address, status}], "tabs": [{label, address, online, apps: [{id, name}]}]}`.
+#[no_mangle]
+pub extern "C" fn sp_shell_set_hosts(room: *mut RoomHandle, json: *const c_char) {
+    if json.is_null() {
+        return;
+    }
+    // SAFETY: a NUL-terminated string, by the contract.
+    let text = unsafe { CStr::from_ptr(json) }.to_string_lossy().into_owned();
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else { return };
+    let text_of = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
+    let rows = value["rows"].as_array().cloned().unwrap_or_default().iter().map(|r| spatiand_shell::HostRow {
+        label: text_of(r, "label"),
+        address: text_of(r, "address"),
+        status: match r.get("status").and_then(|x| x.as_str()) {
+            Some("online") => spatiand_shell::HostStatus::Online,
+            Some("connecting") => spatiand_shell::HostStatus::Connecting,
+            Some("refused") => spatiand_shell::HostStatus::Refused,
+            _ => spatiand_shell::HostStatus::Offline,
+        },
+    }).collect();
+    let tabs = value["tabs"].as_array().cloned().unwrap_or_default().iter().map(|t| spatiand_shell::HostTab {
+        label: text_of(t, "label"),
+        address: text_of(t, "address"),
+        online: t.get("online").and_then(|x| x.as_bool()).unwrap_or(false),
+        apps: t["apps"].as_array().cloned().unwrap_or_default().iter().map(|a| spatiand_shell::RemoteEntry {
+            id: text_of(a, "id"),
+            name: text_of(a, "name"),
+            icon: None,
+        }).collect(),
+    }).collect();
+    with_room(room, (), |r| r.ui.set_hosts(rows, tabs));
+}
+
+/// The menus are out of date and should be drawn again.
+#[no_mangle]
+pub extern "C" fn sp_shell_dirty(room: *mut RoomHandle) {
+    with_room(room, (), |r| r.ui.dirty = true);
+}
+
+/// Where pinned windows sit (0 to 3, bottom right first) and whether they are large, for the settings rows.
+#[no_mangle]
+pub extern "C" fn sp_shell_set_pip(room: *mut RoomHandle, corner: i32, large: i32) {
+    with_room(room, (), |r| {
+        r.ui.shell.set_pip(corner.clamp(0, 3) as usize, large != 0);
+        r.ui.dirty = true;
+    });
+}
+
+/// A launcher bubble's picture, by the application's name: straight RGBA.
+#[no_mangle]
+pub extern "C" fn sp_shell_set_icon(room: *mut RoomHandle, name: *const c_char, width: u32, height: u32, rgba: *const u8) {
+    if name.is_null() || rgba.is_null() || width == 0 || height == 0 || width > 512 || height > 512 {
+        return;
+    }
+    // SAFETY: a NUL-terminated string and `width * height * 4` readable bytes, by the contract.
+    let (name, pixels) = unsafe { (CStr::from_ptr(name).to_string_lossy().into_owned(), std::slice::from_raw_parts(rgba, (width * height * 4) as usize).to_vec()) };
+    with_room(room, (), |r| r.ui.set_icon(&name, width, height, pixels));
+}
+
+/// The environments on offer: whether the studio is the one in use. (Blank and the studio are the two the
+/// Mac has.)
+#[no_mangle]
+pub extern "C" fn sp_shell_set_studio(room: *mut RoomHandle, studio: i32) {
+    use spatiand_shell::EnvironmentChoice as C;
+    let choices = vec![("Studio".to_string(), C::Studio), ("Blank".to_string(), C::Blank)];
+    with_room(room, (), |r| r.ui.set_environments(choices, if studio != 0 { C::Studio } else { C::Blank }));
+}
+
+/// Text typed while the shell asks for it (a computer's address): returns an event JSON when Return is hit.
+#[no_mangle]
+pub extern "C" fn sp_shell_type(room: *mut RoomHandle, text: *const c_char, backspace: i32, enter: i32) -> *mut c_char {
+    let text = if text.is_null() { String::new() } else { unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned() };
+    json_out(with_room(room, None, |r| {
+        r.ui.dirty = true;
+        if !text.is_empty() {
+            r.ui.shell.type_text(&text);
+        }
+        if backspace != 0 {
+            r.ui.shell.type_backspace();
+        }
+        if enter != 0 {
+            return r.ui.shell.type_enter();
+        }
+        None
+    })
+    .map(|e| event_json(&e)))
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_set_title(room: *mut RoomHandle, id: u32, title: *const c_char) {
+    if title.is_null() {
+        return;
+    }
+    // SAFETY: a NUL-terminated string, by the contract.
+    let title = unsafe { CStr::from_ptr(title) }.to_string_lossy().into_owned();
+    with_room(room, (), |r| r.set_title(id, &title));
+}
+
+/// The application's icon: `width * height * 4` bytes of straight RGBA.
+#[no_mangle]
+pub extern "C" fn sp_room_set_icon(room: *mut RoomHandle, id: u32, width: u32, height: u32, rgba: *const u8) {
+    if rgba.is_null() || width == 0 || height == 0 || width > 512 || height > 512 {
+        return;
+    }
+    // SAFETY: `width * height * 4` readable bytes, by the contract.
+    let pixels = unsafe { std::slice::from_raw_parts(rgba, (width * height * 4) as usize) }.to_vec();
+    with_room(room, (), |r| r.set_icon(id, width, height, pixels));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_set_sound(room: *mut RoomHandle, id: u32, sounding: i32, muted: i32) {
+    with_room(room, (), |r| r.set_sound(id, sounding != 0, muted != 0));
+}
+
+/// What the pointer is over on a window's chrome (a zone code; 0 for nothing).
+#[no_mangle]
+pub extern "C" fn sp_room_set_hover(room: *mut RoomHandle, id: u32, zone: i32) {
+    with_room(room, (), |r| r.set_hover(chrome::Zone::from_code(zone).map(|z| (id, z))));
+}
+
+/// Take a window by one of its edges (a zone code, 7 to 11).
+#[no_mangle]
+pub extern "C" fn sp_room_begin_resize(room: *mut RoomHandle, id: u32, zone: i32) {
+    if let Some(chrome::Zone::Resize(edge)) = chrome::Zone::from_code(zone) {
+        with_room(room, (), |r| r.begin_resize(id, edge));
+    }
+}
+
+/// Carry the edge along with the pointer. 1, and the size to ask the application for, if a resize is
+/// going on.
+#[no_mangle]
+pub extern "C" fn sp_room_drag_resize(room: *mut RoomHandle, id: *mut u32, w: *mut u32, h: *mut u32) -> i32 {
+    match with_room(room, None, |r| r.drag_resize()) {
+        Some((window, (pw, ph))) => {
             // SAFETY: writable integers, by the contract.
             unsafe {
-                if let Some(w) = w.as_mut() {
-                    *w = nw;
-                }
-                if let Some(h) = h.as_mut() {
-                    *h = nh;
+                if let (Some(id), Some(w), Some(h)) = (id.as_mut(), w.as_mut(), h.as_mut()) {
+                    *id = window;
+                    *w = pw;
+                    *h = ph;
                 }
             }
             1
@@ -674,25 +985,83 @@ pub extern "C" fn sp_room_native_size(room: *mut RoomHandle, id: u32, w: *mut u3
     }
 }
 
-/// The host is being asked to resize this window to about this many pixels; writes the size after
-/// limits, which is what to ask it. 1 if there is such a window.
 #[no_mangle]
-pub extern "C" fn sp_room_request_size(room: *mut RoomHandle, id: u32, width: f64, height: f64, w: *mut u32, h: *mut u32) -> i32 {
-    match with_room(room, None, |r| r.request_size(id, (width, height))) {
-        Some((nw, nh)) => {
-            // SAFETY: writable integers, by the contract.
-            unsafe {
-                if let Some(w) = w.as_mut() {
-                    *w = nw;
-                }
-                if let Some(h) = h.as_mut() {
-                    *h = nh;
-                }
-            }
-            1
+pub extern "C" fn sp_room_end_resize(room: *mut RoomHandle) {
+    with_room(room, (), |r| r.end_resize());
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_is_sizing(room: *mut RoomHandle) -> i32 {
+    with_room(room, -1, |r| r.is_sizing().map_or(-1, |i| i as i32))
+}
+
+/// Put a window nearer (negative) or further (positive), by this many metres.
+#[no_mangle]
+pub extern "C" fn sp_room_push_pull(room: *mut RoomHandle, id: u32, metres: f64) {
+    with_room(room, (), |r| r.push_pull(id, metres));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_set_hidden(room: *mut RoomHandle, id: u32, hidden: i32) {
+    with_room(room, (), |r| r.set_hidden(id, hidden != 0));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_room_is_hidden(room: *mut RoomHandle, id: u32) -> i32 {
+    with_room(room, 0, |r| r.is_hidden(id) as i32)
+}
+
+/// A number that changes when a window's chrome has to be drawn again; 0 for a window without any.
+#[no_mangle]
+pub extern "C" fn sp_room_chrome_version(room: *mut RoomHandle, id: u32) -> u64 {
+    with_room(room, None, |r| r.look_of(id)).map_or(0, |l| chrome::look_key(&l))
+}
+
+/// A window's chrome as premultiplied BGRA, `width * height * 4` bytes, into `out`; the size is
+/// written to `w` and `h` first, and nothing is drawn if it would not fit in `capacity`. Returns whether
+/// it was drawn. Made off the room's lock: it sets text, which takes a moment.
+#[no_mangle]
+pub extern "C" fn sp_room_chrome_render(room: *mut RoomHandle, id: u32, width_px: u32, w: *mut u32, h: *mut u32, out: *mut u8, capacity: usize) -> i32 {
+    let Some(look) = with_room(room, None, |r| r.look_of(id)) else { return 0 };
+    let (cw, ch, mut rgba) = chrome::compose(&look, width_px);
+    // SAFETY: writable integers and `capacity` writable bytes, by the contract.
+    unsafe {
+        if let (Some(w), Some(h)) = (w.as_mut(), h.as_mut()) {
+            *w = cw;
+            *h = ch;
         }
-        None => 0,
+        if out.is_null() || rgba.len() > capacity {
+            return 0;
+        }
     }
+    // Premultiplied, and in the order Metal's BGRA wants.
+    for px in rgba.chunks_exact_mut(4) {
+        let a = px[3] as u32;
+        let (r, g, b) = (px[0] as u32 * a / 255, px[1] as u32 * a / 255, px[2] as u32 * a / 255);
+        px[0] = b as u8;
+        px[1] = g as u8;
+        px[2] = r as u8;
+    }
+    // SAFETY: as above.
+    unsafe { std::slice::from_raw_parts_mut(out, rgba.len()).copy_from_slice(&rgba) };
+    1
+}
+
+/// The Deck's pointer: a dot in a ring. White, straight RGBA, `size * size * 4` bytes.
+#[no_mangle]
+pub extern "C" fn sp_reticle(size: u32, out: *mut u8) {
+    if out.is_null() || size == 0 || size > 512 {
+        return;
+    }
+    let image = look::reticle_image(size);
+    // SAFETY: `size * size * 4` writable bytes, by the contract.
+    unsafe { std::slice::from_raw_parts_mut(out, image.len()).copy_from_slice(&image) };
+}
+
+/// Start finding the machine's fonts now, so a window's title is ready when it is first drawn.
+#[no_mangle]
+pub extern "C" fn sp_text_warm_up() {
+    chrome::warm_up();
 }
 
 /// Where the cursor is in one window's pixels, even off its edge. 1 if there is such a window.

@@ -17,17 +17,33 @@ final class RoomHint {
 
     init(controller: RoomController) { self.controller = controller }
 
+    /// Say something for a few seconds, wherever the wearer is looking: what a row of the menu cannot do here.
+    private var saying: String?
+    private var sayingTimer: Timer?
+    func say(_ text: String) {
+        saying = text
+        sayingTimer?.invalidate()
+        sayingTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: false) { [weak self] _ in
+            self?.saying = nil
+            self?.update()
+        }
+        lastText = ""
+        update()
+    }
+
     /// Show or take away the panel to suit what the room holds now.
     func update() {
         let model = Model.shared
-        let wanted = controller.active && !controller.hasWindows && !controller.menu.isOpen
+        let wanted = controller.active && (saying != nil || (!controller.hasWindows && !controller.menu.isOpen))
         guard wanted else {
             if shown { remove() }
             return
         }
         let second: String
-        if model.connected {
-            second = "Nothing is open on \(model.host?.name ?? "the computer"). Press Ctrl-Space for the menu."
+        if let saying {
+            second = saying
+        } else if model.connected {
+            second = "Nothing is open on \(model.host?.name ?? "the computer"). Ctrl-Space opens the launcher, Ctrl-Tab the settings."
         } else if model.host != nil {
             second = "Connecting to \(model.host?.name ?? "the computer")\u{2026}"
         } else {
@@ -61,12 +77,12 @@ final class RoomHint {
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
         defer { NSGraphicsContext.restoreGraphicsState() }
-        NSColor(white: 0.09, alpha: 1).setFill()
-        NSBezierPath(rect: CGRect(origin: .zero, size: size)).fill()
-        NSColor(white: 0.32, alpha: 1).setStroke()
-        let frame = NSBezierPath(rect: CGRect(x: 2, y: 2, width: size.width - 4, height: size.height - 4))
-        frame.lineWidth = 4
-        frame.stroke()
+        // The Deck's card: a rim of pale blue, dark ground, rounded.
+        context.clear(CGRect(origin: .zero, size: size))
+        NSColor(calibratedRed: 0.55, green: 0.70, blue: 1.0, alpha: 0.16).setFill()
+        NSBezierPath(roundedRect: CGRect(origin: .zero, size: size), xRadius: 54, yRadius: 54).fill()
+        NSColor(calibratedRed: 0.043, green: 0.05, blue: 0.072, alpha: 0.93).setFill()
+        NSBezierPath(roundedRect: CGRect(x: 5, y: 5, width: size.width - 10, height: size.height - 10), xRadius: 50, yRadius: 50).fill()
 
         func text(_ s: String, y: CGFloat, size: CGFloat, weight: NSFont.Weight, colour: NSColor, lines: CGFloat = 1) {
             let style = NSMutableParagraphStyle()
@@ -79,9 +95,9 @@ final class RoomHint {
                 .draw(in: CGRect(x: 40, y: y, width: self.size.width - 80, height: size * 1.3 * lines))
         }
         text("Spatiand", y: 28, size: 52, weight: .semibold, colour: .white)
-        text(second, y: 108, size: 30, weight: .regular, colour: NSColor(white: 0.85, alpha: 1), lines: 2)
+        text(second, y: 108, size: 30, weight: .regular, colour: NSColor(calibratedRed: 0.70, green: 0.76, blue: 0.87, alpha: 1), lines: 2)
         text("Ctrl-Option-R recentres  \u{00B7}  Ctrl-Option-G gives the mouse and keyboard back to the Mac",
-             y: 232, size: 22, weight: .regular, colour: NSColor(white: 0.55, alpha: 1), lines: 1)
+             y: 232, size: 22, weight: .regular, colour: NSColor(calibratedRed: 0.50, green: 0.55, blue: 0.66, alpha: 1), lines: 1)
 
         guard let data = context.data else { return }
         var texture = renderer.panels[UInt32(Self.panelID)]

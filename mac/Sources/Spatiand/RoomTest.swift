@@ -48,8 +48,6 @@ enum RoomTest {
                 room.buttonDown(0x110, grab: false); room.buttonUp(0x110)
                 for code: CGKeyCode in [4, 34] { MacInput.key(code: code, flags: [], down: true, pid: info.pid); MacInput.key(code: code, flags: [], down: false, pid: info.pid) }
                 let before = MacWindows.currentFrame(info)
-                room.fit(id)
-                _ = room.core.requestSize(id, width: 1500, height: 900)
                 MacWindows.resize(info, toPoints: CGSize(width: 820, height: 500))
                 after(1) { print("mac window size: \(before.map { "\(Int($0.width))x\(Int($0.height))" } ?? "?") -> \(MacWindows.currentFrame(info).map { "\(Int($0.width))x\(Int($0.height))" } ?? "?")") }
                 after(1.5) { print("text now: \(MacWindows.text(info) ?? "?")") }
@@ -133,27 +131,23 @@ enum RoomTest {
                 exit(0)
             }
             if env["SPATIAND_TEST_RESIZE"] != nil {
-                // Take the bottom right corner of the window and pull it out and down; the host is
-                // asked for more pixels, and the window grows with them rather than stretching.
+                // Take the right edge of the window's frame and pull it out; the application is asked for
+                // more pixels at the same density, and the window grows with them.
                 guard let id = room.known.keys.min() else { print("no window"); exit(1) }
                 room.core.centrePointer()
                 var a = room.core.aim()
-                for _ in 0..<12 {
-                    // Towards the corner, a step at a time (pixels of the window, about two to the point).
-                    let size = room.known[id] ?? .zero
-                    room.pointerMoved(dx: (size.width - 4 - a.x) * 0.45, dy: (size.height - 4 - a.y) * 0.45)
+                var steps = 0
+                while a.zone != .right && steps < 200 {
+                    room.pointerMoved(dx: 6, dy: 0)
                     a = room.core.aim()
+                    steps += 1
                 }
-                print("corner aim: window \(a.window.map(String.init) ?? "none") corner \(a.corner) at \(Int(a.x)),\(Int(a.y)) of \(room.known[id].map { "\(Int($0.width))x\(Int($0.height))" } ?? "?")")
+                print("edge aim: window \(a.window.map(String.init) ?? "none") zone \(a.zone) after \(steps) steps; window \(room.known[id].map { "\(Int($0.width))x\(Int($0.height))" } ?? "?")")
                 room.buttonDown(0x110, grab: false)
-                for _ in 0..<10 { room.pointerMoved(dx: 14, dy: 8); Thread.sleep(forTimeInterval: 0.15) }
+                for _ in 0..<8 { room.pointerMoved(dx: 10, dy: 0); Thread.sleep(forTimeInterval: 0.15) }
                 room.buttonUp(0x110)
                 after(2) {
                     print("after the pull: \(room.known[id].map { "\(Int($0.width))x\(Int($0.height))" } ?? "?")")
-                    room.fit(id)
-                }
-                after(4) {
-                    print("after fit: \(room.known[id].map { "\(Int($0.width))x\(Int($0.height))" } ?? "?")")
                     room.tick(); if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-resize.png") }
                     exit(0)
                 }
@@ -165,7 +159,7 @@ enum RoomTest {
                 room.core.centrePointer()
                 room.pointerMoved(dx: 318, dy: -226)
                 let a = room.core.aim()
-                print("bar aim: window \(a.window.map(String.init) ?? "none") title \(a.title) at \(Int(a.x)),\(Int(a.y))")
+                print("bar aim: window \(a.window.map(String.init) ?? "none") zone \(a.zone) at \(Int(a.x)),\(Int(a.y))")
                 room.tick()
                 if let image = room.renderer?.snapshot(width: 3840, height: 1080, sideBySide: true) { write(image, "/tmp/spatiand-room-bar1.png") }
                 room.pointerMoved(dx: -250, dy: 0)
@@ -179,7 +173,8 @@ enum RoomTest {
                 exit(0)
             }
             if env["SPATIAND_TEST_MENU"] != nil {
-                room.menu.open()
+                if env["SPATIAND_TEST_MENU"] == "launcher" { room.toggleMenu() } else { room.toggleSettings() }
+                room.tick()
                 // Up and to the left a little, onto the first rows.
                 room.core.centrePointer()
                 room.pointerMoved(dx: 150, dy: -50)

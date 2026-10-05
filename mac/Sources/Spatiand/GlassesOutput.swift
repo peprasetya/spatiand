@@ -86,6 +86,7 @@ final class GlassesOutput: NSObject {
         do {
             let d = try XRealDevice()
             let core = room.core
+            core.setDevice("XREAL Air")
             try d.startIMU { sample in
                 core.imu(timestamp: sample.timestamp, gyro: sample.gyro, accel: sample.accel, mag: sample.mag)
             }

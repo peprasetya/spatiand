@@ -7,6 +7,7 @@
 //  windows float in whatever is really there.
 
 import AppKit
+import CSpatiand
 import CoreVideo
 import Metal
 import QuartzCore
@@ -16,6 +17,10 @@ final class RoomRenderer {
     private let queue: MTLCommandQueue
     private let windowPipeline: MTLRenderPipelineState
     private let cursorPipeline: MTLRenderPipelineState
+    private let skyPipeline: MTLRenderPipelineState
+    /// The Deck's studio: a dark sky, a key light, a horizon and a floor grid. What tells the eyes
+    /// how far away the windows are; without it they hang in a void and read as flat.
+    private var skyTexture: MTLTexture?
     private var cache: CVMetalTextureCache?
     private var cursorTexture: MTLTexture
     private let arrowTexture: MTLTexture
@@ -59,6 +64,7 @@ final class RoomRenderer {
             }
             windowPipeline = try pipeline("vertex_room", "fragment_window", blend: false)
             cursorPipeline = try pipeline("vertex_room", "fragment_cursor", blend: true)
+            skyPipeline = try pipeline("vertex_sky", "fragment_sky", blend: false)
         } catch {
             print("room: could not build the shaders: \(error)")
             return nil
@@ -71,11 +77,33 @@ final class RoomRenderer {
             guard let b = device.makeBuffer(length: Self.capacity * 4, options: .storageModeShared) else { return nil }
             buffers.append(b)
         }
+        loadSky()
+    }
+
+    private func loadSky() {
+        // Generated off the main thread: two million pixels of it.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let (w, h) = (2048, 1024)
+            var pixels = [UInt8](repeating: 0, count: w * h * 4)
+            sp_sky_studio(UInt32(w), UInt32(h), &pixels)
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: w, height: h, mipmapped: true)
+            guard let self, let texture = self.device.makeTexture(descriptor: d) else { return }
+            texture.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0, withBytes: pixels, bytesPerRow: w * 4)
+            if let queue = self.device.makeCommandQueue(), let commands = queue.makeCommandBuffer(), let blit = commands.makeBlitCommandEncoder() {
+                blit.generateMipmaps(for: texture)
+                blit.endEncoding()
+                commands.commit()
+                commands.waitUntilCompleted()
+            }
+            self.skyTexture = texture
+        }
     }
 
     /// The host's own pointer picture (premultiplied BGRA), or the plain arrow when there is none.
     func setCursorPicture(_ pixels: Data?, width: Int, height: Int) {
-        guard let pixels, width > 0, height > 0, pixels.count >= width * height * 4 else {
+        // The Deck draws the same reticle over every window and not the application's own pointer, so
+        // this does too.
+        guard false, let pixels, width > 0, height > 0, pixels.count >= width * height * 4 else {
             cursorTexture = arrowTexture
             return
         }
@@ -127,6 +155,8 @@ final class RoomRenderer {
         return CVMetalTextureGetTexture(made)
     }
 
+    private func skyMatrices() -> [Float] { core.skyMatrices() }
+
     // MARK: drawing
 
     /// Draw the room into `target`. `sideBySide` is two eyes across it, else one eye over it all.
@@ -161,20 +191,33 @@ final class RoomRenderer {
             if let t = texture(for: draw.window, keep: &keep) { textures[draw.window] = t }
         }
 
+        let sky = Settings.studio ? skyMatrices() : nil
         for eye in 0..<eyes {
             let rect = MTLViewport(originX: Double(eye * eyeWidth), originY: 0, width: Double(eyeWidth), height: Double(height), znear: 0, zfar: 1)
             encoder.setViewport(rect)
             encoder.setScissorRect(MTLScissorRect(x: eye * eyeWidth, y: 0, width: eyeWidth, height: height))
+            if let sky, let texture = skyTexture {
+                var inverse = Array(sky[(eye * 16)..<(eye * 16 + 16)])
+                encoder.setRenderPipelineState(skyPipeline)
+                encoder.setVertexBytes(&inverse, length: 64, index: 0)
+                encoder.setFragmentBytes(&inverse, length: 64, index: 0)
+                encoder.setFragmentTexture(texture, index: 0)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            }
             var matrix = Array(frame.matrices[(eye * 16)..<(eye * 16 + 16)])
             encoder.setVertexBuffer(buffer, offset: 0, index: 0)
             encoder.setVertexBytes(&matrix, length: 64, index: 1)
 
-            encoder.setRenderPipelineState(windowPipeline)
             for draw in frame.draws where draw.window != RoomCore.cursor {
                 guard let texture = textures[draw.window] else { continue }
-                // The one being looked at is as the host drew it; the rest are a little dimmer.
-                var brightness: Float = (draw.focused || draw.aimed || draw.window >= 0xFFF0 || draw.window & 0x10000 != 0) ? 1.0 : 0.82
-                encoder.setFragmentBytes(&brightness, length: 4, index: 0)
+                if draw.window & 0x10000 != 0 || (draw.window >= UInt32(RoomCore.panelFirst) && draw.window != RoomCore.cursor) {
+                    // A window's frame, or one of the menus: glass and rounded cards, with edges that are not there.
+                    encoder.setRenderPipelineState(cursorPipeline)
+                } else {
+                    encoder.setRenderPipelineState(windowPipeline)
+                    var brightness: Float = 1.0
+                    encoder.setFragmentBytes(&brightness, length: 4, index: 0)
+                }
                 encoder.setFragmentTexture(texture, index: 0)
                 encoder.drawPrimitives(type: .triangle, vertexStart: draw.first, vertexCount: draw.count)
             }
@@ -222,40 +265,17 @@ final class RoomRenderer {
 
     // MARK: the cursor
 
-    /// An arrow, drawn once: white with a dark edge, so it reads over a page of either colour.
+    /// The Deck's pointer: a dot in a ring. Pale green, which is the colour the Deck gives a mouse's, so
+    /// it is told from a thumb's.
     private static func makeCursor(_ device: MTLDevice) -> MTLTexture? {
         let size = 64
         var pixels = [UInt8](repeating: 0, count: size * size * 4)
-        let ok = pixels.withUnsafeMutableBytes { raw -> Bool in
-            guard let context = CGContext(
-                data: raw.baseAddress, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size * 4,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
-            // The tip at the top left, in a context whose y runs up.
-            let p = CGMutablePath()
-            p.move(to: CGPoint(x: 6, y: 58))
-            p.addLine(to: CGPoint(x: 6, y: 10))
-            p.addLine(to: CGPoint(x: 19, y: 22))
-            p.addLine(to: CGPoint(x: 27, y: 5))
-            p.addLine(to: CGPoint(x: 36, y: 9))
-            p.addLine(to: CGPoint(x: 28, y: 26))
-            p.addLine(to: CGPoint(x: 46, y: 26))
-            p.closeSubpath()
-            context.addPath(p)
-            context.setFillColor(CGColor(gray: 1, alpha: 1))
-            context.fillPath()
-            context.addPath(p)
-            context.setStrokeColor(CGColor(gray: 0.05, alpha: 1))
-            context.setLineWidth(4)
-            context.setLineJoin(.round)
-            context.strokePath()
-            // The stroke covers the inside edge of the fill; draw the fill again, smaller, on top.
-            context.addPath(p)
-            context.setFillColor(CGColor(gray: 1, alpha: 1))
-            context.fillPath()
-            return true
+        sp_reticle(UInt32(size), &pixels)
+        let tint: [Float] = [0.62, 1.0, 0.72]
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            let a = Float(pixels[i + 3]) / 255
+            for c in 0..<3 { pixels[i + c] = UInt8(min(255, Float(pixels[i + c]) * tint[c] * a)) }
         }
-        guard ok else { return nil }
         let description = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: size, height: size, mipmapped: false)
         guard let texture = device.makeTexture(descriptor: description) else { return nil }
         texture.replace(region: MTLRegionMake2D(0, 0, size, size), mipmapLevel: 0, withBytes: pixels, bytesPerRow: size * 4)
@@ -284,6 +304,30 @@ final class RoomRenderer {
     }
 
     constexpr sampler linear_clamped(filter::linear, address::clamp_to_edge);
+
+    // The environment: every pixel's direction, looked up in an equirectangular picture. The same
+    // arithmetic as the Deck's, with +X forward, +Y left and +Z up.
+    struct SkyVarying { float4 position [[position]]; float2 ndc; };
+
+    vertex SkyVarying vertex_sky(uint id [[vertex_id]]) {
+        float2 corners[3] = { float2(-1, -1), float2(3, -1), float2(-1, 3) };
+        SkyVarying out;
+        out.position = float4(corners[id], 1.0, 1.0);
+        out.ndc = corners[id];
+        return out;
+    }
+
+    fragment float4 fragment_sky(SkyVarying in [[stage_in]],
+                                 texture2d<float> sky [[texture(0)]],
+                                 constant float4x4 &inverse [[buffer(0)]]) {
+        float4 far = inverse * float4(in.ndc, 1.0, 1.0);
+        float3 dir = normalize(far.xyz / far.w);
+        constexpr sampler around(filter::linear, mip_filter::linear, address::repeat);
+        float azimuth = atan2(-dir.y, dir.x);
+        float u = 0.5 + azimuth / (2.0 * M_PI_F);
+        float v = 0.5 - asin(clamp(dir.z, -1.0, 1.0)) / M_PI_F;
+        return float4(sky.sample(around, float2(u, v)).rgb, 1.0);
+    }
 
     fragment float4 fragment_window(Varying in [[stage_in]],
                                     texture2d<float> picture [[texture(0)]],
