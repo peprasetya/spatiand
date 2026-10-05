@@ -83,6 +83,7 @@ void sp_room_set_device(sp_room *room, const char *name);
 void sp_room_sky_matrices(sp_room *room, float *out);
 // The Deck's studio environment, generated: width * height * 4 bytes of RGBA, equirectangular.
 void sp_sky_studio(uint32_t width, uint32_t height, uint8_t *out);
+int32_t sp_room_compass_ready(sp_room *room);
 void sp_room_recentre(sp_room *room);
 int32_t sp_room_has_head(sp_room *room);
 // For a preview with no sensors: hold the head at this heading and pitch, in degrees.

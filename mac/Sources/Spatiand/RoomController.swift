@@ -87,6 +87,9 @@ final class RoomController {
 
     /// The computers, and what each offers, for the launcher and the computers page: every one this Mac has
     /// paired with, the one in use online with its applications, and this Mac itself.
+    /// Applications whose pictures the menus already have.
+    private var iconsSent: Set<String> = []
+
     func syncHosts() {
         var rows: [[String: Any]] = []
         var tabs: [[String: Any]] = []
@@ -97,7 +100,7 @@ final class RoomController {
             if current {
                 for app in model.apps {
                     apps.append(["id": app.id, "name": app.name])
-                    if let icon = app.icon, let pixels = Self.pixels(of: icon, side: 128) { sp_shell_set_icon(core.handle, app.name, 128, 128, pixels) }
+                    if iconsSent.insert(host.address + app.id).inserted, let icon = app.icon, let pixels = Self.pixels(of: icon, side: 128) { sp_shell_set_icon(core.handle, app.name, 128, 128, pixels) }
                 }
             }
             tabs.append(["label": host.name, "address": host.address, "online": current, "apps": apps])
@@ -106,7 +109,7 @@ final class RoomController {
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular && app.bundleIdentifier != Bundle.main.bundleIdentifier {
             guard let id = app.bundleIdentifier, let name = app.localizedName else { continue }
             mac.append(["id": id, "name": name])
-            if let icon = app.icon, let pixels = Self.pixels(of: icon, side: 128) { sp_shell_set_icon(core.handle, name, 128, 128, pixels) }
+            if iconsSent.insert(id).inserted, let icon = app.icon, let pixels = Self.pixels(of: icon, side: 128) { sp_shell_set_icon(core.handle, name, 128, 128, pixels) }
         }
         mac.sort { ($0["name"] as? String ?? "") < ($1["name"] as? String ?? "") }
         tabs.append(["label": "This Mac", "address": "mac", "online": true, "apps": mac])
@@ -267,7 +270,23 @@ final class RoomController {
     }
 
     /// Once a frame: what the bars say, if that has changed.
-    func tick() { updateSound(); titles.update(); menu.update() }
+    private var compassSaid = Date.distantPast
+    private var compassChecked = Date.distantPast
+
+    func tick() {
+        updateSound()
+        titles.update()
+        menu.update()
+        // Until the glasses have measured their own magnetic field the view drifts: say what helps, now and
+        // then, and stop once it is done.
+        if active, drivesGlasses, Date().timeIntervalSince(compassChecked) > 2 {
+            compassChecked = Date()
+            if core.hasHead, !core.compassReady, Date().timeIntervalSince(compassSaid) > 150 {
+                compassSaid = Date()
+                hint.say("Look up, down and all around for a minute or two. The glasses are learning their compass, and the view stops drifting once they have.")
+            }
+        }
+    }
 
     /// The host's windows are gone with the session; this Mac's own stay.
     func sessionEnded() {
@@ -454,7 +473,9 @@ final class RoomController {
             let list = await MacWindows.list()
             await MainActor.run {
                 self?.macList = list
-                self?.syncHosts()
+                // Pictures of every running application are drawn only for a menu that is open: doing it every few
+                // seconds for nothing was a visible hitch in the view.
+                if self?.menu.isOpen == true { self?.syncHosts() }
             }
         }
     }

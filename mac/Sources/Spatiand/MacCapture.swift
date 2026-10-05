@@ -36,8 +36,15 @@ enum MacWindows {
     static func isMac(_ id: UInt16) -> Bool { id >= firstID && id < RoomCore.panelFirst }
 
     /// Whether the permission to capture is in hand, asking for it if it is not.
+    private static var allowedAt = Date.distantPast
     static func allowed(ask: Bool) -> Bool {
-        if CGPreflightScreenCaptureAccess() { return true }
+        // The question is a synchronous trip to the permissions database, tens of milliseconds, and is asked
+        // every few seconds from the main thread: a yes is remembered for a minute so it is not a hitch.
+        if !ask, Date().timeIntervalSince(allowedAt) < 60 { return true }
+        if CGPreflightScreenCaptureAccess() {
+            allowedAt = Date()
+            return true
+        }
         if ask { CGRequestScreenCaptureAccess() }
         return false
     }

@@ -442,6 +442,12 @@ impl Room {
         self.memory.tick(&self.tracker);
     }
 
+    /// Whether the magnetic anchor that holds yaw is running: it is only once the glasses have measured their own
+    /// field, which takes a minute or two of the head looking up and down as well as round.
+    pub fn compass_ready(&self) -> bool {
+        self.tracker.magnetic_status().hard_iron.is_some()
+    }
+
     pub fn recentre(&mut self) {
         self.tracker.recenter();
     }

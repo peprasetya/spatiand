@@ -547,6 +547,12 @@ pub extern "C" fn sp_sky_studio(width: u32, height: u32, out: *mut u8) {
     out[..n].copy_from_slice(&sky.rgba[..n]);
 }
 
+/// Whether the glasses' compass (the magnetic yaw anchor) is measured and running.
+#[no_mangle]
+pub extern "C" fn sp_room_compass_ready(room: *mut RoomHandle) -> i32 {
+    with_room(room, 0, |r| r.compass_ready() as i32)
+}
+
 #[no_mangle]
 pub extern "C" fn sp_room_recentre(room: *mut RoomHandle) {
     with_room(room, (), |r| r.recentre());

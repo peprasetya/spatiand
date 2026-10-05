@@ -80,8 +80,8 @@ final class GlassesOutput: NSObject {
     private var imuTried = 0
     /// Whether the glasses have been asked for their 3D mode this time; asked once, not each time round.
     private var modeAsked = false
-    /// The rate asked of the glasses: 72 Hz, as the Deck runs them, unless the Mac offers no such mode.
-    private var wantedRate = 72
+    /// The rate asked of the glasses: 60 Hz unless this Mac already lists the double-width mode at 72.
+    private var wantedRate = 60
     private var shownRate = 60.0
 
     private func connectDevice() {
@@ -132,7 +132,11 @@ final class GlassesOutput: NSObject {
         if !modeAsked {
             modeAsked = true
             setStatus("Switching the glasses to 3D")
-            // 72 Hz, as the Deck drives them; 60 when the Mac's display list has no such mode.
+            // 72 Hz, as the Deck drives them, only if this Mac's list already has such a mode: with the glasses
+            // plugged in here the double-width mode was only ever offered at 60, and asking for a rate the
+            // display does not list leaves the glasses showing one the Mac is not sending.
+            let modes = ((CGDisplayCopyAllDisplayModes(id, [kCGDisplayShowDuplicateLowResolutionModes: true] as CFDictionary) as? [CGDisplayMode]) ?? [])
+            wantedRate = modes.contains { $0.pixelWidth == 3840 && abs($0.refreshRate - 72) < 1 } ? 72 : 60
             do { try device.setDisplayMode(wantedRate == 72 ? .sbs3D72 : .sbs3D60) } catch { print("glasses: could not change the mode: \(error)") }
         }
         if let wide = Self.wideMode(of: id, rate: wantedRate), wantedRate != 72 || abs(wide.refreshRate - 72) < 1 || attempt >= 12 {
@@ -262,7 +266,37 @@ final class GlassesOutput: NSObject {
         print("glasses: drawing \(Int(frame.width))x\(Int(frame.height)) on display \(id), \(sideBySide ? "two eyes" : "one eye")")
     }
 
-    @objc private func draw() {
+    /// How regularly frames are being drawn, said in the log every few seconds: the line that tells a view that
+    /// jitters from one that is only being looked at hard.
+    private var frameClock = (last: 0.0, since: Date(), count: 0, late: 0, longest: 0.0, spent: 0.0, worst: 0.0, interval: 0.0)
+
+    private func noteFrame(_ link: CADisplayLink, spent: Double) {
+        let now = link.timestamp
+        let period = max(0.001, link.targetTimestamp - link.timestamp)
+        frameClock.interval = period
+        if frameClock.last > 0 {
+            let gap = now - frameClock.last
+            frameClock.count += 1
+            if gap > period * 1.5 {
+                frameClock.late += 1
+                if ProcessInfo.processInfo.environment["SPATIAND_DEBUG_FRAMES"] != nil { print(String(format: "  late: %.1f ms at %.3f s", gap * 1000, now)) }
+            }
+            frameClock.longest = max(frameClock.longest, gap)
+        }
+        frameClock.last = now
+        frameClock.spent += spent
+        frameClock.worst = max(frameClock.worst, spent)
+        if Date().timeIntervalSince(frameClock.since) >= 5, frameClock.count > 0 {
+            print(String(format: "glasses: %d frames in 5 s (the display's period is %.1f ms), %d late, longest gap %.1f ms; drawing took %.1f ms on average, %.1f at worst",
+                         frameClock.count, frameClock.interval * 1000, frameClock.late, frameClock.longest * 1000,
+                         frameClock.spent / Double(frameClock.count) * 1000, frameClock.worst * 1000))
+            frameClock = (frameClock.last, Date(), 0, 0, 0, 0, 0, frameClock.interval)
+        }
+    }
+
+    @objc private func draw(_ displayLink: CADisplayLink) {
+        let started = CACurrentMediaTime()
+        defer { noteFrame(displayLink, spent: CACurrentMediaTime() - started) }
         guard let renderer = room.renderer, window != nil, let drawable = layer.nextDrawable() else { return }
         // Where the cursor is changes when the head turns, with the mouse still.
         let aim = room.core.aim()

@@ -37,7 +37,16 @@ final class PadInput {
     private(set) var debugLine = ""
     private var model: Model { Model.shared }
 
-    var enabled: Bool { Defaults.store.object(forKey: "gamepads") as? Bool ?? true }
+    private var enabledAt = Date.distantPast
+    private var enabledNow = true
+    /// Read from the preferences once a second, not a hundred and twenty times.
+    var enabled: Bool {
+        if Date().timeIntervalSince(enabledAt) > 1 {
+            enabledAt = Date()
+            enabledNow = Defaults.store.object(forKey: "gamepads") as? Bool ?? true
+        }
+        return enabledNow
+    }
 
     func start() {
         guard timer == nil else { return }

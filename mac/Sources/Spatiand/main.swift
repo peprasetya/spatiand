@@ -441,6 +441,70 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-pad") {
     RunLoop.main.run()
 }
 
+if CommandLine.arguments.contains("--selftest-display") {
+    // --selftest-display: which double-width modes the glasses' display offers at 72 Hz and at 60, asking for each in turn
+    // and putting them back in one eye afterwards. Touches nothing but the glasses' own display.
+    setvbuf(stdout, nil, _IOLBF, 0)
+    _ = NSApplication.shared
+    func modes() -> String {
+        guard let id = GlassesOutput.findDisplay() else { return "no glasses display" }
+        let options = [kCGDisplayShowDuplicateLowResolutionModes: true] as CFDictionary
+        let all = (CGDisplayCopyAllDisplayModes(id, options) as? [CGDisplayMode]) ?? []
+        let now = CGDisplayCopyDisplayMode(id)
+        return "now \(now?.pixelWidth ?? 0)x\(now?.pixelHeight ?? 0)@\(now?.refreshRate ?? 0); offered " + all.map { "\($0.pixelWidth)x\($0.pixelHeight)@\(Int($0.refreshRate))" }.joined(separator: " ")
+    }
+    do {
+        let device = try XRealDevice()
+        print("start: " + modes())
+        for (name, mode) in [("3D 72", XRealDevice.DisplayMode.sbs3D72), ("3D 60", .sbs3D60)] {
+            let ok = try device.setDisplayMode(mode)
+            print("asked for \(name): \(ok)")
+            for _ in 0..<4 { RunLoop.main.run(until: Date().addingTimeInterval(2)); print("   ... " + modes().prefix(60)) }
+            print("\(name): " + modes())
+        }
+        let ok = try device.setDisplayMode(.mono1080p60)
+        print("asked for one eye: \(ok)")
+        for _ in 0..<4 { RunLoop.main.run(until: Date().addingTimeInterval(2)); print("   ... " + modes().prefix(60)) }
+        print("back: " + modes())
+    } catch {
+        print("display: \(error)")
+    }
+    exit(0)
+}
+
+if let at = CommandLine.arguments.firstIndex(of: "--selftest-imu") {
+    // --selftest-imu <seconds>: read the glasses' sensors into a room, without touching their display or this
+    // Mac's mouse, and say how the tracker is doing.
+    let seconds = Double(CommandLine.arguments.dropFirst(at + 1).first ?? "") ?? 30
+    _ = NSApplication.shared
+    setvbuf(stdout, nil, _IOLBF, 0)
+    let core = RoomCore()
+    core.setDevice("XREAL Air")
+    do {
+        let device = try XRealDevice()
+        var n = 0
+        try device.startIMU { sample in
+            core.imu(timestamp: sample.timestamp, gyro: sample.gyro, accel: sample.accel, mag: sample.mag)
+            n += 1
+            if n % 4000 == 1 {
+                print(String(format: "imu raw: t %llu gyro %.3f %.3f %.3f accel %.3f %.3f %.3f mag %.3f %.3f %.3f", sample.timestamp,
+                             sample.gyro.x, sample.gyro.y, sample.gyro.z, sample.accel.x, sample.accel.y, sample.accel.z,
+                             sample.mag.x, sample.mag.y, sample.mag.z))
+            }
+        }
+        let t = Timer(timeInterval: 5, repeats: true) { _ in
+            let h = core.headDegrees
+            print(String(format: "head yaw %.2f pitch %.2f roll %.2f", h.yaw, h.pitch, h.roll))
+        }
+        RunLoop.main.add(t, forMode: .common)
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { device.stopIMU(); exit(0) }
+    } catch {
+        print("imu: could not open the glasses: \(error)")
+        exit(1)
+    }
+    RunLoop.main.run()
+}
+
 if CommandLine.arguments.contains("--selftest-local") {
     exit(LocalTests.run())
 }

@@ -36,6 +36,7 @@ final class RoomCore {
     }
     func markShellDirty() { sp_shell_dirty(room) }
     func setDevice(_ name: String) { sp_room_set_device(room, name) }
+    var compassReady: Bool { sp_room_compass_ready(room) != 0 }
     func recentre() { sp_room_recentre(room) }
     var hasHead: Bool { sp_room_has_head(room) != 0 }
     /// For a preview with no sensors.
