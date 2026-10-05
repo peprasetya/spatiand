@@ -5,6 +5,7 @@
 //  or a window. The link's callbacks arrive here already on the main queue.
 
 import AppKit
+import CSpatiand
 
 final class Model {
     static let shared = Model()
@@ -87,7 +88,20 @@ final class Model {
     private var wantConnection = false
     private var retry: Timer?
 
+    /// The rate a host was told pictures are shown at.
+    private var toldRefresh = 0
+
+    /// The glasses show pictures at a different rate from the one a host was told: tell it, by connecting again.
+    func displayRefreshChanged(_ mhz: Int) {
+        Settings.glassesRefreshMHz = mhz
+        guard connected, let host, mhz != toldRefresh else { return }
+        print("host: the display runs at \(Double(mhz) / 1000) Hz, not \(Double(toldRefresh) / 1000); connecting again so it paces to that")
+        connect(host)
+    }
+
     func connect(_ host: PairedHost) {
+        toldRefresh = Settings.glassesRefreshMHz
+        sp_set_refresh_mhz(UInt32(toldRefresh))
         closeAll()
         wantConnection = true
         takenOver = false

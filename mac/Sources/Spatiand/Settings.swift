@@ -44,6 +44,12 @@ enum Settings {
         set { defaults.set(newValue, forKey: "maxKbit") }
     }
 
+    /// The rate, in millihertz, the glasses were last shown at: what the next connection tells a host to pace to.
+    static var glassesRefreshMHz: Int {
+        get { defaults.object(forKey: "glassesRefreshMHz") as? Int ?? 60_000 }
+        set { defaults.set(newValue, forKey: "glassesRefreshMHz") }
+    }
+
     /// Whether the glasses are put into their 3D mode, each eye with a half of the picture.
     static var glassesStereo: Bool {
         get { defaults.object(forKey: "glassesStereo") as? Bool ?? true }

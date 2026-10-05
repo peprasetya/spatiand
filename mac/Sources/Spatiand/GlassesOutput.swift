@@ -80,6 +80,9 @@ final class GlassesOutput: NSObject {
     private var imuTried = 0
     /// Whether the glasses have been asked for their 3D mode this time; asked once, not each time round.
     private var modeAsked = false
+    /// The rate asked of the glasses: 72 Hz, as the Deck runs them, unless the Mac offers no such mode.
+    private var wantedRate = 72
+    private var shownRate = 60.0
 
     private func connectDevice() {
         guard device == nil else { return }
@@ -129,9 +132,17 @@ final class GlassesOutput: NSObject {
         if !modeAsked {
             modeAsked = true
             setStatus("Switching the glasses to 3D")
-            do { try device.setDisplayMode(.sbs3D60) } catch { print("glasses: could not change the mode: \(error)") }
+            // 72 Hz, as the Deck drives them; 60 when the Mac's display list has no such mode.
+            do { try device.setDisplayMode(wantedRate == 72 ? .sbs3D72 : .sbs3D60) } catch { print("glasses: could not change the mode: \(error)") }
         }
-        if let wide = Self.wideMode(of: id) {
+        if let wide = Self.wideMode(of: id, rate: wantedRate), wantedRate != 72 || abs(wide.refreshRate - 72) < 1 || attempt >= 12 {
+            if wantedRate == 72, abs(wide.refreshRate - 72) >= 1 {
+                // Only 60 is offered: ask the glasses for 60, so what they show and what is sent agree.
+                print("glasses: no 72 Hz mode is offered; using \(Int(wide.refreshRate)) Hz")
+                wantedRate = 60
+                try? device.setDisplayMode(.sbs3D60)
+            }
+            shownRate = wide.refreshRate > 1 ? wide.refreshRate : Double(wantedRate)
             // macOS goes back to the 1920 wide mode by itself when the display returns; ask for the
             // double-width one for this session.
             var config: CGDisplayConfigRef?
@@ -149,11 +160,11 @@ final class GlassesOutput: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.beginMode(attempt: attempt + 1) }
     }
 
-    private static func wideMode(of id: CGDirectDisplayID) -> CGDisplayMode? {
+    /// The double-width mode at this rate if there is one, or the fastest there is.
+    private static func wideMode(of id: CGDirectDisplayID, rate: Int = 72) -> CGDisplayMode? {
         let options = [kCGDisplayShowDuplicateLowResolutionModes: true] as CFDictionary
-        let modes = (CGDisplayCopyAllDisplayModes(id, options) as? [CGDisplayMode]) ?? []
-        return modes.first { $0.pixelWidth == 3840 && $0.pixelHeight == 1080 && abs($0.refreshRate - 60) < 1 }
-            ?? modes.first { $0.pixelWidth == 3840 && $0.pixelHeight == 1080 }
+        let modes = ((CGDisplayCopyAllDisplayModes(id, options) as? [CGDisplayMode]) ?? []).filter { $0.pixelWidth == 3840 && $0.pixelHeight == 1080 }
+        return modes.first { abs($0.refreshRate - Double(rate)) < 1 } ?? modes.max { $0.refreshRate < $1.refreshRate }
     }
 
     private func waitForWidth(_ id: CGDirectDisplayID, tries: Int) {
@@ -245,6 +256,9 @@ final class GlassesOutput: NSObject {
         starting = false
         if let path = ProcessInfo.processInfo.environment["SPATIAND_DEBUG_SNAPSHOT"] { watchSnapshots(path) }
         setStatus(sideBySide ? "In the glasses, in 3D" : "In the glasses, one eye")
+        let actual = CGDisplayCopyDisplayMode(id)?.refreshRate ?? shownRate
+        print("glasses: the display runs at \(actual) Hz")
+        Model.shared.displayRefreshChanged(Int((actual > 1 ? actual : shownRate) * 1000))
         print("glasses: drawing \(Int(frame.width))x\(Int(frame.height)) on display \(id), \(sideBySide ? "two eyes" : "one eye")")
     }
 
@@ -293,7 +307,7 @@ final class GlassesOutput: NSObject {
         // keeps it there until asked again; so a display that is not the width we are drawn for is
         // put right, and a window drawn for another width is drawn again.
         let width = CGDisplayBounds(displayID).width
-        if stereoWanted, width < 3000, Date().timeIntervalSince(lastModeTry) > 1.0, let wide = Self.wideMode(of: displayID) {
+        if stereoWanted, width < 3000, Date().timeIntervalSince(lastModeTry) > 1.0, let wide = Self.wideMode(of: displayID, rate: wantedRate) {
             lastModeTry = Date()
             var config: CGDisplayConfigRef?
             CGBeginDisplayConfiguration(&config)

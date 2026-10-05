@@ -237,6 +237,52 @@ struct Sizing {
     from: (f64, f64),
 }
 
+/// What the glasses' sensors are sending, said in the log every few seconds: how often, how big. The line
+/// that tells a drifting view from one whose sensors are not what the tracker was written for.
+#[derive(Default)]
+struct ImuStats {
+    since: Option<std::time::Instant>,
+    count: u64,
+    gaps_over_2ms: u64,
+    last_ns: u64,
+    max_gap_ms: f64,
+    accel: f64,
+    mag: f64,
+    gyro: f64,
+}
+
+impl ImuStats {
+    fn note(&mut self, s: &ImuSample) {
+        let now = std::time::Instant::now();
+        let since = *self.since.get_or_insert(now);
+        self.count += 1;
+        if self.last_ns != 0 && s.timestamp_ns > self.last_ns {
+            let gap = (s.timestamp_ns - self.last_ns) as f64 * 1e-6;
+            if gap > 2.5 {
+                self.gaps_over_2ms += 1;
+            }
+            self.max_gap_ms = self.max_gap_ms.max(gap);
+        }
+        self.last_ns = s.timestamp_ns;
+        self.accel += s.accel.length();
+        self.mag += s.mag.length();
+        self.gyro += s.gyro.length();
+        if now.duration_since(since).as_secs_f64() >= 10.0 {
+            let n = self.count.max(1) as f64;
+            log::info!(
+                "imu: {:.0} samples a second, {} gaps over 2.5 ms (longest {:.1} ms); mean |accel| {:.3} g, |mag| {:.3} G, |gyro| {:.2} deg/s",
+                n / now.duration_since(since).as_secs_f64(),
+                self.gaps_over_2ms,
+                self.max_gap_ms,
+                self.accel / n,
+                self.mag / n,
+                self.gyro / n
+            );
+            *self = ImuStats { since: Some(now), last_ns: self.last_ns, ..ImuStats::default() };
+        }
+    }
+}
+
 /// One application's sound, being placed.
 struct Voice {
     layout: Layout,
@@ -269,6 +315,8 @@ pub struct Room {
     /// What the tracker has learned about the glasses' sensors, kept between runs.
     memory: spatiand_track::SensorMemory,
     device: Option<String>,
+    last_imu: Option<ImuSample>,
+    imu_stats: ImuStats,
     /// Which application each window belongs to, so its sound can be put where the window is.
     app_of: HashMap<u32, String>,
     voices: HashMap<String, Voice>,
@@ -310,6 +358,8 @@ impl Room {
             tracker: HeadTracker::new(axes, TrackerConfig::default()),
             memory: spatiand_track::SensorMemory::new(),
             device: None,
+            last_imu: None,
+            imu_stats: ImuStats::default(),
             app_of: HashMap::new(),
             voices: HashMap::new(),
             stereo: StereoConfig::default(),
@@ -354,11 +404,41 @@ impl Room {
         }
     }
 
+    /// One sample from the glasses.
+    ///
+    /// The tracker's constants are written for samples a millisecond apart -- two thousand still ones before
+    /// the gyro's offset is trusted, a smoothing step of a twentieth per sample -- as the glasses send them
+    /// to the Deck. A Mac does not always get them that often: a report that is dropped or batched is a
+    /// longer gap, and with fewer samples a second the gyro's offset is never found (the head is never
+    /// still for thirty seconds), the magnetic anchor that needs the offset never starts, and the world
+    /// turns by the offset's whole size, about a degree a second. So the gaps are filled: a sample that
+    /// comes late is preceded by the ones that should have been there, laid in a straight line from the
+    /// last to this, and the tracker is always fed at a millisecond.
     pub fn imu(&mut self, sample: &ImuSample) {
         if self.device.is_none() {
             self.set_device("XREAL Air");
         }
+        self.imu_stats.note(sample);
+        if let Some(last) = self.last_imu {
+            let gap = sample.timestamp_ns.saturating_sub(last.timestamp_ns);
+            let steps = (gap as f64 / 1_000_000.0).round() as u64;
+            if (2..=50).contains(&steps) {
+                for i in 1..steps {
+                    let t = i as f64 / steps as f64;
+                    let blend = |a: glam::DVec3, b: glam::DVec3| a + (b - a) * t;
+                    let between = ImuSample {
+                        timestamp_ns: last.timestamp_ns + gap * i / steps,
+                        gyro: blend(last.gyro, sample.gyro),
+                        accel: blend(last.accel, sample.accel),
+                        mag: blend(last.mag, sample.mag),
+                        temperature_c: sample.temperature_c,
+                    };
+                    self.tracker.integrate(&between);
+                }
+            }
+        }
         self.tracker.integrate(sample);
+        self.last_imu = Some(*sample);
         self.memory.tick(&self.tracker);
     }
 
@@ -1272,6 +1352,31 @@ mod tests {
         assert_eq!(r.aim().window, Some(1), "and the nearer is the one aimed at");
         r.push_pull(2, -10.0);
         assert!(r.windows().iter().find(|w| w.id == 2).unwrap().place.radius >= DISTANCE_RANGE.0);
+    }
+
+    #[test]
+    fn sensors_that_report_slowly_still_teach_the_tracker_the_gyros_offset() {
+        // Still glasses with a gyro offset of about a degree a second, reporting every 4 ms instead of every 1.
+        let still = |slow: bool| {
+            let mut r = Room::new();
+            let step = if slow { 4_000_000u64 } else { 1_000_000 };
+            let seconds = 6u64;
+            for i in 1..=(seconds * 1_000_000_000 / step) {
+                r.imu(&ImuSample {
+                    timestamp_ns: i * step,
+                    gyro: DVec3::new(0.55, -0.80, -0.72),
+                    // Level, with gravity along the sensor's own up.
+                    accel: DVec3::new(0.0, 0.0, 1.0),
+                    mag: DVec3::new(0.1, 0.1, 0.1),
+                    temperature_c: None,
+                });
+            }
+            r.tracker.gyro_bias().length()
+        };
+        let fast = still(false);
+        let slow = still(true);
+        assert!(fast > 0.5, "the offset is found at a millisecond: {fast}");
+        assert!(slow > 0.5, "and at four, because the gaps are filled: {slow}");
     }
 
     #[test]

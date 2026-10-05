@@ -130,6 +130,8 @@ int32_t sp_room_is_hidden(sp_room *room, uint32_t id);
 uint64_t sp_room_chrome_version(sp_room *room, uint32_t id);
 int32_t sp_room_chrome_render(sp_room *room, uint32_t id, uint32_t width_px, uint32_t *w, uint32_t *h, uint8_t *out, size_t capacity);
 void sp_text_warm_up(void);
+// The display's rate in millihertz, for the next connection's hello.
+void sp_set_refresh_mhz(uint32_t mhz);
 // --- the Deck's menus: settings, launcher, windows, environment, computers ---
 // Intents: 0 up, 1 down, 2 left, 3 right, 4 accept, 5 back, 6 settings, 7 launcher, 8 windows, 9 close, 10 hide.
 // Each returns what the shell asks the app to do, as JSON, or NULL. Free it with sp_free_string.

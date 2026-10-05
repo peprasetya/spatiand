@@ -9,6 +9,17 @@
 //! It is `probe-session` made into a library: the same Hello, the same control stream, the same
 //! reassembly of frames, with callbacks where the probe printed.
 
+use std::sync::atomic::AtomicU32;
+
+/// The display's rate, told to a host in the hello so it paces applications to it. 60 Hz until the glasses say otherwise.
+static REFRESH_MHZ: AtomicU32 = AtomicU32::new(60_000);
+
+/// Say what rate pictures will be shown at, in millihertz, for the next connection's hello.
+#[no_mangle]
+pub extern "C" fn sp_set_refresh_mhz(mhz: u32) {
+    REFRESH_MHZ.store(mhz.clamp(24_000, 240_000), std::sync::atomic::Ordering::Relaxed);
+}
+
 pub mod chrome;
 pub mod host;
 pub mod logging;
@@ -172,7 +183,7 @@ async fn run_session(
             // Both, best first: the Mac decodes either in hardware.
             codecs: vec![Codec::H265, Codec::H264],
             max_size: (3840, 2160),
-            refresh_mhz: 60_000,
+            refresh_mhz: REFRESH_MHZ.load(std::sync::atomic::Ordering::Relaxed),
             session: String::new(),
         },
     )
