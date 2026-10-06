@@ -1,6 +1,4 @@
-//! What the open menu says. Copied from the Deck's `crates/spatiand/src/menu.rs`, which depends on nothing but the shell,
-//! so the Mac's menus say the same things in the same words.
-//!
+//! What the open menu says.
 //!
 //! One description of a menu — a title, a column of rows, an explanation, a line of hints —
 //! that every menu in the shell is expressed as. The scene knows how to draw *that* and
@@ -83,7 +81,7 @@ impl MenuModel {
 /// The pointer can choose every row, and without this it could not leave: backing out was B,
 /// and a Beam Pro has no B. The title line is where "up a level" sits on every phone and
 /// every window, so the arrow is drawn there and the whole line is the target
-/// (the shell's `Back` target).
+/// ((the Deck's `MenuTarget::Back`)).
 pub const BACK_MARK: &str = "\u{2039}  ";
 
 /// The menu the shell currently has open, if any.

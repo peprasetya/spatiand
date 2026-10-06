@@ -20,6 +20,9 @@ if [ -f Resources/hrtf/libmysofa.1.dylib ]; then
   cp Resources/hrtf/libmysofa.1.dylib "$app/Contents/Frameworks/"
   cp Resources/hrtf/default.sofa Resources/hrtf/NOTICE.txt "$app/Contents/Resources/"
 fi
+# The icon is the Deck's and the Beam Pro's (assets/icons/spatiand.svg), made into an .icns once.
+mkdir -p "$app/Contents/Resources"
+cp ../assets/icons/Spatiand.icns "$app/Contents/Resources/Spatiand.icns"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -29,6 +32,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>CFBundleDisplayName</key><string>Spatiand</string>
     <key>CFBundleIdentifier</key><string>com.peprasetya.spatiand</string>
     <key>CFBundleExecutable</key><string>Spatiand</string>
+    <key>CFBundleIconFile</key><string>Spatiand</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1</string>
     <key>CFBundleVersion</key><string>1</string>

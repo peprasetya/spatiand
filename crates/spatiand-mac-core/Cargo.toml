@@ -13,6 +13,7 @@ crate-type = ["staticlib", "rlib"]
 [dependencies]
 spatiand-stream = { path = "../spatiand-stream" }
 spatiand-render = { path = "../spatiand-render" }
+spatiand-room = { path = "../spatiand-room" }
 spatiand-track = { path = "../spatiand-track" }
 spatiand-hmd = { path = "../spatiand-hmd" }
 spatiand-audio = { path = "../spatiand-audio" }

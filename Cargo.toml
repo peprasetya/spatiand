@@ -4,6 +4,7 @@ members = [
     "crates/spatiand-hmd",
     "crates/spatiand-track",
     "crates/spatiand-render",
+    "crates/spatiand-room",
     "crates/spatiand-input",
     "crates/spatiand-pad",
     "crates/spatiand-mapper",

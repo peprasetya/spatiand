@@ -1,0 +1,13 @@
+[package]
+name = "spatiand-room"
+description = "What a window in the room is, however the room is drawn: where it sits, its frame, title bar and buttons, what a point on it means, and the pictures of the furniture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+glam.workspace = true
+spatiand-render = { path = "../spatiand-render" }
+spatiand-shell = { path = "../spatiand-shell" }
+spatiand-mapper = { path = "../spatiand-mapper" }

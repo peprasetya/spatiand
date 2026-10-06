@@ -3904,6 +3904,7 @@ dependencies = [
  "spatiand-platform",
  "spatiand-proto",
  "spatiand-render",
+ "spatiand-room",
  "spatiand-shell",
  "spatiand-stream",
  "spatiand-track",
@@ -3940,6 +3941,7 @@ dependencies = [
  "spatiand-platform",
  "spatiand-proto",
  "spatiand-render",
+ "spatiand-room",
  "spatiand-shell",
  "spatiand-stream",
  "spatiand-track",
@@ -4052,6 +4054,7 @@ dependencies = [
  "spatiand-hmd",
  "spatiand-mapper",
  "spatiand-render",
+ "spatiand-room",
  "spatiand-shell",
  "spatiand-stream",
  "spatiand-track",
@@ -4101,6 +4104,16 @@ dependencies = [
  "glam",
  "log",
  "serde",
+]
+
+[[package]]
+name = "spatiand-room"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "spatiand-mapper",
+ "spatiand-render",
+ "spatiand-shell",
 ]
 
 [[package]]

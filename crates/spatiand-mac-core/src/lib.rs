@@ -23,8 +23,8 @@ pub extern "C" fn sp_set_refresh_mhz(mhz: u32) {
 pub mod chrome;
 pub mod host;
 pub mod logging;
-pub mod menu_model;
-pub mod look;
+pub use spatiand_room::menu as menu_model;
+pub use spatiand_room::look;
 pub mod pads;
 pub mod room;
 pub mod shell_ui;

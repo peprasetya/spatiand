@@ -26,6 +26,7 @@ tokio = { version = "1", features = ["rt", "net", "time", "io-util", "macros"] }
 spatiand-hmd = { path = "../spatiand-hmd" }
 spatiand-track = { path = "../spatiand-track" }
 spatiand-render = { path = "../spatiand-render" }
+spatiand-room = { path = "../spatiand-room" }
 spatiand-input = { path = "../spatiand-input" }
 spatiand-mapper = { path = "../spatiand-mapper" }
 spatiand-shell = { path = "../spatiand-shell" }

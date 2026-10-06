@@ -21,6 +21,7 @@ use spatiand_render::camera::{eyes_for, StereoConfig};
 use spatiand_render::pip::{self, Corner, Size};
 use spatiand_render::ray::{intersect_plane, intersect_quad, Bend, Quad, Ray};
 use crate::chrome::{self, Edge, Frame as ChromeFrame, Look, Zone};
+use spatiand_room::placement::{on_cylinder, strips_overlapping, Placement, Strip, PITCH_LIMIT};
 use crate::shell_ui::{self, ShellUi, Target};
 use spatiand_track::{AxisMap, HeadTracker, TrackerConfig, DEFAULT_PREDICTION_MAX_DEGREES, DEFAULT_PREDICTION_SECONDS};
 
@@ -41,100 +42,21 @@ const CURSOR_HALF_FOV: (f64, f64) = (19.0, 11.0);
 /// How far a mouse's travel turns the cursor, degrees per point.
 pub const DEGREES_PER_POINT: f64 = 0.045;
 /// How far a window may be taken above or below the horizon, radians.
-const PITCH_LIMIT: f64 = 89.0 * std::f64::consts::PI / 180.0;
 /// The most a window may grow to, and the least it may shrink to, metres across.
 const WIDTH_RANGE: (f64, f64) = (0.3, 4.0);
 /// How near and how far a window may be put, metres, as on the Deck.
 const DISTANCE_RANGE: (f64, f64) = (0.8, 8.0);
 
-/// How far round the wearer one strip of a bent window may turn, radians.
-const STRIP_STEP: f64 = 0.026;
-const MAX_STRIPS: usize = 64;
-const STRIP_OVERLAP_M: f64 = 0.00005;
-
-/// Where a window sits, in the viewer-centred frame. The Deck's `Placement`, less what needs a
-/// compositor.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Placement {
-    /// Round the wearer, radians; 0 is straight ahead, positive is to the left.
-    pub yaw: f64,
-    /// Above the horizon, radians.
-    pub pitch: f64,
-    pub radius: f64,
-    /// Across, metres. Height follows from the picture's own shape.
-    pub width: f64,
-    /// For a window pinned to the glass: the way it faces, which is the head's.
-    pub facing: Option<DQuat>,
-    pub pinned: bool,
-}
-
-impl Default for Placement {
-    fn default() -> Self {
-        Placement { yaw: 0.0, pitch: 0.0, radius: DEFAULT_RADIUS, width: DEFAULT_WIDTH, facing: None, pinned: false }
-    }
-}
-
-impl Placement {
-    pub fn position(&self) -> DVec3 {
-        let horizontal = self.radius * self.pitch.cos();
-        DVec3::new(horizontal * self.yaw.cos(), horizontal * self.yaw.sin(), self.radius * self.pitch.sin())
-    }
-
-    pub fn orientation(&self) -> DQuat {
-        if let Some(facing) = self.facing {
-            return facing;
-        }
-        DQuat::from_axis_angle(DVec3::Z, self.yaw) * DQuat::from_axis_angle(DVec3::Y, -self.pitch)
-    }
-
-    pub fn bend(&self) -> Option<Bend> {
-        (!self.pinned).then_some(Bend { radius: self.radius, offset: 0.0 })
-    }
-}
-
-/// A point across a bent window put on the cylinder it is bent round; see the Deck's window.rs.
-fn on_cylinder(radius: f64, y: f64, z: f64) -> (DVec3, f64) {
-    let angle = y / radius.max(1e-6);
-    (DVec3::new(radius * (angle.cos() - 1.0), radius * angle.sin(), z), angle)
-}
-
-struct Strip {
-    y: f64,
-    chord: f64,
-    from: f64,
-    to: f64,
-}
-
-fn strips(radius: f64, width: f64, overlap: f64) -> Vec<Strip> {
-    let radius = radius.max(1e-6);
-    let span = width / radius;
-    let count = ((span / STRIP_STEP).ceil() as usize).clamp(1, MAX_STRIPS);
-    let step = span / count as f64;
-    let overlap = if count > 1 { overlap } else { 0.0 };
-    let share = overlap * 0.5 / width.max(1e-6);
-    (0..count)
-        .map(|i| {
-            let from = i as f64 / count as f64;
-            let to = (i + 1) as f64 / count as f64;
-            Strip {
-                y: width * (0.5 - (from + to) * 0.5),
-                chord: 2.0 * radius * (step * 0.5).tan() + overlap,
-                from: (from - share).max(0.0),
-                to: (to + share).min(1.0),
-            }
-        })
-        .collect()
-}
 
 /// A window's strips, as triangles, appended to `verts`: a flat piece for each, standing on the
 /// window's own cylinder, `rise` metres up the window's own vertical from its middle.
 fn push_strips(verts: &mut Vec<f32>, place: &Placement, width: f64, height: f64, rise: f64, blended: bool) {
     let origin = place.position();
     let turn = place.orientation();
-    let pieces = if place.pinned { vec![Strip { y: 0.0, chord: width, from: 0.0, to: 1.0 }] } else { strips(place.radius, width, if blended { 0.0 } else { STRIP_OVERLAP_M }) };
+    let pieces = if place.pip { vec![Strip { y: 0.0, chord: width, from: 0.0, to: 1.0 }] } else { strips_overlapping(place.radius, 0.0, width, if blended { 0.0 } else { 0.00005 }) };
     for s in pieces {
         // The flat piece's middle on the window's own cylinder, and which way it runs.
-        let (centre, angle) = if place.pinned { (DVec3::new(0.0, s.y, 0.0), 0.0) } else { on_cylinder(place.radius, s.y, 0.0) };
+        let (centre, angle) = if place.pip { (DVec3::new(0.0, s.y, 0.0), 0.0) } else { on_cylinder(place.radius, s.y, 0.0) };
         let centre = centre + DVec3::Z * rise;
         let along = DVec3::new(-angle.sin(), angle.cos(), 0.0) * (s.chord * 0.5);
         let up = DVec3::Z * (height * 0.5);
@@ -179,7 +101,7 @@ impl Win {
     /// frame's own measures. The bar reaches further above the content than the frame does below it,
     /// so the quad's middle is above the content's.
     fn chrome(&self, place: &Placement) -> (Quad, ChromeFrame, f64) {
-        let frame = ChromeFrame::of(self.size, place.width, place.radius, place.pinned);
+        let frame = ChromeFrame::of(self.size, place);
         let content_height = self.height(place);
         let rise = frame.bar * content_height * 0.5;
         let quad = Quad {
@@ -187,7 +109,7 @@ impl Win {
             orientation: place.orientation(),
             width: frame.width() * content_height,
             height: frame.height() * content_height,
-            bend: place.bend(),
+            bend: place.bend_radius().map(|radius| Bend { radius, offset: 0.0 }),
         };
         (quad, frame, rise)
     }
@@ -198,7 +120,7 @@ impl Win {
             orientation: place.orientation(),
             width: place.width,
             height: self.height(place),
-            bend: place.bend(),
+            bend: place.bend_radius().map(|radius| Bend { radius, offset: 0.0 }),
         }
     }
 }
@@ -521,7 +443,7 @@ impl Room {
         // To the right of whatever is in the way first, then to the left, a step at a time.
         let half = |w: f64| w / DEFAULT_RADIUS * 0.5;
         let taken = |yaw: f64, windows: &[Win]| {
-            windows.iter().filter(|w| !w.place.pinned && !Room::is_panel(w.id)).any(|w| {
+            windows.iter().filter(|w| !w.place.pip && !Room::is_panel(w.id)).any(|w| {
                 let apart = (yaw - w.place.yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
                 apart.abs() < half(width) + half(w.place.width) + GAP
             })
@@ -674,7 +596,7 @@ impl Room {
 
     /// Move a window round the room by this much: `yaw` to the left and `pitch` up, radians.
     pub fn nudge(&mut self, id: u32, yaw: f64, pitch: f64) {
-        if let Some(w) = self.windows.iter_mut().find(|w| w.id == id && !w.place.pinned) {
+        if let Some(w) = self.windows.iter_mut().find(|w| w.id == id && !w.place.pip) {
             w.place.yaw = (w.place.yaw + yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
             w.place.pitch = (w.place.pitch + pitch).clamp(-PITCH_LIMIT, PITCH_LIMIT);
         }
@@ -687,7 +609,7 @@ impl Room {
         let mut round: Vec<(f64, u32)> = self
             .windows
             .iter()
-            .filter(|w| w.shown && !w.place.pinned && !Room::is_panel(w.id))
+            .filter(|w| w.shown && !w.place.pip && !Room::is_panel(w.id))
             .map(|w| (w.place.yaw, w.id))
             .collect();
         if round.is_empty() {
@@ -714,7 +636,7 @@ impl Room {
         let mut ids: Vec<(u32, f64)> = self
             .windows
             .iter()
-            .filter(|w| w.shown && !w.place.pinned && !Room::is_panel(w.id))
+            .filter(|w| w.shown && !w.place.pip && !Room::is_panel(w.id))
             .map(|w| (w.id, w.place.width / w.place.radius))
             .collect();
         ids.sort_by_key(|(id, _)| *id);
@@ -751,7 +673,7 @@ impl Room {
 
     pub fn set_pinned(&mut self, id: u32, pinned: bool) {
         if let Some(w) = self.windows.iter_mut().find(|w| w.id == id) {
-            w.place.pinned = pinned;
+            w.place.pip = pinned;
             if !pinned {
                 w.place.facing = None;
                 self.bring_here(id);
@@ -760,7 +682,7 @@ impl Room {
     }
 
     pub fn is_pinned(&self, id: u32) -> bool {
-        self.windows.iter().any(|w| w.id == id && w.place.pinned)
+        self.windows.iter().any(|w| w.id == id && w.place.pip)
     }
 
     pub fn next_corner(&mut self) {
@@ -791,7 +713,7 @@ impl Room {
             .iter()
             .enumerate()
             .map(|(i, w)| {
-                if w.place.pinned {
+                if w.place.pip {
                     let pose = pip::pose(head, &view, self.corner, self.size, w.aspect(), slot);
                     slot += 1;
                     (i, Placement {
@@ -800,7 +722,7 @@ impl Room {
                         radius: pose.radius,
                         width: pose.width,
                         facing: Some(pose.facing),
-                        pinned: true,
+                        pip: true,
                     })
                 } else {
                     (i, w.place)
@@ -834,8 +756,8 @@ impl Room {
         let mut order: Vec<usize> = placed.iter().map(|(i, _)| *i).collect();
         order.sort_by(|a, b| {
             let (wa, wb) = (&self.windows[*a], &self.windows[*b]);
-            (!Self::is_panel(wa.id), !wa.place.pinned)
-                .cmp(&(!Self::is_panel(wb.id), !wb.place.pinned))
+            (!Self::is_panel(wa.id), !wa.place.pip)
+                .cmp(&(!Self::is_panel(wb.id), !wb.place.pip))
                 .then(placed[*a].1.radius.total_cmp(&placed[*b].1.radius))
                 .then(b.cmp(a))
         });
@@ -944,7 +866,7 @@ impl Room {
                     title: self.titles.get(&id).cloned().unwrap_or_else(|| "Window".into()),
                     current: self.focus == Some(id),
                     hidden: w.hidden,
-                    pinned: w.place.pinned,
+                    pinned: w.place.pip,
                     room: false,
                 }
             })
@@ -1048,12 +970,10 @@ impl Room {
             title: self.titles.get(&id).cloned().unwrap_or_default(),
             focused: self.focus == Some(id),
             hot: self.hover.filter(|(h, _)| *h == id).map(|(_, z)| z),
-            pinned: place.pinned,
             sound: self.sound.get(&id).and_then(|(sounding, muted)| (*sounding || *muted).then_some(*muted)),
             icon: self.icons.get(&id).cloned(),
             pixels: w.size,
-            width_m: place.width,
-            radius_m: place.radius,
+            place,
         })
     }
 
@@ -1065,7 +985,7 @@ impl Room {
         let placed = self.placed(head);
         let Some((i, place)) = placed.iter().find(|(i, _)| self.windows[*i].id == id).copied() else { return };
         let w = &self.windows[i];
-        if place.pinned || Self::is_panel(id) {
+        if place.pip || Self::is_panel(id) {
             return;
         }
         if let Some(from) = self.plane_fractions(id) {
@@ -1111,7 +1031,7 @@ impl Room {
     /// Put a window nearer or further, by this many metres, keeping where it is in the view. Nearer
     /// is in front of the rest; further is behind.
     pub fn push_pull(&mut self, id: u32, metres: f64) {
-        if let Some(w) = self.windows.iter_mut().find(|w| w.id == id && !w.place.pinned && !Room::is_panel(id)) {
+        if let Some(w) = self.windows.iter_mut().find(|w| w.id == id && !w.place.pip && !Room::is_panel(id)) {
             w.place.radius = (w.place.radius + metres).clamp(DISTANCE_RANGE.0, DISTANCE_RANGE.1);
         }
     }
@@ -1137,7 +1057,7 @@ impl Room {
         let head = self.head();
         let ray = self.ray(head);
         let (yaw, pitch) = Self::angles(ray.direction);
-        if let Some(w) = self.windows.iter().find(|w| w.id == id && !w.place.pinned) {
+        if let Some(w) = self.windows.iter().find(|w| w.id == id && !w.place.pip) {
             self.grab = Some(Grab { id, yaw: w.place.yaw - yaw, pitch: w.place.pitch - pitch });
             self.raise(id);
         }
@@ -1211,8 +1131,8 @@ impl Room {
         let mut order: Vec<usize> = placed.iter().map(|(i, _)| *i).collect();
         order.sort_by(|a, b| {
             let (wa, wb) = (&self.windows[*a], &self.windows[*b]);
-            (Self::is_panel(wa.id), wa.place.pinned)
-                .cmp(&(Self::is_panel(wb.id), wb.place.pinned))
+            (Self::is_panel(wa.id), wa.place.pip)
+                .cmp(&(Self::is_panel(wb.id), wb.place.pip))
                 .then(placed[*b].1.radius.total_cmp(&placed[*a].1.radius))
                 .then(a.cmp(b))
         });
@@ -1233,7 +1153,7 @@ impl Room {
                     count: (verts.len() / 5) as u32 - first,
                     focused,
                     aimed: aim.window == Some(w.id) && aim.zone == Some(Zone::Content),
-                    pinned: place.pinned,
+                    pinned: place.pip,
                 }
             };
             if Self::is_panel(w.id) {
@@ -1251,9 +1171,9 @@ impl Room {
                 count: (verts.len() / 5) as u32 - first,
                 focused,
                 aimed: false,
-                pinned: place.pinned,
+                pinned: place.pip,
             };
-            if place.pinned {
+            if place.pip {
                 draws.push(content(&mut verts));
                 draws.push(chrome);
             } else {
