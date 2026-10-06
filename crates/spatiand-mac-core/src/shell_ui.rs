@@ -48,6 +48,19 @@ pub const BUBBLE_FIRST: u32 = 0xFF10;
 pub const BUBBLE_FOCUSED_FIRST: u32 = 0xFF20;
 pub const DOT_FIRST: u32 = 0xFF30;
 pub const LABEL_FIRST: u32 = 0xFF40;
+/// The launcher's search field, and the line that says nothing was found.
+pub const SEARCH_ID: u32 = 0xFFF4;
+pub const SEARCH_NOTE_ID: u32 = 0xFFF5;
+/// The field's picture and where it hangs: across the top of the launcher's view, with the bubbles a little
+/// lower than the Deck puts them to make the room. Numbers set by the glasses' 23 degrees of height: the
+/// field's top edge and the last row's name both stay inside it.
+const SEARCH_W_PX: u32 = 1300;
+const SEARCH_H_PX: u32 = 124;
+const SEARCH_WIDTH_M: f64 = 0.54;
+const SEARCH_PITCH_DEG: f64 = 9.1;
+const SEARCH_DROP_DEG: f64 = 0.6;
+/// The rows are a little closer than the Deck's, to leave the field's top for the search.
+const SEARCH_ROW_SQUEEZE: f64 = 0.9;
 
 /// The card's picture is this many pixels for each of the Deck's logical ones.
 const CARD_SCALE: f32 = 1.5;
@@ -207,7 +220,8 @@ impl ShellUi {
         self.images.clear();
         self.bubbles.clear();
         self.layout = None;
-        if self.shell.mode() == Mode::Launcher && !self.shell.launcher().is_empty() {
+        let launcher = self.shell.launcher();
+        if self.shell.mode() == Mode::Launcher && (!launcher.is_empty() || !launcher.query().is_empty()) {
             self.render_launcher();
         } else if let Some(model) = menu_model::model(&self.shell) {
             self.render_card(&model, fov);
@@ -326,6 +340,8 @@ impl ShellUi {
         let cursor = launcher.cursor();
         let pages = launcher.pages();
         let page = launcher.page();
+        let (query, searched) = (launcher.query().to_string(), launcher.searched());
+        let drop = SEARCH_DROP_DEG.to_radians();
         let mut specs = Vec::new();
         for (index, placement) in &placements {
             let Some((label, icon_name)) = bubbles.get(*index) else { continue };
@@ -344,20 +360,20 @@ impl ShellUi {
                 image: Image { width: BUBBLE_PX, height: BUBBLE_PX, rgba: Arc::new(icon_image(label, icon)) },
                 width_m: diameter,
                 yaw: placement.yaw as f64,
-                pitch: placement.pitch as f64,
+                pitch: placement.pitch as f64 * SEARCH_ROW_SQUEEZE - drop,
                 radius: placement.radius as f64,
             }));
             // The name, clear of the glass even when it is the focused one and larger.
             let (lw, lh, label_rgba) = label_image(label, focused);
             let label_height_m = LABEL_HEIGHT_M;
-            let drop = diameter * 0.5 + 0.022 + label_height_m * 0.5;
+            let below = diameter * 0.5 + 0.010 + label_height_m * 0.5;
             let lid = LABEL_FIRST + *index as u32 % 16;
             self.images.insert(lid, PanelSpec {
                 id: lid,
                 image: Image { width: lw, height: lh, rgba: Arc::new(label_rgba) },
                 width_m: label_height_m * lw as f64 / lh as f64,
                 yaw: placement.yaw as f64,
-                pitch: placement.pitch as f64 - drop / placement.radius as f64,
+                pitch: placement.pitch as f64 * SEARCH_ROW_SQUEEZE - drop - below / placement.radius as f64,
                 radius: placement.radius as f64,
             });
         }
@@ -365,8 +381,40 @@ impl ShellUi {
             self.bubbles.insert(id, index);
             self.images.insert(id, spec);
         }
-        // Page dots, so a paged grid is not mistaken for a short one.
-        if pages > 1 {
+        // The search field, always there: it says that typing does something, and what it has caught.
+        let (sw, sh, search) = search_image(&query, bubbles.len(), searched);
+        self.images.insert(SEARCH_ID, PanelSpec {
+            id: SEARCH_ID,
+            image: Image { width: sw, height: sh, rgba: Arc::new(search) },
+            width_m: SEARCH_WIDTH_M,
+            yaw: 0.0,
+            pitch: SEARCH_PITCH_DEG.to_radians(),
+            radius: spatiand_shell::launcher::ARC_RADIUS_M as f64,
+        });
+        if bubbles.is_empty() && !query.is_empty() {
+            let (nw, nh, note) = label_image(&format!("No application called \u{201c}{query}\u{201d}"), true);
+            self.images.insert(SEARCH_NOTE_ID, PanelSpec {
+                id: SEARCH_NOTE_ID,
+                image: Image { width: nw, height: nh, rgba: Arc::new(note) },
+                width_m: LABEL_HEIGHT_M * 1.3 * nw as f64 / nh as f64,
+                yaw: 0.0,
+                pitch: -drop,
+                radius: spatiand_shell::launcher::ARC_RADIUS_M as f64,
+            });
+        }
+        // Page dots, so a paged grid is not mistaken for a short one. A long list has too many for the
+        // field's height -- two hundred applications are seventeen pages -- and says where it is in words.
+        if pages > 6 {
+            let (pw, ph, note) = label_image(&format!("{} / {}", page + 1, pages), false);
+            self.images.insert(DOT_FIRST, PanelSpec {
+                id: DOT_FIRST,
+                image: Image { width: pw, height: ph, rgba: Arc::new(note) },
+                width_m: LABEL_HEIGHT_M * pw as f64 / ph as f64,
+                yaw: -(9.0f64 * 1.9).to_radians(),
+                pitch: -drop,
+                radius: spatiand_shell::launcher::ARC_RADIUS_M as f64,
+            });
+        } else if pages > 1 {
             for p in 0..pages.min(8) {
                 let size = if p == page { 40 } else { 24 };
                 let mut canvas = vec![0u8; (size * size * 4) as usize];
@@ -417,6 +465,125 @@ pub fn premultiply(mut rgba: Vec<u8>) -> Vec<u8> {
         px[2] = r as u8;
     }
     rgba
+}
+
+/// A shape's coverage of a pixel, from its signed distance: the edge is half a pixel soft.
+fn cover(distance: f32) -> f32 {
+    (0.5 - distance).clamp(0.0, 1.0)
+}
+
+/// A rounded rectangle's outline, `stroke` thick inside its edge, brighter at the top than the bottom.
+#[allow(clippy::too_many_arguments)]
+fn round_rect_ring(canvas: &mut [u8], cw: u32, ch: u32, x: f32, y: f32, w: f32, h: f32, radius: f32, stroke: f32, colour: [f32; 4]) {
+    let (cx, cy) = (x + w * 0.5, y + h * 0.5);
+    let (hx, hy) = (w * 0.5 - radius, h * 0.5 - radius);
+    for py in (y.floor().max(0.0) as u32)..((y + h).ceil().min(ch as f32) as u32) {
+        for px in (x.floor().max(0.0) as u32)..((x + w).ceil().min(cw as f32) as u32) {
+            let (dx, dy) = ((px as f32 + 0.5 - cx).abs() - hx, (py as f32 + 0.5 - cy).abs() - hy);
+            let outside = (dx.max(0.0).powi(2) + dy.max(0.0).powi(2)).sqrt() + dx.max(dy).min(0.0) - radius;
+            let c = cover((outside + stroke * 0.5).abs() - stroke * 0.5);
+            if c > 0.0 {
+                let light = 1.0 - 0.6 * ((py as f32 - y) / h).clamp(0.0, 1.0);
+                let i = ((py * cw + px) * 4) as usize;
+                over(&mut canvas[i..i + 4], [colour[0], colour[1], colour[2], colour[3] * c * light]);
+            }
+        }
+    }
+}
+
+/// A circle's outline.
+fn ring(canvas: &mut [u8], cw: u32, ch: u32, cx: f32, cy: f32, radius: f32, stroke: f32, colour: [f32; 4]) {
+    let reach = radius + stroke;
+    for py in ((cy - reach).floor().max(0.0) as u32)..((cy + reach).ceil().min(ch as f32) as u32) {
+        for px in ((cx - reach).floor().max(0.0) as u32)..((cx + reach).ceil().min(cw as f32) as u32) {
+            let d = ((px as f32 + 0.5 - cx).powi(2) + (py as f32 + 0.5 - cy).powi(2)).sqrt();
+            let c = cover((d - radius).abs() - stroke * 0.5);
+            if c > 0.0 {
+                let i = ((py * cw + px) * 4) as usize;
+                over(&mut canvas[i..i + 4], [colour[0], colour[1], colour[2], colour[3] * c]);
+            }
+        }
+    }
+}
+
+/// A line with round ends.
+#[allow(clippy::too_many_arguments)]
+fn stroke_line(canvas: &mut [u8], cw: u32, ch: u32, a: (f32, f32), b: (f32, f32), width: f32, colour: [f32; 4]) {
+    let (lo, hi) = ((a.0.min(b.0) - width) as i32, (a.0.max(b.0) + width) as i32);
+    let (top, bottom) = ((a.1.min(b.1) - width) as i32, (a.1.max(b.1) + width) as i32);
+    let (vx, vy) = (b.0 - a.0, b.1 - a.1);
+    let length2 = (vx * vx + vy * vy).max(1e-6);
+    for py in top.max(0)..bottom.min(ch as i32) {
+        for px in lo.max(0)..hi.min(cw as i32) {
+            let (qx, qy) = (px as f32 + 0.5 - a.0, py as f32 + 0.5 - a.1);
+            let t = ((qx * vx + qy * vy) / length2).clamp(0.0, 1.0);
+            let d = ((qx - vx * t).powi(2) + (qy - vy * t).powi(2)).sqrt();
+            let c = cover(d - width * 0.5);
+            if c > 0.0 {
+                let i = ((py as u32 * cw + px as u32) * 4) as usize;
+                over(&mut canvas[i..i + 4], [colour[0], colour[1], colour[2], colour[3] * c]);
+            }
+        }
+    }
+}
+
+/// The launcher's search field: a pane of glass with a magnifying glass, what has been typed with its
+/// caret (or a hint that typing is what to do), and on the right how much it has caught.
+fn search_image(query: &str, found: usize, searched: usize) -> (u32, u32, Vec<u8>) {
+    let (w, h) = (SEARCH_W_PX, SEARCH_H_PX);
+    let (wf, hf) = (w as f32, h as f32);
+    let mut canvas = vec![0u8; (w * h * 4) as usize];
+    let radius = hf * 0.5;
+    // Glass: dark ground, a lighter top where the room's light falls, a rim that is lit from above.
+    round_rect(&mut canvas, w, h, 0.0, 0.0, wf, hf, radius, [0.035, 0.05, 0.085, 0.74]);
+    round_rect(&mut canvas, w, h, hf * 0.5, 4.0, wf - hf, hf * 0.36, hf * 0.18, [0.60, 0.76, 1.0, 0.09]);
+    let focus = if query.is_empty() { 0.30 } else { 0.62 };
+    round_rect_ring(&mut canvas, w, h, 1.0, 1.0, wf - 2.0, hf - 2.0, radius - 1.0, 2.5, [0.62, 0.78, 1.0, focus]);
+    // The magnifying glass.
+    let ink = [0.62, 0.78, 1.0, if query.is_empty() { 0.65 } else { 0.95 }];
+    let (lx, ly, lr) = (hf * 0.72, hf * 0.45, hf * 0.17);
+    ring(&mut canvas, w, h, lx, ly, lr, hf * 0.065, ink);
+    let handle = std::f32::consts::FRAC_1_SQRT_2;
+    stroke_line(&mut canvas, w, h, (lx + lr * handle, ly + lr * handle), (lx + lr * handle + hf * 0.17, ly + lr * handle + hf * 0.17), hf * 0.075, ink);
+    // How much it caught, at the right.
+    let count = match (query.is_empty(), searched) {
+        (_, 0) => String::new(),
+        (true, n) => format!("{n} apps"),
+        (false, n) => format!("{found} of {n}"),
+    };
+    let mut right = wf - hf * 0.6;
+    if !count.is_empty() {
+        let tint = if !query.is_empty() && found == 0 { [255, 150, 130, 235] } else { [140, 178, 255, if query.is_empty() { 150 } else { 235 }] };
+        let t = chrome::text_image(&count, hf * 0.40, 360, tint);
+        if !t.is_empty() {
+            right -= t.width as f32;
+            chrome::blit(&mut canvas, w, h, &t.rgba, t.width, t.height, right, (hf - t.height as f32) * 0.5, t.width as f32, t.height as f32, [1.0; 4]);
+            right -= hf * 0.35;
+        }
+    }
+    let left = hf * 1.28;
+    let room = (right - left).max(40.0) as u32;
+    if query.is_empty() {
+        let t = chrome::text_image("Type to search", hf * 0.46, room, [150, 164, 190, 200]);
+        if !t.is_empty() {
+            chrome::blit(&mut canvas, w, h, &t.rgba, t.width, t.height, left + 6.0, (hf - t.height as f32) * 0.5, t.width as f32, t.height as f32, [1.0; 4]);
+        }
+        // The caret waits at the start of it.
+        round_rect(&mut canvas, w, h, left - 6.0, hf * 0.22, 3.5, hf * 0.56, 1.75, [0.50, 0.74, 1.0, 0.95]);
+    } else {
+        // A long search shows its end, where the typing is.
+        let mut shown: String = query.to_string();
+        let mut t = chrome::text_image(&shown, hf * 0.50, 4096, [245, 248, 255, 255]);
+        while t.width > room && shown.chars().count() > 1 {
+            shown.remove(0);
+            t = chrome::text_image(&format!("\u{2026}{shown}"), hf * 0.50, 4096, [245, 248, 255, 255]);
+        }
+        if !t.is_empty() {
+            chrome::blit(&mut canvas, w, h, &t.rgba, t.width, t.height, left, (hf - t.height as f32) * 0.5, t.width as f32, t.height as f32, [1.0; 4]);
+            round_rect(&mut canvas, w, h, left + t.width as f32 + 5.0, hf * 0.22, 3.5, hf * 0.56, 1.75, [0.50, 0.74, 1.0, 0.95]);
+        }
+    }
+    (w, h, premultiply(canvas))
 }
 
 /// How tall a bubble's name is, metres.
@@ -500,5 +667,89 @@ mod tests {
         assert!(matches!(ui.shell.launcher().level(), spatiand_shell::Level::Host(1)));
         ui.handle(Intent::Back);
         ui.handle(Intent::Navigate(NavDirection::Left));
+    }
+
+    fn mac_tab(n: usize) -> HostTab {
+        let names = ["Activity Monitor", "App Store", "Calculator", "Calendar", "Google Chrome", "Google Sheets", "Safari", "Slack", "Terminal", "TextEdit", "Visual Studio Code", "Xcode", "Claude", "Finder", "Mail", "Maps"];
+        HostTab {
+            label: "This Mac".into(),
+            address: "mac".into(),
+            online: true,
+            apps: (0..n).map(|i| spatiand_shell::RemoteEntry { id: format!("a{i}"), name: if i < names.len() { names[i].into() } else { format!("Application {i}") }, icon: None }).collect(),
+        }
+    }
+
+    /// What the wearer sees, as one picture of the glasses' field: every panel at its angle. With
+    /// `SPATIAND_PREVIEW=dir` set the pictures are written there; otherwise this only checks the fit.
+    fn view_of(ui: &ShellUi, name: &str) {
+        const PPD: f64 = 40.0;
+        let (w, h) = ((40.0 * PPD) as usize, (23.0 * PPD) as usize);
+        let mut out = vec![0u8; w * h * 4];
+        for px in out.chunks_exact_mut(4) {
+            px.copy_from_slice(&[26, 22, 20, 255]);
+        }
+        let mut ids: Vec<_> = ui.images.keys().copied().collect();
+        ids.sort();
+        for id in ids {
+            let spec = &ui.images[&id];
+            let (aw, ah) = (spec.width_m / spec.radius * 57.2958 * PPD, spec.width_m / spec.radius * 57.2958 * PPD * spec.image.height as f64 / spec.image.width as f64);
+            let (cx, cy) = (w as f64 * 0.5 - spec.yaw * 57.2958 * PPD, h as f64 * 0.5 - spec.pitch * 57.2958 * PPD);
+            let (x0, y0) = (cx - aw * 0.5, cy - ah * 0.5);
+            assert!(x0 >= -1.0 && x0 + aw <= w as f64 + 1.0 && y0 >= -1.0 && y0 + ah <= h as f64 + 1.0, "{name}: panel {id:#x} leaves the field: {x0:.0},{y0:.0} {aw:.0}x{ah:.0} of {w}x{h}");
+            for y in (y0.max(0.0) as usize)..((y0 + ah).min(h as f64) as usize) {
+                for x in (x0.max(0.0) as usize)..((x0 + aw).min(w as f64) as usize) {
+                    let (sx, sy) = (((x as f64 - x0) / aw * spec.image.width as f64) as usize, ((y as f64 - y0) / ah * spec.image.height as f64) as usize);
+                    let s = &spec.image.rgba[(sy.min(spec.image.height as usize - 1) * spec.image.width as usize + sx.min(spec.image.width as usize - 1)) * 4..][..4];
+                    let d = &mut out[(y * w + x) * 4..][..4];
+                    let a = s[3] as u32;
+                    // Premultiplied BGRA over the room.
+                    d[0] = (s[2] as u32 + d[0] as u32 * (255 - a) / 255).min(255) as u8;
+                    d[1] = (s[1] as u32 + d[1] as u32 * (255 - a) / 255).min(255) as u8;
+                    d[2] = (s[0] as u32 + d[2] as u32 * (255 - a) / 255).min(255) as u8;
+                }
+            }
+        }
+        if let Ok(dir) = std::env::var("SPATIAND_PREVIEW") {
+            let mut raw = format!("{w} {h}\n").into_bytes();
+            raw.extend_from_slice(&out);
+            std::fs::write(format!("{dir}/{name}.rgba"), raw).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_launchers_search_field_and_bubbles_fit_the_glasses_view() {
+        let mut ui = ShellUi::new();
+        ui.set_hosts(vec![], vec![mac_tab(200)]);
+        ui.handle(Intent::ToggleLauncher);
+        ui.handle(Intent::Accept); // into This Mac: 200 applications
+        assert!(ui.render((40.0, 23.0)));
+        assert!(ui.images.contains_key(&SEARCH_ID), "the field is there before anything is typed");
+        view_of(&ui, "launcher-empty");
+        for c in "g".chars() {
+            ui.shell.type_text(&c.to_string());
+        }
+        ui.dirty = true;
+        assert!(ui.render((40.0, 23.0)));
+        view_of(&ui, "launcher-g");
+        ui.shell.type_text("oogle");
+        ui.dirty = true;
+        ui.render((40.0, 23.0));
+        view_of(&ui, "launcher-google");
+        assert_eq!(ui.shell.launcher().len(), 2);
+        ui.shell.type_text("zzz");
+        ui.dirty = true;
+        assert!(ui.render((40.0, 23.0)), "an empty result still draws the launcher, not a settings card");
+        assert!(ui.images.contains_key(&SEARCH_NOTE_ID));
+        assert!(ui.bubbles.is_empty());
+        view_of(&ui, "launcher-none");
+    }
+
+    #[test]
+    fn the_search_field_changes_with_what_is_typed() {
+        let (w, h, empty) = search_image("", 200, 200);
+        let (w2, h2, typed) = search_image("chrome", 1, 200);
+        assert_eq!((w, h), (w2, h2));
+        assert_ne!(empty, typed);
+        assert!(empty.chunks_exact(4).filter(|p| p[3] > 100).count() > (w * h) as usize / 2, "a pane of glass");
     }
 }

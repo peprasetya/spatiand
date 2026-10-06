@@ -256,15 +256,26 @@ impl Shell {
 
     /// Text typed while [`wants_text`](Self::wants_text).
     pub fn type_text(&mut self, text: &str) {
-        if self.wants_text() {
+        if self.mode == Mode::Launcher {
+            self.launcher.type_query(text);
+        } else if self.wants_text() {
             self.hosts.type_text(text);
         }
     }
 
     pub fn type_backspace(&mut self) {
-        if self.wants_text() {
+        if self.mode == Mode::Launcher {
+            self.launcher.query_backspace();
+        } else if self.wants_text() {
             self.hosts.backspace();
         }
+    }
+
+    /// Whether letters typed now narrow the launcher down. Not [`wants_text`](Self::wants_text),
+    /// which is what raises the on-screen keyboard: a launcher open on a Deck should not bring one
+    /// up. A keyboard that is there anyway -- a Mac's -- uses this.
+    pub fn searches(&self) -> bool {
+        self.mode == Mode::Launcher
     }
 
     /// Enter, while typing.
@@ -324,6 +335,10 @@ impl Shell {
             return None;
         }
         self.mode = mode;
+        if mode == Mode::Launcher {
+            // Each time it opens it is a blank search.
+            self.launcher.clear_query();
+        }
         Some(ShellEvent::ModeChanged(mode))
     }
 
@@ -1103,5 +1118,31 @@ mod tests {
             })
         );
         assert_eq!(s.mode(), Mode::World);
+    }
+
+    #[test]
+    fn the_launcher_opens_a_blank_search_and_typing_there_does_not_ask_for_a_keyboard() {
+        let mut s = Shell::new(vec![], DesktopPanels::ALL, true);
+        s.set_hosts(
+            vec![],
+            vec![HostTab {
+                label: "This Mac".into(),
+                address: "mac".into(),
+                online: true,
+                apps: vec![RemoteEntry { id: "x".into(), name: "Safari".into(), icon: None }],
+            }],
+        );
+        s.handle(Intent::ToggleLauncher);
+        assert!(s.searches());
+        assert!(!s.wants_text(), "that is what raises the on-screen keyboard");
+        s.type_text("saf");
+        assert_eq!(s.launcher().query(), "saf");
+        assert_eq!(
+            s.handle(Intent::Accept),
+            Some(ShellEvent::LaunchRemote { host: "mac".into(), app: "x".into() })
+        );
+        assert!(!s.searches());
+        s.handle(Intent::ToggleLauncher);
+        assert_eq!(s.launcher().query(), "", "closed and opened again, it is blank");
     }
 }

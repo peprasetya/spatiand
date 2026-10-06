@@ -26,6 +26,8 @@ final class RoomShell {
     private var state: Int32 { sp_shell_open(controller.core.handle) }
     var isOpen: Bool { state & 1 != 0 }
     var wantsText: Bool { state & 2 != 0 }
+    /// The launcher is open: what is typed narrows its bubbles down.
+    var isSearching: Bool { state & 4 != 0 }
 
     // MARK: opening and closing
 
@@ -90,6 +92,7 @@ final class RoomShell {
                 return false
             }
         }
+        if isSearching { return searchKey(event) }
         switch Int(event.keyCode) {
         case 126: intent(.up)
         case 125: intent(.down)
@@ -100,6 +103,27 @@ final class RoomShell {
         case 7: intent(.hide)       // X
         case 6: intent(.close)      // Z, standing in for Y
         default: return true
+        }
+        return true
+    }
+
+    /// A key in the launcher: letters narrow the bubbles down, the arrows move among what is left, Return opens
+    /// the one the cursor is on, and Escape takes back what was typed before it takes back the launcher.
+    private func searchKey(_ event: NSEvent) -> Bool {
+        switch Int(event.keyCode) {
+        case 126: intent(.up)
+        case 125: intent(.down)
+        case 123: intent(.left)
+        case 124: intent(.right)
+        case 36, 76: intent(.accept)
+        case 53: intent(.back)
+        case 51: typed(text: "", backspace: true, enter: false)
+        case 48: break
+        default:
+            guard event.modifierFlags.intersection([.command, .control]).isEmpty, let text = event.characters else { return true }
+            // The arrows, Home and the like arrive as characters in the private-use area; they are not text.
+            let printable = text.unicodeScalars.filter { $0.value >= 0x20 && $0.value != 0x7F && !(0xF700...0xF8FF).contains($0.value) }
+            if !printable.isEmpty { typed(text: String(String.UnicodeScalarView(printable)), backspace: false, enter: false) }
         }
         return true
     }

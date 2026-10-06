@@ -531,6 +531,9 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-host") {
     application.run()
 }
 
+if CommandLine.arguments.contains("--selftest-launcher") {
+    LauncherTest.run()
+}
 if let at = CommandLine.arguments.firstIndex(of: "--selftest-focus") {
     let args = Array(CommandLine.arguments[(at + 1)...])
     FocusTest.run(app: args.first ?? "TextEdit", title: args.dropFirst().first ?? "")

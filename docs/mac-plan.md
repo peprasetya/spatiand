@@ -196,6 +196,17 @@ the Deck's). The same look and the same controls, taken from the Deck's code rat
 * **Launcher glass.** The bubbles are the Deck's refracting glass (`fragment_bubble` in `RoomRenderer.swift` is the
   Deck's `BUBBLE_FRAG`), with the application's icon inside, its name on a plate below, and the computers and groups
   drawn from their icon-theme names by `theme_icons.rs` (a Mac has no icon theme). The focused one is lit.
+* **Launcher search.** A Mac has some two hundred applications, which is seventeen pages of bubbles and not a
+  thing to categorise, so the launcher is a search. Typing narrows the bubbles as you go (`Launcher::type_query` in
+  `spatiand-shell`, so any front end can use it): names that begin with the letters first, then a word that does,
+  then a name that contains them, then the letters in order ("vsc" finds Visual Studio Code), accents ignored. From
+  the top it looks through every computer's applications, inside one computer or group only that one. The arrows move
+  among what is left, Return opens it, Escape takes back the search and then the launcher, and the launcher opens
+  blank. The field is a glass pill at the top of the view (`search_image`, `shell_ui.rs`) with how many it caught;
+  the rows sit a little closer to make room for it, and a long list says "3 / 17" in words, as seventeen dots do not
+  fit the field's height. It does not raise the Deck's on-screen keyboard (`Shell::searches`, not `wants_text`).
+  `Spatiand --selftest-launcher` drives it through the menu's own key handling and writes what the glasses would show
+  to `/tmp/spatiand-launcher-*.png`.
 * **The pointer** is the Deck's reticle, and over a window's frame the Deck's double arrow, turned to lie along the
   way that edge or corner pulls.
 * **A Mac window with the keyboard is made the active one.** The Mac shows a caret, keeps a popover open and selects

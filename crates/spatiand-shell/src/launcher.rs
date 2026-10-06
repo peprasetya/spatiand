@@ -126,6 +126,62 @@ pub struct Launcher {
     /// Where the cursor was in the group list, so backing out returns to it rather than to the
     /// top -- opening the wrong app and coming back should not cost you your place.
     group_cursor: usize,
+    /// What has been typed to narrow the bubbles down. Empty means no search.
+    query: String,
+}
+
+/// One thing a search can land on: an application of this machine, or one a computer offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hit {
+    Local(usize),
+    Remote(usize, usize),
+}
+
+/// The longest search that is kept. Longer than any name; stops a held key from making a ribbon.
+pub const QUERY_MAX: usize = 40;
+
+/// A name or a query in the form they are compared in: lower case, without the common accents.
+fn fold(s: &str) -> String {
+    s.chars()
+        .flat_map(char::to_lowercase)
+        .map(|c| match c {
+            'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => 'a',
+            'ç' => 'c',
+            'è' | 'é' | 'ê' | 'ë' => 'e',
+            'ì' | 'í' | 'î' | 'ï' => 'i',
+            'ñ' => 'n',
+            'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' => 'o',
+            'ù' | 'ú' | 'û' | 'ü' => 'u',
+            'ý' | 'ÿ' => 'y',
+            c => c,
+        })
+        .collect()
+}
+
+/// How well a name matches a query, lower is better, `None` is not at all.
+///
+/// Four grades, which is what people expect without being told: it begins with what was
+/// typed, one of its words does, it contains it, or the letters are in it in order ("ggl" finds
+/// Google Chrome -- only tried from two letters up, because one letter is a subsequence of
+/// nearly everything).
+fn rank(name: &str, query: &str) -> Option<u8> {
+    let name = fold(name);
+    if name.starts_with(query) {
+        return Some(0);
+    }
+    if name.split(|c: char| !c.is_alphanumeric()).any(|w| !w.is_empty() && w.starts_with(query)) {
+        return Some(1);
+    }
+    if name.contains(query) {
+        return Some(2);
+    }
+    if query.chars().count() >= 2 {
+        let mut letters = name.chars();
+        if query.chars().all(|q| letters.any(|c| c == q)) {
+            return Some(3);
+        }
+    }
+    None
 }
 
 impl Launcher {
@@ -138,7 +194,108 @@ impl Launcher {
             groups,
             hosts: Vec::new(),
             group_cursor: 0,
+            query: String::new(),
         }
+    }
+
+    // MARK: search
+
+    /// What has been typed.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Everything a search here would look through: the applications of the group that is open or
+    /// the computer that is, and from the top of the launcher all of them, on every machine --
+    /// typing a name should not first require knowing which tab it lives in.
+    fn scope(&self) -> Vec<Hit> {
+        match &self.level {
+            Level::Groups => (0..self.apps.len())
+                .map(Hit::Local)
+                .chain(
+                    self.hosts
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(h, tab)| (0..tab.apps.len()).map(move |a| Hit::Remote(h, a))),
+                )
+                .collect(),
+            Level::Apps(group) => self
+                .apps
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| group_for(&a.categories) == *group)
+                .map(|(i, _)| Hit::Local(i))
+                .collect(),
+            Level::Host(h) => self
+                .hosts
+                .get(*h)
+                .map(|tab| (0..tab.apps.len()).map(|a| Hit::Remote(*h, a)).collect())
+                .unwrap_or_default(),
+        }
+    }
+
+    fn name_of(&self, hit: Hit) -> &str {
+        match hit {
+            Hit::Local(i) => &self.apps[i].name,
+            Hit::Remote(h, a) => &self.hosts[h].apps[a].name,
+        }
+    }
+
+    /// What the query finds, best first; `None` when there is no query.
+    fn hits(&self) -> Option<Vec<Hit>> {
+        let query = fold(self.query.trim());
+        if query.is_empty() {
+            return None;
+        }
+        let mut found: Vec<(u8, String, Hit)> = self
+            .scope()
+            .into_iter()
+            .filter_map(|hit| {
+                let name = self.name_of(hit);
+                rank(name, &query).map(|r| (r, fold(name), hit))
+            })
+            .collect();
+        // Better matches first, then alphabetical: the list is not in an order anyone chose.
+        found.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+        Some(found.into_iter().map(|(_, _, hit)| hit).collect())
+    }
+
+    /// How many applications the search is looking through, for "7 of 203".
+    pub fn searched(&self) -> usize {
+        self.scope().len()
+    }
+
+    fn requery(&mut self) {
+        self.grid = Grid::new(COLUMNS, self.len());
+    }
+
+    /// Type into the search. Control characters are not text.
+    pub fn type_query(&mut self, text: &str) {
+        let before = self.query.clone();
+        for c in text.chars().filter(|c| !c.is_control()) {
+            if self.query.chars().count() < QUERY_MAX && !(c == ' ' && self.query.is_empty()) {
+                self.query.push(c);
+            }
+        }
+        if self.query != before {
+            self.requery();
+        }
+    }
+
+    pub fn query_backspace(&mut self) {
+        if self.query.pop().is_some() {
+            self.requery();
+        }
+    }
+
+    /// Drop the search. `true` if there was one.
+    pub fn clear_query(&mut self) -> bool {
+        if self.query.is_empty() {
+            return false;
+        }
+        self.query.clear();
+        self.requery();
+        true
     }
 
     pub fn hosts(&self) -> &[HostTab] {
@@ -187,6 +344,15 @@ impl Launcher {
     ///
     /// One list so the renderer does not need to know what kinds of bubble there are.
     pub fn bubbles(&self) -> Vec<(String, Option<String>)> {
+        if let Some(hits) = self.hits() {
+            return hits
+                .into_iter()
+                .map(|hit| match hit {
+                    Hit::Local(i) => (self.apps[i].name.clone(), self.apps[i].icon.clone()),
+                    Hit::Remote(h, a) => (self.hosts[h].apps[a].name.clone(), self.hosts[h].apps[a].icon.clone()),
+                })
+                .collect();
+        }
         match &self.level {
             Level::Groups => self
                 .groups
@@ -236,6 +402,9 @@ impl Launcher {
 
     /// How many bubbles the current level shows.
     pub fn len(&self) -> usize {
+        if let Some(hits) = self.hits() {
+            return hits.len();
+        }
         match &self.level {
             Level::Groups => self.groups.len() + self.hosts.len(),
             Level::Apps(_) => self.apps_in_level().len(),
@@ -248,6 +417,15 @@ impl Launcher {
     /// `Ok(Some(app))` means launch it; `Ok(None)` means the level changed and there is
     /// nothing else to do.
     pub fn activate(&mut self) -> Option<Launch> {
+        if let Some(hits) = self.hits() {
+            return match hits.get(self.grid.cursor())? {
+                Hit::Local(i) => Some(Launch::Local(self.apps[*i].clone())),
+                Hit::Remote(h, a) => Some(Launch::Remote {
+                    host: self.hosts[*h].address.clone(),
+                    app: self.hosts[*h].apps[*a].id.clone(),
+                }),
+            };
+        }
         match self.level.clone() {
             Level::Groups => {
                 let cursor = self.grid.cursor();
@@ -282,6 +460,10 @@ impl Launcher {
     /// `false` at the top means the caller should close the launcher entirely — B has to keep
     /// working rather than becoming inert once you are already at the root.
     pub fn back(&mut self) -> bool {
+        // What was typed goes first: a search is the innermost place there is.
+        if self.clear_query() {
+            return true;
+        }
         match self.level {
             Level::Groups => false,
             Level::Apps(_) | Level::Host(_) => {
@@ -312,6 +494,12 @@ impl Launcher {
 
     /// The focused application, or `None` at the group level.
     pub fn focused(&self) -> Option<AppEntry> {
+        if let Some(hits) = self.hits() {
+            return match hits.get(self.grid.cursor())? {
+                Hit::Local(i) => Some(self.apps[*i].clone()),
+                Hit::Remote(..) => None,
+            };
+        }
         match self.level {
             Level::Groups | Level::Host(_) => None,
             Level::Apps(_) => self
@@ -707,5 +895,132 @@ mod tests {
         assert_eq!(l.len(), 2);
         l.set_hosts(vec![tab("new", &[])]);
         assert_eq!(l.level(), &Level::Groups, "and out, once it is gone");
+    }
+
+    fn mac_launcher() -> Launcher {
+        let mut l = Launcher::new(vec![]);
+        let names = [
+            "Activity Monitor", "App Store", "Calculator", "Calendar", "Google Chrome", "Google Sheets", "Safari",
+            "Slack", "Terminal", "TextEdit", "Visual Studio Code", "Xcode", "Pok\u{e9}mon Go",
+        ];
+        l.set_hosts(vec![HostTab {
+            label: "This Mac".into(),
+            address: "mac".into(),
+            online: true,
+            apps: names
+                .iter()
+                .map(|n| RemoteEntry { id: format!("id.{}", n.to_lowercase().replace(' ', "-")), name: (*n).into(), icon: None })
+                .collect(),
+        }]);
+        l
+    }
+
+    fn shown(l: &Launcher) -> Vec<String> {
+        l.bubbles().into_iter().map(|(n, _)| n).collect()
+    }
+
+    #[test]
+    fn typing_from_the_top_narrows_to_the_applications_of_every_computer() {
+        let mut l = mac_launcher();
+        assert_eq!(shown(&l), vec!["This Mac"], "no search: the computers");
+        l.type_query("sa");
+        assert_eq!(shown(&l)[0], "Safari", "a name that begins with it comes first");
+        assert!(shown(&l).contains(&"Google Sheets".to_string()) || shown(&l).len() >= 1);
+        l.type_query("f");
+        assert_eq!(shown(&l), vec!["Safari"]);
+        assert_eq!(l.len(), 1);
+        assert_eq!(l.activate(), Some(Launch::Remote { host: "mac".into(), app: "id.safari".into() }));
+    }
+
+    #[test]
+    fn a_word_in_the_middle_of_a_name_and_the_letters_in_order_both_find_it() {
+        let mut l = mac_launcher();
+        l.type_query("chrome");
+        assert_eq!(shown(&l), vec!["Google Chrome"]);
+        l.clear_query();
+        l.type_query("studio");
+        assert_eq!(shown(&l), vec!["Visual Studio Code", "Xcode"].into_iter().take(1).collect::<Vec<_>>());
+        l.clear_query();
+        l.type_query("vsc");
+        assert_eq!(shown(&l), vec!["Visual Studio Code"], "initials are in order in the name");
+        l.clear_query();
+        l.type_query("pokemon");
+        assert_eq!(shown(&l), vec!["Pok\u{e9}mon Go"], "without the accent");
+    }
+
+    #[test]
+    fn better_matches_come_before_worse_ones() {
+        let mut l = mac_launcher();
+        l.type_query("ca");
+        let names = shown(&l);
+        let calc = names.iter().position(|n| n == "Calculator").unwrap();
+        let sheets = names.iter().position(|n| n == "Google Sheets");
+        assert!(calc < 2, "begins with it: {names:?}");
+        assert!(sheets.map_or(true, |s| s > calc));
+    }
+
+    #[test]
+    fn nothing_found_is_an_empty_grid_that_launches_nothing_and_backspace_brings_it_back() {
+        let mut l = mac_launcher();
+        l.type_query("zzzq");
+        assert_eq!(l.len(), 0);
+        assert!(l.is_empty());
+        assert_eq!(l.activate(), None);
+        assert_eq!(l.searched(), 13);
+        for _ in 0..4 {
+            l.query_backspace();
+        }
+        assert_eq!(l.query(), "");
+        assert_eq!(shown(&l), vec!["This Mac"]);
+    }
+
+    #[test]
+    fn back_drops_the_search_before_it_leaves_anything() {
+        let mut l = mac_launcher();
+        l.activate(); // into This Mac
+        assert_eq!(l.len(), 13);
+        l.type_query("term");
+        assert_eq!(shown(&l), vec!["Terminal"]);
+        assert!(l.back(), "the search goes first");
+        assert_eq!(l.len(), 13, "and the computer is still open");
+        assert!(l.back());
+        assert!(matches!(l.level(), Level::Groups));
+        assert!(!l.back(), "then it is the top, which closes");
+    }
+
+    #[test]
+    fn inside_a_computer_only_its_own_applications_are_searched() {
+        let mut l = mac_launcher();
+        l.set_hosts(vec![
+            HostTab { label: "This Mac".into(), address: "mac".into(), online: true, apps: vec![RemoteEntry { id: "a".into(), name: "Notes".into(), icon: None }] },
+            HostTab { label: "Box".into(), address: "box".into(), online: true, apps: vec![RemoteEntry { id: "b".into(), name: "Notepad".into(), icon: None }] },
+        ]);
+        l.type_query("note");
+        assert_eq!(l.len(), 2, "from the top, everywhere");
+        l.clear_query();
+        l.activate();
+        l.type_query("note");
+        assert_eq!(shown(&l), vec!["Notes"], "inside one, that one");
+    }
+
+    #[test]
+    fn the_search_is_bounded_and_does_not_start_with_a_space() {
+        let mut l = mac_launcher();
+        l.type_query(" ");
+        assert_eq!(l.query(), "");
+        l.type_query(&"x".repeat(100));
+        assert_eq!(l.query().chars().count(), QUERY_MAX);
+        l.clear_query();
+        l.type_query("a\u{7}b");
+        assert_eq!(l.query(), "ab", "a control character is not text");
+    }
+
+    #[test]
+    fn local_applications_are_searched_too_and_launch_as_local() {
+        let mut l = Launcher::new(vec![app("Firefox"), app("Files")]);
+        l.type_query("fire");
+        assert_eq!(shown(&l), vec!["Firefox"]);
+        assert!(matches!(l.activate(), Some(Launch::Local(a)) if a.name == "Firefox"));
+        assert_eq!(l.focused().map(|a| a.name), Some("Firefox".into()));
     }
 }

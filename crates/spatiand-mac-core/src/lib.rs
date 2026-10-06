@@ -775,10 +775,11 @@ pub extern "C" fn sp_shell_intent(room: *mut RoomHandle, intent: i32) -> *mut c_
     json_out(with_room(room, None, |r| r.shell_intent(intent)).map(|e| event_json(&e)))
 }
 
-/// Whether a menu is covering the world, and whether it wants the keyboard's text.
+/// Whether a menu is covering the world (bit 0), whether it wants the keyboard's text (bit 1), and whether
+/// it is the launcher, whose bubbles typing narrows down (bit 2).
 #[no_mangle]
 pub extern "C" fn sp_shell_open(room: *mut RoomHandle) -> i32 {
-    with_room(room, 0, |r| r.ui.open() as i32 | ((r.ui.shell.wants_text() as i32) << 1))
+    with_room(room, 0, |r| r.ui.open() as i32 | ((r.ui.shell.wants_text() as i32) << 1) | ((r.ui.shell.searches() as i32) << 2))
 }
 
 /// Draw the menus again if they changed, and hang them in the room. Returns a number that changes when
@@ -832,6 +833,31 @@ pub extern "C" fn sp_shell_panel_image(room: *mut RoomHandle, id: u32, w: *mut u
 }
 
 /// The pointer is moving over an open menu: the shell's cursor goes to the row or bubble it is on.
+/// The launcher as it stands, for tests and for the app to look at: what was typed, how many bubbles that
+/// leaves of how many were searched, the names on show, and the cursor. JSON; free it with `sp_free_string`.
+#[no_mangle]
+pub extern "C" fn sp_shell_launcher(room: *mut RoomHandle) -> *mut c_char {
+    json_out(with_room(room, None, |r| {
+        let l = r.ui.shell.launcher();
+        let all = l.bubbles();
+        let names: Vec<String> = l.visible().map(|i| all[i].0.clone()).collect();
+        Some(
+            serde_json::json!({
+                "mode": format!("{:?}", r.ui.shell.mode()),
+                "query": l.query(),
+                "count": l.len(),
+                "searched": l.searched(),
+                "cursor": l.cursor(),
+                "focused": l.focused_label(),
+                "page": l.page(),
+                "pages": l.pages(),
+                "shown": names,
+            })
+            .to_string(),
+        )
+    }))
+}
+
 #[no_mangle]
 pub extern "C" fn sp_shell_hover(room: *mut RoomHandle) {
     with_room(room, (), |r| {
