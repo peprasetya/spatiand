@@ -1065,6 +1065,17 @@ pub extern "C" fn sp_room_chrome_render(room: *mut RoomHandle, id: u32, width_px
     1
 }
 
+/// How steady the view is held: 0 not at all, 1 a little, 2 firmly, for typing.
+#[no_mangle]
+pub extern "C" fn sp_room_set_damping(room: *mut RoomHandle, level: i32) {
+    let damping = match level {
+        0 => room::Damping::Off,
+        2 => room::Damping::Typing,
+        _ => room::Damping::Light,
+    };
+    with_room(room, (), |r| r.set_damping(damping));
+}
+
 /// The Deck's pointer over a window's frame: a double arrow, pointing left and right. White, straight RGBA.
 #[no_mangle]
 pub extern "C" fn sp_resize_cursor(size: u32, out: *mut u8) {

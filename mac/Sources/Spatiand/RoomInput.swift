@@ -138,6 +138,7 @@ final class InputView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        controller?.keyNoted()
         if Self.trace { print("input: key \(event.keyCode)") }
         if chord(event) { return }
         // A menu takes the keyboard: the arrows and Return work it, as a D-pad and A do.
@@ -226,6 +227,9 @@ final class RoomInput: NSObject, NSWindowDelegate {
     }
 
     private let chords = RoomChords()
+    let menuKeys = KeyTap()
+    /// Whether Spatiand's own window has the keyboard, and so hears keys itself.
+    var hasKeyboard: Bool { window?.isKeyWindow == true && NSApp.isActive }
     private var watcher: NSObjectProtocol?
     private var keyMonitor: Any?
     private var gestureMonitor: Any?
@@ -261,26 +265,35 @@ final class RoomInput: NSObject, NSWindowDelegate {
         keyboardOwner = info.pid
         window?.keyable = false
         NSRunningApplication(processIdentifier: info.pid)?.activate()
-        if let ax = MacWindows.axWindow(info) {
-            AXUIElementSetAttributeValue(ax, kAXMainAttribute as CFString, kCFBooleanTrue)
-            AXUIElementPerformAction(ax, kAXRaiseAction as CFString)
-        }
+        MacWindows.raise(info)
     }
 
-    /// Spatiand has the keyboard again: for a host's window, or a menu.
+    /// Spatiand has the keyboard again: for a host's window, or a menu. The system may take a moment to agree,
+    /// or refuse the first time, and a menu that cannot hear the arrow keys is worse than one that is late, so
+    /// it is asked again until Spatiand is the active application with its window the key one.
     func takeKeyboard() {
         guard capturing, let w = window else { return }
         keyboardOwner = nil
         w.keyable = true
+        claimKeyboard(attempt: 0)
+    }
+
+    private func claimKeyboard(attempt: Int) {
+        guard capturing, let w = window, w.keyable else { return }
         NSApp.activate(ignoringOtherApps: true)
+        NSRunningApplication.current.activate(options: [.activateAllWindows])
         w.makeKeyAndOrderFront(nil)
         w.makeFirstResponder(w.contentView)
+        if (!NSApp.isActive || !w.isKeyWindow) && attempt < 20 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.claimKeyboard(attempt: attempt + 1) }
+        }
     }
 
     func stop() {
         guard capturing else { return }
         capturing = false
         chords.disable()
+        menuKeys.stop()
         if let watcher { NSWorkspace.shared.notificationCenter.removeObserver(watcher) }
         watcher = nil
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }

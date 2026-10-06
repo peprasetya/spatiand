@@ -380,6 +380,7 @@ final class RoomController {
     /// application is handed the keyboard when a key is pressed and Spatiand takes it back when the pointer or
     /// the fingers are used again.
     private(set) var typing = false
+    private var menuKeysWired = false
     private var lastKey = Date.distantPast
 
     func keyNoted() { lastKey = Date() }
@@ -394,6 +395,21 @@ final class RoomController {
     /// then made the active window; otherwise Spatiand, which sends the keys to a host's window or a menu.
     private func syncKeyboard() {
         guard input.capturing else { keyOwner = nil; return }
+        // A menu is Spatiand's, and a menu that was opened ends the typing that was going on.
+        if menu.isOpen { typing = false }
+        // And while it is open its keys are taken from whoever has them, if Spatiand is not yet the one.
+        if input.capturing, menu.isOpen, !input.hasKeyboard {
+            if !menuKeysWired {
+                menuKeysWired = true
+                input.menuKeys.handler = { [weak self] event in
+                    guard let self, self.menu.isOpen, !self.input.hasKeyboard else { return false }
+                    return self.menu.key(event)
+                }
+            }
+            input.menuKeys.start()
+        } else if input.menuKeys.running {
+            input.menuKeys.stop()
+        }
         var want: UInt16?
         if Settings.activateMacWindows, typing, !menu.isOpen, let id = core.focused, MacWindows.isMac(id), macCaptures[id] != nil { want = id }
         guard want != keyOwner else { return }
@@ -401,7 +417,13 @@ final class RoomController {
         if let id = want, let capture = macCaptures[id] { input.giveKeyboard(to: capture.info) } else { input.takeKeyboard() }
     }
 
+    private var damping = -1
+
     func tick() {
+        // Steady while typing: for two seconds after a key the view is held firmly, because reading what has just
+        // been typed is when a head that is never quite still is most in the way.
+        let level = !Settings.steadyView ? 0 : (Date().timeIntervalSince(lastKey) < 2.0 ? 2 : 1)
+        if level != damping { damping = level; core.setDamping(level) }
         syncKeyboard()
         // Only the window being used is captured at the display's rate; the rest at half of it, which is
         // what keeps this Mac's fan quiet with several windows in the room.
@@ -539,8 +561,15 @@ final class RoomController {
 
     func buttonUp(_ button: Int) {
         if core.isSizing {
-            if let drag = core.dragResize() { askSize(drag.id, drag.width, drag.height) }
+            var sized: UInt16?
+            if let drag = core.dragResize() { askSize(drag.id, drag.width, drag.height); sized = drag.id }
             core.endResize()
+            // Now the window is what the application has made of it, and again a moment later: a resize that is
+            // asked for is not done until the application has redrawn.
+            if let id = sized {
+                reconcileSize(id)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.reconcileSize(id) }
+            }
             return
         }
         if core.isGrabbing {
@@ -784,6 +813,17 @@ final class RoomController {
         model.link.say(["InputAt": ["window": Int(id), "input": ["Key": ["code": 29, "pressed": true]], "time_ms": at]])
         model.link.say(["InputAt": ["window": Int(id), "input": ["Scroll": ["horizontal": 0.0, "vertical": zoomIn ? -10.0 : 10.0]], "time_ms": at + 1]])
         model.link.say(["InputAt": ["window": Int(id), "input": ["Key": ["code": 29, "pressed": false]], "time_ms": at + 2]])
+    }
+
+    /// The window's size in the room is its application's own.
+    private func reconcileSize(_ id: UInt16) {
+        if MacWindows.isMac(id) {
+            guard let capture = macCaptures[id] else { return }
+            let size = capture.frameSizePixels
+            if size.width > 0, size.height > 0 { core.setWindow(id, width: Int(size.width), height: Int(size.height)) }
+        } else if let size = known[id] {
+            core.setWindow(id, width: Int(size.width), height: Int(size.height))
+        }
     }
 
     /// Ask the application to make its window about this many pixels.

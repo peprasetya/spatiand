@@ -41,6 +41,17 @@ final class RoomRenderer {
     private let inFlight = DispatchSemaphore(value: 3)
 
     private(set) var framesDrawn = 0
+    private let statsLock = NSLock()
+    private var gpuTotal = 0.0, gpuWorst = 0.0, gpuFrames = 0, dropped = 0
+
+    /// How long the GPU took over the frames since last asked, and how many were not drawn for want of it.
+    func takeGPUStats() -> (average: Double, worst: Double, frames: Int, dropped: Int) {
+        statsLock.lock()
+        defer { statsLock.unlock() }
+        let out = (gpuFrames > 0 ? gpuTotal / Double(gpuFrames) : 0, gpuWorst, gpuFrames, dropped)
+        gpuTotal = 0; gpuWorst = 0; gpuFrames = 0; dropped = 0
+        return out
+    }
 
     init?(core: RoomCore, device: MTLDevice? = nil) {
         guard let device = device ?? MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { return nil }
@@ -196,7 +207,12 @@ final class RoomRenderer {
     /// Draw the room into `target`. `sideBySide` is two eyes across it, else one eye over it all.
     /// Returns once the commands are queued; `done` is called when the GPU has finished.
     func render(into target: MTLTexture, sideBySide: Bool, present: CAMetalDrawable? = nil, done: (() -> Void)? = nil) {
-        inFlight.wait()
+        // A frame the GPU has not got to is dropped rather than waited for: the main thread is also the pointer, the
+        // keys and the fingers, and a wait of thirty milliseconds there is felt as much as a skipped frame.
+        if inFlight.wait(timeout: .now() + .milliseconds(3)) == .timedOut {
+            statsLock.lock(); dropped += 1; statsLock.unlock()
+            return
+        }
         let buffer = buffers[next]
         next = (next + 1) % buffers.count
         let floats = buffer.contents().bindMemory(to: Float.self, capacity: Self.capacity)
@@ -273,8 +289,12 @@ final class RoomRenderer {
         }
         encoder.endEncoding()
         if let present { commands.present(present) }
-        commands.addCompletedHandler { [inFlight] _ in
+        commands.addCompletedHandler { [inFlight, weak self] finished in
             _ = keep.count
+            if let self, finished.gpuEndTime > finished.gpuStartTime {
+                let spent = finished.gpuEndTime - finished.gpuStartTime
+                self.statsLock.lock(); self.gpuTotal += spent; self.gpuWorst = max(self.gpuWorst, spent); self.gpuFrames += 1; self.statsLock.unlock()
+            }
             inFlight.signal()
             done?()
         }

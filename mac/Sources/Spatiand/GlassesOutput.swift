@@ -269,6 +269,8 @@ final class GlassesOutput: NSObject {
     /// How regularly frames are being drawn, said in the log every few seconds: the line that tells a view that
     /// jitters from one that is only being looked at hard.
     private var frameClock = (last: 0.0, since: Date(), count: 0, late: 0, longest: 0.0, spent: 0.0, worst: 0.0, interval: 0.0)
+    /// Time spent waiting for the display to hand over a drawable, in this window of the log.
+    private var waited = 0.0, waitedWorst = 0.0
 
     private func noteFrame(_ link: CADisplayLink, spent: Double) {
         let now = link.timestamp
@@ -287,9 +289,12 @@ final class GlassesOutput: NSObject {
         frameClock.spent += spent
         frameClock.worst = max(frameClock.worst, spent)
         if Date().timeIntervalSince(frameClock.since) >= 5, frameClock.count > 0 {
-            print(String(format: "glasses: %d frames in 5 s (the display's period is %.1f ms), %d late, longest gap %.1f ms; drawing took %.1f ms on average, %.1f at worst",
+            let gpu = room.renderer?.takeGPUStats() ?? (average: 0, worst: 0, frames: 0, dropped: 0)
+            print(String(format: "glasses: %d frames in 5 s (the display's period is %.1f ms), %d late, longest gap %.1f ms; drawing took %.1f ms on average, %.1f at worst; waiting for a drawable %.1f ms on average, %.1f at worst; the GPU took %.1f ms on average, %.1f at worst, %d frames dropped",
                          frameClock.count, frameClock.interval * 1000, frameClock.late, frameClock.longest * 1000,
-                         frameClock.spent / Double(frameClock.count) * 1000, frameClock.worst * 1000))
+                         frameClock.spent / Double(frameClock.count) * 1000, frameClock.worst * 1000,
+                         waited / Double(frameClock.count) * 1000, waitedWorst * 1000, gpu.average * 1000, gpu.worst * 1000, gpu.dropped))
+            waited = 0; waitedWorst = 0
             frameClock = (frameClock.last, Date(), 0, 0, 0, 0, 0, frameClock.interval)
         }
     }
@@ -297,7 +302,12 @@ final class GlassesOutput: NSObject {
     @objc private func draw(_ displayLink: CADisplayLink) {
         let started = CACurrentMediaTime()
         defer { noteFrame(displayLink, spent: CACurrentMediaTime() - started) }
-        guard let renderer = room.renderer, window != nil, let drawable = layer.nextDrawable() else { return }
+        guard let renderer = room.renderer, window != nil else { return }
+        let asked = CACurrentMediaTime()
+        guard let drawable = layer.nextDrawable() else { return }
+        let gotIt = CACurrentMediaTime() - asked
+        waited += gotIt
+        waitedWorst = max(waitedWorst, gotIt)
         // Where the cursor is changes when the head turns, with the mouse still.
         let aim = room.core.aim()
         let now = (aim.window, Int(aim.x), Int(aim.y))

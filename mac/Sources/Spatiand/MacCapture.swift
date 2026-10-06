@@ -52,6 +52,7 @@ enum MacWindows {
     /// The accessibility element of a window, for closing it and sizing it. Needs Accessibility.
     static func axWindow(_ info: MacWindowInfo) -> AXUIElement? {
         let app = AXUIElementCreateApplication(info.pid)
+        AXUIElementSetMessagingTimeout(app, 0.5)
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
               let windows = value as? [AXUIElement] else { return nil }
@@ -61,13 +62,45 @@ enum MacWindows {
         }
     }
 
-    /// Ask a window to be this size, in points. It may decline: a window has its own limits.
-    @discardableResult
-    static func resize(_ info: MacWindowInfo, toPoints size: CGSize) -> Bool {
-        guard let window = axWindow(info) else { return false }
-        var wanted = size
-        guard let value = AXValueCreate(.cgSize, &wanted) else { return false }
-        return AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value) == .success
+    /// Calls to another application's accessibility interface are a conversation with that application, and one
+    /// that is busy answers slowly: a resize asked for on the main thread has held the whole room still for a
+    /// quarter of a second. They are made on a queue of their own, one at a time, and only the newest of the
+    /// sizes asked for a window is ever made.
+    private static let axQueue = DispatchQueue(label: "spatiand.ax", qos: .userInitiated)
+    private static let axLock = NSLock()
+    private static var wantedSize: [CGWindowID: (MacWindowInfo, CGSize)] = [:]
+
+    /// Ask a window to be this size, in points, soon. It may decline: a window has its own limits.
+    static func resize(_ info: MacWindowInfo, toPoints size: CGSize) {
+        axLock.lock()
+        let busy = !wantedSize.isEmpty
+        wantedSize[info.windowID] = (info, size)
+        axLock.unlock()
+        guard !busy else { return }
+        axQueue.async { drainSizes() }
+    }
+
+    private static func drainSizes() {
+        while true {
+            axLock.lock()
+            guard let (id, entry) = wantedSize.first else { axLock.unlock(); return }
+            wantedSize[id] = nil
+            axLock.unlock()
+            guard let window = axWindow(entry.0) else { continue }
+            AXUIElementSetMessagingTimeout(window, 0.5)
+            var wanted = entry.1
+            if let value = AXValueCreate(.cgSize, &wanted) { AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value) }
+        }
+    }
+
+    /// Make a window its application's main one and raise it, off the main thread.
+    static func raise(_ info: MacWindowInfo) {
+        axQueue.async {
+            guard let window = axWindow(info) else { return }
+            AXUIElementSetMessagingTimeout(window, 0.5)
+            AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        }
     }
 
     /// A window's size now, in points, for tests.

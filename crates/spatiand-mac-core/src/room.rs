@@ -157,6 +157,50 @@ struct Sizing {
     start_pixels: (u32, u32),
     /// Where the pointer was on the window's plane, as fractions of it.
     from: (f64, f64),
+    /// The window's quad as it stood when the edge was grabbed. Everything in the drag is measured against
+    /// this and not against the window as it is now: the live one moves and changes size as the drag goes on,
+    /// and measuring against it feeds the answer back into its own question, so the window runs away from
+    /// the pointer, or jumps as the application catches up.
+    start_quad: Quad,
+}
+
+/// The view, steadied. A head is never quite still, and the room is nailed to the real one, so every tremor of it
+/// moves every window; while typing, reading small text, that is the difference between legible and not. The
+/// cure is a low-pass filter whose cutoff opens with the speed of the head (the One Euro filter, as in
+/// `spatiand_track::smoothing`): heavy while the head is nearly still, where there is only tremor to remove,
+/// and wide open in a real turn, where a lag would be felt. Two strengths: the everyday one is barely there,
+/// and the one for typing is firm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Damping {
+    Off,
+    #[default]
+    Light,
+    Typing,
+}
+
+impl Damping {
+    /// The cutoff at rest in hertz, and how much each degree a second of head speed opens it by.
+    fn parameters(self) -> Option<(f64, f64)> {
+        match self {
+            Damping::Off => None,
+            Damping::Light => Some((3.0, 0.5)),
+            Damping::Typing => Some((0.8, 0.12)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ViewFilter {
+    out: DQuat,
+    last_raw: DQuat,
+    /// How fast the head is turning, degrees a second, itself lightly smoothed.
+    speed: f64,
+    at: std::time::Instant,
+}
+
+fn smoothing_alpha(cutoff: f64, dt: f64) -> f64 {
+    let tau = 1.0 / (2.0 * std::f64::consts::PI * cutoff.max(1e-3));
+    1.0 / (1.0 + tau / dt)
 }
 
 /// What the glasses' sensors are sending, said in the log every few seconds: how often, how big. The line
@@ -263,6 +307,8 @@ pub struct Room {
     size: Size,
     /// A head to use before the glasses have said anything, for the preview and tests.
     fixed_head: Option<DQuat>,
+    damping: Damping,
+    view: std::cell::Cell<Option<ViewFilter>>,
     /// The pointer's picture: its size and where its hot spot is, in the picture's pixels.
     cursor_shape: (f64, f64, f64, f64),
 }
@@ -298,6 +344,8 @@ impl Room {
             corner: Corner::default(),
             size: Size::default(),
             fixed_head: None,
+            damping: Damping::default(),
+            view: std::cell::Cell::new(None),
             cursor_shape: (0.0, 0.0, 0.0, 0.0),
         }
     }
@@ -386,10 +434,47 @@ impl Room {
 
     /// Where the head will be when the photons arrive: one frame ahead.
     pub fn head(&self) -> DQuat {
-        self.fixed_head.unwrap_or_else(|| {
-            self.tracker
-                .predicted_orientation(DEFAULT_PREDICTION_SECONDS, DEFAULT_PREDICTION_MAX_DEGREES)
-        })
+        if let Some(fixed) = self.fixed_head {
+            return fixed;
+        }
+        let raw = self.tracker.predicted_orientation(DEFAULT_PREDICTION_SECONDS, DEFAULT_PREDICTION_MAX_DEGREES);
+        self.steadied(raw)
+    }
+
+    pub fn set_damping(&mut self, damping: Damping) {
+        self.damping = damping;
+    }
+
+    /// `raw`, with the tremor taken out. Asked for several times a frame, which is harmless: it moves on only
+    /// by the time that has passed.
+    fn steadied(&self, raw: DQuat) -> DQuat {
+        let Some((min_cutoff, beta)) = self.damping.parameters() else {
+            self.view.set(None);
+            return raw;
+        };
+        let now = std::time::Instant::now();
+        let Some(mut f) = self.view.get() else {
+            self.view.set(Some(ViewFilter { out: raw, last_raw: raw, speed: 0.0, at: now }));
+            return raw;
+        };
+        let dt = now.duration_since(f.at).as_secs_f64();
+        if dt < 0.002 {
+            return f.out;
+        }
+        // After a pause the old position means nothing: start from where the head is.
+        if dt > 0.25 {
+            self.view.set(Some(ViewFilter { out: raw, last_raw: raw, speed: 0.0, at: now }));
+            return raw;
+        }
+        let moved = f.last_raw.angle_between(raw).to_degrees();
+        let a_speed = smoothing_alpha(1.0, dt);
+        f.speed += a_speed * (moved / dt - f.speed);
+        let alpha = smoothing_alpha(min_cutoff + beta * f.speed.abs(), dt);
+        f.out = f.out.slerp(raw, alpha).normalize();
+        f.last_raw = raw;
+        f.at = now;
+        self.view.set(Some(f));
+        f.out
     }
 
     fn eye_centre(&self, head: DQuat) -> DVec3 {
@@ -429,7 +514,11 @@ impl Room {
     /// looking, beside whatever is there.
     pub fn set_window(&mut self, id: u32, size: (u32, u32)) {
         if let Some(w) = self.windows.iter_mut().find(|w| w.id == id) {
-            w.size = size;
+            // While its edge is being dragged the window is the size it was asked to be; what the application
+            // has made of it so far is taken up when the drag ends.
+            if self.sizing.map(|s| s.id) != Some(id) {
+                w.size = size;
+            }
             return;
         }
         let heading = {
@@ -988,20 +1077,18 @@ impl Room {
         if place.pip || Self::is_panel(id) {
             return;
         }
-        if let Some(from) = self.plane_fractions(id) {
-            self.sizing = Some(Sizing { id, edge, start: w.place, start_pixels: w.size, from });
+        let start_quad = w.quad(&place);
+        let (start, start_pixels) = (w.place, w.size);
+        if let Some(from) = self.plane_fractions(&start_quad) {
+            self.sizing = Some(Sizing { id, edge, start, start_pixels, from, start_quad });
             self.raise(id);
         }
     }
 
     /// Where the pointer is on a window's plane, as fractions of its content, off its edges as well.
-    fn plane_fractions(&self, id: u32) -> Option<(f64, f64)> {
-        let head = self.head();
-        let ray = self.ray(head);
-        let placed = self.placed(head);
-        let (i, place) = placed.iter().find(|(i, _)| self.windows[*i].id == id).copied()?;
-        let w = &self.windows[i];
-        let hit = intersect_plane(&ray, &w.quad(&place))?;
+    fn plane_fractions(&self, quad: &Quad) -> Option<(f64, f64)> {
+        let ray = self.ray(self.head());
+        let hit = intersect_plane(&ray, quad)?;
         Some((hit.u, hit.v))
     }
 
@@ -1013,7 +1100,7 @@ impl Room {
     /// should be asked for is returned.
     pub fn drag_resize(&mut self) -> Option<(u32, (u32, u32))> {
         let sizing = self.sizing?;
-        let now = self.plane_fractions(sizing.id)?;
+        let now = self.plane_fractions(&sizing.start_quad)?;
         let aspect = sizing.start_pixels.0 as f64 / sizing.start_pixels.1.max(1) as f64;
         let start_height = sizing.start.width / aspect.max(0.01);
         let dx = (now.0 - sizing.from.0) * sizing.start.width;
@@ -1021,6 +1108,9 @@ impl Room {
         let out = chrome::resize(sizing.edge, &sizing.start, sizing.start_pixels, dx, dy);
         let w = self.windows.iter_mut().find(|w| w.id == sizing.id)?;
         w.place = out.placement;
+        // The window is as big as it was asked to be, whatever size the application has got to: its picture
+        // is stretched for a moment, which is better than a frame that changes shape under the pointer.
+        w.size = out.pixels;
         Some((sizing.id, out.pixels))
     }
 
@@ -1272,6 +1362,73 @@ mod tests {
         assert!(last(&r).aimed, "on the frame");
         r.cursor = (0.0, 0.0);
         assert!(!last(&r).aimed, "on the surface");
+    }
+
+    #[test]
+    fn the_view_is_steadied_when_the_head_is_nearly_still_and_follows_when_it_turns() {
+        let yaw = |degrees: f64| DQuat::from_axis_angle(DVec3::Z, degrees.to_radians());
+        let tremor = |damping: Damping| {
+            let r = {
+                let mut r = Room::new();
+                r.set_damping(damping);
+                r
+            };
+            let mut worst = 0.0f64;
+            let start = std::time::Instant::now();
+            for i in 0..120 {
+                // A third of a degree either way, five times a second.
+                let shake = 0.3 * (std::f64::consts::TAU * 5.0 * start.elapsed().as_secs_f64()).sin();
+                let seen = r.steadied(yaw(shake));
+                if i > 60 {
+                    worst = worst.max(seen.angle_between(DQuat::IDENTITY).to_degrees());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(8));
+            }
+            worst
+        };
+        let (off, light, typing) = (tremor(Damping::Off), tremor(Damping::Light), tremor(Damping::Typing));
+        assert!(off > 0.25, "undamped, the whole shake shows: {off}");
+        assert!(light < off && typing < light * 0.8, "firmer is steadier: {off} {light} {typing}");
+        assert!(typing < 0.15, "typing removes half of it or more: {typing}");
+
+        // A real turn, sixty degrees a second, is followed within a few degrees.
+        let mut r = Room::new();
+        r.set_damping(Damping::Typing);
+        let start = std::time::Instant::now();
+        let mut lag = 0.0f64;
+        while start.elapsed().as_secs_f64() < 0.8 {
+            let truth = start.elapsed().as_secs_f64() * 60.0;
+            let seen = r.steadied(yaw(truth));
+            if start.elapsed().as_secs_f64() > 0.4 {
+                lag = lag.max(seen.angle_between(yaw(truth)).to_degrees());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+        assert!(lag < 7.0, "a turn is not smoothed into mush: {lag}");
+    }
+
+    #[test]
+    fn a_resize_holds_still_while_the_application_catches_up_and_takes_what_it_made_afterwards() {
+        let mut r = room();
+        r.set_window(1, (1280, 800));
+        r.show(1);
+        let half = r.windows()[0].place.width / 2.0 / DEFAULT_RADIUS;
+        r.cursor = (-(half + 0.02), 0.0);
+        r.begin_resize(1, Edge::Right);
+        r.cursor = (-(half + 0.10), 0.0);
+        let (_, asked) = r.drag_resize().unwrap();
+        let first = r.windows()[0].place;
+        // The application answers with something else, twice, and the pointer has not moved.
+        r.set_window(1, (1300, 900));
+        let again = r.drag_resize().unwrap().1;
+        r.set_window(1, (1500, 700));
+        let third = r.drag_resize().unwrap().1;
+        assert_eq!((asked, asked), (again, third), "the question is the same");
+        assert_eq!(r.windows()[0].place, first, "and so is the window");
+        assert_eq!(r.windows()[0].size, asked, "it is the size it was asked to be");
+        r.end_resize();
+        r.set_window(1, (1500, 700));
+        assert_eq!(r.windows()[0].size, (1500, 700), "afterwards the application's own size is taken");
     }
 
     #[test]

@@ -61,9 +61,10 @@ enum RoomTest {
                     _ = room.macKey(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: .shift, timestamp: 0, windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 56)!)
                     room.tick()
                 }
-                after(6) { print("keymode: typing \(room.typing), front \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?")"); room.pointingAgain(force: true); room.tick() }
-                after(6.6) { print("keymode: after the fingers, front is \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?")") }
-                after(7) {
+                after(6) { print("keymode: typing \(room.typing), front \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?")"); room.toggleMenu(); room.tick() }
+                after(6.4) { room.tick() }
+                after(7) { print("keymode: with the menu open, front is \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"), typing \(room.typing)") }
+                after(7.5) {
                     let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
                     print("keymode: capturing \(room.input.capturing), the front application is \(front)")
                     room.input.stop()

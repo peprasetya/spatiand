@@ -64,6 +64,12 @@ enum Settings {
         set { defaults.set(newValue, forKey: "activateMacWindows") }
     }
 
+    /// Whether the view is held steady, a little always and firmly while typing. Off follows the head exactly.
+    static var steadyView: Bool {
+        get { defaults.object(forKey: "steadyView") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "steadyView") }
+    }
+
     static var captureInput: Bool {
         get { defaults.object(forKey: "captureInput") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "captureInput") }

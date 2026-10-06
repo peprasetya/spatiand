@@ -8,6 +8,8 @@
 import AppKit
 import ApplicationServices
 import CoreImage
+import Metal
+import QuartzCore
 import CoreVideo
 
 enum FocusTest {
@@ -156,6 +158,55 @@ enum PanelTest {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 12) { CGAssociateMouseAndMouseCursorPosition(1); exit(2) }
+        ns.run()
+    }
+}
+
+/// `Spatiand --selftest-perf <app> <title>`: the room's frame loop at the display's rate with a window of this Mac in
+/// it, offscreen, and where the time of each frame goes.
+enum PerfTest {
+    static func run(app: String, title: String) {
+        let room = Model.shared.room
+        let ns = NSApplication.shared
+        ns.setActivationPolicy(.accessory)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            room.core.holdHead(yaw: 0, pitch: 0)
+            room.core.perEye(1920, 1080)
+            room.setActive(true)
+            Task {
+                guard let info = await MacWindows.list().first(where: { $0.app == app && $0.title.contains(title) }) else { print("no window"); exit(1) }
+                await MainActor.run { room.bringMacWindow(info) }
+            }
+        }
+        guard let renderer = room.renderer else { print("no renderer"); exit(1) }
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 3840, height: 1080, mipmapped: false)
+        d.usage = [.renderTarget, .shaderRead]
+        d.storageMode = .private
+        guard let target = renderer.device.makeTexture(descriptor: d) else { exit(1) }
+        var t = (aim: 0.0, tick: 0.0, render: 0.0, frames: 0, worst: 0.0)
+        var started = Date()
+        var last = CACurrentMediaTime()
+        var gaps: [Double] = []
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { _ in
+            let a = CACurrentMediaTime()
+            _ = room.core.aim()
+            let b = CACurrentMediaTime()
+            room.tick()
+            let c = CACurrentMediaTime()
+            renderer.render(into: target, sideBySide: true)
+            let e = CACurrentMediaTime()
+            gaps.append(a - last); last = a
+            t.aim += b - a; t.tick += c - b; t.render += e - c; t.frames += 1; t.worst = max(t.worst, e - a)
+            if Date().timeIntervalSince(started) > 5 {
+                let n = Double(max(1, t.frames))
+                let late = gaps.filter { $0 > 0.025 }.count
+                print(String(format: "perf: %d frames in 5 s (%d late); per frame: aim %.2f ms, tick %.2f ms, render %.2f ms; worst %.1f ms",
+                             t.frames, late, t.aim / n * 1000, t.tick / n * 1000, t.render / n * 1000, t.worst * 1000))
+                t = (0, 0, 0, 0, 0); gaps = []; started = Date()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 22) { exit(0) }
         ns.run()
     }
 }

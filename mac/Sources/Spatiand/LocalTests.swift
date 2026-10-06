@@ -108,6 +108,10 @@ enum LocalTests {
         check("an application that runs in the background is not offered", !apps.contains { $0.id == "com.apple.dock" })
         print("note  e.g. " + apps.map(\.name).sorted().prefix(8).joined(separator: ", "))
 
+        let tap = KeyTap()
+        print("note  a key tap for the menu can be made: \(tap.start()) (accessibility \(AXIsProcessTrusted()), input monitoring \(CGPreflightListenEventAccess()))")
+        tap.stop()
+
         // --- hot keys: whether the chords can be had here is a fact about this Mac, not a pass/fail
         let keys = Hotkeys()
         keys.enable()
