@@ -191,7 +191,23 @@ the Deck's). The same look and the same controls, taken from the Deck's code rat
   bias and without the magnetic anchor that holds yaw. It does now, kept in `~/.config/spatiand/sensors.toml`. The Rust
   half also had no logger, so the tracker's own account of the anchor went nowhere: it writes to the app's log now
   (`~/Library/Logs/Spatiand/spatiand.log`, a `tracker:` line every thirty seconds). The anchor needs a minute or two of
-  looking up, down and round the first time.
+  looking up, down and round the first time (the same glasses' file can be copied from the Deck's
+  `~/.config/spatiand/sensors.toml`, which already has it; the app no longer interrupts to ask).
+* **Launcher glass.** The bubbles are the Deck's refracting glass (`fragment_bubble` in `RoomRenderer.swift` is the
+  Deck's `BUBBLE_FRAG`), with the application's icon inside, its name on a plate below, and the computers and groups
+  drawn from their icon-theme names by `theme_icons.rs` (a Mac has no icon theme). The focused one is lit.
+* **The pointer** is the Deck's reticle, and over a window's frame the Deck's double arrow, turned to lie along the
+  way that edge or corner pulls.
+* **A Mac window with the keyboard is made the active one.** The Mac shows a caret, keeps a popover open and selects
+  text only in the active application, and an application that is merely posted events is not. So while a Mac window is
+  the one in front of the wearer, its application is activated and its window raised (`RoomInput.giveKeyboard`), the
+  keys go to it directly, and Spatiand's input window is a non-activating panel that still hears the frozen pointer, the
+  wheel and the pinch. Spatiand's own chords (Ctrl-Option and G, R, P, B, C, S, W) are then registered with the
+  system, and opening a menu or focusing a host's window takes the keyboard back. `defaults write
+  com.peprasetya.spatiand activateMacWindows -bool false` goes back to posting keys at a window in the background.
+* **Cost.** The window in use is captured at the display's rate and the rest at half; the pointer is told of a move at
+  most every 25 ms (8 ms when dragging) and always of the last; a captured window is copied into a mipmapped texture so
+  text does not shimmer when the head moves.
 
 **Game controllers** (a DualShock 4 over a cable or Bluetooth, a DualSense, an Xbox pad) work as they do on the Deck and
 the Beam Pro: `mac/Sources/Spatiand/PadInput.swift` reads them with GameController, and `spatiand-mac-core/src/pads.rs`

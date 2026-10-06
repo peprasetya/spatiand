@@ -531,6 +531,14 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-host") {
     application.run()
 }
 
+if let at = CommandLine.arguments.firstIndex(of: "--selftest-focus") {
+    let args = Array(CommandLine.arguments[(at + 1)...])
+    FocusTest.run(app: args.first ?? "TextEdit", title: args.dropFirst().first ?? "")
+}
+if let at = CommandLine.arguments.firstIndex(of: "--selftest-panel") {
+    let args = Array(CommandLine.arguments[(at + 1)...])
+    PanelTest.run(app: args.first ?? "TextEdit", title: args.dropFirst().first ?? "")
+}
 if let at = CommandLine.arguments.firstIndex(of: "--selftest-room") {
     let args = Array(CommandLine.arguments[(at + 1)...])
     guard args.count >= 3 else { print("usage: --selftest-room <address> <fingerprint> <app>"); exit(2) }

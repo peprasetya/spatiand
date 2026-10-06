@@ -62,4 +62,31 @@ enum MacInput {
         cg.flags = CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue) & 0xFFFF_0000)
         cg.postToPid(pid)
     }
+
+    // MARK: making a window the key one
+
+    private typealias PostRecord = @convention(c) (UnsafeRawPointer, UnsafeMutablePointer<UInt8>) -> Int32
+    private typealias ProcessForPID = @convention(c) (pid_t, UnsafeMutableRawPointer) -> Int32
+    private static let skyLight = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY)
+    private static let postRecord: PostRecord? = skyLight.flatMap { dlsym($0, "SLPSPostEventRecordTo") }.map { unsafeBitCast($0, to: PostRecord.self) }
+    private static let processForPID: ProcessForPID? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "GetProcessForPID").map { unsafeBitCast($0, to: ProcessForPID.self) }
+
+    /// Tell an application its window is the key one, without bringing it to the front: two event records, as
+    /// the window servers sends when a window is clicked. Without them a window that has been posted clicks
+    /// still looks inactive -- no caret, menus that close at once -- because as far as it knows, it is.
+    static func makeKey(window: CGWindowID, pid: pid_t) {
+        guard let postRecord, let processForPID else { return }
+        var psn = [UInt32](repeating: 0, count: 2)
+        guard processForPID(pid, &psn) == 0 else { return }
+        for kind: UInt8 in [0x01, 0x02] {
+            var bytes = [UInt8](repeating: 0, count: 0xF8)
+            bytes[0x04] = 0xF8
+            bytes[0x08] = kind
+            bytes[0x3A] = 0x10
+            var id = window
+            withUnsafeBytes(of: &id) { for i in 0..<4 { bytes[0x3C + i] = $0[i] } }
+            for i in 0..<16 { bytes[0x20 + i] = 0xFF }
+            _ = psn.withUnsafeBytes { postRecord($0.baseAddress!, &bytes) }
+        }
+    }
 }

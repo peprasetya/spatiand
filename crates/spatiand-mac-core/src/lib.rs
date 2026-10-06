@@ -28,6 +28,7 @@ pub mod look;
 pub mod pads;
 pub mod room;
 pub mod shell_ui;
+pub mod theme_icons;
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::PathBuf;
@@ -1062,6 +1063,17 @@ pub extern "C" fn sp_room_chrome_render(room: *mut RoomHandle, id: u32, width_px
     // SAFETY: as above.
     unsafe { std::slice::from_raw_parts_mut(out, rgba.len()).copy_from_slice(&rgba) };
     1
+}
+
+/// The Deck's pointer over a window's frame: a double arrow, pointing left and right. White, straight RGBA.
+#[no_mangle]
+pub extern "C" fn sp_resize_cursor(size: u32, out: *mut u8) {
+    if out.is_null() || size == 0 || size > 512 {
+        return;
+    }
+    let image = look::resize_cursor_image(size);
+    // SAFETY: `size * size * 4` writable bytes, by the contract.
+    unsafe { std::slice::from_raw_parts_mut(out, image.len()).copy_from_slice(&image) };
 }
 
 /// The Deck's pointer: a dot in a ring. White, straight RGBA, `size * size * 4` bytes.

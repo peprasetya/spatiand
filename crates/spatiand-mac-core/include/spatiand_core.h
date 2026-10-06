@@ -154,6 +154,7 @@ char *sp_shell_type(sp_room *room, const char *text, int32_t backspace, int32_t 
 
 // The Deck's pointer: a dot in a ring, white, size * size * 4 bytes of straight RGBA.
 void sp_reticle(uint32_t size, uint8_t *out);
+void sp_resize_cursor(uint32_t size, uint8_t *out);
 
 void sp_room_begin_grab(sp_room *room, uint32_t id);
 void sp_room_drag(sp_room *room);

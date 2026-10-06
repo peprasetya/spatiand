@@ -29,9 +29,13 @@
 import AppKit
 import Carbon.HIToolbox
 
-final class InputWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
+/// The window that covers the Mac's screen to take its mouse. A panel that does not activate Spatiand when it is
+/// clicked, so that a window of this Mac can be the active application, with the keyboard, while the pointer is
+/// still Spatiand's: `keyable` is whether Spatiand itself has the keyboard.
+final class InputWindow: NSPanel {
+    var keyable = true
+    override var canBecomeKey: Bool { keyable }
+    override var canBecomeMain: Bool { keyable }
 }
 
 final class InputView: NSView {
@@ -52,6 +56,13 @@ final class InputView: NSView {
         wantsRestingTouches = false
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    // The pointer moves are heard even when another application is the active one.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self, userInfo: nil))
+    }
 
     /// Whether three or more fingers are down, in which case the pointer is the gesture's and does not move.
     var gesturing: Bool { recognizer.active }
@@ -162,8 +173,11 @@ final class RoomInput: NSObject, NSWindowDelegate {
 
     func start() {
         guard !capturing, let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-        let w = InputWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        let w = InputWindow(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
+        w.isFloatingPanel = true
+        w.hidesOnDeactivate = false
+        w.becomesKeyOnlyIfNeeded = false
         w.level = .screenSaver
         // Nearly invisible, but not clear: a window that is wholly transparent hears nothing.
         w.backgroundColor = NSColor(white: 0, alpha: 0.004)
@@ -199,12 +213,71 @@ final class RoomInput: NSObject, NSWindowDelegate {
         CGAssociateMouseAndMouseCursorPosition(0)
         CGDisplayHideCursor(CGMainDisplayID())
         capturing = true
+        chords.onChord = { [weak self] key in self?.chord(key) }
+        chords.enable()
+        watcher = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            self?.activated(note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
+        }
         onChange?()
+    }
+
+    private let chords = RoomChords()
+    private var watcher: NSObjectProtocol?
+    /// The application of this Mac that has the keyboard, when it is not Spatiand.
+    private var keyboardOwner: pid_t?
+
+    /// A chord asked of the system, for when another application has the keyboard.
+    private func chord(_ key: Int) {
+        switch key {
+        case Int(kVK_ANSI_G): stop()
+        case Int(kVK_ANSI_R): controller.recentre()
+        case Int(kVK_ANSI_P): controller.togglePin()
+        case Int(kVK_ANSI_B): controller.bringAimedHere()
+        case Int(kVK_ANSI_C): controller.nextCorner()
+        case Int(kVK_ANSI_S): controller.toggleSize()
+        case Int(kVK_ANSI_W): controller.closeAimed()
+        default: break
+        }
+    }
+
+    /// Another application has come to the front of its own accord -- the wearer switched with Command-Tab --
+    /// and that is a way of asking for the Mac back.
+    private func activated(_ app: NSRunningApplication?) {
+        guard capturing, let owner = keyboardOwner, let app else { return }
+        if app.processIdentifier != owner, app.processIdentifier != ProcessInfo.processInfo.processIdentifier { stop() }
+    }
+
+    /// A window of this Mac has the keyboard: its application is made the active one and the window its key
+    /// window, so it behaves as a window in front does -- a caret, selection, menus that stay open -- while
+    /// the pointer is still Spatiand's.
+    func giveKeyboard(to info: MacWindowInfo) {
+        guard capturing else { return }
+        keyboardOwner = info.pid
+        window?.keyable = false
+        NSRunningApplication(processIdentifier: info.pid)?.activate()
+        if let ax = MacWindows.axWindow(info) {
+            AXUIElementSetAttributeValue(ax, kAXMainAttribute as CFString, kCFBooleanTrue)
+            AXUIElementPerformAction(ax, kAXRaiseAction as CFString)
+        }
+    }
+
+    /// Spatiand has the keyboard again: for a host's window, or a menu.
+    func takeKeyboard() {
+        guard capturing, let w = window else { return }
+        keyboardOwner = nil
+        w.keyable = true
+        NSApp.activate(ignoringOtherApps: true)
+        w.makeKeyAndOrderFront(nil)
+        w.makeFirstResponder(w.contentView)
     }
 
     func stop() {
         guard capturing else { return }
         capturing = false
+        chords.disable()
+        if let watcher { NSWorkspace.shared.notificationCenter.removeObserver(watcher) }
+        watcher = nil
+        keyboardOwner = nil
         CGAssociateMouseAndMouseCursorPosition(1)
         CGDisplayShowCursor(CGMainDisplayID())
         window?.delegate = nil
@@ -216,6 +289,7 @@ final class RoomInput: NSObject, NSWindowDelegate {
 
     /// Switching to another app is a way of asking for the Mac back.
     func windowDidResignKey(_ note: Notification) {
-        if capturing { stop() }
+        // Not when a window of this Mac was given the keyboard on purpose.
+        if capturing, keyboardOwner == nil { stop() }
     }
 }

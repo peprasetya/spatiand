@@ -42,14 +42,17 @@ const SCROLL_THUMB: [f32; 4] = [0.42, 0.68, 1.0, 0.70];
 
 /// The panels the menus use, in the room's panel ids.
 pub const CARD_ID: u32 = 0xFFF2;
+/// A launcher bubble's glass is drawn by the renderer from its picture (the icon); the focused one has its own
+/// range of ids so the renderer knows to light it. The names under them are plain panels.
 pub const BUBBLE_FIRST: u32 = 0xFF10;
+pub const BUBBLE_FOCUSED_FIRST: u32 = 0xFF20;
 pub const DOT_FIRST: u32 = 0xFF30;
+pub const LABEL_FIRST: u32 = 0xFF40;
 
 /// The card's picture is this many pixels for each of the Deck's logical ones.
 const CARD_SCALE: f32 = 1.5;
 /// A bubble's picture, and the room under its disc for the label.
 const BUBBLE_PX: u32 = 256;
-const LABEL_PX: u32 = 84;
 
 /// What a pointer or a press found on a menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -326,24 +329,37 @@ impl ShellUi {
         let mut specs = Vec::new();
         for (index, placement) in &placements {
             let Some((label, icon_name)) = bubbles.get(*index) else { continue };
-            let icon = self.icons.get(label).or_else(|| icon_name.as_ref().and_then(|n| self.icons.get(n))).cloned();
+            // The application's own picture, or the computer or group's drawn one, or its first letter.
+            let icon = self
+                .icons
+                .get(label)
+                .or_else(|| icon_name.as_ref().and_then(|n| self.icons.get(n)))
+                .cloned()
+                .or_else(|| icon_name.as_deref().and_then(crate::theme_icons::themed).map(|(w, h, px)| (w, h, Arc::new(px))));
             let focused = *index == cursor;
-            let (w, h, rgba) = bubble_image(label, icon, focused);
             let diameter = BUBBLE_DIAMETER_M * placement.scale as f64;
-            // The picture is a square for the glass with room under it for the label: its width in metres is
-            // the glass's, its height follows, and its middle is lower than the glass's middle by half
-            // the label's share.
-            let picture_height_m = diameter * h as f64 / BUBBLE_PX as f64;
-            let drop_m = (picture_height_m - diameter) * 0.5;
-            let id = BUBBLE_FIRST + *index as u32 % 16;
+            let id = if focused { BUBBLE_FOCUSED_FIRST } else { BUBBLE_FIRST } + *index as u32 % 16;
             specs.push((id, *index, PanelSpec {
                 id,
-                image: Image { width: w, height: h, rgba: Arc::new(rgba) },
-                width_m: diameter * w as f64 / BUBBLE_PX as f64,
+                image: Image { width: BUBBLE_PX, height: BUBBLE_PX, rgba: Arc::new(icon_image(label, icon)) },
+                width_m: diameter,
                 yaw: placement.yaw as f64,
-                pitch: placement.pitch as f64 - (drop_m / placement.radius as f64),
+                pitch: placement.pitch as f64,
                 radius: placement.radius as f64,
             }));
+            // The name, clear of the glass even when it is the focused one and larger.
+            let (lw, lh, label_rgba) = label_image(label, focused);
+            let label_height_m = LABEL_HEIGHT_M;
+            let drop = diameter * 0.5 + 0.022 + label_height_m * 0.5;
+            let lid = LABEL_FIRST + *index as u32 % 16;
+            self.images.insert(lid, PanelSpec {
+                id: lid,
+                image: Image { width: lw, height: lh, rgba: Arc::new(label_rgba) },
+                width_m: label_height_m * lw as f64 / lh as f64,
+                yaw: placement.yaw as f64,
+                pitch: placement.pitch as f64 - drop / placement.radius as f64,
+                radius: placement.radius as f64,
+            });
         }
         for (id, index, spec) in specs {
             self.bubbles.insert(id, index);
@@ -403,59 +419,40 @@ pub fn premultiply(mut rgba: Vec<u8>) -> Vec<u8> {
     rgba
 }
 
-/// A launcher bubble: a disc of glass with the application's picture in it and its name under. Not the
-/// Deck's refracting sphere, which bends the room behind it, but the same glass: dark and blue, a lit
-/// rim, a soft highlight, and brighter when it is the one the cursor is on.
-fn bubble_image(label: &str, icon: Option<(u32, u32, Arc<Vec<u8>>)>, focused: bool) -> (u32, u32, Vec<u8>) {
-    let (w, h) = (BUBBLE_PX * 3 / 2, BUBBLE_PX + LABEL_PX);
-    let mut canvas = vec![0u8; (w * h * 4) as usize];
-    let (cx, cy, r) = (w as f32 * 0.5, BUBBLE_PX as f32 * 0.5, BUBBLE_PX as f32 * 0.5 - 6.0);
-    for y in 0..BUBBLE_PX {
-        for x in 0..w {
-            let (dx, dy) = ((x as f32 + 0.5 - cx) / r, (y as f32 + 0.5 - cy) / r);
-            let d = (dx * dx + dy * dy).sqrt();
-            let cover = ((1.0 - d) * r + 0.5).clamp(0.0, 1.0);
-            if cover <= 0.0 {
-                continue;
-            }
-            // Dark glass, lighter towards the top, a bright rim, and a highlight up and to the left.
-            let body = 0.10 + 0.10 * (0.5 - dy * 0.5);
-            let rim = ((d - 0.86) / 0.14).clamp(0.0, 1.0).powf(1.5) * if focused { 0.75 } else { 0.40 };
-            let spec = (1.0 - ((dx + 0.38).powi(2) + (dy + 0.42).powi(2)).sqrt() / 0.40).clamp(0.0, 1.0).powf(2.0) * 0.34;
-            let tint = if focused { [0.62, 0.78, 1.0] } else { [0.50, 0.62, 0.85] };
-            let a = (0.50 + rim * 0.5 + spec * 0.4).clamp(0.0, 1.0) * cover;
-            let i = ((y * w + x) * 4) as usize;
-            let lit = body + rim + spec;
-            over(&mut canvas[i..i + 4], [(tint[0] * lit).min(1.0), (tint[1] * lit).min(1.0) + 0.02, (tint[2] * lit).min(1.0), a]);
-        }
-    }
-    // The picture, or the name's first letter when there is none.
+/// How tall a bubble's name is, metres.
+const LABEL_HEIGHT_M: f64 = 0.034;
+
+/// What goes inside a bubble's glass: the application's picture over the whole square, or its first letter.
+/// The glass itself is the renderer's, as the Deck's is: it refracts the room behind it.
+fn icon_image(label: &str, icon: Option<(u32, u32, Arc<Vec<u8>>)>) -> Vec<u8> {
+    let mut canvas = vec![0u8; (BUBBLE_PX * BUBBLE_PX * 4) as usize];
+    let side = BUBBLE_PX as f32;
     match icon {
-        Some((iw, ih, pixels)) => {
-            let side = r * 1.15;
-            chrome::blit(&mut canvas, w, h, &pixels, iw, ih, cx - side * 0.5, cy - side * 0.5, side, side, [1.0; 4]);
-        }
+        Some((iw, ih, pixels)) => chrome::blit(&mut canvas, BUBBLE_PX, BUBBLE_PX, &pixels, iw, ih, 0.0, 0.0, side, side, [1.0; 4]),
         None => {
             let initial: String = label.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
-            let image = chrome::text_image(&initial, r * 1.1, 256, [235, 242, 255, 255]);
+            let image = chrome::text_image(&initial, side * 0.6, 256, [255, 255, 255, 235]);
             if !image.is_empty() {
                 let (iw, ih) = (image.width as f32, image.height as f32);
-                chrome::blit(&mut canvas, w, h, &image.rgba, image.width, image.height, cx - iw * 0.5, cy - ih * 0.5, iw, ih, [1.0; 4]);
+                chrome::blit(&mut canvas, BUBBLE_PX, BUBBLE_PX, &image.rgba, image.width, image.height, (side - iw) * 0.5, (side - ih) * 0.5, iw, ih, [1.0; 4]);
             }
         }
     }
-    // The name, centred under the glass; a long one is shrunk to the room there is. On a plate of dark
-    // glass, so it reads over a page as well as over the sky.
-    let name = chrome::text_image(label, LABEL_PX as f32 * 0.52, w * 4, [226, 234, 250, if focused { 255 } else { 215 }]);
-    if !name.is_empty() {
-        let (mut nw, mut nh) = (name.width as f32, name.height as f32);
-        if nw > w as f32 - 24.0 {
-            nh *= (w as f32 - 24.0) / nw;
-            nw = w as f32 - 24.0;
-        }
-        round_rect(&mut canvas, w, h, cx - nw * 0.5 - 12.0, BUBBLE_PX as f32 + (LABEL_PX as f32 - nh) * 0.5 - 8.0, nw + 24.0, nh + 8.0, (nh + 8.0) * 0.5, [0.04, 0.05, 0.08, 0.72]);
-        chrome::blit(&mut canvas, w, h, &name.rgba, name.width, name.height, cx - nw * 0.5, BUBBLE_PX as f32 + (LABEL_PX as f32 - nh) * 0.5 - 4.0, nw, nh, [1.0; 4]);
+    premultiply(canvas)
+}
+
+/// A bubble's name on a plate of dark glass, so it reads over a page as well as over the sky.
+fn label_image(label: &str, focused: bool) -> (u32, u32, Vec<u8>) {
+    let h = 64u32;
+    let name = chrome::text_image(label, h as f32 * 0.52, 1024, [226, 234, 250, if focused { 255 } else { 215 }]);
+    if name.is_empty() {
+        return (2, 2, vec![0; 16]);
     }
+    let w = name.width + 40;
+    let mut canvas = vec![0u8; (w * h * 4) as usize];
+    round_rect(&mut canvas, w, h, 0.0, 0.0, w as f32, h as f32, h as f32 * 0.5, [0.04, 0.05, 0.08, 0.72]);
+    let y = (h as f32 - name.height as f32) * 0.5;
+    chrome::blit(&mut canvas, w, h, &name.rgba, name.width, name.height, 20.0, y, name.width as f32, name.height as f32, [1.0; 4]);
     (w, h, premultiply(canvas))
 }
 

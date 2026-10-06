@@ -546,7 +546,7 @@ pub fn compose(look: &Look, width_px: u32) -> (u32, u32, Vec<u8>) {
         } else {
             faint(look.focused)
         };
-        button(frame.close(), disc_colour, &g.close, 0.92, if close_hot { [1.0; 4] } else { rest_glyph });
+        button(frame.close(), disc_colour, &g.close, 0.58, if close_hot { [1.0; 4] } else { rest_glyph });
 
         let hide_hot = hot(Zone::Hide);
         let disc_colour = if hide_hot {
@@ -556,7 +556,7 @@ pub fn compose(look: &Look, width_px: u32) -> (u32, u32, Vec<u8>) {
         } else {
             faint(look.focused)
         };
-        button(frame.hide(), disc_colour, &g.hide, 0.92, if hide_hot { [1.0; 4] } else { rest_glyph });
+        button(frame.hide(), disc_colour, &g.hide, 0.58, if hide_hot { [1.0; 4] } else { rest_glyph });
 
         let pin_hot = hot(Zone::Pin);
         let disc_colour = if pin_hot {
@@ -568,7 +568,7 @@ pub fn compose(look: &Look, width_px: u32) -> (u32, u32, Vec<u8>) {
         } else {
             faint(look.focused)
         };
-        button(frame.pin(), disc_colour, &g.pin, 1.04, if pin_hot || look.pinned { [1.0; 4] } else { rest_glyph });
+        button(frame.pin(), disc_colour, &g.pin, 0.70, if pin_hot || look.pinned { [1.0; 4] } else { rest_glyph });
 
         if let Some(muted) = look.sound {
             let mute_hot = hot(Zone::Mute);
@@ -582,7 +582,7 @@ pub fn compose(look: &Look, width_px: u32) -> (u32, u32, Vec<u8>) {
                 [0.80, 0.90, 1.0, 0.30]
             };
             let glyph = if muted { &g.speaker_off } else { &g.speaker };
-            button(frame.mute(), disc_colour, glyph, 0.92, if mute_hot || muted { [1.0; 4] } else { rest_glyph });
+            button(frame.mute(), disc_colour, glyph, 0.62, if mute_hot || muted { [1.0; 4] } else { rest_glyph });
         }
     }
     (cw, ch, canvas)
@@ -684,3 +684,4 @@ mod tests {
         assert!(ink > 20, "something is written in the bar: {ink}");
     }
 }
+

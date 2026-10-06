@@ -57,6 +57,13 @@ enum Settings {
     }
 
     /// Whether this Mac's mouse, trackpad and keyboard steer the room while the glasses are on.
+    /// Whether the Mac window that has the keyboard in the room is made the Mac's active one too, so that it
+    /// shows its caret and keeps its menus open. Off, its keys are posted at it while it stays in the background.
+    static var activateMacWindows: Bool {
+        get { defaults.object(forKey: "activateMacWindows") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "activateMacWindows") }
+    }
+
     static var captureInput: Bool {
         get { defaults.object(forKey: "captureInput") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "captureInput") }

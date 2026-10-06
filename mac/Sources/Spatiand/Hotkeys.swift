@@ -63,3 +63,42 @@ final class Hotkeys {
         if result == noErr, let ref { refs[chord] = ref }
     }
 }
+
+
+/// Ctrl-Option and a letter, registered while the room has the mouse and keyboard. With a window of this Mac
+/// in front the keyboard is that application's and Spatiand hears no keys of its own, so its chords are
+/// asked of the system instead.
+final class RoomChords {
+    var onChord: ((Int) -> Void)?
+    private var refs: [EventHotKeyRef] = []
+    private var handler: EventHandlerRef?
+    private static let keys = [kVK_ANSI_G, kVK_ANSI_R, kVK_ANSI_P, kVK_ANSI_B, kVK_ANSI_C, kVK_ANSI_S, kVK_ANSI_W]
+
+    func enable() {
+        disable()
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        let me = Unmanaged.passUnretained(self).toOpaque()
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, user in
+            guard let event, let user else { return noErr }
+            var id = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                              nil, MemoryLayout<EventHotKeyID>.size, nil, &id)
+            guard id.signature == OSType(0x5370_6143) else { return OSStatus(eventNotHandledErr) }   // 'SpaC'
+            let chords = Unmanaged<RoomChords>.fromOpaque(user).takeUnretainedValue()
+            DispatchQueue.main.async { chords.onChord?(Int(id.id)) }
+            return noErr
+        }, 1, &spec, me, &handler)
+        for key in Self.keys {
+            var ref: EventHotKeyRef?
+            let id = EventHotKeyID(signature: OSType(0x5370_6143), id: UInt32(key))
+            if RegisterEventHotKey(UInt32(key), UInt32(controlKey | optionKey), id, GetApplicationEventTarget(), 0, &ref) == noErr, let ref { refs.append(ref) }
+        }
+    }
+
+    func disable() {
+        for ref in refs { UnregisterEventHotKey(ref) }
+        refs = []
+        if let handler { RemoveEventHandler(handler) }
+        handler = nil
+    }
+}

@@ -143,16 +143,26 @@ final class MacCapture: NSObject, PictureSource, SCStreamOutput, SCStreamDelegat
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.showsCursor = false
         config.queueDepth = 3
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        config.minimumFrameInterval = CMTime(value: 1, timescale: wantFast ? 60 : 30)
         self.config = config
         configuredSize = window.frame.size
         let s = SCStream(filter: filter, configuration: config, delegate: self)
         try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "spatiand.maccapture", qos: .userInteractive))
         try await s.startCapture()
         stream = s
+        if wantFast, let config = self.config { config.minimumFrameInterval = CMTime(value: 1, timescale: 60); try? await s.updateConfiguration(config) }
     }
 
     enum CaptureError: Error { case gone }
+
+    /// The window in use is captured at the display's rate, the others at half of it.
+    private var wantFast = false
+    func setFast(_ fast: Bool) {
+        wantFast = fast
+        guard let stream, let config else { return }
+        config.minimumFrameInterval = CMTime(value: 1, timescale: fast ? 60 : 30)
+        Task { try? await stream.updateConfiguration(config) }
+    }
 
     func invalidate() {
         let s = stream
@@ -182,6 +192,8 @@ final class MacCapture: NSObject, PictureSource, SCStreamOutput, SCStreamDelegat
         cachedFrame = (rect, Date())
         return rect
     }
+
+    var frameSizePixels: CGSize { lastSize.width > 0 ? lastSize : CGSize(width: info.frame.width * scale, height: info.frame.height * scale) }
 
     /// Where a point of the captured picture, in pixels from its top left, is on the Mac's screen.
     func screenPoint(x: Double, y: Double) -> CGPoint {

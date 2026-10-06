@@ -18,12 +18,15 @@ final class RoomRenderer {
     private let windowPipeline: MTLRenderPipelineState
     private let cursorPipeline: MTLRenderPipelineState
     private let skyPipeline: MTLRenderPipelineState
+    private let bubblePipeline: MTLRenderPipelineState
     /// The Deck's studio: a dark sky, a key light, a horizon and a floor grid. What tells the eyes
     /// how far away the windows are; without it they hang in a void and read as flat.
     private var skyTexture: MTLTexture?
     private var cache: CVMetalTextureCache?
     private var cursorTexture: MTLTexture
     private let arrowTexture: MTLTexture
+    /// The double arrow over a window's frame.
+    private let resizeTexture: MTLTexture
     private let core: RoomCore
 
     /// Decoded pictures by window; owned by the main thread.
@@ -65,13 +68,15 @@ final class RoomRenderer {
             windowPipeline = try pipeline("vertex_room", "fragment_window", blend: false)
             cursorPipeline = try pipeline("vertex_room", "fragment_cursor", blend: true)
             skyPipeline = try pipeline("vertex_sky", "fragment_sky", blend: false)
+            bubblePipeline = try pipeline("vertex_room", "fragment_bubble", blend: true)
         } catch {
             print("room: could not build the shaders: \(error)")
             return nil
         }
         CVMetalTextureCacheCreate(nil, nil, device, nil, &cache)
-        guard let cursor = Self.makeCursor(device) else { return nil }
+        guard let cursor = Self.makeCursor(device), let resize = Self.makeCursor(device, resize: true) else { return nil }
         cursorTexture = cursor
+        resizeTexture = resize
         arrowTexture = cursor
         for _ in 0..<3 {
             guard let b = device.makeBuffer(length: Self.capacity * 4, options: .storageModeShared) else { return nil }
@@ -135,24 +140,53 @@ final class RoomRenderer {
         for id in Array(decoders.keys) { drop(id) }
     }
 
-    private func texture(for key: UInt32, keep: inout [CVMetalTexture]) -> MTLTexture? {
+    /// A Mac window's picture is captured at the display's density, which is more than the glasses show of
+    /// it: sampled straight, text shimmers as the head moves. So the newest picture is copied into a texture
+    /// with its smaller sizes, and sampled through those.
+    private var mips: [UInt16: (texture: MTLTexture, generation: Int)] = [:]
+
+    private func mipped(_ id: UInt16, _ source: MTLTexture, generation: Int, commands: MTLCommandBuffer) -> MTLTexture {
+        var entry = mips[id]
+        if entry == nil || entry!.texture.width != source.width || entry!.texture.height != source.height {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: source.width, height: source.height, mipmapped: true)
+            d.usage = .shaderRead
+            d.storageMode = .private
+            guard let texture = device.makeTexture(descriptor: d) else { return source }
+            entry = (texture, -1)
+        }
+        guard var entry else { return source }
+        if entry.generation != generation, let blit = commands.makeBlitCommandEncoder() {
+            blit.copy(from: source, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                      sourceSize: MTLSize(width: source.width, height: source.height, depth: 1),
+                      to: entry.texture, destinationSlice: 0, destinationLevel: 0, destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
+            blit.generateMipmaps(for: entry.texture)
+            blit.endEncoding()
+            entry.generation = generation
+        }
+        mips[id] = entry
+        return entry.texture
+    }
+
+    private func texture(for key: UInt32, keep: inout [CVMetalTexture], commands: MTLCommandBuffer) -> MTLTexture? {
         if let panel = panels[key] { return panel }
         // A title bar that has no picture yet is not drawn; a window's id is 16 bits.
         guard key < 0x10000 else { return nil }
         let id = UInt16(key)
         guard let cache, let (buffer, generation) = decoders[id]?.current() else { return nil }
+        let isMac = MacWindows.isMac(id)
         if let hit = cached[id], hit.generation == generation {
             keep.append(hit.texture)
-            return CVMetalTextureGetTexture(hit.texture)
+            guard let texture = CVMetalTextureGetTexture(hit.texture) else { return nil }
+            return isMac ? mipped(id, texture, generation: generation, commands: commands) : texture
         }
         var made: CVMetalTexture?
         let status = CVMetalTextureCacheCreateTextureFromImage(
             nil, cache, buffer, nil, .bgra8Unorm,
             CVPixelBufferGetWidth(buffer), CVPixelBufferGetHeight(buffer), 0, &made)
-        guard status == kCVReturnSuccess, let made else { return nil }
+        guard status == kCVReturnSuccess, let made, let texture = CVMetalTextureGetTexture(made) else { return nil }
         cached[id] = (generation, made)
         keep.append(made)
-        return CVMetalTextureGetTexture(made)
+        return isMac ? mipped(id, texture, generation: generation, commands: commands) : texture
     }
 
     private func skyMatrices() -> [Float] { core.skyMatrices() }
@@ -172,6 +206,11 @@ final class RoomRenderer {
             return
         }
         var keep: [CVMetalTexture] = []
+        // Textures are looked up once per window, not once per eye.
+        var textures: [UInt32: MTLTexture] = [:]
+        for draw in frame.draws where draw.window != RoomCore.cursor {
+            if let t = texture(for: draw.window, keep: &keep, commands: commands) { textures[draw.window] = t }
+        }
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = target
         pass.colorAttachments[0].loadAction = .clear
@@ -184,12 +223,6 @@ final class RoomRenderer {
         let width = target.width, height = target.height
         let eyes = sideBySide ? 2 : 1
         let eyeWidth = width / eyes
-
-        // Textures are looked up once per window, not once per eye.
-        var textures: [UInt32: MTLTexture] = [:]
-        for draw in frame.draws where draw.window != RoomCore.cursor {
-            if let t = texture(for: draw.window, keep: &keep) { textures[draw.window] = t }
-        }
 
         let sky = Settings.studio ? skyMatrices() : nil
         for eye in 0..<eyes {
@@ -210,6 +243,16 @@ final class RoomRenderer {
 
             for draw in frame.draws where draw.window != RoomCore.cursor {
                 guard let texture = textures[draw.window] else { continue }
+                if (0xFF10...0xFF2F).contains(draw.window) {
+                    // A launcher bubble: glass that bends the room behind it, as the Deck's does.
+                    var bubble = bubbleParams(draw, floats, focused: draw.window >= 0xFF20)
+                    encoder.setRenderPipelineState(bubblePipeline)
+                    encoder.setFragmentBytes(&bubble, length: 16, index: 0)
+                    encoder.setFragmentTexture(texture, index: 0)
+                    encoder.setFragmentTexture(skyTexture ?? arrowTexture, index: 1)
+                    encoder.drawPrimitives(type: .triangle, vertexStart: draw.first, vertexCount: draw.count)
+                    continue
+                }
                 if draw.window & 0x10000 != 0 || (draw.window >= UInt32(RoomCore.panelFirst) && draw.window != RoomCore.cursor) {
                     // A window's frame, or one of the menus: glass and rounded cards, with edges that are not there.
                     encoder.setRenderPipelineState(cursorPipeline)
@@ -224,7 +267,7 @@ final class RoomRenderer {
 
             encoder.setRenderPipelineState(cursorPipeline)
             for draw in frame.draws where draw.window == RoomCore.cursor {
-                encoder.setFragmentTexture(cursorTexture, index: 0)
+                encoder.setFragmentTexture(draw.aimed ? resizeTexture : cursorTexture, index: 0)
                 encoder.drawPrimitives(type: .triangle, vertexStart: draw.first, vertexCount: draw.count)
             }
         }
@@ -237,6 +280,18 @@ final class RoomRenderer {
         }
         commands.commit()
         framesDrawn += 1
+    }
+
+    /// Where a bubble is and whether it is the one pointed at: its middle, from its own corners, and a flag.
+    private func bubbleParams(_ draw: RoomCore.Draw, _ floats: UnsafeMutablePointer<Float>, focused: Bool) -> [Float] {
+        var sum: (Float, Float, Float) = (0, 0, 0)
+        let count = max(1, Int(draw.count))
+        for i in 0..<count {
+            let v = (Int(draw.first) + i) * 5
+            sum.0 += floats[v]; sum.1 += floats[v + 1]; sum.2 += floats[v + 2]
+        }
+        let n = Float(count)
+        return [sum.0 / n, sum.1 / n, sum.2 / n, focused ? 1 : 0]
     }
 
     /// One frame as an image, for looking at without glasses.
@@ -267,10 +322,10 @@ final class RoomRenderer {
 
     /// The Deck's pointer: a dot in a ring. Pale green, which is the colour the Deck gives a mouse's, so
     /// it is told from a thumb's.
-    private static func makeCursor(_ device: MTLDevice) -> MTLTexture? {
+    private static func makeCursor(_ device: MTLDevice, resize: Bool = false) -> MTLTexture? {
         let size = 64
         var pixels = [UInt8](repeating: 0, count: size * size * 4)
-        sp_reticle(UInt32(size), &pixels)
+        if resize { sp_resize_cursor(UInt32(size), &pixels) } else { sp_reticle(UInt32(size), &pixels) }
         let tint: [Float] = [0.62, 1.0, 0.72]
         for i in stride(from: 0, to: pixels.count, by: 4) {
             let a = Float(pixels[i + 3]) / 255
@@ -329,11 +384,65 @@ final class RoomRenderer {
         return float4(sky.sample(around, float2(u, v)).rgb, 1.0);
     }
 
+    constexpr sampler mipped(filter::linear, mip_filter::linear, address::clamp_to_edge, max_anisotropy(8));
+
     fragment float4 fragment_window(Varying in [[stage_in]],
                                     texture2d<float> picture [[texture(0)]],
                                     constant float &brightness [[buffer(0)]]) {
-        float4 c = picture.sample(linear_clamped, in.uv);
+        float4 c = picture.sample(mipped, in.uv);
         return float4(c.rgb * brightness, 1.0);
+    }
+
+    // The Deck's glass bubble: an implicit hemisphere that refracts the sky behind it, mirrors it at the
+    // rim by Fresnel, takes a highlight, and holds the application's icon inside.
+    struct Bubble { packed_float3 centre; float focus; };
+
+    float3 environment(texture2d<float> sky, float3 dir) {
+        constexpr sampler around(filter::linear, address::repeat);
+        float azimuth = atan2(-dir.y, dir.x);
+        float u = 0.5 + azimuth / (2.0 * M_PI_F);
+        float v = 0.5 - asin(clamp(dir.z, -1.0, 1.0)) / M_PI_F;
+        return sky.sample(around, float2(u, v), level(0)).rgb;
+    }
+
+    fragment float4 fragment_bubble(Varying in [[stage_in]],
+                                    texture2d<float> icon [[texture(0)]],
+                                    texture2d<float> sky [[texture(1)]],
+                                    constant Bubble &bubble [[buffer(0)]]) {
+        float2 p = float2(in.uv.x, 1.0 - in.uv.y) * 2.0 - 1.0;
+        float r2 = dot(p, p);
+        if (r2 > 1.0) { discard_fragment(); }
+        float r = sqrt(r2);
+        float z = sqrt(max(1.0 - r2, 0.0));
+        float3 d = normalize(float3(bubble.centre));
+        float3 right = normalize(cross(d, float3(0, 0, 1)));
+        float3 up = cross(right, d);
+        // Facing the viewer: the surface's normal points back along the line of sight where p is zero.
+        float3 normal = normalize(right * p.x + up * p.y - d * z);
+        float focus = bubble.focus;
+
+        float facing = clamp(dot(normal, -d), 0.0, 1.0);
+        float fresnel = 0.04 + 0.96 * pow(1.0 - facing, 5.0);
+        float3 refracted = refract(d, normal, 1.0 / 1.45);
+        if (dot(refracted, refracted) < 1e-6) { refracted = d; }
+        float3 colour = mix(environment(sky, refracted), environment(sky, reflect(d, normal)), fresnel);
+
+        float3 light = normalize(float3(-0.55, 0.6, 0.58));
+        float specular = pow(clamp(dot(normal, light), 0.0, 1.0), 48.0);
+        float edge = smoothstep(0.72, 1.0, r);
+        colour += float3(specular) * (0.5 + 0.5 * focus);
+        colour += float3(0.62, 0.78, 1.0) * edge * (0.10 + 0.55 * focus);
+        colour *= 1.0 - 0.25 * smoothstep(0.0, -1.0, p.y) * (1.0 - edge);
+
+        float2 icon_uv = (in.uv - 0.5) / 0.62 + 0.5;
+        if (all(icon_uv >= float2(0.0)) && all(icon_uv <= float2(1.0))) {
+            float4 i = icon.sample(linear_clamped, icon_uv);
+            // The picture is premultiplied.
+            colour = colour * (1.0 - i.a) + i.rgb + float3(specular * 0.6) * i.a;
+        }
+        float alpha = (0.55 + 0.35 * focus) * (1.0 - smoothstep(0.985, 1.0, r));
+        alpha = clamp(alpha + fresnel * 0.35, 0.0, 1.0);
+        return float4(colour * alpha, alpha);
     }
 
     fragment float4 fragment_cursor(Varying in [[stage_in]],

@@ -270,22 +270,32 @@ final class RoomController {
     }
 
     /// Once a frame: what the bars say, if that has changed.
-    private var compassSaid = Date.distantPast
-    private var compassChecked = Date.distantPast
+    private var captureFocus: UInt16?
+    private var keyOwner: UInt16?
+
+    /// Who has this Mac's keyboard: the window in front of the wearer if it is one of this Mac's, which is
+    /// then made the active window; otherwise Spatiand, which sends the keys to a host's window or a menu.
+    private func syncKeyboard() {
+        guard input.capturing else { keyOwner = nil; return }
+        var want: UInt16?
+        if Settings.activateMacWindows, !menu.isOpen, let id = core.focused, MacWindows.isMac(id), macCaptures[id] != nil { want = id }
+        guard want != keyOwner else { return }
+        keyOwner = want
+        if let id = want, let capture = macCaptures[id] { input.giveKeyboard(to: capture.info) } else { input.takeKeyboard() }
+    }
 
     func tick() {
+        syncKeyboard()
+        // Only the window being used is captured at the display's rate; the rest at half of it, which is
+        // what keeps this Mac's fan quiet with several windows in the room.
+        let focusedNow = core.focused
+        if focusedNow != captureFocus {
+            captureFocus = focusedNow
+            for (id, capture) in macCaptures { capture.setFast(id == focusedNow) }
+        }
         updateSound()
         titles.update()
         menu.update()
-        // Until the glasses have measured their own magnetic field the view drifts: say what helps, now and
-        // then, and stop once it is done.
-        if active, drivesGlasses, Date().timeIntervalSince(compassChecked) > 2 {
-            compassChecked = Date()
-            if core.hasHead, !core.compassReady, Date().timeIntervalSince(compassSaid) > 150 {
-                compassSaid = Date()
-                hint.say("Look up, down and all around for a minute or two. The glasses are learning their compass, and the view stops drifting once they have.")
-            }
-        }
     }
 
     /// The host's windows are gone with the session; this Mac's own stay.
@@ -535,15 +545,42 @@ final class RoomController {
         hint.update()
     }
 
+    private var lastMacMove = (at: Date.distantPast, point: CGPoint.zero)
+    private var trailingMove: DispatchWorkItem?
+
+    /// The pointer over, or dragged across, a window of this Mac. The head turns the pointer sixty times a
+    /// second, and an application that is told each time spends its own time on hover states and redraws
+    /// that nobody sees: so it is told at most every few milliseconds, and the last place always arrives.
     private func macMouse(_ id: UInt16, held: Bool, _ x: Double, _ y: Double) {
         guard let capture = macCaptures[id] else { return }
-        let type: CGEventType = held ? (pressedButton == 0x111 ? .rightMouseDragged : .leftMouseDragged) : .mouseMoved
-        MacInput.mouse(type, button: pressedButton == 0x111 ? .right : .left, at: capture.screenPoint(x: x, y: y),
-                       clicks: 1, window: capture.info.windowID, pid: capture.info.pid)
+        let point = capture.screenPoint(x: x, y: y)
+        let right = pressedButton == 0x111
+        let type: CGEventType = held ? (right ? .rightMouseDragged : .leftMouseDragged) : .mouseMoved
+        let send = { [weak self] in
+            self?.lastMacMove = (Date(), point)
+            MacInput.mouse(type, button: right ? .right : .left, at: point, clicks: 1, window: capture.info.windowID, pid: capture.info.pid)
+        }
+        trailingMove?.cancel()
+        let since = Date().timeIntervalSince(lastMacMove.at)
+        let moved = hypot(point.x - lastMacMove.point.x, point.y - lastMacMove.point.y)
+        if moved < 0.5 { return }
+        if since >= (held ? 0.008 : 0.025) {
+            send()
+        } else {
+            let item = DispatchWorkItem(block: send)
+            trailingMove = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03, execute: item)
+        }
     }
 
     private func macClick(_ id: UInt16, button: Int, down: Bool, _ x: Double, _ y: Double) {
         guard let capture = macCaptures[id] else { return }
+        trailingMove?.cancel()
+        let there = capture.screenPoint(x: x, y: y)
+        if down, hypot(there.x - lastMacMove.point.x, there.y - lastMacMove.point.y) >= 0.5 {
+            MacInput.mouse(.mouseMoved, button: .left, at: there, clicks: 1, window: capture.info.windowID, pid: capture.info.pid)
+        }
+        lastMacMove = (Date(), there)
         let point = capture.screenPoint(x: x, y: y)
         var clicks = 1
         if down {

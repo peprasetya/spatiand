@@ -52,6 +52,17 @@ enum RoomTest {
                 after(1) { print("mac window size: \(before.map { "\(Int($0.width))x\(Int($0.height))" } ?? "?") -> \(MacWindows.currentFrame(info).map { "\(Int($0.width))x\(Int($0.height))" } ?? "?")") }
                 after(1.5) { print("text now: \(MacWindows.text(info) ?? "?")") }
             }
+            if env["SPATIAND_TEST_KEYMODE"] != nil {
+                // The room takes the mouse and keyboard with a window of this Mac in front: that window's
+                // application should then be the active one, and Spatiand's panel should still be there.
+                after(4.5) { room.input.start() }
+                after(5) { room.tick() }
+                after(7) {
+                    let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
+                    print("keymode: capturing \(room.input.capturing), the front application is \(front)")
+                    room.input.stop()
+                }
+            }
             after(8) {
                 let a = room.core.aim()
                 print("aim: window \(a.window.map { String($0, radix: 16) } ?? "none") at \(Int(a.x)),\(Int(a.y))")

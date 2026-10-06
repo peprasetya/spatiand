@@ -274,3 +274,47 @@ pub fn reticle_image(size: u32) -> Vec<u8> {
     out
 }
 
+
+/// The pointer over a window's frame: a double arrow, to be turned to lie across the edge.
+pub fn resize_cursor_image(size: u32) -> Vec<u8> {
+    let mut out = vec![0u8; (size * size * 4) as usize];
+    let centre = (size as f32 - 1.0) * 0.5;
+    let radius = centre;
+    for y in 0..size {
+        for x in 0..size {
+            let dx = (x as f32 - centre) / radius;
+            let dy = (y as f32 - centre) / radius;
+            // The shaft: a thin horizontal bar stopping short of the ends.
+            let shaft = if dx.abs() < 0.62 && dy.abs() < 0.07 {
+                1.0 - (dy.abs() / 0.07)
+            } else {
+                0.0
+            };
+            // A head at each end. Written as a triangle that narrows towards the tip, so the
+            // two arrows read as pointing outwards rather than as a barbell.
+            let head = |tip: f32| {
+                let along = (dx - tip).abs();
+                let depth = 0.30;
+                if along > depth {
+                    return 0.0;
+                }
+                let half = 0.26 * (1.0 - along / depth);
+                if dy.abs() > half {
+                    0.0
+                } else {
+                    1.0
+                }
+            };
+            let a = shaft.max(head(-0.70)).max(head(0.70)).clamp(0.0, 1.0);
+            if a <= 0.0 {
+                continue;
+            }
+            let i = ((y * size + x) * 4) as usize;
+            out[i] = 255;
+            out[i + 1] = 255;
+            out[i + 2] = 255;
+            out[i + 3] = (a * 255.0) as u8;
+        }
+    }
+    out
+}

@@ -1275,6 +1275,25 @@ impl Room {
         let right = to_eye.cross(DVec3::Z).normalize_or_zero();
         let right = if right == DVec3::ZERO { DVec3::Y } else { right };
         let up = right.cross(to_eye).normalize_or_zero();
+        // Over a window's frame the pointer is a double arrow across the edge, centred on the point, turned
+        // to lie along the way the edge can be pulled.
+        let resizing = match aim.zone {
+            Some(Zone::Resize(edge)) => Some(match edge {
+                Edge::Left | Edge::Right => 0.0f64,
+                Edge::Bottom => 90.0,
+                // On the left a bottom corner is pulled down and to the left, on the right down and right.
+                Edge::BottomLeft => 45.0,
+                Edge::BottomRight => -45.0,
+            }),
+            _ => None,
+        };
+        let (width, height, hot_x, hot_y, right, up) = if let Some(degrees) = resizing {
+            let side = distance * 0.026 * 1.6;
+            let (s, c) = degrees.to_radians().sin_cos();
+            (side, side, side * 0.5 / unit, side * 0.5 / unit, right * c + up * s, up * c - right * s)
+        } else {
+            (width, height, hot_x, hot_y, right, up)
+        };
         // The hot spot is the point itself, a little in front of the surface so it is not buried in it.
         let tip = aim.point + to_eye * 0.01;
         let tl = tip - right * (hot_x * unit) + up * (hot_y * unit);
@@ -1289,7 +1308,7 @@ impl Room {
         ] {
             verts.extend_from_slice(&v);
         }
-        draws.push(Draw { window: CURSOR, first, count: 6, focused: false, aimed: false, pinned: false });
+        draws.push(Draw { window: CURSOR, first, count: 6, focused: false, aimed: resizing.is_some(), pinned: false });
 
         Frame { vertices: verts, draws, eyes: self.eye_matrices() }
     }
@@ -1320,6 +1339,19 @@ mod tests {
         let mut r = Room::new();
         r.set_fixed_head(Some(DQuat::IDENTITY));
         r
+    }
+
+    #[test]
+    fn over_a_windows_frame_the_pointer_is_the_double_arrow_and_over_its_surface_the_reticle() {
+        let mut r = room();
+        r.set_window(1, (1280, 800));
+        r.show(1);
+        let half = r.windows()[0].place.width / 2.0 / DEFAULT_RADIUS;
+        let last = |r: &Room| *r.frame().draws.last().unwrap();
+        r.cursor = (-(half + 0.02), 0.0);
+        assert!(last(&r).aimed, "on the frame");
+        r.cursor = (0.0, 0.0);
+        assert!(!last(&r).aimed, "on the surface");
     }
 
     #[test]
