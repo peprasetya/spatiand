@@ -90,6 +90,64 @@ final class RoomController {
     /// Applications whose pictures the menus already have.
     private var iconsSent: Set<String> = []
 
+    /// An application of this Mac that is installed, for the launcher.
+    struct InstalledApp { let id: String; let name: String; let url: URL }
+    private var installed: [InstalledApp] = []
+    private var installedIcons: [String: [UInt8]] = [:]
+    private var installedScannedAt = Date.distantPast
+    private var scanning = false
+
+    private func refreshInstalled() {
+        guard !scanning, Date().timeIntervalSince(installedScannedAt) > 60 else { return }
+        scanning = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let apps = Self.installedApplications()
+            var icons: [String: [UInt8]] = [:]
+            for app in apps {
+                if let pixels = Self.pixels(of: NSWorkspace.shared.icon(forFile: app.url.path), side: 128) { icons[app.id] = pixels }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.installed = apps
+                self.installedIcons = icons
+                self.installedScannedAt = Date()
+                self.scanning = false
+                // The list is already open; show what has been found.
+                self.syncHosts()
+            }
+        }
+    }
+
+    /// The applications in the usual folders, one level of subfolders deep, that have a window to show.
+    static func installedApplications() -> [InstalledApp] {
+        let fm = FileManager.default
+        let roots = ["/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities", NSHomeDirectory() + "/Applications"]
+        var found: [String: InstalledApp] = [:]
+        func visit(_ dir: String, depth: Int) {
+            guard let names = try? fm.contentsOfDirectory(atPath: dir) else { return }
+            for name in names where !name.hasPrefix(".") {
+                let path = dir + "/" + name
+                if name.hasSuffix(".app") {
+                    guard let bundle = Bundle(path: path), let id = bundle.bundleIdentifier, id != Bundle.main.bundleIdentifier else { continue }
+                    let info = bundle.infoDictionary ?? [:]
+                    func flag(_ key: String) -> Bool {
+                        if let n = info[key] as? NSNumber { return n.boolValue }
+                        return (info[key] as? String).map { $0 == "1" || $0.lowercased() == "true" } ?? false
+                    }
+                    if flag("LSUIElement") || flag("LSBackgroundOnly") { continue }
+                    var display = fm.displayName(atPath: path)
+                    if display.hasSuffix(".app") { display.removeLast(4) }
+                    found[id] = InstalledApp(id: id, name: display, url: URL(fileURLWithPath: path))
+                } else if depth < 1 {
+                    var isDirectory: ObjCBool = false
+                    if fm.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue { visit(path, depth: depth + 1) }
+                }
+            }
+        }
+        for root in roots { visit(root, depth: 0) }
+        return Array(found.values)
+    }
+
     func syncHosts() {
         var rows: [[String: Any]] = []
         var tabs: [[String: Any]] = []
@@ -105,13 +163,24 @@ final class RoomController {
             }
             tabs.append(["label": host.name, "address": host.address, "online": current, "apps": apps])
         }
-        var mac: [[String: Any]] = []
+        // Everything installed, running or not: a bubble for an application that is not open starts it, and its
+        // window comes into the room when it has one. The scan is of a few folders, once a minute at most, off
+        // the main thread; what is running is added from the system's own list, which is current.
+        refreshInstalled()
+        var found: [String: String] = [:]
+        for app in installed { found[app.id] = app.name }
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular && app.bundleIdentifier != Bundle.main.bundleIdentifier {
             guard let id = app.bundleIdentifier, let name = app.localizedName else { continue }
-            mac.append(["id": id, "name": name])
+            found[id] = name
             if iconsSent.insert(id).inserted, let icon = app.icon, let pixels = Self.pixels(of: icon, side: 128) { sp_shell_set_icon(core.handle, name, 128, 128, pixels) }
         }
-        mac.sort { ($0["name"] as? String ?? "") < ($1["name"] as? String ?? "") }
+        for app in installed where !iconsSent.contains(app.id) {
+            guard let pixels = installedIcons[app.id] else { continue }
+            iconsSent.insert(app.id)
+            sp_shell_set_icon(core.handle, app.name, 128, 128, pixels)
+        }
+        let mac: [[String: Any]] = found.map { ["id": $0.key, "name": $0.value] }
+            .sorted { ($0["name"] as? String ?? "").localizedCaseInsensitiveCompare($1["name"] as? String ?? "") == .orderedAscending }
         tabs.append(["label": "This Mac", "address": "mac", "online": true, "apps": mac])
         if let data = try? JSONSerialization.data(withJSONObject: ["rows": rows, "tabs": tabs]), let text = String(data: data, encoding: .utf8) {
             sp_shell_set_hosts(core.handle, text)
@@ -126,8 +195,8 @@ final class RoomController {
                 await MainActor.run {
                     if let info = list.first(where: { $0.bundle == id }) {
                         self?.bringMacWindow(info)
-                    } else if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
-                        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+                    } else {
+                        self?.openMacApplication(id)
                     }
                 }
             }
@@ -140,6 +209,40 @@ final class RoomController {
             model.connect(paired)
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
                 if let app = self?.model.apps.first(where: { $0.id == id }) { self?.model.launch(app) }
+            }
+        }
+    }
+
+    /// An application of this Mac that is not showing a window: opened, and its window brought into the room as
+    /// soon as it has one. An application that is running but has none (all minimised, or closed) is asked to
+    /// open one, as clicking its icon in the Dock does.
+    private func openMacApplication(_ id: String) {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else {
+            hint.say("That application could not be found.")
+            return
+        }
+        let name = FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+        hint.say("Opening \(name)\u{2026}")
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            if let error { print("room: could not open \(name): \(error)") }
+        }
+        waitForWindow(of: id, tries: 40)
+    }
+
+    /// Look twice a second, for twenty seconds, for the window an application has been asked to open.
+    private func waitForWindow(of id: String, tries: Int) {
+        guard tries > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            Task { [weak self] in
+                let list = await MacWindows.list()
+                await MainActor.run {
+                    guard let self else { return }
+                    if let info = list.first(where: { $0.bundle == id }) {
+                        self.bringMacWindow(info)
+                    } else {
+                        self.waitForWindow(of: id, tries: tries - 1)
+                    }
+                }
             }
         }
     }
@@ -272,13 +375,27 @@ final class RoomController {
     /// Once a frame: what the bars say, if that has changed.
     private var captureFocus: UInt16?
     private var keyOwner: UInt16?
+    /// Whether the wearer is typing into a window of this Mac. Only then is that window's application the active
+    /// one: trackpad gestures are heard by Spatiand's input window only while Spatiand is active, so the Mac
+    /// application is handed the keyboard when a key is pressed and Spatiand takes it back when the pointer or
+    /// the fingers are used again.
+    private(set) var typing = false
+    private var lastKey = Date.distantPast
+
+    func keyNoted() { lastKey = Date() }
+
+    /// The pointer, the wheel or the fingers are in use: typing is over, once the last key has had a moment.
+    func pointingAgain(force: Bool = false) {
+        guard typing else { return }
+        if force || Date().timeIntervalSince(lastKey) > 0.6 { typing = false }
+    }
 
     /// Who has this Mac's keyboard: the window in front of the wearer if it is one of this Mac's, which is
     /// then made the active window; otherwise Spatiand, which sends the keys to a host's window or a menu.
     private func syncKeyboard() {
         guard input.capturing else { keyOwner = nil; return }
         var want: UInt16?
-        if Settings.activateMacWindows, !menu.isOpen, let id = core.focused, MacWindows.isMac(id), macCaptures[id] != nil { want = id }
+        if Settings.activateMacWindows, typing, !menu.isOpen, let id = core.focused, MacWindows.isMac(id), macCaptures[id] != nil { want = id }
         guard want != keyOwner else { return }
         keyOwner = want
         if let id = want, let capture = macCaptures[id] { input.giveKeyboard(to: capture.info) } else { input.takeKeyboard() }
@@ -349,6 +466,7 @@ final class RoomController {
     private var pinchSum = 0.0
 
     func pointerMoved(dx: Double, dy: Double) {
+        pointingAgain()
         core.movePointer(dx: dx, dy: dy)
         pointerChanged()
     }
@@ -386,6 +504,7 @@ final class RoomController {
     }
 
     func buttonDown(_ button: Int, grab: Bool) {
+        pointingAgain(force: true)
         let aim = core.aim()
         if menu.isOpen { menu.click(); return }
         guard let id = aim.window, id < RoomCore.panelFirst else { return }
@@ -440,6 +559,7 @@ final class RoomController {
     }
 
     func scrolled(dx: Double, dy: Double, precise: Bool) {
+        pointingAgain(force: true)
         guard !menu.isOpen, let id = core.aim().window ?? core.focused, id < RoomCore.panelFirst else { return }
         let unit: Double = precise ? 1 : 10
         if MacWindows.isMac(id), let capture = macCaptures[id], let at = core.aim(at: id) {
@@ -601,6 +721,10 @@ final class RoomController {
     /// A key meant for a Mac window, if that is what has the keyboard: posted at its application.
     func macKey(_ event: NSEvent) -> Bool {
         guard let id = core.focused, MacWindows.isMac(id), let capture = macCaptures[id] else { return false }
+        lastKey = Date()
+        // The first key hands the application the keyboard, as a window in front has it, so it shows its caret; this
+        // key is still posted at it, and the rest arrive of their own accord.
+        if !typing, Settings.activateMacWindows, !menu.isOpen { typing = true }
         switch event.type {
         case .keyDown:
             MacInput.key(event, down: true, pid: capture.info.pid)
@@ -745,6 +869,7 @@ final class RoomController {
     /// Three, four and five fingers on the trackpad. Three work the room as a whole, four the
     /// window being pointed at, and five all the windows at once.
     func gesture(_ event: GestureRecognizer.Event) {
+        pointingAgain(force: true)
         let target = core.aim().window.flatMap { $0 < RoomCore.panelFirst ? $0 : nil } ?? core.focused
         switch event {
         case .swipe(.left, 3), .swipe(.right, 3):

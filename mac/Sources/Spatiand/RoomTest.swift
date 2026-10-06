@@ -56,7 +56,13 @@ enum RoomTest {
                 // The room takes the mouse and keyboard with a window of this Mac in front: that window's
                 // application should then be the active one, and Spatiand's panel should still be there.
                 after(4.5) { room.input.start() }
-                after(5) { room.tick() }
+                after(5) {
+                    // A modifier on its own: the first key, and harmless.
+                    _ = room.macKey(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: .shift, timestamp: 0, windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 56)!)
+                    room.tick()
+                }
+                after(6) { print("keymode: typing \(room.typing), front \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?")"); room.pointingAgain(force: true); room.tick() }
+                after(6.6) { print("keymode: after the fingers, front is \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?")") }
                 after(7) {
                     let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
                     print("keymode: capturing \(room.input.capturing), the front application is \(front)")

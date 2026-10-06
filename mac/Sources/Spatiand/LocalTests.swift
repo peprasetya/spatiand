@@ -102,6 +102,12 @@ enum LocalTests {
         check("a paste is answered with the text",
               (data?["bytes"] as? String).flatMap { Data(base64Encoded: $0) }.flatMap { String(data: $0, encoding: .utf8) } == "from the mac")
 
+        // --- the applications of this Mac
+        let apps = RoomController.installedApplications()
+        check("the installed applications are found (\(apps.count))", apps.count > 10 && apps.contains { $0.id == "com.apple.finder" || $0.id == "com.apple.TextEdit" })
+        check("an application that runs in the background is not offered", !apps.contains { $0.id == "com.apple.dock" })
+        print("note  e.g. " + apps.map(\.name).sorted().prefix(8).joined(separator: ", "))
+
         // --- hot keys: whether the chords can be had here is a fact about this Mac, not a pass/fail
         let keys = Hotkeys()
         keys.enable()

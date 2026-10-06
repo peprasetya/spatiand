@@ -117,7 +117,7 @@ final class InputView: NSView {
     }
 
     /// A pinch on the trackpad: nearer or further on a window's frame, the application's own zoom over its contents.
-    override func magnify(with event: NSEvent) { controller?.pinched(by: Double(event.magnification)) }
+    override func magnify(with event: NSEvent) { controller?.pointingAgain(force: true); controller?.pinched(by: Double(event.magnification)) }
 
     // MARK: the keyboard
 
@@ -215,6 +215,10 @@ final class RoomInput: NSObject, NSWindowDelegate {
         capturing = true
         chords.onChord = { [weak self] key in self?.chord(key) }
         chords.enable()
+        // While another application has the keyboard Spatiand hears neither its keys nor the fingers that begin a
+        // gesture; the system says so to anyone who listens.
+        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] _ in self?.controller.keyNoted() }
+        gestureMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.magnify, .swipe, .gesture, .beginGesture, .scrollWheel]) { [weak self] _ in self?.controller.pointingAgain(force: true) }
         watcher = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             self?.activated(note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
         }
@@ -223,6 +227,8 @@ final class RoomInput: NSObject, NSWindowDelegate {
 
     private let chords = RoomChords()
     private var watcher: NSObjectProtocol?
+    private var keyMonitor: Any?
+    private var gestureMonitor: Any?
     /// The application of this Mac that has the keyboard, when it is not Spatiand.
     private var keyboardOwner: pid_t?
 
@@ -277,6 +283,10 @@ final class RoomInput: NSObject, NSWindowDelegate {
         chords.disable()
         if let watcher { NSWorkspace.shared.notificationCenter.removeObserver(watcher) }
         watcher = nil
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        if let gestureMonitor { NSEvent.removeMonitor(gestureMonitor) }
+        keyMonitor = nil
+        gestureMonitor = nil
         keyboardOwner = nil
         CGAssociateMouseAndMouseCursorPosition(1)
         CGDisplayShowCursor(CGMainDisplayID())
