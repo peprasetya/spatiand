@@ -29,6 +29,8 @@ use spatiand_track::{AxisMap, HeadTracker, TrackerConfig, DEFAULT_PREDICTION_MAX
 pub const CURSOR: u32 = 0xFFFF;
 /// Ids from here up are Spatiand's own panels, not an application's windows.
 pub const PANEL_FIRST: u32 = 0xFF00;
+/// The ids the window list gives to windows of this Mac that are not in the room.
+pub const CANDIDATE_FIRST: u32 = 0xE000;
 /// Added to a window's id for its title bar, in what is drawn.
 pub const TITLE_FLAG: u32 = 0x10000;
 
@@ -307,6 +309,7 @@ pub struct Room {
     size: Size,
     /// A head to use before the glasses have said anything, for the preview and tests.
     fixed_head: Option<DQuat>,
+    candidates: Vec<(u32, String)>,
     damping: Damping,
     view: std::cell::Cell<Option<ViewFilter>>,
     /// The pointer's picture: its size and where its hot spot is, in the picture's pixels.
@@ -344,6 +347,7 @@ impl Room {
             corner: Corner::default(),
             size: Size::default(),
             fixed_head: None,
+            candidates: Vec::new(),
             damping: Damping::default(),
             view: std::cell::Cell::new(None),
             cursor_shape: (0.0, 0.0, 0.0, 0.0),
@@ -943,6 +947,17 @@ impl Room {
         (forward.y.atan2(forward.x), (forward.z.clamp(-1.0, 1.0).asin() + level).clamp(-PITCH_LIMIT, PITCH_LIMIT))
     }
 
+    /// Windows this Mac has open that are not in the room, for the list: they are listed as windows put away,
+    /// and choosing one brings it in. Ids from [`CANDIDATE_FIRST`] up, which are the list's own and name no window
+    /// of the room.
+    pub fn set_candidates(&mut self, candidates: Vec<(u32, String)>) {
+        self.candidates = candidates;
+    }
+
+    pub fn is_candidate(id: u32) -> bool {
+        (CANDIDATE_FIRST..CANDIDATE_FIRST + 0x1000).contains(&id)
+    }
+
     /// The windows, for the list.
     fn window_entries(&self) -> Vec<spatiand_shell::WindowEntry> {
         let mut ids: Vec<u32> = self.windows.iter().filter(|w| !Self::is_panel(w.id) && w.shown).map(|w| w.id).collect();
@@ -959,6 +974,14 @@ impl Room {
                     room: false,
                 }
             })
+            .chain(self.candidates.iter().map(|(id, title)| spatiand_shell::WindowEntry {
+                id: *id as usize,
+                title: title.clone(),
+                current: false,
+                hidden: true,
+                pinned: false,
+                room: false,
+            }))
             .collect()
     }
 
@@ -975,6 +998,8 @@ impl Room {
             self.ui.anchor = self.facing();
         }
         match event {
+            // A window of this Mac that is not in the room yet: the caller brings it in.
+            Some(ShellEvent::FocusWindow(id)) if Self::is_candidate(id as u32) => Some(ShellEvent::FocusWindow(id)),
             Some(ShellEvent::FocusWindow(id)) => {
                 let id = id as u32;
                 self.set_hidden(id, false);
@@ -1405,6 +1430,23 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(8));
         }
         assert!(lag < 7.0, "a turn is not smoothed into mush: {lag}");
+    }
+
+    #[test]
+    fn windows_of_this_mac_that_are_not_in_the_room_are_listed_as_windows_put_away() {
+        let mut r = room();
+        r.set_window(1, (1280, 800));
+        r.show(1);
+        r.set_candidates(vec![(CANDIDATE_FIRST, "Safari \u{2014} News".into()), (CANDIDATE_FIRST + 1, "Chrome".into())]);
+        let entries = r.window_entries();
+        assert_eq!(entries.len(), 3);
+        assert!(!entries[0].hidden, "the one in the room is as it was");
+        assert!(entries[1].hidden && entries[2].hidden, "the others are put away");
+        assert_eq!(entries[1].title, "Safari \u{2014} News");
+        assert!(Room::is_candidate(entries[1].id as u32) && !Room::is_candidate(1));
+        // Choosing one is left to the application, which has the window.
+        r.shell_intent(spatiand_shell::Intent::ToggleSwitcher);
+        assert!(r.ui.open());
     }
 
     #[test]

@@ -42,6 +42,13 @@ struct SettingsView: View {
             Toggle("Hold the view steady, firmly while typing, so a head that is never quite still does not shake the text", isOn: $steadyView)
             Toggle("This Mac's mouse and keyboard steer the glasses when they are on", isOn: $captureInput)
             Text("Ctrl-Option-G gives them back to the Mac at any time.").font(.caption).foregroundColor(.secondary)
+            if !CGPreflightListenEventAccess() {
+                Text("The glasses' menus hear the arrow keys of a Mac application in front only with Input Monitoring allowed.").font(.caption).foregroundColor(.orange)
+                Button("Allow Input Monitoring\u{2026}") {
+                    CGRequestListenEventAccess()
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") { NSWorkspace.shared.open(url) }
+                }
+            }
             Text("In the glasses it works as on the Deck. Ctrl-Space opens the launcher and Ctrl-Tab the settings; the arrows and Return work them, or point and click. Drag a window by its title bar, and by the edges of its frame to resize it; the buttons on the bar close it, put it away, pin it to the glass and, when it makes a sound, mute it. On the trackpad, pinch over a window's frame to bring it nearer or push it further, and over its contents to zoom them. Three fingers swipe sideways for the next window, up for the launcher, down to put it away, and tap to recentre; four fingers swipe to move the window you point at and pinch to bring it nearer; five fingers pinch to gather every window and spread to give them room.")
                 .font(.caption).foregroundColor(.secondary)
             let system = SystemGestures.enabled()

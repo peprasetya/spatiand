@@ -119,6 +119,7 @@ final class RoomCore {
     /// Nearer (negative) or further (positive), in metres.
     func pushPull(_ id: UInt16, metres: Double) { sp_room_push_pull(room, UInt32(id), metres) }
     func setHidden(_ id: UInt16, _ hidden: Bool) { sp_room_set_hidden(room, UInt32(id), hidden ? 1 : 0) }
+    func setCandidates(_ json: String) { sp_room_set_candidates(room, json) }
     func setDamping(_ level: Int) { sp_room_set_damping(room, Int32(level)) }
     func isHidden(_ id: UInt16) -> Bool { sp_room_is_hidden(room, UInt32(id)) != 0 }
     func chromeVersion(_ id: UInt16) -> UInt64 { sp_room_chrome_version(room, UInt32(id)) }

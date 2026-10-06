@@ -181,7 +181,11 @@ final class RoomShell {
         } else if let environment = event["environment"] {
             Settings.studio = (environment as? String) != "blank"
         } else if let focus = event["focus"] as? Int {
-            controller.focusFromList(UInt16(truncatingIfNeeded: focus))
+            if focus >= 0xE000 && focus < 0xF000 {
+                controller.bringCandidate(UInt32(focus))
+            } else {
+                controller.focusFromList(UInt16(truncatingIfNeeded: focus))
+            }
         } else if let close = event["close"] as? Int {
             controller.closeWindow(UInt16(truncatingIfNeeded: close))
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.controller.core.markShellDirty() }

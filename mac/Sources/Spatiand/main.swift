@@ -543,6 +543,10 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-perf") {
     let args = Array(CommandLine.arguments[(at + 1)...])
     PerfTest.run(app: args.first ?? "Claude", title: args.dropFirst().first ?? "Claude")
 }
+if let at = CommandLine.arguments.firstIndex(of: "--selftest-post") {
+    let args = Array(CommandLine.arguments[(at + 1)...])
+    PostTest.run(app: args.first ?? "ClickProbe", title: args.dropFirst().first ?? "")
+}
 if let at = CommandLine.arguments.firstIndex(of: "--selftest-room") {
     let args = Array(CommandLine.arguments[(at + 1)...])
     guard args.count >= 3 else { print("usage: --selftest-room <address> <fingerprint> <app>"); exit(2) }

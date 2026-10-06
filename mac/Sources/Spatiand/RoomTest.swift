@@ -52,6 +52,25 @@ enum RoomTest {
                 after(1) { print("mac window size: \(before.map { "\(Int($0.width))x\(Int($0.height))" } ?? "?") -> \(MacWindows.currentFrame(info).map { "\(Int($0.width))x\(Int($0.height))" } ?? "?")") }
                 after(1.5) { print("text now: \(MacWindows.text(info) ?? "?")") }
             }
+            if env["SPATIAND_TEST_CLICKMODE"] != nil {
+                // A click in a window of this Mac, as the room makes one: the caret should land where it was pointed.
+                after(4.5) { room.input.start(); room.core.holdHead(yaw: 0, pitch: 0) }
+                after(5) { if let id = room.macWindowIDs.first { room.core.bringHere(id) }; room.tick(); room.core.centrePointer() }
+                after(5.5) {
+                    guard let id = room.macWindowIDs.first, let info = room.macInfo(id) else { print("clickmode: no window"); return }
+                    print("clickmode: caret before \(MacWindows.caret(info).map(String.init) ?? "?"), front \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?")")
+                    let a = room.core.aim()
+                    print("clickmode: aiming at window \(a.window.map { String($0, radix: 16) } ?? "none"), zone \(a.zone), focused \(room.core.focused.map { String($0, radix: 16) } ?? "none")")
+                    room.buttonDown(0x110, grab: false)
+                    print("clickmode: after the press holding \(room.holding)")
+                }
+                after(6) { room.buttonUp(0x110) }
+                after(7) {
+                    guard let id = room.macWindowIDs.first, let info = room.macInfo(id) else { return }
+                    print("clickmode: caret after \(MacWindows.caret(info).map(String.init) ?? "?"), front \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"), holding \(room.holding)")
+                    room.input.stop()
+                }
+            }
             if env["SPATIAND_TEST_KEYMODE"] != nil {
                 // The room takes the mouse and keyboard with a window of this Mac in front: that window's
                 // application should then be the active one, and Spatiand's panel should still be there.
@@ -61,9 +80,9 @@ enum RoomTest {
                     _ = room.macKey(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: .shift, timestamp: 0, windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 56)!)
                     room.tick()
                 }
-                after(6) { print("keymode: typing \(room.typing), front \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?")"); room.toggleMenu(); room.tick() }
+                after(6) { print("keymode: holding \(room.holding), front \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?")"); room.toggleMenu(); room.tick() }
                 after(6.4) { room.tick() }
-                after(7) { print("keymode: with the menu open, front is \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"), typing \(room.typing)") }
+                after(7) { print("keymode: with the menu open, front is \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"), holding \(room.holding)") }
                 after(7.5) {
                     let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
                     print("keymode: capturing \(room.input.capturing), the front application is \(front)")

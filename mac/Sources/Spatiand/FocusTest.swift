@@ -34,6 +34,11 @@ enum FocusTest {
             }
             try? await capture.start()
             try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if variant == "activate-wait" {
+                await MainActor.run { NSRunningApplication(processIdentifier: info.pid)?.activate() }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+            print("focus[\(variant)]: caret before \(MacWindows.caret(info).map(String.init) ?? "?")")
             await MainActor.run {
                 switch variant {
                 case "activate": NSRunningApplication(processIdentifier: info.pid)?.activate()
@@ -66,6 +71,7 @@ enum FocusTest {
                     MacInput.mouse(.leftMouseUp, button: .left, at: CGPoint(x: a.x + 240, y: a.y), clicks: 1, window: info.windowID, pid: info.pid)
                 }
             }
+            print("focus[\(variant)]: caret after \(MacWindows.caret(info).map(String.init) ?? "?")")
             lock.lock(); seen.removeAll(); lock.unlock()
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             lock.lock(); print("focus[\(variant)]: \(seen.count) different pictures in three seconds after the click"); lock.unlock()
@@ -207,6 +213,72 @@ enum PerfTest {
         }
         RunLoop.main.add(timer, forMode: .common)
         DispatchQueue.main.asyncAfter(deadline: .now() + 22) { exit(0) }
+        ns.run()
+    }
+}
+
+/// `Spatiand --selftest-post <app> <title>`: which way of posting a click at another application's window it takes.
+enum PostTest {
+    static func run(app: String, title: String) {
+        // Spatiand is the active application when the wearer clicks, so the test is too.
+        let ns = NSApplication.shared
+        ns.setActivationPolicy(.regular)
+        let w = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 200, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+        w.makeKeyAndOrderFront(nil)
+        ns.activate(ignoringOtherApps: true)
+        Task {
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            print("post: this process is active: \(await MainActor.run { NSApp.isActive })")
+            guard let info = await MacWindows.list().first(where: { $0.app == app && $0.title.contains(title) }) else { print("no window"); exit(1) }
+            await MainActor.run { NSRunningApplication(processIdentifier: info.pid)?.activate() }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            print("post: front application is \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?")")
+            let f = info.frame
+            let point = CGPoint(x: f.midX, y: f.midY)
+            func click(_ name: String, source: CGEventSource?, fields: Bool, tap: Bool, toPid: Bool) {
+                for type in [CGEventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
+                    guard let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else { continue }
+                    e.setIntegerValueField(.mouseEventClickState, value: 1)
+                    if type != .mouseMoved { e.setDoubleValueField(.mouseEventPressure, value: type == .leftMouseDown ? 1 : 0) }
+                    if fields {
+                        e.setIntegerValueField(CGEventField(rawValue: 91)!, value: Int64(info.windowID))
+                        e.setIntegerValueField(CGEventField(rawValue: 92)!, value: Int64(info.windowID))
+                    }
+                    if tap { e.post(tap: .cghidEventTap) } else if toPid { e.postToPid(info.pid) }
+                    Thread.sleep(forTimeInterval: 0.03)
+                }
+                print("post: tried \(name)")
+                Thread.sleep(forTimeInterval: 0.4)
+            }
+            // The wheel, as the room posts it.
+            MacInput.scrollThrough(dx: 0, dy: -12, at: point)
+            Thread.sleep(forTimeInterval: 0.3)
+            print("post: tried the wheel")
+            // SkyLight's own way of posting at a process.
+            typealias SLPost = @convention(c) (pid_t, CGEvent) -> Void
+            if let sl = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY), let sym = dlsym(sl, "SLEventPostToPid") {
+                let post = unsafeBitCast(sym, to: SLPost.self)
+                for (name, source) in [("sl/hid", CGEventSource(stateID: .hidSystemState)), ("sl/private", CGEventSource(stateID: .privateState))] {
+                    for type in [CGEventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
+                        guard let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else { continue }
+                        e.setIntegerValueField(.mouseEventClickState, value: 1)
+                        e.setIntegerValueField(CGEventField(rawValue: 91)!, value: Int64(info.windowID))
+                        e.setIntegerValueField(CGEventField(rawValue: 92)!, value: Int64(info.windowID))
+                        post(info.pid, e)
+                        Thread.sleep(forTimeInterval: 0.03)
+                    }
+                    print("post: tried \(name)")
+                    Thread.sleep(forTimeInterval: 0.4)
+                }
+            }
+            click("private/fields/pid", source: CGEventSource(stateID: .privateState), fields: true, tap: false, toPid: true)
+            click("hid/fields/pid", source: CGEventSource(stateID: .hidSystemState), fields: true, tap: false, toPid: true)
+            click("hid/nofields/pid", source: CGEventSource(stateID: .hidSystemState), fields: false, tap: false, toPid: true)
+            click("nil/nofields/pid", source: nil, fields: false, tap: false, toPid: true)
+            click("combined/nofields/pid", source: CGEventSource(stateID: .combinedSessionState), fields: false, tap: false, toPid: true)
+            click("hid/nofields/hidtap", source: CGEventSource(stateID: .hidSystemState), fields: false, tap: true, toPid: false)
+            exit(0)
+        }
         ns.run()
     }
 }

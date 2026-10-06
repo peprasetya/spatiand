@@ -173,8 +173,12 @@ final class RoomInput: NSObject, NSWindowDelegate {
     init(controller: RoomController) { self.controller = controller }
 
     func start() {
-        guard !capturing, let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-        let w = InputWindow(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        guard !capturing, let screen = NSScreen.screens.first else { return }
+        // A strip under the pointer, not a cover for the whole screen: the pointer is frozen here, so what the hand
+        // does is heard here, and a click for another application's window can be sent through the rest of the
+        // screen without this window standing in front of it.
+        let strip = NSRect(x: screen.frame.midX - 290, y: screen.frame.midY - 40, width: 580, height: 80)
+        let w = InputWindow(contentRect: strip, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         w.isFloatingPanel = true
         w.hidesOnDeactivate = false
@@ -187,7 +191,7 @@ final class RoomInput: NSObject, NSWindowDelegate {
         w.acceptsMouseMovedEvents = true
         w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         w.delegate = self
-        let view = InputView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        let view = InputView(frame: NSRect(origin: .zero, size: strip.size))
         view.controller = controller
         view.allowedTouchTypes = [.indirect]
         view.onRelease = { [weak self] in self?.stop() }
@@ -200,7 +204,7 @@ final class RoomInput: NSObject, NSWindowDelegate {
         note.layer?.backgroundColor = NSColor(white: 0.1, alpha: 0.88).cgColor
         note.layer?.cornerRadius = 8
         note.sizeToFit()
-        note.frame = NSRect(x: (screen.frame.width - note.frame.width - 24) / 2, y: 14, width: note.frame.width + 24, height: note.frame.height + 14)
+        note.frame = NSRect(x: (strip.width - note.frame.width - 24) / 2, y: (strip.height - note.frame.height - 14) / 2, width: note.frame.width + 24, height: note.frame.height + 14)
         view.addSubview(note)
         w.contentView = view
         window = w
@@ -210,20 +214,60 @@ final class RoomInput: NSObject, NSWindowDelegate {
         // The pointer is brought onto the screen this window covers first: a mouse that is held still
         // over the glasses' display would be heard by nothing at all.
         let main = CGDisplayBounds(CGMainDisplayID())
-        CGWarpMouseCursorPosition(CGPoint(x: main.midX, y: main.midY))
+        home = CGPoint(x: main.midX, y: main.midY)
+        shielded = CGRect(x: main.midX - 290, y: main.midY - 40, width: 580, height: 80)
+        CGWarpMouseCursorPosition(home)
         CGAssociateMouseAndMouseCursorPosition(0)
         CGDisplayHideCursor(CGMainDisplayID())
         capturing = true
         chords.onChord = { [weak self] key in self?.chord(key) }
         chords.enable()
+        // The menu's keys, when another application has the keyboard, need this permission: asked for now, once, and
+        // not in the middle of a menu.
+        if !CGPreflightListenEventAccess() { CGRequestListenEventAccess() }
         // While another application has the keyboard Spatiand hears neither its keys nor the fingers that begin a
         // gesture; the system says so to anyone who listens.
         keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] _ in self?.controller.keyNoted() }
-        gestureMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.magnify, .swipe, .gesture, .beginGesture, .scrollWheel]) { [weak self] _ in self?.controller.pointingAgain(force: true) }
+        gestureMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.magnify, .swipe, .gesture, .beginGesture]) { [weak self] _ in self?.controller.pointingAgain(force: true) }
         watcher = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             self?.activated(note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
         }
         onChange?()
+    }
+
+    /// Where the frozen pointer rests, in the Mac's screen coordinates, and the strip of window round it.
+    private(set) var home = CGPoint.zero
+    private var shielded = CGRect.zero
+    private var passUntil = Date.distantPast
+
+    /// A mouse event for a window of this Mac. An application ignores a button press posted at it directly, so it
+    /// goes through the system, at the window's place on the screen, as a real one would; the pointer, which
+    /// the system moves to it, is put back where the hand's movements are heard. The strip of window under the
+    /// pointer lets the event through if the window is behind it.
+    func sendThrough(_ type: CGEventType, button: CGMouseButton, at point: CGPoint, clicks: Int) {
+        let behind = shielded.insetBy(dx: -6, dy: -6).contains(point)
+        if behind, let w = window {
+            w.ignoresMouseEvents = true
+            passUntil = Date().addingTimeInterval(0.1)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                if let self, Date() >= self.passUntil { self.window?.ignoresMouseEvents = false }
+            }
+        }
+        MacInput.mouseThrough(type, button: button, at: point, clicks: clicks)
+        CGWarpMouseCursorPosition(home)
+    }
+
+    func sendScroll(dx: Int32, dy: Int32, at point: CGPoint) {
+        let behind = shielded.insetBy(dx: -6, dy: -6).contains(point)
+        if behind, let w = window {
+            w.ignoresMouseEvents = true
+            passUntil = Date().addingTimeInterval(0.1)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                if let self, Date() >= self.passUntil { self.window?.ignoresMouseEvents = false }
+            }
+        }
+        MacInput.scrollThrough(dx: dx, dy: dy, at: point)
+        CGWarpMouseCursorPosition(home)
     }
 
     private let chords = RoomChords()

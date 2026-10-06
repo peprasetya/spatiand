@@ -37,6 +37,23 @@ enum MacInput {
         address(event, window: window, pid: pid)
     }
 
+    private static let hid = CGEventSource(stateID: .hidSystemState)
+
+    /// A mouse event through the system's own stream, at a place on the screen; see `RoomInput.sendThrough`.
+    static func mouseThrough(_ type: CGEventType, button: CGMouseButton, at point: CGPoint, clicks: Int) {
+        guard let event = CGEvent(mouseEventSource: hid, mouseType: type, mouseCursorPosition: point, mouseButton: button) else { return }
+        event.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, clicks)))
+        if type == .leftMouseDown || type == .rightMouseDown { event.setDoubleValueField(.mouseEventPressure, value: 1) }
+        event.post(tap: .cghidEventTap)
+    }
+
+    /// The wheel through the system's own stream, at a place on the screen.
+    static func scrollThrough(dx: Int32, dy: Int32, at point: CGPoint) {
+        guard let event = CGEvent(scrollWheelEvent2Source: hid, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0) else { return }
+        event.location = point
+        event.post(tap: .cghidEventTap)
+    }
+
     /// The wheel, in pixels: vertical then horizontal.
     static func scroll(dx: Int32, dy: Int32, at point: CGPoint, window: CGWindowID, pid: pid_t) {
         guard let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0) else { return }

@@ -113,6 +113,23 @@ enum MacWindows {
         return CGRect(origin: .zero, size: size)
     }
 
+    /// Where the caret is in a window's text area, as a character offset, for tests.
+    static func caret(_ info: MacWindowInfo) -> Int? {
+        guard let window = axWindow(info) else { return nil }
+        func find(_ e: AXUIElement, _ depth: Int) -> Int? {
+            var v: CFTypeRef?
+            if AXUIElementCopyAttributeValue(e, kAXRoleAttribute as CFString, &v) == .success, (v as? String) == "AXTextArea" {
+                guard AXUIElementCopyAttributeValue(e, kAXSelectedTextRangeAttribute as CFString, &v) == .success, let v else { return nil }
+                var range = CFRange()
+                return AXValueGetValue(v as! AXValue, .cfRange, &range) ? range.location : nil
+            }
+            guard depth < 6, AXUIElementCopyAttributeValue(e, kAXChildrenAttribute as CFString, &v) == .success, let kids = v as? [AXUIElement] else { return nil }
+            for k in kids { if let n = find(k, depth + 1) { return n } }
+            return nil
+        }
+        return find(window, 0)
+    }
+
     /// The text in a window's text area, for tests.
     static func text(_ info: MacWindowInfo) -> String? {
         guard let window = axWindow(info) else { return nil }
@@ -183,6 +200,11 @@ final class MacCapture: NSObject, PictureSource, SCStreamOutput, SCStreamDelegat
         try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "spatiand.maccapture", qos: .userInteractive))
         try await s.startCapture()
         stream = s
+        // A window that was resized and then left alone makes no more pictures to notice it by, and would be
+        // left in a picture of its old size with black round it; so it is looked at on a timer too.
+        DispatchQueue.main.async { [weak self] in
+            self?.sizeTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in self?.followResize(fresh: true) }
+        }
         if wantFast, let config = self.config { config.minimumFrameInterval = CMTime(value: 1, timescale: 60); try? await s.updateConfiguration(config) }
     }
 
@@ -197,7 +219,11 @@ final class MacCapture: NSObject, PictureSource, SCStreamOutput, SCStreamDelegat
         Task { try? await stream.updateConfiguration(config) }
     }
 
+    private var sizeTimer: Timer?
+
     func invalidate() {
+        sizeTimer?.invalidate()
+        sizeTimer = nil
         let s = stream
         stream = nil
         Task { try? await s?.stopCapture() }
@@ -212,17 +238,20 @@ final class MacCapture: NSObject, PictureSource, SCStreamOutput, SCStreamDelegat
     // MARK: where it is now
 
     private var cachedFrame: (CGRect, Date)?
+    private let frameLock = NSLock()
 
     /// The window's frame at this moment, in points: it can be moved while it is in the room.
     func frame() -> CGRect {
-        if let (rect, at) = cachedFrame, Date().timeIntervalSince(at) < 0.3 { return rect }
+        frameLock.lock()
+        if let (rect, at) = cachedFrame, Date().timeIntervalSince(at) < 0.3 { frameLock.unlock(); return rect }
+        frameLock.unlock()
         var rect = info.frame
         if let list = CGWindowListCreateDescriptionFromArray([info.windowID] as CFArray) as? [[String: Any]],
            let bounds = list.first?[kCGWindowBounds as String] as? NSDictionary,
            let found = CGRect(dictionaryRepresentation: bounds) {
             rect = found
         }
-        cachedFrame = (rect, Date())
+        frameLock.lock(); cachedFrame = (rect, Date()); frameLock.unlock()
         return rect
     }
 
@@ -259,8 +288,9 @@ final class MacCapture: NSObject, PictureSource, SCStreamOutput, SCStreamDelegat
     }
 
     /// A window that has been resized is captured at its new size, or it would be scaled to the old.
-    private func followResize() {
-        guard let stream, let config, Date().timeIntervalSince(lastResize) > 0.4 else { return }
+    private func followResize(fresh: Bool = false) {
+        guard let stream, let config, Date().timeIntervalSince(lastResize) > 0.3 else { return }
+        if fresh { frameLock.lock(); cachedFrame = nil; frameLock.unlock() }
         let now = frame().size
         guard abs(now.width - configuredSize.width) > 1 || abs(now.height - configuredSize.height) > 1, now.width >= 50, now.height >= 50 else { return }
         lastResize = Date()

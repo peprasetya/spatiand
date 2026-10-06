@@ -123,6 +123,38 @@ final class RoomController {
         }
     }
 
+    /// The windows of this Mac that are not in the room, offered in the window list as windows put away.
+    private var candidateIDs: [CGWindowID: UInt32] = [:]
+    private var candidateInfos: [UInt32: MacWindowInfo] = [:]
+    private var candidatesPushed = ""
+
+    private var candidatesAt = Date.distantPast
+
+    private func pushCandidates() {
+        guard Date().timeIntervalSince(candidatesAt) > 0.5 else { return }
+        candidatesAt = Date()
+        let inRoom = Set(macCaptures.values.map(\.info.windowID))
+        var list: [[Any]] = []
+        var infos: [UInt32: MacWindowInfo] = [:]
+        for w in macWindowList.sorted(by: { ($0.app, $0.title) < ($1.app, $1.title) }) where !inRoom.contains(w.windowID) {
+            let id = candidateIDs[w.windowID] ?? { let n = 0xE000 + UInt32(candidateIDs.count % 0xFFF); candidateIDs[w.windowID] = n; return n }()
+            infos[id] = w
+            let title = w.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            list.append([id, title.isEmpty ? w.app : "\(w.app) \u{2014} \(title)"])
+        }
+        candidateInfos = infos
+        guard let data = try? JSONSerialization.data(withJSONObject: list), let text = String(data: data, encoding: .utf8), text != candidatesPushed else { return }
+        candidatesPushed = text
+        core.setCandidates(text)
+        if menu.isOpen { core.markShellDirty() }
+    }
+
+    /// A window put away in the list, chosen: it comes into the room.
+    func bringCandidate(_ id: UInt32) {
+        guard let info = candidateInfos[id] else { return }
+        bringMacWindow(info)
+    }
+
     private func refreshInstalled() {
         guard !scanning, Date().timeIntervalSince(installedScannedAt) > 60 else { return }
         scanning = true
@@ -205,32 +237,10 @@ final class RoomController {
             iconsSent.insert(app.id)
             sp_shell_set_icon(core.handle, app.name, 128, 128, pixels)
         }
-        // An application with one window is one bubble; with several, a bubble for each window, named by its
-        // title; with none (not running, or all closed), one that opens it.
+        // An application is one bubble, whatever windows it has: choosing it brings all of them in, or opens it.
+        // Single windows are chosen from the window list, where they stand as windows put away.
         refreshWindows()
-        var windowsOf: [String: [MacWindowInfo]] = [:]
-        for w in macWindowList { windowsOf[w.bundle, default: []].append(w) }
-        var entries: [(id: String, name: String)] = []
-        for (id, name) in found {
-            let windows = (windowsOf[id] ?? []).sorted { $0.title < $1.title }
-            if windows.count <= 1 {
-                entries.append((windows.first.map { "\(id)#\($0.windowID)" } ?? id, name))
-            } else {
-                for w in windows {
-                    var title = w.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if title.count > 28 { title = String(title.prefix(27)) + "\u{2026}" }
-                    entries.append(("\(id)#\(w.windowID)", title.isEmpty ? name : "\(name) \u{2014} \(title)"))
-                }
-            }
-        }
-        // Each bubble's picture is its application's, by the name it shows.
-        for entry in entries {
-            let bundle = String(entry.id.split(separator: "#")[0])
-            if let pixels = installedIcons[bundle] ?? runningIcon(bundle), iconsSent.insert(entry.id + entry.name).inserted {
-                sp_shell_set_icon(core.handle, entry.name, 128, 128, pixels)
-            }
-        }
-        let mac: [[String: Any]] = entries.map { ["id": $0.id, "name": $0.name] }
+        let mac: [[String: Any]] = found.map { ["id": $0.key, "name": $0.value] }
             .sorted { ($0["name"] as? String ?? "").localizedCaseInsensitiveCompare($1["name"] as? String ?? "") == .orderedAscending }
         tabs.append(["label": "This Mac", "address": "mac", "online": true, "apps": mac])
         if let data = try? JSONSerialization.data(withJSONObject: ["rows": rows, "tabs": tabs]), let text = String(data: data, encoding: .utf8) {
@@ -241,19 +251,15 @@ final class RoomController {
     /// Start an application on a computer: a host's, or one of this Mac's, whose window comes into the room.
     func launch(app id: String, on host: String) {
         if host == "mac" {
-            // "bundle#window" is one window of an application; a bundle on its own is an application with none.
-            let parts = id.split(separator: "#", maxSplits: 1).map(String.init)
-            let bundle = parts[0]
-            let window = parts.count > 1 ? UInt32(parts[1]) : nil
             Task { [weak self] in
                 let list = await MacWindows.list()
                 await MainActor.run {
-                    if let window, let info = list.first(where: { $0.windowID == window }) {
-                        self?.bringMacWindow(info)
-                    } else if let info = list.first(where: { $0.bundle == bundle }) {
-                        self?.bringMacWindow(info)
+                    let mine = list.filter { $0.bundle == id }
+                    if mine.isEmpty {
+                        self?.openMacApplication(id)
                     } else {
-                        self?.openMacApplication(bundle)
+                        // Every window the application has comes into the room, not one of them.
+                        for info in mine { self?.bringMacWindow(info) }
                     }
                 }
             }
@@ -294,10 +300,11 @@ final class RoomController {
                 let list = await MacWindows.list()
                 await MainActor.run {
                     guard let self else { return }
-                    if let info = list.first(where: { $0.bundle == id }) {
-                        self.bringMacWindow(info)
-                    } else {
+                    let mine = list.filter { $0.bundle == id }
+                    if mine.isEmpty {
                         self.waitForWindow(of: id, tries: tries - 1)
+                    } else {
+                        for info in mine { self.bringMacWindow(info) }
                     }
                 }
             }
@@ -432,28 +439,40 @@ final class RoomController {
     /// Once a frame: what the bars say, if that has changed.
     private var captureFocus: UInt16?
     private var keyOwner: UInt16?
-    /// Whether the wearer is typing into a window of this Mac. Only then is that window's application the active
+    /// Whether the wearer is holding into a window of this Mac. Only then is that window's application the active
     /// one: trackpad gestures are heard by Spatiand's input window only while Spatiand is active, so the Mac
     /// application is handed the keyboard when a key is pressed and Spatiand takes it back when the pointer or
     /// the fingers are used again.
-    private(set) var typing = false
+    private(set) var holding = false
     private var menuKeysWired = false
+    private var menuKeysHinted = false
     private var lastKey = Date.distantPast
 
     func keyNoted() { lastKey = Date() }
 
-    /// The pointer, the wheel or the fingers are in use: typing is over, once the last key has had a moment.
+    /// The fingers have begun a gesture, which only Spatiand can hear: the application lets go of the keyboard.
     func pointingAgain(force: Bool = false) {
-        guard typing else { return }
-        if force || Date().timeIntervalSince(lastKey) > 0.6 { typing = false }
+        if force { holding = false }
+    }
+
+    private var offContent: Date?
+
+    /// Let go of the Mac application when the pointer has been away from its window for a moment and no key is
+    /// being pressed: pointing at a window's frame, or at the sky, is Spatiand's business.
+    private func releaseIfPointedAway() {
+        guard holding, pressed == nil, !core.isSizing, !core.isGrabbing else { offContent = nil; return }
+        let aim = core.aim()
+        if aim.window == core.focused && aim.zone == .content { offContent = nil; return }
+        guard let since = offContent else { offContent = Date(); return }
+        if Date().timeIntervalSince(since) > 0.3, Date().timeIntervalSince(lastKey) > 1.5 { holding = false; offContent = nil }
     }
 
     /// Who has this Mac's keyboard: the window in front of the wearer if it is one of this Mac's, which is
     /// then made the active window; otherwise Spatiand, which sends the keys to a host's window or a menu.
     private func syncKeyboard() {
         guard input.capturing else { keyOwner = nil; return }
-        // A menu is Spatiand's, and a menu that was opened ends the typing that was going on.
-        if menu.isOpen { typing = false }
+        // A menu is Spatiand's, and a menu that was opened ends the holding that was going on.
+        if menu.isOpen { holding = false }
         // And while it is open its keys are taken from whoever has them, if Spatiand is not yet the one.
         if input.capturing, menu.isOpen, !input.hasKeyboard {
             if !menuKeysWired {
@@ -463,12 +482,15 @@ final class RoomController {
                     return self.menu.key(event)
                 }
             }
-            input.menuKeys.start()
+            if !input.menuKeys.start(), !menuKeysHinted {
+                menuKeysHinted = true
+                hint.say("This menu's keys need Input Monitoring: System Settings \u{2192} Privacy & Security \u{2192} Input Monitoring \u{2192} Spatiand.")
+            }
         } else if input.menuKeys.running {
             input.menuKeys.stop()
         }
         var want: UInt16?
-        if Settings.activateMacWindows, typing, !menu.isOpen, let id = core.focused, MacWindows.isMac(id), macCaptures[id] != nil { want = id }
+        if Settings.activateMacWindows, holding, !menu.isOpen, let id = core.focused, MacWindows.isMac(id), macCaptures[id] != nil { want = id }
         guard want != keyOwner else { return }
         keyOwner = want
         if let id = want, let capture = macCaptures[id] { input.giveKeyboard(to: capture.info) } else { input.takeKeyboard() }
@@ -477,11 +499,14 @@ final class RoomController {
     private var damping = -1
 
     func tick() {
-        // Steady while typing: for two seconds after a key the view is held firmly, because reading what has just
+        // Steady while holding: for two seconds after a key the view is held firmly, because reading what has just
         // been typed is when a head that is never quite still is most in the way.
         let level = !Settings.steadyView ? 0 : (Date().timeIntervalSince(lastKey) < 2.0 ? 2 : 1)
         if level != damping { damping = level; core.setDamping(level) }
+        releaseIfPointedAway()
         syncKeyboard()
+        if menu.isOpen { refreshWindows() }
+        pushCandidates()
         // Only the window being used is captured at the display's rate; the rest at half of it, which is
         // what keeps this Mac's fan quiet with several windows in the room.
         let focusedNow = core.focused
@@ -545,7 +570,6 @@ final class RoomController {
     private var pinchSum = 0.0
 
     func pointerMoved(dx: Double, dy: Double) {
-        pointingAgain()
         core.movePointer(dx: dx, dy: dy)
         pointerChanged()
     }
@@ -583,7 +607,6 @@ final class RoomController {
     }
 
     func buttonDown(_ button: Int, grab: Bool) {
-        pointingAgain(force: true)
         let aim = core.aim()
         if menu.isOpen { menu.click(); return }
         guard let id = aim.window, id < RoomCore.panelFirst else { return }
@@ -645,12 +668,11 @@ final class RoomController {
     }
 
     func scrolled(dx: Double, dy: Double, precise: Bool) {
-        pointingAgain(force: true)
         guard !menu.isOpen, let id = core.aim().window ?? core.focused, id < RoomCore.panelFirst else { return }
         let unit: Double = precise ? 1 : 10
         if MacWindows.isMac(id), let capture = macCaptures[id], let at = core.aim(at: id) {
-            MacInput.scroll(dx: Int32(dx * unit), dy: Int32(dy * unit), at: capture.screenPoint(x: at.x, y: at.y),
-                            window: capture.info.windowID, pid: capture.info.pid)
+            // Through the system's stream: an application is not shown a wheel posted at it.
+            input.sendScroll(dx: Int32(dx * unit), dy: Int32(dy * unit), at: capture.screenPoint(x: at.x, y: at.y))
             return
         }
         send(id, ["Scroll": ["horizontal": -dx * unit, "vertical": -dy * unit]])
@@ -751,6 +773,38 @@ final class RoomController {
         hint.update()
     }
 
+    /// Events for a Mac application that is being made the active one wait for it, in order: a click that arrives
+    /// before the application is in front is taken as the click that brings it there, and does nothing else.
+    private var outbox: [() -> Void] = []
+    private var waitingForFront = false
+
+    private func toMac(_ body: @escaping () -> Void) {
+        if waitingForFront { outbox.append(body) } else { body() }
+    }
+
+    private func waitUntilFront(_ pid: pid_t) {
+        guard !waitingForFront, NSWorkspace.shared.frontmostApplication?.processIdentifier != pid else { return }
+        waitingForFront = true
+        var tries = 0
+        func poll() {
+            tries += 1
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid || tries > 30 {
+                // A beat for its window to take the keyboard, then everything that was waiting, in order.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
+                    guard let self else { return }
+                    if ProcessInfo.processInfo.environment["SPATIAND_DEBUG_INPUT"] != nil { print("input: front is \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?") after \(tries) tries; posting \(self.outbox.count) events") }
+                    let queued = self.outbox
+                    self.outbox = []
+                    self.waitingForFront = false
+                    for body in queued { body() }
+                }
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: poll)
+            }
+        }
+        poll()
+    }
+
     private var lastMacMove = (at: Date.distantPast, point: CGPoint.zero)
     private var trailingMove: DispatchWorkItem?
 
@@ -764,7 +818,10 @@ final class RoomController {
         let type: CGEventType = held ? (right ? .rightMouseDragged : .leftMouseDragged) : .mouseMoved
         let send = { [weak self] in
             self?.lastMacMove = (Date(), point)
-            MacInput.mouse(type, button: right ? .right : .left, at: point, clicks: 1, window: capture.info.windowID, pid: capture.info.pid)
+            self?.toMac {
+                if held { self?.input.sendThrough(type, button: right ? .right : .left, at: point, clicks: 1) }
+                else { MacInput.mouse(type, button: .left, at: point, clicks: 1, window: capture.info.windowID, pid: capture.info.pid) }
+            }
         }
         trailingMove?.cancel()
         let since = Date().timeIntervalSince(lastMacMove.at)
@@ -783,25 +840,32 @@ final class RoomController {
         guard let capture = macCaptures[id] else { return }
         trailingMove?.cancel()
         let there = capture.screenPoint(x: x, y: y)
-        if down, hypot(there.x - lastMacMove.point.x, there.y - lastMacMove.point.y) >= 0.5 {
-            MacInput.mouse(.mouseMoved, button: .left, at: there, clicks: 1, window: capture.info.windowID, pid: capture.info.pid)
+        if down {
+            // The first click in a window makes its application the active one, and waits for it to be.
+            if Settings.activateMacWindows, !menu.isOpen {
+                holding = true
+                syncKeyboard()
+                waitUntilFront(capture.info.pid)
+            }
+            if hypot(there.x - lastMacMove.point.x, there.y - lastMacMove.point.y) >= 0.5 {
+                toMac { MacInput.mouse(.mouseMoved, button: .left, at: there, clicks: 1, window: capture.info.windowID, pid: capture.info.pid) }
+            }
         }
         lastMacMove = (Date(), there)
-        let point = capture.screenPoint(x: x, y: y)
+        if ProcessInfo.processInfo.environment["SPATIAND_DEBUG_INPUT"] != nil { print("input: mac click \(down ? "down" : "up") at \(there) in \(capture.frame()), front \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"), waiting \(waitingForFront)") }
         var clicks = 1
         if down {
             if let last = lastClick, last.window == id, Date().timeIntervalSince(last.at) < 0.4,
-               abs(last.point.x - point.x) < 6, abs(last.point.y - point.y) < 6 {
+               abs(last.point.x - there.x) < 6, abs(last.point.y - there.y) < 6 {
                 clicks = last.count + 1
             }
-            lastClick = (Date(), id, point, clicks)
+            lastClick = (Date(), id, there, clicks)
         } else {
             clicks = lastClick?.count ?? 1
         }
         let right = button == 0x111
         let type: CGEventType = down ? (right ? .rightMouseDown : .leftMouseDown) : (right ? .rightMouseUp : .leftMouseUp)
-        MacInput.mouse(type, button: right ? .right : .left, at: point, clicks: clicks,
-                       window: capture.info.windowID, pid: capture.info.pid)
+        toMac { [weak self] in self?.input.sendThrough(type, button: right ? .right : .left, at: there, clicks: clicks) }
     }
 
     /// A key meant for a Mac window, if that is what has the keyboard: posted at its application.
@@ -810,7 +874,7 @@ final class RoomController {
         lastKey = Date()
         // The first key hands the application the keyboard, as a window in front has it, so it shows its caret; this
         // key is still posted at it, and the rest arrive of their own accord.
-        if !typing, Settings.activateMacWindows, !menu.isOpen { typing = true }
+        if !holding, Settings.activateMacWindows, !menu.isOpen { holding = true }
         switch event.type {
         case .keyDown:
             MacInput.key(event, down: true, pid: capture.info.pid)

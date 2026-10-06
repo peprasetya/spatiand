@@ -1065,6 +1065,18 @@ pub extern "C" fn sp_room_chrome_render(room: *mut RoomHandle, id: u32, width_px
     1
 }
 
+/// The windows of this Mac that are not in the room, for the window list: a JSON array of `[id, title]`.
+#[no_mangle]
+pub extern "C" fn sp_room_set_candidates(room: *mut RoomHandle, json: *const c_char) {
+    if json.is_null() {
+        return;
+    }
+    // SAFETY: a NUL-terminated string, by the contract.
+    let text = unsafe { std::ffi::CStr::from_ptr(json) }.to_string_lossy().into_owned();
+    let Ok(list) = serde_json::from_str::<Vec<(u32, String)>>(&text) else { return };
+    with_room(room, (), |r| r.set_candidates(list));
+}
+
 /// How steady the view is held: 0 not at all, 1 a little, 2 firmly, for typing.
 #[no_mangle]
 pub extern "C" fn sp_room_set_damping(room: *mut RoomHandle, level: i32) {
