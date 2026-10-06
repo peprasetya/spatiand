@@ -90,12 +90,38 @@ final class RoomController {
     /// Applications whose pictures the menus already have.
     private var iconsSent: Set<String> = []
 
+    private func runningIcon(_ bundle: String) -> [UInt8]? {
+        guard let icon = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first?.icon else { return nil }
+        return Self.pixels(of: icon, side: 128)
+    }
+
     /// An application of this Mac that is installed, for the launcher.
     struct InstalledApp { let id: String; let name: String; let url: URL }
     private var installed: [InstalledApp] = []
     private var installedIcons: [String: [UInt8]] = [:]
     private var installedScannedAt = Date.distantPast
     private var scanning = false
+
+    /// The windows this Mac is showing, for the launcher: an application with several has a bubble for each.
+    private var macWindowList: [MacWindowInfo] = []
+    private var windowsScannedAt = Date.distantPast
+    private var scanningWindows = false
+
+    private func refreshWindows() {
+        guard !scanningWindows, Date().timeIntervalSince(windowsScannedAt) > 3 else { return }
+        scanningWindows = true
+        Task { [weak self] in
+            let list = await MacWindows.list()
+            await MainActor.run {
+                guard let self else { return }
+                let changed = Set(list.map(\.windowID)) != Set(self.macWindowList.map(\.windowID))
+                self.macWindowList = list
+                self.windowsScannedAt = Date()
+                self.scanningWindows = false
+                if changed { self.syncHosts() }
+            }
+        }
+    }
 
     private func refreshInstalled() {
         guard !scanning, Date().timeIntervalSince(installedScannedAt) > 60 else { return }
@@ -179,7 +205,32 @@ final class RoomController {
             iconsSent.insert(app.id)
             sp_shell_set_icon(core.handle, app.name, 128, 128, pixels)
         }
-        let mac: [[String: Any]] = found.map { ["id": $0.key, "name": $0.value] }
+        // An application with one window is one bubble; with several, a bubble for each window, named by its
+        // title; with none (not running, or all closed), one that opens it.
+        refreshWindows()
+        var windowsOf: [String: [MacWindowInfo]] = [:]
+        for w in macWindowList { windowsOf[w.bundle, default: []].append(w) }
+        var entries: [(id: String, name: String)] = []
+        for (id, name) in found {
+            let windows = (windowsOf[id] ?? []).sorted { $0.title < $1.title }
+            if windows.count <= 1 {
+                entries.append((windows.first.map { "\(id)#\($0.windowID)" } ?? id, name))
+            } else {
+                for w in windows {
+                    var title = w.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if title.count > 28 { title = String(title.prefix(27)) + "\u{2026}" }
+                    entries.append(("\(id)#\(w.windowID)", title.isEmpty ? name : "\(name) \u{2014} \(title)"))
+                }
+            }
+        }
+        // Each bubble's picture is its application's, by the name it shows.
+        for entry in entries {
+            let bundle = String(entry.id.split(separator: "#")[0])
+            if let pixels = installedIcons[bundle] ?? runningIcon(bundle), iconsSent.insert(entry.id + entry.name).inserted {
+                sp_shell_set_icon(core.handle, entry.name, 128, 128, pixels)
+            }
+        }
+        let mac: [[String: Any]] = entries.map { ["id": $0.id, "name": $0.name] }
             .sorted { ($0["name"] as? String ?? "").localizedCaseInsensitiveCompare($1["name"] as? String ?? "") == .orderedAscending }
         tabs.append(["label": "This Mac", "address": "mac", "online": true, "apps": mac])
         if let data = try? JSONSerialization.data(withJSONObject: ["rows": rows, "tabs": tabs]), let text = String(data: data, encoding: .utf8) {
@@ -190,13 +241,19 @@ final class RoomController {
     /// Start an application on a computer: a host's, or one of this Mac's, whose window comes into the room.
     func launch(app id: String, on host: String) {
         if host == "mac" {
+            // "bundle#window" is one window of an application; a bundle on its own is an application with none.
+            let parts = id.split(separator: "#", maxSplits: 1).map(String.init)
+            let bundle = parts[0]
+            let window = parts.count > 1 ? UInt32(parts[1]) : nil
             Task { [weak self] in
                 let list = await MacWindows.list()
                 await MainActor.run {
-                    if let info = list.first(where: { $0.bundle == id }) {
+                    if let window, let info = list.first(where: { $0.windowID == window }) {
+                        self?.bringMacWindow(info)
+                    } else if let info = list.first(where: { $0.bundle == bundle }) {
                         self?.bringMacWindow(info)
                     } else {
-                        self?.openMacApplication(id)
+                        self?.openMacApplication(bundle)
                     }
                 }
             }
