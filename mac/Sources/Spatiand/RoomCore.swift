@@ -12,6 +12,7 @@ final class RoomCore {
     /// The room itself, for the menus' own calls.
     var handle: OpaquePointer { room }
     /// A window's id that stands for the cursor in what is drawn.
+    static let keyboard: UInt16 = 0xFFF8
     static let cursor: UInt32 = 0xFFFF
     /// Ids from here up are Spatiand's own panels: the menus, the hint.
     static let panelFirst: UInt16 = 0xFF00

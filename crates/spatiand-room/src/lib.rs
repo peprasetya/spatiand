@@ -3,6 +3,7 @@
 pub mod diagram;
 pub mod environment;
 pub mod frame;
+pub mod keyboard_face;
 pub mod look;
 pub mod menu;
 pub mod placement;

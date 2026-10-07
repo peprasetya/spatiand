@@ -557,6 +557,9 @@ if CommandLine.arguments.contains("--selftest-record") {
 if CommandLine.arguments.contains("--selftest-tap") {
     TapTest.run()
 }
+if CommandLine.arguments.contains("--selftest-keyboard") {
+    KeyboardTest.run()
+}
 if let at = CommandLine.arguments.firstIndex(of: "--selftest-focus") {
     let args = Array(CommandLine.arguments[(at + 1)...])
     FocusTest.run(app: args.first ?? "TextEdit", title: args.dropFirst().first ?? "")

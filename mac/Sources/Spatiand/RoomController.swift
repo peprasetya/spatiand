@@ -10,6 +10,7 @@
 //  When the glasses go, the windows come back to the desktop exactly as they were.
 
 import AppKit
+import AudioToolbox
 import CSpatiand
 import CoreMedia
 
@@ -683,6 +684,8 @@ final class RoomController {
     func buttonDown(_ button: Int, grab: Bool) {
         let aim = core.aim()
         if menu.isOpen { menu.click(); return }
+        // The on-screen keyboard: a key pressed on it is typed into the window in front.
+        if aim.window == RoomCore.keyboard { keyboardPressed(); return }
         guard let id = aim.window, id < RoomCore.panelFirst else { return }
         focus(id)
         switch aim.zone {
@@ -711,6 +714,29 @@ final class RoomController {
         }
         send(id, ["Motion": ["x": aim.x, "y": aim.y]])
         send(id, ["Button": ["button": button, "pressed": true]])
+    }
+
+    /// A press on the on-screen keyboard: a modifier latches, the sound switch turns, or a key is typed into the window
+    /// in front, as a keyboard on the Deck types into it.
+    private func keyboardPressed() {
+        var stroke = sp_stroke(code: 0, shift: 0, ctrl: 0, alt: 0, click: 0)
+        guard sp_keyboard_press(core.handle, &stroke) == 1, let id = core.focused else { return }
+        if stroke.click != 0 { AudioServicesPlaySystemSound(1104) }
+        let down: [UInt32] = [stroke.shift != 0 ? 42 : 0, stroke.ctrl != 0 ? 29 : 0, stroke.alt != 0 ? 56 : 0].filter { $0 != 0 } + [stroke.code]
+        if MacWindows.isMac(id), let capture = macCaptures[id] {
+            guard let mac = KeyMap.mac[stroke.code] else { return }
+            var flags: NSEvent.ModifierFlags = []
+            if stroke.shift != 0 { flags.insert(.shift) }
+            if stroke.ctrl != 0 { flags.insert(.control) }
+            if stroke.alt != 0 { flags.insert(.option) }
+            if !holding, Settings.activateMacWindows { holding = true }
+            lastKey = Date()
+            MacInput.key(code: mac, flags: flags, down: true, pid: capture.info.pid)
+            MacInput.key(code: mac, flags: flags, down: false, pid: capture.info.pid)
+            return
+        }
+        for code in down { send(id, ["Key": ["code": Int(code), "pressed": true]]) }
+        for code in down.reversed() { send(id, ["Key": ["code": Int(code), "pressed": false]]) }
     }
 
     func buttonUp(_ button: Int) {

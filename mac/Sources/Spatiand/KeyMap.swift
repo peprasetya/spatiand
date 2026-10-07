@@ -22,6 +22,13 @@ enum KeyMap {
         123: 105, 124: 106, 125: 108, 126: 103,
     ]
 
+    /// The Mac key at the position a Linux key code names, for typing from the on-screen keyboard.
+    static let mac: [UInt32: UInt16] = {
+        var out: [UInt32: UInt16] = [:]
+        for (key, code) in evdev where out[code] == nil || key < out[code]! { out[code] = key }
+        return out
+    }()
+
     /// Which modifier flag a modifier key's code toggles, by mask, so a `flagsChanged` event
     /// can be turned into a press or a release.
     static func modifierMask(_ code: UInt16) -> UInt? {

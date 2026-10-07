@@ -811,8 +811,55 @@ impl Room {
         (self.corner, self.size)
     }
 
+    /// Where the keyboard hangs: under the window being typed into, at its distance and facing, as the Deck's does; with
+    /// no window to hang from, just under the eye line. `focus` is that window's place and the shape of its picture.
+    fn keyboard_place(&self, head: DQuat, focus: Option<(Placement, f64)>) -> Placement {
+        let outer = spatiand_shell::keyboard::outer_aspect();
+        let (fov_h, fov_v) = (self.stereo.h_fov_deg.to_radians(), self.stereo.v_fov_deg().to_radians());
+        // As wide as fits the field at that distance.
+        let fit = |radius: f64, v_share: f64| (2.0 * radius * (fov_h * 0.5).tan()).min(2.0 * radius * (fov_v * v_share * 0.5).tan() * outer);
+        let scale = self.ui.keyboard.scale as f64;
+        const GAP: f64 = 0.026;
+        match focus {
+            Some((window, aspect)) => {
+                let fit_width = fit(window.radius, 1.0);
+                let width = (window.width * scale).clamp(fit_width * 0.55, fit_width);
+                let height = width / outer;
+                let window_height = window.width / aspect.max(0.01);
+                let below = window_height * (0.5 + 0.12);
+                let drop = below / window.radius + GAP + height * 0.5 / window.radius;
+                Placement { yaw: window.yaw, pitch: spatiand_room::placement::clamp_pitch(window.pitch - drop), radius: window.radius, width, ..Placement::default() }
+            }
+            None => {
+                let forward = head * DVec3::X;
+                let radius = 1.3;
+                let width = (fit(radius, 0.5) * scale).min(fit(radius, 0.5) * spatiand_shell::keyboard::MAX_SCALE as f64);
+                let drop = (width / outer * 0.5 / radius).atan() + GAP;
+                // Measured from the eyes, which are a little above the pivot the room is centred on.
+                let level = (self.stereo.neck_up_m / radius).atan();
+                Placement { yaw: forward.y.atan2(forward.x), pitch: level - drop, radius, width, ..Placement::default() }
+            }
+        }
+    }
+
     /// Every window's place for a head: a pinned one is worked out from the head afresh.
     fn placed(&self, head: DQuat) -> Vec<(usize, Placement)> {
+        let mut placed = self.placed_windows(head);
+        if let Some(k) = self.windows.iter().position(|w| w.id == shell_ui::KEYBOARD_ID) {
+            let focus = self.focus.filter(|f| !Self::is_panel(*f)).and_then(|f| {
+                let i = self.windows.iter().position(|w| w.id == f)?;
+                let place = placed.iter().find(|(j, _)| *j == i).map(|(_, p)| *p)?;
+                Some((place, self.windows[i].aspect()))
+            });
+            let place = self.keyboard_place(head, focus);
+            if let Some(entry) = placed.iter_mut().find(|(j, _)| *j == k) {
+                entry.1 = place;
+            }
+        }
+        placed
+    }
+
+    fn placed_windows(&self, head: DQuat) -> Vec<(usize, Placement)> {
         let view = pip::View {
             fov_deg: (self.stereo.h_fov_deg, self.stereo.v_fov_deg()),
             eye: self.eye_centre(DQuat::IDENTITY),
@@ -950,6 +997,7 @@ impl Room {
             id == shell_ui::CARD_ID
                 || id == shell_ui::STATUS_ID
             || id == shell_ui::DIAGRAM_ID
+            || id == shell_ui::KEYBOARD_ID
                 || (shell_ui::BUBBLE_FIRST..shell_ui::BUBBLE_FIRST + 16).contains(&id)
                 || (shell_ui::DOT_FIRST..shell_ui::DOT_FIRST + 8).contains(&id)
         };
@@ -1066,6 +1114,12 @@ impl Room {
                 self.ui.set_windows(entries, true);
                 Some(ShellEvent::Hud(spatiand_shell::HudAction::OpenSwitcher))
             }
+            // The keyboard row shows or puts away the on-screen keyboard, which hangs under the window being typed into.
+            Some(ShellEvent::Hud(spatiand_shell::HudAction::ToggleKeyboard)) => {
+                self.ui.keyboard.open = !self.ui.keyboard.open;
+                self.ui.dirty = true;
+                Some(ShellEvent::Hud(spatiand_shell::HudAction::ToggleKeyboard))
+            }
             // Bluetooth on the Deck is a page of its own, run by BlueZ. A Mac has the system's, and it is floated in the
             // room as the Wi-Fi one is: the page is closed again and the app is told which panel to open.
             Some(ShellEvent::Hud(spatiand_shell::HudAction::OpenBluetooth)) => {
@@ -1094,6 +1148,46 @@ impl Room {
                 Some(ShellEvent::AddEnvironment(name))
             }
             other => other,
+        }
+    }
+
+    /// The Linux code of the key the pointer is on, if it is on the keyboard's keys; nothing is pressed.
+    pub fn keyboard_key_under_pointer(&self) -> Option<u32> {
+        use spatiand_shell::keyboard::Target;
+        let aim = self.aim();
+        if aim.window != Some(shell_ui::KEYBOARD_ID) {
+            return None;
+        }
+        let win = self.windows.iter().find(|w| w.id == shell_ui::KEYBOARD_ID)?;
+        match self.ui.keyboard.target_at(aim.x / win.size.0.max(1) as f64, aim.y / win.size.1.max(1) as f64)? {
+            Target::Key(key) => Some(key.code),
+            _ => None,
+        }
+    }
+
+    /// A press at what the pointer is on, if that is the keyboard: the key it lands on is pressed as the Deck's keyboard
+    /// presses it, which latches a modifier or gives a keystroke to send. `Some(None)` is a press that only changed the
+    /// keyboard (a modifier, the click's switch); `None` is a press that was not on a key.
+    pub fn keyboard_press(&mut self) -> Option<Option<(spatiand_shell::keyboard::Stroke, bool)>> {
+        use spatiand_shell::keyboard::Target;
+        let aim = self.aim();
+        if aim.window != Some(shell_ui::KEYBOARD_ID) {
+            return None;
+        }
+        let win = self.windows.iter().find(|w| w.id == shell_ui::KEYBOARD_ID)?;
+        let (u, v) = (aim.x / win.size.0.max(1) as f64, aim.y / win.size.1.max(1) as f64);
+        self.ui.dirty = true;
+        match self.ui.keyboard.target_at(u, v)? {
+            Target::Key(key) => {
+                let stroke = self.ui.keyboard.press(key);
+                self.ui.keyboard.after_press(key);
+                Some(stroke.map(|s| (s, self.ui.keyboard.click)))
+            }
+            Target::SoundToggle => {
+                self.ui.keyboard.toggle_click();
+                Some(None)
+            }
+            Target::Border => None,
         }
     }
 
@@ -1984,5 +2078,72 @@ mod tests {
         r.centre_pointer();
         r.set_fixed_head(Some(glam::DQuat::IDENTITY));
         assert_ne!(r.aim().window, Some(shell_ui::STATUS_ID));
+    }
+
+    /// Open the keyboard from the settings list, as the wearer does.
+    fn open_keyboard(r: &mut Room) {
+        use spatiand_shell::{Intent, ShellEvent};
+        r.shell_intent(Intent::ToggleHud);
+        settings_row(r, "Keyboard");
+        assert!(matches!(r.shell_intent(Intent::Accept), Some(ShellEvent::Hud(_))));
+        assert!(r.ui.keyboard.open);
+        r.ui.render((40.0, 23.0));
+        r.install_shell_panels();
+    }
+
+    /// Steer the pointer, as a hand would, until it is over the key with this Linux code.
+    fn point_at_key(r: &mut Room, code: u32) -> bool {
+        // Steered by a fifth of a degree, as far as the pointer can go.
+        for yaw_step in -120..=120 {
+            for pitch_step in -150..=60 {
+                r.cursor = (yaw_step as f64 * 0.2f64.to_radians(), pitch_step as f64 * 0.2f64.to_radians());
+                if r.keyboard_key_under_pointer() == Some(code) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn the_keyboard_row_shows_a_keyboard_under_the_window_in_front_and_a_press_types_a_key() {
+        let mut r = room();
+        r.set_fixed_head(Some(glam::DQuat::IDENTITY));
+        r.set_window(1, (1280, 800));
+        r.show(1);
+        r.set_focus(Some(1));
+        open_keyboard(&mut r);
+        let window = r.windows.iter().position(|w| w.id == 1).unwrap();
+        let board = r.windows.iter().position(|w| w.id == shell_ui::KEYBOARD_ID).expect("a keyboard panel");
+        let placed = r.placed(r.head());
+        let (below, above) = (placed.iter().find(|(i, _)| *i == board).unwrap().1, placed.iter().find(|(i, _)| *i == window).unwrap().1);
+        assert!(below.pitch < above.pitch, "under the window");
+        assert!((below.yaw - above.yaw).abs() < 1e-9 && (below.radius - above.radius).abs() < 1e-9, "at its distance, in its direction");
+        r.shell_intent(spatiand_shell::Intent::Back);
+        // The letter A, and then Shift and the letter A.
+        assert!(point_at_key(&mut r, 30), "the pointer can be put on the A key");
+        let typed = r.keyboard_press().expect("on the keyboard").expect("a keystroke");
+        assert_eq!((typed.0.code, typed.0.shift), (30, false));
+        assert!(point_at_key(&mut r, spatiand_shell::keyboard::KEY_LEFTSHIFT));
+        assert!(r.keyboard_press().expect("on the keyboard").is_none(), "a modifier only latches");
+        assert!(r.ui.keyboard.shift);
+        assert!(point_at_key(&mut r, 30));
+        let capital = r.keyboard_press().unwrap().unwrap();
+        assert_eq!((capital.0.code, capital.0.shift), (30, true));
+        assert!(!r.ui.keyboard.shift, "one capital, then it lets go");
+    }
+
+    #[test]
+    fn the_keyboard_row_again_puts_it_away() {
+        let mut r = room();
+        open_keyboard(&mut r);
+        // The settings list again: the same row, chosen again.
+        r.shell_intent(spatiand_shell::Intent::ToggleHud);
+        settings_row(&mut r, "Keyboard");
+        r.shell_intent(spatiand_shell::Intent::Accept);
+        assert!(!r.ui.keyboard.open);
+        r.ui.render((40.0, 23.0));
+        r.install_shell_panels();
+        assert!(r.windows.iter().all(|w| w.id != shell_ui::KEYBOARD_ID), "taken down");
     }
 }

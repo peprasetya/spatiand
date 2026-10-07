@@ -1436,3 +1436,30 @@ pub extern "C" fn sp_shell_set_recording(room: *mut RoomHandle, recording: i32) 
         r.ui.dirty = true;
     });
 }
+
+/// A keystroke from the on-screen keyboard: a Linux key code and the modifiers latched with it.
+#[repr(C)]
+pub struct Stroke {
+    pub code: u32,
+    pub shift: i32,
+    pub ctrl: i32,
+    pub alt: i32,
+    /// Whether the keyboard's click is on, so a sound goes with it.
+    pub click: i32,
+}
+
+/// A press where the pointer is: 0 if it was not on the keyboard's keys, 1 if it was a keystroke to send (in `stroke`),
+/// 2 if it only changed the keyboard.
+#[no_mangle]
+pub extern "C" fn sp_keyboard_press(room: *mut RoomHandle, stroke: *mut Stroke) -> i32 {
+    match with_room(room, None, |r| r.keyboard_press()) {
+        None => 0,
+        Some(None) => 2,
+        Some(Some((s, click))) => {
+            if let Some(out) = unsafe { stroke.as_mut() } {
+                *out = Stroke { code: s.code, shift: s.shift as i32, ctrl: s.ctrl as i32, alt: s.alt as i32, click: click as i32 };
+            }
+            1
+        }
+    }
+}

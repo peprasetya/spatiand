@@ -54,6 +54,10 @@ pub const SEARCH_ID: u32 = 0xFFF4;
 pub const STATUS_ID: u32 = 0xFFF6;
 /// The controller picture above the layout editor's card.
 pub const DIAGRAM_ID: u32 = 0xFFF7;
+/// The on-screen keyboard: the Deck's, under the window being typed into.
+pub const KEYBOARD_ID: u32 = 0xFFF8;
+/// The keyboard's face is drawn this many pixels across, as on the Deck.
+const KEYBOARD_FACE_PX: u32 = 1792;
 pub const SEARCH_NOTE_ID: u32 = 0xFFF5;
 /// The field's picture and where it hangs: across the top of the launcher's view, with the bubbles a little
 /// lower than the Deck puts them to make the room. Numbers set by the glasses' 23 degrees of height: the
@@ -120,6 +124,8 @@ pub struct ShellUi {
     /// The layout editor's page, while it is open: the Deck's own editor, drawn as a card with the controller picture
     /// above it.
     editor: Option<spatiand_mapper::editor::View>,
+    /// The on-screen keyboard: the Deck's own state (latched modifiers, the click) and its face.
+    pub keyboard: spatiand_shell::Keyboard,
 }
 
 impl Default for ShellUi {
@@ -138,6 +144,7 @@ impl ShellUi {
             anchor: (0.0, 0.0),
             status: String::new(),
             editor: None,
+            keyboard: spatiand_shell::Keyboard::default(),
             first: 0,
             icons: HashMap::new(),
             layout: None,
@@ -243,8 +250,34 @@ impl ShellUi {
         if !matches!(self.shell.mode(), Mode::Launcher | Mode::Controller) {
             self.render_status();
         }
+        if self.keyboard.open {
+            self.render_keyboard();
+        }
         self.version += 1;
         true
+    }
+
+    /// The keyboard's plate: the face of keys on a pane of glass with a thin frame, one picture. Where it hangs, and how
+    /// wide, is the room's to say, because it follows the window being typed into.
+    fn render_keyboard(&mut self) {
+        let face = chrome::with_text(|text| spatiand_room::keyboard_face::face(text, &self.keyboard, KEYBOARD_FACE_PX));
+        let (fw, _) = spatiand_shell::keyboard::face_fraction();
+        let w = (face.width as f64 / fw).round() as u32;
+        let h = (w as f64 / spatiand_shell::keyboard::outer_aspect()).round() as u32;
+        let mut canvas = vec![0u8; (w * h * 4) as usize];
+        let radius = h as f32 * 0.04;
+        round_rect(&mut canvas, w, h, 0.0, 0.0, w as f32, h as f32, radius, [0.55, 0.70, 1.0, 0.30]);
+        round_rect(&mut canvas, w, h, 2.0, 2.0, w as f32 - 4.0, h as f32 - 4.0, radius - 1.0, [0.05, 0.06, 0.09, 0.96]);
+        let (x, y) = (((w - face.width) / 2) as f32, ((h - face.height) / 2) as f32);
+        chrome::blit(&mut canvas, w, h, &face.rgba, face.width, face.height, x, y, face.width as f32, face.height as f32, [1.0; 4]);
+        self.images.insert(KEYBOARD_ID, PanelSpec {
+            id: KEYBOARD_ID,
+            image: Image { width: w, height: h, rgba: Arc::new(premultiply(canvas)) },
+            width_m: 1.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            radius: 1.3,
+        });
     }
 
     /// The editor's page as a menu, if it is open.
