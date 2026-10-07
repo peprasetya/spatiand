@@ -247,7 +247,8 @@ Everything the Deck's settings list offers is there, by the Deck's own code wher
 | The Deck's | On the Mac |
 |---|---|
 | Environment: black, the generated studio, any picture in the folder, add one from a file browser, remembered | `spatiand_room::environment` (the same module, moved), `surroundings.rs` joins it to the menus; the picture is drawn by `fragment_sky` with the eye's part of a stereo pair, the front half of a 180, and the turn. Same folder (`~/.local/share/spatiand/environments`) and state files; Settings has a button that runs `tools/fetch-environments.sh` for the default NOIRLab panoramas |
-| Status line (time, battery, windows), head-locked upper left | `spatiand_room::status` for the words, `StatusLine.swift` for the battery, `Room::locked` for holding a panel to the head |
+| Status line (the time and the battery), small, head-locked at the upper right | `spatiand_room::status` for the words, `StatusLine.swift` for the battery, `Room::locked` for holding a panel to the head; the Deck's `draw_status` is sized by height and put at the right too |
+| Notifications | `NotificationBanners.swift`: the system's own banners, captured from the Notification Center window, held to the head under the status line; a press is made on the real banner and the application it opens has its windows brought into the room |
 | Controller layout editor and its picture | `spatiand_mapper::editor` through `Pads`, drawn as the Deck's card with `spatiand_room::diagram` above it |
 | Radial menu of a layout | the mapper's `RadialView`, a ring of head-locked plates |
 | On-screen keyboard under the window being typed into | `spatiand_shell::keyboard` and `spatiand_room::keyboard_face`; a press is typed into the window in front |
@@ -256,6 +257,8 @@ Everything the Deck's settings list offers is there, by the Deck's own code wher
 | Sound of each window placed where it is | `MacTap.swift` / `MacSound.swift`: a Core Audio process tap, muted on the speakers while taken. Off until asked for in Settings, because macOS asks permission the first time and an application is silent on the Mac while its sound is held |
 | Calibrate head tracking | not needed: the Mac learns the glasses' sensors as they are worn and keeps them |
 | Sidecar screen, volume rocker, power button | the Deck's own hardware; the Mac has its own screen and keys |
+
+Frames: `DrawablePump` gets drawables on a thread of its own (the main thread waited for them for most of every second, and every key, pointer and finger waited behind it); the display link ticks on the main thread and takes the drawable if there is one. The head is drawn where it will be when the frame is on the display.
 
 What is still different: the keyboard cannot be dragged larger by its frame, a hovered key does not stand up, and the
 idle fade the Deck gives a film's transport bar is not there.
