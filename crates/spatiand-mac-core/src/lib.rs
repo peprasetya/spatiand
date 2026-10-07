@@ -1427,3 +1427,12 @@ pub extern "C" fn sp_shell_close_controller(room: *mut RoomHandle) {
         r.ui.dirty = true;
     });
 }
+
+/// Whether a video is being recorded, so the settings list's row offers to stop it.
+#[no_mangle]
+pub extern "C" fn sp_shell_set_recording(room: *mut RoomHandle, recording: i32) {
+    with_room(room, (), |r| {
+        r.ui.shell.set_recording(recording != 0);
+        r.ui.dirty = true;
+    });
+}

@@ -343,6 +343,33 @@ final class RoomController {
         hint.say("Saved to your Pictures folder.")
     }
 
+    /// The video being recorded, if there is one.
+    private(set) var recorder: Recorder?
+
+    /// The HUD's Record row: begins a video of what the glasses show, or finishes the one that is going.
+    func toggleRecording() {
+        if let current = recorder {
+            recorder = nil
+            core.setRecording(false)
+            current.stop { [weak self] saved in
+                DispatchQueue.main.async {
+                    self?.hint.say(saved ? "Saved to your Movies folder: \(current.url.lastPathComponent)" : "Nothing was recorded.")
+                }
+            }
+            return
+        }
+        guard let renderer else { return }
+        let width = output.isRunning ? Int(CGDisplayBounds(output.displayID).width) : 3840
+        guard let new = Recorder(renderer: renderer, width: width, height: 1080, sideBySide: output.sideBySide) else {
+            hint.say("A video could not be started.")
+            return
+        }
+        recorder = new
+        core.setRecording(true)
+        hint.say("Recording. Choose Record again to stop.")
+        Task { if await new.start() == false { await MainActor.run { self.recorder = nil; self.core.setRecording(false); self.hint.say("A video could not be started.") } } }
+    }
+
     /// "Leave Spatiand": the windows go back to this Mac's screen.
     func leave() {
         NotificationCenter.default.post(name: .spatiandLeave, object: nil)

@@ -551,6 +551,9 @@ if CommandLine.arguments.contains("--selftest-environment") {
 if CommandLine.arguments.contains("--selftest-controller") {
     ControllerTest.run()
 }
+if CommandLine.arguments.contains("--selftest-record") {
+    RecordTest.run()
+}
 if let at = CommandLine.arguments.firstIndex(of: "--selftest-focus") {
     let args = Array(CommandLine.arguments[(at + 1)...])
     FocusTest.run(app: args.first ?? "TextEdit", title: args.dropFirst().first ?? "")

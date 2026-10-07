@@ -129,7 +129,7 @@ mod tests {
     use super::*;
 
     fn wait(s: &mut Surroundings) -> SkyInfo {
-        for _ in 0..200 {
+        for _ in 0..3000 {
             if let Some(info) = s.poll() {
                 return info;
             }

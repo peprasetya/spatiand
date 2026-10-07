@@ -208,7 +208,7 @@ final class RoomShell {
             case "ReturnToDesktop": controller.leave()
             case "ToggleKeyboard": controller.hint.say("Type on this Mac's keyboard: it goes to the window in front of you.")
             case "ControllerLayout": PadInput.shared.openEditor(for: controller.core.aim().window ?? controller.core.focused)
-            case "Record": controller.hint.say("Recording is not on the Mac yet.")
+            case "Record": controller.toggleRecording()
             case "Calibrate": controller.hint.say("The Mac learns the glasses' sensors as they are worn, and remembers them.")
             default: break
             }

@@ -316,6 +316,7 @@ final class GlassesOutput: NSObject, CAMetalDisplayLinkDelegate {
         if now != lastAim { lastAim = now; room.pointerChanged() }
         room.tick()
         renderer.render(into: drawable.texture, sideBySide: sideBySide, present: drawable)
+        room.recorder?.capture(sideBySide: sideBySide)
     }
 
     func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {

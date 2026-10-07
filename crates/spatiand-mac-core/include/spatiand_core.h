@@ -146,6 +146,7 @@ int32_t sp_shell_panel_image(sp_room *room, uint32_t id, uint32_t *w, uint32_t *
 char *sp_shell_launcher(sp_room *room);
 char *sp_shell_card(sp_room *room);
 void sp_shell_close_controller(sp_room *room);
+void sp_shell_set_recording(sp_room *room, int32_t recording);
 void sp_room_set_status(sp_room *room, const char *text);
 char *sp_status_line(uint32_t windows, int32_t battery, int32_t charging);
 void sp_shell_hover(sp_room *room);
