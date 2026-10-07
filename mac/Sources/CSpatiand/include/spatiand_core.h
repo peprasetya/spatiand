@@ -151,6 +151,7 @@ int32_t sp_keyboard_press(sp_room *room, sp_stroke *stroke);
 void sp_shell_set_recording(sp_room *room, int32_t recording);
 void sp_room_set_status(sp_room *room, const char *text);
 char *sp_status_line(int32_t battery, int32_t charging);
+void sp_room_set_banner(sp_room *room, uint32_t width, uint32_t height, const uint8_t *bgra, double points);
 void sp_shell_hover(sp_room *room);
 char *sp_shell_click(sp_room *room);
 void sp_shell_set_hosts(sp_room *room, const char *json);

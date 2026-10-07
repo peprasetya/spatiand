@@ -942,7 +942,7 @@ impl Room {
         for i in self.nearest_first(&placed) {
             let (_, place) = placed[i];
             let w = &self.windows[i];
-            if !w.shown || w.hidden || self.locked.contains_key(&w.id) {
+            if !w.shown || w.hidden || shell_ui::is_passive(w.id) {
                 continue;
             }
             if Self::is_panel(w.id) {
@@ -2199,5 +2199,43 @@ mod tests {
         r.install_shell_panels();
         // Only what is always there (the status line is not drawn at all with nothing to say).
         assert_eq!(menu_panels(&r), 0, "{:?}", r.windows.iter().map(|w| w.id).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_notification_banner_hangs_under_the_status_line_and_can_be_pointed_at() {
+        let mut r = room();
+        r.set_fixed_head(Some(glam::DQuat::IDENTITY));
+        r.ui.set_status("12:00  80%");
+        // A banner is a plate 344 points by 70, at two pixels to a point.
+        let (w, h) = (688u32, 140u32);
+        let banner = shell_ui::Image { width: w, height: h, rgba: std::sync::Arc::new(vec![200u8; (w * h * 4) as usize]) };
+        r.ui.set_banner(Some((banner, 344.0)));
+        assert!(r.ui.render((40.0, 23.0)));
+        r.install_shell_panels();
+        let placed = r.placed(r.head());
+        let place = |id: u32| {
+            let i = r.windows.iter().position(|w| w.id == id).expect("a panel");
+            placed.iter().find(|(j, _)| *j == i).unwrap().1
+        };
+        let (status, banner) = (place(shell_ui::STATUS_ID), place(shell_ui::BANNER_ID));
+        assert!(banner.pitch < status.pitch, "under the status line");
+        assert!(banner.yaw < 0.0, "on the right");
+        // It is aimed at: put the pointer on its middle.
+        let mut found = false;
+        'scan: for yaw in -300..=0 {
+            for pitch in -50..=150 {
+                r.cursor = (yaw as f64 * 0.05f64.to_radians(), pitch as f64 * 0.05f64.to_radians());
+                if r.aim().window == Some(shell_ui::BANNER_ID) {
+                    found = true;
+                    break 'scan;
+                }
+            }
+        }
+        assert!(found, "the pointer can be put on a banner");
+        // And it is gone when no banner is.
+        r.ui.set_banner(None);
+        r.ui.render((40.0, 23.0));
+        r.install_shell_panels();
+        assert!(r.windows.iter().all(|w| w.id != shell_ui::BANNER_ID));
     }
 }

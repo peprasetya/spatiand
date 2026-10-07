@@ -13,6 +13,7 @@ final class RoomCore {
     var handle: OpaquePointer { room }
     /// A window's id that stands for the cursor in what is drawn.
     static let keyboard: UInt16 = 0xFFF8
+    static let banner: UInt16 = 0xFFF9
     static let cursor: UInt32 = 0xFFFF
     /// Ids from here up are Spatiand's own panels: the menus, the hint.
     static let panelFirst: UInt16 = 0xFF00
@@ -136,6 +137,13 @@ final class RoomCore {
         guard let c = sp_environment_folder() else { return nil }
         defer { sp_free_string(c) }
         return String(cString: c)
+    }
+    /// The Mac's notification banners as one picture, or none.
+    func setBanner(_ shown: NotificationBanners.Shown?) {
+        guard let shown else { sp_room_set_banner(room, 0, 0, nil, 0); return }
+        shown.pixels.withUnsafeBytes { bytes in
+            sp_room_set_banner(room, UInt32(shown.width), UInt32(shown.height), bytes.bindMemory(to: UInt8.self).baseAddress, Double(shown.width) / Double(shown.scale))
+        }
     }
     func setRecording(_ on: Bool) { sp_shell_set_recording(room, on ? 1 : 0) }
     func setRadial(_ labels: String?, selected: Int) { sp_room_set_radial(room, labels, Int32(selected)) }

@@ -1476,3 +1476,17 @@ pub extern "C" fn sp_room_set_radial(room: *mut RoomHandle, json: *const c_char,
     };
     with_room(room, (), |r| r.ui.set_radial(radial));
 }
+
+/// The Mac's notification banners, as one picture (premultiplied BGRA, `width` by `height` pixels) that is `points` wide on
+/// the Mac's screen; held to the head under the status line. A zero size takes it down.
+#[no_mangle]
+pub extern "C" fn sp_room_set_banner(room: *mut RoomHandle, width: u32, height: u32, bgra: *const u8, points: f64) {
+    let banner = if width == 0 || height == 0 || bgra.is_null() || width > 4096 || height > 4096 {
+        None
+    } else {
+        // SAFETY: `width * height * 4` readable bytes, by the contract.
+        let pixels = unsafe { std::slice::from_raw_parts(bgra, (width * height * 4) as usize) }.to_vec();
+        Some((shell_ui::Image { width, height, rgba: std::sync::Arc::new(pixels) }, points))
+    };
+    with_room(room, (), |r| r.ui.set_banner(banner));
+}

@@ -56,6 +56,10 @@ pub const STATUS_ID: u32 = 0xFFF6;
 pub const STATUS_HEIGHT_DEG: f64 = 1.6;
 pub const STATUS_RIGHT_EDGE_DEG: f64 = 16.0;
 pub const STATUS_PITCH_DEG: f64 = 10.2;
+/// The Mac's notifications, beneath it: a banner is about 344 points wide and is shown this many degrees across.
+pub const BANNER_ID: u32 = 0xFFF9;
+pub const BANNER_REFERENCE_POINTS: f64 = 344.0;
+pub const BANNER_REFERENCE_DEG: f64 = 11.0;
 /// The controller picture above the layout editor's card.
 pub const DIAGRAM_ID: u32 = 0xFFF7;
 /// The on-screen keyboard: the Deck's, under the window being typed into.
@@ -66,7 +70,7 @@ pub const RADIAL_MAX: usize = 16;
 /// Whether a panel id is one the menus and overlays make (so the room takes it down when they stop wanting it), as
 /// opposed to the hint, which is the app's own.
 pub fn is_menu_panel(id: u32) -> bool {
-    matches!(id, CARD_ID | SEARCH_ID | SEARCH_NOTE_ID | STATUS_ID | DIAGRAM_ID | KEYBOARD_ID)
+    matches!(id, CARD_ID | SEARCH_ID | SEARCH_NOTE_ID | STATUS_ID | DIAGRAM_ID | KEYBOARD_ID | BANNER_ID)
         // Bubbles, lit and not, their names, the page dots, and a radial menu's items.
         || (BUBBLE_FIRST..BUBBLE_FIRST + 32).contains(&id)
         || (DOT_FIRST..DOT_FIRST + 16).contains(&id)
@@ -74,9 +78,14 @@ pub fn is_menu_panel(id: u32) -> bool {
         || (RADIAL_FIRST..RADIAL_FIRST + RADIAL_MAX as u32).contains(&id)
 }
 
+/// Whether the pointer passes through a panel to what is behind it: the status line is only looked at.
+pub fn is_passive(id: u32) -> bool {
+    id == STATUS_ID || (RADIAL_FIRST..RADIAL_FIRST + RADIAL_MAX as u32).contains(&id)
+}
+
 /// Whether a panel is held to the head rather than hung in the room.
 pub fn is_head_locked(id: u32) -> bool {
-    id == STATUS_ID || (RADIAL_FIRST..RADIAL_FIRST + RADIAL_MAX as u32).contains(&id)
+    id == STATUS_ID || id == BANNER_ID || (RADIAL_FIRST..RADIAL_FIRST + RADIAL_MAX as u32).contains(&id)
 }
 /// The keyboard's face is drawn this many pixels across, as on the Deck.
 const KEYBOARD_FACE_PX: u32 = 1792;
@@ -150,6 +159,8 @@ pub struct ShellUi {
     pub keyboard: spatiand_shell::Keyboard,
     /// A radial menu that is open: the words of its items and the one that is lit.
     radial: Option<(Vec<String>, Option<usize>)>,
+    /// The Mac's notification banners, as a picture (premultiplied BGRA, size in pixels) and how wide it is in points.
+    banner: Option<(Image, f64)>,
 }
 
 impl Default for ShellUi {
@@ -170,6 +181,7 @@ impl ShellUi {
             editor: None,
             keyboard: spatiand_shell::Keyboard::default(),
             radial: None,
+            banner: None,
             first: 0,
             icons: HashMap::new(),
             layout: None,
@@ -279,8 +291,43 @@ impl ShellUi {
             self.render_keyboard();
         }
         self.render_radial();
+        self.render_banner();
         self.version += 1;
         true
+    }
+
+    /// The banners on show, or none.
+    pub fn set_banner(&mut self, banner: Option<(Image, f64)>) {
+        let changed = match (&self.banner, &banner) {
+            (None, None) => false,
+            (Some((a, _)), Some((b, _))) => a.width != b.width || a.height != b.height || a.rgba != b.rgba,
+            _ => true,
+        };
+        if changed {
+            self.banner = banner;
+            self.dirty = true;
+        }
+    }
+
+    /// The notification banners, just under the status line at the upper right and held to the head, at a size that makes the
+    /// type of a banner about as big as the type of anything else in the glasses. Not passive: a banner is pointed at and
+    /// pressed, and the press is made on the real one.
+    fn render_banner(&mut self) {
+        let Some((image, points)) = self.banner.clone() else { return };
+        let width_deg = (points / BANNER_REFERENCE_POINTS * BANNER_REFERENCE_DEG).clamp(4.0, 15.0);
+        let distance = 1.5f64;
+        let width_m = 2.0 * distance * (width_deg.to_radians() * 0.5).tan();
+        let height_deg = width_deg * image.height as f64 / image.width.max(1) as f64;
+        // Its top edge a little below the status line's lower edge.
+        let top = STATUS_PITCH_DEG - STATUS_HEIGHT_DEG * 0.5 - 0.5;
+        self.images.insert(BANNER_ID, PanelSpec {
+            id: BANNER_ID,
+            image,
+            width_m,
+            yaw: -(STATUS_RIGHT_EDGE_DEG - width_deg * 0.5).to_radians(),
+            pitch: (top - height_deg * 0.5).to_radians(),
+            radius: distance,
+        });
     }
 
     /// A radial menu is open, or has closed: its items, and which one the thumb is on.

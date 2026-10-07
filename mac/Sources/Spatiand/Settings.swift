@@ -100,6 +100,12 @@ enum Settings {
         set { defaults.set(newValue, forKey: "placeMacSound") }
     }
 
+    /// Whether the Mac's notifications are shown in the glasses, under the clock.
+    static var notifications: Bool {
+        get { defaults.object(forKey: "notifications") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "notifications") }
+    }
+
     static var hotkeys: Bool {
         defaults.object(forKey: "hotkeys") as? Bool ?? true
     }

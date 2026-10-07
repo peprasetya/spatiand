@@ -416,6 +416,8 @@ final class RoomController {
         } else {
             menu.close()
             macSound.stopAll()
+            banners.stop()
+            bannerShown = nil
             stopWatchingMacWindows()
             if drivesGlasses {
                 input.stop()
@@ -537,6 +539,61 @@ final class RoomController {
 
     private var damping = -1
 
+    private(set) lazy var banners = NotificationBanners()
+    /// The notification banners on show, for turning where the pointer is on one into where it is on the Mac's screen.
+    private var bannerShown: NotificationBanners.Shown?
+    private var bannerPressed = false
+    private var bannerAt = Date.distantPast
+
+    /// The Mac's notifications, when the owner wants them: watched while the room is in use.
+    private func updateBanners() {
+        guard Date().timeIntervalSince(bannerAt) > 2 else { return }
+        bannerAt = Date()
+        if Settings.notifications, active, MacWindows.allowed(ask: false) {
+            if !banners.running {
+                banners.onChange = { [weak self] shown in
+                    self?.bannerShown = shown
+                    self?.core.setBanner(shown)
+                }
+                Task { await banners.start() }
+            }
+        } else if banners.running {
+            banners.stop()
+            bannerShown = nil
+        }
+    }
+
+    /// The pointer is on a banner: the real banner is told, so that it shows what it shows when pointed at.
+    private func bannerHover(_ x: Double, _ y: Double) {
+        guard let shown = bannerShown, banners.windowID != 0 else { return }
+        let point = NotificationBanners.screenPoint(shown, x: x, y: y)
+        MacInput.mouse(.mouseMoved, button: .left, at: point, clicks: 1, window: banners.windowID, pid: banners.pid)
+    }
+
+    /// A press on a banner is a press on the real one, through the system's stream. When the application it is from has come
+    /// to the front, its windows come into the room.
+    private func bannerButton(down: Bool, _ x: Double, _ y: Double) {
+        guard let shown = bannerShown else { return }
+        let point = NotificationBanners.screenPoint(shown, x: x, y: y)
+        let before = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        if down {
+            bannerPressed = true
+            MacInput.mouse(.mouseMoved, button: .left, at: point, clicks: 1, window: banners.windowID, pid: banners.pid)
+        } else {
+            bannerPressed = false
+        }
+        input.sendThrough(down ? .leftMouseDown : .leftMouseUp, button: .left, at: point, clicks: 1)
+        guard !down else { return }
+        for delay in [0.7, 1.6] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, let app = NSWorkspace.shared.frontmostApplication,
+                      app.processIdentifier != before, app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+                      let id = app.bundleIdentifier, !self.macCaptures.values.contains(where: { $0.info.pid == app.processIdentifier }) else { return }
+                self.launch(app: id, on: "mac")
+            }
+        }
+    }
+
     private(set) lazy var macSound = MacSound(room: core)
     private var soundAt = Date.distantPast
 
@@ -572,6 +629,7 @@ final class RoomController {
         if level != damping { damping = level; core.setDamping(level) }
         updateStatus()
         updateMacSound()
+        updateBanners()
         // A new environment, when one has been read and decoded: the renderer changes to it when it has it ready.
         // (Not before there is a renderer to give it to: a picture taken now would be lost.)
         if let renderer, let (info, pixels) = core.newEnvironment() { renderer.setSky(info, pixels: pixels) }
@@ -661,6 +719,7 @@ final class RoomController {
             return
         }
         let aim = core.aim()
+        if aim.window == RoomCore.banner { bannerHover(aim.x, aim.y); return }
         // The frame is Spatiand's, not the application's: the application is told the pointer left it, and the
         // button under the pointer lights.
         if let id = aim.window, id < RoomCore.panelFirst, aim.zone != .content, aim.zone != .none {
@@ -683,6 +742,8 @@ final class RoomController {
         if menu.isOpen { menu.click(); return }
         // The on-screen keyboard: a key pressed on it is typed into the window in front.
         if aim.window == RoomCore.keyboard { keyboardPressed(); return }
+        // A notification: the press is made on the real banner.
+        if aim.window == RoomCore.banner, button == 0x110 { bannerButton(down: true, aim.x, aim.y); return }
         guard let id = aim.window, id < RoomCore.panelFirst else { return }
         focus(id)
         switch aim.zone {
@@ -737,6 +798,10 @@ final class RoomController {
     }
 
     func buttonUp(_ button: Int) {
+        if bannerPressed, let at = core.aim(at: UInt16(RoomCore.banner)) {
+            bannerButton(down: false, at.x, at.y)
+            return
+        }
         if core.isSizing {
             var sized: UInt16?
             if let drag = core.dragResize() { askSize(drag.id, drag.width, drag.height); sized = drag.id }

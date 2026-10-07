@@ -1,0 +1,40 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Spatiand click test</title>
+<style>
+  body { margin: 0; font: 14px -apple-system, sans-serif; background: #202428; color: #ddd; user-select: none; }
+  .box { position: absolute; width: 180px; height: 50px; border: 1px solid #789; border-radius: 8px; background: #2c333a; display: flex; align-items: center; justify-content: center; }
+  .box:hover { background: #3a4552; }
+  #menu { position: absolute; left: 60px; top: 190px; width: 200px; display: none; background: #384; border-radius: 8px; padding: 6px; }
+  #menu div { padding: 10px; }
+  #menu div:hover { background: #4a5; }
+  #count { position: absolute; left: 300px; top: 60px; font-size: 22px; }
+</style>
+<button class="box" id="a" style="left:60px;top:60px">Button A</button>
+<button class="box" id="b" style="left:60px;top:140px">Menu (opens on pointerdown)</button>
+<div id="menu"><div id="m1">Item one</div><div id="m2">Item two</div><div id="m3">Item three</div></div>
+<select class="box" id="c" style="left:60px;top:300px"><option>one</option><option>two</option><option>three</option></select>
+<input class="box" id="d" style="left:60px;top:380px" placeholder="type here" value="">
+<div id="count">clicks: 0</div>
+<script>
+  const t0 = performance.now();
+  const send = (what) => { try { navigator.sendBeacon('/log?t=' + Math.round(performance.now() - t0) + '&m=' + encodeURIComponent(what)); } catch (e) {} };
+  let clicks = 0;
+  const watch = (id, types) => {
+    const el = document.getElementById(id);
+    for (const type of types) el.addEventListener(type, (e) => {
+      send(id + ':' + type + ' trusted=' + e.isTrusted + ' button=' + e.button + ' buttons=' + e.buttons + ' at=' + Math.round(e.clientX) + ',' + Math.round(e.clientY) + ' focus=' + document.hasFocus());
+      if (id === 'a' && type === 'click') document.getElementById('count').textContent = 'clicks: ' + (++clicks);
+    }, true);
+  };
+  for (const id of ['a', 'b', 'c', 'd', 'm1', 'm2', 'm3']) watch(id, ['pointerover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'focus']);
+  document.getElementById('b').addEventListener('pointerdown', (e) => { if (e.button === 0) { const m = document.getElementById('menu'); m.style.display = m.style.display === 'block' ? 'none' : 'block'; send('b:menu ' + m.style.display); } });
+  document.addEventListener('mouseleave', () => send('document:mouseleave'));
+  document.addEventListener('visibilitychange', () => send('document:' + document.visibilityState));
+  const layout = () => {
+    const out = { sx: window.screenX, sy: window.screenY, ow: window.outerWidth, oh: window.outerHeight, iw: window.innerWidth, ih: window.innerHeight, dpr: window.devicePixelRatio, boxes: {} };
+    for (const id of ['a', 'b', 'c', 'd', 'm1', 'm2', 'm3']) { const r = document.getElementById(id).getBoundingClientRect(); out.boxes[id] = [r.left + r.width / 2, r.top + r.height / 2]; }
+    navigator.sendBeacon('/layout', JSON.stringify(out));
+  };
+  window.addEventListener('load', () => { layout(); setInterval(layout, 1000); });
+</script>
