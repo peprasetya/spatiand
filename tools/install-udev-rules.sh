@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Grant persistent access to the XR glasses and the Steam Deck controller.
+# Grant persistent access to the XR glasses, the Steam Deck controller and the Deck's backlight.
 #
 # By default these hidraw nodes are readable only through a logind ACL, which exists solely
 # for the *active session on seat0*. That is fine when Spatiand is started by SDDM, and not
@@ -18,6 +18,11 @@
 # be able to send MCU commands to the glasses.
 #
 # SPATIAND_USER can override the owner on a system where the desktop user is not `deck`.
+#
+# The backlight is a sysfs file, not a device node, so OWNER and MODE do not reach it: a rule has to
+# change the file itself when the device appears. Without it the sidecar's brightness slider cannot
+# write the Deck's brightness (the session then asks logind to, which is slower and only works from
+# a session on a seat).
 #
 # /etc survives SteamOS updates (unlike /usr), so unlike the session entry this only needs
 # installing once.
@@ -39,6 +44,9 @@ SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3318", OWNER="$OWNER", GROUP="wheel", MOD
 # Valve Steam Deck / Steam Controller - the vendor interface carrying absolute touchpad
 # coordinates, pressure and the IMU, none of which evdev exposes.
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="28de", OWNER="$OWNER", GROUP="wheel", MODE="0660"
+
+# The Deck's screen brightness, for the sidecar's slider.
+ACTION=="add", SUBSYSTEM=="backlight", RUN+="/bin/chgrp wheel /sys/class/backlight/%k/brightness", RUN+="/bin/chmod g+w /sys/class/backlight/%k/brightness"
 EOF
 
 echo "== installed $RULES =="
@@ -46,10 +54,15 @@ cat "$RULES"
 
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=hidraw
+udevadm trigger --subsystem-match=backlight --action=add
 echo
 echo "== current permissions =="
 sleep 1
 for n in /dev/hidraw*; do
     printf '%s  ' "$(ls -l "$n" | awk '{print $1, $3, $4, $NF}')"
+    echo
+done
+for b in /sys/class/backlight/*/brightness; do
+    printf '%s  ' "$(ls -l "$b" | awk '{print $1, $3, $4, $NF}')"
     echo
 done

@@ -182,6 +182,8 @@ pub fn run(
     let mut had_headset = false;
     // When the button now being held went down, while waiting with windows to lose.
     let mut leave_held_since: Option<std::time::Instant> = None;
+    // Whether the last frame was a waiting one, so that the start of each wait can be told.
+    let mut was_waiting = false;
     // Whether every button has been seen released since the session started. Until it has, a
     // held button is the one that launched Spatiand rather than a request to leave.
     let mut leave_armed = false;
@@ -1017,6 +1019,16 @@ pub fn run(
                 // can end itself before the wearer has looked up, which is indistinguishable
                 // from never having started. Arming on the first frame with nothing held is
                 // what separates "still holding what launched me" from "reaching for the exit".
+                //
+                // Every wait starts like that, not only the first: a link that drops in the middle
+                // of a game -- X8 is a heavy start for the USB-C port -- finds the wearer holding
+                // the very controls they were playing with, and two seconds of that ended the
+                // session and the game with it.
+                if missing.is_some() && !was_waiting {
+                    leave_armed = false;
+                    leave_held_since = None;
+                }
+                was_waiting = missing.is_some();
                 if !any_button_held(c.state()) {
                     leave_armed = true;
                 }
@@ -1134,6 +1146,7 @@ pub fn run(
             // The window the layout says is focused is the window the keyboard talks to.
             // Cheap and idempotent: it does nothing at all on a frame where focus has not
             // moved. See `Spatiand::settle_keyboard_focus`.
+            runtime.state.hide_vr_companions();
             runtime.state.settle_keyboard_focus();
             runtime.state.fit_screen_to_windows();
 
@@ -1268,7 +1281,10 @@ pub fn run(
             // have undone it. A trigger the layout uses as a trigger is a different matter, and
             // reads as unpulled here so the pointer does not also click with it.
             if let Some(mut input) = deck_input {
-                if !shell.menu_is_open() {
+                // A menu that wants text is the exception to "a menu takes the pads": the pointer
+                // is how the keyboard under it is typed on, and without it there is nothing to
+                // aim with (Remote computers, adding an address).
+                if !shell.menu_is_open() || shell.wants_text() {
                     let mut raw = input.buttons.raw();
                     for (clicks, control) in [
                         (delivery.pointer_clicks[0], spatiand_input::Control::L2),
@@ -1601,7 +1617,7 @@ pub fn run(
                             );
                         }
                         // The shell has already opened the page; `remotes.tick` keeps it filled.
-                        HudAction::OpenHosts => {}
+                        HudAction::OpenHosts | HudAction::OpenPinned => {}
                         // The shell has opened the page; ask BlueZ now rather than at the tick.
                         HudAction::OpenBluetooth => bluetooth.refresh(),
                         HudAction::ReturnToDesktop => leaving = true,
@@ -2008,7 +2024,7 @@ pub fn run(
             // Once a second is plenty: the clock changes once a minute and the battery
             // slower still, while rebuilding rasterises and uploads a texture.
             if last_status_update.elapsed() >= Duration::from_secs(1) || status_text.is_empty() {
-                status_text = crate::status::line(runtime.state.window_count());
+                status_text = crate::status::line();
                 last_status_update = std::time::Instant::now();
             }
             scene.sync_status(&mut renderer, &mut text, &status_text, ppd)?;
@@ -2301,8 +2317,9 @@ pub fn run(
             // D-pad moves, and a click is A. Windows still get nothing while a menu is up --
             // this aims at the shell alone, and `pads` stays empty for everything below.
             //
-            // Not while the shell wants text: then the pointer is the keyboard's.
-            let menu_aim = (shell.menu_is_open() && !shell.wants_text())
+            // Also while the shell wants text: the pointer is the keyboard's *and* the card's, and
+            // whichever the ray is over gets the click (see `right_aim` below).
+            let menu_aim = shell.menu_is_open()
                 .then_some(deck_input.as_ref())
                 .flatten()
                 .filter(|p| p.right_pad.touched)
@@ -2337,6 +2354,9 @@ pub fn run(
                 });
             let menu_pointed = menu_aim.as_ref().and_then(|(_, target)| *target);
             let menu_aim = menu_aim.map(|(aim, _)| aim);
+            // A ray that is on the card is not also on the keyboard behind it: the card has it, so
+            // a click chooses the row and does not type a key through it.
+            let right_aim = if menu_pointed.is_some() { None } else { right_aim };
             // Another pad's touchpad clicks as a whole, and is only seen as a state, so its
             // press is the edge of that state.
             let pad_clicked = deck_input.is_some_and(|p| p.right_pad.clicked);

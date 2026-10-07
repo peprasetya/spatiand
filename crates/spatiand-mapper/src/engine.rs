@@ -18,6 +18,11 @@ use crate::output::{Action, Frame, RadialView, Side};
 pub const PULSE_SECONDS: f64 = 0.05;
 const STICK_MOUSE_PIXELS_PER_SECOND: f64 = 1400.0;
 const GYRO_MOUSE_PIXELS_PER_DEGREE: f64 = 14.0;
+/// How far the gyro can turn a VR hand from where the head points, each way, in degrees.
+const HAND_LIMIT_DEGREES: f64 = 75.0;
+/// How long a hand takes to come back to the head once the gyro is off: its time constant.
+const HAND_EASE_SECONDS: f64 = 0.25;
+
 /// Turning this fast pushes a camera stick all the way over, at sensitivity 1.
 const GYRO_CAMERA_FULL_DPS: f64 = 240.0;
 /// Tilting this far holds a steering stick all the way over, at sensitivity 1.
@@ -705,6 +710,10 @@ impl Engine {
                                 (h * sensitivity / GYRO_CAMERA_FULL_DPS).clamp(-1.0, 1.0),
                                 (v * sensitivity / GYRO_CAMERA_FULL_DPS).clamp(-1.0, 1.0),
                             ),
+                            GyroOutput::Hand => {
+                                state.tilt.0 = (state.tilt.0 + h * dt * sensitivity).clamp(-HAND_LIMIT_DEGREES, HAND_LIMIT_DEGREES);
+                                state.tilt.1 = (state.tilt.1 + v * dt * sensitivity).clamp(-HAND_LIMIT_DEGREES, HAND_LIMIT_DEGREES);
+                            }
                             GyroOutput::Tilt { side } => {
                                 state.tilt.0 += h * dt;
                                 state.tilt.1 += v * dt;
@@ -719,8 +728,20 @@ impl Engine {
                             }
                         }
                     }
-                    // Tilt is measured from where the gyro came on, so it starts again each time.
+                    // A hand eases back to the head; tilt is measured from where the gyro came on, so
+                    // it starts again each time.
+                    _ if matches!(*output, GyroOutput::Hand) => {
+                        let keep = (-dt / HAND_EASE_SECONDS).exp();
+                        state.tilt = (state.tilt.0 * keep, state.tilt.1 * keep);
+                        if state.tilt.0.abs() < 0.05 && state.tilt.1.abs() < 0.05 {
+                            state.tilt = (0.0, 0.0);
+                        }
+                    }
                     _ => state.tilt = (0.0, 0.0),
+                }
+                if matches!(*output, GyroOutput::Hand) {
+                    frame.hand_aim[0] += (state.tilt.0 / 90.0) as f32;
+                    frame.hand_aim[1] += (state.tilt.1 / 90.0) as f32;
                 }
             }
         }
@@ -1226,6 +1247,52 @@ mod tests {
         assert_eq!(hold(&mut engine, &input, 0.1).mouse_motion, (0, 0));
         input.buttons.set(Button::RPadTouch, true);
         assert!(hold(&mut engine, &input, 0.1).mouse_motion.0 > 0, "right turn, right motion");
+    }
+
+    fn a_hand_engine() -> Engine {
+        let mut mode = crate::layout::ModeKind::Gyro.default_mode(Group::Gyro);
+        if let Mode::Gyro { output, enable, .. } = &mut mode {
+            *output = GyroOutput::Hand;
+            *enable = GyroEnable::WhileHeld { button: Button::RPadTouch };
+        }
+        let mut c = Controls::default();
+        c.groups.insert(Group::Gyro, GroupConfig::new(mode));
+        Engine::new(layout_of(c))
+    }
+
+    #[test]
+    fn the_gyro_turns_a_vr_hand_the_way_it_is_turned_and_lets_it_go() {
+        let mut engine = a_hand_engine();
+        let mut input = Snapshot {
+            // Turning right at 45 degrees a second, and tipping up at 30.
+            gyro: Some(Rates { pitch: 30.0, yaw: -45.0, roll: 0.0 }),
+            ..Default::default()
+        };
+        assert_eq!(hold(&mut engine, &input, 0.2).hand_aim, [0.0, 0.0], "off until its button is held");
+        input.buttons.set(Button::RPadTouch, true);
+        let on = hold(&mut engine, &input, 1.0);
+        assert!((on.hand_aim[0] - 0.5).abs() < 0.05, "45 degrees to the right is half of 90: {:?}", on.hand_aim);
+        assert!((on.hand_aim[1] - 30.0 / 90.0).abs() < 0.05, "{:?}", on.hand_aim);
+        // Still on, and still turning: it stops at the limit rather than going round.
+        let far = hold(&mut engine, &input, 10.0);
+        assert!(far.hand_aim[0] <= 75.0 / 90.0 + 1e-4 && far.hand_aim[0] > 0.8, "{:?}", far.hand_aim);
+        // Let go: it comes back to where the head points.
+        input.buttons.set(Button::RPadTouch, false);
+        let back = hold(&mut engine, &input, 3.0);
+        assert_eq!(back.hand_aim, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_hand_that_is_aimed_does_not_also_push_a_stick() {
+        let mut engine = a_hand_engine();
+        let mut input = Snapshot {
+            gyro: Some(Rates { pitch: 0.0, yaw: -90.0, roll: 0.0 }),
+            ..Default::default()
+        };
+        input.buttons.set(Button::RPadTouch, true);
+        let f = hold(&mut engine, &input, 0.5);
+        assert_eq!(f.pad.right, (0.0, 0.0));
+        assert_eq!(f.mouse_motion, (0, 0));
     }
 
     #[test]

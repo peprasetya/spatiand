@@ -446,11 +446,75 @@ impl Backlight {
     }
 
     /// Writing here needs the file to be writable by the session, which it is on SteamOS via
-    /// a udev rule. Failure is reported rather than swallowed so the caller can say so.
+    /// a udev rule (`tools/install-udev-rules.sh`). Failure is reported rather than swallowed so the caller can say so.
+    ///
+    /// When it is not -- SteamOS' udev rule for it does not survive an update, and the file is
+    /// then the system's alone -- the session asks logind to, which allows it to the active
+    /// session on a seat. See [`via_logind`].
     pub fn set(&self, level: f32) -> std::io::Result<()> {
         let value = (level.clamp(0.0, 1.0) * self.max as f32).round() as u32;
-        std::fs::write(&self.path, value.to_string())
+        match std::fs::write(&self.path, value.to_string()) {
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                let name = self.path.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned());
+                match name {
+                    Some(name) => {
+                        via_logind(name, value);
+                        Ok(())
+                    }
+                    None => Err(e),
+                }
+            }
+            other => other,
+        }
     }
+}
+
+/// Ask logind to set a backlight: `Session.SetBrightness("backlight", name, value)`.
+///
+/// Through `busctl`, on a thread of its own that only ever sends the newest value: a slider
+/// sends one per touch sample, and a process per sample would be a queue of them still
+/// running a second after the finger is up.
+fn via_logind(name: String, value: u32) {
+    use std::sync::{Condvar, Mutex, Once};
+    static SLOT: Mutex<Option<(String, u32)>> = Mutex::new(None);
+    static WAKE: Condvar = Condvar::new();
+    static START: Once = Once::new();
+    START.call_once(|| {
+        std::thread::Builder::new()
+            .name("backlight".into())
+            .spawn(|| loop {
+                let (name, value) = {
+                    let mut pending = SLOT.lock().unwrap();
+                    while pending.is_none() {
+                        pending = WAKE.wait(pending).unwrap();
+                    }
+                    pending.take().unwrap()
+                };
+                let result = std::process::Command::new("busctl")
+                    .args([
+                        "call",
+                        "org.freedesktop.login1",
+                        "/org/freedesktop/login1/session/auto",
+                        "org.freedesktop.login1.Session",
+                        "SetBrightness",
+                        "ssu",
+                        "backlight",
+                        &name,
+                        &value.to_string(),
+                    ])
+                    .output();
+                match result {
+                    Ok(out) if !out.status.success() => {
+                        log::warn!("logind would not set the backlight: {}", String::from_utf8_lossy(&out.stderr).trim())
+                    }
+                    Err(e) => log::warn!("could not run busctl to set the backlight: {e}"),
+                    _ => {}
+                }
+            })
+            .expect("a thread for the backlight");
+    });
+    *SLOT.lock().unwrap() = Some((name, value));
+    WAKE.notify_one();
 }
 
 /// Output volume, via PipeWire's own tool.

@@ -755,7 +755,7 @@ pub fn run(
                             keyboard.open = !keyboard.open;
                             log::info!("keyboard {}", if keyboard.open { "shown" } else { "hidden" });
                         }
-                        HudAction::OpenHosts => {}
+                        HudAction::OpenHosts | HudAction::OpenPinned => {}
                         HudAction::OpenBluetooth => {}
                         HudAction::ReturnToDesktop => log::info!("there is no desktop to return to here"),
                         HudAction::OpenSystemSettings(panel) => log::info!("no {panel} settings here"),
@@ -945,7 +945,7 @@ pub fn run(
                 log::info!("environment now {}", environments.describe());
             }
             if last_status_update.elapsed() >= Duration::from_secs(1) || status_text.is_empty() {
-                status_text = crate::status::line(runtime.state.window_count());
+                status_text = crate::status::line();
                 last_status_update = Instant::now();
             }
             scene.sync_status(&mut renderer, &mut text, &status_text, ppd)?;

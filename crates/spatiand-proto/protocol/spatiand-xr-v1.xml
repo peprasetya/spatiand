@@ -52,7 +52,7 @@
     The per-frame values are not on the wire at all -- see the pose channel.
   </description>
 
-  <interface name="spatiand_xr_v1" version="4">
+  <interface name="spatiand_xr_v1" version="5">
     <description summary="stereoscopic and head-tracked surfaces">
       The factory. Binding it says nothing and changes nothing.
     </description>
@@ -92,7 +92,7 @@
     </enum>
   </interface>
 
-  <interface name="spatiand_xr_surface_v1" version="4">
+  <interface name="spatiand_xr_surface_v1" version="5">
     <description summary="how a surface is drawn for two eyes">
       All state here is double-buffered: it takes effect on the next
       wl_surface.commit, like everything else about a surface. Changing layout
@@ -338,9 +338,43 @@
       </description>
       <arg name="enable" type="uint" summary="0 or 1"/>
     </request>
+
+    <request name="set_frame_pose" since="5">
+      <description summary="the head this surface's picture was drawn for">
+        For a `projection` surface: where the head was pointing in the picture
+        attached with the next commit -- the orientation the client rendered
+        its eye views from, which is not where the head is by the time they are
+        shown. Between reading the pose and the picture reaching the glass are
+        the client's rendering and the compositor's own wait for the next
+        display frame, and a picture drawn for one head and shown to another
+        swims against the world when the head moves.
+
+        Told the difference, the compositor turns the picture by it before
+        showing it, so the world stays where it is. Rotation only: a few
+        centimetres of head movement in a few milliseconds is not what anyone
+        sees, and what a rotation cannot fix a translation cannot be asked
+        to.
+
+        The quaternion is the head's orientation in this protocol's frame (see
+        COORDINATES), each component in millionths. A surface that never says
+        is shown as though drawn for the head as it is now. Double-buffered,
+        so the pose and the picture it belongs to arrive together.
+
+        `token` is a number the pose channel's slot carried when the client read
+        it (its `reserved` field, which is otherwise zero), handed back so that a
+        compositor that is only passing the picture on -- to a headset across a
+        network, say -- can say which head it was drawn for without the two ends
+        agreeing on a clock. Zero means none.
+      </description>
+      <arg name="token" type="uint" summary="the slot's reserved field, or zero"/>
+      <arg name="x" type="int" summary="millionths"/>
+      <arg name="y" type="int" summary="millionths"/>
+      <arg name="z" type="int" summary="millionths"/>
+      <arg name="w" type="int" summary="millionths"/>
+    </request>
   </interface>
 
-  <interface name="spatiand_xr_pose_channel_v1" version="1">
+  <interface name="spatiand_xr_pose_channel_v1" version="2">
     <description summary="head and eye poses, in shared memory">
       Poses are NOT sent as events, and that is the central decision in this
       protocol.
@@ -422,6 +456,22 @@
       </description>
       <arg name="fd" type="fd"/>
       <arg name="size" type="uint" summary="bytes to map"/>
+    </event>
+
+    <event name="render_size" since="2">
+      <description summary="the size the viewer wants each eye drawn at">
+        Sent when a viewer that is not on this machine -- a headset across a
+        network, being streamed to -- has a size for each eye that is not the one
+        the client would pick for itself, and again whenever it changes. A client
+        that renders to its own idea of "an eye" is stretched to fit, which on a
+        stream is a picture that has been resampled twice for nothing.
+
+        A compositor that drives the display directly has no such preference and
+        never sends this. Dimensions are one eye's, in pixels; the client chooses
+        its layout and multiplies them itself.
+      </description>
+      <arg name="width" type="uint"/>
+      <arg name="height" type="uint"/>
     </event>
 
     <event name="unavailable">

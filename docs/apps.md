@@ -30,8 +30,8 @@ document:
 | `spatiand_xr_v1` — the shared-memory pose channel | **Works** |
 | `spatiand_xr_v1` — `set_idle_fade`, `set_idle_after` | **Works** |
 | `spatiand_xr_v1` — `set_resize_anchor` | **Works** |
-| `spatiand_xr_v1` — the `projection` layer | Refused, not built |
-| OpenXR | Not a runtime — see [openxr.md](openxr.md) |
+| `spatiand_xr_v1` — the `projection` layer, `set_frame_pose` | **Works** |
+| OpenXR | A runtime of its own, built on this protocol — see [openxr.md](openxr.md) |
 
 ---
 
@@ -211,7 +211,8 @@ double-buffered against `wl_surface.commit`, like everything else about a
 surface, so layout and buffer land on the same frame and never one without the
 other.
 
-**The global is at version 3.** `set_idle_fade` needs 2; `set_idle_after` and
+**The global is at version 5.** `set_frame_pose` needs 5 and the pose channel's `render_size` event
+needs 2 of that interface. `set_idle_fade` needs 2; `set_idle_after` and
 `set_resize_anchor` need 3. Bind `MIN(interface version you built against, version the registry
 advertises)` rather than a hard-coded number — a client that binds 1 on a
 version 2 compositor loses the request silently, which is the ordinary Wayland
@@ -293,7 +294,13 @@ it arrives at (640, 400) — surface coordinates, not buffer ones.
 | `window` | An ordinary panel the wearer moves and keeps. The default. | Works |
 | `head_locked` | Follows the view, keeping its angular size and position. | Works |
 | `equirect_180` / `equirect_360` | The surface **is the room**. | Works |
-| `projection` | You have rendered the two eye views to fill the view. | Refused |
+| `projection` | You have rendered the two eye views to fill the view. Exclusive with the equirect layers: it is the room too. Needs a side-by-side or top-bottom `set_eye_layout`. | Works |
+
+A `projection` surface is drawn from the pose channel's poses and fields of view, and the
+compositor shows it filling each eye. Say which head it was drawn for with `set_frame_pose` on the same
+commit and it is turned by how far the head has moved since, so the world stays where it is; without
+it, it is shown as though drawn for the head as it is now. This is what the OpenXR runtime
+(`crates/spatiand-openxr`) does at every `xrEndFrame`; see [openxr.md](openxr.md).
 
 `head_locked` moves the window in the *layout*, not just the drawing — so the
 pointer, a drag and the pixels all agree. It is also what makes a client doing

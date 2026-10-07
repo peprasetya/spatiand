@@ -128,7 +128,11 @@ the heights — and the microphone. The Beam Pro records the same file. On the
 Deck, `kill -USR2 $(pgrep -x spatiand)` starts and stops it too.
 
 **The panel** is a touch sidecar: volume, brightness, audio device, a second
-keyboard, and the way out.
+keyboard, and the way out. A tap on the Deck's power button switches the panel
+off completely — picture and backlight, not just dimmed — while its touch
+sensor stays on; touching it wakes it again (that first touch only wakes, it
+does not press anything). Holding the power button for a second and a half
+ends the session.
 
 ## What does not work yet
 
@@ -136,9 +140,12 @@ Listed because finding out by hitting them is worse.
 
   * **Two-handed window gestures.** The geometry is written and tested; nothing
     consumes it, so moving and scaling with both thumbs does nothing.
-  * **OpenXR.** Spatiand is not an OpenXR runtime and does not pretend to be
-    one. [docs/openxr.md](docs/openxr.md) sets out what would have to be true
-    and which of the three possible routes is worth taking.
+  * **OpenXR is partial.** Spatiand has an OpenXR runtime of its own
+    (`crates/spatiand-openxr`): Vulkan and OpenGL applications run, in the
+    room on the Deck and, through `spatiand-host`, from another computer. It is
+    not conformant, tracked hands are a gamepad standing in, and a Windows game
+    needs a one-off step under Proton. [docs/openxr.md](docs/openxr.md) says
+    exactly what is and is not there.
   * **Games stutter while you point at them.** A game plays with the virtual
     gamepad, but resting a thumb on a trackpad over it makes Stumble Guys
     stutter until a few seconds after the thumb lifts. The session log now
@@ -250,7 +257,7 @@ on purpose — it is shown precisely when there is no headset to ask.
 | [docs/apps.md](docs/apps.md) | Writing an application for Spatiand: window sizing, audio layouts, and the stereo and immersive-video protocols as they are specified so far |
 | [docs/x11.md](docs/x11.md) | Why X11 runs and is not supported |
 | [docs/input-mapper.md](docs/input-mapper.md) | Controller layouts and the virtual gamepad a game sees |
-| [docs/openxr.md](docs/openxr.md) | Why Spatiand is not an OpenXR runtime, what it would take, and the order to do it in |
+| [docs/openxr.md](docs/openxr.md) | The OpenXR runtime: how it works, how to run a game with it (native, Proton, remote), what is missing |
 | [docs/remote.md](docs/remote.md) | Applications on another computer: what was measured, and what each measurement decided |
 | [docs/install.md](docs/install.md) | Installing a release, and what to check when it goes wrong |
 | [docs/xreal-air.md](docs/xreal-air.md) | The glasses' protocol, verified against hardware. Probably the most reusable thing here |

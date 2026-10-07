@@ -1179,7 +1179,8 @@ impl Editor {
                     row("Output", Some(output.label())),
                     Op::Cycle(Field::GyroOutput { group, shifted }, None),
                     "Mouse aims directly. Camera turns a stick faster the faster you turn. Tilt \
-                     holds a stick over as far as you lean, to steer."
+                     holds a stick over as far as you lean, to steer. VR right hand aims a VR \
+                     game's hand: where the head points, turned by how far you have turned."
                         .into(),
                 ));
                 rows.push((
@@ -1435,6 +1436,7 @@ impl Editor {
                         GyroOutput::Camera { side: Side::Left },
                         GyroOutput::Tilt { side: Side::Left },
                         GyroOutput::Tilt { side: Side::Right },
+                        GyroOutput::Hand,
                     ];
                     let at = options.iter().position(|o| o == output).unwrap_or(0);
                     *output = options[cycle_index(at, options.len(), step)];

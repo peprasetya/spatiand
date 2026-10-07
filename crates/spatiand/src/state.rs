@@ -279,7 +279,7 @@ impl Spatiand {
         // Stereo, head-locked and immersive surfaces. Binding it says nothing and changes
         // nothing: an application that ignores it is an ordinary window, which is the whole
         // design. See `crate::xr` and the protocol XML.
-        dh.create_global::<Self, spatiand_proto::server::spatiand_xr_v1::SpatiandXrV1, _>(4, ());
+        dh.create_global::<Self, spatiand_proto::server::spatiand_xr_v1::SpatiandXrV1, _>(5, ());
 
         // The screen clients see. Refresh is a placeholder until a backend reports the real
         // one; the size is the size every toplevel is offered.
@@ -654,6 +654,56 @@ impl Spatiand {
         })
     }
 
+    /// The processes whose own picture is the room: a game drawing through the OpenXR runtime.
+    fn room_pids(&self) -> std::collections::HashSet<u32> {
+        use smithay::reexports::wayland_server::Resource;
+        use smithay::wayland::seat::WaylandFocus;
+        self.space
+            .elements()
+            .filter_map(|window| {
+                let surface = window.wl_surface()?.into_owned();
+                if !self.is_room(window, &surface) {
+                    return None;
+                }
+                let pid = surface.client()?.get_credentials(&self.display_handle).ok()?.pid as u32;
+                // Never this process: a remote host's picture arrives over a socket pair.
+                (pid != std::process::id()).then_some(pid)
+            })
+            .collect()
+    }
+
+    /// Whether a window is the flat window of a game that is drawing the room: Unreal's own
+    /// "(Shipping)" window mirroring the headset, which is not something to look at or switch to --
+    /// the picture it shows is the room already.
+    pub fn is_vr_companion(&self, window: &smithay::desktop::Window, room_pids: &std::collections::HashSet<u32>) -> bool {
+        use smithay::wayland::seat::WaylandFocus;
+        if room_pids.is_empty() {
+            return false;
+        }
+        if window.wl_surface().is_some_and(|s| crate::xr::state_of(&s).is_projection()) {
+            return false;
+        }
+        self.pid_of(window).is_some_and(|pid| room_pids.contains(&pid))
+    }
+
+    /// Put away the windows of a game that is the room, once, as they appear. They stay running.
+    pub fn hide_vr_companions(&mut self) {
+        let pids = self.room_pids();
+        if pids.is_empty() {
+            return;
+        }
+        let companions: Vec<_> = self
+            .space
+            .elements()
+            .filter(|w| !self.layout.is_hidden(w) && self.is_vr_companion(w, &pids))
+            .cloned()
+            .collect();
+        for window in companions {
+            log::info!("hiding {:?}: it belongs to a game that is drawing the room", self.display_title(&window));
+            self.hide_window(&window);
+        }
+    }
+
     pub fn focus_window(&mut self, window: &smithay::desktop::Window) {
         self.layout.focus(window);
         self.space.raise_element(window, true);
@@ -773,9 +823,13 @@ impl Spatiand {
     /// has no title bar, so this list is how it is ended. Leaving either out is leaving it
     /// running with no way to reach it.
     pub fn open_windows(&self) -> Vec<spatiand_shell::WindowEntry> {
+        let room_pids = self.room_pids();
         self.space
             .elements()
             .filter_map(|window| {
+                if self.is_vr_companion(window, &room_pids) {
+                    return None;
+                }
                 let id = self.layout.id_of(window)?;
                 let title = self.display_title(window);
                 Some(spatiand_shell::WindowEntry {

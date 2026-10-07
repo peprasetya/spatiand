@@ -229,7 +229,7 @@ mod tests {
             "Pinned windows: top left",
             "Pinned windows: top right",
         ];
-        let mut hud = spatiand_shell::Hud::default();
+        let mut hud = spatiand_shell::Hud::pinned();
         for (n, corner) in Corner::ALL.iter().enumerate() {
             let settings = Settings { corner: *corner, size: Size::Small };
             assert_eq!(settings.corner_index(), n);

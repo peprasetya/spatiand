@@ -254,6 +254,11 @@ final class GlassesOutput: NSObject {
         let now = (aim.window, Int(aim.x), Int(aim.y))
         if now != lastAim { lastAim = now; room.pointerChanged() }
         room.tick()
+        // Where the head is, for an application on the host that draws its own two eyes: every
+        // frame, so what comes back was drawn for a head that has hardly moved.
+        let eyeWidth = sideBySide ? drawable.texture.width / 2 : drawable.texture.width
+        room.core.refreshFrameHead()
+        Model.shared.link.sendViewport(room: room.core.handle, width: UInt32(eyeWidth * 2), height: UInt32(drawable.texture.height))
         renderer.render(into: drawable.texture, sideBySide: sideBySide, present: drawable)
     }
 

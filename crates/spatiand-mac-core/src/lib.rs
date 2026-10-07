@@ -216,6 +216,7 @@ async fn run_session(
                 let window = packet.window;
                 match windows.entry(window).or_default().accept(&packet) {
                     Arrival::Frame(frame) => {
+                        remember_frame_head(window, frame.viewport);
                         let codec = codecs.get(&window).copied().unwrap_or(Codec::H265);
                         (callbacks.video)(
                             callbacks.user as *mut c_void,
@@ -458,6 +459,106 @@ fn with_room<R>(room: *mut RoomHandle, default: R, f: impl FnOnce(&mut room::Roo
         Some(handle) => f(&mut handle.0.lock().unwrap()),
         None => default,
     }
+}
+
+/// Make this window the room: its application drew both eyes' views itself, side by side, and they
+/// fill the view. A negative id puts it back as a panel.
+#[no_mangle]
+pub extern "C" fn sp_room_set_projection(room: *mut RoomHandle, id: i32) {
+    with_room(room, (), |r| r.set_projection((id >= 0).then_some(id as u32)));
+}
+
+/// The application draws the pointer itself where it is over this window, so the room draws none.
+#[no_mangle]
+pub extern "C" fn sp_room_set_cursor_drawn(room: *mut RoomHandle, id: u32, drawn: i32) {
+    with_room(room, (), |r| r.set_cursor_drawn(id, drawn != 0));
+}
+
+/// Tell the host where the head and eyes are now, so an application that draws its own views draws
+/// from here. `width` and `height` are what is wanted back, both eyes together.
+///
+/// # Safety
+/// `core` from `sp_start`, `room` from `sp_room_new`.
+#[no_mangle]
+pub unsafe extern "C" fn sp_send_viewport(core: *mut Core, room: *mut RoomHandle, width: u32, height: u32) {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static SEQ: AtomicU32 = AtomicU32::new(0);
+    let Some(core) = core.as_ref() else { return };
+    let started = *START.get_or_init(std::time::Instant::now);
+    let time_us = started.elapsed().as_micros() as u64;
+    // From one: zero is what a picture says when its host did not say which viewport it was for.
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed).wrapping_add(1).max(1);
+    let Some(viewport) = with_room(room, None, |r| Some(r.viewport(seq, time_us, (width, height)))) else { return };
+    forget_head_before(viewport.seq, viewport.orientation);
+    if let Some(tx) = core.session.lock().unwrap().as_ref() {
+        let _ = tx.send(ClientMessage::Viewport(viewport));
+    }
+}
+
+static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// Heads this Mac has told hosts of, and the head each window's newest picture was drawn for.
+///
+/// A picture names the viewport it was drawn for; showing it turned by the difference between that
+/// head and the one now is what keeps the world still in a game that draws its own eyes.
+#[derive(Default)]
+struct Heads {
+    sent: std::collections::VecDeque<(u32, [f32; 4])>,
+    drawn_for: std::collections::HashMap<u16, [f32; 4]>,
+}
+
+static HEADS: std::sync::Mutex<Option<Heads>> = std::sync::Mutex::new(None);
+
+fn with_heads<R>(f: impl FnOnce(&mut Heads) -> R) -> R {
+    let mut guard = HEADS.lock().unwrap();
+    f(guard.get_or_insert_with(Heads::default))
+}
+
+fn forget_head_before(seq: u32, orientation: [f32; 4]) {
+    with_heads(|h| {
+        if h.sent.len() >= 512 {
+            h.sent.pop_front();
+        }
+        h.sent.push_back((seq, orientation));
+    });
+}
+
+fn remember_frame_head(window: u16, viewport: u32) {
+    if viewport == 0 {
+        return;
+    }
+    with_heads(|h| {
+        if let Some((_, q)) = h.sent.iter().rev().find(|(s, _)| *s == viewport) {
+            let q = *q;
+            h.drawn_for.insert(window, q);
+        }
+    });
+}
+
+/// The head a window's newest picture was drawn for, into four floats (x, y, z, w, OpenXR's frame).
+/// 1 if it is known, 0 if the host did not say.
+///
+/// # Safety
+/// `out` must point at four writable floats.
+#[no_mangle]
+pub unsafe extern "C" fn sp_frame_head(window: u16, out: *mut f32) -> i32 {
+    match with_heads(|h| h.drawn_for.get(&window).copied()) {
+        Some(q) if !out.is_null() => {
+            std::slice::from_raw_parts_mut(out, 4).copy_from_slice(&q);
+            1
+        }
+        _ => 0,
+    }
+}
+
+/// Turn the room by the head its picture was drawn for, or (null) not at all.
+///
+/// # Safety
+/// `q` is null or four floats.
+#[no_mangle]
+pub unsafe extern "C" fn sp_room_set_frame_head(room: *mut RoomHandle, q: *const f32) {
+    let head = if q.is_null() { None } else { Some(std::slice::from_raw_parts(q, 4).to_vec()) };
+    with_room(room, (), |r| r.set_frame_head(head.map(|v| [v[0], v[1], v[2], v[3]])));
 }
 
 #[no_mangle]
@@ -817,7 +918,7 @@ pub extern "C" fn sp_room_frame(
                     window: d.window,
                     first: d.first,
                     count: d.count,
-                    flags: d.focused as u32 | (d.aimed as u32) << 1 | (d.pinned as u32) << 2,
+                    flags: d.focused as u32 | (d.aimed as u32) << 1 | (d.pinned as u32) << 2 | (d.room as u32) << 3,
                 };
             }
         }

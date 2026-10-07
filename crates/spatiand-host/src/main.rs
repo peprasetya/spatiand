@@ -32,6 +32,7 @@ mod encode;
 mod input;
 mod microphone;
 mod voice;
+mod xr;
 mod net;
 mod pace;
 mod pad;
@@ -850,10 +851,9 @@ fn run_host(
 
         // --- the size the session wants, for applications drawing two eyes ---
         if let Some(size) = &render_size {
-            appcontrol::tell_render_size(
-                &mut host,
-                pose::unpack_size(size.load(std::sync::atomic::Ordering::Relaxed)),
-            );
+            let wanted = pose::unpack_size(size.load(std::sync::atomic::Ordering::Relaxed));
+            appcontrol::tell_render_size(&mut host, wanted);
+            xr::tell_render_size(&mut host, wanted);
         }
 
         // --- what applications have said they became ---
@@ -1010,10 +1010,19 @@ fn run_host(
                                     s.frame = s.frame.wrapping_add(1);
                                     s.frame
                                 });
+                                // The head the application drew this for, if it said: with it the session
+                                // turns the picture by how far the head has moved since.
+                                let viewport = host
+                                    .windows
+                                    .iter()
+                                    .find(|t| t.id.0 == id)
+                                    .and_then(|t| host.frame_viewports.get(&t.app))
+                                    .copied()
+                                    .unwrap_or(0);
                                 net.send(ToSession::Video {
                                     window: id as u16,
                                     frame: frame.unwrap_or(0),
-                                    viewport: 0,
+                                    viewport,
                                     keyframe: packet.keyframe,
                                     captured_us: now.as_micros() as u64,
                                     bytes: packet.bytes,

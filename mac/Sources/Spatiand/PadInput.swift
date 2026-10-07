@@ -200,7 +200,7 @@ final class PadInput {
             let report: [String: Any] = [
                 "buttons": Int(out.pad_buttons), "dpad": Int(out.dpad),
                 "left": [out.left.0, out.left.1], "right": [out.right.0, out.right.1],
-                "triggers": [out.triggers.0, out.triggers.1], "extra": [0, 0, 0, 0],
+                "triggers": [out.triggers.0, out.triggers.1], "extra": [out.hand.0, out.hand.1, 0, 0],
             ]
             if lastReport.map({ NSDictionary(dictionary: $0).isEqual(to: report) }) != true {
                 lastReport = report

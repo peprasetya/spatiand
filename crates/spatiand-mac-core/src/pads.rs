@@ -23,6 +23,17 @@ const GUIDE_HOLD: Duration = Duration::from_millis(500);
 /// which makes the whole pad three quarters of the view, as on the Beam Pro.
 const POINTS_PER_UNIT: f32 = 320.0;
 
+/// How much of a touchpad slide reaches the pointer, by how far the thumb moved this step.
+///
+/// A small pad reports a coarse position, so a nudge is a step of several points and the pointer
+/// overshoots what was meant: slow, small movements are given less than a quick one, which keeps
+/// the whole pad's reach as it was (a flick is passed on in full) and makes aiming at something
+/// small possible. A unit is half the pad.
+fn slide_gain(step: f32) -> f32 {
+    let t = ((step - 0.004) / (0.08 - 0.004)).clamp(0.0, 1.0);
+    0.45 + 0.55 * t * t * (3.0 - 2.0 * t)
+}
+
 /// Bits of [`PadIn::buttons`].
 pub const B_A: u32 = 1 << 0;
 pub const B_B: u32 = 1 << 1;
@@ -106,6 +117,9 @@ pub struct PadOut {
     pub guide_held: i32,
     /// D-pad, A, B and Y pressed this frame, for working a menu: bits 0..3 up, down, left, right, 4 A, 5 B, 6 Y.
     pub menu_presses: u32,
+    /// Where the gyro aims a VR game's right hand from where the head points: right and up, -1..1
+    /// for -90..90 degrees. Sent as the pad's first two spare axes.
+    pub hand: [f32; 2],
 }
 
 impl Default for PadOut {
@@ -182,6 +196,7 @@ impl Pads {
         out.left = [frame.pad.left.0, frame.pad.left.1];
         out.right = [frame.pad.right.0, frame.pad.right.1];
         out.triggers = [frame.pad.left_trigger, frame.pad.right_trigger];
+        out.hand = frame.hand_aim;
 
         // Keys, as changes.
         let mut n = 0;
@@ -239,8 +254,10 @@ impl Pads {
         out.motion_y = frame.mouse_motion.1 as f32;
         if touched {
             if let Some((x, y)) = self.touch_last {
-                out.motion_x += (input.touch_x - x) * POINTS_PER_UNIT;
-                out.motion_y -= (input.touch_y - y) * POINTS_PER_UNIT;
+                let (dx, dy) = (input.touch_x - x, input.touch_y - y);
+                let gain = slide_gain(dx.hypot(dy));
+                out.motion_x += dx * POINTS_PER_UNIT * gain;
+                out.motion_y -= dy * POINTS_PER_UNIT * gain;
             }
             self.touch_last = Some((input.touch_x, input.touch_y));
         } else {
@@ -432,6 +449,9 @@ mod tests {
         let slid = p.step(&PadIn { touched: 1, touch_x: 0.25, touch_y: 0.1, clicked: 1, ..Default::default() });
         assert!((slid.motion_x - 80.0).abs() < 1e-3 && (slid.motion_y + 32.0).abs() < 1e-3, "{} {}", slid.motion_x, slid.motion_y);
         assert_eq!(slid.pointer & P_LEFT, P_LEFT);
+        // A nudge gets less than its share, and a flick all of it.
+        assert!(slide_gain(0.005) < 0.5 && (slide_gain(0.3) - 1.0).abs() < 1e-6);
+        assert!(slide_gain(0.02) < slide_gain(0.04));
         // Lifted, then touched again: no jump from where the thumb was before.
         p.step(&PadIn::default());
         let again = p.step(&PadIn { touched: 1, touch_x: -0.8, touch_y: 0.8, ..Default::default() });

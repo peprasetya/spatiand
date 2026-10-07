@@ -127,6 +127,11 @@ pub struct Host {
     /// Applications whose presentation changed since the main loop last looked, so it can
     /// re-announce their streams and tell the session.
     pub presentation_changed: Vec<String>,
+    /// Pose channels asked for over `spatiand_xr_v1`, to be told the session's render size. See `xr`.
+    pub xr_channels: Vec<crate::xr::Channel>,
+    /// The viewport each application's latest picture was drawn for (`set_frame_pose`), by catalogue
+    /// id, so the stream can say which head it was drawn for.
+    pub frame_viewports: HashMap<String, u32>,
     /// Applications that draw the pointer over their windows themselves, by catalogue id.
     /// Kept apart from `presentation` because changing it must not restart a stream.
     pub cursor_drawn: std::collections::HashSet<String>,
@@ -226,6 +231,7 @@ impl Host {
         output.change_current_state(Some(mode), Some(Transform::Normal), None, Some((0, 0).into()));
         output.set_preferred(mode);
         output.create_global::<Self>(&dh);
+        crate::xr::create_global(&dh);
 
         let socket_name = Self::init_socket(loop_handle);
 
@@ -255,6 +261,8 @@ impl Host {
             app_of_pid: HashMap::new(),
             sounds: None,
             pose_fd: None,
+            xr_channels: Vec::new(),
+            frame_viewports: HashMap::new(),
             presentation: HashMap::new(),
             presentation_changed: Vec::new(),
             cursor_drawn: std::collections::HashSet::new(),
@@ -401,7 +409,7 @@ impl Host {
     /// A client that was not launched from the catalogue — something a launched application
     /// started for itself, or anything else that found the socket — is still served, and is
     /// attributed to whatever its parent was launched as when that can be seen.
-    fn app_for(&self, client: Option<&Client>) -> String {
+    pub(crate) fn app_for(&self, client: Option<&Client>) -> String {
         let Some(client) = client else {
             return "unknown".into();
         };

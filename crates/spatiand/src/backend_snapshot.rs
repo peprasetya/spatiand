@@ -557,7 +557,19 @@ pub fn run(
                     runtime.state.settle_keyboard_focus();
                     runtime.state.fit_screen_to_windows();
                     windows = crate::scene::collect_windows(&mut renderer, &runtime.state);
-                    if !windows.is_empty() {
+                    // An application that has become the room draws no window, so a client that
+                    // is only a pair of eye views would be waited on for the whole of `seconds`
+                    // and then reported as never having drawn.
+                    let is_room = crate::scene::projection_surface(
+                        &mut renderer,
+                        &runtime.state,
+                        crate::pose::eye_fovs(&StereoConfig {
+                            per_eye: (width, height),
+                            ..Default::default()
+                        }),
+                    )
+                    .is_some();
+                    if !windows.is_empty() || is_room {
                         // The first buffer a toolkit commits is usually blank -- it has the
                         // right size but the UI has not been painted into it. Snapshotting
                         // there gives a black rectangle that looks like a broken import.
@@ -757,6 +769,14 @@ pub fn run(
         per_eye: (width, height),
         ..Default::default()
     };
+    // Whether an application has become the room by drawing the eye views itself, asked once
+    // for the same reason the sky is: a snapshot is one frame.
+    let projection =
+        crate::scene::projection_surface(&mut renderer, &runtime.state, crate::pose::eye_fovs(&stereo));
+    if projection.is_some() {
+        log::info!("an application is the room: its own eye views fill the view");
+    }
+    scene.set_projection(projection);
     let ppd = TextRenderer::px_per_degree(stereo.per_eye.0, stereo.h_fov_deg);
     scene.sync_apps(&mut renderer, &mut text, &shell, ppd)?;
     // Icons load on a thread of their own and arrive a frame or two after they are asked for.
@@ -779,7 +799,7 @@ pub fn run(
     scene.sync_status(
         &mut renderer,
         &mut text,
-        &crate::status::line(runtime.state.window_count()),
+        &crate::status::line(),
         ppd,
     )?;
     let editor_view = editor.as_mut().map(|e| e.view());

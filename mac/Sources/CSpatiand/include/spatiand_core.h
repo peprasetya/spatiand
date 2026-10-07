@@ -136,6 +136,21 @@ void sp_room_toggle_size(sp_room *room);
 uint32_t sp_room_frame(sp_room *room, float *matrices, float *vertices, uint32_t vertex_capacity,
                        sp_draw *draws, uint32_t draw_capacity, uint32_t *draw_count);
 
+// An application on the host drew both eyes' views itself, side by side, and they fill the view. A
+// negative id puts the window back as a panel.
+void sp_room_set_projection(sp_room *room, int32_t id);
+// The application draws the pointer itself where the pointer is over this window (the compositor's
+// own would be at the wrong depth); the room then draws none there.
+void sp_room_set_cursor_drawn(sp_room *room, uint32_t id, int32_t drawn);
+// The head (x y z w, OpenXR's frame) a window's newest picture was drawn for, into four floats.
+// 1 if known, 0 if the host did not say.
+int32_t sp_frame_head(uint16_t window, float *out);
+// Turn the room by that head, or (NULL) not at all.
+void sp_room_set_frame_head(sp_room *room, const float *q);
+// Tell the host where the head and eyes are now; `width` x `height` is what is wanted back, both
+// eyes together.
+void sp_send_viewport(sp_core *core, sp_room *room, uint32_t width, uint32_t height);
+
 // ---- the Mac as a host. See crates/spatiand-mac-core/src/host.rs. ----
 
 typedef struct HostCore sp_host;
@@ -162,6 +177,7 @@ void sp_host_trust(sp_host *host, const char *fingerprint);
 int32_t sp_host_paired_count(sp_host *host);
 void sp_host_forget_all(sp_host *host);
 
+
 // --- game controllers, run through the same layouts as the Deck's ---
 typedef struct PadsHandle sp_pads;
 typedef struct {
@@ -187,6 +203,7 @@ typedef struct {
     uint32_t commands;                  // 1 menu, 2 launcher, 4 keyboard, 8 screenshot, 16 recentre
     int32_t guide, guide_held;
     uint32_t menu_presses;              // bits 0..3 up, down, left, right, 4 A, 5 B, 6 Y
+    float hand[2];                      // the gyro's aim of a VR right hand: right, up; -1..1 is -90..90 degrees
 } sp_pad_out;
 sp_pads *sp_pads_new(const char *layouts_dir);
 void sp_pads_free(sp_pads *pads);

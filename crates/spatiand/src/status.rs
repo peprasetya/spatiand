@@ -1,6 +1,6 @@
 //! The persistent status readout: time, battery, and how the session is doing.
 //!
-//! Head-locked in the upper left, because the two things it carries are the two things you
+//! Head-locked in the upper right, small, and only to be looked at -- it is not pointed at -- because the two things it carries are the two things you
 //! look up mid-task without wanting to leave what you are doing — what time it is, and whether
 //! the battery is about to end the session. Anything world-locked would have to be hunted for,
 //! which defeats the point.
@@ -81,23 +81,18 @@ fn read_trimmed(path: &Path) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
-/// The whole status line.
+/// The whole status line: the time and the battery.
 ///
-/// Kept short on purpose. The bar is sized to a fixed angular *width*, so every extra word
-/// makes the whole line shorter to read -- and the environment name, which was here first,
-/// costs more characters than anything else while being the least urgent thing on it. It lives
-/// in the HUD instead, next to the control that changes it.
-pub fn line(windows: usize) -> String {
+/// Kept short on purpose. The bar's letters are a fixed size and its width follows from how many
+/// there are, so every extra word is more of the view covered. The environment's name and the
+/// number of windows were here once; the first lives in the HUD next to the control that changes
+/// it, and the second was never something to look up mid-task.
+pub fn line() -> String {
     let mut parts = vec![clock()];
     if let Some(b) = battery() {
         parts.push(b.label());
     }
-    parts.push(match windows {
-        0 => "no windows".to_string(),
-        1 => "1 window".to_string(),
-        n => format!("{n} windows"),
-    });
-    parts.join("    ")
+    parts.join("  ")
 }
 
 #[cfg(test)]
@@ -140,25 +135,16 @@ mod tests {
     }
 
     #[test]
-    fn the_window_count_reads_as_english() {
-        assert!(line(0).contains("no windows"));
-        assert!(line(1).contains("1 window"));
-        assert!(line(4).contains("4 windows"));
-        assert!(!line(1).contains("1 windows"));
-    }
-
-    #[test]
     fn the_line_stays_short_enough_to_read_in_a_corner() {
-        // It is sized to a fixed angular width, so length trades directly against legibility.
-        // Roughly 24 characters keeps the glyphs about 2 degrees tall.
+        // Its letters are a fixed size, so length is how much of the view it covers.
         //
         // Counted in characters, because that is what gets drawn. Counting bytes made this
         // pass or fail on the battery: the lightning bolt is three bytes, so a machine at
         // 100% was two over a limit that a machine at 97% met, and neither line was any wider
         // on the glasses than the other.
-        let text = line(4);
+        let text = line();
         assert!(
-            text.chars().count() <= 28,
+            text.chars().count() <= 14,
             "status line is {text:?} ({} characters)",
             text.chars().count()
         );
@@ -168,7 +154,7 @@ mod tests {
     fn the_line_survives_a_machine_with_no_battery() {
         // Desktops, and any Deck whose sysfs layout has moved. Omitting it beats showing 0%,
         // which reads as an emergency.
-        let text = line(2);
+        let text = line();
         assert!(text.contains(&clock()));
         assert!(!text.contains("0%") || battery().is_some());
     }

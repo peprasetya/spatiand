@@ -981,3 +981,37 @@ What it found, apart from the clipboard itself:
 - **A closed remote window's buffers were never destroyed**, and each held its picture's
   dmabufs for the life of the connection: a long session would run out of descriptors and
   lose the link to the host ("Too many open files").
+
+## An OpenXR game on a host — 2026-10-04
+
+A VR game on the host no longer needs a viewer written for Spatiand. The OpenXR runtime
+(`crates/spatiand-openxr`, see [openxr.md](openxr.md)) runs beside the game and is a client of the host's
+compositor, which now serves `spatiand_xr_v1` itself (`crates/spatiand-host/src/xr.rs`): the game's window
+is declared a side-by-side `projection` layer, the pose channel it reads is the ring the headset's
+viewports are already written into, and the stream carries the window like any other. The headset
+shows a `projection` window as the room.
+
+`render_size` is a new event on the pose channel (interface version 2): the host says what size one
+eye should be drawn at, from the viewport the headset last sent, because a game that picks its own
+size is resampled twice for nothing.
+
+**[verified]** against a second host in a sandbox (own `XDG_RUNTIME_DIR`, config and port, so the
+service was undisturbed), with the Deck as the headset: a Vulkan test client, then an OpenGL one, each
+launched from the host's control socket, mapped a real pose channel, drew a different colour in each
+eye, and the Deck showed them as the room — left eye one colour, right the other. The Mac client
+(`mac/`) was checked the same way with `--selftest-room`, and now sends its head and eyes as
+viewports and draws a `projection` window as the room. The Beam Pro shares the Deck's remote code
+and was built, not worn.
+
+**The picture is turned by how far the head has moved.** The pose slot the game reads carries which
+viewport the headset sent (`Slot.reserved`, plus one); the runtime hands it back with
+`set_frame_pose`; the host stamps it into the picture's `viewport` field, which the wire format always
+had and nothing filled; and the session looks up the head it sent under that number and passes it to
+its compositor, which shows the picture turned by the difference. **[verified]** on the Deck: every
+picture shown from the test host was matched to a head (`104 shown ... (104 for a head it knew)`).
+Rotation only. Whether it *feels* right at network latency has not been judged by a wearer.
+
+**A second device takes the windows.** Connecting the Mac's self-test to the sandbox host while the
+Deck was attached took the windows from the Deck ("another device took the windows; starting one of
+its applications here takes them back"), and the Deck showed nothing until its session reconnected. That
+is the existing rule, but it is easy to forget with two machines on one host.

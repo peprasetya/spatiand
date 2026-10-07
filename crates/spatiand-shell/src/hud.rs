@@ -70,6 +70,9 @@ pub enum HudAction {
     OpenSwitcher,
     /// Show or hide the on-screen keyboard.
     ToggleKeyboard,
+    /// Open the pinned windows' own list: where they sit and how big. The list stays open while
+    /// either is changed, so a corner can be tried and tried again.
+    OpenPinned,
     /// Move pinned windows to the next corner of the view.
     PipCorner,
     /// Switch pinned windows between their two sizes.
@@ -253,8 +256,12 @@ impl Hud {
                 detail: "Switch to another window and bring it in front of you",
                 action: HudAction::OpenSwitcher,
             },
-            pip_corner_row(0),
-            pip_size_row(false),
+            HudItem {
+                label: "Pinned windows",
+                detail: "Where windows pinned to your view sit, and how big. Opens a list that \
+                         stays open while you try each",
+                action: HudAction::OpenPinned,
+            },
             HudItem {
                 label: "Environment",
                 detail: "Choose what surrounds you, or add an image",
@@ -290,6 +297,12 @@ impl Hud {
             action: HudAction::ReturnToDesktop,
         });
         Self { items, cursor: 0 }
+    }
+
+    /// The pinned windows' list: the corner, then the size. A list of its own that the shell shows
+    /// in place of the settings and leaves open as either changes.
+    pub fn pinned() -> Self {
+        Self { items: vec![pip_corner_row(0), pip_size_row(false)], cursor: 0 }
     }
 
     /// Show whether a recording is going, on the recording row.
@@ -528,7 +541,7 @@ mod tests {
 
     #[test]
     fn the_pinned_window_rows_say_where_and_how_big() {
-        let mut hud = Hud::new(DesktopPanels::ALL);
+        let mut hud = Hud::pinned();
         let rows = |hud: &Hud| -> Vec<&'static str> {
             hud.items()
                 .iter()
@@ -564,8 +577,7 @@ mod tests {
                 "Record a video",
                 "Windows",
                 // Next to the window list: a pinned window is a way of arranging windows.
-                "Pinned windows: bottom right",
-                "Pinned size: small",
+                "Pinned windows",
                 "Environment",
                 // Spatiand's own pages before the desktop's panels: this one is where the
                 // launcher's remote tabs come from, and it is reached for more than Bluetooth.

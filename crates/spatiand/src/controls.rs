@@ -619,9 +619,11 @@ fn report_of(frame: &Frame) -> Report {
         right: p.right,
         left_trigger: p.left_trigger,
         right_trigger: p.right_trigger,
-        // Reserved, and centred until something has a reason to move them -- see
-        // `Report::extra`. Nothing in a layout can reach them yet.
-        extra: [0.0; 4],
+        // The first two of the spare axes (`Report::extra`) carry where the gyro aims a VR game's
+        // right hand, when a layout has asked for that: right and up, -1..1 for -90..90 degrees.
+        // Centred otherwise, which is what a game that reads them sees. The OpenXR runtime reads
+        // them, here or beside a game on a host.
+        extra: [frame.hand_aim[0].clamp(-1.0, 1.0), frame.hand_aim[1].clamp(-1.0, 1.0), 0.0, 0.0],
     }
 }
 

@@ -173,8 +173,12 @@ final class RoomRenderer {
             for draw in frame.draws where draw.window != RoomCore.cursor {
                 guard let texture = textures[draw.window] else { continue }
                 // The one being looked at is as the host drew it; the rest are a little dimmer.
-                var brightness: Float = (draw.focused || draw.aimed || draw.window >= 0xFFF0 || draw.window & 0x10000 != 0) ? 1.0 : 0.82
+                var brightness: Float = (draw.focused || draw.aimed || draw.window >= 0xFFF0 || draw.window & 0x10000 != 0 || draw.room) ? 1.0 : 0.82
                 encoder.setFragmentBytes(&brightness, length: 4, index: 0)
+                // The room is both eyes' views side by side: this eye takes its own half. Everything
+                // else is one picture for both eyes.
+                var halves: SIMD2<Float> = draw.room ? SIMD2(0.5, sideBySide ? Float(eye) * 0.5 : 0) : SIMD2(1, 0)
+                encoder.setFragmentBytes(&halves, length: 8, index: 1)
                 encoder.setFragmentTexture(texture, index: 0)
                 encoder.drawPrimitives(type: .triangle, vertexStart: draw.first, vertexCount: draw.count)
             }
@@ -287,8 +291,9 @@ final class RoomRenderer {
 
     fragment float4 fragment_window(Varying in [[stage_in]],
                                     texture2d<float> picture [[texture(0)]],
-                                    constant float &brightness [[buffer(0)]]) {
-        float4 c = picture.sample(linear_clamped, in.uv);
+                                    constant float &brightness [[buffer(0)]],
+                                    constant float2 &halves [[buffer(1)]]) {
+        float4 c = picture.sample(linear_clamped, float2(in.uv.x * halves.x + halves.y, in.uv.y));
         return float4(c.rgb * brightness, 1.0);
     }
 

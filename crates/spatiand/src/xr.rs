@@ -98,6 +98,9 @@ pub struct XrState {
     /// The client draws the pointer over this surface itself, at the depth of whatever is
     /// under it; the compositor draws none there. See `set_cursor_drawn`.
     pub cursor_drawn: bool,
+    /// The head's orientation the picture was drawn for, in the protocol's (OpenXR's) frame, if the
+    /// client said. See `set_frame_pose`.
+    pub frame_orientation: Option<[f32; 4]>,
 }
 
 impl XrState {
@@ -446,6 +449,12 @@ impl Dispatch<spatiand_xr_surface_v1::SpatiandXrSurfaceV1, Mutex<Pending>> for S
             }
             spatiand_xr_surface_v1::Request::SetCursorDrawn { enable } => {
                 pending.next.cursor_drawn = enable != 0;
+            }
+            spatiand_xr_surface_v1::Request::SetFramePose { token: _, x, y, z, w } => {
+                let q = [x, y, z, w].map(|c| c as f32 / 1e6);
+                // A zero quaternion is a client that meant "none" and has nothing to normalise.
+                let length = q.iter().map(|c| c * c).sum::<f32>().sqrt();
+                pending.next.frame_orientation = (length > 1e-3).then(|| q.map(|c| c / length));
             }
             spatiand_xr_surface_v1::Request::Destroy => release(state, &mut pending),
             _ => {}

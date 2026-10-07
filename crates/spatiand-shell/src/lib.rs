@@ -88,6 +88,8 @@ pub enum Mode {
     Hosts,
     /// Bluetooth devices: the paired ones, connecting them, and adding another. From the HUD.
     Bluetooth,
+    /// Where pinned windows sit and how big. Reached from the HUD; changing either leaves it open.
+    Pinned,
 }
 
 /// A menu control, passed through to the controller layout editor.
@@ -165,6 +167,7 @@ fn bluetooth_event(action: BluetoothAction) -> Option<ShellEvent> {
 pub struct Shell {
     mode: Mode,
     hud: Hud,
+    pinned: Hud,
     launcher: Launcher,
     environments: EnvironmentPicker,
     files: FileBrowser,
@@ -180,6 +183,7 @@ impl Shell {
         Self {
             mode: Mode::World,
             hud: Hud::with_calibration(panels, calibrated),
+            pinned: Hud::pinned(),
             launcher: Launcher::new(apps),
             environments: EnvironmentPicker::default(),
             files: FileBrowser::default(),
@@ -206,6 +210,12 @@ impl Shell {
     /// to 3, bottom right first; see `Hud::set_pip`.
     pub fn set_pip(&mut self, corner: usize, large: bool) {
         self.hud.set_pip(corner, large);
+        self.pinned.set_pip(corner, large);
+    }
+
+    /// The pinned windows' list.
+    pub fn pinned(&self) -> &Hud {
+        &self.pinned
     }
 
     pub fn launcher(&self) -> &Launcher {
@@ -343,6 +353,7 @@ impl Shell {
             Mode::Switcher => self.switcher.select(index),
             Mode::Hosts => self.hosts.select(index),
             Mode::Bluetooth => self.bluetooth.select(index),
+            Mode::Pinned => self.pinned.select(index),
             Mode::Controller | Mode::World => false,
         }
     }
@@ -420,7 +431,7 @@ impl Shell {
                     (true, action) => hosts_event(action),
                     (false, _) => self.enter(Mode::Hud),
                 },
-                Mode::Bluetooth => self.enter(Mode::Hud),
+                Mode::Bluetooth | Mode::Pinned => self.enter(Mode::Hud),
                 _ => self.enter(Mode::World),
             },
             Intent::Navigate(direction) => {
@@ -452,6 +463,7 @@ impl Shell {
                     Mode::Switcher => self.switcher.step(direction),
                     Mode::Hosts => self.hosts.step(direction),
                     Mode::Bluetooth => self.bluetooth.step(direction),
+                    Mode::Pinned => self.pinned.step(direction),
                     Mode::Controller => false,
                     // In the world the D-pad will move focus between windows; until windows
                     // are drawn there is nothing to move between.
@@ -481,6 +493,7 @@ impl Shell {
                             self.bluetooth.open();
                             self.mode = Mode::Bluetooth;
                         }
+                        HudAction::OpenPinned => self.mode = Mode::Pinned,
                         // Everything else takes you back to the world, settings panels
                         // included: staying on the menu after recentring hides the thing you
                         // just changed, and staying on it after opening Wi-Fi leaves a menu
@@ -491,6 +504,8 @@ impl Shell {
                     }
                     Some(ShellEvent::Hud(action))
                 }
+                // Both rows are settings that step: the list stays up, the row says what it is now.
+                Mode::Pinned => Some(ShellEvent::Hud(self.pinned.activate())),
                 Mode::Environment => match self.environments.activate() {
                     EnvironmentAction::Choose(choice) => {
                         self.mode = Mode::World;

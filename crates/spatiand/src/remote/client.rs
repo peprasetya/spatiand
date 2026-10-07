@@ -248,6 +248,22 @@ impl Client {
         window.surface.commit();
     }
 
+    /// The head a remote window's next picture was drawn for, in the protocol's frame, so the
+    /// compositor turns it by how far the head has moved since. Takes effect with the next commit,
+    /// which is the picture's. Only a compositor at version 5 understands it.
+    pub fn set_frame_pose(&mut self, id: u32, token: u32, orientation: [f32; 4]) {
+        let Some(xr) = self.xr.as_ref() else { return };
+        if xr.version() < 5 {
+            return;
+        }
+        let Some(window) = self.windows.get_mut(&id) else { return };
+        let surface = window
+            .xr
+            .get_or_insert_with(|| xr.get_xr_surface(&window.surface, &self.handle, id));
+        let [x, y, z, w] = orientation.map(|c| (c * 1e6).round() as i32);
+        surface.set_frame_pose(token, x, y, z, w);
+    }
+
     /// Say whether a remote window's application draws the pointer over it itself.
     ///
     /// Only a compositor at version 4 understands it; an older one keeps drawing its own

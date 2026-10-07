@@ -103,6 +103,28 @@ final class RoomCore {
         let id = sp_room_focus_step(room, Int32(step))
         return id >= 0 ? UInt16(id) : nil
     }
+    /// Make a window the room: its application drew both eyes itself. Nil puts it back as a panel.
+    func setProjection(_ id: UInt16?) {
+        projection = id
+        sp_room_set_projection(room, id.map { Int32($0) } ?? -1)
+    }
+    /// The application draws the pointer itself where it is over this window: the room draws none.
+    func setCursorDrawn(_ id: UInt16, _ drawn: Bool) {
+        sp_room_set_cursor_drawn(room, UInt32(id), drawn ? 1 : 0)
+    }
+    /// The window that is the room, if one is.
+    private(set) var projection: UInt16?
+    var handle: OpaquePointer? { room }
+    /// Turn the room by the head its newest picture was drawn for, when the host says which.
+    func refreshFrameHead() {
+        guard let id = projection else { return }
+        var q = [Float](repeating: 0, count: 4)
+        if sp_frame_head(id, &q) != 0 {
+            sp_room_set_frame_head(room, q)
+        } else {
+            sp_room_set_frame_head(room, nil)
+        }
+    }
     func arrange(spread: Double) { sp_room_arrange(room, spread) }
     func bringHere(_ id: UInt16) { sp_room_bring_here(room, UInt32(id)) }
     func setPinned(_ id: UInt16, _ pinned: Bool) { sp_room_set_pinned(room, UInt32(id), pinned ? 1 : 0) }
@@ -111,7 +133,7 @@ final class RoomCore {
     func toggleSize() { sp_room_toggle_size(room) }
 
     // What to draw.
-    struct Draw { var window: UInt32; var first: Int; var count: Int; var focused: Bool; var aimed: Bool; var pinned: Bool }
+    struct Draw { var window: UInt32; var first: Int; var count: Int; var focused: Bool; var aimed: Bool; var pinned: Bool; var room: Bool }
     struct Frame { var matrices: [Float]; var floats: Int; var draws: [Draw] }
 
     /// Fill `vertices` (room for `capacity` floats) and say what is in it. Nil if it would not fit.
@@ -125,7 +147,7 @@ final class RoomCore {
             matrices: matrices, floats: Int(written),
             draws: draws.prefix(Int(count)).map {
                 Draw(window: $0.window, first: Int($0.first), count: Int($0.count),
-                     focused: $0.flags & 1 != 0, aimed: $0.flags & 2 != 0, pinned: $0.flags & 4 != 0)
+                     focused: $0.flags & 1 != 0, aimed: $0.flags & 2 != 0, pinned: $0.flags & 4 != 0, room: $0.flags & 8 != 0)
             })
     }
 }

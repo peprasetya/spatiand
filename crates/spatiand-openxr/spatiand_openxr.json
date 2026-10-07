@@ -1,0 +1,7 @@
+{
+    "file_format_version": "1.0.0",
+    "runtime": {
+        "name": "Spatiand",
+        "library_path": "libspatiand_openxr.so"
+    }
+}

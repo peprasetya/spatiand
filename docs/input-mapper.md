@@ -223,3 +223,16 @@ hover to work at all, and where the pointer is is not something to be clever abo
 pointer now behaves like a mouse on a desk, in every application. If a pad game stalls on this
 again it comes back as a switch in *that application's* layout, not as a rule about all of
 them; `Pointers::withdraw` and `Controls::drives_pad` are kept for exactly that.
+
+## The gyro can aim a VR game's hand — 2026-10-05
+
+A gyro group's output has a fourth kind besides mouse, camera and tilt: **VR right hand**
+(`GyroOutput::Hand`, `kind = "hand"` in a layout file). A VR game under Spatiand's OpenXR runtime has no
+hand to track, and the runtime stands the pad in for a pair of controllers (`docs/openxr.md`); this lets
+the gyro turn the right one. The engine integrates the gyro's turning into `[right, up]` angles, held to
+75 degrees either way and easing back to zero in about a quarter of a second once the gyro is off, and
+puts them in `Frame::hand_aim`. They leave as the pad's first two spare axes (`Report::extra[0..2]`,
+-1..1 for -90..90 degrees), which is why it works on the Deck, over a stream to a host, and from a Mac's
+or Android's DualShock 4 without anything else. Sensitivity, deadzone, which rotation is left and right,
+the inversions and what enables it are the gyro's own settings. The *VR game* template is a gamepad with
+this on while a thumb rests on the right trackpad.

@@ -112,6 +112,16 @@ fn card(shell: &Shell) -> Option<MenuModel> {
                 footer: FOOTER_SELECT.into(),
             })
         }
+        Mode::Pinned => {
+            let list = shell.pinned();
+            Some(MenuModel {
+                title: "Pinned windows".into(),
+                rows: list.items().iter().map(|i| MenuRow::plain(i.label)).collect(),
+                cursor: list.cursor(),
+                detail: list.focused().detail.into(),
+                footer: "A change    B back".into(),
+            })
+        }
         Mode::Environment => {
             let picker = shell.environments();
             Some(MenuModel {

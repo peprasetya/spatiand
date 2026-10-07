@@ -1,0 +1,24 @@
+[package]
+name = "spatiand-openxr"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "An OpenXR runtime for Spatiand: the loader finds it, and its frames become a stereo window in the room"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+openxr-sys = "0.14"
+libc = "0.2"
+log = { workspace = true }
+glam = { workspace = true }
+spatiand-proto = { path = "../spatiand-proto", features = ["client"] }
+ash = "0.38"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+
+[build-dependencies]
+naga = { version = "25", features = ["glsl-in", "spv-out"] }

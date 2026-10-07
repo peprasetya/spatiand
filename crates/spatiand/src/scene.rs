@@ -828,10 +828,13 @@ impl Scene {
         view.w_axis = Vec4::new(0.0, 0.0, 0.0, 1.0);
         let inv = (eye.projection * view).inverse();
         if let Some(projection) = self.projection {
-            // The camera the picture was drawn with. Today that is taken to be the head as it
-            // is now, which fills the view with the picture exactly; once pictures say which
-            // head they were drawn for, this is where the older one goes instead.
-            let to_frame = Mat3::from_quat(eye.orientation.inverse().as_quat());
+            // The camera the picture was drawn with: the head it was drawn for, when the
+            // application said (`set_frame_pose`), and the head as it is now when it did not --
+            // which fills the view with the picture exactly. The difference between the two is
+            // the turn the head has made since, and showing the picture turned back by it is
+            // what keeps the world where it is.
+            let drawn_for = projection.frame.unwrap_or(eye.orientation);
+            let to_frame = Mat3::from_quat(drawn_for.inverse().as_quat());
             let i = usize::from(eye.side != EyeSide::Left);
             let fov = projection.fov[i];
             self.projection_pipeline.draw(
@@ -1430,7 +1433,7 @@ impl Scene {
         Ok(())
     }
 
-    /// Draw the status bar in the upper left, locked to the head.
+    /// Draw the status bar in the upper right, locked to the head.
     ///
     /// Head-locked rather than body-locked: the whole point is that it is there whenever you
     /// glance for it, without having to remember which way you were facing when it appeared.
@@ -1441,23 +1444,21 @@ impl Scene {
         let Some(bar) = self.status else {
             return;
         };
-        // Sized by WIDTH, not height. Sizing by height and letting the aspect decide the
-        // width meant a long line ran 25 degrees across and off the side of the field -- the
-        // string length silently controlled the layout.
+        // Sized by HEIGHT now, because the line is only the time and the battery: it cannot run
+        // off the side the way a long one could, and a short line should be a short bar rather
+        // than the same width of bigger letters. The letters are small on purpose -- it is
+        // looked at, never pointed at.
         let distance = 1.5f32;
-        let half_width_deg = 7.5f32;
-        let width = 2.0 * distance * half_width_deg.to_radians().tan();
-        let height = width / bar.aspect.max(0.01);
+        let height_deg = 1.3f32;
+        let height = 2.0 * distance * (height_deg / 2.0).to_radians().tan();
+        let width = height * bar.aspect.max(0.01);
+        let half_width_deg = (width / 2.0 / distance).atan().to_degrees();
 
-        // Anchored by its top-left corner rather than its centre, so the bar stays put in the
-        // corner whatever it happens to say.
-        let left_edge_deg = 16.0f32;
-        let yaw = (left_edge_deg - half_width_deg).to_radians();
-        // Above a centred window rather than beside it. A default window's top edge reaches
-        // about 8.5 degrees, and the bar is 15 degrees wide -- so there is no horizontal
-        // position that clears it. Going over the top is the only placement that works, and it
-        // leaves the bar inside the 11.57 degree half-field with a little to spare.
-        let pitch = 10.2f32.to_radians();
+        // Anchored by its top-right corner, so the bar stays put in the corner whatever it says.
+        let right_edge_deg = 17.0f32;
+        let yaw = -(right_edge_deg - half_width_deg).to_radians();
+        // Near the top of the field (the half-field is 11.57 degrees), clear of a centred window.
+        let pitch = 10.0f32.to_radians();
         let head = Quat::from_xyzw(
             orientation.x as f32,
             orientation.y as f32,
@@ -1470,7 +1471,7 @@ impl Scene {
             + direction * Vec3::X * distance;
 
         // A plate behind it, or the text is unreadable over a bright environment.
-        let backdrop = self.panel_model(centre, direction, width * 1.12, height * 2.0);
+        let backdrop = self.panel_model(centre, direction, width * 1.12, height * 1.5);
         self.quads.draw(
             gl,
             self.white,
@@ -2337,7 +2338,8 @@ impl Scene {
             | Mode::Files
             | Mode::Switcher
             | Mode::Hosts
-            | Mode::Bluetooth => {
+            | Mode::Bluetooth
+            | Mode::Pinned => {
                 self.draw_card(gl, eye, fov)
             }
             Mode::Controller => {
@@ -3732,6 +3734,9 @@ pub struct ProjectionOverride {
     pub rects: [(f32, f32, f32, f32); 2],
     /// Each eye's field of view as `XrFovf`: angleLeft, angleRight, angleUp, angleDown.
     pub fov: [[f32; 4]; 2],
+    /// The head the picture was drawn for, when the application said (`set_frame_pose`). Without
+    /// it the picture is taken to be drawn for the head as it is now.
+    pub frame: Option<glam::DQuat>,
 }
 
 /// The surface that has become the room by drawing its own eye views, if one has and has drawn.
@@ -3796,6 +3801,7 @@ pub fn projection_surface(
             texture,
             rects: [rect(true), rect(false)],
             fov,
+            frame: xr.frame_orientation.map(spatiand_render::openxr::from_openxr),
         });
     }
     None

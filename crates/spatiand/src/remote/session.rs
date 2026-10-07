@@ -74,7 +74,14 @@ struct Stream {
     /// Frames thrown away undecoded while waiting for a keyframe.
     skipped: u64,
     shown: u64,
+    /// Which viewport each recent frame was drawn for, by the capture time the host stamped on it
+    /// -- the key that comes back with the decoded picture. Zero means the host did not say.
+    viewports: std::collections::VecDeque<(i64, u32)>,
 }
+
+/// How many recent viewports and frames are remembered for matching a picture to its head: at the
+/// glasses' rate, several seconds, far longer than anything is in flight.
+const REMEMBERED: usize = 512;
 
 /// How often a window being dragged may tell the host its new size.
 const RESIZE_EVERY: Duration = Duration::from_millis(150);
@@ -325,6 +332,9 @@ async fn serve(
     launch_first: Option<String>,
 ) -> Ended {
     let mut streams: HashMap<u32, Stream> = HashMap::new();
+    // The head and eyes this session has told the host, newest last: a picture comes back naming
+    // one of them, and showing it turned by the difference is what keeps the world still.
+    let mut heads: std::collections::VecDeque<(u32, [f32; 4])> = Default::default();
     let mut windows: HashMap<u32, Reassembler> = HashMap::new();
     let mut apps: HashMap<u32, String> = HashMap::new();
     // How each window's pictures are packed and what it is in the room, as its host last said.
@@ -352,6 +362,7 @@ async fn serve(
     let mut listened = Instant::now();
     let mut quiet = false;
     let mut worked = Instant::now();
+    let mut turned = 0u64;
     let mut frames = 0u64;
     let mut decode_ms: Vec<f32> = Vec::new();
     {
@@ -454,6 +465,7 @@ async fn serve(
                                                 dropped: 0,
                                                 skipped: 0,
                                                 shown: 0,
+                                                viewports: Default::default(),
                                             });
                                             windows.insert(window.0, Reassembler::new());
                                         }
@@ -623,6 +635,10 @@ async fn serve(
                                         window: WindowId(window),
                                     });
                                 } else {
+                                    if stream.viewports.len() >= REMEMBERED {
+                                        stream.viewports.pop_front();
+                                    }
+                                    stream.viewports.push_back((frame.captured_us as i64, frame.viewport));
                                     stream.queue.push_back((frame.captured_us, frame.bytes));
                                 }
                             }
@@ -657,6 +673,10 @@ async fn serve(
                             say(&out, ClientMessage::Clipboard(what));
                         }
                         Some(Command::Viewport(viewport)) => {
+                            if heads.len() >= REMEMBERED {
+                                heads.pop_front();
+                            }
+                            heads.push_back((viewport.seq, viewport.orientation));
                             // **A datagram, never the ordered stream.** A head pose is only
                             // worth anything while it is the newest one; queued behind a
                             // clipboard transfer or a lost packet's retransmission it would
@@ -824,6 +844,21 @@ async fn serve(
                                     }
                                 }
                             }
+                            // Which head this was drawn for, if the host said, so the compositor can
+                            // turn it by how far the head has gone since. Set before the picture is
+                            // attached: it takes effect with that commit.
+                            let drawn_for = stream
+                                .viewports
+                                .iter()
+                                .find(|(captured, _)| *captured == picture.timestamp)
+                                .map(|(_, seq)| *seq)
+                                .filter(|seq| *seq != 0)
+                                .and_then(|seq| heads.iter().rev().find(|(s, _)| *s == seq))
+                                .map(|(seq, q)| (*seq, *q));
+                            if let Some((seq, orientation)) = drawn_for {
+                                client.set_frame_pose(*id, seq, orientation);
+                                turned += 1;
+                            }
                             if let Err(e) = client.show(*id, converted) {
                                 log::error!("remote: window {id}: {e}");
                             }
@@ -929,7 +964,7 @@ async fn serve(
                 );
                 carried = now;
                 log::info!(
-                    "remote {}: {frames} shown in {secs:.1}s, {mean:.1} ms decoding, {dropped} \
+                    "remote {}: {frames} shown in {secs:.1}s ({turned} for a head it knew), {mean:.1} ms decoding, {dropped} \
                      overtaken, {gaps} lost whole, {skipped} skipped for a keyframe, rtt {:.1} ms, \
                      {down:.1} Mbit/s down {up:.2} up, {lost}/{sent} packets lost, {squeezed} \
                      congestion, buffers held [{}], {pending} waiting to decode",
@@ -938,6 +973,7 @@ async fn serve(
                     waiting.join(" ")
                 );
                 frames = 0;
+                turned = 0;
                 decode_ms.clear();
                 said = Instant::now();
             }

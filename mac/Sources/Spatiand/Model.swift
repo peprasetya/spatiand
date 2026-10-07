@@ -248,6 +248,22 @@ final class Model {
             } else {
                 open(id, size: size)
             }
+        case "Layer":
+            // An application on the host that draws both eyes itself has become the room. Only one
+            // can be; another one saying so takes it, and one going back to a window gives it up.
+            if let id = window(), let layer = fields["layer"] as? String {
+                if layer == "projection" {
+                    room.core.setProjection(id)
+                } else if room.core.projection == id {
+                    room.core.setProjection(nil)
+                }
+            }
+        case "CursorDrawn":
+            // The application draws the pointer itself where it is over this window -- a game's
+            // laser from a hand, a viewer's own cursor -- so the room draws none there.
+            if let id = window(), let drawn = fields["drawn"] as? Bool {
+                room.core.setCursorDrawn(id, drawn)
+            }
         case "Retitled":
             if let id = window(), let title = fields["title"] as? String {
                 infos[id]?.title = title
@@ -257,6 +273,7 @@ final class Model {
         case "Closed":
             if let id = window() {
                 windows.removeValue(forKey: id)?.closeForReal()
+                if room.core.projection == id { room.core.setProjection(nil) }
                 room.windowClosed(id)
                 infos[id] = nil
                 sizes[id] = nil

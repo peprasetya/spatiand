@@ -281,6 +281,13 @@ pub struct Room {
     fixed_head: Option<DQuat>,
     /// The pointer's picture: its size and where its hot spot is, in the picture's pixels.
     cursor_shape: (f64, f64, f64, f64),
+    /// The window whose application is the room: it drew both eyes' views itself, and they fill the
+    /// view instead of hanging in it as a panel.
+    projection: Option<u32>,
+    /// Windows whose application draws the pointer itself where it is over them.
+    cursor_drawn: std::collections::HashSet<u32>,
+    /// The head the room's picture was drawn for, in OpenXR's frame, when the host said.
+    frame_head: Option<[f32; 4]>,
 }
 
 impl Default for Room {
@@ -304,6 +311,9 @@ impl Room {
             corner: Corner::default(),
             size: Size::default(),
             fixed_head: None,
+            projection: None,
+            cursor_drawn: Default::default(),
+            frame_head: None,
             cursor_shape: (0.0, 0.0, 0.0, 0.0),
         }
     }
@@ -645,6 +655,9 @@ impl Room {
     pub fn aim_free(&self, id: u32) -> Option<(f64, f64)> {
         let head = self.head();
         let ray = self.ray(head);
+        if self.projection == Some(id) {
+            return self.aim_room(&ray, head).map(|a| (a.x, a.y));
+        }
         let placed = self.placed(head);
         let (i, place) = placed.iter().find(|(i, _)| self.windows[*i].id == id).copied()?;
         let w = &self.windows[i];
@@ -750,7 +763,8 @@ impl Room {
         for i in order {
             let (_, place) = placed[i];
             let w = &self.windows[i];
-            if !w.shown {
+            // The room is not a panel to be hit; it is what is behind them all, below.
+            if !w.shown || self.projection == Some(w.id) {
                 continue;
             }
             if let Some(hit) = intersect_quad(&ray, &w.quad(&place)) {
@@ -778,6 +792,9 @@ impl Room {
                 }
             }
         }
+        if let Some(room) = self.aim_room(&ray, head) {
+            return room;
+        }
         Aim { window: None, x: 0.0, y: 0.0, point: ray.at(DEFAULT_RADIUS), title: false, corner: false }
     }
 
@@ -786,6 +803,9 @@ impl Room {
     pub fn aim_at(&self, id: u32) -> Option<(f64, f64)> {
         let head = self.head();
         let ray = self.ray(head);
+        if self.projection == Some(id) {
+            return self.aim_room(&ray, head).map(|a| (a.x, a.y));
+        }
         let placed = self.placed(head);
         let (i, place) = placed.iter().find(|(i, _)| self.windows[*i].id == id).copied()?;
         let w = &self.windows[i];
@@ -842,6 +862,78 @@ impl Room {
         self.stereo.per_eye = (width.max(1), height.max(1));
     }
 
+    /// Make this window the room (its picture fills the view), or none.
+    pub fn set_projection(&mut self, id: Option<u32>) {
+        self.projection = id;
+    }
+
+    pub fn projection(&self) -> Option<u32> {
+        self.projection
+    }
+
+    /// The application draws the pointer itself where it is over this window: the room draws none.
+    pub fn set_cursor_drawn(&mut self, id: u32, drawn: bool) {
+        if drawn {
+            self.cursor_drawn.insert(id);
+        } else {
+            self.cursor_drawn.remove(&id);
+        }
+    }
+
+    /// Where the cursor is on the room, if an application is the room: in the left eye's half of
+    /// its picture, in pixels -- the half an application's own interface is laid out in, and the
+    /// inverse of how [`Room::frame`] lays the picture out in front of the head.
+    fn aim_room(&self, ray: &Ray, head: DQuat) -> Option<Aim> {
+        const DISTANCE: f64 = 30.0;
+        let id = self.projection?;
+        let w = self.windows.iter().find(|w| w.id == id && w.shown)?;
+        let drawn_for = self.frame_head.map(spatiand_render::openxr::from_openxr).unwrap_or(head);
+        let local = drawn_for.inverse() * ray.direction;
+        if local.x <= 1e-4 {
+            return None;
+        }
+        let half_w = (self.stereo.h_fov_deg.to_radians() * 0.5).tan();
+        let half_h = half_w * self.stereo.per_eye.1 as f64 / self.stereo.per_eye.0.max(1) as f64;
+        // Right is -Y and up is +Z in the room's frame.
+        let u = ((-local.y / local.x) / half_w + 1.0) / 2.0;
+        let v = (1.0 - (local.z / local.x) / half_h) / 2.0;
+        if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+            return None;
+        }
+        Some(Aim {
+            window: Some(id),
+            x: u * w.size.0 as f64 / 2.0,
+            y: v * w.size.1 as f64,
+            point: ray.at(DISTANCE),
+            title: false,
+            corner: false,
+        })
+    }
+
+    pub fn set_frame_head(&mut self, head: Option<[f32; 4]>) {
+        self.frame_head = head;
+    }
+
+    /// Where the head and both eyes are now, as the host is told it so that an application
+    /// drawing its own two eyes draws from here. The frame is OpenXR's and the eyes are the ones
+    /// the room is drawn through, from the same maths, so what comes back fits the view exactly.
+    pub fn viewport(&self, seq: u32, time_us: u64, render_size: (u32, u32)) -> spatiand_stream::Viewport {
+        use spatiand_render::camera::EyeSide;
+        let head = self.head();
+        let left = spatiand_render::openxr::openxr_eye(EyeSide::Left, head, DVec3::ZERO, &self.stereo);
+        let right = spatiand_render::openxr::openxr_eye(EyeSide::Right, head, DVec3::ZERO, &self.stereo);
+        let (orientation, position) = spatiand_render::openxr::to_openxr(head, DVec3::ZERO);
+        spatiand_stream::Viewport {
+            seq,
+            time_us,
+            orientation,
+            position,
+            eye_position: [left.position, right.position],
+            fov: [left.fov, right.fov],
+            render_size,
+        }
+    }
+
     /// Each eye's view-projection, left then right, in column-major order.
     pub fn eye_matrices(&self) -> [Mat4; 2] {
         let head = self.head();
@@ -859,13 +951,43 @@ impl Room {
         let mut draws: Vec<Draw> = Vec::new();
         let mut bars: Vec<Draw> = Vec::new();
 
+        // An application that is the room goes first and fills the view. It is a flat sheet far
+        // enough away that the eyes' few centimetres apart do not show, square on to the head and
+        // exactly as wide as the field of view, so each eye's half of the picture lands where the
+        // application drew it for.
+        if let Some(window) = self.projection.filter(|id| self.windows.iter().any(|w| w.id == *id && w.shown)) {
+            const DISTANCE: f64 = 30.0;
+            // Square on to the head the picture was drawn for -- which is not the head now, by the
+            // time the picture has been drawn, streamed, decoded and shown -- so that the world in it
+            // stays where it was drawn while the head moves.
+            let drawn_for = self.frame_head.map(spatiand_render::openxr::from_openxr).unwrap_or(head);
+            let centre = self.eye_centre(head) + drawn_for * DVec3::X * DISTANCE;
+            let right = drawn_for * -DVec3::Y;
+            let up = drawn_for * DVec3::Z;
+            let half_w = DISTANCE * (self.stereo.h_fov_deg.to_radians() * 0.5).tan();
+            let half_h = half_w * self.stereo.per_eye.1 as f64 / self.stereo.per_eye.0.max(1) as f64;
+            let tl = centre - right * half_w + up * half_h;
+            let tr = centre + right * half_w + up * half_h;
+            let bl = centre - right * half_w - up * half_h;
+            let br = centre + right * half_w - up * half_h;
+            let first = (verts.len() / 5) as u32;
+            let corner = |p: DVec3, u: f32, v: f32| [p.x as f32, p.y as f32, p.z as f32, u, v];
+            for v in [
+                corner(tl, 0.0, 0.0), corner(bl, 0.0, 1.0), corner(tr, 1.0, 0.0),
+                corner(tr, 1.0, 0.0), corner(bl, 0.0, 1.0), corner(br, 1.0, 1.0),
+            ] {
+                verts.extend_from_slice(&v);
+            }
+            draws.push(Draw { window, first, count: 6, focused: false, aimed: false, pinned: false, room: true });
+        }
+
         // The room's windows first, in order, then the pinned ones over them.
         let mut order: Vec<usize> = placed.iter().map(|(i, _)| *i).collect();
         order.sort_by_key(|i| (Self::is_panel(self.windows[*i].id), self.windows[*i].place.pinned, *i));
         for i in order {
             let (_, place) = placed[i];
             let w = &self.windows[i];
-            if !w.shown {
+            if !w.shown || self.projection == Some(w.id) {
                 continue;
             }
             let first = (verts.len() / 5) as u32;
@@ -880,6 +1002,7 @@ impl Room {
                 focused: self.focus == Some(w.id),
                 aimed,
                 pinned: place.pinned,
+                room: false,
             });
             if let Some((_, rise, bar_height)) = w.bar(&place) {
                 let first = (verts.len() / 5) as u32;
@@ -892,6 +1015,7 @@ impl Room {
                     focused: self.focus == Some(w.id),
                     aimed: aim.window == Some(w.id) && aim.title,
                     pinned: false,
+                    room: false,
                 });
             }
         }
@@ -928,7 +1052,11 @@ impl Room {
         ] {
             verts.extend_from_slice(&v);
         }
-        draws.push(Draw { window: CURSOR, first, count: 6, focused: false, aimed: false, pinned: false });
+        // Over an application that draws its own pointer, the room draws none: its own is at the
+        // right depth and this would be a second one.
+        if !aim.window.is_some_and(|id| self.projection == Some(id) && self.cursor_drawn.contains(&id)) {
+            draws.push(Draw { window: CURSOR, first, count: 6, focused: false, aimed: false, pinned: false, room: false });
+        }
 
         Frame { vertices: verts, draws, eyes: self.eye_matrices() }
     }
@@ -942,6 +1070,8 @@ pub struct Draw {
     pub focused: bool,
     pub aimed: bool,
     pub pinned: bool,
+    /// Its picture is both eyes' views, side by side, and fills the view.
+    pub room: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -978,6 +1108,97 @@ mod tests {
         // Fit gives the density a new window starts with.
         let (w, _) = r.native_size(1).unwrap();
         assert_eq!(w, ((after * DENSITY).round() as u32) & !1);
+    }
+
+    #[test]
+    fn an_application_that_is_the_room_fills_the_view_and_has_no_bar() {
+        let mut r = room();
+        r.set_window(1, (1280, 800));
+        r.show(1);
+        r.set_window(2, (3840, 1080));
+        r.show(2);
+        r.set_projection(Some(2));
+        let frame = r.frame();
+        let first = frame.draws.first().expect("a draw");
+        assert_eq!((first.window, first.room, first.count), (2, true, 6), "the room goes first");
+        assert!(
+            !frame.draws.iter().any(|d| d.window & TITLE_FLAG != 0 && d.window & !TITLE_FLAG == 2),
+            "the room has no title bar"
+        );
+        assert!(frame.draws.iter().any(|d| d.window == 1 && !d.room), "the other window is still a panel");
+        // And it is dead ahead of the head: the middle of its sheet is on the forward axis.
+        let v = &frame.vertices[first.first as usize * 5..(first.first as usize + 6) * 5];
+        let (mut y, mut z) = (0.0f32, 0.0f32);
+        for i in 0..6 {
+            y += v[i * 5 + 1];
+            z += v[i * 5 + 2];
+        }
+        assert!((y / 6.0).abs() < 1.0 && (z / 6.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn the_viewport_told_to_a_host_matches_the_eyes_the_room_is_drawn_through() {
+        let r = room();
+        let v = r.viewport(7, 1234, (3840, 1080));
+        assert_eq!((v.seq, v.time_us, v.render_size), (7, 1234, (3840, 1080)));
+        // The left eye is the one with the smaller X in OpenXR's frame, and they are an IPD apart.
+        assert!(v.eye_position[0][0] < v.eye_position[1][0]);
+        let apart = (v.eye_position[1][0] - v.eye_position[0][0]) as f64;
+        assert!((apart - r.stereo().ipd_m).abs() < 1e-4, "{apart}");
+        // Signed the way OpenXR signs a field of view.
+        assert!(v.fov[0][0] < 0.0 && v.fov[0][1] > 0.0 && v.fov[0][2] > 0.0 && v.fov[0][3] < 0.0);
+    }
+
+    fn a_room_ready() -> Room {
+        let mut r = room();
+        r.set_window(2, (3840, 1080));
+        r.show(2);
+        r.set_projection(Some(2));
+        r
+    }
+
+    #[test]
+    fn the_cursor_over_the_room_is_in_the_middle_of_the_left_eyes_half() {
+        let r = a_room_ready();
+        let aim = r.aim();
+        assert_eq!(aim.window, Some(2));
+        assert!((aim.x - 960.0).abs() < 1.0 && (aim.y - 540.0).abs() < 1.0, "({}, {})", aim.x, aim.y);
+    }
+
+    #[test]
+    fn the_cursor_moved_right_and_up_is_further_right_and_higher_in_the_picture() {
+        let mut r = a_room_ready();
+        let before = r.aim();
+        // Mouse right and up, in points: the cursor turns.
+        r.move_pointer(60.0, -40.0);
+        let after = r.aim();
+        assert_eq!(after.window, Some(2));
+        assert!(after.x > before.x + 20.0, "{} against {}", after.x, before.x);
+        assert!(after.y < before.y - 20.0, "{} against {}", after.y, before.y);
+        assert!(after.x < 1920.0, "it stays in the left half");
+    }
+
+    #[test]
+    fn a_window_in_front_of_the_room_is_what_the_cursor_is_over() {
+        let mut r = room();
+        r.set_window(1, (1280, 800));
+        r.show(1);
+        r.set_window(2, (3840, 1080));
+        r.show(2);
+        r.set_projection(Some(2));
+        assert_eq!(r.aim().window, Some(1), "the first window is dead ahead");
+        r.move_pointer(-400.0, 0.0);
+        assert_eq!(r.aim().window, Some(2), "off it, the cursor is on the room");
+    }
+
+    #[test]
+    fn an_application_that_draws_its_own_pointer_has_the_room_draw_none_over_it() {
+        let mut r = a_room_ready();
+        assert_eq!(r.frame().draws.last().unwrap().window, CURSOR);
+        r.set_cursor_drawn(2, true);
+        assert!(!r.frame().draws.iter().any(|d| d.window == CURSOR));
+        r.set_cursor_drawn(2, false);
+        assert_eq!(r.frame().draws.last().unwrap().window, CURSOR);
     }
 
     #[test]

@@ -102,7 +102,9 @@ fn slot(v: &Viewport, now_ns: i64) -> Slot {
         seq: 0,
         sample_ns: now_ns,
         predicted_ns: now_ns,
-        reserved: 0,
+        // Which viewport this is, plus one so that zero still means none: an application that
+        // reads it back (`set_frame_pose`) is naming the head its picture was drawn for.
+        reserved: v.seq as i64 + 1,
         head_orientation: v.orientation,
         head_position: v.position,
         _pad: 0.0,

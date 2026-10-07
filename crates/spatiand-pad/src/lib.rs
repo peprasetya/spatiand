@@ -219,6 +219,11 @@ pub struct Report {
     /// might ever be wanted has to exist from the beginning or every application has to be
     /// restarted to find it.
     ///
+    /// `extra[0]` and `extra[1]` also carry where a layout's gyro aims a VR game's right hand --
+    /// right and up, -1..1 for -90..90 degrees from where the head points -- when it has been asked
+    /// to (`GyroOutput::Hand`); the OpenXR runtime reads them. They are the two spares every shape of
+    /// the device has, which is why they and not the tilts.
+    ///
     /// What they are for is a head: a gamepad has six axes, two sticks and two triggers, and a
     /// head has three of its own before anything is held in a hand. An application that wants
     /// to be driven by where the wearer is looking — the reason this is being reserved is

@@ -319,4 +319,7 @@ pub struct Frame {
     /// that pointer and are never a layout's to take.
     pub pointer_clicks: [bool; 2],
     pub radial: Option<RadialView>,
+    /// Where the gyro aims a VR game's right hand, relative to where the head points: `[right, up]`,
+    /// each -1..1 for -90..90 degrees. Zero when nothing aims it. See `GyroOutput::Hand`.
+    pub hand_aim: [f32; 2],
 }

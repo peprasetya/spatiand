@@ -9,7 +9,7 @@ use crate::output::{Action, Direction, MouseButton, PadButton, Side};
 
 /// Every template, in the order the editor lists them.
 pub fn all() -> Vec<Layout> {
-    vec![gamepad(), gamepad_with_gyro(), keyboard_and_mouse(), desktop()]
+    vec![gamepad(), gamepad_with_gyro(), vr_game(), keyboard_and_mouse(), desktop()]
 }
 
 fn single_set(name: &str, description: &str, controls: Controls) -> Layout {
@@ -88,6 +88,30 @@ pub fn gamepad_with_gyro() -> Layout {
     single_set(
         "Gamepad with gyro aiming",
         "A gamepad, plus aiming by moving the Deck while your thumb rests on the right trackpad.",
+        c,
+    )
+}
+
+pub fn vr_game() -> Layout {
+    let mut c = gamepad_controls();
+    c.groups.insert(
+        Group::Gyro,
+        GroupConfig::new(Mode::Gyro {
+            output: GyroOutput::Hand,
+            enable: GyroEnable::WhileHeld {
+                button: Button::RPadTouch,
+            },
+            sensitivity: 1.0,
+            horizontal: Default::default(),
+            deadzone: 0.5,
+            invert_x: false,
+            invert_y: false,
+        }),
+    );
+    single_set(
+        "VR game",
+        "A gamepad for the sticks and buttons, and the gyro aims the right hand while your thumb rests \
+         on the right trackpad: turn the Deck to point a gun, a laser, a hand.",
         c,
     )
 }

@@ -357,6 +357,10 @@ pub enum GyroOutput {
     Camera { side: Side },
     /// Tilting from where it was enabled holds a stick over — steering.
     Tilt { side: Side },
+    /// Turning aims the right hand of a VR game, which has no hand to track: the hand points where
+    /// the head does, turned by as far as the gyro has turned since it came on, and eases back to
+    /// the head when it goes off. A game that is not a VR game never sees it.
+    Hand,
 }
 
 impl GyroOutput {
@@ -365,6 +369,7 @@ impl GyroOutput {
             GyroOutput::Mouse => "Mouse".into(),
             GyroOutput::Camera { side } => format!("{} stick camera", side.label()),
             GyroOutput::Tilt { side } => format!("{} stick tilt", side.label()),
+            GyroOutput::Hand => "VR right hand".into(),
         }
     }
 }

@@ -92,6 +92,39 @@ fn parse(message: &str) -> Option<Said> {
     }
 }
 
+/// An application said, over `spatiand_xr_v1`, how its eyes are packed.
+pub fn say_eyes(host: &mut Host, app: &str, eyes: Eyes) {
+    let now = host.presentation.entry(app.to_string()).or_default();
+    if now.0 != eyes {
+        now.0 = eyes;
+        log::info!("{app} says set_eye_layout {eyes:?}");
+        host.presentation_changed.push(app.to_string());
+    }
+}
+
+/// ...and what it is in the room.
+pub fn say_layer(host: &mut Host, app: &str, layer: Layer) {
+    let now = host.presentation.entry(app.to_string()).or_default();
+    if now.1 != layer {
+        now.1 = layer;
+        log::info!("{app} says set_layer {layer:?}");
+        host.presentation_changed.push(app.to_string());
+    }
+}
+
+/// ...whether it draws the pointer itself where the pointer is over it.
+pub fn say_cursor(host: &mut Host, app: &str, drawn: bool) {
+    let changed = if drawn {
+        host.cursor_drawn.insert(app.to_string())
+    } else {
+        host.cursor_drawn.remove(app)
+    };
+    if changed {
+        log::info!("{app} says set_cursor_drawn {}", drawn as u32);
+        host.cursor_changed.push(app.to_string());
+    }
+}
+
 /// Listen to what `app` says on its end of a pair.
 ///
 /// When it closes — the application exited — whatever it had claimed is given back, so a
@@ -140,17 +173,7 @@ pub fn watch(host: &mut Host, app: String, ours: OwnedFd) {
             }
             let message = String::from_utf8_lossy(&buffer[..n as usize]);
             match parse(&message) {
-                Some(Said::CursorDrawn(drawn)) => {
-                    let changed = if drawn {
-                        host.cursor_drawn.insert(app.clone())
-                    } else {
-                        host.cursor_drawn.remove(&app)
-                    };
-                    if changed {
-                        log::info!("{app} says {}", message.trim());
-                        host.cursor_changed.push(app.clone());
-                    }
-                }
+                Some(Said::CursorDrawn(drawn)) => say_cursor(host, &app, drawn),
                 Some(said) => {
                     let now = host.presentation.entry(app.clone()).or_default();
                     let before = *now;
