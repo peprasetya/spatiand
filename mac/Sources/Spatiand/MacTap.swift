@@ -77,6 +77,9 @@ final class MacTap {
         stop()
         let objects = processObjects()
         guard !objects.isEmpty else { lastError = "nothing of \(bundle) is playing yet"; return false }
+        if ProcessInfo.processInfo.environment["SPATIAND_DEBUG_TAP"] != nil {
+            for o in objects { print("tap: process object \(o) pid \(Self.property(o, kAudioProcessPropertyPID, as: pid_t.self, default: -1)) running output \(Self.property(o, kAudioProcessPropertyIsRunningOutput, as: UInt32.self, default: 9))") }
+        }
         let description = CATapDescription(stereoMixdownOfProcesses: objects)
         description.uuid = UUID()
         description.muteBehavior = .mutedWhenTapped
@@ -111,7 +114,15 @@ final class MacTap {
         let rate = format.mSampleRate > 0 ? format.mSampleRate : 48_000
         let interleaved = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
 
+        let debug = ProcessInfo.processInfo.environment["SPATIAND_DEBUG_TAP"] != nil
+        if debug { print("tap: \(objects.count) process(es), format \(format.mSampleRate) Hz, \(channels) channel(s), interleaved \(interleaved), output \(output)") }
+        var calls = 0
         let result = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregate, queue) { [weak self] _, input, _, _, _ in
+            calls += 1
+            if debug, calls == 1 || calls % 200 == 0 {
+                let list = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
+                print("tap: call \(calls), \(list.count) buffer(s), \(list.first?.mDataByteSize ?? 0) bytes, \(list.first?.mNumberChannels ?? 0) channel(s)")
+            }
             guard let self, let sink = self.onSound else { return }
             let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
             guard let first = buffers.first, let data = first.mData else { return }
@@ -131,7 +142,9 @@ final class MacTap {
             }
             sink(out, rate)
         }
-        guard result == noErr, let procID, AudioDeviceStart(aggregate, procID) == noErr else { lastError = "the tap could not be read"; stop(); return false }
+        let started = procID.map { AudioDeviceStart(aggregate, $0) } ?? -1
+        if debug { print("tap: io proc \(result), start \(started)") }
+        guard result == noErr, procID != nil, started == noErr else { lastError = "the tap could not be read (\(result), \(started))"; stop(); return false }
         running = true
         return true
     }

@@ -5,9 +5,10 @@
 //  Spatiand's engine. Off until the owner asks for it in Settings: macOS asks, the first time, whether Spatiand may take
 //  other applications' sound, and an application whose sound is taken is silent on the Mac's own speakers.
 //
-//  If the permission is refused macOS does not say so; the tap simply delivers silence. So an application that Core
-//  Audio says is playing while its tap has heard nothing for a few seconds is let go -- its sound comes back on the
-//  speakers -- and the owner is told where to allow it.
+//  If the permission is refused macOS does not say so; the tap simply delivers silence. But an application can also be
+//  "playing" silence (a paused video, a call nobody is speaking in). So one whose tap has heard nothing for a good while
+//  while Core Audio says it is playing is only let go -- its sound comes back on the speakers, and it is not tapped again
+//  for a minute -- and the owner is told once, in case it is the permission.
 
 import AppKit
 import AudioToolbox
@@ -17,6 +18,9 @@ final class MacSound {
     private var taps: [String: AnyObject] = [:]
     private var heard: [String: Date] = [:]
     private var playingSince: [String: Date] = [:]
+    /// Applications let go of for want of sound, and until when; and which have been told of.
+    private var restUntil: [String: Date] = [:]
+    private var told: Set<String> = []
     private let lock = NSLock()
     /// Said, on the main thread, when the sound could not be taken: the reason, for the hint.
     var onProblem: ((String) -> Void)?
@@ -30,6 +34,7 @@ final class MacSound {
         guard #available(macOS 14.2, *) else { return }
         for bundle in Array(taps.keys) where wanted[bundle] == nil { drop(bundle) }
         for (bundle, pid) in wanted {
+            if let until = restUntil[bundle], until > Date() { continue }
             if let existing = taps[bundle] as? MacTap {
                 // More of its processes are playing than when the tap was made: made again with them in it.
                 if existing.needsRefresh() { existing.start() }
@@ -55,10 +60,14 @@ final class MacSound {
         guard tap.isPlaying() else { playingSince[bundle] = nil; return }
         let since = playingSince[bundle] ?? now
         playingSince[bundle] = since
-        if now.timeIntervalSince(since) > 4, now.timeIntervalSince(last) > 4 {
-            // Playing, and nothing has come through the tap: the permission has not been given.
-            stopAll()
-            onProblem?("macOS has not let Spatiand take other applications' sound, so it is left on the Mac's speakers. Allow it in System Settings \u{2192} Privacy & Security \u{2192} Screen & System Audio Recording \u{2192} System Audio Recording Only.")
+        if now.timeIntervalSince(since) > 10, now.timeIntervalSince(last) > 10 {
+            // Playing, and nothing has come through the tap: let go of it, so that if it is the permission the application
+            // is not left silent, and try again in a minute.
+            drop(bundle)
+            restUntil[bundle] = now.addingTimeInterval(60)
+            if told.insert(bundle).inserted {
+                onProblem?("No sound came through for \(bundle), so it is left on the Mac's speakers. If it should have, allow Spatiand in System Settings \u{2192} Privacy & Security \u{2192} Screen & System Audio Recording \u{2192} System Audio Recording Only.")
+            }
         }
     }
 

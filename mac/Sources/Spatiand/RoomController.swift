@@ -548,10 +548,7 @@ final class RoomController {
             if !macSound.bundles.isEmpty { macSound.stopAll() }
             return
         }
-        macSound.onProblem = { [weak self] words in
-            Settings.placeMacSound = false
-            self?.hint.say(words)
-        }
+        macSound.onProblem = { [weak self] words in self?.hint.say(words) }
         var wanted: [String: pid_t] = [:]
         for capture in macCaptures.values where capture.info.bundle != Bundle.main.bundleIdentifier { wanted[capture.info.bundle] = capture.info.pid }
         macSound.reconcile(wanted: wanted)

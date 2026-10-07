@@ -15,13 +15,19 @@ enum TapTest {
             print((ok ? "ok    " : "FAIL  ") + name)
             if !ok { failures += 1 }
         }
-        // Something to listen to: the sound repeated, until this test is done. Quiet, and for a short time.
+        // Something to listen to, in one process that lasts: a few seconds of speech, made here and played once. (A loop of
+        // short sounds is a new process each time, and a tap is made for the processes there were.)
+        let speech = "/tmp/spatiand-tap-test.aiff"
+        let say = Process()
+        say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+        say.arguments = ["-o", speech, "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen"]
+        try? say.run()
+        say.waitUntilExit()
         let player = Process()
-        player.executableURL = URL(fileURLWithPath: "/bin/sh")
-        player.arguments = ["-c", "for i in 1 2 3 4 5 6 7 8; do afplay -v 0.2 /System/Library/Sounds/Glass.aiff; done"]
+        player.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
+        player.arguments = ["-v", "0.5", speech]
         try? player.run()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            // afplay is a child of the shell, which is a child of this test.
             let tap = MacTap(bundle: "test.afplay", pid: player.processIdentifier)
             var samples = 0
             var peak: Float = 0
@@ -42,9 +48,24 @@ enum TapTest {
                 print("note  the player was producing sound, as Core Audio sees it: \(tap.isPlaying())")
                 check("sound arrives (\(n) frames, peak \(String(format: "%.3f", p)))", n > 20_000 && p > 0.001)
                 tap.stop()
-                player.terminate()
-                print(failures == 0 ? "all passed" : "\(failures) failed")
-                exit(failures == 0 ? 0 : 1)
+                // And through the whole path a Mac window's sound takes: tapped, placed by the room, handed to the engine.
+                let placed = MacSound(room: Model.shared.room.core)
+                let second = Process()
+                second.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
+                second.arguments = ["-v", "0.3", speech]
+                try? second.run()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    placed.reconcile(wanted: ["test.afplay": second.processIdentifier])
+                    check("a tap is made for the application", placed.bundles == ["test.afplay"])
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        check("its sound reaches the room's engine", AudioOut.shared.isSounding("test.afplay"))
+                        placed.stopAll()
+                        player.terminate()
+                        second.terminate()
+                        print(failures == 0 ? "all passed" : "\(failures) failed")
+                        exit(failures == 0 ? 0 : 1)
+                    }
+                }
             }
         }
         NSApplication.shared.setActivationPolicy(.accessory)
