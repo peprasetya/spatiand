@@ -174,6 +174,7 @@ final class RoomInput: NSObject, NSWindowDelegate {
 
     func start() {
         guard !capturing, let screen = NSScreen.screens.first else { return }
+        releasedByRequest = false
         // A strip under the pointer, not a cover for the whole screen: the pointer is frozen here, so what the hand
         // does is heard here, and a click for another application's window can be sent through the rest of the
         // screen without this window standing in front of it.
@@ -194,7 +195,7 @@ final class RoomInput: NSObject, NSWindowDelegate {
         let view = InputView(frame: NSRect(origin: .zero, size: strip.size))
         view.controller = controller
         view.allowedTouchTypes = [.indirect]
-        view.onRelease = { [weak self] in self?.stop() }
+        view.onRelease = { [weak self] in self?.stop(byRequest: true) }
         // A word on the Mac's own screen, so a Mac whose pointer has stopped answering says why.
         let note = NSTextField(labelWithString: "Spatiand has this Mac\u{2019}s mouse and keyboard for the glasses.   Ctrl-Option-G gives them back.")
         note.font = .systemFont(ofSize: 13, weight: .medium)
@@ -227,7 +228,10 @@ final class RoomInput: NSObject, NSWindowDelegate {
         if !CGPreflightListenEventAccess() { CGRequestListenEventAccess() }
         // While another application has the keyboard Spatiand hears neither its keys nor the fingers that begin a
         // gesture; the system says so to anyone who listens.
-        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] _ in self?.controller.keyNoted() }
+        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+            self?.controller.keyNoted()
+            if event.modifierFlags.contains(.command) { self?.lastCommand = Date() }
+        }
         gestureMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.magnify, .swipe, .gesture, .beginGesture]) { [weak self] _ in self?.controller.pointingAgain(force: true) }
         watcher = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             self?.activated(note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
@@ -283,7 +287,7 @@ final class RoomInput: NSObject, NSWindowDelegate {
     /// A chord asked of the system, for when another application has the keyboard.
     private func chord(_ key: Int) {
         switch key {
-        case Int(kVK_ANSI_G): stop()
+        case Int(kVK_ANSI_G): stop(byRequest: true)
         case Int(kVK_ANSI_R): controller.recentre()
         case Int(kVK_ANSI_P): controller.togglePin()
         case Int(kVK_ANSI_B): controller.bringAimedHere()
@@ -298,8 +302,17 @@ final class RoomInput: NSObject, NSWindowDelegate {
     /// and that is a way of asking for the Mac back.
     private func activated(_ app: NSRunningApplication?) {
         guard capturing, let owner = keyboardOwner, let app else { return }
-        if app.processIdentifier != owner, app.processIdentifier != ProcessInfo.processInfo.processIdentifier { stop() }
+        guard app.processIdentifier != owner, app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+        if switchedByHand { stop(); return }
+        // Something else took the front of its own accord -- a notification, a helper, an updater. That is not the
+        // wearer asking for the Mac back, and giving it back would pull the pointer out of the glasses in the middle
+        // of a sentence: the application that had the keyboard is asked for it again.
+        NSRunningApplication(processIdentifier: owner)?.activate()
     }
+
+    /// The Command key was down a moment ago: a switch of application then is the wearer's, with Command-Tab.
+    private var lastCommand = Date.distantPast
+    private var switchedByHand: Bool { Date().timeIntervalSince(lastCommand) < 1.5 }
 
     /// A window of this Mac has the keyboard: its application is made the active one and the window its key
     /// window, so it behaves as a window in front does -- a caret, selection, menus that stay open -- while
@@ -333,8 +346,13 @@ final class RoomInput: NSObject, NSWindowDelegate {
         }
     }
 
-    func stop() {
+    /// Whether the wearer asked for the Mac back (Ctrl-Option-G) rather than it being lost to something else. Only a
+    /// loss is put right when the wearer reaches for the room again.
+    private(set) var releasedByRequest = false
+
+    func stop(byRequest: Bool = false) {
         guard capturing else { return }
+        releasedByRequest = byRequest
         capturing = false
         chords.disable()
         menuKeys.stop()
@@ -357,6 +375,12 @@ final class RoomInput: NSObject, NSWindowDelegate {
     /// Switching to another app is a way of asking for the Mac back.
     func windowDidResignKey(_ note: Notification) {
         // Not when a window of this Mac was given the keyboard on purpose.
-        if capturing, keyboardOwner == nil { stop() }
+        guard capturing, keyboardOwner == nil else { return }
+        if switchedByHand { stop(); return }
+        // Another application came to the front by itself: Spatiand asks for the keyboard back.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self, self.capturing, self.keyboardOwner == nil, let w = self.window, w.keyable else { return }
+            self.claimKeyboard(attempt: 0)
+        }
     }
 }

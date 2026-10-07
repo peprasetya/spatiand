@@ -17,6 +17,7 @@ struct SettingsView: View {
     @AppStorage("gamepads", store: Defaults.store) private var gamepads = true
     @State private var atLogin = SMAppService.mainApp.status == .enabled
     @State private var loginProblem = ""
+    @StateObject private var panoramas = PanoramaFolder()
     let hotkeyStatus: () -> String
 
     var body: some View {
@@ -59,6 +60,15 @@ struct SettingsView: View {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.Trackpad-Settings") { NSWorkspace.shared.open(url) }
                 }
             }
+            Text("Environment").font(.headline)
+            Text(panoramas.summary).font(.caption).foregroundColor(.secondary)
+            HStack {
+                Button("Show the folder") { panoramas.reveal() }
+                Button(panoramas.fetching ? "Fetching\u{2026}" : "Get the default panoramas") { panoramas.fetch() }.disabled(panoramas.fetching || !panoramas.canFetch)
+            }
+            if !panoramas.progress.isEmpty { Text(panoramas.progress).font(.caption).foregroundColor(.secondary) }
+            Text("Choose what surrounds you in the glasses' settings list, under Environment: black, the generated studio, or any picture in this folder, or add one from anywhere with Add an image. The folder is the Deck's own (~/.local/share/spatiand/environments), so a folder of panoramas can be copied across. A name with 180 in it is read as the front half only; _ou or _sbs in it, or a square or very wide picture, as a stereo pair.")
+                .font(.caption).foregroundColor(.secondary)
             Toggle("Game controllers work as they do on the Deck (cable or Bluetooth)", isOn: $gamepads)
             Text("A pad's touchpad slides the pointer in the glasses and its press clicks; the PS button opens the menu, which the D-pad, X and O then work. Each window has the controller layout it has on the Deck: copy ~/.config/spatiand/layouts from a Deck into ~/Library/Application Support/Spatiand/layouts to use the same ones.")
                 .font(.caption).foregroundColor(.secondary)
@@ -82,6 +92,55 @@ struct SettingsView: View {
         }
         .padding(20)
         .frame(width: 520)
+    }
+}
+
+/// The folder of environment images, for the settings window: how many there are, where, and the Deck's own script
+/// for fetching the default ones, which is run only when the wearer presses the button.
+final class PanoramaFolder: ObservableObject {
+    @Published var summary = ""
+    @Published var progress = ""
+    @Published var fetching = false
+    private let folder = RoomCore.environmentFolder
+    private var script: String? { Bundle.main.path(forResource: "fetch-environments", ofType: "sh") }
+    var canFetch: Bool { script != nil && folder != nil }
+
+    init() { refresh() }
+
+    func refresh() {
+        let count = folder.flatMap { try? FileManager.default.contentsOfDirectory(atPath: $0) }?.filter { ["jpg", "jpeg", "png"].contains(($0 as NSString).pathExtension.lowercased()) }.count ?? 0
+        summary = count == 0 ? "No panoramas yet in \(folder ?? "the folder"). The studio and black are always there." : "\(count) panorama\(count == 1 ? "" : "s") in \(folder ?? "the folder")."
+    }
+
+    func reveal() {
+        guard let folder else { return }
+        try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(URL(fileURLWithPath: folder))
+    }
+
+    func fetch() {
+        guard let script, let folder, !fetching else { return }
+        fetching = true
+        progress = "Downloading from NOIRLab; each is a few megabytes."
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/bash")
+            task.arguments = [script]
+            var env = ProcessInfo.processInfo.environment
+            env["SPATIAND_ENVIRONMENTS"] = folder
+            task.environment = env
+            let out = Pipe()
+            task.standardOutput = out
+            task.standardError = out
+            try? task.run()
+            let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            task.waitUntilExit()
+            DispatchQueue.main.async {
+                self?.fetching = false
+                self?.progress = task.terminationStatus == 0 ? "Done." : "It did not finish: " + (text.split(separator: "\n").last.map(String.init) ?? "no answer")
+                self?.refresh()
+            }
+        }
     }
 }
 

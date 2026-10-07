@@ -49,7 +49,6 @@ final class RoomShell {
     private func prepare() {
         controller.syncHosts()
         sp_shell_set_pip(controller.core.handle, Int32(controller.cornerIndex), controller.pinnedLarge ? 1 : 0)
-        sp_shell_set_studio(controller.core.handle, Settings.studio ? 1 : 0)
         controller.refreshMacList()
     }
 
@@ -193,7 +192,10 @@ final class RoomShell {
             case "Screenshot": controller.screenshot()
             case "PipCorner": controller.nextCorner(); sp_shell_set_pip(controller.core.handle, Int32(controller.cornerIndex), controller.pinnedLarge ? 1 : 0)
             case "PipSize": controller.toggleSize(); sp_shell_set_pip(controller.core.handle, Int32(controller.cornerIndex), controller.pinnedLarge ? 1 : 0)
-            case "OpenEnvironments": sp_shell_set_studio(controller.core.handle, Settings.studio ? 1 : 0)
+            case "OpenEnvironments":
+                if controller.core.environmentImageCount == 0 {
+                    controller.hint.say("No panoramas yet. Add an image here, or get the default ones in Spatiand's settings on this Mac.")
+                }
             case "OpenHosts": controller.syncHosts()
             case "ReturnToDesktop": controller.leave()
             case "ToggleKeyboard": controller.hint.say("Type on this Mac's keyboard: it goes to the window in front of you.")
@@ -202,8 +204,6 @@ final class RoomShell {
             case "Calibrate": controller.hint.say("The Mac learns the glasses' sensors as they are worn, and remembers them.")
             default: break
             }
-        } else if let environment = event["environment"] {
-            Settings.studio = (environment as? String) != "blank"
         } else if let focus = event["focus"] as? Int {
             if focus >= 0xE000 && focus < 0xF000 {
                 controller.bringCandidate(UInt32(focus))
@@ -219,9 +219,6 @@ final class RoomShell {
             NotificationCenter.default.post(name: .spatiandPair, object: address)
         } else if let address = event["forget"] as? String {
             controller.forgetHost(address: address)
-        } else if event["add_environment"] != nil || event["list_directory"] != nil {
-            controller.hint.say("Adding an image is not on the Mac yet.")
-            intent(.back)
         }
     }
 }

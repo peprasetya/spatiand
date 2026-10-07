@@ -75,12 +75,6 @@ enum Settings {
         set { defaults.set(newValue, forKey: "captureInput") }
     }
 
-    /// Whether the glasses are given the Deck's studio to look at, or black: the studio is what tells the
-    /// eyes how far away things are.
-    static var studio: Bool {
-        get { defaults.object(forKey: "studio") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "studio") }
-    }
 
     /// Where a window pinned to the glass sits (0 bottom right, then round) and how big.
     static var pinnedCorner: Int {

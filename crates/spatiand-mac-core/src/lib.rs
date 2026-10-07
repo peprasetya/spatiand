@@ -28,6 +28,7 @@ pub use spatiand_room::look;
 pub mod pads;
 pub mod room;
 pub mod shell_ui;
+pub mod surroundings;
 pub mod theme_icons;
 
 use std::ffi::{c_char, c_void, CStr, CString};
@@ -858,6 +859,24 @@ pub extern "C" fn sp_shell_launcher(room: *mut RoomHandle) -> *mut c_char {
     }))
 }
 
+/// The card of the open menu as the app can read it, for tests: its title, rows (label and what is on the right of
+/// it), and the row the cursor is on. JSON; free it with `sp_free_string`.
+#[no_mangle]
+pub extern "C" fn sp_shell_card(room: *mut RoomHandle) -> *mut c_char {
+    json_out(with_room(room, None, |r| {
+        let model = menu_model::model(&r.ui.shell)?;
+        Some(
+            serde_json::json!({
+                "mode": format!("{:?}", r.ui.shell.mode()),
+                "title": model.title,
+                "cursor": model.cursor,
+                "rows": model.rows.iter().map(|row| serde_json::json!([row.label, row.trailing])).collect::<Vec<_>>(),
+            })
+            .to_string(),
+        )
+    }))
+}
+
 #[no_mangle]
 pub extern "C" fn sp_shell_hover(room: *mut RoomHandle) {
     with_room(room, (), |r| {
@@ -938,15 +957,6 @@ pub extern "C" fn sp_shell_set_icon(room: *mut RoomHandle, name: *const c_char, 
     // SAFETY: a NUL-terminated string and `width * height * 4` readable bytes, by the contract.
     let (name, pixels) = unsafe { (CStr::from_ptr(name).to_string_lossy().into_owned(), std::slice::from_raw_parts(rgba, (width * height * 4) as usize).to_vec()) };
     with_room(room, (), |r| r.ui.set_icon(&name, width, height, pixels));
-}
-
-/// The environments on offer: whether the studio is the one in use. (Blank and the studio are the two the
-/// Mac has.)
-#[no_mangle]
-pub extern "C" fn sp_shell_set_studio(room: *mut RoomHandle, studio: i32) {
-    use spatiand_shell::EnvironmentChoice as C;
-    let choices = vec![("Studio".to_string(), C::Studio), ("Blank".to_string(), C::Blank)];
-    with_room(room, (), |r| r.ui.set_environments(choices, if studio != 0 { C::Studio } else { C::Blank }));
 }
 
 /// Text typed while the shell asks for it (a computer's address): returns an event JSON when Return is hit.
@@ -1104,6 +1114,12 @@ pub extern "C" fn sp_room_set_candidates(room: *mut RoomHandle, json: *const c_c
 }
 
 /// How steady the view is held: 0 not at all, 1 a little, 2 firmly, for typing.
+/// How far ahead the head is drawn, in seconds: until the frame being drawn is on the display.
+#[no_mangle]
+pub extern "C" fn sp_room_set_prediction(room: *mut RoomHandle, seconds: f64) {
+    with_room(room, (), |r| r.set_prediction(seconds));
+}
+
 #[no_mangle]
 pub extern "C" fn sp_room_set_damping(room: *mut RoomHandle, level: i32) {
     let damping = match level {
@@ -1319,4 +1335,56 @@ mod tests {
             Ok(ClientMessage::Input { .. })
         ));
     }
+}
+
+// MARK: the environment
+
+/// Use the wearer's own environments -- the folder of images, what was chosen last time -- rather than only the two
+/// generated ones, and begin loading the one that was in use.
+#[no_mangle]
+pub extern "C" fn sp_environment_use_disk(room: *mut RoomHandle) {
+    with_room(room, (), |r| r.use_disk_environments());
+}
+
+/// Whether a new environment picture is ready for the renderer. If so, `info` says what it is, and
+/// [`sp_environment_take`] hands over its pixels (once).
+#[no_mangle]
+pub extern "C" fn sp_environment_poll(room: *mut RoomHandle, info: *mut surroundings::SkyInfo) -> i32 {
+    if info.is_null() {
+        return 0;
+    }
+    match with_room(room, None, |r| r.surroundings.poll()) {
+        Some(found) => {
+            // SAFETY: a valid `SkyInfo`, by the contract.
+            unsafe { *info = found };
+            1
+        }
+        None => 0,
+    }
+}
+
+/// The pixels of the picture [`sp_environment_poll`] reported: straight RGBA, top row first, `len` bytes of room.
+/// Returns how many were written, 0 when there is nothing to take.
+#[no_mangle]
+pub extern "C" fn sp_environment_take(room: *mut RoomHandle, out: *mut u8, len: usize) -> usize {
+    if out.is_null() {
+        return 0;
+    }
+    let Some(sky) = with_room(room, None, |r| r.surroundings.take()) else { return 0 };
+    let n = sky.rgba.len().min(len);
+    // SAFETY: room for `len` bytes, by the contract.
+    unsafe { std::ptr::copy_nonoverlapping(sky.rgba.as_ptr(), out, n) };
+    n
+}
+
+/// The folder environment images are kept in, as text; free it with `sp_free_string`.
+#[no_mangle]
+pub extern "C" fn sp_environment_folder() -> *mut c_char {
+    json_out(spatiand_room::environment::Environments::images_folder().map(|p| p.display().to_string()))
+}
+
+/// How many images are in that folder.
+#[no_mangle]
+pub extern "C" fn sp_environment_image_count(room: *mut RoomHandle) -> i32 {
+    with_room(room, 0, |r| r.surroundings.image_count() as i32)
 }

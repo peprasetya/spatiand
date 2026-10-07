@@ -23,6 +23,8 @@ fi
 # The icon is the Deck's and the Beam Pro's (assets/icons/spatiand.svg), made into an .icns once.
 mkdir -p "$app/Contents/Resources"
 cp ../assets/icons/Spatiand.icns "$app/Contents/Resources/Spatiand.icns"
+# The Deck's own script for the default panoramas (NOIRLab's night skies), run from Settings when the wearer asks.
+cp ../tools/fetch-environments.sh "$app/Contents/Resources/fetch-environments.sh"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

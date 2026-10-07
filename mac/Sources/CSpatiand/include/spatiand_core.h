@@ -144,11 +144,25 @@ uint64_t sp_shell_sync(sp_room *room);
 size_t sp_shell_panel_ids(sp_room *room, uint32_t *out, size_t capacity);
 int32_t sp_shell_panel_image(sp_room *room, uint32_t id, uint32_t *w, uint32_t *h, uint8_t *out, size_t capacity);
 char *sp_shell_launcher(sp_room *room);
+char *sp_shell_card(sp_room *room);
 void sp_shell_hover(sp_room *room);
 char *sp_shell_click(sp_room *room);
 void sp_shell_set_hosts(sp_room *room, const char *json);
 void sp_shell_set_icon(sp_room *room, const char *name, uint32_t width, uint32_t height, const uint8_t *rgba);
-void sp_shell_set_studio(sp_room *room, int32_t studio);
+
+/* What surrounds the wearer. */
+typedef struct {
+    uint32_t width;
+    uint32_t height;
+    int32_t projection;   /* 0 all the way round, 1 the front half */
+    int32_t stereo;       /* 0 one picture, 1 left over right, 2 left beside right */
+    int32_t yaw_millideg;
+} sp_sky_info;
+void sp_environment_use_disk(sp_room *room);
+int32_t sp_environment_poll(sp_room *room, sp_sky_info *info);
+size_t sp_environment_take(sp_room *room, uint8_t *out, size_t len);
+char *sp_environment_folder(void);
+int32_t sp_environment_image_count(sp_room *room);
 void sp_shell_dirty(sp_room *room);
 void sp_shell_set_pip(sp_room *room, int32_t corner, int32_t large);
 char *sp_shell_type(sp_room *room, const char *text, int32_t backspace, int32_t enter);
@@ -156,6 +170,7 @@ char *sp_shell_type(sp_room *room, const char *text, int32_t backspace, int32_t 
 // The Deck's pointer: a dot in a ring, white, size * size * 4 bytes of straight RGBA.
 void sp_reticle(uint32_t size, uint8_t *out);
 void sp_resize_cursor(uint32_t size, uint8_t *out);
+void sp_room_set_prediction(sp_room *room, double seconds);
 void sp_room_set_damping(sp_room *room, int32_t level);
 void sp_room_set_candidates(sp_room *room, const char *json);
 

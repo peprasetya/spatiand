@@ -158,8 +158,7 @@ impl ShellUi {
         self.dirty = true;
     }
 
-    pub fn set_environments(&mut self, choices: Vec<(String, EnvironmentChoice)>, current: EnvironmentChoice) {
-        let entries = choices.into_iter().map(|(label, choice)| EnvironmentEntry { label, choice }).collect();
+    pub fn set_environment_entries(&mut self, entries: Vec<EnvironmentEntry>, current: EnvironmentChoice) {
         self.shell.set_environments(entries, current);
         self.dirty = true;
     }

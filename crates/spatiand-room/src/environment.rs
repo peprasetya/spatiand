@@ -73,6 +73,17 @@ pub struct Environments {
 }
 
 impl Environments {
+    /// Only the two generated ones, and nothing remembered or recorded anywhere: for tests of what is drawn, which
+    /// must not change the wearer's own environment.
+    pub fn ephemeral() -> Self {
+        Self::opening(Vec::new(), None)
+    }
+
+    /// The folder images are looked for in (and where `tools/fetch-environments.sh` puts them), for saying where.
+    pub fn images_folder() -> Option<PathBuf> {
+        search_directories().into_iter().next()
+    }
+
     pub fn discover() -> Self {
         let files = scan();
         if files.is_empty() {

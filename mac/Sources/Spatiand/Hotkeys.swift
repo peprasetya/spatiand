@@ -33,6 +33,9 @@ final class Hotkeys {
             var id = EventHotKeyID()
             GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                               nil, MemoryLayout<EventHotKeyID>.size, nil, &id)
+            // Only Spatiand's two own chords (signature 'Spat'): the room's Ctrl-Option letters arrive at the same
+            // handler, and their key numbers are not these chords' numbers.
+            guard id.signature == OSType(0x5370_6174) else { return OSStatus(eventNotHandledErr) }
             let keys = Unmanaged<Hotkeys>.fromOpaque(user).takeUnretainedValue()
             DispatchQueue.main.async {
                 switch Chord(rawValue: id.id) {

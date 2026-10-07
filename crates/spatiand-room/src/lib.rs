@@ -1,5 +1,6 @@
-//! What a window in the room is, however the room is drawn. See [`placement`], [`frame`], [`look`] and [`menu`].
+//! What a window in the room is, however the room is drawn. See [`environment`], [`placement`], [`frame`], [`look`] and [`menu`].
 
+pub mod environment;
 pub mod frame;
 pub mod look;
 pub mod menu;

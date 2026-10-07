@@ -21,12 +21,12 @@ final class GlassesWindow: NSWindow {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
-final class GlassesOutput: NSObject {
+final class GlassesOutput: NSObject, CAMetalDisplayLinkDelegate {
     private let room: RoomController
     private var device: XRealDevice?
     private var window: GlassesWindow?
     private let layer = CAMetalLayer()
-    private var link: CADisplayLink?
+    private var link: CAMetalDisplayLink?
     private var watchdog: Timer?
     private var starting = false
     private var captured: CGDirectDisplayID?
@@ -249,7 +249,12 @@ final class GlassesOutput: NSObject {
         window = w
         hasHadAWindow = true
 
-        let tick = view.displayLink(target: self, selector: #selector(draw))
+        // The display hands over a drawable when there is one to draw on, instead of the main thread waiting for it: it
+        // waited for more than half of every second with the old way, and a main thread that waits is late for the
+        // pointer, the keys and the fingers, and for the next frame.
+        let tick = CAMetalDisplayLink(metalLayer: layer)
+        tick.delegate = self
+        tick.preferredFrameLatency = 2
         tick.add(to: .main, forMode: .common)
         link = tick
 
@@ -272,9 +277,7 @@ final class GlassesOutput: NSObject {
     /// Time spent waiting for the display to hand over a drawable, in this window of the log.
     private var waited = 0.0, waitedWorst = 0.0
 
-    private func noteFrame(_ link: CADisplayLink, spent: Double) {
-        let now = link.timestamp
-        let period = max(0.001, link.targetTimestamp - link.timestamp)
+    private func noteFrame(arrived now: Double, period: Double, spent: Double, ahead: Double) {
         frameClock.interval = period
         if frameClock.last > 0 {
             let gap = now - frameClock.last
@@ -288,32 +291,35 @@ final class GlassesOutput: NSObject {
         frameClock.last = now
         frameClock.spent += spent
         frameClock.worst = max(frameClock.worst, spent)
+        waited += ahead
         if Date().timeIntervalSince(frameClock.since) >= 5, frameClock.count > 0 {
             let gpu = room.renderer?.takeGPUStats() ?? (average: 0, worst: 0, frames: 0, dropped: 0)
-            print(String(format: "glasses: %d frames in 5 s (the display's period is %.1f ms), %d late, longest gap %.1f ms; drawing took %.1f ms on average, %.1f at worst; waiting for a drawable %.1f ms on average, %.1f at worst; the GPU took %.1f ms on average, %.1f at worst, %d frames dropped",
+            print(String(format: "glasses: %d frames in 5 s (the display's period is %.1f ms), %d late, longest gap %.1f ms; drawing took %.1f ms on average, %.1f at worst; the head is drawn %.1f ms ahead; the GPU took %.1f ms on average, %.1f at worst, %d frames dropped",
                          frameClock.count, frameClock.interval * 1000, frameClock.late, frameClock.longest * 1000,
                          frameClock.spent / Double(frameClock.count) * 1000, frameClock.worst * 1000,
-                         waited / Double(frameClock.count) * 1000, waitedWorst * 1000, gpu.average * 1000, gpu.worst * 1000, gpu.dropped))
+                         waited / Double(frameClock.count) * 1000, gpu.average * 1000, gpu.worst * 1000, gpu.dropped))
             waited = 0; waitedWorst = 0
             frameClock = (frameClock.last, Date(), 0, 0, 0, 0, 0, frameClock.interval)
         }
     }
 
-    @objc private func draw(_ displayLink: CADisplayLink) {
+    private func draw(_ drawable: CAMetalDrawable, presentsAt: CFTimeInterval, period: Double) {
         let started = CACurrentMediaTime()
-        defer { noteFrame(displayLink, spent: CACurrentMediaTime() - started) }
+        // The head is drawn where it will be when this frame is on the display, not where it is now.
+        let ahead = max(0.006, min(0.050, presentsAt - started + 0.002))
+        room.core.setPrediction(seconds: ahead)
+        defer { noteFrame(arrived: started, period: period, spent: CACurrentMediaTime() - started, ahead: ahead) }
         guard let renderer = room.renderer, window != nil else { return }
-        let asked = CACurrentMediaTime()
-        guard let drawable = layer.nextDrawable() else { return }
-        let gotIt = CACurrentMediaTime() - asked
-        waited += gotIt
-        waitedWorst = max(waitedWorst, gotIt)
         // Where the cursor is changes when the head turns, with the mouse still.
         let aim = room.core.aim()
         let now = (aim.window, Int(aim.x), Int(aim.y))
         if now != lastAim { lastAim = now; room.pointerChanged() }
         room.tick()
         renderer.render(into: drawable.texture, sideBySide: sideBySide, present: drawable)
+    }
+
+    func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
+        draw(update.drawable, presentsAt: update.targetPresentationTimestamp, period: 1.0 / max(shownRate, 30))
     }
 
     /// `SPATIAND_DEBUG_SNAPSHOT=/tmp/x.png`: every few seconds, what is being drawn, written out, and

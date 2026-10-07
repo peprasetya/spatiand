@@ -21,7 +21,9 @@ final class RoomRenderer {
     private let bubblePipeline: MTLRenderPipelineState
     /// The Deck's studio: a dark sky, a key light, a horizon and a floor grid. What tells the eyes
     /// how far away the windows are; without it they hang in a void and read as flat.
-    private var skyTexture: MTLTexture?
+    private var currentSky: (texture: MTLTexture, info: sp_sky_info)?
+    private let skyLock = NSLock()
+    private var skyTexture: MTLTexture? { skyLock.lock(); defer { skyLock.unlock() }; return currentSky?.texture }
     private var cache: CVMetalTextureCache?
     private var cursorTexture: MTLTexture
     private let arrowTexture: MTLTexture
@@ -93,15 +95,18 @@ final class RoomRenderer {
             guard let b = device.makeBuffer(length: Self.capacity * 4, options: .storageModeShared) else { return nil }
             buffers.append(b)
         }
-        loadSky()
     }
 
-    private func loadSky() {
-        // Generated off the main thread: two million pixels of it.
+    /// What the environment picture is and how it is laid out: how it is read for each eye, whether it covers only
+    /// the front, and how far it is turned. Set with the picture.
+    private var skyInfo: sp_sky_info { skyLock.lock(); defer { skyLock.unlock() }; return currentSky?.info ?? sp_sky_info(width: 0, height: 0, projection: 0, stereo: 0, yaw_millideg: 0) }
+
+    /// A new environment: its pixels are made a texture, with its mipmaps, off the main thread, and the room changes
+    /// to it when it is ready -- the old one stays up and keeps tracking until then.
+    func setSky(_ info: sp_sky_info, pixels: [UInt8]) {
+        let (w, h) = (Int(info.width), Int(info.height))
+        guard w > 0, h > 0, pixels.count >= w * h * 4 else { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let (w, h) = (2048, 1024)
-            var pixels = [UInt8](repeating: 0, count: w * h * 4)
-            sp_sky_studio(UInt32(w), UInt32(h), &pixels)
             let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: w, height: h, mipmapped: true)
             guard let self, let texture = self.device.makeTexture(descriptor: d) else { return }
             texture.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0, withBytes: pixels, bytesPerRow: w * 4)
@@ -111,8 +116,22 @@ final class RoomRenderer {
                 commands.commit()
                 commands.waitUntilCompleted()
             }
-            self.skyTexture = texture
+            self.skyLock.lock()
+            self.currentSky = (texture, info)
+            self.skyLock.unlock()
         }
+    }
+
+    /// How an eye reads the environment picture: the part of it that is that eye's (a stereo pair is packed into one),
+    /// whether only the front is there, and the turn.
+    private func skyParams(eye: Int) -> [Float] {
+        var rect: [Float] = [0, 0, 1, 1]
+        switch skyInfo.stereo {
+        case 1: rect = eye == 0 ? [0, 0, 1, 0.5] : [0, 0.5, 1, 1]
+        case 2: rect = eye == 0 ? [0, 0, 0.5, 1] : [0.5, 0, 1, 1]
+        default: break
+        }
+        return rect + [Float(skyInfo.yaw_millideg) / 1000 * .pi / 180, skyInfo.projection == 1 ? 1 : 0, 0, 0]
     }
 
     /// The host's own pointer picture (premultiplied BGRA), or the plain arrow when there is none.
@@ -240,7 +259,7 @@ final class RoomRenderer {
         let eyes = sideBySide ? 2 : 1
         let eyeWidth = width / eyes
 
-        let sky = Settings.studio ? skyMatrices() : nil
+        let sky = skyTexture != nil ? skyMatrices() : nil
         for eye in 0..<eyes {
             let rect = MTLViewport(originX: Double(eye * eyeWidth), originY: 0, width: Double(eyeWidth), height: Double(height), znear: 0, zfar: 1)
             encoder.setViewport(rect)
@@ -250,6 +269,8 @@ final class RoomRenderer {
                 encoder.setRenderPipelineState(skyPipeline)
                 encoder.setVertexBytes(&inverse, length: 64, index: 0)
                 encoder.setFragmentBytes(&inverse, length: 64, index: 0)
+                var params = skyParams(eye: eye)
+                encoder.setFragmentBytes(&params, length: 32, index: 1)
                 encoder.setFragmentTexture(texture, index: 0)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             }
@@ -264,6 +285,8 @@ final class RoomRenderer {
                     var bubble = bubbleParams(draw, floats, focused: draw.window >= 0xFF20)
                     encoder.setRenderPipelineState(bubblePipeline)
                     encoder.setFragmentBytes(&bubble, length: 16, index: 0)
+                    var params = skyParams(eye: 0)
+                    encoder.setFragmentBytes(&params, length: 32, index: 1)
                     encoder.setFragmentTexture(texture, index: 0)
                     encoder.setFragmentTexture(skyTexture ?? arrowTexture, index: 1)
                     encoder.drawPrimitives(type: .triangle, vertexStart: draw.first, vertexCount: draw.count)
@@ -392,16 +415,34 @@ final class RoomRenderer {
         return out;
     }
 
+    // How an eye reads the environment: its part of the picture, whether only the front of the room is there, and the
+    // turn of it. The Deck's SkySource, as the shader gets it.
+    struct SkyParams { float4 rect; float yaw; float front_only; float2 pad; };
+
+    // The colour of a direction, or black where the picture has nothing (behind the viewer, for a 180 degree one).
+    float3 sky_colour(texture2d<float> sky, constant SkyParams &p, float3 dir, bool use_mips) {
+        constexpr sampler around(filter::linear, mip_filter::linear, s_address::repeat, t_address::clamp_to_edge);
+        float azimuth = atan2(-dir.y, dir.x) - p.yaw;
+        azimuth = azimuth - 2.0 * M_PI_F * floor((azimuth + M_PI_F) / (2.0 * M_PI_F));
+        float u;
+        if (p.front_only > 0.5) {
+            if (fabs(azimuth) > M_PI_F * 0.5) { return float3(0.0); }
+            u = 0.5 + azimuth / M_PI_F;
+        } else {
+            u = 0.5 + azimuth / (2.0 * M_PI_F);
+        }
+        float v = 0.5 - asin(clamp(dir.z, -1.0, 1.0)) / M_PI_F;
+        float2 uv = float2(p.rect.x + u * (p.rect.z - p.rect.x), p.rect.y + v * (p.rect.w - p.rect.y));
+        return use_mips ? sky.sample(around, uv).rgb : sky.sample(around, uv, level(0)).rgb;
+    }
+
     fragment float4 fragment_sky(SkyVarying in [[stage_in]],
                                  texture2d<float> sky [[texture(0)]],
-                                 constant float4x4 &inverse [[buffer(0)]]) {
+                                 constant float4x4 &inverse [[buffer(0)]],
+                                 constant SkyParams &params [[buffer(1)]]) {
         float4 far = inverse * float4(in.ndc, 1.0, 1.0);
         float3 dir = normalize(far.xyz / far.w);
-        constexpr sampler around(filter::linear, mip_filter::linear, address::repeat);
-        float azimuth = atan2(-dir.y, dir.x);
-        float u = 0.5 + azimuth / (2.0 * M_PI_F);
-        float v = 0.5 - asin(clamp(dir.z, -1.0, 1.0)) / M_PI_F;
-        return float4(sky.sample(around, float2(u, v)).rgb, 1.0);
+        return float4(sky_colour(sky, params, dir, true), 1.0);
     }
 
     constexpr sampler mipped(filter::linear, mip_filter::linear, address::clamp_to_edge, max_anisotropy(8));
@@ -417,18 +458,15 @@ final class RoomRenderer {
     // rim by Fresnel, takes a highlight, and holds the application's icon inside.
     struct Bubble { packed_float3 centre; float focus; };
 
-    float3 environment(texture2d<float> sky, float3 dir) {
-        constexpr sampler around(filter::linear, address::repeat);
-        float azimuth = atan2(-dir.y, dir.x);
-        float u = 0.5 + azimuth / (2.0 * M_PI_F);
-        float v = 0.5 - asin(clamp(dir.z, -1.0, 1.0)) / M_PI_F;
-        return sky.sample(around, float2(u, v), level(0)).rgb;
+    float3 environment(texture2d<float> sky, constant SkyParams &params, float3 dir) {
+        return sky_colour(sky, params, dir, false);
     }
 
     fragment float4 fragment_bubble(Varying in [[stage_in]],
                                     texture2d<float> icon [[texture(0)]],
                                     texture2d<float> sky [[texture(1)]],
-                                    constant Bubble &bubble [[buffer(0)]]) {
+                                    constant Bubble &bubble [[buffer(0)]],
+                                    constant SkyParams &params [[buffer(1)]]) {
         float2 p = float2(in.uv.x, 1.0 - in.uv.y) * 2.0 - 1.0;
         float r2 = dot(p, p);
         if (r2 > 1.0) { discard_fragment(); }
@@ -445,7 +483,7 @@ final class RoomRenderer {
         float fresnel = 0.04 + 0.96 * pow(1.0 - facing, 5.0);
         float3 refracted = refract(d, normal, 1.0 / 1.45);
         if (dot(refracted, refracted) < 1e-6) { refracted = d; }
-        float3 colour = mix(environment(sky, refracted), environment(sky, reflect(d, normal)), fresnel);
+        float3 colour = mix(environment(sky, params, refracted), environment(sky, params, reflect(d, normal)), fresnel);
 
         float3 light = normalize(float3(-0.55, 0.6, 0.58));
         float specular = pow(clamp(dot(normal, light), 0.0, 1.0), 48.0);

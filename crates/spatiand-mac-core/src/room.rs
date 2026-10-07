@@ -312,6 +312,9 @@ pub struct Room {
     candidates: Vec<(u32, String)>,
     damping: Damping,
     view: std::cell::Cell<Option<ViewFilter>>,
+    prediction: std::cell::Cell<Option<f64>>,
+    /// What surrounds the wearer, and the picker that changes it.
+    pub surroundings: crate::surroundings::Surroundings,
     /// The pointer's picture: its size and where its hot spot is, in the picture's pixels.
     cursor_shape: (f64, f64, f64, f64),
 }
@@ -350,6 +353,8 @@ impl Room {
             candidates: Vec::new(),
             damping: Damping::default(),
             view: std::cell::Cell::new(None),
+            prediction: std::cell::Cell::new(None),
+            surroundings: crate::surroundings::Surroundings::ephemeral(),
             cursor_shape: (0.0, 0.0, 0.0, 0.0),
         }
     }
@@ -441,8 +446,15 @@ impl Room {
         if let Some(fixed) = self.fixed_head {
             return fixed;
         }
-        let raw = self.tracker.predicted_orientation(DEFAULT_PREDICTION_SECONDS, DEFAULT_PREDICTION_MAX_DEGREES);
+        let ahead = self.prediction.get().unwrap_or(DEFAULT_PREDICTION_SECONDS);
+        let raw = self.tracker.predicted_orientation(ahead, DEFAULT_PREDICTION_MAX_DEGREES);
         self.steadied(raw)
+    }
+
+    /// How far ahead the head is drawn, seconds: the time from now until this frame is on the display, which
+    /// the display says. Unset, one frame at the Deck's rate.
+    pub fn set_prediction(&self, seconds: f64) {
+        self.prediction.set(Some(seconds.clamp(0.0, 0.08)));
     }
 
     pub fn set_damping(&mut self, damping: Damping) {
@@ -1025,8 +1037,31 @@ impl Room {
                 self.ui.set_windows(entries, true);
                 Some(ShellEvent::Hud(spatiand_shell::HudAction::OpenSwitcher))
             }
+            // The environment picker, as the Deck's compositor answers it: the folder is read when the list opens, a
+            // choice is remembered and loaded, and the browser lists the folder it is asked for.
+            Some(ShellEvent::Hud(spatiand_shell::HudAction::OpenEnvironments)) => {
+                self.surroundings.open_picker(&mut self.ui);
+                Some(ShellEvent::Hud(spatiand_shell::HudAction::OpenEnvironments))
+            }
+            Some(ShellEvent::ChooseEnvironment(choice)) => {
+                self.surroundings.choose(choice);
+                Some(ShellEvent::ChooseEnvironment(choice))
+            }
+            Some(ShellEvent::ListDirectory(name)) => {
+                self.surroundings.list(name.clone(), &mut self.ui);
+                Some(ShellEvent::ListDirectory(name))
+            }
+            Some(ShellEvent::AddEnvironment(name)) => {
+                self.surroundings.add(&name);
+                Some(ShellEvent::AddEnvironment(name))
+            }
             other => other,
         }
+    }
+
+    /// The wearer's own environments from here on: their folder of images and what they chose last time.
+    pub fn use_disk_environments(&mut self) {
+        self.surroundings = crate::surroundings::Surroundings::on_disk();
     }
 
     /// What the pointer is on of an open menu.

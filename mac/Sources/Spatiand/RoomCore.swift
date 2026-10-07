@@ -121,6 +121,22 @@ final class RoomCore {
     func setHidden(_ id: UInt16, _ hidden: Bool) { sp_room_set_hidden(room, UInt32(id), hidden ? 1 : 0) }
     func setCandidates(_ json: String) { sp_room_set_candidates(room, json) }
     func setDamping(_ level: Int) { sp_room_set_damping(room, Int32(level)) }
+    func useDiskEnvironments() { sp_environment_use_disk(room) }
+    /// A new environment picture, if one has finished loading: what it is and its pixels.
+    func newEnvironment() -> (sp_sky_info, [UInt8])? {
+        var info = sp_sky_info(width: 0, height: 0, projection: 0, stereo: 0, yaw_millideg: 0)
+        guard sp_environment_poll(room, &info) != 0 else { return nil }
+        var pixels = [UInt8](repeating: 0, count: Int(info.width) * Int(info.height) * 4)
+        let n = sp_environment_take(room, &pixels, pixels.count)
+        return n == pixels.count ? (info, pixels) : nil
+    }
+    var environmentImageCount: Int { Int(sp_environment_image_count(room)) }
+    static var environmentFolder: String? {
+        guard let c = sp_environment_folder() else { return nil }
+        defer { sp_free_string(c) }
+        return String(cString: c)
+    }
+    func setPrediction(seconds: Double) { sp_room_set_prediction(room, seconds) }
     func isHidden(_ id: UInt16) -> Bool { sp_room_is_hidden(room, UInt32(id)) != 0 }
     func chromeVersion(_ id: UInt16) -> UInt64 { sp_room_chrome_version(room, UInt32(id)) }
     private static let chromeBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 2048 * 2048 * 4)

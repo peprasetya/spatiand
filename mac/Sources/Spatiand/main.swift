@@ -95,6 +95,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshIcon()
         if Settings.hostEnabled { MacHost.shared.start() }
         Model.shared.room.drivesGlasses = true
+        // The wearer's own environments, as on the Deck: the folder of images and the one chosen last time.
+        Model.shared.room.core.useDiskEnvironments()
         PadInput.shared.start()
         Model.shared.room.onChange = { [weak self] in self?.item.button?.appearsDisabled = !(self?.glasses.isPluggedIn ?? false) }
         wasPlugged = glasses.isPluggedIn
@@ -112,16 +114,25 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Mac's is out of sight. Otherwise it is the usual one.
         hotkeys.onMenu = { [weak self] in
             let room = Model.shared.room
-            if room.active, room.input.capturing { room.toggleMenu() } else { self?.item.button?.performClick(nil) }
+            if Self.roomHasThisMac(room) { room.toggleMenu() } else { self?.item.button?.performClick(nil) }
         }
         hotkeys.onSettings = { [weak self] in
             let room = Model.shared.room
-            if room.active, room.input.capturing { room.toggleSettings() } else { self?.settings.show() }
+            if Self.roomHasThisMac(room) { room.toggleSettings() } else { self?.settings.show() }
         }
         if Settings.hotkeys { hotkeys.enable() }
         Model.shared.onProblem = { PairingUI.alert("Spatiand", $0) }
         // Back to the computer this Mac was last using, if there is one.
         if let last = Hosts.all.first { Model.shared.connect(last) }
+    }
+
+    /// Whether the room is where the wearer is, so the chord is the room's: glasses on and the mouse and keyboard theirs. If
+    /// they were lost to something else -- and not asked back with Ctrl-Option-G -- they are taken again, as the chord is
+    /// the wearer reaching for the room.
+    private static func roomHasThisMac(_ room: RoomController) -> Bool {
+        guard room.active, room.drivesGlasses else { return false }
+        if !room.input.capturing, !room.input.releasedByRequest, Settings.captureInput { room.input.start() }
+        return room.input.capturing
     }
 
     /// The icon says which world Spatiand is in: dimmed with nothing plugged in, normal with
@@ -533,6 +544,9 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-host") {
 
 if CommandLine.arguments.contains("--selftest-launcher") {
     LauncherTest.run()
+}
+if CommandLine.arguments.contains("--selftest-environment") {
+    EnvironmentTest.run()
 }
 if let at = CommandLine.arguments.firstIndex(of: "--selftest-focus") {
     let args = Array(CommandLine.arguments[(at + 1)...])

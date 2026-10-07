@@ -503,6 +503,9 @@ final class RoomController {
         // been typed is when a head that is never quite still is most in the way.
         let level = !Settings.steadyView ? 0 : (Date().timeIntervalSince(lastKey) < 2.0 ? 2 : 1)
         if level != damping { damping = level; core.setDamping(level) }
+        // A new environment, when one has been read and decoded: the renderer changes to it when it has it ready.
+        // (Not before there is a renderer to give it to: a picture taken now would be lost.)
+        if let renderer, let (info, pixels) = core.newEnvironment() { renderer.setSky(info, pixels: pixels) }
         releaseIfPointedAway()
         syncKeyboard()
         if menu.isOpen { refreshWindows() }
