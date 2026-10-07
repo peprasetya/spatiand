@@ -27,6 +27,12 @@ final class GlassesOutput: NSObject, CAMetalDisplayLinkDelegate {
     private var window: GlassesWindow?
     private let layer = CAMetalLayer()
     private var link: CAMetalDisplayLink?
+    /// The older way of being called once a frame, used if the display does not call the newer one: it blocks the main
+    /// thread in `nextDrawable`, but it has always worked on this display.
+    private var classicLink: CADisplayLink?
+    /// When the last frame was drawn, by either, for noticing that none are.
+    private var lastDrawn = CACurrentMediaTime()
+    private var openedAt = CACurrentMediaTime()
     private var watchdog: Timer?
     private var starting = false
     private var captured: CGDirectDisplayID?
@@ -257,6 +263,9 @@ final class GlassesOutput: NSObject, CAMetalDisplayLinkDelegate {
         tick.preferredFrameLatency = 2
         tick.add(to: .main, forMode: .common)
         link = tick
+        classicLink = nil
+        openedAt = CACurrentMediaTime()
+        lastDrawn = openedAt
 
         let dog = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in self?.check() }
         RunLoop.main.add(dog, forMode: .common)
@@ -303,8 +312,27 @@ final class GlassesOutput: NSObject, CAMetalDisplayLinkDelegate {
         }
     }
 
+    /// The glasses must never be left dark: a display that does not call the newer link (nothing drawn for a second) is
+    /// drawn for the older way instead, and the log says so.
+    private func ensureFrames() {
+        guard window != nil, classicLink == nil, CACurrentMediaTime() - lastDrawn > 1.0, let view = window?.contentView else { return }
+        print("glasses: no frame from the display link for a second; drawing the older way")
+        link?.invalidate()
+        link = nil
+        let tick = view.displayLink(target: self, selector: #selector(drawClassic(_:)))
+        tick.add(to: .main, forMode: .common)
+        classicLink = tick
+        lastDrawn = CACurrentMediaTime()
+    }
+
+    @objc private func drawClassic(_ displayLink: CADisplayLink) {
+        guard window != nil, let drawable = layer.nextDrawable() else { return }
+        draw(drawable, presentsAt: displayLink.targetTimestamp, period: max(0.001, displayLink.targetTimestamp - displayLink.timestamp))
+    }
+
     private func draw(_ drawable: CAMetalDrawable, presentsAt: CFTimeInterval, period: Double) {
         let started = CACurrentMediaTime()
+        lastDrawn = started
         // The head is drawn where it will be when this frame is on the display, not where it is now.
         let ahead = max(0.006, min(0.050, presentsAt - started + 0.002))
         room.core.setPrediction(seconds: ahead)
@@ -348,6 +376,7 @@ final class GlassesOutput: NSObject, CAMetalDisplayLinkDelegate {
 
     private func check() {
         guard window != nil else { return }
+        ensureFrames()
         let here = Self.findDisplay() != nil && CGDisplayIsActive(displayID) != 0
         if !here {
             hideNow()
@@ -384,6 +413,8 @@ final class GlassesOutput: NSObject, CAMetalDisplayLinkDelegate {
     func hideNow() {
         link?.invalidate()
         link = nil
+        classicLink?.invalidate()
+        classicLink = nil
         watchdog?.invalidate()
         watchdog = nil
         layer.removeFromSuperlayer()

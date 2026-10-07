@@ -184,8 +184,9 @@ the Deck's). The same look and the same controls, taken from the Deck's code rat
 * **Menus.** `spatiand-shell` runs unchanged inside the room (`shell_ui.rs`, with the Deck's `menu.rs` copied as
   `menu_model.rs`): Ctrl-Space is the launcher (the Deck's ⋯), Ctrl-Tab the settings list (STEAM), a pad's PS button the
   settings and held the launcher. The arrows and Return, the D-pad and A, or the pointer work them. The launcher has a
-  bubble for each computer, and one for This Mac whose applications bring their windows into the room. Rows the Mac
-  cannot do (recording, the on-screen keyboard, the controller layout editor, calibration) say so in a panel.
+  bubble for each computer, and one for This Mac whose applications bring their windows into the room. Every row of the
+  settings list does what it does on the Deck (see "Parity with the Deck" below); only calibration, which the Mac learns
+  as the glasses are worn, says so in a panel.
 * **Yaw drift.** The Deck and the Beam Pro hand the tracker what it learned about the glasses' sensors last time (the
   gyro's resting offset and the magnetometer's own field, `SensorMemory`) and the Mac never did, so it started without a
   bias and without the magnetic anchor that holds yaw. It does now, kept in `~/.config/spatiand/sensors.toml`. The Rust
@@ -237,6 +238,31 @@ for layouts, the on-screen keyboard and screenshot commands, and the layout edit
 1. Notarisation: `mac/make-app.sh` installs `~/Applications/Spatiand.app`, signed with HoloFrame's self-signed
    "HoloFrame Dev" certificate when it is in the keychain (so the Screen Recording and Accessibility grants survive
    rebuilds), ad hoc otherwise. Not notarised, so for this Mac only.
+
+### Parity with the Deck
+
+Everything the Deck's settings list offers is there, by the Deck's own code where it has any, which was moved into
+`spatiand-room` so the Deck, the Beam Pro and the Mac use one copy of it:
+
+| The Deck's | On the Mac |
+|---|---|
+| Environment: black, the generated studio, any picture in the folder, add one from a file browser, remembered | `spatiand_room::environment` (the same module, moved), `surroundings.rs` joins it to the menus; the picture is drawn by `fragment_sky` with the eye's part of a stereo pair, the front half of a 180, and the turn. Same folder (`~/.local/share/spatiand/environments`) and state files; Settings has a button that runs `tools/fetch-environments.sh` for the default NOIRLab panoramas |
+| Status line (time, battery, windows), head-locked upper left | `spatiand_room::status` for the words, `StatusLine.swift` for the battery, `Room::locked` for holding a panel to the head |
+| Controller layout editor and its picture | `spatiand_mapper::editor` through `Pads`, drawn as the Deck's card with `spatiand_room::diagram` above it |
+| Radial menu of a layout | the mapper's `RadialView`, a ring of head-locked plates |
+| On-screen keyboard under the window being typed into | `spatiand_shell::keyboard` and `spatiand_room::keyboard_face`; a press is typed into the window in front |
+| Record a video | `Recorder.swift`: the room drawn again into the encoder's buffer, and what the Mac is playing, to `~/Movies` |
+| Wi-Fi and Bluetooth panels floated as windows | System Settings' own panes, brought into the room like any Mac window |
+| Sound of each window placed where it is | `MacTap.swift` / `MacSound.swift`: a Core Audio process tap, muted on the speakers while taken. Off until asked for in Settings, because macOS asks permission the first time and an application is silent on the Mac while its sound is held |
+| Calibrate head tracking | not needed: the Mac learns the glasses' sensors as they are worn and keeps them |
+| Sidecar screen, volume rocker, power button | the Deck's own hardware; the Mac has its own screen and keys |
+
+What is still different: the keyboard cannot be dragged larger by its frame, a hovered key does not stand up, and the
+idle fade the Deck gives a film's transport bar is not there.
+
+Tests that drive these without glasses (each writes pictures of what the glasses would show to `/tmp`):
+`Spatiand --selftest-launcher`, and, through `tools/selftest-scratch.sh` (which keeps the wearer's own folders out of it),
+`--selftest-environment`, `--selftest-controller`, `--selftest-keyboard`, `--selftest-record` and `--selftest-tap`.
 
 ## The Mac as a host (later)
 
