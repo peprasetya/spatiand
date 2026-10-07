@@ -92,6 +92,14 @@ enum Settings {
         set { defaults.set(newValue, forKey: "hostEnabled") }
     }
 
+    /// Whether the sound of the Mac applications that have a window in the room is placed where the window is, as on the
+    /// Deck. Off until asked for, because macOS asks permission the first time and the application goes quiet on the
+    /// Mac's own speakers while it is taken.
+    static var placeMacSound: Bool {
+        get { defaults.object(forKey: "placeMacSound") as? Bool ?? false }
+        set { defaults.set(newValue, forKey: "placeMacSound") }
+    }
+
     static var hotkeys: Bool {
         defaults.object(forKey: "hotkeys") as? Bool ?? true
     }

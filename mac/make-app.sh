@@ -42,6 +42,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <!-- A menu-bar app: no Dock icon, no main window. -->
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAudioCaptureUsageDescription</key><string>Spatiand places a Mac application's sound where its window is in the glasses, which needs to take that sound from the speakers.</string>
 </dict>
 </plist>
 PLIST

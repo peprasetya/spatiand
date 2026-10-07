@@ -414,6 +414,7 @@ final class RoomController {
             }
         } else {
             menu.close()
+            macSound.stopAll()
             stopWatchingMacWindows()
             if drivesGlasses {
                 input.stop()
@@ -535,6 +536,26 @@ final class RoomController {
 
     private var damping = -1
 
+    private(set) lazy var macSound = MacSound(room: core)
+    private var soundAt = Date.distantPast
+
+    /// The sound of the Mac applications in the room, placed where their windows are, when the owner has asked for it.
+    private func updateMacSound() {
+        guard Date().timeIntervalSince(soundAt) > 1.0 else { return }
+        soundAt = Date()
+        guard Settings.placeMacSound, active else {
+            if !macSound.bundles.isEmpty { macSound.stopAll() }
+            return
+        }
+        macSound.onProblem = { [weak self] words in
+            Settings.placeMacSound = false
+            self?.hint.say(words)
+        }
+        var wanted: [String: pid_t] = [:]
+        for capture in macCaptures.values where capture.info.bundle != Bundle.main.bundleIdentifier { wanted[capture.info.bundle] = capture.info.pid }
+        macSound.reconcile(wanted: wanted)
+    }
+
     private var statusAt = Date.distantPast
     private var statusShown = ""
 
@@ -552,6 +573,7 @@ final class RoomController {
         let level = !Settings.steadyView ? 0 : (Date().timeIntervalSince(lastKey) < 2.0 ? 2 : 1)
         if level != damping { damping = level; core.setDamping(level) }
         updateStatus()
+        updateMacSound()
         // A new environment, when one has been read and decoded: the renderer changes to it when it has it ready.
         // (Not before there is a renderer to give it to: a picture taken now would be lost.)
         if let renderer, let (info, pixels) = core.newEnvironment() { renderer.setSky(info, pixels: pixels) }
@@ -790,6 +812,7 @@ final class RoomController {
         let capture = MacCapture(info)
         macCaptures[id] = capture
         titles.set(id, title: info.title.isEmpty ? info.app : info.app + " \u{2014} " + info.title)
+        core.setApp(id, info.bundle)
         if let icon = NSRunningApplication(processIdentifier: info.pid)?.icon { setIcon(id, icon) }
         renderer.decoders[id] = capture
         capture.onSize = { [weak self] size in DispatchQueue.main.async { self?.macSized(id, size) } }

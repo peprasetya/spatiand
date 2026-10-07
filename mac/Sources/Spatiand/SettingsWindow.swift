@@ -15,6 +15,7 @@ struct SettingsView: View {
     @AppStorage("hostControlIsCommand", store: Defaults.store) private var hostControlIsCommand = true
     @AppStorage("hotkeys", store: Defaults.store) private var hotkeys = true
     @AppStorage("gamepads", store: Defaults.store) private var gamepads = true
+    @AppStorage("placeMacSound", store: Defaults.store) private var placeMacSound = false
     @State private var atLogin = SMAppService.mainApp.status == .enabled
     @State private var loginProblem = ""
     @StateObject private var panoramas = PanoramaFolder()
@@ -60,6 +61,9 @@ struct SettingsView: View {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.Trackpad-Settings") { NSWorkspace.shared.open(url) }
                 }
             }
+            Toggle("Put the sound of Mac applications where their windows are in the room, as on the Deck", isOn: $placeMacSound)
+            Text("Spatiand takes an application's sound from the Mac's speakers and plays it from its window, turning with your head. macOS asks once whether Spatiand may take other applications' sound; the application is silent on the Mac itself while it is taken. Turn this off and it is back on the speakers.")
+                .font(.caption).foregroundColor(.secondary)
             Text("Environment").font(.headline)
             Text(panoramas.summary).font(.caption).foregroundColor(.secondary)
             HStack {
