@@ -28,6 +28,8 @@ final class RoomShell {
     var wantsText: Bool { state & 2 != 0 }
     /// The launcher is open: what is typed narrows its bubbles down.
     var isSearching: Bool { state & 4 != 0 }
+    /// The controller layout editor is the menu on show.
+    var isEditing: Bool { state & 8 != 0 }
 
     // MARK: opening and closing
 
@@ -59,6 +61,8 @@ final class RoomShell {
         guard let json = sp_shell_intent(controller.core.handle, intent.rawValue) else { update(); return false }
         defer { sp_free_string(json) }
         handle(String(cString: json))
+        // The editor was left some other way than its own Back: what was changed is kept.
+        if !isEditing { PadInput.shared.closeEditor() }
         update()
         return true
     }
@@ -203,11 +207,15 @@ final class RoomShell {
             case "OpenHosts": controller.syncHosts()
             case "ReturnToDesktop": controller.leave()
             case "ToggleKeyboard": controller.hint.say("Type on this Mac's keyboard: it goes to the window in front of you.")
-            case "ControllerLayout": controller.hint.say("Controller layouts are edited on the Deck. Copy ~/.config/spatiand/layouts to this Mac and they are used here.")
+            case "ControllerLayout": PadInput.shared.openEditor(for: controller.core.aim().window ?? controller.core.focused)
             case "Record": controller.hint.say("Recording is not on the Mac yet.")
             case "Calibrate": controller.hint.say("The Mac learns the glasses' sensors as they are worn, and remembers them.")
             default: break
             }
+        } else if let name = event["controller"] as? String {
+            PadInput.shared.editorInput(name)
+        } else if let row = event["controller_click"] as? Int {
+            PadInput.shared.editorClick(row)
         } else if let focus = event["focus"] as? Int {
             if focus >= 0xE000 && focus < 0xF000 {
                 controller.bringCandidate(UInt32(focus))

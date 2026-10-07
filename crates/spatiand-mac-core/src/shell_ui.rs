@@ -52,6 +52,8 @@ pub const LABEL_FIRST: u32 = 0xFF40;
 pub const SEARCH_ID: u32 = 0xFFF4;
 /// The status line (time, battery, windows), held to the head in the upper left as the Deck's is.
 pub const STATUS_ID: u32 = 0xFFF6;
+/// The controller picture above the layout editor's card.
+pub const DIAGRAM_ID: u32 = 0xFFF7;
 pub const SEARCH_NOTE_ID: u32 = 0xFFF5;
 /// The field's picture and where it hangs: across the top of the launcher's view, with the bubbles a little
 /// lower than the Deck puts them to make the room. Numbers set by the glasses' 23 degrees of height: the
@@ -115,6 +117,9 @@ pub struct ShellUi {
     pub dirty: bool,
     /// The status line's words: time, battery, how many windows.
     status: String,
+    /// The layout editor's page, while it is open: the Deck's own editor, drawn as a card with the controller picture
+    /// above it.
+    editor: Option<spatiand_mapper::editor::View>,
 }
 
 impl Default for ShellUi {
@@ -132,6 +137,7 @@ impl ShellUi {
             shell: Shell::new(Vec::new(), DesktopPanels::ALL, true),
             anchor: (0.0, 0.0),
             status: String::new(),
+            editor: None,
             first: 0,
             icons: HashMap::new(),
             layout: None,
@@ -229,13 +235,51 @@ impl ShellUi {
         if self.shell.mode() == Mode::Launcher && (!launcher.is_empty() || !launcher.query().is_empty()) {
             self.render_launcher();
         } else if let Some(model) = menu_model::model(&self.shell) {
-            self.render_card(&model, fov);
+            self.render_card(&model, fov, false, 0.0);
+        } else if self.shell.mode() == Mode::Controller {
+            self.render_editor(fov);
         }
-        if self.shell.mode() != Mode::Launcher {
-            self.render_status();
+        XX            self.render_status();
         }
         self.version += 1;
         true
+    }
+
+    /// The editor's page as a menu, if it is open.
+    pub fn editor_model(&self) -> Option<MenuModel> {
+        self.editor.as_ref().map(menu_model::from_editor)
+    }
+
+    /// The layout editor's page, or none when it is not open.
+    pub fn set_editor(&mut self, view: Option<spatiand_mapper::editor::View>) {
+        if self.editor != view {
+            self.editor = view;
+            self.dirty = true;
+        }
+    }
+
+    /// The editor: its page as a card, a little smaller than the others, and above it the picture of the controller
+    /// with what each control does written beside it -- the pair centred on the view together, as on the Deck.
+    fn render_editor(&mut self, fov: (f64, f64)) {
+        let Some(view) = self.editor.clone() else { return };
+        let model = menu_model::from_editor(&view);
+        let picture = (!view.callouts.is_empty()).then(|| chrome::with_text(|text| spatiand_room::diagram::render(text, &view.callouts, 0.75)));
+        let card_width = 2.0 * MENU_DISTANCE * (fov.0 * CARD_FOV_FRACTION * 0.78 / 2.0).to_radians().tan();
+        let gap = card_width * 0.03;
+        let picture_height = picture.as_ref().filter(|p| !p.is_empty()).map(|p| card_width * p.height as f64 / p.width.max(1) as f64);
+        let shift = picture_height.map(|h| (h + gap) * 0.5).unwrap_or(0.0);
+        let (_, card_height) = self.render_card(&model, fov, true, shift);
+        if let (Some(picture), Some(height)) = (picture, picture_height) {
+            let up = (card_height + height) * 0.5 + gap - shift;
+            self.images.insert(DIAGRAM_ID, PanelSpec {
+                id: DIAGRAM_ID,
+                image: Image { width: picture.width, height: picture.height, rgba: Arc::new(premultiply(picture.rgba)) },
+                width_m: card_width,
+                yaw: 0.0,
+                pitch: (up / MENU_DISTANCE).atan(),
+                radius: MENU_DISTANCE,
+            });
+        }
     }
 
     /// What the status line says; drawn again when it changes.
@@ -271,7 +315,10 @@ impl ShellUi {
         });
     }
 
-    fn render_card(&mut self, model: &MenuModel, fov: (f64, f64)) {
+    /// Draw a list as a card. `compact` is the smaller card the layout editor has, to leave room for its picture;
+    /// the card's size in metres is returned.
+    fn render_card(&mut self, model: &MenuModel, fov: (f64, f64), compact: bool, shift_m: f64) -> (f64, f64) {
+        let (fraction, height_fraction) = if compact { (CARD_FOV_FRACTION * 0.78, CARD_HEIGHT_FRACTION * 0.75) } else { (CARD_FOV_FRACTION, CARD_HEIGHT_FRACTION) };
         let scale = CARD_SCALE;
         let device = |logical: f32| (logical * scale).max(1.0);
         let content_px = (panel::TEXT_WIDTH * scale) as u32;
@@ -298,8 +345,8 @@ impl ShellUi {
         let footer = (!model.footer.is_empty()).then(|| line(&model.footer, panel::FOOTER_EM, INK_HINT));
         let detail_height = detail.as_ref().map(|d| d.height as f32 / scale).unwrap_or(0.0);
 
-        let card_deg = (fov.0 * CARD_FOV_FRACTION) as f32;
-        let budget = (fov.1 * CARD_HEIGHT_FRACTION) as f32 * (panel::WIDTH / card_deg);
+        let card_deg = (fov.0 * fraction) as f32;
+        let budget = (fov.1 * height_fraction) as f32 * (panel::WIDTH / card_deg);
         let layout = panel::Layout::new(
             &panel::Menu { rows: model.rows.len(), cursor: model.cursor, detail_height, footer: footer.is_some(), budget_height: budget },
             self.first,
@@ -365,13 +412,15 @@ impl ShellUi {
         }
 
         // Metres: the card is this much of the field across at its distance.
-        let card_width = 2.0 * MENU_DISTANCE * (fov.0 * CARD_FOV_FRACTION / 2.0).to_radians().tan();
+        let card_width = 2.0 * MENU_DISTANCE * (fov.0 * fraction / 2.0).to_radians().tan();
         let width_m = card_width * (panel::WIDTH + rim * 2.0) as f64 / panel::WIDTH as f64;
+        let height_m = width_m * ch as f64 / cw as f64;
         self.layout = Some(layout);
         self.images.insert(
             CARD_ID,
-            PanelSpec { id: CARD_ID, image: Image { width: cw, height: ch, rgba: Arc::new(premultiply(canvas)) }, width_m, yaw: 0.0, pitch: 0.0, radius: MENU_DISTANCE },
+            PanelSpec { id: CARD_ID, image: Image { width: cw, height: ch, rgba: Arc::new(premultiply(canvas)) }, width_m, yaw: 0.0, pitch: -(shift_m / MENU_DISTANCE).atan(), radius: MENU_DISTANCE },
         );
+        (width_m, height_m)
     }
 
     fn render_launcher(&mut self) {

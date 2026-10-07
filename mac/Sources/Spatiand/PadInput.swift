@@ -50,7 +50,7 @@ final class PadInput {
 
     func start() {
         guard timer == nil else { return }
-        let dir = NSString("~/Library/Application Support/Spatiand/layouts").expandingTildeInPath
+        let dir = ProcessInfo.processInfo.environment["SPATIAND_LAYOUTS"] ?? NSString("~/Library/Application Support/Spatiand/layouts").expandingTildeInPath
         core = sp_pads_new(dir)
         PadTouchpad.shared.start()
         // The room is for the glasses, and the Mac is not looking at Spatiand while they are on.
@@ -66,6 +66,40 @@ final class PadInput {
         let t = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(t, forMode: .common)
         timer = t
+    }
+
+    // MARK: the layout editor, which is the Deck's: the application in front, its controls
+
+    /// The layout of the application in front, opened for editing.
+    func openEditor(for target: UInt16?) {
+        guard let core else { return }
+        let app = appName(of: target)
+        if app != focusedApp { focusedApp = app; sp_pads_focus(core, app) }
+        let name = target.flatMap { MacWindows.isMac($0) ? model.room.macInfo($0)?.app : model.infos[$0]?.app } ?? "the desktop"
+        sp_pads_editor_open(core, name)
+        sp_shell_editor_sync(model.room.core.handle, core)
+    }
+
+    /// A control for the editor; closes the menu when the editor has closed itself.
+    func editorInput(_ name: String) {
+        guard let core else { return }
+        let codes = ["up": 0, "down": 1, "left": 2, "right": 3, "accept": 4, "back": 5]
+        let open = sp_pads_editor_input(core, Int32(codes[name] ?? 5)) != 0
+        sp_shell_editor_sync(model.room.core.handle, core)
+        if !open { sp_shell_close_controller(model.room.core.handle) }
+    }
+
+    func editorClick(_ row: Int) {
+        guard let core else { return }
+        sp_pads_editor_click(core, Int32(row))
+        sp_shell_editor_sync(model.room.core.handle, core)
+    }
+
+    /// The menu was closed some other way: what was changed is kept.
+    func closeEditor() {
+        guard let core else { return }
+        sp_pads_editor_close(core)
+        sp_shell_editor_sync(model.room.core.handle, core)
     }
 
     func stop() {

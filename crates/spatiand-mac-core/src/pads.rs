@@ -119,6 +119,9 @@ pub struct Pads {
     store: Store,
     engine: Engine,
     app: AppKey,
+    /// The layout editor, while it is open, and whether the layout is back to the default after a reset.
+    editor: Option<spatiand_mapper::editor::Editor>,
+    reset_to_default: bool,
     keys: Vec<u16>,
     last_step: Option<Instant>,
     suspended: bool,
@@ -133,6 +136,8 @@ impl Pads {
         Pads {
             store: Store::new(dir),
             engine: Engine::new(app.default_layout()),
+            editor: None,
+            reset_to_default: false,
             app,
             keys: Vec::new(),
             last_step: None,
@@ -153,6 +158,74 @@ impl Pads {
         log::info!("controls for {app}: {} ({})", layout.name, if own { "its own layout" } else { "the default" });
         self.engine.set_layout(layout);
         self.app = key;
+    }
+
+    // MARK: the layout editor, which is the Deck's own (`spatiand_mapper::editor`)
+
+    pub fn editor_open(&self) -> bool {
+        self.editor.is_some()
+    }
+
+    /// Open the editor on the layout in force for the application in front.
+    pub fn open_editor(&mut self, app_name: &str) {
+        let layout = self.engine.layout().clone();
+        // Every other application's saved layout, so a new one can start from controls the wearer already built.
+        let others = self.store.saved_except(&self.app);
+        self.editor = Some(spatiand_mapper::editor::Editor::new(self.app.clone(), app_name, layout).with_others(others));
+        self.reset_to_default = false;
+    }
+
+    pub fn editor_view(&self) -> Option<spatiand_mapper::editor::View> {
+        self.editor.as_ref().map(|e| e.view())
+    }
+
+    /// A pointer press on a row: as the editor does it.
+    pub fn editor_click(&mut self, row: usize) {
+        let Some(editor) = self.editor.as_mut() else { return };
+        let event = editor.click(row);
+        self.after_editor(event);
+    }
+
+    /// Feed the editor. `false` once it has closed.
+    pub fn editor_input(&mut self, input: spatiand_mapper::editor::Input) -> bool {
+        let Some(editor) = self.editor.as_mut() else { return false };
+        let event = editor.handle(input);
+        self.after_editor(event);
+        self.editor.is_some()
+    }
+
+    fn after_editor(&mut self, event: spatiand_mapper::editor::Event) {
+        use spatiand_mapper::editor::Event;
+        let Some(editor) = self.editor.as_mut() else { return };
+        match event {
+            Event::None => {}
+            Event::Changed => {
+                self.reset_to_default = false;
+                self.engine.set_layout(editor.layout().clone());
+            }
+            Event::Reset => {
+                if let Err(e) = self.store.forget(&self.app) {
+                    log::warn!("could not remove the saved layout: {e}");
+                }
+                let default = self.app.default_layout();
+                editor.replace(default.clone());
+                self.engine.set_layout(default);
+                self.reset_to_default = true;
+            }
+            Event::Close => self.close_editor(),
+        }
+    }
+
+    /// Save what the editor changed, and put it away.
+    pub fn close_editor(&mut self) {
+        let Some(editor) = self.editor.take() else { return };
+        let untouched_default = self.reset_to_default && *editor.layout() == editor.app().default_layout();
+        if editor.is_dirty() && !untouched_default {
+            match self.store.save(editor.app(), editor.layout()) {
+                Ok(()) => log::info!("saved the controller layout to {}", self.store.path(editor.app()).display()),
+                Err(e) => log::warn!("could not save the controller layout: {e}"),
+            }
+        }
     }
 
     pub fn layout_name(&self) -> String {
@@ -395,6 +468,58 @@ pub extern "C" fn sp_pads_layout_name(pads: *mut PadsHandle) -> *mut c_char {
     // SAFETY: from `sp_pads_new`, or null.
     let name = unsafe { pads.as_ref() }.map(|p| p.0.lock().unwrap().layout_name()).unwrap_or_default();
     std::ffi::CString::new(name).unwrap_or_default().into_raw()
+}
+
+/// Open the layout editor for the application in front, whose name the page is titled with.
+#[no_mangle]
+pub extern "C" fn sp_pads_editor_open(pads: *mut PadsHandle, name: *const c_char) {
+    // SAFETY: from `sp_pads_new`, or null; a NUL-terminated string.
+    if let (Some(p), false) = (unsafe { pads.as_ref() }, name.is_null()) {
+        let name = unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy().into_owned();
+        p.0.lock().unwrap().open_editor(&name);
+    }
+}
+
+/// A control for the editor: 0 up, 1 down, 2 left, 3 right, 4 accept, 5 back. Returns whether it is still open.
+#[no_mangle]
+pub extern "C" fn sp_pads_editor_input(pads: *mut PadsHandle, input: i32) -> i32 {
+    use spatiand_mapper::editor::Input;
+    let input = match input {
+        0 => Input::Up,
+        1 => Input::Down,
+        2 => Input::Left,
+        3 => Input::Right,
+        4 => Input::Accept,
+        _ => Input::Back,
+    };
+    // SAFETY: from `sp_pads_new`, or null.
+    unsafe { pads.as_ref() }.map(|p| p.0.lock().unwrap().editor_input(input) as i32).unwrap_or(0)
+}
+
+/// A press on a row of the editor's page.
+#[no_mangle]
+pub extern "C" fn sp_pads_editor_click(pads: *mut PadsHandle, row: i32) {
+    // SAFETY: from `sp_pads_new`, or null.
+    if let Some(p) = unsafe { pads.as_ref() } {
+        p.0.lock().unwrap().editor_click(row.max(0) as usize);
+    }
+}
+
+/// Close the editor, saving what was changed.
+#[no_mangle]
+pub extern "C" fn sp_pads_editor_close(pads: *mut PadsHandle) {
+    // SAFETY: from `sp_pads_new`, or null.
+    if let Some(p) = unsafe { pads.as_ref() } {
+        p.0.lock().unwrap().close_editor();
+    }
+}
+
+/// Give the room the editor's page to draw, or take it down if the editor is not open.
+#[no_mangle]
+pub extern "C" fn sp_shell_editor_sync(room: *mut crate::RoomHandle, pads: *mut PadsHandle) {
+    // SAFETY: from `sp_pads_new`, or null.
+    let view = unsafe { pads.as_ref() }.and_then(|p| p.0.lock().unwrap().editor_view());
+    crate::with_room(room, (), |r| r.ui.set_editor(view));
 }
 
 #[cfg(test)]

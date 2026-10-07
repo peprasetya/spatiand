@@ -949,6 +949,7 @@ impl Room {
         let ours = |id: u32| {
             id == shell_ui::CARD_ID
                 || id == shell_ui::STATUS_ID
+            || id == shell_ui::DIAGRAM_ID
                 || (shell_ui::BUBBLE_FIRST..shell_ui::BUBBLE_FIRST + 16).contains(&id)
                 || (shell_ui::DOT_FIRST..shell_ui::DOT_FIRST + 8).contains(&id)
         };

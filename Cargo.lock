@@ -4117,6 +4117,7 @@ dependencies = [
  "spatiand-mapper",
  "spatiand-render",
  "spatiand-shell",
+ "tiny-skia",
 ]
 
 [[package]]

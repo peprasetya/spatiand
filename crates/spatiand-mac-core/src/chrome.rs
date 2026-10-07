@@ -73,6 +73,11 @@ fn text() -> &'static Mutex<TextRenderer> {
     TEXT.get_or_init(|| Mutex::new(TextRenderer::new()))
 }
 
+/// Something drawn with the shared text renderer, which only one thing uses at a time.
+pub fn with_text<R>(f: impl FnOnce(&mut TextRenderer) -> R) -> R {
+    f(&mut text().lock().unwrap())
+}
+
 /// Start finding fonts now.
 pub fn warm_up() {
     std::thread::spawn(|| {

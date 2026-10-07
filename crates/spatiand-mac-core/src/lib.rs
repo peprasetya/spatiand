@@ -469,7 +469,7 @@ pub struct SpDraw {
     pub flags: u32,
 }
 
-fn with_room<R>(room: *mut RoomHandle, default: R, f: impl FnOnce(&mut room::Room) -> R) -> R {
+pub(crate) fn with_room<R>(room: *mut RoomHandle, default: R, f: impl FnOnce(&mut room::Room) -> R) -> R {
     // SAFETY: the pointer came from `sp_room_new` and has not been freed, or it is null.
     match unsafe { room.as_ref() } {
         Some(handle) => f(&mut handle.0.lock().unwrap()),
@@ -732,7 +732,14 @@ fn event_json(event: &spatiand_shell::ShellEvent) -> String {
         E::ListDirectory(dir) => serde_json::json!({ "list_directory": dir }),
         E::AddEnvironment(name) => serde_json::json!({ "add_environment": name }),
         E::FocusWindow(id) => serde_json::json!({ "focus": id }),
-        E::Controller(_) => serde_json::json!({ "controller": true }),
+        E::Controller(intent) => serde_json::json!({ "controller": match intent {
+            spatiand_shell::ControllerIntent::Navigate(spatiand_shell::NavDirection::Up) => "up",
+            spatiand_shell::ControllerIntent::Navigate(spatiand_shell::NavDirection::Down) => "down",
+            spatiand_shell::ControllerIntent::Navigate(spatiand_shell::NavDirection::Left) => "left",
+            spatiand_shell::ControllerIntent::Navigate(spatiand_shell::NavDirection::Right) => "right",
+            spatiand_shell::ControllerIntent::Accept => "accept",
+            spatiand_shell::ControllerIntent::Back => "back",
+        }}),
         E::CloseWindow(id) => serde_json::json!({ "close": id }),
         E::HideWindow { id, hidden } => serde_json::json!({ "hide": { "id": id, "hidden": hidden } }),
         E::PinWindow { id, pinned } => serde_json::json!({ "pin": { "id": id, "pinned": pinned } }),
@@ -777,10 +784,10 @@ pub extern "C" fn sp_shell_intent(room: *mut RoomHandle, intent: i32) -> *mut c_
 }
 
 /// Whether a menu is covering the world (bit 0), whether it wants the keyboard's text (bit 1), and whether
-/// it is the launcher, whose bubbles typing narrows down (bit 2).
+/// it is the launcher, whose bubbles typing narrows down (bit 2), and whether it is the controller layout editor (bit 3).
 #[no_mangle]
 pub extern "C" fn sp_shell_open(room: *mut RoomHandle) -> i32 {
-    with_room(room, 0, |r| r.ui.open() as i32 | ((r.ui.shell.wants_text() as i32) << 1) | ((r.ui.shell.searches() as i32) << 2))
+    with_room(room, 0, |r| r.ui.open() as i32 | ((r.ui.shell.wants_text() as i32) << 1) | ((r.ui.shell.searches() as i32) << 2) | ((r.ui.mode() == spatiand_shell::Mode::Controller) as i32) << 3)
 }
 
 /// Draw the menus again if they changed, and hang them in the room. Returns a number that changes when
@@ -864,7 +871,7 @@ pub extern "C" fn sp_shell_launcher(room: *mut RoomHandle) -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn sp_shell_card(room: *mut RoomHandle) -> *mut c_char {
     json_out(with_room(room, None, |r| {
-        let model = menu_model::model(&r.ui.shell)?;
+        let model = menu_model::model(&r.ui.shell).or_else(|| r.ui.editor_model())?;
         Some(
             serde_json::json!({
                 "mode": format!("{:?}", r.ui.shell.mode()),
@@ -890,14 +897,17 @@ pub extern "C" fn sp_shell_hover(room: *mut RoomHandle) {
 #[no_mangle]
 pub extern "C" fn sp_shell_click(room: *mut RoomHandle) -> *mut c_char {
     json_out(with_room(room, None, |r| match r.shell_target() {
+        // The layout editor keeps its own cursor: a press on its row is the editor's to answer.
+        Some(shell_ui::Target::Row(index)) if r.ui.mode() == spatiand_shell::Mode::Controller => {
+            Some(serde_json::json!({ "controller_click": index }).to_string())
+        }
         Some(shell_ui::Target::Row(index)) => {
             r.ui.point(index);
-            r.shell_intent(spatiand_shell::Intent::Accept)
+            r.shell_intent(spatiand_shell::Intent::Accept).map(|e| event_json(&e))
         }
-        Some(shell_ui::Target::Back) => r.shell_intent(spatiand_shell::Intent::Back),
+        Some(shell_ui::Target::Back) => r.shell_intent(spatiand_shell::Intent::Back).map(|e| event_json(&e)),
         None => None,
-    })
-    .map(|e| event_json(&e)))
+    }))
 }
 
 /// The computers: `{"rows": [{label, address, status}], "tabs": [{label, address, online, apps: [{id, name}]}]}`.
@@ -1407,4 +1417,13 @@ pub extern "C" fn sp_room_set_status(room: *mut RoomHandle, text: *const c_char)
 pub extern "C" fn sp_status_line(windows: u32, battery: i32, charging: i32) -> *mut c_char {
     let battery = (battery >= 0).then(|| spatiand_room::status::Battery { percent: battery.min(100) as u8, charging: charging != 0 });
     json_out(Some(spatiand_room::status::line_from(battery, windows as usize)))
+}
+
+/// The layout editor has closed itself: back to the world.
+#[no_mangle]
+pub extern "C" fn sp_shell_close_controller(room: *mut RoomHandle) {
+    with_room(room, (), |r| {
+        r.ui.shell.close_controller();
+        r.ui.dirty = true;
+    });
 }
