@@ -239,7 +239,9 @@ impl ShellUi {
         } else if self.shell.mode() == Mode::Controller {
             self.render_editor(fov);
         }
-        XX            self.render_status();
+        // Not over the launcher's search or the editor's picture, which it would sit on.
+        if !matches!(self.shell.mode(), Mode::Launcher | Mode::Controller) {
+            self.render_status();
         }
         self.version += 1;
         true
