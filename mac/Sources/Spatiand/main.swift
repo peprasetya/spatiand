@@ -156,7 +156,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard bundle.pathExtension == "app" else { print("glasses unplugged; not running from an app, staying up"); return }
         let relauncher = Process()
         relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
-        relauncher.arguments = ["-c", "while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done; exec /usr/bin/open \"$1\"", "sh", bundle.path]
+        // Launch Services may still hold the old process for a moment after it has gone, and answers "no such process"
+        // (-600) to an open that comes too soon; so a new instance is asked for, and again if it is refused.
+        relauncher.arguments = ["-c", "while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done; sleep 1; for i in 1 2 3 4 5 6 7 8; do /usr/bin/open -n \"$1\" && exit 0; sleep 1.5; done", "sh", bundle.path]
         do { try relauncher.run() } catch { print("could not relaunch: \(error)"); return }
         print("glasses unplugged; restarting so the next plug-in starts clean")
         Model.shared.room.output.stop(restoreMode: false)
