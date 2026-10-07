@@ -1,4 +1,4 @@
-//! The persistent status readout: time, battery, and how the session is doing.
+//! The persistent status readout: the time and the battery.
 //!
 //! Head-locked in the upper left, because the two things it carries are the two things you
 //! look up mid-task without wanting to leave what you are doing — what time it is, and whether
@@ -46,23 +46,14 @@ impl Battery {
     }
 }
 
-/// The whole status line.
-///
-/// Kept short on purpose. The bar is sized to a fixed angular *width*, so every extra word
-/// makes the whole line shorter to read -- and the environment name, which was here first,
-/// costs more characters than anything else while being the least urgent thing on it. It lives
-/// in the HUD instead, next to the control that changes it.
-pub fn line_from(battery: Option<Battery>, windows: usize) -> String {
+/// The whole status line: the time, and the battery where there is one. Small, in a corner, and only to be looked at, so
+/// it carries nothing else: the number of windows it once counted is a thing the wearer can see.
+pub fn line_from(battery: Option<Battery>) -> String {
     let mut parts = vec![clock()];
     if let Some(b) = battery {
         parts.push(b.label());
     }
-    parts.push(match windows {
-        0 => "no windows".to_string(),
-        1 => "1 window".to_string(),
-        n => format!("{n} windows"),
-    });
-    parts.join("    ")
+    parts.join("  ")
 }
 
 #[cfg(test)]
@@ -88,23 +79,22 @@ mod tests {
     }
 
     #[test]
-    fn the_window_count_reads_as_english() {
-        assert!(line_from(None, 0).contains("no windows"));
-        assert!(line_from(None, 1).contains("1 window"));
-        assert!(line_from(None, 4).contains("4 windows"));
-        assert!(!line_from(None, 1).contains("1 windows"));
+    fn the_line_is_the_time_and_the_battery_and_nothing_else() {
+        assert!(!line_from(None).contains("window"));
+        assert_eq!(line_from(None), clock());
+        let with = line_from(Some(Battery { percent: 87, charging: true }));
+        assert!(with.starts_with(&clock()) && with.contains("87%"), "{with:?}");
     }
 
     #[test]
-    fn the_line_stays_short_enough_to_read_in_a_corner() {
-        // Counted in characters, because that is what gets drawn: the lightning bolt is three bytes.
-        let text = line_from(Some(Battery { percent: 100, charging: true }), 4);
-        assert!(text.chars().count() <= 28, "status line is {text:?}");
+    fn the_line_stays_short() {
+        let text = line_from(Some(Battery { percent: 100, charging: true }));
+        assert!(text.chars().count() <= 12, "status line is {text:?}");
     }
 
     #[test]
     fn the_line_survives_a_machine_with_no_battery() {
-        let text = line_from(None, 2);
+        let text = line_from(None);
         assert!(text.contains(&clock()));
         assert!(!text.contains('%'));
     }

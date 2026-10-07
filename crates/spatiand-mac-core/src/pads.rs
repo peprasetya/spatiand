@@ -23,6 +23,14 @@ const GUIDE_HOLD: Duration = Duration::from_millis(500);
 /// which makes the whole pad three quarters of the view, as on the Beam Pro.
 const POINTS_PER_UNIT: f32 = 320.0;
 
+/// How much of that a slide of the thumb moves the pointer, by how fast the thumb goes, in pads-widths-over-two per
+/// second. Slow, a thumb is aiming at something small and a few millimetres should be a fraction of a degree; fast, it is
+/// crossing the view and should get there. The same thumb at one gain made aiming twitchy and crossing slow.
+pub fn slide_gain(speed: f32) -> f32 {
+    let t = ((speed - 0.15) / (2.5 - 0.15)).clamp(0.0, 1.0);
+    0.30 + 1.0 * t * t * (3.0 - 2.0 * t)
+}
+
 /// Bits of [`PadIn::buttons`].
 pub const B_A: u32 = 1 << 0;
 pub const B_B: u32 = 1 << 1;
@@ -330,8 +338,13 @@ impl Pads {
         out.motion_y = frame.mouse_motion.1 as f32;
         if touched {
             if let Some((x, y)) = self.touch_last {
-                out.motion_x += (input.touch_x - x) * POINTS_PER_UNIT;
-                out.motion_y -= (input.touch_y - y) * POINTS_PER_UNIT;
+                let (dx, dy) = (input.touch_x - x, input.touch_y - y);
+                // A frame is a hundred and twentieth of a second; a step of the clock that is shorter is not trusted
+                // to say how fast the thumb went.
+                let speed = (dx * dx + dy * dy).sqrt() / (dt as f32).max(1.0 / 240.0);
+                let gain = slide_gain(speed);
+                out.motion_x += dx * POINTS_PER_UNIT * gain;
+                out.motion_y -= dy * POINTS_PER_UNIT * gain;
             }
             self.touch_last = Some((input.touch_x, input.touch_y));
         } else {
@@ -581,7 +594,9 @@ mod tests {
         let first = p.step(&PadIn { touched: 1, ..Default::default() });
         assert_eq!((first.motion_x, first.motion_y), (0.0, 0.0));
         let slid = p.step(&PadIn { touched: 1, touch_x: 0.25, touch_y: 0.1, clicked: 1, ..Default::default() });
-        assert!((slid.motion_x - 80.0).abs() < 1e-3 && (slid.motion_y + 32.0).abs() < 1e-3, "{} {}", slid.motion_x, slid.motion_y);
+        // A jump of a quarter of a unit in no time at all is a fast thumb: full gain.
+        let gain = slide_gain(1.0e6);
+        assert!((slid.motion_x - 80.0 * gain).abs() < 1e-2 && (slid.motion_y + 32.0 * gain).abs() < 1e-2, "{} {}", slid.motion_x, slid.motion_y);
         assert_eq!(slid.pointer & P_LEFT, P_LEFT);
         // Lifted, then touched again: no jump from where the thumb was before.
         p.step(&PadIn::default());
@@ -623,5 +638,17 @@ mod tests {
         std::thread::sleep(GUIDE_HOLD + Duration::from_millis(30));
         assert_eq!(p.step(&PadIn { buttons: B_GUIDE, ..Default::default() }).guide_held, 1);
         assert_eq!(p.step(&PadIn::default()).guide, 0);
+    }
+
+    #[test]
+    fn a_slow_thumb_aims_finely_and_a_fast_one_crosses_the_view() {
+        assert!(slide_gain(0.0) < 0.35 && slide_gain(0.4) < 0.5, "slow is fine: {} {}", slide_gain(0.0), slide_gain(0.4));
+        assert!(slide_gain(3.0) > 1.25, "fast is brisk: {}", slide_gain(3.0));
+        let mut last = 0.0;
+        for i in 0..40 {
+            let g = slide_gain(i as f32 * 0.1);
+            assert!(g >= last - 1e-6, "never less for going faster");
+            last = g;
+        }
     }
 }

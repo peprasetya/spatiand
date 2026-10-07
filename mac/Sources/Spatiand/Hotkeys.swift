@@ -75,7 +75,7 @@ final class RoomChords {
     var onChord: ((Int) -> Void)?
     private var refs: [EventHotKeyRef] = []
     private var handler: EventHandlerRef?
-    private static let keys = [kVK_ANSI_G, kVK_ANSI_R, kVK_ANSI_P, kVK_ANSI_B, kVK_ANSI_C, kVK_ANSI_S, kVK_ANSI_W]
+    private static let keys = [kVK_ANSI_R, kVK_ANSI_P, kVK_ANSI_B, kVK_ANSI_C, kVK_ANSI_S, kVK_ANSI_W]
 
     func enable() {
         disable()
@@ -103,5 +103,33 @@ final class RoomChords {
         refs = []
         if let handler { RemoveEventHandler(handler) }
         handler = nil
+    }
+}
+
+
+/// Ctrl-Option-G, always: the Mac's mouse and keyboard are given back, whether or not Spatiand thinks it has them. It
+/// is registered for as long as the app runs, and it never takes anything: pressed when the Mac already has its mouse
+/// it does nothing but make sure the pointer is free.
+final class RescueChord {
+    var onPress: (() -> Void)?
+    private var ref: EventHotKeyRef?
+    private var handler: EventHandlerRef?
+
+    func enable() {
+        guard ref == nil else { return }
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        let me = Unmanaged.passUnretained(self).toOpaque()
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, user in
+            guard let event, let user else { return noErr }
+            var id = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                              nil, MemoryLayout<EventHotKeyID>.size, nil, &id)
+            guard id.signature == OSType(0x5370_6152) else { return OSStatus(eventNotHandledErr) }   // 'SpaR'
+            let chord = Unmanaged<RescueChord>.fromOpaque(user).takeUnretainedValue()
+            DispatchQueue.main.async { chord.onPress?() }
+            return noErr
+        }, 1, &spec, me, &handler)
+        let id = EventHotKeyID(signature: OSType(0x5370_6152), id: 1)
+        if RegisterEventHotKey(UInt32(kVK_ANSI_G), UInt32(controlKey | optionKey), id, GetApplicationEventTarget(), 0, &ref) != noErr { ref = nil }
     }
 }

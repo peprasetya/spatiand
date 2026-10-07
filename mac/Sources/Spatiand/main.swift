@@ -45,6 +45,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let glasses = GlassesWatcher()
     private let pairing = PairingUI()
     private let hotkeys = Hotkeys()
+    private let rescue = RescueChord()
     private lazy var settings = SettingsWindow(hotkeyStatus: { [unowned self] in
         let menu = hotkeys.status[.menu] == true
         let tab = hotkeys.status[.settings] == true
@@ -121,6 +122,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if Self.roomHasThisMac(room) { room.toggleSettings() } else { self?.settings.show() }
         }
         if Settings.hotkeys { hotkeys.enable() }
+        // Ctrl-Option-G, whatever the settings: the Mac gets its mouse and keyboard back.
+        rescue.onPress = {
+            Model.shared.room.input.stop(byRequest: true)
+            RoomInput.giveTheMouseBack()
+        }
+        rescue.enable()
         Model.shared.onProblem = { PairingUI.alert("Spatiand", $0) }
         // Back to the computer this Mac was last using, if there is one.
         if let last = Hosts.all.first { Model.shared.connect(last) }

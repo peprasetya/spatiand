@@ -1435,7 +1435,7 @@ impl Scene {
         Ok(())
     }
 
-    /// Draw the status bar in the upper left, locked to the head.
+    /// Draw the status line in the upper right, locked to the head.
     ///
     /// Head-locked rather than body-locked: the whole point is that it is there whenever you
     /// glance for it, without having to remember which way you were facing when it appeared.
@@ -1446,22 +1446,21 @@ impl Scene {
         let Some(bar) = self.status else {
             return;
         };
-        // Sized by WIDTH, not height. Sizing by height and letting the aspect decide the
-        // width meant a long line ran 25 degrees across and off the side of the field -- the
-        // string length silently controlled the layout.
+        // Sized by HEIGHT now: the line is only the time and the battery, a handful of characters, and sizing it by
+        // width would have blown it up to fill the width. A small, fixed height -- under a degree of type -- is what
+        // stays out of the way of whatever is behind it; it is something to glance at and is never pointed at.
         let distance = 1.5f32;
-        let half_width_deg = 7.5f32;
-        let width = 2.0 * distance * half_width_deg.to_radians().tan();
-        let height = width / bar.aspect.max(0.01);
+        let height_deg = 0.95f32;
+        let height = 2.0 * distance * (height_deg.to_radians() * 0.5).tan();
+        let width = height * bar.aspect.max(0.01);
+        let half_width_deg = (width * 0.5 / distance).atan().to_degrees();
 
-        // Anchored by its top-left corner rather than its centre, so the bar stays put in the
-        // corner whatever it happens to say.
-        let left_edge_deg = 16.0f32;
-        let yaw = (left_edge_deg - half_width_deg).to_radians();
-        // Above a centred window rather than beside it. A default window's top edge reaches
-        // about 8.5 degrees, and the bar is 15 degrees wide -- so there is no horizontal
-        // position that clears it. Going over the top is the only placement that works, and it
-        // leaves the bar inside the 11.57 degree half-field with a little to spare.
+        // Anchored by its top-right corner rather than its centre, so it stays put in the corner whatever it says.
+        // +Y is left, so right of the middle is a negative yaw. Notifications stack beneath it.
+        let right_edge_deg = 16.0f32;
+        let yaw = -(right_edge_deg - half_width_deg).to_radians();
+        // Above a centred window rather than beside it: the top edge of a default window reaches about 8.5 degrees,
+        // and going over the top is the placement that clears it, inside the 11.57 degree half-field.
         let pitch = 10.2f32.to_radians();
         let head = Quat::from_xyzw(
             orientation.x as f32,
@@ -1475,7 +1474,7 @@ impl Scene {
             + direction * Vec3::X * distance;
 
         // A plate behind it, or the text is unreadable over a bright environment.
-        let backdrop = self.panel_model(centre, direction, width * 1.12, height * 2.0);
+        let backdrop = self.panel_model(centre, direction, width + height * 0.9, height * 1.5);
         self.quads.draw(
             gl,
             self.white,

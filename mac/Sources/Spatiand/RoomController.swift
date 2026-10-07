@@ -561,7 +561,7 @@ final class RoomController {
     private func updateStatus() {
         guard Date().timeIntervalSince(statusAt) > 1.0 else { return }
         statusAt = Date()
-        let words = StatusLine.text(windows: known.count + macCaptures.count)
+        let words = StatusLine.text()
         if words != statusShown { statusShown = words; core.setStatus(words) }
     }
 

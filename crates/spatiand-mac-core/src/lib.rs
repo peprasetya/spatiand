@@ -1411,12 +1411,12 @@ pub extern "C" fn sp_room_set_status(room: *mut RoomHandle, text: *const c_char)
     with_room(room, (), |r| r.ui.set_status(&text));
 }
 
-/// The status line's words for these windows, as the Deck would write them; `battery` is the charge in percent or
+/// The status line's words, as the Deck would write them: the time and the battery. `battery` is the charge in percent or
 /// negative for none, and `charging` whether power is going in. Free it with `sp_free_string`.
 #[no_mangle]
-pub extern "C" fn sp_status_line(windows: u32, battery: i32, charging: i32) -> *mut c_char {
+pub extern "C" fn sp_status_line(battery: i32, charging: i32) -> *mut c_char {
     let battery = (battery >= 0).then(|| spatiand_room::status::Battery { percent: battery.min(100) as u8, charging: charging != 0 });
-    json_out(Some(spatiand_room::status::line_from(battery, windows as usize)))
+    json_out(Some(spatiand_room::status::line_from(battery)))
 }
 
 /// The layout editor has closed itself: back to the world.

@@ -24,9 +24,9 @@ enum StatusLine {
     }
 
     /// The line, as the Deck would write it.
-    static func text(windows: Int) -> String {
+    static func text() -> String {
         let b = battery()
-        guard let c = sp_status_line(UInt32(max(0, windows)), Int32(b?.percent ?? -1), (b?.charging ?? false) ? 1 : 0) else { return "" }
+        guard let c = sp_status_line(Int32(b?.percent ?? -1), (b?.charging ?? false) ? 1 : 0) else { return "" }
         defer { sp_free_string(c) }
         return String(cString: c)
     }

@@ -73,6 +73,16 @@ final class InputView: NSView {
         }
         if let gesture = recognizer.update(touches, at: event.timestamp) { controller?.gesture(gesture) }
     }
+    /// The fingers as a monitor hears them, when this window is not the one that has the keyboard and so is not told of
+    /// them: the same gestures, and the pointer held still while they are made, however the keyboard is held.
+    func touchedByMonitor(_ event: NSEvent) {
+        guard window?.isKeyWindow != true else { return }
+        let touches = event.allTouches().filter { $0.phase != .ended && $0.phase != .cancelled }.map {
+            GestureRecognizer.Touch(id: $0.identity.hash, x: Double($0.normalizedPosition.x), y: Double($0.normalizedPosition.y))
+        }
+        if let gesture = recognizer.update(touches, at: event.timestamp) { controller?.gesture(gesture) }
+    }
+
     override func touchesBegan(with event: NSEvent) { touched(event) }
     override func touchesMoved(with event: NSEvent) { touched(event) }
     override func touchesEnded(with event: NSEvent) { touched(event) }
@@ -220,6 +230,10 @@ final class RoomInput: NSObject, NSWindowDelegate {
         CGWarpMouseCursorPosition(home)
         CGAssociateMouseAndMouseCursorPosition(0)
         CGDisplayHideCursor(CGMainDisplayID())
+        // After a warp the system ignores the hand for a quarter of a second, by default. The pointer is put back where
+        // it rests after every click and every notch of the wheel, so with that on, the trackpad went dead for a moment
+        // after each, and what the hand did in that moment was lost.
+        Self.suppressAfterWarp(false)
         capturing = true
         chords.onChord = { [weak self] key in self?.chord(key) }
         chords.enable()
@@ -232,7 +246,10 @@ final class RoomInput: NSObject, NSWindowDelegate {
             self?.controller.keyNoted()
             if event.modifierFlags.contains(.command) { self?.lastCommand = Date() }
         }
-        gestureMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.magnify, .swipe, .gesture, .beginGesture]) { [weak self] _ in self?.controller.pointingAgain(force: true) }
+        gestureMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.magnify, .swipe, .gesture, .beginGesture, .endGesture]) { [weak self] event in
+            self?.controller.pointingAgain(force: true)
+            (self?.window?.contentView as? InputView)?.touchedByMonitor(event)
+        }
         watcher = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             self?.activated(note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
         }
@@ -350,6 +367,30 @@ final class RoomInput: NSObject, NSWindowDelegate {
     /// loss is put right when the wearer reaches for the room again.
     private(set) var releasedByRequest = false
 
+    /// Whether the system ignores the hand for a moment after the pointer is put somewhere (its default), or not.
+    static func suppressAfterWarp(_ suppress: Bool) {
+        CGEventSource(stateID: .combinedSessionState)?.localEventsSuppressionInterval = suppress ? 0.25 : 0
+        // The older call that sets it for everything is marked as no longer supported, and is still in the library; it is
+        // asked for by name, and if it has gone nothing happens.
+        typealias SetInterval = @convention(c) (Double) -> Int32
+        if let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGSetLocalEventsSuppressionInterval") {
+            _ = unsafeBitCast(symbol, to: SetInterval.self)(suppress ? 0.25 : 0)
+        }
+    }
+
+    /// The Mac's own pointer, free and shown, whatever state it was left in. Safe to do at any time, and done more than
+    /// once, because a pointer that cannot be moved is the one thing that cannot be allowed to last.
+    static func giveTheMouseBack() {
+        CGAssociateMouseAndMouseCursorPosition(1)
+        suppressAfterWarp(true)
+        for _ in 0..<4 { CGDisplayShowCursor(CGMainDisplayID()) }
+        NSCursor.unhide()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            CGAssociateMouseAndMouseCursorPosition(1)
+            CGDisplayShowCursor(CGMainDisplayID())
+        }
+    }
+
     func stop(byRequest: Bool = false) {
         guard capturing else { return }
         releasedByRequest = byRequest
@@ -363,8 +404,7 @@ final class RoomInput: NSObject, NSWindowDelegate {
         keyMonitor = nil
         gestureMonitor = nil
         keyboardOwner = nil
-        CGAssociateMouseAndMouseCursorPosition(1)
-        CGDisplayShowCursor(CGMainDisplayID())
+        Self.giveTheMouseBack()
         window?.delegate = nil
         window?.orderOut(nil)
         window?.close()

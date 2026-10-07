@@ -98,7 +98,7 @@ enum EnvironmentTest {
             room.core.perEye(1920, 1080)
             room.setActive(true)
             room.core.useDiskEnvironments()
-            room.core.setStatus(StatusLine.text(windows: 2))
+            room.core.setStatus(StatusLine.text())
         }
         after(1.5) {
             // --- it starts in the studio, which is generated

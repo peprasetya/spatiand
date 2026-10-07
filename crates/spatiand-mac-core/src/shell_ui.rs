@@ -52,6 +52,10 @@ pub const LABEL_FIRST: u32 = 0xFF40;
 pub const SEARCH_ID: u32 = 0xFFF4;
 /// The status line (time, battery, windows), held to the head in the upper left as the Deck's is.
 pub const STATUS_ID: u32 = 0xFFF6;
+/// How tall its plate is, in degrees; how far out its right edge is; how high it sits.
+pub const STATUS_HEIGHT_DEG: f64 = 1.6;
+pub const STATUS_RIGHT_EDGE_DEG: f64 = 16.0;
+pub const STATUS_PITCH_DEG: f64 = 10.2;
 /// The controller picture above the layout editor's card.
 pub const DIAGRAM_ID: u32 = 0xFFF7;
 /// The on-screen keyboard: the Deck's, under the window being typed into.
@@ -389,8 +393,9 @@ impl ShellUi {
         }
     }
 
-    /// The Deck's status bar: a small dark plate with the line on it, in the upper left of the view, held to the head.
-    /// Sized by its width, as the Deck does -- 15 degrees across at 1.5 metres -- so a long line is a smaller one.
+    /// The Deck's status line: the time and the battery on a small dark plate, in the upper right of the view, held to the
+    /// head and never pointed at. Small -- a degree of type -- and sized by its height, so that two or three words are
+    /// not blown up to fill a width. Notifications hang beneath it.
     fn render_status(&mut self) {
         if self.status.is_empty() {
             return;
@@ -404,18 +409,21 @@ impl ShellUi {
         let mut canvas = vec![0u8; (w * h * 4) as usize];
         round_rect(&mut canvas, w, h, 0.0, 0.0, w as f32, h as f32, h as f32 * 0.3, [0.02, 0.03, 0.06, 0.55]);
         chrome::blit(&mut canvas, w, h, &text.rgba, text.width, text.height, 20.0, (h as f32 - text.height as f32) * 0.5, text.width as f32, text.height as f32, [1.0; 4]);
+        let distance = 1.5f64;
+        let height_m = 2.0 * distance * (STATUS_HEIGHT_DEG.to_radians() * 0.5).tan();
+        let width_m = height_m * w as f64 / h as f64;
+        let half_width_deg = (width_m * 0.5 / distance).atan().to_degrees();
         self.images.insert(STATUS_ID, PanelSpec {
             id: STATUS_ID,
             image: Image { width: w, height: h, rgba: Arc::new(premultiply(canvas)) },
-            width_m: 2.0 * 1.5 * (7.5f64).to_radians().tan(),
-            yaw: 8.5f64.to_radians(),
-            pitch: 10.2f64.to_radians(),
-            radius: 1.5,
+            width_m,
+            // +Y is left: right of the middle is a negative yaw. Its right edge is 16 degrees out, as the Deck's.
+            yaw: -(STATUS_RIGHT_EDGE_DEG - half_width_deg).to_radians(),
+            pitch: STATUS_PITCH_DEG.to_radians(),
+            radius: distance,
         });
     }
 
-    /// Draw a list as a card. `compact` is the smaller card the layout editor has, to leave room for its picture;
-    /// the card's size in metres is returned.
     fn render_card(&mut self, model: &MenuModel, fov: (f64, f64), compact: bool, shift_m: f64) -> (f64, f64) {
         let (fraction, height_fraction) = if compact { (CARD_FOV_FRACTION * 0.78, CARD_HEIGHT_FRACTION * 0.75) } else { (CARD_FOV_FRACTION, CARD_HEIGHT_FRACTION) };
         let scale = CARD_SCALE;

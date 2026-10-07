@@ -2056,7 +2056,7 @@ mod tests {
     #[test]
     fn the_status_line_is_held_to_the_head_and_never_aimed_at() {
         let mut r = room();
-        r.ui.set_status("12:00    80%    2 windows");
+        r.ui.set_status("12:00  80%");
         assert!(r.ui.render((40.0, 23.0)));
         r.install_shell_panels();
         let at = |r: &Room, head: glam::DQuat| {
@@ -2067,7 +2067,7 @@ mod tests {
         let ahead = at(&r, glam::DQuat::IDENTITY);
         let turned = at(&r, glam::DQuat::from_axis_angle(glam::DVec3::Z, 1.0));
         assert!((turned.yaw - ahead.yaw - 1.0).abs() < 1e-6, "it turns with the head: {} then {}", ahead.yaw, turned.yaw);
-        assert!(ahead.yaw > 0.0 && ahead.pitch > 0.0, "upper left");
+        assert!(ahead.yaw < 0.0 && ahead.pitch > 0.0, "upper right");
         r.centre_pointer();
         r.set_fixed_head(Some(glam::DQuat::IDENTITY));
         assert_ne!(r.aim().window, Some(shell_ui::STATUS_ID));

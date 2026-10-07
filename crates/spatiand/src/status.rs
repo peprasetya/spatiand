@@ -43,9 +43,10 @@ fn read_trimmed(path: &Path) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
-/// The whole status line.
-pub fn line(windows: usize) -> String {
-    line_from(battery(), windows)
+/// The whole status line: the time and the battery. The count of windows it used to carry is gone, and the argument
+/// stays only so that the callers need not change; it is not read.
+pub fn line(_windows: usize) -> String {
+    line_from(battery())
 }
 
 #[cfg(test)]
@@ -62,8 +63,7 @@ mod tests {
     }
 
     #[test]
-    fn the_window_count_reads_as_english() {
-        assert!(line(1).contains("1 window"));
-        assert!(line(4).contains("4 windows"));
+    fn the_line_has_no_window_count() {
+        assert!(!line(4).contains("window"));
     }
 }
