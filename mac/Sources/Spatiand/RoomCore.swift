@@ -138,6 +138,7 @@ final class RoomCore {
         return String(cString: c)
     }
     func setRecording(_ on: Bool) { sp_shell_set_recording(room, on ? 1 : 0) }
+    func setRadial(_ labels: String?, selected: Int) { sp_room_set_radial(room, labels, Int32(selected)) }
     func setStatus(_ text: String) { sp_room_set_status(room, text) }
     func setPrediction(seconds: Double) { sp_room_set_prediction(room, seconds) }
     func isHidden(_ id: UInt16) -> Bool { sp_room_is_hidden(room, UInt32(id)) != 0 }

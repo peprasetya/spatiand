@@ -28,6 +28,7 @@ final class PadInput {
     private var timer: Timer?
     private var focusedApp = ""
     private var lastPointer: UInt32 = 0
+    private var lastRadial: (count: Int32, group: UInt32, selected: Int32) = (0, 0, -1)
     private var lastReport: [String: Any]?
     private var lastTarget: UInt16?
     private var engines: [ObjectIdentifier: CHHapticEngine] = [:]
@@ -262,6 +263,16 @@ final class PadInput {
         }
 
         if room.active {
+            // A radial menu of the layout, drawn by the room round the middle of the view.
+            if out.radial != lastRadial.count || out.radial_group != lastRadial.group || out.radial_selected != lastRadial.selected {
+                lastRadial = (out.radial, out.radial_group, out.radial_selected)
+                if out.radial == 0 {
+                    room.core.setRadial(nil, selected: -1)
+                } else if let c = sp_pads_radial_labels(core) {
+                    room.core.setRadial(String(cString: c), selected: Int(out.radial_selected))
+                    sp_free_string(c)
+                }
+            }
             // The pointer.
             if out.motion_x != 0 || out.motion_y != 0 { room.pointerMoved(dx: Double(out.motion_x), dy: Double(out.motion_y)) }
             let changed = out.pointer ^ lastPointer

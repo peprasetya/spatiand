@@ -993,21 +993,14 @@ impl Room {
     /// Hang the menu's panels where the shell says: each placed round the way the wearer was facing when
     /// the menu opened, and any that are no longer wanted taken down.
     pub fn install_shell_panels(&mut self) {
-        let ours = |id: u32| {
-            id == shell_ui::CARD_ID
-                || id == shell_ui::STATUS_ID
-            || id == shell_ui::DIAGRAM_ID
-            || id == shell_ui::KEYBOARD_ID
-                || (shell_ui::BUBBLE_FIRST..shell_ui::BUBBLE_FIRST + 16).contains(&id)
-                || (shell_ui::DOT_FIRST..shell_ui::DOT_FIRST + 8).contains(&id)
-        };
+        let ours = shell_ui::is_menu_panel;
         let wanted: Vec<u32> = self.ui.images.keys().copied().collect();
         self.windows.retain(|w| !ours(w.id) || wanted.contains(&w.id));
         let (yaw, pitch) = self.ui.anchor;
         let specs: Vec<shell_ui::PanelSpec> = self.ui.images.values().cloned().collect();
         self.locked.retain(|id, _| wanted.contains(id));
         for spec in specs {
-            if spec.id == shell_ui::STATUS_ID {
+            if shell_ui::is_head_locked(spec.id) {
                 // Held to the head, in the corner: the direction is the panel's own yaw and pitch, in the head's frame.
                 self.locked.insert(spec.id, (spec.yaw, spec.pitch, spec.radius));
             }
@@ -2145,5 +2138,66 @@ mod tests {
         r.ui.render((40.0, 23.0));
         r.install_shell_panels();
         assert!(r.windows.iter().all(|w| w.id != shell_ui::KEYBOARD_ID), "taken down");
+    }
+
+    #[test]
+    fn a_radial_menu_is_a_ring_of_plates_held_to_the_head_with_the_first_at_the_top() {
+        let mut r = room();
+        r.set_fixed_head(Some(glam::DQuat::IDENTITY));
+        r.ui.set_radial(Some((vec!["Copy".into(), "Paste".into(), "Undo".into(), "Redo".into()], Some(1))));
+        assert!(r.ui.render((40.0, 23.0)));
+        r.install_shell_panels();
+        let placed = r.placed(r.head());
+        let at = |label: u32| {
+            let i = r.windows.iter().position(|w| w.id == shell_ui::RADIAL_FIRST + label).expect("a plate");
+            placed.iter().find(|(j, _)| *j == i).unwrap().1
+        };
+        let (top, right, bottom, left) = (at(0), at(1), at(2), at(3));
+        assert!(top.pitch > right.pitch && right.pitch > bottom.pitch, "first at the top, going round clockwise");
+        assert!(right.yaw < top.yaw && left.yaw > top.yaw, "the second to the right (yaw is positive to the left)");
+        // Held to the head: turned with it.
+        r.set_fixed_head(Some(glam::DQuat::from_axis_angle(glam::DVec3::Z, 0.5)));
+        let turned = r.placed(r.head());
+        let i = r.windows.iter().position(|w| w.id == shell_ui::RADIAL_FIRST).unwrap();
+        assert!((turned.iter().find(|(j, _)| *j == i).unwrap().1.yaw - top.yaw - 0.5).abs() < 1e-6);
+        // And gone when the menu is.
+        r.ui.set_radial(None);
+        r.ui.render((40.0, 23.0));
+        r.install_shell_panels();
+        assert!(r.windows.iter().all(|w| !(shell_ui::RADIAL_FIRST..shell_ui::RADIAL_FIRST + 16).contains(&w.id)));
+    }
+
+    #[test]
+    fn the_launchers_panels_are_all_taken_down_with_it_and_do_not_stay_to_catch_the_pointer() {
+        use spatiand_shell::{HostTab, Intent, RemoteEntry};
+        let mut r = room();
+        r.ui.set_hosts(
+            vec![],
+            vec![HostTab {
+                label: "This Mac".into(),
+                address: "mac".into(),
+                online: true,
+                apps: (0..30).map(|i| RemoteEntry { id: format!("{i}"), name: format!("App {i}"), icon: None }).collect(),
+            }],
+        );
+        r.shell_intent(Intent::ToggleLauncher);
+        r.shell_intent(Intent::Accept);
+        r.shell_intent(Intent::Navigate(spatiand_shell::NavDirection::Right));
+        r.ui.render((40.0, 23.0));
+        r.install_shell_panels();
+        let menu_panels = |r: &Room| r.windows.iter().filter(|w| shell_ui::is_menu_panel(w.id)).count();
+        assert!(menu_panels(&r) > 12, "bubbles, their names and the search: {}", menu_panels(&r));
+        // Move the cursor, so the lit bubble is another panel; then close.
+        r.shell_intent(Intent::Navigate(spatiand_shell::NavDirection::Right));
+        r.ui.render((40.0, 23.0));
+        r.install_shell_panels();
+        r.shell_intent(Intent::Back);
+        r.shell_intent(Intent::Back);
+        r.shell_intent(Intent::Back);
+        assert_eq!(r.ui.mode(), spatiand_shell::Mode::World);
+        r.ui.render((40.0, 23.0));
+        r.install_shell_panels();
+        // Only what is always there (the status line is not drawn at all with nothing to say).
+        assert_eq!(menu_panels(&r), 0, "{:?}", r.windows.iter().map(|w| w.id).collect::<Vec<_>>());
     }
 }

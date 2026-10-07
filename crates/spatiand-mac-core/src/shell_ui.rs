@@ -56,6 +56,24 @@ pub const STATUS_ID: u32 = 0xFFF6;
 pub const DIAGRAM_ID: u32 = 0xFFF7;
 /// The on-screen keyboard: the Deck's, under the window being typed into.
 pub const KEYBOARD_ID: u32 = 0xFFF8;
+/// The items of a radial menu, round the middle of the view, held to the head.
+pub const RADIAL_FIRST: u32 = 0xFF50;
+pub const RADIAL_MAX: usize = 16;
+/// Whether a panel id is one the menus and overlays make (so the room takes it down when they stop wanting it), as
+/// opposed to the hint, which is the app's own.
+pub fn is_menu_panel(id: u32) -> bool {
+    matches!(id, CARD_ID | SEARCH_ID | SEARCH_NOTE_ID | STATUS_ID | DIAGRAM_ID | KEYBOARD_ID)
+        // Bubbles, lit and not, their names, the page dots, and a radial menu's items.
+        || (BUBBLE_FIRST..BUBBLE_FIRST + 32).contains(&id)
+        || (DOT_FIRST..DOT_FIRST + 16).contains(&id)
+        || (LABEL_FIRST..LABEL_FIRST + 16).contains(&id)
+        || (RADIAL_FIRST..RADIAL_FIRST + RADIAL_MAX as u32).contains(&id)
+}
+
+/// Whether a panel is held to the head rather than hung in the room.
+pub fn is_head_locked(id: u32) -> bool {
+    id == STATUS_ID || (RADIAL_FIRST..RADIAL_FIRST + RADIAL_MAX as u32).contains(&id)
+}
 /// The keyboard's face is drawn this many pixels across, as on the Deck.
 const KEYBOARD_FACE_PX: u32 = 1792;
 pub const SEARCH_NOTE_ID: u32 = 0xFFF5;
@@ -126,6 +144,8 @@ pub struct ShellUi {
     editor: Option<spatiand_mapper::editor::View>,
     /// The on-screen keyboard: the Deck's own state (latched modifiers, the click) and its face.
     pub keyboard: spatiand_shell::Keyboard,
+    /// A radial menu that is open: the words of its items and the one that is lit.
+    radial: Option<(Vec<String>, Option<usize>)>,
 }
 
 impl Default for ShellUi {
@@ -145,6 +165,7 @@ impl ShellUi {
             status: String::new(),
             editor: None,
             keyboard: spatiand_shell::Keyboard::default(),
+            radial: None,
             first: 0,
             icons: HashMap::new(),
             layout: None,
@@ -253,8 +274,51 @@ impl ShellUi {
         if self.keyboard.open {
             self.render_keyboard();
         }
+        self.render_radial();
         self.version += 1;
         true
+    }
+
+    /// A radial menu is open, or has closed: its items, and which one the thumb is on.
+    pub fn set_radial(&mut self, radial: Option<(Vec<String>, Option<usize>)>) {
+        if self.radial != radial {
+            self.radial = radial;
+            self.dirty = true;
+        }
+    }
+
+    /// The Deck's radial menu: the items round a ring in the middle of the view, the first at the top and the rest
+    /// clockwise, each on a small plate, the one under the thumb lit. Held to the head.
+    fn render_radial(&mut self) {
+        let Some((labels, selected)) = self.radial.clone() else { return };
+        let distance = 1.4f64;
+        let ring = 8.5f64;
+        let text_height_m = 2.0 * distance * 1.4f64.to_radians().tan();
+        for (index, label) in labels.iter().take(RADIAL_MAX).enumerate() {
+            let lit = selected == Some(index);
+            let h = 96u32;
+            let text = chrome::text_image(label, h as f32 * 0.55, 900, [236, 242, 252, 255]);
+            if text.is_empty() {
+                continue;
+            }
+            let w = text.width + 80;
+            let mut canvas = vec![0u8; (w * h * 4) as usize];
+            let ground = if lit { [0.30, 0.52, 0.92, 0.92] } else { [0.03, 0.04, 0.08, 0.72] };
+            round_rect(&mut canvas, w, h, 0.0, 0.0, w as f32, h as f32, h as f32 * 0.5, ground);
+            chrome::blit(&mut canvas, w, h, &text.rgba, text.width, text.height, 40.0, (h as f32 - text.height as f32) * 0.5, text.width as f32, text.height as f32, [1.0; 4]);
+            let turn = index as f64 / labels.len() as f64 * std::f64::consts::TAU;
+            let id = RADIAL_FIRST + index as u32;
+            self.images.insert(id, PanelSpec {
+                id,
+                image: Image { width: w, height: h, rgba: Arc::new(premultiply(canvas)) },
+                // The plate is the text's height times one and six tenths, and as wide as the text and a little over.
+                width_m: text_height_m * 1.6 * w as f64 / h as f64,
+                // +Y is left, so a positive sine (to the right) is a negative yaw.
+                yaw: -(ring * turn.sin()).to_radians(),
+                pitch: (ring * turn.cos()).to_radians(),
+                radius: distance,
+            });
+        }
     }
 
     /// The keyboard's plate: the face of keys on a pane of glass with a thin frame, one picture. Where it hangs, and how

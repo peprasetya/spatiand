@@ -1463,3 +1463,16 @@ pub extern "C" fn sp_keyboard_press(room: *mut RoomHandle, stroke: *mut Stroke) 
         }
     }
 }
+
+/// A radial menu is open (`json` is the array of its words, `selected` the lit one or -1), or has closed (`json` null).
+#[no_mangle]
+pub extern "C" fn sp_room_set_radial(room: *mut RoomHandle, json: *const c_char, selected: i32) {
+    let radial = if json.is_null() {
+        None
+    } else {
+        // SAFETY: a NUL-terminated string, by the contract.
+        let text = unsafe { CStr::from_ptr(json) }.to_string_lossy().into_owned();
+        serde_json::from_str::<Vec<String>>(&text).ok().map(|labels| (labels, (selected >= 0).then_some(selected as usize)))
+    };
+    with_room(room, (), |r| r.ui.set_radial(radial));
+}

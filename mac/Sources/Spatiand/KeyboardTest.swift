@@ -59,6 +59,15 @@ enum KeyboardTest {
             _ = goTo("Keyboard")
             room.menu.intent(.accept)
             check("choosing it again puts it away", !panels().contains(0xFFF8))
+ 
+            // A radial menu of a controller layout, round the middle of the view.
+            sp_room_set_radial(room.core.handle, "[\"Copy\",\"Paste\",\"Undo\",\"Redo\",\"Select all\",\"Find\"]", 2)
+            room.menu.update()
+            check("a radial menu is six plates", panels().filter { $0 >= 0xFF50 && $0 < 0xFF60 }.count == 6)
+            snapshot("radial")
+            sp_room_set_radial(room.core.handle, nil, -1)
+            room.menu.update()
+            check("and is gone when it closes", panels().filter { $0 >= 0xFF50 && $0 < 0xFF60 }.isEmpty)
             print(failures == 0 ? "all passed" : "\(failures) failed")
             exit(failures == 0 ? 0 : 1)
         }

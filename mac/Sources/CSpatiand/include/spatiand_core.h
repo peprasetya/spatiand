@@ -253,11 +253,16 @@ typedef struct {
     uint32_t commands;                  // 1 menu, 2 launcher, 4 keyboard, 8 screenshot, 16 recentre
     int32_t guide, guide_held;
     uint32_t menu_presses;              // bits 0..3 up, down, left, right, 4 A, 5 B, 6 Y
+    int32_t radial;                     // items in the radial menu that is open, or 0
+    int32_t radial_selected;            // the lit one, or -1
+    uint32_t radial_group;              // changes when its items do
 } sp_pad_out;
 sp_pads *sp_pads_new(const char *layouts_dir);
 void sp_pads_free(sp_pads *pads);
 void sp_pads_focus(sp_pads *pads, const char *app);
 void sp_pads_step(sp_pads *pads, const sp_pad_in *input, sp_pad_out *out);
+char *sp_pads_radial_labels(sp_pads *pads);
+void sp_room_set_radial(sp_room *room, const char *json, int32_t selected);
 char *sp_pads_layout_name(sp_pads *pads);
 void sp_pads_editor_open(sp_pads *pads, const char *name);
 int32_t sp_pads_editor_input(sp_pads *pads, int32_t input);

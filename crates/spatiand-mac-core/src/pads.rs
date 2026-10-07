@@ -106,6 +106,11 @@ pub struct PadOut {
     pub guide_held: i32,
     /// D-pad, A, B and Y pressed this frame, for working a menu: bits 0..3 up, down, left, right, 4 A, 5 B, 6 Y.
     pub menu_presses: u32,
+    /// A radial menu is open: how many items it has (0 for none), which is lit (-1 for none), and a number that changes
+    /// when its items do. Their words come from [`sp_pads_radial_labels`].
+    pub radial: i32,
+    pub radial_selected: i32,
+    pub radial_group: u32,
 }
 
 impl Default for PadOut {
@@ -122,6 +127,7 @@ pub struct Pads {
     /// The layout editor, while it is open, and whether the layout is back to the default after a reset.
     editor: Option<spatiand_mapper::editor::Editor>,
     reset_to_default: bool,
+    radial_labels: Vec<String>,
     keys: Vec<u16>,
     last_step: Option<Instant>,
     suspended: bool,
@@ -138,6 +144,7 @@ impl Pads {
             engine: Engine::new(app.default_layout()),
             editor: None,
             reset_to_default: false,
+            radial_labels: Vec::new(),
             app,
             keys: Vec::new(),
             last_step: None,
@@ -273,6 +280,17 @@ impl Pads {
             }
         }
         out.key_count = n as i32;
+
+        // A radial menu: the room draws it. What it says is fetched when this number changes.
+        out.radial_selected = -1;
+        if let Some(view) = &frame.radial {
+            out.radial = view.labels.len() as i32;
+            out.radial_selected = view.selected.map(|i| i as i32).unwrap_or(-1);
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(&view.labels, &mut h);
+            out.radial_group = (std::hash::Hasher::finish(&h) as u32) | 1;
+            self.radial_labels = view.labels.clone();
+        }
         self.keys = frame.keys.clone();
 
         // The pointer's buttons. A layout's mouse buttons, a trigger the desktop layout makes a
@@ -468,6 +486,14 @@ pub extern "C" fn sp_pads_layout_name(pads: *mut PadsHandle) -> *mut c_char {
     // SAFETY: from `sp_pads_new`, or null.
     let name = unsafe { pads.as_ref() }.map(|p| p.0.lock().unwrap().layout_name()).unwrap_or_default();
     std::ffi::CString::new(name).unwrap_or_default().into_raw()
+}
+
+/// The words of the radial menu that is open, as a JSON array; free it with `sp_free_string`.
+#[no_mangle]
+pub extern "C" fn sp_pads_radial_labels(pads: *mut PadsHandle) -> *mut c_char {
+    // SAFETY: from `sp_pads_new`, or null.
+    let labels = unsafe { pads.as_ref() }.map(|p| p.0.lock().unwrap().radial_labels.clone()).unwrap_or_default();
+    std::ffi::CString::new(serde_json::to_string(&labels).unwrap_or_default()).unwrap_or_default().into_raw()
 }
 
 /// Open the layout editor for the application in front, whose name the page is titled with.
