@@ -5,3 +5,4 @@ pub mod frame;
 pub mod look;
 pub mod menu;
 pub mod placement;
+pub mod status;

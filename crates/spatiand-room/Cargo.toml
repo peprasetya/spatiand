@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 glam.workspace = true
 log.workspace = true
+libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 spatiand-render = { path = "../spatiand-render" }
 spatiand-shell = { path = "../spatiand-shell" }

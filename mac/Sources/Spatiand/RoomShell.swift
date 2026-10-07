@@ -187,6 +187,10 @@ final class RoomShell {
     private func handle(_ json: String) {
         guard let data = json.data(using: .utf8), let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         if let hud = event["hud"] as? String {
+            if hud.hasPrefix("OpenSystemSettings") {
+                controller.openSystemSettings(panel: hud.contains("bluetooth") ? "bluetooth" : "wifi")
+                return
+            }
             switch hud {
             case "Recentre": controller.recentre()
             case "Screenshot": controller.screenshot()

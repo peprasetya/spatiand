@@ -50,6 +50,8 @@ pub const DOT_FIRST: u32 = 0xFF30;
 pub const LABEL_FIRST: u32 = 0xFF40;
 /// The launcher's search field, and the line that says nothing was found.
 pub const SEARCH_ID: u32 = 0xFFF4;
+/// The status line (time, battery, windows), held to the head in the upper left as the Deck's is.
+pub const STATUS_ID: u32 = 0xFFF6;
 pub const SEARCH_NOTE_ID: u32 = 0xFFF5;
 /// The field's picture and where it hangs: across the top of the launcher's view, with the bubbles a little
 /// lower than the Deck puts them to make the room. Numbers set by the glasses' 23 degrees of height: the
@@ -111,6 +113,8 @@ pub struct ShellUi {
     pub images: HashMap<u32, PanelSpec>,
     pub version: u64,
     pub dirty: bool,
+    /// The status line's words: time, battery, how many windows.
+    status: String,
 }
 
 impl Default for ShellUi {
@@ -123,9 +127,11 @@ impl ShellUi {
     pub fn new() -> Self {
         ShellUi {
             // Nothing local to launch: a Mac's applications are another computer's tab, and calibration is
-            // the glasses' business, settled once.
-            shell: Shell::new(Vec::new(), DesktopPanels::NONE, true),
+            // the glasses' business, settled once. Wi-Fi and Bluetooth are System Settings' panes, floated in
+            // the room as the Deck floats its own panels.
+            shell: Shell::new(Vec::new(), DesktopPanels::ALL, true),
             anchor: (0.0, 0.0),
+            status: String::new(),
             first: 0,
             icons: HashMap::new(),
             layout: None,
@@ -225,8 +231,44 @@ impl ShellUi {
         } else if let Some(model) = menu_model::model(&self.shell) {
             self.render_card(&model, fov);
         }
+        if self.shell.mode() != Mode::Launcher {
+            self.render_status();
+        }
         self.version += 1;
         true
+    }
+
+    /// What the status line says; drawn again when it changes.
+    pub fn set_status(&mut self, text: &str) {
+        if self.status != text {
+            self.status = text.to_string();
+            self.dirty = true;
+        }
+    }
+
+    /// The Deck's status bar: a small dark plate with the line on it, in the upper left of the view, held to the head.
+    /// Sized by its width, as the Deck does -- 15 degrees across at 1.5 metres -- so a long line is a smaller one.
+    fn render_status(&mut self) {
+        if self.status.is_empty() {
+            return;
+        }
+        let h = 64u32;
+        let text = chrome::text_image(&self.status, h as f32 * 0.5, 1400, [214, 226, 248, 255]);
+        if text.is_empty() {
+            return;
+        }
+        let w = text.width + 40;
+        let mut canvas = vec![0u8; (w * h * 4) as usize];
+        round_rect(&mut canvas, w, h, 0.0, 0.0, w as f32, h as f32, h as f32 * 0.3, [0.02, 0.03, 0.06, 0.55]);
+        chrome::blit(&mut canvas, w, h, &text.rgba, text.width, text.height, 20.0, (h as f32 - text.height as f32) * 0.5, text.width as f32, text.height as f32, [1.0; 4]);
+        self.images.insert(STATUS_ID, PanelSpec {
+            id: STATUS_ID,
+            image: Image { width: w, height: h, rgba: Arc::new(premultiply(canvas)) },
+            width_m: 2.0 * 1.5 * (7.5f64).to_radians().tan(),
+            yaw: 8.5f64.to_radians(),
+            pitch: 10.2f64.to_radians(),
+            radius: 1.5,
+        });
     }
 
     fn render_card(&mut self, model: &MenuModel, fov: (f64, f64)) {

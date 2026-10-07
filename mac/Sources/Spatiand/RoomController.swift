@@ -276,6 +276,16 @@ final class RoomController {
         }
     }
 
+    /// One of System Settings' panes, floated in the room as a window: the Deck does the same with its own Wi-Fi and
+    /// Bluetooth panels.
+    func openSystemSettings(panel: String) {
+        let pane = panel == "bluetooth" ? "com.apple.BluetoothSettings" : "com.apple.wifi-settings-extension"
+        guard let url = URL(string: "x-apple.systempreferences:" + pane) else { return }
+        hint.say(panel == "bluetooth" ? "Opening Bluetooth\u{2026}" : "Opening Wi-Fi\u{2026}")
+        NSWorkspace.shared.open(url)
+        waitForWindow(of: "com.apple.systempreferences", tries: 40)
+    }
+
     /// An application of this Mac that is not showing a window: opened, and its window brought into the room as
     /// soon as it has one. An application that is running but has none (all minimised, or closed) is asked to
     /// open one, as clicking its icon in the Dock does.
@@ -498,11 +508,23 @@ final class RoomController {
 
     private var damping = -1
 
+    private var statusAt = Date.distantPast
+    private var statusShown = ""
+
+    /// The status line, a few times a minute and whenever the number of windows changes.
+    private func updateStatus() {
+        guard Date().timeIntervalSince(statusAt) > 1.0 else { return }
+        statusAt = Date()
+        let words = StatusLine.text(windows: known.count + macCaptures.count)
+        if words != statusShown { statusShown = words; core.setStatus(words) }
+    }
+
     func tick() {
         // Steady while holding: for two seconds after a key the view is held firmly, because reading what has just
         // been typed is when a head that is never quite still is most in the way.
         let level = !Settings.steadyView ? 0 : (Date().timeIntervalSince(lastKey) < 2.0 ? 2 : 1)
         if level != damping { damping = level; core.setDamping(level) }
+        updateStatus()
         // A new environment, when one has been read and decoded: the renderer changes to it when it has it ready.
         // (Not before there is a renderer to give it to: a picture taken now would be lost.)
         if let renderer, let (info, pixels) = core.newEnvironment() { renderer.setSky(info, pixels: pixels) }

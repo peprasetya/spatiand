@@ -310,6 +310,9 @@ pub struct Room {
     /// A head to use before the glasses have said anything, for the preview and tests.
     fixed_head: Option<DQuat>,
     candidates: Vec<(u32, String)>,
+    /// Panels held to the head rather than hung in the room: where each is, as the direction in the head's own frame
+    /// (yaw, pitch, radians) and the distance, metres. The status line is one.
+    locked: HashMap<u32, (f64, f64, f64)>,
     damping: Damping,
     view: std::cell::Cell<Option<ViewFilter>>,
     prediction: std::cell::Cell<Option<f64>>,
@@ -354,6 +357,7 @@ impl Room {
             damping: Damping::default(),
             view: std::cell::Cell::new(None),
             prediction: std::cell::Cell::new(None),
+            locked: HashMap::new(),
             surroundings: crate::surroundings::Surroundings::ephemeral(),
             cursor_shape: (0.0, 0.0, 0.0, 0.0),
         }
@@ -818,7 +822,21 @@ impl Room {
             .iter()
             .enumerate()
             .map(|(i, w)| {
-                if w.place.pip {
+                if let Some(&(yaw, pitch, distance)) = self.locked.get(&w.id) {
+                    // The way a pinned window is held, from the head's frame out into the room: flat to the view,
+                    // tilting with the head because it is the head's own.
+                    let direction = DVec3::new(pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), pitch.sin());
+                    let world = head * (view.eye + direction * distance);
+                    let radius = world.length().max(1e-6);
+                    (i, Placement {
+                        yaw: world.y.atan2(world.x),
+                        pitch: (world.z / radius).clamp(-1.0, 1.0).asin(),
+                        radius,
+                        width: w.place.width,
+                        facing: Some(head),
+                        pip: false,
+                    })
+                } else if w.place.pip {
                     let pose = pip::pose(head, &view, self.corner, self.size, w.aspect(), slot);
                     slot += 1;
                     (i, Placement {
@@ -877,7 +895,7 @@ impl Room {
         for i in self.nearest_first(&placed) {
             let (_, place) = placed[i];
             let w = &self.windows[i];
-            if !w.shown || w.hidden {
+            if !w.shown || w.hidden || self.locked.contains_key(&w.id) {
                 continue;
             }
             if Self::is_panel(w.id) {
@@ -928,12 +946,22 @@ impl Room {
     /// Hang the menu's panels where the shell says: each placed round the way the wearer was facing when
     /// the menu opened, and any that are no longer wanted taken down.
     pub fn install_shell_panels(&mut self) {
-        let ours = |id: u32| id == shell_ui::CARD_ID || (shell_ui::BUBBLE_FIRST..shell_ui::BUBBLE_FIRST + 16).contains(&id) || (shell_ui::DOT_FIRST..shell_ui::DOT_FIRST + 8).contains(&id);
+        let ours = |id: u32| {
+            id == shell_ui::CARD_ID
+                || id == shell_ui::STATUS_ID
+                || (shell_ui::BUBBLE_FIRST..shell_ui::BUBBLE_FIRST + 16).contains(&id)
+                || (shell_ui::DOT_FIRST..shell_ui::DOT_FIRST + 8).contains(&id)
+        };
         let wanted: Vec<u32> = self.ui.images.keys().copied().collect();
         self.windows.retain(|w| !ours(w.id) || wanted.contains(&w.id));
         let (yaw, pitch) = self.ui.anchor;
         let specs: Vec<shell_ui::PanelSpec> = self.ui.images.values().cloned().collect();
+        self.locked.retain(|id, _| wanted.contains(id));
         for spec in specs {
+            if spec.id == shell_ui::STATUS_ID {
+                // Held to the head, in the corner: the direction is the panel's own yaw and pitch, in the head's frame.
+                self.locked.insert(spec.id, (spec.yaw, spec.pitch, spec.radius));
+            }
             let place = Placement {
                 yaw: yaw + spec.yaw,
                 pitch: (pitch + spec.pitch).clamp(-PITCH_LIMIT, PITCH_LIMIT),
@@ -1036,6 +1064,15 @@ impl Room {
                 let entries = self.window_entries();
                 self.ui.set_windows(entries, true);
                 Some(ShellEvent::Hud(spatiand_shell::HudAction::OpenSwitcher))
+            }
+            // Bluetooth on the Deck is a page of its own, run by BlueZ. A Mac has the system's, and it is floated in the
+            // room as the Wi-Fi one is: the page is closed again and the app is told which panel to open.
+            Some(ShellEvent::Hud(spatiand_shell::HudAction::OpenBluetooth)) => {
+                self.ui.handle(spatiand_shell::Intent::Back);
+                if self.ui.mode() == spatiand_shell::Mode::Hud {
+                    self.ui.handle(spatiand_shell::Intent::ToggleHud);
+                }
+                Some(ShellEvent::Hud(spatiand_shell::HudAction::OpenSystemSettings("bluetooth")))
             }
             // The environment picker, as the Deck's compositor answers it: the folder is read when the list opens, a
             // choice is remembered and loaded, and the browser lists the folder it is asked for.
@@ -1901,5 +1938,50 @@ mod tests {
         assert!((r.windows()[0].place.yaw - before.yaw - 0.2).abs() < 1e-9);
         r.nudge(1, 0.0, 10.0);
         assert!(r.windows()[0].place.pitch <= PITCH_LIMIT);
+    }
+
+    /// Move the settings list's cursor to the row with this label.
+    fn settings_row(r: &mut Room, label: &str) {
+        for _ in 0..30 {
+            let model = crate::menu_model::model(&r.ui.shell).unwrap();
+            if model.rows[model.cursor].label == label {
+                return;
+            }
+            r.shell_intent(spatiand_shell::Intent::Navigate(spatiand_shell::NavDirection::Down));
+        }
+        panic!("no row {label}");
+    }
+
+    #[test]
+    fn bluetooth_and_wifi_open_the_systems_panes_and_leave_the_menu() {
+        use spatiand_shell::{HudAction, Intent, Mode, ShellEvent};
+        for (label, pane) in [("Bluetooth", "bluetooth"), ("Wi-Fi", "wifi")] {
+            let mut r = room();
+            r.shell_intent(Intent::ToggleHud);
+            settings_row(&mut r, label);
+            let event = r.shell_intent(Intent::Accept);
+            assert_eq!(event, Some(ShellEvent::Hud(HudAction::OpenSystemSettings(pane))));
+            assert_eq!(r.ui.mode(), Mode::World, "the menu is out of the way of the window it opens");
+        }
+    }
+
+    #[test]
+    fn the_status_line_is_held_to_the_head_and_never_aimed_at() {
+        let mut r = room();
+        r.ui.set_status("12:00    80%    2 windows");
+        assert!(r.ui.render((40.0, 23.0)));
+        r.install_shell_panels();
+        let at = |r: &Room, head: glam::DQuat| {
+            let placed = r.placed(head);
+            let i = r.windows.iter().position(|w| w.id == shell_ui::STATUS_ID).expect("a status panel");
+            placed.iter().find(|(j, _)| *j == i).unwrap().1
+        };
+        let ahead = at(&r, glam::DQuat::IDENTITY);
+        let turned = at(&r, glam::DQuat::from_axis_angle(glam::DVec3::Z, 1.0));
+        assert!((turned.yaw - ahead.yaw - 1.0).abs() < 1e-6, "it turns with the head: {} then {}", ahead.yaw, turned.yaw);
+        assert!(ahead.yaw > 0.0 && ahead.pitch > 0.0, "upper left");
+        r.centre_pointer();
+        r.set_fixed_head(Some(glam::DQuat::IDENTITY));
+        assert_ne!(r.aim().window, Some(shell_ui::STATUS_ID));
     }
 }

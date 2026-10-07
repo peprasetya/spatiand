@@ -98,6 +98,7 @@ enum EnvironmentTest {
             room.core.perEye(1920, 1080)
             room.setActive(true)
             room.core.useDiskEnvironments()
+            room.core.setStatus(StatusLine.text(windows: 2))
         }
         after(1.5) {
             // --- it starts in the studio, which is generated
@@ -115,6 +116,12 @@ enum EnvironmentTest {
             check("the images in the folder are listed by name", list.contains("sunset-360") && list.contains("stereo_ou") && list.contains("front-180"))
             check("and the way to add another comes last", list.last == "Add an image...")
             check("the cursor starts on what is in use", rows()[cursor()] == "Studio (generated)")
+
+            // --- the status line, held to the head in the upper left
+            snapshot("status")
+            var ids = [UInt32](repeating: 0, count: 64)
+            let count = sp_shell_panel_ids(room.core.handle, &ids, ids.count)
+            check("the status line is a panel of its own", ids.prefix(count).contains(0xFFF6))
 
             // --- a 360 panorama
             check("can move to the sunset", goTo("sunset-360"))

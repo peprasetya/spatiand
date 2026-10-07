@@ -136,6 +136,7 @@ final class RoomCore {
         defer { sp_free_string(c) }
         return String(cString: c)
     }
+    func setStatus(_ text: String) { sp_room_set_status(room, text) }
     func setPrediction(seconds: Double) { sp_room_set_prediction(room, seconds) }
     func isHidden(_ id: UInt16) -> Bool { sp_room_is_hidden(room, UInt32(id)) != 0 }
     func chromeVersion(_ id: UInt16) -> UInt64 { sp_room_chrome_version(room, UInt32(id)) }

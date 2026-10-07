@@ -1388,3 +1388,23 @@ pub extern "C" fn sp_environment_folder() -> *mut c_char {
 pub extern "C" fn sp_environment_image_count(room: *mut RoomHandle) -> i32 {
     with_room(room, 0, |r| r.surroundings.image_count() as i32)
 }
+
+/// The words of the status line -- time, battery, windows -- which the app composes and the room draws, held to the
+/// head in the upper left as the Deck's is. Empty takes it down.
+#[no_mangle]
+pub extern "C" fn sp_room_set_status(room: *mut RoomHandle, text: *const c_char) {
+    if text.is_null() {
+        return;
+    }
+    // SAFETY: a NUL-terminated string, by the contract.
+    let text = unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned();
+    with_room(room, (), |r| r.ui.set_status(&text));
+}
+
+/// The status line's words for these windows, as the Deck would write them; `battery` is the charge in percent or
+/// negative for none, and `charging` whether power is going in. Free it with `sp_free_string`.
+#[no_mangle]
+pub extern "C" fn sp_status_line(windows: u32, battery: i32, charging: i32) -> *mut c_char {
+    let battery = (battery >= 0).then(|| spatiand_room::status::Battery { percent: battery.min(100) as u8, charging: charging != 0 });
+    json_out(Some(spatiand_room::status::line_from(battery, windows as usize)))
+}
