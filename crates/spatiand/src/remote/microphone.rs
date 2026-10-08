@@ -167,10 +167,10 @@ async fn send(connection: &quinn::Connection, stop: &AtomicBool) -> Result<(), S
 }
 
 /// What is recording: stopped when dropped.
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 struct Recording(std::process::Child);
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 impl Drop for Recording {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -180,7 +180,7 @@ impl Drop for Recording {
 
 /// Record the microphone in ten-millisecond chunks into `tx`, dropping what the link has no
 /// room for.
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 fn record(tx: tokio::sync::mpsc::Sender<Vec<u8>>) -> Result<Recording, String> {
     // `pw-record` reads whatever the desktop calls the default source. Its output is read on a
     // thread of its own -- a child's pipe is a blocking read, and blocking here would stop
@@ -236,7 +236,7 @@ fn record(tx: tokio::sync::mpsc::Sender<Vec<u8>>) -> Result<Recording, String> {
 }
 
 /// On Android: Android's microphone through AAudio, in the same chunks.
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "macos"))]
 fn record(tx: tokio::sync::mpsc::Sender<Vec<u8>>) -> Result<spatiand_audio::server::Capture, String> {
     let mut chunk: Vec<u8> = Vec::with_capacity(CHUNK_BYTES);
     spatiand_audio::server::Capture::open(

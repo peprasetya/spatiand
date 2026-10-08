@@ -54,7 +54,7 @@ pub struct Window {
     /// anything other than an ordinary mono window.
     xr: Option<spatiand_xr_surface_v1::SpatiandXrSurfaceV1>,
     /// On Android, what stands in for the picture: see [`Placeholder`].
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "macos"))]
     placeholder: Option<Placeholder>,
 }
 
@@ -64,12 +64,12 @@ pub struct Window {
 /// is given this -- which makes it the right size, and so placed, framed and pointed at like any
 /// other -- and the compositor draws the decoder's newest picture in its place, finding it by
 /// the token in the first eight bytes. See `spatiand_video::android`.
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "macos"))]
 struct Placeholder {
     buffer: wl_buffer::WlBuffer,
     token: u32,
     size: (u32, u32),
-    output: std::sync::Arc<spatiand_video::android::Output>,
+    output: std::sync::Arc<spatiand_video::placeholder::Output>,
 }
 
 /// Everything the client half owns.
@@ -81,7 +81,7 @@ pub struct Client {
     pub handle: QueueHandle<Client>,
     compositor: wl_compositor::WlCompositor,
     shell: xdg_wm_base::XdgWmBase,
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "macos")))]
     dmabuf: zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
     /// Only for the diagnostic path below.
     shm: wl_shm::WlShm,
@@ -148,7 +148,7 @@ impl Client {
         // Version 3 is enough: the parameters interface has not changed, and asking for 4 means
         // handling the feedback objects, which a client that is told what to send does not need.
         // Not on Android, whose pictures go by placeholder: see [`Placeholder`].
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(any(target_os = "android", target_os = "macos")))]
         let dmabuf: zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1 = globals
             .bind(&handle, 3..=3, ())
             .map_err(|e| format!("no linux-dmabuf, so pictures cannot be shown without a copy: {e}"))?;
@@ -171,7 +171,7 @@ impl Client {
             handle,
             compositor,
             shell,
-            #[cfg(not(target_os = "android"))]
+            #[cfg(not(any(target_os = "android", target_os = "macos")))]
             dmabuf,
             shm,
             xr,
@@ -215,7 +215,7 @@ impl Client {
                 first_configured: false,
                 closed: false,
                 xr: None,
-                #[cfg(target_os = "android")]
+                #[cfg(any(target_os = "android", target_os = "macos"))]
                 placeholder: None,
             },
         );
@@ -359,9 +359,9 @@ impl Client {
             for (buffer, _picture) in window.showing.into_iter().chain(window.in_flight.into_values()) {
                 buffer.destroy();
             }
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_os = "macos"))]
             if let Some(placeholder) = window.placeholder {
-                spatiand_video::android::forget(placeholder.token);
+                spatiand_video::placeholder::forget(placeholder.token);
                 placeholder.buffer.destroy();
             }
         }
@@ -385,7 +385,7 @@ impl Client {
     }
 
     /// Show a picture on a window.
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "macos")))]
     pub fn show(&mut self, id: u32, picture: Converted) -> Result<(), String> {
         self.reap();
         let handle = self.handle.clone();
@@ -509,7 +509,7 @@ impl Client {
     ///
     /// Committed with no damage, so the compositor never re-reads the placeholder's memory:
     /// only a new size, or a new decoder, attaches a new one.
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "macos"))]
     pub fn show(&mut self, id: u32, picture: Converted) -> Result<(), String> {
         self.reap();
         let handle = self.handle.clone();
@@ -523,7 +523,7 @@ impl Client {
             .as_ref()
             .is_some_and(|p| p.size == size && std::sync::Arc::ptr_eq(&p.output, &picture.output));
         if !current {
-            let token = spatiand_video::android::register(picture.output.clone());
+            let token = spatiand_video::placeholder::register(picture.output.clone());
             let bytes = (size.0 * size.1 * 4) as usize;
             let file = placeholder_memory(bytes, token)?;
             let pool = shm.create_pool(std::os::fd::AsFd::as_fd(&file), bytes as i32, &handle, ());
@@ -546,7 +546,7 @@ impl Client {
                 size,
                 output: picture.output.clone(),
             }) {
-                spatiand_video::android::forget(old.token);
+                spatiand_video::placeholder::forget(old.token);
                 old.buffer.destroy();
             }
         }
@@ -558,7 +558,7 @@ impl Client {
     ///
     /// Only for finding out what the compositor can and cannot import — the picture is not
     /// kept alive afterwards, so this is a diagnostic and not a path to use.
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "macos")))]
     pub fn show_raw(
         &mut self,
         id: u32,
@@ -606,7 +606,7 @@ impl Client {
     }
 
     /// Android has no dmabufs to hand over by hand.
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "macos"))]
     pub fn show_raw(
         &mut self,
         id: u32,
@@ -839,19 +839,25 @@ impl Dispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, ()> for Client {
 }
 
 /// A placeholder's memory: `bytes` of zeroes, except its magic and token at the start.
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "macos"))]
 fn placeholder_memory(bytes: usize, token: u32) -> Result<std::fs::File, String> {
     use std::io::{Seek, Write};
     use std::os::fd::FromRawFd;
     // An app has no writable temporary directory to make one in, so it is anonymous memory.
-    let fd = unsafe { libc::memfd_create(c"spatiand-placeholder".as_ptr(), libc::MFD_CLOEXEC) };
-    if fd < 0 {
-        return Err(format!("could not make a placeholder: {}", std::io::Error::last_os_error()));
-    }
-    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    #[cfg(target_os = "android")]
+    let mut file = {
+        let fd = unsafe { libc::memfd_create(c"spatiand-placeholder".as_ptr(), libc::MFD_CLOEXEC) };
+        if fd < 0 {
+            return Err(format!("could not make a placeholder: {}", std::io::Error::last_os_error()));
+        }
+        unsafe { std::fs::File::from_raw_fd(fd) }
+    };
+    // The Mac has no anonymous memory with a descriptor, and does have a temporary directory.
+    #[cfg(not(target_os = "android"))]
+    let mut file = tempfile()?;
     file.set_len(bytes as u64)
         .map_err(|e| format!("could not size a placeholder: {e}"))?;
-    let mut head = spatiand_video::android::PLACEHOLDER_MAGIC.to_le_bytes().to_vec();
+    let mut head = spatiand_video::placeholder::PLACEHOLDER_MAGIC.to_le_bytes().to_vec();
     head.extend_from_slice(&token.to_le_bytes());
     file.write_all(&head)
         .and_then(|_| file.rewind())

@@ -181,13 +181,13 @@ impl Drop for Player {
     }
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 struct Output {
     child: Child,
     target: Option<String>,
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 impl Output {
     fn start(app_id: &str, target: Option<String>, channels: u16) -> Option<Output> {
         let mut command = Command::new("pw-cat");
@@ -248,7 +248,7 @@ impl Output {
     }
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 impl Drop for Output {
     fn drop(&mut self) {
         drop(self.child.stdin.take());
@@ -259,8 +259,8 @@ impl Drop for Output {
 
 /// On Android there is no `pw-cat` and no sink to play into: the sound goes to the audio
 /// engine at its window's slot, which places it the same way (`spatiand_audio`'s
-/// `server_android.rs`). The engine's queue is the buffer the pipe is on the Deck.
-#[cfg(target_os = "android")]
+/// `server_fed.rs`). The engine's queue is the buffer the pipe is on the Deck.
+#[cfg(any(target_os = "android", target_os = "macos"))]
 fn play(app_id: &str, shared: &Shared) {
     let mut samples: Vec<i16> = Vec::with_capacity(4096);
     let mut slot = None;
@@ -296,7 +296,7 @@ fn play(app_id: &str, shared: &Shared) {
     }
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 fn play(app_id: &str, shared: &Shared) {
     let mut output: Option<Output> = None;
     // A second copy for the recording's surround track; see `set_recording`.

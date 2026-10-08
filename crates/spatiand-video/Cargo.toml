@@ -17,7 +17,7 @@ spatiand-stream = { path = "../spatiand-stream" }
 log.workspace = true
 libc = "0.2"
 
-[target.'cfg(not(target_os = "android"))'.dependencies]
+[target.'cfg(not(any(target_os = "android", target_os = "macos")))'.dependencies]
 # libavcodec, the same library the host encodes with. The first attempt used `cros-codecs`
 # over libva, which is pure Rust and needs no headers — and cannot run here: it opens its
 # decoder with a 16x16 probe context, and this GPU refuses any video context below 64x64. Both

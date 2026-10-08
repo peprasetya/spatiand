@@ -1,0 +1,75 @@
+[package]
+name = "spatiand-mac"
+description = "Spatiand on the Mac: the Deck's compositor on the glasses, drawn through ANGLE"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+license = "MIT"
+
+# A workspace of its own, for one reason: the compositor is built on Smithay, which has a
+# handful of Linux-only calls in corners the Mac never runs (X11's sockets, DRM's sync files).
+# `mac/vendor/smithay` is Smithay 0.7.0 with those made to build, and a `[patch]` can only be
+# said at a workspace's root -- saying it at the repository's would change what the Deck and
+# the Beam Pro are built from, and they are built from crates.io's.
+[workspace]
+
+[lib]
+name = "spatiand_mac"
+# `staticlib` is what the app links; `rlib` is for the binary below and the tests.
+crate-type = ["staticlib", "rlib"]
+
+# The compositor with no app around it: one frame to a PNG (`SPATIAND_BACKEND=snapshot`, as on
+# the Deck), which is how a menu is looked at without putting the glasses on.
+[[bin]]
+name = "spatiand-mac"
+path = "src/bin/spatiand-mac.rs"
+
+[patch.crates-io]
+smithay = { path = "../../mac/vendor/smithay" }
+
+# The first half is `crates/spatiand`'s own list, because its modules are compiled here by path
+# (see `src/lib.rs`), exactly as `spatiand-android` does; keep the three in step.
+[dependencies]
+spatiand-stream = { path = "../spatiand-stream" }
+spatiand-video = { path = "../spatiand-video" }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+tokio = { version = "1", features = ["rt", "net", "time", "io-util", "macros"] }
+spatiand-hmd = { path = "../spatiand-hmd" }
+spatiand-track = { path = "../spatiand-track" }
+spatiand-render = { path = "../spatiand-render" }
+spatiand-input = { path = "../spatiand-input" }
+spatiand-mapper = { path = "../spatiand-mapper" }
+spatiand-shell = { path = "../spatiand-shell" }
+spatiand-platform = { path = "../spatiand-platform" }
+spatiand-proto = { path = "../spatiand-proto", features = ["client"] }
+# On the Mac the `server` is `server_fed.rs`, on Core Audio: the same interface, no PipeWire.
+spatiand-audio = { path = "../spatiand-audio", features = ["server"] }
+glam = { version = "0.29", features = ["serde"] }
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+env_logger = "0.11"
+thiserror = "2"
+libc = "0.2"
+x11rb = "0.13"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+resvg = "0.45"
+usvg = "0.45"
+tiny-skia = "0.11"
+
+# The Deck's features less what needs the Deck: no scanout, GBM, libinput, logind or winit.
+# `backend_drm` and `xwayland` stay for the types the shared modules name; neither opens
+# anything here.
+[dependencies.smithay]
+version = "0.7"
+default-features = false
+features = [
+    "backend_egl",
+    "backend_drm",
+    "renderer_gl",
+    "wayland_frontend",
+    "desktop",
+    "xwayland",
+]

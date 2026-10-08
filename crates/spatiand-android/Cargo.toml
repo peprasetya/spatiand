@@ -31,7 +31,7 @@ spatiand-mapper = { path = "../spatiand-mapper" }
 spatiand-shell = { path = "../spatiand-shell" }
 spatiand-platform = { path = "../spatiand-platform" }
 spatiand-proto = { path = "../spatiand-proto", features = ["client"] }
-# On Android the `server` is `server_android.rs`: the same interface, no PipeWire.
+# On Android the `server` is `server_fed.rs`: the same interface, no PipeWire.
 spatiand-audio = { path = "../spatiand-audio", features = ["server"] }
 glam.workspace = true
 log.workspace = true

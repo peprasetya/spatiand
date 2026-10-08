@@ -75,11 +75,13 @@
 use std::path::PathBuf;
 
 use glam::{DQuat, DVec3};
+#[cfg(not(target_os = "macos"))]
 use smithay::backend::allocator::gbm::GbmDevice;
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::egl::{EGLContext, EGLDisplay};
 use smithay::backend::renderer::gles::{ffi, GlesRenderer, GlesTexture};
 use smithay::backend::renderer::Offscreen;
+#[cfg(not(target_os = "macos"))]
 use smithay::utils::DeviceFd;
 
 use smithay::reexports::calloop::EventLoop;
@@ -201,17 +203,24 @@ pub fn run(
     ));
 
     // --- a GL context with no display attached ---
-    let node =
-        std::env::var("SPATIAND_RENDER_NODE").unwrap_or_else(|_| "/dev/dri/renderD128".into());
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&node)?;
-    let gbm = GbmDevice::new(DeviceFd::from(std::os::fd::OwnedFd::from(file)))?;
-    let egl_display = unsafe { EGLDisplay::new(gbm)? };
-    let egl_context = EGLContext::new(&egl_display)?;
-    let mut renderer = unsafe { GlesRenderer::new(egl_context)? };
-    log::info!("offscreen renderer ready on {node}");
+    #[cfg(not(target_os = "macos"))]
+    let mut renderer = {
+        let node =
+            std::env::var("SPATIAND_RENDER_NODE").unwrap_or_else(|_| "/dev/dri/renderD128".into());
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&node)?;
+        let gbm = GbmDevice::new(DeviceFd::from(std::os::fd::OwnedFd::from(file)))?;
+        let egl_display = unsafe { EGLDisplay::new(gbm)? };
+        let egl_context = EGLContext::new(&egl_display)?;
+        let renderer = unsafe { GlesRenderer::new(egl_context)? };
+        log::info!("offscreen renderer ready on {node}");
+        renderer
+    };
+    // The Mac has no render node: ANGLE's display, with no surface. See `mac::egl`.
+    #[cfg(target_os = "macos")]
+    let mut renderer = crate::mac::egl::offscreen()?;
 
     // --- the same objects the real backends build ---
     let apps: Vec<spatiand_shell::AppEntry> = spatiand_platform::scan()

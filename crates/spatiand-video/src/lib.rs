@@ -23,24 +23,24 @@
 //! wreckage until the next keyframe, and that wreckage is the smear people recognise as bad
 //! game streaming.
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 pub mod convert;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 pub mod decode;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 pub mod export;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 pub mod record;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 pub mod split;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 pub mod voice;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 pub use convert::{Converted, Converter};
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 pub use decode::{Decoder, Picture, VideoError};
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "macos")))]
 pub use split::Units;
 
 /// The same interface on Android, on `MediaCodec`; see the file.
@@ -48,3 +48,16 @@ pub use split::Units;
 pub mod android;
 #[cfg(target_os = "android")]
 pub use android::{voice, Converted, Converter, Decoder, Picture, VideoError};
+
+/// The same interface on the Mac, on VideoToolbox; see the file.
+#[cfg(target_os = "macos")]
+pub mod mac;
+#[cfg(target_os = "macos")]
+pub use mac::{voice, Converted, Converter, Decoder, Picture, VideoError};
+
+/// Where pictures stay on the GPU and reach the compositor by a placeholder's token rather than
+/// as a dmabuf: Android's and the Mac's. The same names in both.
+#[cfg(target_os = "android")]
+pub use android as placeholder;
+#[cfg(target_os = "macos")]
+pub use mac as placeholder;

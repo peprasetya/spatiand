@@ -20,7 +20,11 @@ use spatiand_render::text::TextImage;
 
 /// Shared preamble. GLES needs an explicit precision declaration and there is no reason for
 /// the three shaders to disagree about it.
+#[cfg(not(target_os = "macos"))]
 const PREAMBLE: &str = "#version 320 es\nprecision highp float;\n";
+/// The Mac draws through ANGLE on Metal, which is GLES 3.0; nothing here needs more.
+#[cfg(target_os = "macos")]
+const PREAMBLE: &str = "#version 300 es\nprecision highp float;\n";
 
 /// Vertex shader: an untransformed unit quad, positioned entirely by the MVP.
 const QUAD_VERT: &str = r#"

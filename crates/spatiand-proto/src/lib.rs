@@ -128,19 +128,22 @@ pub mod pose {
     /// from the glasses, and a host, filling it from what the session sends, write through
     /// this — so there is one seqlock in the tree, not two that nearly agree. What goes *in*
     /// a slot is the caller's business; this only guarantees a reader never sees half of one.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(unix)]
     pub struct Ring {
         memory: *mut u8,
         fd: std::os::fd::OwnedFd,
         written: u64,
+        /// macOS: the name the memory is shared under, kept so it can be opened again read-only.
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        name: std::ffi::CString,
     }
 
     // The pointer is to a mapping this type owns alone; it is written from one thread at a time
     // and never shared as a reference.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(unix)]
     unsafe impl Send for Ring {}
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(unix)]
     impl Ring {
         /// Make the memory and map it.
         ///
@@ -151,8 +154,24 @@ pub mod pose {
             use std::os::fd::FromRawFd;
             let size = channel_size();
             // SAFETY: a libc call with a valid C string and no borrowed state.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             let raw = unsafe {
                 libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING)
+            };
+            // macOS has no memfd: shared memory with a name, and the name taken away at once so
+            // that only the descriptor is left. It cannot be sealed; nothing local maps it there.
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            let (raw, unique) = unsafe {
+                static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                // Short: macOS allows a shared memory name 31 bytes.
+                let unique = std::ffi::CString::new(format!(
+                    "/spd-{}-{}",
+                    libc::getpid(),
+                    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                ))
+                .unwrap();
+                let _ = name;
+                (libc::shm_open(unique.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_EXCL, 0o600), unique)
             };
             if raw < 0 {
                 return Err(format!("memfd_create: {}", std::io::Error::last_os_error()));
@@ -164,6 +183,7 @@ pub mod pose {
                 return Err(format!("ftruncate: {}", std::io::Error::last_os_error()));
             }
             // SAFETY: a libc call on a descriptor we own.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             unsafe { libc::fcntl(raw, libc::F_ADD_SEALS, libc::F_SEAL_SHRINK | libc::F_SEAL_GROW) };
             // SAFETY: mapping a descriptor we own at the length it has just been given.
             let memory = unsafe {
@@ -190,7 +210,13 @@ pub mod pose {
             };
             // SAFETY: a fresh mapping of at least `channel_size()` bytes; Header is repr(C).
             unsafe { std::ptr::write(memory as *mut Header, header) };
-            Ok(Ring { memory, fd, written: 0 })
+            Ok(Ring {
+                memory,
+                fd,
+                written: 0,
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                name: unique,
+            })
         }
 
         /// The descriptor the ring lives in. Writable: for handing over a Wayland connection
@@ -208,10 +234,19 @@ pub mod pose {
         /// descriptor onto a memfd that is still mapped writable here.
         pub fn read_only(&self) -> Result<std::os::fd::OwnedFd, String> {
             use std::os::fd::{AsRawFd, FromRawFd};
-            let path = std::ffi::CString::new(format!("/proc/self/fd/{}", self.fd.as_raw_fd()))
-                .map_err(|e| e.to_string())?;
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            let raw = {
+                let path = std::ffi::CString::new(format!("/proc/self/fd/{}", self.fd.as_raw_fd()))
+                    .map_err(|e| e.to_string())?;
+                // SAFETY: a libc call with a valid C string.
+                unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) }
+            };
             // SAFETY: a libc call with a valid C string.
-            let raw = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            let raw = unsafe {
+                let _ = self.fd.as_raw_fd();
+                libc::shm_open(self.name.as_ptr(), libc::O_RDONLY, 0)
+            };
             if raw < 0 {
                 return Err(format!("reopening the pose channel read-only: {}", std::io::Error::last_os_error()));
             }
@@ -262,11 +297,16 @@ pub mod pose {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(unix)]
     impl Drop for Ring {
         fn drop(&mut self) {
             // SAFETY: unmapping exactly what `new` mapped.
             unsafe { libc::munmap(self.memory as *mut libc::c_void, channel_size()) };
+            // SAFETY: a libc call with a valid C string.
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            unsafe {
+                libc::shm_unlink(self.name.as_ptr());
+            }
         }
     }
 
@@ -337,7 +377,7 @@ pub mod pose {
             assert!(SLOTS.is_power_of_two());
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(unix)]
         fn sample(n: i64) -> Slot {
             Slot {
                 sample_ns: n,
@@ -347,7 +387,7 @@ pub mod pose {
             }
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(unix)]
         #[test]
         fn a_written_slot_reads_back_whole() {
             let mut ring = Ring::new(c"test-poses").expect("ring");
@@ -359,7 +399,7 @@ pub mod pose {
             assert_eq!(newest.predicted_ns, 112);
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(unix)]
         #[test]
         fn the_ring_wraps_without_losing_the_newest() {
             let mut ring = Ring::new(c"test-poses").expect("ring");
@@ -369,7 +409,7 @@ pub mod pose {
             assert_eq!(ring.newest().expect("written").sample_ns, SLOTS as i64 * 3 - 1);
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(unix)]
         #[test]
         fn the_read_only_descriptor_sees_the_poses_and_cannot_change_them() {
             use std::os::fd::AsRawFd;

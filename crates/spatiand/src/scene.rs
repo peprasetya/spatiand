@@ -3494,6 +3494,8 @@ pub fn collect_windows(
         // decoder has; see `spatiand_video::android`.
         #[cfg(target_os = "android")]
         let texture = crate::android::remote_video::substitute(renderer, &surface, texture);
+        #[cfg(target_os = "macos")]
+        let texture = crate::mac::remote_video::substitute(renderer, &surface, texture);
         // A surface that has become the environment is not also a panel in it. Asked through
         // `is_environment` rather than by listing layers: the list here once said "the two
         // panoramas", and the day a third kind of room arrived it would have been drawn twice.
@@ -3781,6 +3783,8 @@ pub fn projection_surface(
         };
         #[cfg(target_os = "android")]
         let texture = crate::android::remote_video::substitute(renderer, &surface, texture);
+        #[cfg(target_os = "macos")]
+        let texture = crate::mac::remote_video::substitute(renderer, &surface, texture);
         // Client textures arrive with GL's default sampler, which is incomplete without
         // mipmaps and samples as black; see `sky_surface`. Clamped rather than wrapped: an eye
         // view has edges, and wrapping would bleed one eye's picture into the other's.
