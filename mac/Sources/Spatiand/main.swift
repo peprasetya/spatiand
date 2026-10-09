@@ -652,6 +652,11 @@ if CommandLine.arguments.contains("--selftest-resize") {
     application.run()
 }
 
+if let at = CommandLine.arguments.firstIndex(of: "--click-target") {
+    PointerTest.target(file: CommandLine.arguments.dropFirst(at + 1).first ?? NSTemporaryDirectory() + "spatiand-clicks.txt")
+}
+if CommandLine.arguments.contains("--selftest-pointer") { PointerTest.run() }
+
 if CommandLine.arguments.contains("--selftest-local") {
     exit(LocalTests.run())
 }

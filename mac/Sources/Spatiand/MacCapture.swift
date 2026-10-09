@@ -168,9 +168,13 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     /// The window's frame at this moment, in points: it can be moved while it is in the room.
     func frame() -> CGRect {
-        if let (rect, at) = cachedFrame, Date().timeIntervalSince(at) < 0.3 { return rect }
-        var rect = info.frame
-        if let list = CGWindowListCreateDescriptionFromArray([info.windowID] as CFArray) as? [[String: Any]],
+        if let (rect, at) = cachedFrame, Date().timeIntervalSince(at) < 0.1 { return rect }
+        var rect = cachedFrame?.0 ?? info.frame
+        // Asked for by its number through the list. (The call that takes an array of window
+        // numbers wants them raw, not boxed, and handed boxed ones found nothing: the frame
+        // stayed what it was when the window was first seen, so a window moved or resized was
+        // clicked where it used to be and never captured at its new size.)
+        if let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], info.windowID) as? [[String: Any]],
            let bounds = list.first?[kCGWindowBounds as String] as? NSDictionary,
            let found = CGRect(dictionaryRepresentation: bounds) {
             rect = found

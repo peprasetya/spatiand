@@ -49,10 +49,26 @@ final class RoomTap {
     private var jump: (dx: Double, dy: Double, at: Date)?
 
     func expectJump(dx: Double, dy: Double) {
-        guard hypot(dx, dy) > 1 else { return }
         jumpLock.lock()
-        jump = (dx, dy, Date())
+        // Two before any travel is heard add up.
+        let before = jump.map { Date().timeIntervalSince($0.at) < 0.5 ? ($0.dx, $0.dy) : (0, 0) } ?? (0, 0)
+        jump = (before.0 + dx, before.1 + dy, Date())
         jumpLock.unlock()
+    }
+
+    /// The next travel heard after the cursor was put somewhere has that jump added to it, as
+    /// if the hand had made it. Taken off again, whatever its size.
+    private func withoutJump(_ dx: Double, _ dy: Double) -> (Double, Double) {
+        jumpLock.lock()
+        defer { jumpLock.unlock() }
+        guard let j = jump else { return (dx, dy) }
+        jump = nil
+        guard Date().timeIntervalSince(j.at) < 0.5 else { return (dx, dy) }
+        // Only if it is there: an event that was already on its way when the cursor was put
+        // does not carry it.
+        let size = hypot(j.dx, j.dy)
+        guard size > 0.5, hypot(dx - j.dx, dy - j.dy) < hypot(dx, dy) else { if size > 0.5 { jump = j }; return (dx, dy) }
+        return (dx - j.dx, dy - j.dy)
     }
 
     private func isEcho(_ dx: Double, _ dy: Double) -> Bool {
@@ -172,8 +188,8 @@ final class RoomTap {
         switch type {
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
             let dx = event.getDoubleValueField(.mouseEventDeltaX), dy = event.getDoubleValueField(.mouseEventDeltaY)
-            if isEcho(dx, dy) { break }
-            sp_pointer(Float(dx), Float(dy), buttons, 0, 0)
+            let (tx, ty) = withoutJump(dx, dy)
+            sp_pointer(Float(tx), Float(ty), buttons, 0, 0)
         case .leftMouseDown: buttons |= 1; sp_pointer(0, 0, buttons, 0, 0)
         case .leftMouseUp: buttons &= ~1; sp_pointer(0, 0, buttons, 0, 0)
         case .rightMouseDown: buttons |= 2; sp_pointer(0, 0, buttons, 0, 0)

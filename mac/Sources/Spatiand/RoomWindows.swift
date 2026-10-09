@@ -95,6 +95,20 @@ final class RoomWindows {
         insideLock.unlock()
     }
 
+    /// For tests: where the room's pointer is in a window, in its picture's pixels.
+    func pointerIn(_ windowID: CGWindowID) -> CGPoint? {
+        insideLock.lock()
+        defer { insideLock.unlock() }
+        guard let id = showing.first(where: { $0.info.windowID == windowID })?.id else { return nil }
+        return pointerNow[id]
+    }
+    private var pointerNow: [UInt32: CGPoint] = [:]
+    private func notePointer(_ id: UInt32, _ p: CGPoint?) {
+        insideLock.lock()
+        pointerNow[id] = p
+        insideLock.unlock()
+    }
+
     /// For tests: the room's number and the details of an application's window that is on show.
     func shownWindow(bundle: String) -> (id: UInt32, info: MacWindowInfo)? {
         insideLock.lock()
@@ -269,6 +283,7 @@ final class RoomWindows {
             case SP_WINDOW_MOTION: motion(id, x: a, y: b)
             case SP_WINDOW_LEAVE:
                 at[id] = nil
+                notePointer(id, nil)
                 setInside(!at.isEmpty)
             case SP_WINDOW_BUTTON: button(id, code: Int(a), pressed: b != 0)
             case SP_WINDOW_SCROLL: scroll(id, across: a, down: b)
@@ -320,8 +335,11 @@ final class RoomWindows {
     private func motion(_ id: UInt32, x: Double, y: Double) {
         // Onto a window it was not on: that window comes to the top, so that what is under the
         // real pointer is this window and not whichever lay over it on the Mac's own screen.
-        if at[id] == nil, !down.contains(id) { raise(id) }
+        // (It is not brought to the front for being pointed at: that took a quarter of a second
+        // each time, and pointing across one window on the way to the room's keyboard made it
+        // the Mac's front window, which is where the keys then went. A press brings it forward.)
         at[id] = CGPoint(x: x, y: y)
+        notePointer(id, at[id])
         setInside(true)
         guard let p = point(id) else { return }
         // A real pointer, really there: what makes hover, tooltips and the cursor's shape work.
@@ -385,6 +403,10 @@ final class RoomWindows {
             event?.flags = RoomTap.shared.flags
             post(event)
             return
+        }
+        // To the window the room says has the keys, whatever the Mac has in front by now.
+        if down, focused != 0, let pid = entries[focused]?.info.pid, NSWorkspace.shared.frontmostApplication?.processIdentifier != pid {
+            raise(focused)
         }
         let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(code), keyDown: down)
         event?.flags = RoomTap.shared.flags
