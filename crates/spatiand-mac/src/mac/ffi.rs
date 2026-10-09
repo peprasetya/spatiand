@@ -400,7 +400,7 @@ pub unsafe extern "C" fn sp_app_sound(bundle: *const c_char, pcm: *const i16, fr
     }
     let samples = std::slice::from_raw_parts(pcm, (frames * channels) as usize);
     let slot = crate::remote::sound::slot_for(&local::app_id(&text(bundle)));
-    spatiand_audio::server::feed(slot, samples, channels as usize);
+    spatiand_audio::server::feed_local(slot, samples, channels as usize);
 }
 
 /// A line saying how the session is, for the app's menu. Returns its length; at most `size − 1`

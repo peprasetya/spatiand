@@ -72,6 +72,13 @@ enum Settings {
         set { defaults.set(newValue, forKey: "hostEnabled") }
     }
 
+    /// Whether the sound of a Mac application with a window in the room is taken from the Mac's speakers and placed
+    /// at that window.
+    static var soundPlacement: Bool {
+        get { defaults.object(forKey: "soundPlacement") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "soundPlacement") }
+    }
+
     static var hotkeys: Bool {
         defaults.object(forKey: "hotkeys") as? Bool ?? true
     }

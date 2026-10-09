@@ -106,6 +106,9 @@ struct SlotState {
     muted: AtomicBool,
     peak: AtomicU32,
     sounding: AtomicU32,
+    /// Its sound is made on this machine, not sent over a network: it arrives steadily and
+    /// needs only a short wait before it is played. See [`feed_local`].
+    local: AtomicBool,
 }
 
 fn layout_code(layout: Layout) -> u32 {
@@ -249,6 +252,18 @@ pub fn feed(slot: Option<Slot>, pcm: &[i16], channels: usize) {
     state.queue.write(&output);
 }
 
+/// Sound made on this machine -- an application's, tapped -- for a window's slot.
+///
+/// The same as [`feed`], except for how long it waits: network sound is held back 150 ms so that
+/// a late burst is not heard, and sound that was made a moment ago in the next process arrives
+/// like clockwork and would only be 150 ms behind its picture for it.
+pub fn feed_local(slot: Option<Slot>, pcm: &[i16], channels: usize) {
+    if let Some(state) = slot.and_then(|slot| shared().slots.lock().ok()?.get(&slot).cloned()) {
+        state.local.store(true, Ordering::Relaxed);
+    }
+    feed(slot, pcm, channels);
+}
+
 /// Copy what the output plays, stereo at the engine's rate, into `into` from now on, or stop.
 pub fn record_heard(into: Option<Arc<Ring>>) {
     *shared().heard.lock().unwrap() = into;
@@ -290,7 +305,7 @@ fn mix(out: &mut [f32]) {
     let surround = shared.surround.try_lock().ok().and_then(|s| s.clone());
     let mut bed = vec![0.0f32; if surround.is_some() { frames * SURROUND_CHANNELS } else { 0 }];
     let mut bed_scratch = bed.clone();
-    read_cushioned(&shared.unplaced, &shared.unplaced_primed, &mut scratch, rate, None);
+    read_cushioned(&shared.unplaced, &shared.unplaced_primed, &mut scratch, rate, CUSHION_MS, None);
     for (o, s) in out.iter_mut().zip(&scratch) {
         *o += *s;
     }
@@ -310,7 +325,8 @@ fn mix(out: &mut [f32]) {
     if let Ok(slots) = shared.slots.try_lock() {
         for state in slots.values() {
             let companion = surround.is_some().then(|| Companion { ring: &state.bed, out: &mut bed_scratch });
-            read_cushioned(&state.queue, &state.primed, &mut scratch, rate, companion);
+            let cushion = if state.local.load(Ordering::Relaxed) { LOCAL_CUSHION_MS } else { CUSHION_MS };
+            read_cushioned(&state.queue, &state.primed, &mut scratch, rate, cushion, companion);
             for (o, s) in out.iter_mut().zip(&scratch) {
                 *o += *s;
             }
@@ -345,6 +361,9 @@ fn lost() {
 /// asks for a few milliseconds at a time and a queue read that thinly runs dry at every late
 /// packet, which is heard as a jitter.
 const CUSHION_MS: usize = 150;
+/// The same for sound made on this machine, which is never late: enough for the two callbacks
+/// -- the one it is taken in and the one it is played in -- not to be in step.
+const LOCAL_CUSHION_MS: usize = 30;
 /// More than this waiting and the oldest is dropped, so a stall does not leave the sound
 /// behind the picture for ever after.
 const MOST_MS: usize = 400;
@@ -362,8 +381,15 @@ struct Companion<'a> {
     out: &'a mut [f32],
 }
 
-fn read_cushioned(ring: &Ring, primed: &AtomicBool, out: &mut [f32], rate: usize, mut companion: Option<Companion>) {
-    let cushion = rate * 2 * CUSHION_MS / 1000;
+fn read_cushioned(
+    ring: &Ring,
+    primed: &AtomicBool,
+    out: &mut [f32],
+    rate: usize,
+    cushion_ms: usize,
+    mut companion: Option<Companion>,
+) {
+    let cushion = rate * 2 * cushion_ms / 1000;
     let most = rate * 2 * MOST_MS / 1000;
     let waiting = ring.available();
     if let Some(c) = companion.as_mut() {
@@ -483,6 +509,7 @@ impl Engine {
                 muted: AtomicBool::new(false),
                 peak: AtomicU32::new(0),
                 sounding: AtomicU32::new(0),
+                local: AtomicBool::new(false),
             })
         });
     }

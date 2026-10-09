@@ -62,6 +62,15 @@ final class RoomWindows {
     /// Whether a window is on show in the room.
     func has(_ windowID: CGWindowID) -> Bool { queue.sync { entries.values.contains { $0.info.windowID == windowID && $0.capture != nil } } }
 
+    /// The applications with a window on show, and a process of each: whose sound is placed.
+    var onShow: [String: pid_t] {
+        queue.sync {
+            var out: [String: pid_t] = [:]
+            for entry in entries.values where entry.capture != nil && !entry.info.bundle.isEmpty { out[entry.info.bundle] = entry.info.pid }
+            return out
+        }
+    }
+
     // MARK: the Mac's windows, all of them
 
     /// **Every window open on this Mac is in the room's list of windows, put away.** They are

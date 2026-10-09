@@ -21,6 +21,8 @@ final class Room {
 
     let screen = GlassesScreen()
     private(set) var running = false
+    private let sound = MacSound()
+    private var soundTimer: Timer?
     var onChange: (() -> Void)?
 
     var status: String {
@@ -62,11 +64,20 @@ final class Room {
             if MacWindows.allowed(ask: true) { RoomWindows.shared.start() }
         }
         PadInput.shared.start()
+        // The sound of each application with a window on show, taken and placed at that window.
+        if Settings.soundPlacement, !preview {
+            sound.onProblem = { print("sound: \($0)") }
+            let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.sound.reconcile(wanted: RoomWindows.shared.onShow) }
+            RunLoop.main.add(t, forMode: .common)
+            soundTimer = t
+        }
     }
 
     /// Give everything back: the display, the pointer, the glasses' mode.
     func stop() {
         guard running else { return }
+        soundTimer?.invalidate()
+        sound.stopAll()
         RoomTap.shared.remove()
         RoomWindows.shared.clear()
         screen.stop()
