@@ -102,3 +102,8 @@ unsafe impl EGLNativeSurface for AndroidWindow {
         Some("Android/ANativeWindow".into())
     }
 }
+
+/// The surface to draw into for a window the app handed over.
+pub fn surface_of(window: &super::NativeWindow) -> AndroidWindow {
+    AndroidWindow::new(window.0)
+}

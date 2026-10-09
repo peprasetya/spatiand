@@ -31,3 +31,9 @@ pub fn head_locked_panel_sized(orientation: DQuat, width: f32, height: f32, port
     let roll = if portrait { Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2) } else { Mat4::IDENTITY };
     Mat4::from_quat(orientation.as_quat()) * roll * basis
 }
+
+/// Android draws the phone's touch area here. The Mac has no second screen of its own to draw.
+///
+/// # Safety
+/// Never called: the Mac's `Shared::phone` holds no window.
+pub unsafe fn draw(_gl: &smithay::backend::renderer::gles::ffi::Gles2, _size: (u32, u32)) {}

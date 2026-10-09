@@ -18,6 +18,8 @@ use std::time::Duration;
 
 pub mod device;
 pub mod hid;
+#[cfg(target_os = "macos")]
+pub mod iohid;
 pub mod null;
 pub mod port;
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -219,6 +221,9 @@ pub trait Hmd: Send {
 /// device table without opening anything. The hotplug poll calls this on a timer, and opening
 /// the device to find out would send MCU traffic to hardware that may be mid-enumeration.
 pub fn is_present() -> bool {
+    #[cfg(target_os = "macos")]
+    return iohid::is_present();
+    #[cfg(not(target_os = "macos"))]
     hid::enumerate()
         .iter()
         .any(|n| device::lookup(n.vid, n.pid).is_some())

@@ -96,11 +96,19 @@ pub fn offscreen() -> Result<GlesRenderer, Box<dyn std::error::Error>> {
     Ok(renderer)
 }
 
-/// A `CALayer` the app handed over, as something EGL can draw into. ANGLE puts a Metal layer of
-/// its own inside it.
-pub struct Layer(pub *mut c_void);
+/// What the app handed over, as something EGL can draw into: a `CALayer`, in which ANGLE puts
+/// a Metal layer of its own -- or, with no layer, a picture of that size that goes nowhere.
+pub struct Layer {
+    layer: *mut c_void,
+    size: (i32, i32),
+}
 
 unsafe impl Send for Layer {}
+
+/// The surface to draw into for a window the app handed over.
+pub fn surface_of(window: &super::NativeWindow) -> Layer {
+    Layer { layer: window.layer, size: window.size }
+}
 
 unsafe impl EGLNativeSurface for Layer {
     unsafe fn create(
@@ -109,12 +117,23 @@ unsafe impl EGLNativeSurface for Layer {
         config_id: ffi::egl::types::EGLConfig,
     ) -> Result<*const c_void, EGLError> {
         let surface = unsafe {
-            ffi::egl::CreateWindowSurface(
-                display.handle,
-                config_id,
-                self.0 as ffi::NativeWindowType,
-                [ffi::egl::NONE as ffi::EGLint].as_ptr(),
-            )
+            if self.layer.is_null() {
+                let attributes = [
+                    ffi::egl::WIDTH as ffi::EGLint,
+                    self.size.0,
+                    ffi::egl::HEIGHT as ffi::EGLint,
+                    self.size.1,
+                    ffi::egl::NONE as ffi::EGLint,
+                ];
+                ffi::egl::CreatePbufferSurface(display.handle, config_id, attributes.as_ptr())
+            } else {
+                ffi::egl::CreateWindowSurface(
+                    display.handle,
+                    config_id,
+                    self.layer as ffi::NativeWindowType,
+                    [ffi::egl::NONE as ffi::EGLint].as_ptr(),
+                )
+            }
         };
         if surface == ffi::egl::NO_SURFACE {
             Err(EGLError::BadSurface)

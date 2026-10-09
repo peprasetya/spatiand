@@ -4,7 +4,7 @@
 pub mod backend;
 pub mod egl;
 mod jni;
-mod keys;
+pub mod keys;
 mod logging;
 pub mod pads;
 pub mod panel;
@@ -89,7 +89,77 @@ pub fn recentre_requested() -> &'static AtomicBool {
     &REQUESTED
 }
 
+/// The app asking for a picture of what the glasses show, saved as the HUD's screenshot is.
+pub fn screenshot_requested() -> &'static AtomicBool {
+    static REQUESTED: AtomicBool = AtomicBool::new(false);
+    &REQUESTED
+}
+
 pub fn shared() -> &'static Arc<Shared> {
     static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
     SHARED.get_or_init(|| Arc::new(Shared::default()))
+}
+
+// --- what `backend` asks of the platform it runs on. The Mac has the same names; see the top of
+// `backend.rs`. ---
+
+/// The controller the session reads: on Android, the phone.
+pub mod controller {
+    pub use super::phone::{PhoneController as Controller, Typed};
+}
+
+/// The Beam Pro composites every display on the phone screen's 60 Hz clock.
+pub const REFRESH_MHZ: i32 = 60_000;
+/// How far ahead the head is predicted: two frames -- this one through Android's compositor on
+/// its next tick, then scanout -- the Beam Pro's latency, measured as smoothest.
+pub const PREDICT_AHEAD_S: f64 = 2.0 / 60.0;
+/// What to do about there being no glasses, under the message that says so.
+pub const PLUG_HINT: &str = "Plug the glasses into the Beam Pro.";
+/// Android's own Wi-Fi and Bluetooth settings are not windows that can be brought here.
+pub const PANELS: spatiand_shell::DesktopPanels = spatiand_shell::DesktopPanels {
+    network: false,
+    bluetooth: false,
+};
+
+/// The launcher has only remote applications here: Android's own are not windows yet.
+pub fn local_apps() -> Vec<spatiand_shell::AppEntry> {
+    Vec::new()
+}
+
+pub fn launch_local(app: &spatiand_shell::AppEntry) {
+    log::info!("{} is a local application; none run here", app.name);
+}
+
+pub fn return_to_desktop() {
+    log::info!("there is no desktop to return to here");
+}
+
+pub fn system_settings(panel: &str) {
+    log::info!("no {panel} settings here");
+}
+
+pub fn adopt_paired_hosts(prefs: &mut crate::prefs::Prefs) {
+    jni::adopt_paired_hosts(prefs);
+}
+
+/// New glasses on the USB side, if the app has handed any over: opened, in place of any held,
+/// and told the refresh rate the display they are on is drawn at.
+pub fn take_glasses(
+    shared: &Shared,
+    held: &mut Option<Box<dyn spatiand_hmd::Hmd>>,
+) -> Option<spatiand_hmd::Result<Box<dyn spatiand_hmd::Hmd>>> {
+    let fd = shared.usb.lock().unwrap().take()?;
+    // Let go of first: two handles on one pair of glasses silence each other.
+    *held = None;
+    Some(spatiand_hmd::XrealGlasses::open_usb(fd).map(|mut glasses| {
+        // The Beam Pro composites every display on the phone's 60 Hz clock; the glasses' own
+        // 72 would show one frame in five twice.
+        glasses.prefer_refresh((REFRESH_MHZ / 1000) as u32);
+        Box::new(glasses) as Box<dyn spatiand_hmd::Hmd>
+    }))
+}
+
+/// Whether there are glasses to open that the session has not opened yet.
+pub fn glasses_waiting(shared: &Shared, _holding: bool) -> bool {
+    shared.usb.lock().unwrap().is_some()
 }

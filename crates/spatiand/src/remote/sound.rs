@@ -76,6 +76,13 @@ pub fn set_sinks(map: HashMap<String, String>) {
     }
 }
 
+/// The engine's slot for an application's sound, where the engine is fed rather than played
+/// into: for sound that does not come from a host -- the Mac's own applications'.
+#[cfg(any(target_os = "android", target_os = "macos"))]
+pub fn slot_for(app_id: &str) -> Option<spatiand_audio::server::Slot> {
+    sink_for(app_id).and_then(|sink| spatiand_audio::server::slot_of_sink(&sink))
+}
+
 fn sink_for(app_id: &str) -> Option<String> {
     sinks().lock().ok().and_then(|s| s.get(app_id).cloned())
 }

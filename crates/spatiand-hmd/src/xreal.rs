@@ -22,7 +22,9 @@ use std::time::Duration;
 
 use glam::DVec3;
 
-use crate::device::{self, DeviceSpec};
+#[cfg(not(target_os = "macos"))]
+use crate::device;
+use crate::device::DeviceSpec;
 use crate::hid::{self, HidDevice, HidNode};
 use crate::port::Port;
 use crate::{DisplayMode, Hmd, HmdButton, HmdError, HmdEvent, HmdInfo, ImuSample, Result};
@@ -96,6 +98,14 @@ impl XrealGlasses {
     /// away — and in Rust an assignment evaluates the new value before dropping the old, which
     /// makes `hmd = open_any()` exactly that pattern. The symptom is a device that looks
     /// perfectly healthy and never sends a sample.
+    #[cfg(target_os = "macos")]
+    pub fn open_any() -> Result<Self> {
+        // No hidraw on the Mac: the interfaces come from IOKit. See `crate::iohid`.
+        let (spec, imu, mcu) = crate::iohid::open_glasses("xreal")?;
+        Self::with_ports(spec, Box::new(imu), Box::new(mcu))
+    }
+
+    #[cfg(not(target_os = "macos"))]
     pub fn open_any() -> Result<Self> {
         let nodes = hid::enumerate();
         let spec = nodes
@@ -106,6 +116,7 @@ impl XrealGlasses {
         Self::open(spec, &nodes)
     }
 
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     fn open(spec: &'static DeviceSpec, nodes: &[HidNode]) -> Result<Self> {
         if !spec.verified {
             log::warn!(

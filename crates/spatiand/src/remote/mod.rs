@@ -25,7 +25,8 @@
 //! compositor thread is untouched: it discovers remote windows the same way it discovers any
 //! other application's, by being asked for a surface.
 
-mod client;
+/// The Mac's own windows are shown through the same client; see `spatiand-mac`'s `local`.
+pub(crate) mod client;
 mod microphone;
 mod pairing;
 mod session;

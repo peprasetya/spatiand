@@ -1,6 +1,13 @@
 //! The Android backend: the Deck's session, with the glasses' Android display for a screen and
 //! the phone for a controller.
 //!
+//! **The Mac runs this file too** (`crates/spatiand-mac` compiles it by path), since a Mac is the
+//! same case: an app hosts the compositor, hands it a window to draw into, and tells it what its
+//! pointer and keys did. Everything that differs between the two is behind a name in `super` --
+//! the window and its EGL surface, the controller, the glasses' USB, the pads, the recorder --
+//! which each platform's module supplies. What is written below about the phone and the Beam Pro
+//! is Android's half of those; `crates/spatiand-mac/src/mac/mod.rs` says what the Mac's are.
+//!
 //! This is `crates/spatiand/src/backend_drm.rs`'s frame loop, kept as close to it as the
 //! hardware allows, so that what happens in the room is what happens on the Deck: the same
 //! menus, the same pointer, the same windows with the same frames, moved, resized and pushed
@@ -36,8 +43,7 @@ use spatiand_render::{EyeSide, StereoConfig, TextRenderer};
 use spatiand_shell::{DesktopPanels, HudAction, Mode, Shell, ShellEvent};
 use spatiand_track::{AxisMap, HeadTracker, TrackerConfig};
 
-use super::egl::AndroidWindow;
-use super::phone::{PhoneController, Typed};
+use super::controller::{Controller, Typed};
 use super::{remote_video, Shared};
 use crate::calib::Calibration;
 use crate::environment::Environments;
@@ -56,8 +62,9 @@ const IMU_SILENCE_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_STALL_FORGIVENESS: Duration = Duration::from_millis(500);
 /// How often the phone's touch area is redrawn: it only needs to be there.
 const PANEL_EVERY: Duration = Duration::from_secs(1);
-/// The Beam Pro draws every display at the phone's 60 Hz.
-const REFRESH_MHZ: i32 = 60_000;
+/// What the display the glasses are on is refreshed at. The Beam Pro draws every display at the
+/// phone's 60 Hz.
+const REFRESH_MHZ: i32 = super::REFRESH_MHZ;
 
 /// The pad as the wire carries it. See `spatiand_stream::Pad`.
 fn pad_state(report: &spatiand_input::virtual_pad::Report) -> spatiand_stream::Pad {
@@ -100,7 +107,7 @@ fn output_for(
     let window = slot.window.lock().unwrap();
     let result = window.as_ref().and_then(|window| {
         let size = window.size();
-        let native = AndroidWindow::new(window.0);
+        let native = super::egl::surface_of(window);
         let pixel_format = context.pixel_format()?;
         match unsafe { EGLSurface::new(display, pixel_format, context.config_id(), native) } {
             Ok(surface) => Some(Output { surface, generation, size }),
@@ -143,7 +150,7 @@ pub fn run(
     let mut last_status_update = Instant::now();
     let mut last_poll_attempt = Instant::now();
     let mut status_text = String::new();
-    let mut controller = PhoneController::new();
+    let mut controller = Controller::new();
     let mut controls = crate::controls::Controls::new();
     let mut controls_focus: Option<usize> = None;
     let mut gesture = spatiand_input::TwoPadGesture::new();
@@ -154,7 +161,7 @@ pub fn run(
     let mut left_was_down = false;
     let mut left_scroll = spatiand_input::PadScroll::default();
     let mut prefs = crate::prefs::Prefs::load();
-    super::jni::adopt_paired_hosts(&mut prefs);
+    super::adopt_paired_hosts(&mut prefs);
     let mut remotes = crate::remote::Remotes::start(&mut runtime.display_handle, &prefs);
     let mut typed_event: Option<ShellEvent> = None;
     let mut keyboard_for_shell = false;
@@ -190,11 +197,9 @@ pub fn run(
     let mut panel_drawn = Instant::now() - PANEL_EVERY;
 
     // The launcher has only remote applications here: Android's own are not windows yet.
-    let shell_apps: Vec<spatiand_shell::AppEntry> = Vec::new();
-    let panels = DesktopPanels {
-        network: false,
-        bluetooth: false,
-    };
+    // On the Mac, the Mac's own.
+    let shell_apps: Vec<spatiand_shell::AppEntry> = super::local_apps();
+    let panels = super::PANELS;
     let calibrated = spatiand_track::config::load_axes().is_some();
     let mut shell = Shell::new(shell_apps, panels, calibrated);
     // Where windows pinned to the view go and how big: the wearer's, from last time.
@@ -239,20 +244,16 @@ pub fn run(
             hmd = None;
         }
         // New glasses on the USB side: open them, in 60 Hz side-by-side.
-        if let Some(fd) = shared.usb.lock().unwrap().take() {
-            hmd = None;
-            match spatiand_hmd::XrealGlasses::open_usb(fd) {
-                Ok(mut x) => {
+        if let Some(opened) = super::take_glasses(shared, &mut hmd) {
+            match opened {
+                Ok(x) => {
                     let info = x.info().clone();
                     log::info!("headset: {}", info.name);
                     settle_axes(&info, stored, &mut tracker, &mut calibration);
                     sensor_memory.restore(&info.name, &mut tracker);
-                    // The Beam Pro composites every display on the phone's 60 Hz clock; the
-                    // glasses' own 72 would show one frame in five twice.
-                    x.prefer_refresh(60);
                     had_headset = true;
                     stereo_asked = false;
-                    hmd = Some(Box::new(x));
+                    hmd = Some(x);
                     *shared.status.lock().unwrap() = format!("{} connected", info.name);
                 }
                 Err(e) => {
@@ -317,7 +318,7 @@ pub fn run(
         while shared.running.load(std::sync::atomic::Ordering::Relaxed) {
             // A new window, a window taken away, or new glasses: go round again.
             if shared.glasses.generation.load(std::sync::atomic::Ordering::SeqCst) != generation
-                || shared.usb.lock().unwrap().is_some()
+                || super::glasses_waiting(shared, hmd.is_some())
                 || shared.usb_gone.load(std::sync::atomic::Ordering::SeqCst)
             {
                 break;
@@ -334,7 +335,7 @@ pub fn run(
                 None
             };
             let two_handed: Option<spatiand_input::GestureDelta> = None;
-            let mut screenshot = false;
+            let mut screenshot = super::screenshot_requested().swap(false, std::sync::atomic::Ordering::SeqCst);
             let mut record_toggle = false;
 
             // --- input ---
@@ -613,7 +614,7 @@ pub fn run(
                             scene.anchor_menu(mode, tracker.recentred_orientation());
                         }
                     }
-                    ShellEvent::Launch(app) => log::info!("{} is a local application; none run here", app.name),
+                    ShellEvent::Launch(app) => super::launch_local(&app),
                     ShellEvent::ChooseEnvironment(choice) => {
                         environments.select(choice);
                         sky_loader.load(&environments);
@@ -757,8 +758,8 @@ pub fn run(
                         }
                         HudAction::OpenHosts | HudAction::OpenPinned => {}
                         HudAction::OpenBluetooth => {}
-                        HudAction::ReturnToDesktop => log::info!("there is no desktop to return to here"),
-                        HudAction::OpenSystemSettings(panel) => log::info!("no {panel} settings here"),
+                        HudAction::ReturnToDesktop => super::return_to_desktop(),
+                        HudAction::OpenSystemSettings(panel) => super::system_settings(panel),
                         HudAction::Dismiss => {}
                     },
                 }
@@ -864,7 +865,7 @@ pub fn run(
 
             // Two frames ahead: this one through Android's compositor on its next tick, then
             // scanout -- the Beam Pro's latency, measured as smoothest.
-            let orientation = tracker.predicted_orientation(2.0 / 60.0, spatiand_track::DEFAULT_PREDICTION_MAX_DEGREES);
+            let orientation = tracker.predicted_orientation(super::PREDICT_AHEAD_S, spatiand_track::DEFAULT_PREDICTION_MAX_DEGREES);
 
             {
                 let dt = last_tick.elapsed();
@@ -912,7 +913,7 @@ pub fn run(
                 _ if missing.is_some() => crate::waiting::message(
                     missing.unwrap_or(crate::waiting::Missing::Headset),
                     had_headset,
-                    "Plug the glasses into the Beam Pro.".into(),
+                    super::PLUG_HINT.into(),
                 ),
                 Some(c) => {
                     let p = c.prompt();
