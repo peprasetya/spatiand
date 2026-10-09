@@ -264,31 +264,66 @@ pub fn prepare() {
 /// that many times its size.
 pub static DISPLAY_SCALE: Mutex<f64> = Mutex::new(1.0);
 
+/// What the frame loop does for this Mac's own windows, once a frame.
+///
 /// **A Mac window is as big in the room as it is on the Mac, relative to the others.** The room
 /// gives every window the same width -- right on the Deck, where every window is offered the
 /// same 1280 pixels and takes them. A Mac's windows are the sizes their applications made them:
 /// a calculator at the width of a browser is a wall of blurred buttons. So the first time one
-/// has a picture, its width in the room is set from its width in points, at the density the
-/// room's own default window has (1280 points across 1.1 m).
-pub fn size_new_windows(state: &mut crate::Spatiand, windows: &mut [crate::scene::WindowQuad]) {
+/// is seen, its width in the room is set from its width in points, at the density the room's
+/// own default window has (1280 points across 1.1 m).
+///
+/// **And every window open on the Mac is in the room's list, put away.** The app announces them
+/// all; each arrives hidden, and is brought out from the list of windows, or by opening its
+/// application in the launcher. Only the ones on show are captured.
+pub fn size_new_windows(state: &mut crate::Spatiand, _windows: &mut [crate::scene::WindowQuad]) {
+    use smithay::reexports::wayland_server::Resource;
+    use smithay::wayland::seat::WaylandFocus;
     thread_local! {
         static SIZED: std::cell::RefCell<std::collections::HashSet<usize>> = Default::default();
     }
     let scale = *DISPLAY_SCALE.lock().unwrap();
     let prefix = format!("remote.{}.", local::HOST);
-    for quad in windows.iter_mut() {
-        let Some(id) = state.layout.id_of(&quad.window) else { continue };
-        if quad.pixels.0 <= 16 || SIZED.with(|s| s.borrow().contains(&id)) {
+    let mut on_show = std::collections::HashSet::new();
+    let all: Vec<smithay::desktop::Window> = state.space.elements().cloned().collect();
+    for window in all {
+        if !state.app_id_of(&window).is_some_and(|a| a.starts_with(&prefix)) {
+            continue;
+        }
+        let Some(surface) = window.wl_surface() else { continue };
+        let Some((mac_id, wanted)) = local::wanted(surface.id().protocol_id()) else { continue };
+        if wanted.hide {
+            state.hide_window(&window);
+        }
+        if wanted.show {
+            state.show_window(&window);
+            // In front of the wearer, as a window chosen from the list is.
+            if let Some(mut placement) = state.layout.get(&window).filter(|_| !state.layout.is_pinned(&window)) {
+                placement.yaw = state.spawn_yaw;
+                placement.pitch = 0.0;
+                state.layout.set(&window, placement);
+            }
+            state.focus_window(&window);
+        }
+        if !state.layout.is_hidden(&window) {
+            on_show.insert(mac_id);
+        }
+        let Some(id) = state.layout.id_of(&window) else { continue };
+        if SIZED.with(|s| s.borrow().contains(&id)) {
+            continue;
+        }
+        let pixels = smithay::backend::renderer::utils::with_renderer_surface_state(&surface, |s| s.surface_size())
+            .flatten()
+            .map(|size| size.w.max(0) as u32)
+            .unwrap_or(0);
+        if pixels <= 16 {
             continue;
         }
         SIZED.with(|s| s.borrow_mut().insert(id));
-        if !state.app_id_of(&quad.window).is_some_and(|a| a.starts_with(&prefix)) {
-            continue;
-        }
-        let Some(mut placement) = state.layout.get(&quad.window) else { continue };
+        let Some(mut placement) = state.layout.get(&window) else { continue };
         let default = crate::window::Placement::default().width;
-        placement.width = (default * quad.pixels.0 as f64 / scale / 1280.0).clamp(0.25, 2.4);
-        state.layout.set(&quad.window, placement);
-        quad.placement = placement;
+        placement.width = (default * pixels as f64 / scale / 1280.0).clamp(0.25, 2.4);
+        state.layout.set(&window, placement);
     }
+    local::on_show(on_show);
 }

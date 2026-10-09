@@ -23,8 +23,11 @@ final class RoomWindows {
     static let shared = RoomWindows()
 
     private struct Entry {
-        let info: MacWindowInfo
-        let capture: MacCapture
+        var info: MacWindowInfo
+        /// Capturing only while the window is on show in the room.
+        var capture: MacCapture?
+        /// Scans in a row that did not find it on the Mac.
+        var missed = 0
     }
 
     /// Everything here is touched on this queue only: the compositor's callbacks arrive on its
@@ -56,87 +59,133 @@ final class RoomWindows {
     }
 
     /// The windows in the room, for the menu.
-    var titles: [String] { queue.sync { entries.values.map { $0.info.app + ($0.info.title.isEmpty ? "" : " \u{2014} " + $0.info.title) } } }
+    /// Whether a window is on show in the room.
+    func has(_ windowID: CGWindowID) -> Bool { queue.sync { entries.values.contains { $0.info.windowID == windowID && $0.capture != nil } } }
 
-    func has(_ windowID: CGWindowID) -> Bool { queue.sync { entries.values.contains { $0.info.windowID == windowID } } }
+    // MARK: the Mac's windows, all of them
 
-    // MARK: bringing windows in
-
-    /// Bring one window into the room.
-    func bring(_ info: MacWindowInfo) {
-        queue.async { [self] in
-            guard !entries.values.contains(where: { $0.info.windowID == info.windowID }) else { return }
-            let id = nextID
-            nextID += 1
-            let capture = MacCapture(info)
-            capture.onFrame = { pixels, _ in
-                guard let surface = CVPixelBufferGetIOSurface(pixels)?.takeUnretainedValue() else { return }
-                sp_window_picture(id, Unmanaged.passUnretained(surface).toOpaque())
-            }
-            capture.onEnded = { [weak self] in self?.gone(id) }
-            entries[id] = Entry(info: info, capture: capture)
-            sp_window_open(id, info.bundle, info.title.isEmpty ? info.app : info.title)
-            Task {
-                do { try await capture.start() } catch {
-                    print("windows: could not capture \(info.app): \(error)")
-                    self.gone(id)
-                }
-            }
-            print("windows: \(info.app) \u{201C}\(info.title)\u{201D} is in the room as \(id)")
-        }
-    }
-
-    /// Bring every window an application has, and the ones it opens from now on.
-    func follow(bundle: String) {
-        queue.async { self.following.insert(bundle) }
+    /// **Every window open on this Mac is in the room's list of windows, put away.** They are
+    /// announced as they are found and cost nothing while they are only listed; one is captured
+    /// from the moment it is brought out -- from that list, from the launcher by opening its
+    /// application, or from the app's menu -- until it is put away again.
+    func start() {
         DispatchQueue.main.async { [self] in
-            if scan == nil {
-                let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.rescan() }
-                RunLoop.main.add(t, forMode: .common)
-                scan = t
-            }
+            guard scan == nil else { return }
+            let t = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in self?.rescan() }
+            RunLoop.main.add(t, forMode: .common)
+            scan = t
             rescan()
         }
     }
 
+    /// Announce a window, on this queue. Returns its number in the room.
+    private func announce(_ info: MacWindowInfo, hidden: Bool) -> UInt32 {
+        if let known = entries.first(where: { $0.value.info.windowID == info.windowID })?.key { return known }
+        let id = nextID
+        nextID += 1
+        entries[id] = Entry(info: info, capture: nil)
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        sp_window_open(id, info.bundle, info.title.isEmpty ? info.app : info.app + " \u{2014} " + info.title,
+                       UInt32(info.frame.width * scale), UInt32(info.frame.height * scale), hidden)
+        return id
+    }
+
+    /// Bring one window out, in front of the wearer.
+    func bring(_ info: MacWindowInfo) {
+        queue.async { [self] in
+            let id = announce(info, hidden: true)
+            sp_window_show(id)
+        }
+    }
+
+    /// Bring out every window an application has, and the ones it opens from now on.
+    func follow(bundle: String) {
+        queue.async { [self] in
+            following.insert(bundle)
+            for (id, entry) in entries where entry.info.bundle == bundle { sp_window_show(id) }
+        }
+        start()
+        DispatchQueue.main.async { self.rescan() }
+    }
+
     private func rescan() {
+        guard MacWindows.allowed(ask: false) else { return }
         Task {
             let all = await MacWindows.list()
             queue.async { [self] in
-                for info in all where following.contains(info.bundle) && !entries.values.contains(where: { $0.info.windowID == info.windowID }) {
-                    DispatchQueue.main.async { self.bring(info) }
+                for info in all where !entries.values.contains(where: { $0.info.windowID == info.windowID }) {
+                    // A new window of an application that was opened from the room comes out at
+                    // once; any other waits in the list.
+                    let wanted = following.contains(info.bundle)
+                    let id = announce(info, hidden: true)
+                    if wanted { sp_window_show(id) }
                 }
-                // A window that has closed on the Mac leaves the room; one retitled is retitled.
                 for (id, entry) in entries {
                     if let now = all.first(where: { $0.windowID == entry.info.windowID }) {
+                        entries[id]?.missed = 0
                         if now.title != entry.info.title, !now.title.isEmpty {
-                            entries[id] = Entry(info: now, capture: entry.capture)
-                            sp_window_title(id, now.title)
+                            entries[id]?.info = now
+                            sp_window_title(id, now.app + " \u{2014} " + now.title)
                         }
+                    } else if entry.capture == nil {
+                        // Gone from the Mac's screen, and not one being shown (whose capture
+                        // says when it ends): after a second look, gone from the list.
+                        entries[id]?.missed += 1
+                        if entry.missed >= 1 { gone(id) }
                     }
                 }
             }
         }
     }
 
+    /// The window is on show in the room: capture it.
+    private func shown(_ id: UInt32) {
+        guard var entry = entries[id], entry.capture == nil else { return }
+        let info = entry.info
+        let capture = MacCapture(info)
+        capture.onFrame = { pixels, _ in
+            guard let surface = CVPixelBufferGetIOSurface(pixels)?.takeUnretainedValue() else { return }
+            sp_window_picture(id, Unmanaged.passUnretained(surface).toOpaque())
+        }
+        capture.onEnded = { [weak self] in self?.gone(id) }
+        entry.capture = capture
+        entries[id] = entry
+        Task {
+            do { try await capture.start() } catch {
+                print("windows: could not capture \(info.app): \(error)")
+                self.gone(id)
+            }
+        }
+        print("windows: \(info.app) \u{201C}\(info.title)\u{201D} is on show as \(id)")
+    }
+
+    /// Put away: nothing needs its picture.
+    private func hidden(_ id: UInt32) {
+        guard let capture = entries[id]?.capture else { return }
+        capture.invalidate()
+        entries[id]?.capture = nil
+        at[id] = nil
+        setInside(!at.isEmpty)
+    }
+
     private func gone(_ id: UInt32) {
         queue.async { [self] in
             guard let entry = entries.removeValue(forKey: id) else { return }
-            entry.capture.invalidate()
+            entry.capture?.invalidate()
             at[id] = nil
             setInside(!at.isEmpty)
             down.remove(id)
             if focused == id { focused = 0 }
             sp_window_close(id)
-            print("windows: \(entry.info.app) has left the room")
         }
     }
 
     /// Everything out of the room, as the session ends.
     func clear() {
+        DispatchQueue.main.async { self.scan?.invalidate(); self.scan = nil }
         queue.async { [self] in
             for (id, entry) in entries {
-                entry.capture.invalidate()
+                entry.capture?.invalidate()
                 sp_window_close(id)
             }
             entries.removeAll()
@@ -151,6 +200,8 @@ final class RoomWindows {
         queue.async { [self] in
             guard what == SP_WINDOW_FOCUS || entries[id] != nil else { return }
             switch Int(what) {
+            case SP_WINDOW_SHOWN: shown(id)
+            case SP_WINDOW_HIDDEN: hidden(id)
             case SP_WINDOW_FOCUS: focus(id)
             case SP_WINDOW_MOTION: motion(id, x: a, y: b)
             case SP_WINDOW_LEAVE:
@@ -200,8 +251,8 @@ final class RoomWindows {
     }
 
     private func point(_ id: UInt32) -> CGPoint? {
-        guard let entry = entries[id], let p = at[id] else { return nil }
-        return entry.capture.screenPoint(x: Double(p.x), y: Double(p.y))
+        guard let capture = entries[id]?.capture, let p = at[id] else { return nil }
+        return capture.screenPoint(x: Double(p.x), y: Double(p.y))
     }
 
     private func motion(_ id: UInt32, x: Double, y: Double) {
@@ -269,7 +320,7 @@ final class RoomWindows {
 
     private func resize(_ id: UInt32, width: Double, height: Double) {
         guard let entry = entries[id] else { return }
-        let scale = entry.capture.scale
+        let scale = entry.capture?.scale ?? (NSScreen.main?.backingScaleFactor ?? 2)
         MacWindows.resize(entry.info, toPoints: CGSize(width: width / scale, height: height / scale))
     }
 

@@ -45,6 +45,10 @@ pub enum Asked {
     WindowResize = 16,
     /// Window `id` should close.
     WindowClose = 17,
+    /// Window `id` is on show in the room now: its picture is wanted.
+    WindowShown = 18,
+    /// Window `id` has been put away, and is only in the list: no picture is needed.
+    WindowHidden = 19,
 }
 
 pub type Callback =
@@ -329,13 +333,28 @@ pub extern "C" fn sp_display_scale(scale: f64) {
     }
 }
 
-/// A window of this Mac's is to be in the room. `id` is the app's own and never 0.
+/// A window of this Mac's, for the room: `id` is the app's own and never 0, and the size is its
+/// picture's in pixels. `hidden` lists it without showing it -- it is in the room's list of
+/// windows, to be brought out from there -- and the app hears `WindowShown` when it is.
 ///
 /// # Safety
 /// The strings must be valid C strings or null.
 #[no_mangle]
-pub unsafe extern "C" fn sp_window_open(id: u32, bundle: *const c_char, title: *const c_char) {
-    local::open(id, &text(bundle), &text(title));
+pub unsafe extern "C" fn sp_window_open(
+    id: u32,
+    bundle: *const c_char,
+    title: *const c_char,
+    width: u32,
+    height: u32,
+    hidden: bool,
+) {
+    local::open(id, &text(bundle), &text(title), (width, height), hidden);
+}
+
+/// Bring a listed window out, in front of the wearer.
+#[no_mangle]
+pub extern "C" fn sp_window_show(id: u32) {
+    local::show(id);
 }
 
 /// A window's newest picture, as an `IOSurfaceRef`, which is held for as long as it is shown.

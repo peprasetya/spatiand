@@ -484,6 +484,27 @@ if let at = CommandLine.arguments.firstIndex(of: "--preview") {
     application.run()
 }
 
+if CommandLine.arguments.contains("--selftest-windows") {
+    // The room in a window, and its list of windows opened (the settings, then Windows): every
+    // window open on this Mac should be in it, put away. A picture is saved (~/screenshots).
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    func after(_ seconds: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body) }
+    func press(_ control: Int32, at time: Double) { after(time) { sp_control(control, true); after(0.08) { sp_control(control, false) } } }
+    DispatchQueue.main.async {
+        Room.shared.start(preview: true)
+        press(3, at: 1.5)
+        press(0, at: 4.0)
+        for step in 0..<6 { press(7, at: 4.5 + Double(step) * 0.3) }
+        press(2, at: 6.6)
+        after(7.5) { sp_screenshot() }
+        after(10) { Room.shared.stop(); exit(0) }
+    }
+    application.run()
+}
+
 if let at = CommandLine.arguments.firstIndex(of: "--selftest-click") {
     // --selftest-click [application.app]: the room in a window, an application's window brought
     // in, and the room's pointer -- which starts in the middle of the view, where the window is --

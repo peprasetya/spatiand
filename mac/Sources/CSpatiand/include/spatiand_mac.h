@@ -31,6 +31,8 @@ enum {
     SP_WINDOW_FOCUS = 15,     // the keyboard is window id's now, or nobody's of this Mac's (id 0)
     SP_WINDOW_RESIZE = 16,    // window id should be a by b pixels
     SP_WINDOW_CLOSE = 17,     // window id should close
+    SP_WINDOW_SHOWN = 18,     // window id is on show in the room: its picture is wanted
+    SP_WINDOW_HIDDEN = 19,    // window id has been put away: no picture is needed
 };
 
 typedef void (*sp_asked_fn)(void *user, int32_t what, uint32_t id, double a, double b, double c,
@@ -89,8 +91,12 @@ void sp_paired_host(const char *address, const char *fingerprint);
 // How many pixels a point of this Mac's screen is: 2 on a Retina display.
 void sp_display_scale(double scale);
 
-// A window of this Mac's in the room. id is the app's own and never 0.
-void sp_window_open(uint32_t id, const char *bundle, const char *title);
+// A window of this Mac's, for the room. id is the app's own and never 0; the size is its
+// picture's, in pixels. hidden lists it without showing it: it is in the room's list of windows
+// until it is brought out, from there or with sp_window_show, and SP_WINDOW_SHOWN says when.
+void sp_window_open(uint32_t id, const char *bundle, const char *title, uint32_t width,
+                    uint32_t height, bool hidden);
+void sp_window_show(uint32_t id);
 // Its newest picture, an IOSurfaceRef, held for as long as it is shown.
 void sp_window_picture(uint32_t id, const void *surface);
 void sp_window_title(uint32_t id, const char *title);

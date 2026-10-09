@@ -54,9 +54,12 @@ final class Room {
             // Nothing is taken from the Mac: it is being looked at, not worn.
             sp_pointer_held(true)
             screen.startPreview()
+            if MacWindows.allowed(ask: false) { RoomWindows.shared.start() }
         } else {
             if Settings.captureInput, RoomTap.allowed(ask: true) { RoomTap.shared.hold(true) }
             screen.start()
+            // Every window open on this Mac, in the room's list of windows.
+            if MacWindows.allowed(ask: true) { RoomWindows.shared.start() }
         }
         PadInput.shared.start()
     }
