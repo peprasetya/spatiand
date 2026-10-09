@@ -40,7 +40,7 @@ struct SettingsView: View {
             Toggle("Show the glasses in 3D (applies the next time they are plugged in)", isOn: $glassesStereo)
             Toggle("This Mac's mouse and keyboard steer the glasses when they are on", isOn: $captureInput)
             Text("Ctrl-Option-G gives them back to the Mac at any time.").font(.caption).foregroundColor(.secondary)
-            Text("On the trackpad, in the glasses: three fingers swipe sideways to bring the next window here, up for the menu, down to put it away, and tap to recentre. Four fingers swipe to move the window you point at, and pinch to resize it. Five fingers pinch to gather every window in front of you, and spread to give them room.")
+            Text("On the trackpad, in the glasses: two fingers scroll, and pinching on a window\u{2019}s title bar brings it closer or pushes it away (inside a Mac window the pinch is the application\u{2019}s). Three fingers drag: they are the button held down, so a window is carried by its title bar or resized by its edge. Four fingers swipe up for the launcher and down to back out, and tap to recentre. Control-Option-G gives the mouse back to this Mac\u{2019}s own screen, and takes it again.")
                 .font(.caption).foregroundColor(.secondary)
             let system = SystemGestures.enabled()
             if !system.isEmpty {

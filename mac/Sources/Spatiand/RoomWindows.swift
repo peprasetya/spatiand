@@ -41,6 +41,19 @@ final class RoomWindows {
     private var down: Set<UInt32> = []
     private var lastClick: (Date, CGPoint, Int) = (.distantPast, .zero, 0)
     private let source = CGEventSource(stateID: .hidSystemState)
+    /// Whether the room's pointer is inside one of these windows now. Read from the event tap.
+    private let insideLock = NSLock()
+    private var insideNow = false
+    var pointerInside: Bool {
+        insideLock.lock()
+        defer { insideLock.unlock() }
+        return insideNow
+    }
+    private func setInside(_ on: Bool) {
+        insideLock.lock()
+        insideNow = on
+        insideLock.unlock()
+    }
 
     /// The windows in the room, for the menu.
     var titles: [String] { queue.sync { entries.values.map { $0.info.app + ($0.info.title.isEmpty ? "" : " \u{2014} " + $0.info.title) } } }
@@ -111,6 +124,7 @@ final class RoomWindows {
             guard let entry = entries.removeValue(forKey: id) else { return }
             entry.capture.invalidate()
             at[id] = nil
+            setInside(!at.isEmpty)
             down.remove(id)
             if focused == id { focused = 0 }
             sp_window_close(id)
@@ -139,7 +153,9 @@ final class RoomWindows {
             switch Int(what) {
             case SP_WINDOW_FOCUS: focus(id)
             case SP_WINDOW_MOTION: motion(id, x: a, y: b)
-            case SP_WINDOW_LEAVE: at[id] = nil
+            case SP_WINDOW_LEAVE:
+                at[id] = nil
+                setInside(!at.isEmpty)
             case SP_WINDOW_BUTTON: button(id, code: Int(a), pressed: b != 0)
             case SP_WINDOW_SCROLL: scroll(id, across: a, down: b)
             case SP_WINDOW_KEY: if a >= 0 { key(UInt16(a), down: b != 0) }
@@ -189,7 +205,11 @@ final class RoomWindows {
     }
 
     private func motion(_ id: UInt32, x: Double, y: Double) {
+        // Onto a window it was not on: that window comes to the top, so that what is under the
+        // real pointer is this window and not whichever lay over it on the Mac's own screen.
+        if at[id] == nil, !down.contains(id) { raise(id) }
         at[id] = CGPoint(x: x, y: y)
+        setInside(true)
         guard let p = point(id) else { return }
         // A real pointer, really there: what makes hover, tooltips and the cursor's shape work.
         let type: CGEventType = down.contains(id) ? .leftMouseDragged : .mouseMoved

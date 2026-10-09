@@ -48,6 +48,7 @@ final class Room {
         }, nil)
         RoomTap.shared.onChange = { [weak self] in self?.onChange?() }
         RoomTap.shared.onRepeat = { RoomWindows.shared.repeated($0) }
+        RoomTap.shared.overMacWindow = { RoomWindows.shared.pointerInside }
         screen.onChange = { [weak self] in self?.onChange?() }
         if preview {
             // Nothing is taken from the Mac: it is being looked at, not worn.

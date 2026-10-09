@@ -30,6 +30,18 @@ final class RoomTap {
     var onChange: (() -> Void)?
     /// A key that is being held down and repeating, for a window of this Mac's that has the keys.
     var onRepeat: ((UInt16) -> Void)?
+    /// Whether the room's pointer is inside one of this Mac's own windows, whose real window the
+    /// Mac's real pointer is then over: scrolling and pinching there are left to macOS, which
+    /// delivers them to that window as it would have -- momentum, phases, smart zoom and all.
+    var overMacWindow: () -> Bool = { false }
+
+    // Three fingers and more.
+    private var recognizer = GestureRecognizer()
+    private var threeDown: (since: Double, x: Double, y: Double)?
+    private var dragging = false
+    /// Whether macOS is doing three-finger drag itself (Accessibility's setting): then it sends
+    /// a held button and nothing needs doing here.
+    private lazy var systemDrags = SystemGestures.enabled().contains("three-finger drag")
 
     var isInstalled: Bool { tap != nil }
 
@@ -141,6 +153,8 @@ final class RoomTap {
         case .otherMouseDown: buttons |= 4; sp_pointer(0, 0, buttons, 0, 0)
         case .otherMouseUp: buttons &= ~4; sp_pointer(0, 0, buttons, 0, 0)
         case .scrollWheel:
+            // Over a window of this Mac's own, macOS scrolls it: the real pointer is over it.
+            if overMacWindow() { return pass }
             // In pixels where the device says them (a trackpad, a Magic Mouse), else in lines. A
             // notch of a wheel is fifteen of the compositor's units, and so about fifteen pixels.
             let continuous = event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
@@ -159,12 +173,61 @@ final class RoomTap {
             let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
             if let bit = Self.modifierBit(code) { sp_key(code, event.flags.rawValue & bit != 0) }
         default:
-            // A gesture: two fingers spreading or closing is all that is taken from them here.
-            if type.rawValue == 29, let gesture = NSEvent(cgEvent: event), gesture.type == .magnify {
+            guard type.rawValue == 29, let gesture = NSEvent(cgEvent: event) else { break }
+            if gesture.type == .magnify {
+                // Over a window of this Mac's own, the pinch is that application's.
+                if overMacWindow() { return pass }
                 sp_pinch(Float(1 + gesture.magnification))
+            } else if gesture.type == .gesture {
+                fingers(gesture)
             }
         }
         return nil
+    }
+
+    // MARK: three, four and five fingers
+
+    /// Where the fingers are now.
+    ///
+    /// **Three fingers drag**, as macOS's own three-finger drag does: they are the button held
+    /// down, and moving them moves the pointer -- so a window is carried by its title bar, an
+    /// edge is pulled, text is selected, with nothing pressed. **Four fingers** are the room's:
+    /// up for the launcher, down to back out, a tap to recentre. Five are not used yet.
+    private func fingers(_ event: NSEvent) {
+        let all = event.allTouches().filter { $0.phase != .ended && $0.phase != .cancelled }
+        let touches = all.map { GestureRecognizer.Touch(id: $0.identity.hash, x: Double($0.normalizedPosition.x), y: Double($0.normalizedPosition.y)) }
+        let now = event.timestamp
+        if touches.count == 3, !systemDrags {
+            let x = touches.reduce(0) { $0 + $1.x } / 3, y = touches.reduce(0) { $0 + $1.y } / 3
+            let size = all.first?.deviceSize ?? NSSize(width: 440, height: 300)
+            if let held = threeDown {
+                if !dragging, now - held.since >= 0.06 {
+                    dragging = true
+                    buttons |= 1
+                    sp_pointer(0, 0, buttons, 0, 0)
+                } else if dragging {
+                    // The pad's own size in points, so three fingers carry as far as one does.
+                    sp_pointer(Float((x - held.x) * size.width * 1.6), Float(-(y - held.y) * size.height * 1.6), buttons, 0, 0)
+                }
+                threeDown = (held.since, x, y)
+            } else {
+                threeDown = (now, x, y)
+            }
+        } else if threeDown != nil {
+            threeDown = nil
+            if dragging {
+                dragging = false
+                buttons &= ~1
+                sp_pointer(0, 0, buttons, 0, 0)
+            }
+        }
+        guard let done = recognizer.update(touches, at: now) else { return }
+        switch done {
+        case .swipe(.up, fingers: 4): press(1)
+        case .swipe(.down, fingers: 4): press(3)
+        case .tap(fingers: 4): sp_recentre()
+        default: break
+        }
     }
 
     /// The device-dependent bit of the flags that says one particular modifier key is down.

@@ -1216,9 +1216,16 @@ pub fn run(
                             .find(|w| runtime.state.layout.is_focused(w))
                             .cloned()
                     });
+                // On the title bar the window is what is taken hold of, and spreading the fingers
+                // brings it closer; anywhere else on it, it is what it shows that is made bigger.
+                let on_title = right_aim.as_ref().is_some_and(|a| a.on_title);
                 if let Some(window) = target {
                     if let Some(mut placement) = runtime.state.layout.get(&window) {
-                        placement.width = (placement.width * pinch as f64).clamp(0.3, 4.0);
+                        if on_title {
+                            placement.radius = (placement.radius / pinch as f64).clamp(0.8, 8.0);
+                        } else {
+                            placement.width = (placement.width * pinch as f64).clamp(0.25, 4.0);
+                        }
                         runtime.state.layout.set(&window, placement);
                     }
                 }
