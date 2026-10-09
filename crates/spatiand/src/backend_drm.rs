@@ -1620,6 +1620,14 @@ pub fn run(
                         }
                         // The shell has already opened the page; `remotes.tick` keeps it filled.
                         HudAction::OpenHosts | HudAction::OpenPinned => {}
+                        HudAction::OpenAudio => {
+                            #[cfg(target_os = "macos")]
+                            crate::mac::audio_devices_wanted();
+                        }
+                        HudAction::ChooseAudio(_index) => {
+                            #[cfg(target_os = "macos")]
+                            crate::mac::audio_device_chosen(_index);
+                        }
                         // The shell has opened the page; ask BlueZ now rather than at the tick.
                         HudAction::OpenBluetooth => bluetooth.refresh(),
                         HudAction::ReturnToDesktop => leaving = true,

@@ -73,6 +73,10 @@ pub enum HudAction {
     /// Open the pinned windows' own list: where they sit and how big. The list stays open while
     /// either is changed, so a corner can be tried and tried again.
     OpenPinned,
+    /// Open the sound devices' list: where sound comes out and which microphone listens.
+    OpenAudio,
+    /// Use the device on this row of that list.
+    ChooseAudio(usize),
     /// Move pinned windows to the next corner of the view.
     PipCorner,
     /// Switch pinned windows between their two sizes.
@@ -141,6 +145,25 @@ pub struct HudItem {
     /// under mild stress, and a bare verb is not enough to commit to pressing A.
     pub detail: &'static str,
     pub action: HudAction,
+}
+
+const NO_AUDIO: HudItem = HudItem {
+    label: "Looking for sound devices",
+    detail: "None found yet",
+    action: HudAction::Dismiss,
+};
+
+/// A row's words kept for good, since a row holds borrowed ones: each different text once.
+fn keep(text: String) -> &'static str {
+    use std::sync::{Mutex, OnceLock};
+    static KEPT: OnceLock<Mutex<std::collections::HashSet<&'static str>>> = OnceLock::new();
+    let mut kept = KEPT.get_or_init(Default::default).lock().unwrap();
+    if let Some(found) = kept.get(text.as_str()) {
+        return found;
+    }
+    let leaked: &'static str = Box::leak(text.into_boxed_str());
+    kept.insert(leaked);
+    leaked
 }
 
 /// The recording row while nothing is being recorded.
@@ -332,6 +355,44 @@ impl Hud {
 
     pub fn cursor(&self) -> usize {
         self.cursor
+    }
+
+    /// The sound devices' list, empty until the compositor says what there is.
+    pub fn audio() -> Self {
+        Self { items: vec![NO_AUDIO], cursor: 0 }
+    }
+
+    /// Offer the sound devices' list in the settings, after the pinned windows' row. For a
+    /// platform that can say what devices there are and switch between them.
+    pub fn offer_audio(&mut self) {
+        if self.items.iter().any(|i| i.action == HudAction::OpenAudio) {
+            return;
+        }
+        let at = self.items.iter().position(|i| i.action == HudAction::OpenPinned).map_or(self.items.len(), |i| i + 1);
+        self.items.insert(
+            at,
+            HudItem {
+                label: "Sound devices",
+                detail: "Where sound comes out, and which microphone listens",
+                action: HudAction::OpenAudio,
+            },
+        );
+    }
+
+    /// What the sound devices' list shows: each device's name, whether it is a microphone, and
+    /// whether it is the one in use. Outputs first, as given.
+    pub fn set_audio(&mut self, devices: &[(String, bool, bool)]) {
+        let items: Vec<HudItem> = devices
+            .iter()
+            .enumerate()
+            .map(|(index, (name, input, current))| HudItem {
+                label: keep(format!("{}: {name}{}", if *input { "Microphone" } else { "Output" }, if *current { "  \u{2713}" } else { "" })),
+                detail: if *current { "In use now" } else { "Press A to use this one" },
+                action: HudAction::ChooseAudio(index),
+            })
+            .collect();
+        self.items = if items.is_empty() { vec![NO_AUDIO] } else { items };
+        self.cursor = self.cursor.min(self.items.len() - 1);
     }
 
     pub fn focused(&self) -> &HudItem {

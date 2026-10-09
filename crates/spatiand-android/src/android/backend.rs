@@ -210,6 +210,9 @@ pub fn run(
     let calibrated = spatiand_track::config::load_axes().is_some() || cfg!(target_os = "macos");
     let mut shell = Shell::new(shell_apps, panels, calibrated);
     shell.set_local_name(&crate::system::machine_name());
+    // On a Mac the menu bar that chooses where sound comes out is out of sight in the glasses.
+    #[cfg(target_os = "macos")]
+    shell.offer_audio();
     // Where windows pinned to the view go and how big: the wearer's, from last time.
     crate::pip::adopt(&mut runtime.state, &prefs, &mut shell);
     let mut environments = Environments::discover();
@@ -348,6 +351,10 @@ pub fn run(
 
             // --- input ---
             controller.poll(tracker.orientation());
+            #[cfg(target_os = "macos")]
+            if let Some(devices) = crate::mac::audio_devices_changed() {
+                shell.set_audio(&devices);
+            }
             // **A wheel, or two fingers on a trackpad, moves through an open menu** a row at a
             // time, as it scrolls a page anywhere else: the pointer alone reaches only the rows
             // in view.
@@ -791,6 +798,14 @@ pub fn run(
                             log::info!("keyboard {}", if keyboard.open { "shown" } else { "hidden" });
                         }
                         HudAction::OpenHosts | HudAction::OpenPinned => {}
+                        HudAction::OpenAudio => {
+                            #[cfg(target_os = "macos")]
+                            crate::mac::audio_devices_wanted();
+                        }
+                        HudAction::ChooseAudio(_index) => {
+                            #[cfg(target_os = "macos")]
+                            crate::mac::audio_device_chosen(_index);
+                        }
                         HudAction::OpenBluetooth => {}
                         HudAction::ReturnToDesktop => super::return_to_desktop(),
                         HudAction::OpenSystemSettings(panel) => super::system_settings(panel),

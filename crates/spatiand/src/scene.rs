@@ -2563,6 +2563,7 @@ impl Scene {
             | Mode::Switcher
             | Mode::Hosts
             | Mode::Bluetooth
+            | Mode::Audio
             | Mode::Pinned => {
                 self.draw_card(gl, eye, fov)
             }

@@ -14,6 +14,7 @@
 //  One session a process: when the glasses are unplugged the app starts over (see `main.swift`).
 
 import AppKit
+import CoreAudio
 import AVFoundation
 import CSpatiand
 
@@ -116,6 +117,10 @@ final class Room {
             }
         case SP_NOTICE_PRESSED:
             DispatchQueue.main.async { Notices.shared.pressed() }
+        case SP_AUDIO_LIST:
+            DispatchQueue.main.async { RoomSoundDevices.say() }
+        case SP_AUDIO_CHOOSE:
+            DispatchQueue.main.async { RoomSoundDevices.use(AudioDeviceID(id), input: a == 1) }
         case SP_RECORD_START:
             DispatchQueue.main.async { if #available(macOS 15.0, *) { RoomRecorder.shared.start(screen: self.screen) } else { print("recording: needs macOS 15") } }
         case SP_RECORD_STOP:

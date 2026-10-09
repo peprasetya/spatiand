@@ -55,6 +55,10 @@ pub enum Asked {
     RecordStart = 20,
     /// And stop, and save it.
     RecordStop = 21,
+    /// Say what sound devices there are, with `sp_audio_devices_begin` and the rest.
+    AudioList = 22,
+    /// Use sound device `id`: as the microphone if `a` is 1, else for sound to come out of.
+    AudioChoose = 23,
 }
 
 pub type Callback =
@@ -346,6 +350,30 @@ pub unsafe extern "C" fn sp_paired_host(address: *const c_char, fingerprint: *co
 #[no_mangle]
 pub extern "C" fn sp_microphone_allowed(allowed: bool) {
     super::MICROPHONE_ALLOWED.store(allowed, std::sync::atomic::Ordering::Relaxed);
+}
+
+thread_local! {
+    static AUDIO_BEING_SAID: std::cell::RefCell<Vec<super::AudioDevice>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The sound devices, said from one thread: begin, each device, end.
+#[no_mangle]
+pub extern "C" fn sp_audio_devices_begin() {
+    AUDIO_BEING_SAID.with(|list| list.borrow_mut().clear());
+}
+
+/// # Safety
+/// `name` must be a valid C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn sp_audio_device(id: u32, name: *const c_char, input: bool, current: bool) {
+    let name = text(name);
+    AUDIO_BEING_SAID.with(|list| list.borrow_mut().push((id, name, input, current)));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_audio_devices_end() {
+    let said = AUDIO_BEING_SAID.with(|list| std::mem::take(&mut *list.borrow_mut()));
+    *super::AUDIO_DEVICES.lock().unwrap() = (said, true);
 }
 
 /// How many pixels a point of this Mac's screen is: 2 on a Retina display.

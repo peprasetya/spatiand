@@ -414,3 +414,34 @@ pub fn shape_while_resizing(
         (now.wanted.0.max(1), now.wanted.1.max(1))
     })
 }
+
+// --- the sound devices' list in the settings ---
+
+/// One of this Mac's sound devices: its number, its name, whether it is a microphone, and
+/// whether it is the one in use.
+pub type AudioDevice = (u32, String, bool, bool);
+
+/// What the app last said there is, and whether the settings have been told since.
+pub static AUDIO_DEVICES: Mutex<(Vec<AudioDevice>, bool)> = Mutex::new((Vec::new(), false));
+
+/// The settings' list has been opened: ask the app what there is.
+pub fn audio_devices_wanted() {
+    ffi::tell(ffi::Asked::AudioList, "");
+}
+
+/// The device on this row of the list is to be used.
+pub fn audio_device_chosen(index: usize) {
+    let chosen = AUDIO_DEVICES.lock().unwrap().0.get(index).map(|d| (d.0, d.2));
+    if let Some((id, input)) = chosen {
+        ffi::tell_window(ffi::Asked::AudioChoose, id, if input { 1.0 } else { 0.0 }, 0.0, 0.0);
+    }
+}
+
+/// The list as the settings show it, if it has changed since this was last asked.
+pub fn audio_devices_changed() -> Option<Vec<(String, bool, bool)>> {
+    let mut devices = AUDIO_DEVICES.lock().unwrap();
+    if !std::mem::take(&mut devices.1) {
+        return None;
+    }
+    Some(devices.0.iter().map(|(_, name, input, current)| (name.clone(), *input, *current)).collect())
+}

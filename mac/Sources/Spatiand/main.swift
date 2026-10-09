@@ -716,6 +716,28 @@ if let at = CommandLine.arguments.firstIndex(of: "--trace-pointer") {
     application.run()
 }
 
+if CommandLine.arguments.contains("--selftest-sound-page") {
+    // The room in a window, the settings opened and the sound devices' list chosen from them:
+    // a picture is saved (~/screenshots). Nothing is switched.
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    func after(_ seconds: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body) }
+    func press(_ control: Int32, at time: Double) { after(time) { sp_control(control, true); after(0.08) { sp_control(control, false) } } }
+    DispatchQueue.main.async {
+        Room.shared.start(preview: true)
+        press(3, at: 1.5)
+        press(0, at: 4.0)
+        for step in 0..<7 { press(7, at: 4.5 + Double(step) * 0.3) }
+        after(7.3) { sp_screenshot() }
+        press(2, at: 8.2)
+        after(10) { sp_screenshot() }
+        after(12.5) { Room.shared.stop(); exit(0) }
+    }
+    application.run()
+}
+
 if CommandLine.arguments.contains("--selftest-record") {
     // The room in a window, filmed for four seconds: says where the film is and how big.
     setenv("SPATIAND_HMD", "null", 1)

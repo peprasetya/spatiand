@@ -90,6 +90,8 @@ pub enum Mode {
     Bluetooth,
     /// Where pinned windows sit and how big. Reached from the HUD; changing either leaves it open.
     Pinned,
+    /// Sound devices: where sound comes out and which microphone listens. From the HUD.
+    Audio,
 }
 
 /// A menu control, passed through to the controller layout editor.
@@ -168,6 +170,7 @@ pub struct Shell {
     mode: Mode,
     hud: Hud,
     pinned: Hud,
+    audio: Hud,
     launcher: Launcher,
     environments: EnvironmentPicker,
     files: FileBrowser,
@@ -184,6 +187,7 @@ impl Shell {
             mode: Mode::World,
             hud: Hud::with_calibration(panels, calibrated),
             pinned: Hud::pinned(),
+            audio: Hud::audio(),
             launcher: Launcher::new(apps),
             environments: EnvironmentPicker::default(),
             files: FileBrowser::default(),
@@ -211,6 +215,21 @@ impl Shell {
     pub fn set_pip(&mut self, corner: usize, large: bool) {
         self.hud.set_pip(corner, large);
         self.pinned.set_pip(corner, large);
+    }
+
+    /// The sound devices' list.
+    pub fn audio(&self) -> &Hud {
+        &self.audio
+    }
+
+    /// Offer the sound devices' list in the settings; see [`Hud::offer_audio`].
+    pub fn offer_audio(&mut self) {
+        self.hud.offer_audio();
+    }
+
+    /// Say what sound devices there are; see [`Hud::set_audio`].
+    pub fn set_audio(&mut self, devices: &[(String, bool, bool)]) {
+        self.audio.set_audio(devices);
     }
 
     /// The pinned windows' list.
@@ -385,6 +404,7 @@ impl Shell {
             Mode::Hosts => self.hosts.select(index),
             Mode::Bluetooth => self.bluetooth.select(index),
             Mode::Pinned => self.pinned.select(index),
+            Mode::Audio => self.audio.select(index),
             Mode::Controller | Mode::World => false,
         }
     }
@@ -462,7 +482,7 @@ impl Shell {
                     (true, action) => hosts_event(action),
                     (false, _) => self.enter(Mode::Hud),
                 },
-                Mode::Bluetooth | Mode::Pinned => self.enter(Mode::Hud),
+                Mode::Bluetooth | Mode::Pinned | Mode::Audio => self.enter(Mode::Hud),
                 _ => self.enter(Mode::World),
             },
             Intent::Navigate(direction) => {
@@ -495,6 +515,7 @@ impl Shell {
                     Mode::Hosts => self.hosts.step(direction),
                     Mode::Bluetooth => self.bluetooth.step(direction),
                     Mode::Pinned => self.pinned.step(direction),
+                    Mode::Audio => self.audio.step(direction),
                     Mode::Controller => false,
                     // In the world the D-pad will move focus between windows; until windows
                     // are drawn there is nothing to move between.
@@ -525,6 +546,7 @@ impl Shell {
                             self.mode = Mode::Bluetooth;
                         }
                         HudAction::OpenPinned => self.mode = Mode::Pinned,
+                        HudAction::OpenAudio => self.mode = Mode::Audio,
                         // Everything else takes you back to the world, settings panels
                         // included: staying on the menu after recentring hides the thing you
                         // just changed, and staying on it after opening Wi-Fi leaves a menu
@@ -537,6 +559,8 @@ impl Shell {
                 }
                 // Both rows are settings that step: the list stays up, the row says what it is now.
                 Mode::Pinned => Some(ShellEvent::Hud(self.pinned.activate())),
+                // The list stays up, and says which is in use once the choice has taken.
+                Mode::Audio => Some(ShellEvent::Hud(self.audio.activate())),
                 Mode::Environment => match self.environments.activate() {
                     EnvironmentAction::Choose(choice) => {
                         self.mode = Mode::World;

@@ -112,6 +112,16 @@ fn card(shell: &Shell) -> Option<MenuModel> {
                 footer: FOOTER_SELECT.into(),
             })
         }
+        Mode::Audio => {
+            let list = shell.audio();
+            Some(MenuModel {
+                title: "Sound devices".into(),
+                rows: list.items().iter().map(|i| MenuRow::plain(i.label)).collect(),
+                cursor: list.cursor(),
+                detail: list.focused().detail.into(),
+                footer: "A use    B back".into(),
+            })
+        }
         Mode::Pinned => {
             let list = shell.pinned();
             Some(MenuModel {

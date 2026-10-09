@@ -35,7 +35,9 @@ enum {
     SP_WINDOW_SHOWN = 18,     // window id is on show in the room: its picture is wanted
     SP_WINDOW_HIDDEN = 19,
     SP_RECORD_START = 20,     // film what the glasses show, from now
-    SP_RECORD_STOP = 21,      // and stop, and save it    // window id has been put away: no picture is needed
+    SP_RECORD_STOP = 21,      // and stop, and save it
+    SP_AUDIO_LIST = 22,       // say what sound devices there are (sp_audio_devices_begin...)
+    SP_AUDIO_CHOOSE = 23,     // use device id: the microphone if a is 1, else the output    // window id has been put away: no picture is needed
 };
 
 typedef void (*sp_asked_fn)(void *user, int32_t what, uint32_t id, double a, double b, double c,
@@ -94,6 +96,10 @@ void sp_paired_host(const char *address, const char *fingerprint);
 // How many pixels a point of this Mac's screen is: 2 on a Retina display.
 /// Where the room's pointer is, each from -1 to 1 across the view. For tracing.
 void sp_pointer_where(float *x, float *y);
+// This Mac's sound devices, for the room's settings: begin, each one, end, from one thread.
+void sp_audio_devices_begin(void);
+void sp_audio_device(uint32_t id, const char *name, bool input, bool current);
+void sp_audio_devices_end(void);
 void sp_display_scale(double scale);
 /// Whether macOS has allowed the microphone: it is not opened for a host until it has.
 void sp_microphone_allowed(bool allowed);
