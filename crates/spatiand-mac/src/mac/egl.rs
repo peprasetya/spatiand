@@ -252,7 +252,11 @@ pub fn pace() {
         // Shown on the display's own refresh, never part-way down it: with an interval of 0 the
         // layer is not synchronised, and a turning head sees each picture torn across the last.
         // The wait below only decides when a frame is started.
-        let interval = if std::env::var("SPATIAND_SWAP").as_deref() == Ok("0") { 0 } else { 1 };
+        // But not by the swap's own interval: asked for 1, ANGLE showed every other refresh --
+        // thirty frames a second, measured, and a pointer that stood and leapt. The interval
+        // stays 0 and the app turns the layer's own synchronising back on (see `GlassesScreen`),
+        // which costs nothing; this loop's wait for the display's tick is the only clock.
+        let interval = if std::env::var("SPATIAND_SWAP").as_deref() == Ok("1") { 1 } else { 0 };
         unsafe { egl::SwapInterval(egl::GetCurrentDisplay(), interval) };
         clock.frames.store(0, std::sync::atomic::Ordering::SeqCst);
     }
@@ -268,7 +272,7 @@ pub fn pace() {
     }
     // One clock, not two: the swap waits for the display's refresh, and waiting here for the
     // same refresh as well showed every other one -- thirty frames a second in the glasses.
-    if std::env::var("SPATIAND_SWAP").as_deref() != Ok("0") {
+    if std::env::var("SPATIAND_SWAP").as_deref() == Ok("1") {
         return;
     }
     if clock.link.lock().unwrap().is_none() {

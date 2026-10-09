@@ -92,6 +92,8 @@ void sp_apps_end(void);
 void sp_paired_host(const char *address, const char *fingerprint);
 
 // How many pixels a point of this Mac's screen is: 2 on a Retina display.
+/// Where the room's pointer is, each from -1 to 1 across the view. For tracing.
+void sp_pointer_where(float *x, float *y);
 void sp_display_scale(double scale);
 /// Whether macOS has allowed the microphone: it is not opened for a host until it has.
 void sp_microphone_allowed(bool allowed);

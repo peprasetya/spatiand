@@ -67,6 +67,9 @@ pub fn set_speed(speed: f32) {
 }
 
 /// How long the pointer may be still before it goes.
+/// Where the pointer is on its pad as of the last frame, for tests that trace it.
+pub static PAD_NOW: std::sync::Mutex<(f32, f32)> = std::sync::Mutex::new((0.0, 0.0));
+
 const HIDE_AFTER: std::time::Duration = std::time::Duration::from_secs(4);
 
 pub struct Controller {
@@ -158,6 +161,7 @@ impl Controller {
         // **The pointer goes after a few seconds still**, as the Mac's own does while typing,
         // and comes back at the first movement. A thumb leaving the Deck's pad is the same
         // thing: nothing touched, no laser.
+        *PAD_NOW.lock().unwrap() = self.pad;
         let shown = pointer_held && self.stirred.elapsed() < HIDE_AFTER;
         let right_pad = Pad {
             x: self.pad.0,

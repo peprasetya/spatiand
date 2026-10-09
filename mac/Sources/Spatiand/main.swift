@@ -656,6 +656,66 @@ if let at = CommandLine.arguments.firstIndex(of: "--click-target") {
     PointerTest.target(file: CommandLine.arguments.dropFirst(at + 1).first ?? NSTemporaryDirectory() + "spatiand-clicks.txt")
 }
 if CommandLine.arguments.contains("--selftest-pointer") { PointerTest.run() }
+if let at = CommandLine.arguments.firstIndex(of: "--trace-pointer") {
+    // --trace-pointer [seconds]: the room in a window with this Mac's mouse the room's, and a
+    // record kept of every movement of the mouse beside where the room's pointer went, for
+    // finding where the two part company. Move the mouse about; Ctrl-Option-G gives it back.
+    let seconds = Double(CommandLine.arguments.dropFirst(at + 1).first ?? "") ?? 30
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    let lock = NSLock()
+    var lines: [String] = []
+    let started = Date()
+    func note(_ what: String) {
+        lock.lock()
+        lines.append(String(format: "%.4f,", Date().timeIntervalSince(started)) + what)
+        lock.unlock()
+    }
+    DispatchQueue.main.async {
+        Room.shared.start(preview: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { sp_control(3, true); DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { sp_control(3, false) } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            // A window of this Mac's in the room, to point at: the click target, resizable.
+            let helper = Process()
+            helper.executableURL = Bundle.main.executableURL
+            helper.arguments = ["--click-target", NSTemporaryDirectory() + "spatiand-clicks.txt"]
+            try? helper.run()
+            atexit_b { helper.terminate() }
+            var target: MacWindowInfo?
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                Task {
+                    target = await MacWindows.list().first { $0.title == PointerTest.title }
+                    if let target { RoomWindows.shared.bring(target) }
+                }
+            }
+            RoomTap.shared.install()
+            RoomTap.shared.trace = { note("hand," + $0) }
+            RoomTap.shared.hold(true)
+            let sample = Timer(timeInterval: 0.005, repeats: true) { _ in
+                var x: Float = 0, y: Float = 0
+                sp_pointer_where(&x, &y)
+                let inside = target.flatMap { RoomWindows.shared.pointerIn($0.windowID) }
+                note("room,\(x),\(y),\(inside.map { "\($0.x),\($0.y)" } ?? ",")")
+            }
+            RunLoop.main.add(sample, forMode: .common)
+            print("trace: the mouse is the room's for \(Int(seconds)) s; move it about")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3 + seconds) {
+            RoomTap.shared.hold(false)
+            let file = NSTemporaryDirectory() + "spatiand-trace.csv"
+            lock.lock()
+            try? lines.joined(separator: "\n").write(toFile: file, atomically: true, encoding: .utf8)
+            lock.unlock()
+            print("trace: \(lines.count) lines in \(file)")
+            Room.shared.stop()
+            exit(0)
+        }
+    }
+    application.run()
+}
+
 if CommandLine.arguments.contains("--selftest-record") {
     // The room in a window, filmed for four seconds: says where the film is and how big.
     setenv("SPATIAND_HMD", "null", 1)

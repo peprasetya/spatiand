@@ -85,6 +85,9 @@ final class RoomTap {
         return true
     }
 
+    /// While set, told of every movement of the mouse the room takes: for tracing.
+    var trace: ((String) -> Void)?
+
     var isInstalled: Bool { tap != nil }
 
     /// Whether events may be tapped and posted, asking if they may not.
@@ -188,6 +191,7 @@ final class RoomTap {
         switch type {
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
             let dx = event.getDoubleValueField(.mouseEventDeltaX), dy = event.getDoubleValueField(.mouseEventDeltaY)
+            trace?("\(type.rawValue),\(dx),\(dy),\(event.location.x),\(event.location.y)")
             let (tx, ty) = withoutJump(dx, dy)
             sp_pointer(Float(tx), Float(ty), buttons, 0, 0)
         case .leftMouseDown: buttons |= 1; sp_pointer(0, 0, buttons, 0, 0)

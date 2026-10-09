@@ -51,6 +51,28 @@ final class GlassesScreen {
         return ids.prefix(Int(count)).first { CGDisplayVendorNumber($0) == 0x3647 && CGDisplayModelNumber($0) == 0x3132 }
     }
 
+    /// ANGLE's Metal layer, put inside ours when the compositor first draws, shows each frame
+    /// the moment it is given one -- across the middle of the last, if that is where the
+    /// display has got to. Told to wait for the refresh instead, here, since the compositor's
+    /// way of asking for that halved the frame rate.
+    private var syncTimer: Timer?
+    private func keepInStep(_ layer: CALayer) {
+        syncTimer?.invalidate()
+        var looks = 0
+        let t = Timer(timeInterval: 0.25, repeats: true) { [weak layer] timer in
+            looks += 1
+            for case let metal as CAMetalLayer in layer?.sublayers ?? [] where !metal.displaySyncEnabled {
+                metal.displaySyncEnabled = true
+                print("glasses: frames are shown on the display's refresh")
+            }
+            // It is made anew when the size changes; looked at for as long as the window lives.
+            if layer == nil { timer.invalidate() }
+            _ = looks
+        }
+        RunLoop.main.add(t, forMode: .common)
+        syncTimer = t
+    }
+
     private func say(_ text: String) {
         status = text
         onChange?()
@@ -82,6 +104,7 @@ final class GlassesScreen {
         w.orderFrontRegardless()
         window = w
         sp_glasses(Unmanaged.passUnretained(layer).toOpaque(), Int32(frame.width * 2), Int32(frame.height * 2), 0)
+        keepInStep(layer)
         say("In a window on this Mac")
         if ProcessInfo.processInfo.environment["SPATIAND_LAYER_DEBUG"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
@@ -180,6 +203,7 @@ final class GlassesScreen {
         let pixels = (Int32(frame.width * scale), Int32(frame.height * scale))
         pixelWidth = CGFloat(pixels.0)
         sp_glasses(Unmanaged.passUnretained(layer).toOpaque(), pixels.0, pixels.1, id)
+        keepInStep(layer)
         let twoEyes = pixels.0 >= pixels.1 * 3
         say(twoEyes ? "In the glasses, in 3D" : "In the glasses, one eye")
         print("glasses: a window of \(pixels.0)x\(pixels.1) on display \(id), \(twoEyes ? "two eyes" : "one eye")")

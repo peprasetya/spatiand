@@ -195,6 +195,17 @@ pub extern "C" fn sp_pointer_held(held: bool) {
     }
 }
 
+/// Where the room's pointer is, across and up, each from -1 to 1 over the view. For tracing.
+///
+/// # Safety
+/// `x` and `y` must be valid to write.
+#[no_mangle]
+pub unsafe extern "C" fn sp_pointer_where(x: *mut f32, y: *mut f32) {
+    let pad = *controller::PAD_NOW.lock().unwrap();
+    *x = pad.0;
+    *y = pad.1;
+}
+
 #[no_mangle]
 pub extern "C" fn sp_pointer_speed(speed: f32) {
     controller::set_speed(speed);
