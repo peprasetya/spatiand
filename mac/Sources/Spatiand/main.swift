@@ -588,6 +588,67 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-click") {
     application.run()
 }
 
+if CommandLine.arguments.contains("--selftest-resize") {
+    // The room in a window, the Dictionary brought in, and its window asked to be a new size
+    // sixty times a second for two seconds, as a drag by its corner does. Says how long the real
+    // window took to arrive at the last size asked for, and the longest the main thread -- where
+    // the mouse comes in -- was kept waiting meanwhile.
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    func after(_ seconds: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body) }
+    var worstStall = 0.0
+    var lastBeat = Date()
+    let beat = Timer(timeInterval: 0.01, repeats: true) { _ in
+        let now = Date()
+        worstStall = max(worstStall, now.timeIntervalSince(lastBeat))
+        lastBeat = now
+    }
+    DispatchQueue.main.async {
+        Room.shared.start(preview: true)
+        after(1.5) { sp_control(3, true); after(0.1) { sp_control(3, false) } }
+        after(2) { Room.shared.launch(path: "/System/Applications/Dictionary.app") }
+        after(8) {
+            guard let window = RoomWindows.shared.shownWindow(bundle: "com.apple.Dictionary") else {
+                print("resize: FAILED, the Dictionary's window never came into the room")
+                Room.shared.stop(); exit(1)
+            }
+            let scale = Double(NSScreen.main?.backingScaleFactor ?? 2)
+            let before = MacWindows.currentFrame(window.info)?.size ?? .zero
+            print("resize: the window is \(Int(before.width))x\(Int(before.height)) points")
+            RunLoop.main.add(beat, forMode: .common)
+            lastBeat = Date()
+            worstStall = 0
+            let started = Date()
+            let last = CGSize(width: before.width + 120, height: before.height + 80)
+            for step in 1...120 {
+                after(Double(step) / 60) {
+                    let w = Double(before.width) + Double(step), h = Double(before.height) + Double(step) * 2 / 3
+                    RoomWindows.shared.asked(Int32(SP_WINDOW_RESIZE), id: window.id, a: w * scale, b: h * scale, c: 0)
+                }
+            }
+            func settled(_ tries: Int) {
+                let now = MacWindows.currentFrame(window.info)?.size ?? .zero
+                let took = Date().timeIntervalSince(started)
+                if abs(now.width - last.width) <= 2, abs(now.height - last.height) <= 2 {
+                    print(String(format: "resize: PASSED, at %dx%d %.2f s after the drag began (the drag took 2.00); the main thread waited at most %.0f ms", Int(now.width), Int(now.height), took, worstStall * 1000))
+                } else if tries > 0 {
+                    after(0.1) { settled(tries - 1) }
+                    return
+                } else {
+                    print(String(format: "resize: FAILED, still %dx%d after %.1f s, wanted %dx%d; the main thread waited at most %.0f ms", Int(now.width), Int(now.height), took, Int(last.width), Int(last.height), worstStall * 1000))
+                }
+                MacWindows.resize(window.info, toPoints: before)
+                NSRunningApplication(processIdentifier: window.info.pid)?.terminate()
+                after(1) { Room.shared.stop(); exit(0) }
+            }
+            after(2.05) { settled(60) }
+        }
+    }
+    application.run()
+}
+
 if CommandLine.arguments.contains("--selftest-local") {
     exit(LocalTests.run())
 }

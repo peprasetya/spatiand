@@ -392,6 +392,8 @@ pub struct Scene {
     reticle_left: u32,
     /// Rounded glass, for window frames and title bars.
     glass: u32,
+    /// The same with barely a corner, for the hairline round a window pinned to the glass.
+    glass_pinned: u32,
 
     /// One per app in the launcher, in the same order.
     app_labels: Vec<Texture>,
@@ -541,6 +543,7 @@ impl Scene {
             speaker_glyph,
             speaker_off_glyph,
             glass,
+            glass_pinned,
         ) = renderer
             .with_context(|gl| unsafe {
                 (
@@ -586,6 +589,12 @@ impl Scene {
                         let g = glass_panel_image(256, 96, 14.0);
                         upload_raw(gl, 256, 96, &g, false)
                     },
+                    {
+                        // A pinned window's border is a hairline, and a corner rounder than the
+                        // border is thick leaves the picture's square corner outside the glass.
+                        let g = glass_panel_image(256, 96, 4.0);
+                        upload_raw(gl, 256, 96, &g, false)
+                    },
                 )
             })
             .map_err(|e| format!("no GL context: {e}"))?;
@@ -610,6 +619,7 @@ impl Scene {
             speaker_glyph,
             speaker_off_glyph,
             glass,
+            glass_pinned,
             app_labels: Vec::new(),
             launcher_caption: None,
             launcher_caption_text: String::new(),
@@ -1462,7 +1472,7 @@ impl Scene {
             return Ok(());
         }
         self.status_text = wanted.to_string();
-        let image = text.render(wanted, px_per_degree * 0.8, 1400, [214, 226, 248, 255]);
+        let image = text.render(wanted, px_per_degree * 0.8, 1400, [226, 234, 250, 255]);
         let old = self.status.take();
         self.status = Some(
             renderer
@@ -1496,7 +1506,7 @@ impl Scene {
         // than the same width of bigger letters. The letters are small on purpose -- it is
         // looked at, never pointed at.
         let distance = 1.5f32;
-        let height_deg = 1.3f32;
+        let height_deg = 0.65f32;
         let height = 2.0 * distance * (height_deg / 2.0).to_radians().tan();
         let width = height * bar.aspect.max(0.01);
         let half_width_deg = (width / 2.0 / distance).atan().to_degrees();
@@ -1517,15 +1527,20 @@ impl Scene {
         let centre = head * Vec3::new(cfg.neck_forward_m as f32, 0.0, cfg.neck_up_m as f32)
             + direction * Vec3::X * distance;
 
-        // A plate behind it, or the text is unreadable over a bright environment.
-        let backdrop = self.panel_model(centre, direction, width * 1.12, height * 1.5);
-        self.quads.draw(
-            gl,
-            self.white,
-            &(eye.view_projection() * backdrop),
-            [0.02, 0.03, 0.06, 0.55],
-            (0.0, 1.0),
-        );
+        // A capsule of dark glass behind it, or the text is unreadable over a bright
+        // environment: a lit rim, then the body, each with ends as round as it is tall.
+        let (plate_w, plate_h) = (width + height * 1.5, height * 1.7);
+        let px = 64.0 / plate_h;
+        for (grow, tint) in [(1.10f32, [0.75, 0.85, 1.0, 0.22]), (1.0, [0.03, 0.05, 0.09, 0.58])] {
+            let (w, h) = (plate_w + plate_h * (grow - 1.0), plate_h * grow);
+            self.rounded.draw(
+                gl,
+                &(eye.view_projection() * self.panel_model(centre, direction, w, h)),
+                tint,
+                (w * px, h * px),
+                h * px * 0.5,
+            );
+        }
         let model = self.panel_model(centre, direction, width, height);
         self.quads.draw(
             gl,
@@ -1587,7 +1602,7 @@ impl Scene {
         // Under the status bar, by the same right edge: the bar is centred ten degrees up and
         // about two tall with its plate.
         let right_edge_deg = 17.0f32;
-        let top_deg = 8.3f32;
+        let top_deg = 9.3f32;
         let yaw = -(right_edge_deg - 0.5 - width_deg / 2.0).to_radians();
         let pitch = (top_deg - 0.4 - height_deg / 2.0).to_radians();
         let head = Quat::from_xyzw(
@@ -1613,15 +1628,19 @@ impl Scene {
         else {
             return;
         };
+        // The status bar's glass, as a card: a lit rim round a dark body, corners rounded.
         let pad = 0.012f32;
-        let backdrop = self.panel_model(centre, direction, width + pad * 2.0, height + pad * 2.0);
-        self.quads.draw(
-            gl,
-            self.white,
-            &(eye.view_projection() * backdrop),
-            [0.05, 0.07, 0.12, 0.82],
-            (0.0, 1.0),
-        );
+        let px = 2000.0f32;
+        for (grow, tint) in [(0.004f32, [0.75, 0.85, 1.0, 0.22]), (0.0, [0.03, 0.05, 0.09, 0.78])] {
+            let (w, h) = (width + (pad + grow) * 2.0, height + (pad + grow) * 2.0);
+            self.rounded.draw(
+                gl,
+                &(eye.view_projection() * self.panel_model(centre, direction, w, h)),
+                tint,
+                (w * px, h * px),
+                (0.016 + grow) * px,
+            );
+        }
         let model = self.panel_model(centre, direction, width, height);
         self.quads.draw(gl, texture.id, &(eye.view_projection() * model), [1.0, 1.0, 1.0, 0.97], (0.0, 1.0));
     }
@@ -2066,7 +2085,7 @@ impl Scene {
                 self.quads.seams(gl, cut.seams.0, cut.seams.1);
                 self.quads.draw(
                     gl,
-                    self.glass,
+                    if frame.overlay { self.glass_pinned } else { self.glass },
                     &(eye.view_projection() * cut.model),
                     dim(chrome_tint),
                     (cut.from, cut.to),

@@ -45,6 +45,8 @@ enum MacWindows {
     /// The accessibility element of a window, for closing it and sizing it. Needs Accessibility.
     static func axWindow(_ info: MacWindowInfo) -> AXUIElement? {
         let app = AXUIElementCreateApplication(info.pid)
+        // An application that is busy answers when it likes; not waited for at length.
+        AXUIElementSetMessagingTimeout(app, 0.5)
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
               let windows = value as? [AXUIElement] else { return nil }

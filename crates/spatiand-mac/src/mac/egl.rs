@@ -266,6 +266,11 @@ pub fn pace() {
     if frame < 30 || frame % 120 == 0 {
         flush_layers();
     }
+    // One clock, not two: the swap waits for the display's refresh, and waiting here for the
+    // same refresh as well showed every other one -- thirty frames a second in the glasses.
+    if std::env::var("SPATIAND_SWAP").as_deref() != Ok("0") {
+        return;
+    }
     if clock.link.lock().unwrap().is_none() {
         return;
     }

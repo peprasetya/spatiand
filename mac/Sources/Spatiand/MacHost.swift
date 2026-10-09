@@ -400,9 +400,15 @@ final class MacHost {
         }
     }
 
+    /// Once the viewer's drag has stopped; see `SettledResize`.
+    private let sizes = SettledResize()
+
     private func resize(_ s: Shared, pixelsWide: Double, high: Double) {
         let scale = s.capture.scale
-        MacWindows.resize(s.info, toPoints: CGSize(width: pixelsWide / scale, height: high / scale))
+        let info = s.info
+        sizes.want(UInt32(truncatingIfNeeded: info.windowID)) {
+            MacWindows.resize(info, toPoints: CGSize(width: pixelsWide / scale, height: high / scale))
+        }
     }
 
     // MARK: input

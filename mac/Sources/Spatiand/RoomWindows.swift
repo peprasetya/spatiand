@@ -60,14 +60,54 @@ final class RoomWindows {
 
     /// The windows in the room, for the menu.
     /// Whether a window is on show in the room.
-    func has(_ windowID: CGWindowID) -> Bool { queue.sync { entries.values.contains { $0.info.windowID == windowID && $0.capture != nil } } }
+    func has(_ windowID: CGWindowID) -> Bool {
+        insideLock.lock()
+        defer { insideLock.unlock() }
+        return showing.contains { $0.info.windowID == windowID }
+    }
 
     /// The applications with a window on show, and a process of each: whose sound is placed.
     var onShow: [String: pid_t] {
-        queue.sync {
-            var out: [String: pid_t] = [:]
-            for entry in entries.values where entry.capture != nil && !entry.info.bundle.isEmpty { out[entry.info.bundle] = entry.info.pid }
-            return out
+        insideLock.lock()
+        defer { insideLock.unlock() }
+        var out: [String: pid_t] = [:]
+        for (_, info) in showing where !info.bundle.isEmpty { out[info.bundle] = info.pid }
+        return out
+    }
+
+    /// The windows on show, kept for whoever asks from another thread. **Nothing waits for the
+    /// queue**: it does things to other applications that take as long as those applications
+    /// like, and the main thread -- which is where the mouse and keyboard come in -- waiting
+    /// behind that is a pointer that has stopped and a button that never comes up.
+    private var showing: [(id: UInt32, info: MacWindowInfo)] = []
+    private func publish() {
+        let now = entries.filter { $0.value.capture != nil }.map { (id: $0.key, info: $0.value.info) }
+        insideLock.lock()
+        showing = now
+        insideLock.unlock()
+    }
+
+    /// For tests: the room's number and the details of an application's window that is on show.
+    func shownWindow(bundle: String) -> (id: UInt32, info: MacWindowInfo)? {
+        insideLock.lock()
+        defer { insideLock.unlock() }
+        return showing.first { $0.info.bundle == bundle }
+    }
+
+    /// A drag by a window's corner asks for a new size with every frame, and a real window takes
+    /// a good part of a second over each. So while the sizes keep coming the picture is only
+    /// stretched, which the room does by itself, and the real window is resized once, to the last
+    /// size asked for, when they stop: the button let go, or the hand held still.
+    private let sizes = SettledResize()
+
+    private func wantSize(_ id: UInt32, width: Double, height: Double) {
+        sizes.want(id) { [self] in
+            insideLock.lock()
+            let info = showing.first { $0.id == id }?.info
+            insideLock.unlock()
+            guard let info else { return }
+            let scale = NSScreen.main?.backingScaleFactor ?? 2
+            MacWindows.resize(info, toPoints: CGSize(width: width / scale, height: height / scale))
         }
     }
 
@@ -159,6 +199,7 @@ final class RoomWindows {
         capture.onEnded = { [weak self] in self?.gone(id) }
         entry.capture = capture
         entries[id] = entry
+        publish()
         Task {
             do { try await capture.start() } catch {
                 print("windows: could not capture \(info.app): \(error)")
@@ -173,6 +214,7 @@ final class RoomWindows {
         guard let capture = entries[id]?.capture else { return }
         capture.invalidate()
         entries[id]?.capture = nil
+        publish()
         at[id] = nil
         setInside(!at.isEmpty)
     }
@@ -181,6 +223,7 @@ final class RoomWindows {
         queue.async { [self] in
             guard let entry = entries.removeValue(forKey: id) else { return }
             entry.capture?.invalidate()
+            publish()
             at[id] = nil
             setInside(!at.isEmpty)
             down.remove(id)
@@ -199,6 +242,7 @@ final class RoomWindows {
             }
             entries.removeAll()
             following.removeAll()
+            publish()
         }
     }
 
@@ -206,6 +250,7 @@ final class RoomWindows {
 
     /// Called from the compositor's threads; see `spatiand_mac.h` for what each means.
     func asked(_ what: Int32, id: UInt32, a: Double, b: Double, c: Double) {
+        if what == SP_WINDOW_RESIZE { wantSize(id, width: a, height: b); return }
         queue.async { [self] in
             guard what == SP_WINDOW_FOCUS || entries[id] != nil else { return }
             switch Int(what) {
@@ -219,7 +264,6 @@ final class RoomWindows {
             case SP_WINDOW_BUTTON: button(id, code: Int(a), pressed: b != 0)
             case SP_WINDOW_SCROLL: scroll(id, across: a, down: b)
             case SP_WINDOW_KEY: if a >= 0 { key(UInt16(a), down: b != 0) }
-            case SP_WINDOW_RESIZE: resize(id, width: a, height: b)
             case SP_WINDOW_CLOSE: close(id)
             default: break
             }
@@ -327,12 +371,6 @@ final class RoomWindows {
         post(event)
     }
 
-    private func resize(_ id: UInt32, width: Double, height: Double) {
-        guard let entry = entries[id] else { return }
-        let scale = entry.capture?.scale ?? (NSScreen.main?.backingScaleFactor ?? 2)
-        MacWindows.resize(entry.info, toPoints: CGSize(width: width / scale, height: height / scale))
-    }
-
     private func close(_ id: UInt32) {
         guard let entry = entries[id] else { return }
         // The window's own close button, pressed: so a document that is unsaved asks, as it would.
@@ -344,5 +382,24 @@ final class RoomWindows {
             }
         }
         gone(id)
+    }
+}
+
+/// Sizes asked for in a stream, given once the stream stops. For this Mac's own windows only: a
+/// Wayland application resizes as fast as it is asked and is not treated so.
+final class SettledResize {
+    private let queue = DispatchQueue(label: "spatiand.resize", qos: .userInitiated)
+    private let lock = NSLock()
+    private var waiting: [UInt32: DispatchWorkItem] = [:]
+    /// How long nothing new must have been asked for.
+    var quiet = 0.15
+
+    func want(_ window: UInt32, _ apply: @escaping () -> Void) {
+        let item = DispatchWorkItem(block: apply)
+        lock.lock()
+        waiting[window]?.cancel()
+        waiting[window] = item
+        lock.unlock()
+        queue.asyncAfter(deadline: .now() + quiet, execute: item)
     }
 }
