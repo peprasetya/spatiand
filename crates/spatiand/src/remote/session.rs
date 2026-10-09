@@ -903,7 +903,7 @@ async fn serve(
                 say(&out, match told {
                     Told::Input { window, input, time_ms } => ClientMessage::InputAt {
                         window: WindowId(window),
-                        input,
+                        input: as_the_host_expects(input),
                         time_ms,
                     },
                     Told::Focus(window) => ClientMessage::Focus {
@@ -1045,4 +1045,24 @@ async fn talk(
         }
     }
     let _ = stream.finish();
+}
+
+/// A key as the host's applications expect it.
+///
+/// **From a Mac, Command is Control.** A Mac's copy, paste, select-all and close are Command, and
+/// the hands of whoever is typing on a Mac's keyboard go there without asking; on every other
+/// kind of host those are Control. So the Command keys are sent as the Control keys. A host that
+/// is itself a Mac turns Control back into Command for its own applications, so the same hands
+/// work there too. Everywhere but on a Mac this changes nothing.
+fn as_the_host_expects(input: spatiand_stream::Input) -> spatiand_stream::Input {
+    #[cfg(target_os = "macos")]
+    if let spatiand_stream::Input::Key { code, pressed } = input {
+        let code = match code {
+            125 => 29,
+            126 => 97,
+            other => other,
+        };
+        return spatiand_stream::Input::Key { code, pressed };
+    }
+    input
 }

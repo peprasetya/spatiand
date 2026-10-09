@@ -49,6 +49,7 @@ impl Battery {
 ///
 /// `None` on a machine without one — a desktop, or a Deck whose battery node has moved. The
 /// status bar simply omits it rather than showing a zero, which would look like an emergency.
+#[cfg(not(target_os = "macos"))]
 pub fn battery() -> Option<Battery> {
     let supplies = std::fs::read_dir("/sys/class/power_supply").ok()?;
     for entry in supplies.flatten() {
@@ -73,6 +74,78 @@ pub fn battery() -> Option<Battery> {
         });
     }
     None
+}
+
+/// The Mac's battery, from the system's own account of its power sources.
+#[cfg(target_os = "macos")]
+pub fn battery() -> Option<Battery> {
+    use std::ffi::{c_char, c_void, CString};
+    type Ref = *const c_void;
+    #[link(name = "IOKit", kind = "framework")]
+    extern "C" {
+        fn IOPSCopyPowerSourcesInfo() -> Ref;
+        fn IOPSCopyPowerSourcesList(blob: Ref) -> Ref;
+        fn IOPSGetPowerSourceDescription(blob: Ref, source: Ref) -> Ref;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFBooleanTrue: Ref;
+        fn CFRelease(object: Ref);
+        fn CFArrayGetCount(array: Ref) -> isize;
+        fn CFArrayGetValueAtIndex(array: Ref, index: isize) -> Ref;
+        fn CFDictionaryGetValue(dictionary: Ref, key: Ref) -> Ref;
+        fn CFStringCreateWithCString(allocator: Ref, text: *const c_char, encoding: u32) -> Ref;
+        fn CFNumberGetValue(number: Ref, kind: isize, value: *mut c_void) -> u8;
+    }
+    // SAFETY: Core Foundation calls on objects made here and released here; what a "Get" hands
+    // back belongs to the object it came from, which outlives its use.
+    unsafe {
+        let blob = IOPSCopyPowerSourcesInfo();
+        if blob.is_null() {
+            return None;
+        }
+        let list = IOPSCopyPowerSourcesList(blob);
+        let mut found = None;
+        if !list.is_null() {
+            let value = |dictionary: Ref, key: &str| -> Ref {
+                let key_c = CString::new(key).unwrap();
+                let key = CFStringCreateWithCString(std::ptr::null(), key_c.as_ptr(), 0x0800_0100);
+                let value = CFDictionaryGetValue(dictionary, key);
+                CFRelease(key);
+                value
+            };
+            let number = |value: Ref| -> Option<i32> {
+                let mut out = 0i32;
+                (!value.is_null() && CFNumberGetValue(value, 3, &mut out as *mut i32 as *mut c_void) != 0).then_some(out)
+            };
+            for i in 0..CFArrayGetCount(list) {
+                let description = IOPSGetPowerSourceDescription(blob, CFArrayGetValueAtIndex(list, i));
+                if description.is_null() {
+                    continue;
+                }
+                let (Some(now), Some(full)) =
+                    (number(value(description, "Current Capacity")), number(value(description, "Max Capacity")))
+                else {
+                    continue;
+                };
+                if full <= 0 {
+                    continue;
+                }
+                // On mains and full counts as charging, as on the Deck: the question is whether
+                // it is going down.
+                let charging = value(description, "Is Charging") == kCFBooleanTrue
+                    || value(description, "Is Charged") == kCFBooleanTrue;
+                found = Some(Battery {
+                    percent: ((now * 100 + full / 2) / full).clamp(0, 100) as u8,
+                    charging,
+                });
+                break;
+            }
+            CFRelease(list);
+        }
+        CFRelease(blob);
+        found
+    }
 }
 
 fn read_trimmed(path: &Path) -> Option<String> {
