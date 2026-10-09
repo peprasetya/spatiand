@@ -1,4 +1,5 @@
 module CSpatiand {
     header "spatiand_core.h"
+    header "spatiand_mac.h"
     export *
 }

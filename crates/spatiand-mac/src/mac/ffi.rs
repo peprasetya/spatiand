@@ -307,6 +307,16 @@ pub extern "C" fn sp_apps_end() {
     local::set_apps(std::mem::take(&mut *APPS.lock().unwrap()));
 }
 
+/// A computer this Mac has paired with, which the room is to connect to as the Deck does to the
+/// hosts in its preferences.
+///
+/// # Safety
+/// The strings must be valid C strings or null.
+#[no_mangle]
+pub unsafe extern "C" fn sp_paired_host(address: *const c_char, fingerprint: *const c_char) {
+    super::PAIRED.lock().unwrap().push((text(address), text(fingerprint)));
+}
+
 /// A window of this Mac's is to be in the room. `id` is the app's own and never 0.
 ///
 /// # Safety

@@ -215,14 +215,7 @@ extension RemoteSurface {
     func video(_ data: Data, codec: Int32, captured: UInt64) {
         let samples = (self as? RemoteWindow)?.samples ?? (self as? RemotePopup)?.samples
         guard let sample = samples?.sample(data, codec: codec, capturedMicros: captured) else { return }
-        // In the room the picture is decoded for drawing there, and the window on this Mac,
-        // which is not on show, is left alone.
-        let room = Model.shared.room
-        if room.active {
-            if self is RemoteWindow { room.picture(id, sample) }
-        } else {
-            view.show(sample)
-        }
+        view.show(sample)
     }
 }
 

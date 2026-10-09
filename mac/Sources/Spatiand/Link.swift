@@ -67,10 +67,6 @@ final class Link {
     }
 
     func pair(address: String) { if let core { sp_pair(core, address) } }
-    /// Where the head and eyes are now, for an application on the host that draws its own two eyes.
-    func sendViewport(room: OpaquePointer?, width: UInt32, height: UInt32) {
-        if let core, let room { sp_send_viewport(core, room, width, height) }
-    }
     func connect(address: String, fingerprint: String) { if let core { sp_connect(core, address, fingerprint) } }
     func disconnect() { if let core { sp_disconnect(core) } }
 

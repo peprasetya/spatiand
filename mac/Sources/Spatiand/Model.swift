@@ -21,8 +21,6 @@ final class Model {
     /// `SPATIAND_DEBUG=1` says what arrives, for working out why a window is black.
     let debug = ProcessInfo.processInfo.environment["SPATIAND_DEBUG"] != nil
     let clipboard = ClipboardSync()
-    /// The glasses' world, which windows go into when there are glasses.
-    let room = RoomController()
     private(set) var host: PairedHost?
     private(set) var connected = false
     /// Another device took this host's windows over. Not answered by taking them straight back:
@@ -73,8 +71,7 @@ final class Model {
         }
         link.onAudio = { [unowned self] app, channels, data in
             audioHeard += data.count
-            // In the room the sound is placed where its window is, and follows the head.
-            AudioOut.shared.feed(app: app, channels: Int(channels), data: data, placed: room.place(app: app, channels: Int(channels), pcm: data))
+            AudioOut.shared.feed(app: app, channels: Int(channels), data: data, placed: nil)
         }
         clipboard.send = { [unowned self] in link.say($0) }
         clipboard.start()
@@ -126,7 +123,6 @@ final class Model {
         didSet {
             if glassesOn != oldValue {
                 sendGlasses()
-                room.setActive(glassesOn)
             }
         }
     }
@@ -154,13 +150,7 @@ final class Model {
     }
 
     func raise(_ id: UInt16) {
-        // In the room, raising a window is bringing it to where the wearer is looking.
-        if room.active {
-            room.core.bringHere(id)
-            room.core.focused = id
-        } else {
-            windows[id]?.show()
-        }
+        windows[id]?.show()
     }
 
     // MARK: hearing
@@ -209,7 +199,6 @@ final class Model {
             onPairFailed?((detail as? String) ?? "pairing failed")
         default: break
         }
-        room.hint.update()
         onChange?()
     }
 
@@ -240,7 +229,6 @@ final class Model {
             // A picture to start from. A window that is not changing sends nothing by itself, so
             // one that was already there when this session arrived would stay black for ever.
             link.say(["WantKeyframe": ["window": Int(id)]])
-            room.windowSized(id, size: size)
             if let existing = windows[id] {
                 existing.setSize(size)
             } else if let parent = infos[id]?.parent {
@@ -248,33 +236,14 @@ final class Model {
             } else {
                 open(id, size: size)
             }
-        case "Layer":
-            // An application on the host that draws both eyes itself has become the room. Only one
-            // can be; another one saying so takes it, and one going back to a window gives it up.
-            if let id = window(), let layer = fields["layer"] as? String {
-                if layer == "projection" {
-                    room.core.setProjection(id)
-                } else if room.core.projection == id {
-                    room.core.setProjection(nil)
-                }
-            }
-        case "CursorDrawn":
-            // The application draws the pointer itself where it is over this window -- a game's
-            // laser from a hand, a viewer's own cursor -- so the room draws none there.
-            if let id = window(), let drawn = fields["drawn"] as? Bool {
-                room.core.setCursorDrawn(id, drawn)
-            }
         case "Retitled":
             if let id = window(), let title = fields["title"] as? String {
                 infos[id]?.title = title
-                room.retitled(id, title)
                 (windows[id] as? RemoteWindow)?.window.title = title
             }
         case "Closed":
             if let id = window() {
                 windows.removeValue(forKey: id)?.closeForReal()
-                if room.core.projection == id { room.core.setProjection(nil) }
-                room.windowClosed(id)
                 infos[id] = nil
                 sizes[id] = nil
             }
@@ -282,10 +251,6 @@ final class Model {
             clipboard.fromHost(fields)
         case "Cursor":
             cursor(fields)
-        case "Rumble":
-            if let strong = (fields["strong"] as? NSNumber)?.intValue, let weak = (fields["weak"] as? NSNumber)?.intValue {
-                PadInput.shared.rumble(strong: strong, weak: weak)
-            }
         case "Refused":
             onProblem?((fields["reason"] as? String) ?? "the computer refused this session")
         default: break
@@ -308,12 +273,9 @@ final class Model {
             link.say(["Configure": ["window": Int(id), "width": w, "height": h]])
         }
         windows[id] = remote
-        room.windowOpened(id, size: size, app: infos[id]?.app ?? "", title: infos[id]?.title ?? "")
         feedEarly(id)
-        if !room.active {
-            remote.show()
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        remote.show()
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     /// Terminals, where Control-C is an interrupt and copy is Control-Shift-C.
@@ -350,7 +312,6 @@ final class Model {
         let picture = NSImage(cgImage: image, size: size)
         let cursor = NSCursor(image: picture, hotSpot: NSPoint(x: hot[0].doubleValue / scale, y: hot[1].doubleValue / scale))
         for surface in windows.values { surface.view.cursor = cursor }
-        room.hostCursor(pixels: pixels, width: w, height: h, hotX: hot[0].doubleValue, hotY: hot[1].doubleValue)
     }
 
     private func feedEarly(_ id: UInt16) {
@@ -360,7 +321,6 @@ final class Model {
     }
 
     private func closeAll() {
-        room.sessionEnded()
         earlyKeyframes = [:]
         for window in windows.values { window.closeForReal() }
         windows = [:]

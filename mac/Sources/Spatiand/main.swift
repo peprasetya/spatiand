@@ -8,6 +8,7 @@
 //  `Spatiand --selftest` prints what it can see and exits, for checking without a screen.
 
 import AppKit
+import CSpatiand
 
 setvbuf(stdout, nil, _IOLBF, 0)
 
@@ -62,9 +63,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ note: Notification) { giveEverythingBack() }
 
     private func giveEverythingBack() {
-        let room = Model.shared.room
-        room.input.stop()
-        room.output.stop(restoreMode: true)
+        Room.shared.stop()
     }
 
     private func handleSignals() {
@@ -94,26 +93,44 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         glasses.start()
         refreshIcon()
         if Settings.hostEnabled { MacHost.shared.start() }
-        Model.shared.room.drivesGlasses = true
-        PadInput.shared.start()
-        Model.shared.room.onChange = { [weak self] in self?.item.button?.appearsDisabled = !(self?.glasses.isPluggedIn ?? false) }
         wasPlugged = glasses.isPluggedIn
-        Model.shared.glassesOn = glassesWanted()
         pairing.start()
-        // With the glasses on and the mouse and keyboard theirs, the menu is the glasses' own: the
-        // Mac's is out of sight. Otherwise it is the usual one.
+        // With the glasses on and the mouse and keyboard theirs, these are the room's own launcher
+        // and settings: the Mac's menu is out of sight. Otherwise they are the Mac's.
         hotkeys.onMenu = { [weak self] in
-            let room = Model.shared.room
-            if room.active, room.input.capturing { room.toggleMenu() } else { self?.item.button?.performClick(nil) }
+            if Room.shared.running, RoomTap.shared.holding { Self.press(1) } else { self?.item.button?.performClick(nil) }
         }
         hotkeys.onSettings = { [weak self] in
-            let room = Model.shared.room
-            if room.active, room.input.capturing { room.toggleMenu() } else { self?.settings.show() }
+            if Room.shared.running, RoomTap.shared.holding { Self.press(0) } else { self?.settings.show() }
         }
         if Settings.hotkeys { hotkeys.enable() }
         Model.shared.onProblem = { PairingUI.alert("Spatiand", $0) }
-        // Back to the computer this Mac was last using, if there is one.
-        if let last = Hosts.all.first { Model.shared.connect(last) }
+        Room.shared.onChange = { [weak self] in self?.refreshIcon() }
+        Room.shared.screen.onLost = { [weak self] in self?.relaunchForNextPlugIn() }
+        chooseWorld()
+    }
+
+    /// One of the Deck's buttons, pressed and let go: 0 the settings, 1 the launcher.
+    private static func press(_ control: Int32) {
+        sp_control(control, true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { sp_control(control, false) }
+    }
+
+    /// With glasses, the room: the Deck's compositor, in the glasses. Without, windows on this
+    /// Mac. Never both: a host shows its windows to one viewer, and the room is its own.
+    private func chooseWorld() {
+        Model.shared.glassesOn = false
+        if glassesWanted() {
+            guard !Room.shared.running else { return }
+            Model.shared.disconnect()
+            Room.shared.start()
+        } else if Room.shared.running {
+            // One session a process; see `Room`.
+            relaunchForNextPlugIn()
+        } else if Model.shared.host == nil, let last = Hosts.all.first {
+            // Back to the computer this Mac was last using, if there is one.
+            Model.shared.connect(last)
+        }
     }
 
     /// The icon says which world Spatiand is in: dimmed with nothing plugged in, normal with
@@ -122,25 +139,32 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.appearsDisabled = !glasses.isPluggedIn
         let unplugged = wasPlugged && !glasses.isPluggedIn
         wasPlugged = glasses.isPluggedIn
-        Model.shared.glassesOn = glassesWanted()
         // A display that has gone leaves a ghost of the glasses' window in the window server for
         // as long as this process lives, so the next plug-in starts from a fresh one.
-        if unplugged, Model.shared.room.output.hasHadAWindow { relaunchForNextPlugIn() }
+        if unplugged, Room.shared.running { relaunchForNextPlugIn(); return }
+        if glassesWanted() != Room.shared.running { chooseWorld() }
     }
 
     private var wasPlugged = false
+    /// This Mac's windows, as of the last time the menu opened.
+    private var macList: [MacWindowInfo] = []
 
     /// Start over as a new process, once this one has gone. Through `open`, so macOS treats the
     /// new one as the app and not as a child of whatever started this.
     private func relaunchForNextPlugIn() {
         let bundle = Bundle.main.bundleURL
-        guard bundle.pathExtension == "app" else { print("glasses unplugged; not running from an app, staying up"); return }
+        guard bundle.pathExtension == "app" else {
+            print("the room has ended; not running from an app, so stopping here")
+            Room.shared.stop()
+            exit(0)
+        }
         let relauncher = Process()
         relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
-        relauncher.arguments = ["-c", "while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done; exec /usr/bin/open \"$1\"", "sh", bundle.path]
+        // `open` can refuse in the moment after the old one goes (-600); it is asked until it does not.
+        relauncher.arguments = ["-c", "while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done; for i in 1 2 3 4 5 6 7 8; do /usr/bin/open -n \"$1\" && exit 0; sleep 0.5; done", "sh", bundle.path]
         do { try relauncher.run() } catch { print("could not relaunch: \(error)"); return }
-        print("glasses unplugged; restarting so the next plug-in starts clean")
-        Model.shared.room.output.stop(restoreMode: false)
+        print("the room has ended; restarting so the next one starts clean")
+        Room.shared.stop()
         exit(0)
     }
 
@@ -154,13 +178,18 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        let room = Model.shared.room
+        let room = Room.shared
         let status = glasses.isPluggedIn
-            ? (room.active ? "Glasses: " + room.output.status : "Glasses connected — windows are on this Mac")
-            : "No glasses — windows are on this Mac"
+            ? (room.running ? "Glasses: " + room.status : "Glasses connected \u{2014} windows are on this Mac")
+            : "No glasses \u{2014} windows are on this Mac"
         add(menu, status, enabled: false)
-        if room.active {
-            let hold = NSMenuItem(title: room.input.capturing ? "Give the mouse and keyboard back to this Mac" : "Use this Mac's mouse and keyboard in the glasses",
+        if room.running {
+            if !RoomTap.allowed(ask: false) {
+                let ask = NSMenuItem(title: "Allow Accessibility, for the mouse and keyboard in the glasses\u{2026}", action: #selector(allowControl), keyEquivalent: "")
+                ask.target = self
+                menu.addItem(ask)
+            }
+            let hold = NSMenuItem(title: RoomTap.shared.holding ? "Give the mouse and keyboard back to this Mac (Ctrl-Option-G)" : "Use this Mac\u{2019}s mouse and keyboard in the glasses (Ctrl-Option-G)",
                                   action: #selector(toggleCapture), keyEquivalent: "")
             hold.target = self
             menu.addItem(hold)
@@ -170,28 +199,32 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        buildComputers(menu)
-        if room.active {
+        if room.running {
             let macs = NSMenuItem(title: "Bring a window of this Mac into the glasses", action: nil, keyEquivalent: "")
             let sub = NSMenu()
             if !MacWindows.allowed(ask: false) {
                 let ask = NSMenuItem(title: "Allow Screen Recording\u{2026}", action: #selector(allowCapture), keyEquivalent: "")
                 ask.target = self
                 sub.addItem(ask)
-            } else if room.macList.isEmpty {
+            } else if macList.isEmpty {
                 let none = NSMenuItem(title: "No windows to show", action: nil, keyEquivalent: "")
                 none.isEnabled = false
                 sub.addItem(none)
             }
-            for (i, info) in room.macList.prefix(30).enumerated() {
+            for (i, info) in macList.prefix(30).enumerated() {
                 let entry = NSMenuItem(title: info.app + (info.title.isEmpty ? "" : " \u{2014} " + String(info.title.prefix(40))),
                                        action: #selector(bringMacWindow(_:)), keyEquivalent: "")
                 entry.target = self
                 entry.tag = i
+                entry.state = RoomWindows.shared.has(info.windowID) ? .on : .off
                 sub.addItem(entry)
             }
             macs.submenu = sub
             menu.addItem(macs)
+            // For the next time the menu opens: asking takes a moment, and a menu cannot wait.
+            Task { @MainActor in self.macList = await MacWindows.list() }
+        } else {
+            buildComputers(menu)
         }
         menu.addItem(.separator())
 
@@ -333,16 +366,15 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func allowCapture() { _ = MacWindows.allowed(ask: true) }
     @objc private func bringMacWindow(_ sender: NSMenuItem) {
-        let room = Model.shared.room
-        guard sender.tag < room.macList.count else { return }
-        room.bringMacWindow(room.macList[sender.tag])
+        guard sender.tag < macList.count else { return }
+        RoomWindows.shared.bring(macList[sender.tag])
     }
 
     @objc private func toggleCapture() {
-        let room = Model.shared.room
-        if room.input.capturing { room.input.stop() } else { room.input.start() }
+        if !RoomTap.shared.holding, !RoomTap.allowed(ask: true) { return }
+        RoomTap.shared.toggle()
     }
-    @objc private func recentre() { Model.shared.room.recentre() }
+    @objc private func recentre() { sp_recentre() }
     @objc private func openSettings() { settings.show() }
     @objc private func addComputer() { pairing.ask() }
     @objc private func disconnect() { Model.shared.disconnect() }
@@ -372,13 +404,15 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func choosePresentation(_ sender: NSMenuItem) {
         if let raw = sender.representedObject as? String, let choice = Presentation(rawValue: raw) {
             Settings.presentation = choice
-            Model.shared.glassesOn = glassesWanted()
+            chooseWorld()
         }
     }
 
     @objc private func chooseOutput(_ sender: NSMenuItem) {
         Settings.audioOutputUID = sender.representedObject as? String
         AudioOut.shared.applyDevice()
+        let device = AudioDevices.outputs().first { $0.uid == Settings.audioOutputUID }
+        sp_audio_output(Int32(bitPattern: device?.id ?? 0))
     }
 }
 
@@ -415,22 +449,29 @@ if let at = CommandLine.arguments.firstIndex(of: "--add-host") {
     exit(0)
 }
 
-if let at = CommandLine.arguments.firstIndex(of: "--selftest-pad") {
-    // --selftest-pad <seconds>: watch the game controllers for a while, printing what they say.
-    let seconds = Double(CommandLine.arguments.dropFirst(at + 1).first ?? "") ?? 15
-    _ = NSApplication.shared
-    PadInput.shared.start()
-    var last = ""
-    let t = Timer(timeInterval: 0.2, repeats: true) { _ in
-        let line = PadInput.shared.debugLine
-        if line != last { last = line; print("pad: \(line)") }
+
+if let at = CommandLine.arguments.firstIndex(of: "--preview") {
+    // --preview [seconds] [application.app]: the room in a window on this Mac, with stand-in
+    // glasses, for looking at without wearing anything. With an application, its windows are
+    // brought in. A picture of it is saved every few seconds (~/screenshots).
+    let args = Array(CommandLine.arguments[(at + 1)...])
+    let seconds = Double(args.first ?? "") ?? 20
+    setenv("SPATIAND_HMD", "null", 1)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    DispatchQueue.main.async {
+        Room.shared.start(preview: true)
+        if args.count > 1 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { Room.shared.launch(path: args[1]) }
+        }
+        let shots = Timer(timeInterval: 4, repeats: true) { _ in sp_screenshot() }
+        RunLoop.main.add(shots, forMode: .common)
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+            Room.shared.stop()
+            exit(0)
+        }
     }
-    RunLoop.main.add(t, forMode: .common)
-    DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
-        print("pad: \(PadInput.shared.names.count) controllers \(PadInput.shared.names), \(PadTouchpad.shared.reports) touchpad reports from \(PadTouchpad.shared.devices) device(s)")
-        exit(0)
-    }
-    RunLoop.main.run()
+    application.run()
 }
 
 if CommandLine.arguments.contains("--selftest-local") {
@@ -459,23 +500,7 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-host") {
     application.run()
 }
 
-if let at = CommandLine.arguments.firstIndex(of: "--selftest-room") {
-    let args = Array(CommandLine.arguments[(at + 1)...])
-    guard args.count >= 3 else { print("usage: --selftest-room <address> <fingerprint> <app>"); exit(2) }
-    let application = NSApplication.shared
-    application.setActivationPolicy(.accessory)
-    DispatchQueue.main.async { RoomTest.run(address: args[0], fingerprint: args[1], app: args[2]) }
-    application.run()
-}
 
-if let at = CommandLine.arguments.firstIndex(of: "--selftest-window") {
-    let args = Array(CommandLine.arguments[(at + 1)...])
-    guard args.count >= 3 else { print("usage: --selftest-window <address> <fingerprint> <app>"); exit(2) }
-    let application = NSApplication.shared
-    application.setActivationPolicy(.accessory)
-    DispatchQueue.main.async { WindowTest.run(address: args[0], fingerprint: args[1], app: args[2]) }
-    application.run()
-}
 
 let application = NSApplication.shared
 let delegate = App()

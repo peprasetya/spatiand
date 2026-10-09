@@ -104,7 +104,7 @@ enum MacWindows {
 }
 
 /// One Mac window being captured: its newest picture, kept for the room to draw.
-final class MacCapture: NSObject, PictureSource, SCStreamOutput, SCStreamDelegate {
+final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     let info: MacWindowInfo
     private var stream: SCStream?
     private let lock = NSLock()

@@ -21,6 +21,10 @@
 
 pub mod mac;
 
+/// The app's link to a host when there are no glasses, and this Mac as a host: its C interface
+/// is part of this library's.
+pub use spatiand_mac_core as link;
+
 /// The two helpers of the Deck's backend that the snapshot names. The backend itself is DRM
 /// from end to end and is not built here.
 mod backend_drm {

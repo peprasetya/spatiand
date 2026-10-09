@@ -3,7 +3,10 @@
 # The result is ./Spatiand.app. Not notarised, so it is for this Mac, not for handing out.
 set -e
 cd "$(dirname "$0")"
-MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p spatiand-mac-core --release --manifest-path ../Cargo.toml
+[ -f xkbcommon/out/libxkbcommon.a ] || xkbcommon/build.sh
+[ -f vendor/angle/libEGL.dylib ] || ./fetch-angle.sh
+(cd ../crates/spatiand-mac && MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release)
+rm -f .build/release/Spatiand
 SPATIAND_CORE=release swift build -c release
 # Put together in a scratch folder and installed at ~/Applications afterwards. ~/Documents is
 # synced by iCloud, which puts attributes on every file that a signature refuses, and an app that
@@ -20,6 +23,11 @@ if [ -f Resources/hrtf/libmysofa.1.dylib ]; then
   cp Resources/hrtf/libmysofa.1.dylib "$app/Contents/Frameworks/"
   cp Resources/hrtf/default.sofa Resources/hrtf/NOTICE.txt "$app/Contents/Resources/"
 fi
+# What the compositor draws with and types with: ANGLE (OpenGL ES on Metal) beside the program,
+# and the keyboard layouts libxkbcommon reads.
+mkdir -p "$app/Contents/Frameworks" "$app/Contents/Resources"
+cp vendor/angle/libEGL.dylib vendor/angle/libGLESv2.dylib "$app/Contents/Frameworks/"
+cp -R xkbcommon/out/xkb "$app/Contents/Resources/xkb"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -36,6 +44,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <!-- A menu-bar app: no Dock icon, no main window. -->
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSMicrophoneUsageDescription</key><string>Spatiand sends your voice to an application on another computer when that application asks for the microphone.</string>
 </dict>
 </plist>
 PLIST

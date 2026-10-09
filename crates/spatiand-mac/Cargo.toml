@@ -30,6 +30,9 @@ smithay = { path = "../../mac/vendor/smithay" }
 # The first half is `crates/spatiand`'s own list, because its modules are compiled here by path
 # (see `src/lib.rs`), exactly as `spatiand-android` does; keep the three in step.
 [dependencies]
+# The link to a host for the app's own windows on this Mac (no glasses), and the Mac as a host:
+# behind `spatiand_core.h`. Here so that the app links one Rust library, not two.
+spatiand-mac-core = { path = "../spatiand-mac-core" }
 spatiand-stream = { path = "../spatiand-stream" }
 spatiand-video = { path = "../spatiand-video" }
 wayland-client = "0.31"

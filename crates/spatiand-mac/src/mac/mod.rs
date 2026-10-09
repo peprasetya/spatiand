@@ -169,8 +169,29 @@ pub fn system_settings(panel: &str) {
     ffi::tell(ffi::Asked::SystemSettings, panel);
 }
 
-/// Hosts the Mac app paired with before its room was the Deck's compositor.
-pub fn adopt_paired_hosts(_prefs: &mut crate::prefs::Prefs) {}
+/// Computers the app says this Mac has paired with: (address, fingerprint).
+pub static PAIRED: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+
+/// The computers the app has paired with become the preferences' remote hosts, as the Deck's
+/// are: pairing happens in the app's menu, and the room connects to what was paired there.
+pub fn adopt_paired_hosts(prefs: &mut crate::prefs::Prefs) {
+    let mut changed = false;
+    for (address, fingerprint) in PAIRED.lock().unwrap().iter() {
+        if prefs.remotes.iter().any(|r| &r.host == address) {
+            continue;
+        }
+        log::info!("adopting {address} from the app");
+        prefs.remotes.push(crate::prefs::RemoteHost {
+            host: address.clone(),
+            fingerprint: fingerprint.clone(),
+            launch: Vec::new(),
+        });
+        changed = true;
+    }
+    if changed {
+        prefs.save();
+    }
+}
 
 /// When the glasses were last looked for, and whether they were there.
 static LOOKED: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
