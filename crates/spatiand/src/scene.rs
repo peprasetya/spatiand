@@ -277,6 +277,9 @@ struct MenuTextures {
     /// The explanation's height in logical panel pixels, which the layout needs and only the
     /// rasteriser knows, since it depends on how many lines the text wrapped onto.
     detail_height: f32,
+    /// How tall the explanation's own picture is, which is less than the room kept for it when
+    /// it is one line.
+    detail_drawn: f32,
     footer: Option<Texture>,
     /// Device pixels per logical panel pixel when this was built. A different headset, or a
     /// different eye resolution, means rasterising again rather than magnifying.
@@ -1948,10 +1951,13 @@ impl Scene {
                         // The explanation is padded to the content width, so its height in
                         // logical pixels follows from the image and is the one thing the
                         // layout cannot work out for itself.
+                        // Room for two lines whatever it says, so the card does not change
+                        // size as the selection moves between a short one and a long one.
                         detail_height: detail
                             .as_ref()
-                            .map(|i| i.height as f32 / scale)
+                            .map(|i| (i.height as f32 / scale).max(panel::DETAIL_EM * 1.4 * 2.0))
                             .unwrap_or(0.0),
+                        detail_drawn: detail.as_ref().map(|i| i.height as f32 / scale).unwrap_or(0.0),
                         detail: detail.as_ref().map(&upload),
                         footer: footer.as_ref().map(&upload),
                         scale,
@@ -2794,8 +2800,10 @@ impl Scene {
         if let Some(sep) = layout.separator {
             panel_rect(sep, SEPARATOR, sep.h * 0.5);
         }
-        if let (Some(rect), Some(tex)) = (layout.detail, menu.detail.as_ref()) {
-            // Already padded to the content width, so it goes exactly where the layout says.
+        if let (Some(mut rect), Some(tex)) = (layout.detail, menu.detail.as_ref()) {
+            // Already padded to the content width, so it goes exactly where the layout says --
+            // at its own height, from the top of the room kept for it.
+            rect.h = menu.detail_drawn.min(rect.h);
             self.quads.draw(
                 gl,
                 tex.id,

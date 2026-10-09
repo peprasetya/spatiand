@@ -245,6 +245,9 @@ pub fn brought_here(placement: Placement, head: DQuat) -> Placement {
 /// Per-window spatial state, alongside Smithay's `Space`.
 #[derive(Debug, Default)]
 pub struct WindowLayout {
+    /// How far above the horizon the wearer is looking, radians: where a new window opens, so
+    /// that it opens in the middle of the view and not on a horizon they are looking away from.
+    pub view_pitch: f64,
     placements: HashMap<usize, Placement>,
     focused: Option<usize>,
     next_id: usize,
@@ -297,8 +300,12 @@ impl WindowLayout {
         // drew in front. Opening Bluetooth and then Wi-Fi looked exactly like one window that
         // had changed its contents, which is what it was reported as. Half a width is wide
         // enough to see two things; a spatial desktop is allowed to ask you to turn your head.
-        let n = self.placements.len();
+        // Counted among what is on show. Windows that are put away are not in the way, and on a
+        // Mac -- where every window open on it is in the list, put away -- counting them sent a
+        // new one a long way round the room to be looked for.
+        let n = self.placements.keys().filter(|id| !self.hidden.contains(id)).count();
         let placement = Placement {
+            pitch: clamp_pitch(self.view_pitch),
             yaw: view_yaw + Self::fan_offset(n),
             // A little depth too, so even a head-on view separates them.
             radius: Placement::default().radius + Self::fan_rank(n) * 0.06,

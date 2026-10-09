@@ -315,7 +315,7 @@ pub fn size_new_windows(state: &mut crate::Spatiand, _windows: &mut [crate::scen
             // In front of the wearer, as a window chosen from the list is.
             if let Some(mut placement) = state.layout.get(&window).filter(|_| !state.layout.is_pinned(&window)) {
                 placement.yaw = state.spawn_yaw;
-                placement.pitch = 0.0;
+                placement.pitch = crate::window::clamp_pitch(state.layout.view_pitch);
                 state.layout.set(&window, placement);
             }
             state.focus_window(&window);

@@ -1847,6 +1847,7 @@ pub fn run(
             // Where new windows will open. Refreshed every frame so an app launched after a
             // head turn appears in front of the wearer rather than at world zero.
             runtime.state.spawn_yaw = tracker.euler_degrees().yaw.to_radians();
+            runtime.state.layout.view_pitch = crate::window::facing(tracker.orientation()).1;
 
             // Surfaces that asked to be head-locked follow the view, every frame.
             //

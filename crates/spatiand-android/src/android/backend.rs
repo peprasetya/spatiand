@@ -201,7 +201,8 @@ pub fn run(
     // On the Mac, the Mac's own.
     let shell_apps: Vec<spatiand_shell::AppEntry> = super::local_apps();
     let panels = super::PANELS;
-    let calibrated = spatiand_track::config::load_axes().is_some();
+    // On the Mac the glasses say how their sensors sit, and nothing needs measuring first.
+    let calibrated = spatiand_track::config::load_axes().is_some() || cfg!(target_os = "macos");
     let mut shell = Shell::new(shell_apps, panels, calibrated);
     shell.set_local_name(&crate::system::machine_name());
     // Where windows pinned to the view go and how big: the wearer's, from last time.
@@ -852,6 +853,7 @@ pub fn run(
             }
 
             runtime.state.spawn_yaw = tracker.euler_degrees().yaw.to_radians();
+            runtime.state.layout.view_pitch = crate::window::facing(tracker.orientation()).1;
             {
                 let view_yaw = runtime.state.spawn_yaw;
                 let locked: Vec<smithay::desktop::Window> = runtime
