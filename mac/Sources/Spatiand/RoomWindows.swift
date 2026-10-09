@@ -43,7 +43,15 @@ final class RoomWindows {
     private var at: [UInt32: CGPoint] = [:]
     private var down: Set<UInt32> = []
     private var lastClick: (Date, CGPoint, Int) = (.distantPast, .zero, 0)
-    private let source = CGEventSource(stateID: .hidSystemState)
+    private let source: CGEventSource? = {
+        let source = CGEventSource(stateID: .hidSystemState)
+        // Without this, each event posted silences the real mouse for a quarter of a second:
+        // over a window of this Mac's, where the pointer is posted as it moves, the trackpad
+        // all but stopped moving it.
+        source?.localEventsSuppressionInterval = 0
+        source?.setLocalEventsFilterDuringSuppressionState([.permitLocalMouseEvents, .permitLocalKeyboardEvents, .permitSystemDefinedEvents], state: .eventSuppressionStateSuppressionInterval)
+        return source
+    }()
     /// Whether the room's pointer is inside one of these windows now. Read from the event tap.
     private let insideLock = NSLock()
     private var insideNow = false

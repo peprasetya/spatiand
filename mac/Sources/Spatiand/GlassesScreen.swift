@@ -143,7 +143,9 @@ final class GlassesScreen {
         // And only when asked: while any display is captured macOS keeps this application in
         // front, and with the mouse given back to the Mac no other application could be chosen.
         // A window above everything covers the display as well.
-        if wide, ProcessInfo.processInfo.environment["SPATIAND_CAPTURE"] != nil {
+        // Taken over, the glasses were drawn to at a steady rate; left to the window server, at
+        // half of it. SPATIAND_CAPTURE=0 leaves the display alone, for comparing.
+        if wide, ProcessInfo.processInfo.environment["SPATIAND_CAPTURE"] != "0" {
             if CGDisplayCapture(id) == .success { captured = id } else { print("glasses: could not take the display over") }
         }
 
@@ -204,6 +206,12 @@ final class GlassesScreen {
             CGConfigureDisplayWithDisplayMode(config, displayID, wide, nil)
             CGCompleteDisplayConfiguration(config, .forSession)
         }
+        // And where the display is: one that has moved leaves the window where it was, which
+        // may be the Mac's own screen.
+        let place = Self.appKitFrame(of: displayID)
+        if abs(pixelWidth - width) <= 1, abs(window.frame.width - place.width) <= 1, window.frame.origin != place.origin {
+            window.setFrame(place, display: true)
+        }
         if abs(pixelWidth - width) > 1 || abs(window.frame.width - CGDisplayBounds(displayID).width) > 1 {
             print("glasses: the display is now \(Int(width)) wide; a new window")
             let id = displayID
@@ -226,6 +234,10 @@ final class GlassesScreen {
         watchdog = nil
         guard window != nil else { return }
         sp_glasses_gone()
+        // Made nothing before it is put away: the window server has been seen to keep a window
+        // whose display changed under it, on the Mac's own screen, black and above everything.
+        window?.alphaValue = 0
+        window?.setFrame(NSRect(x: -30000, y: -30000, width: 1, height: 1), display: false)
         window?.contentView = nil
         window?.orderOut(nil)
         window?.close()

@@ -188,7 +188,11 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     // MARK: SCStreamOutput
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sample: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen, CMSampleBufferIsValid(sample), let pixels = CMSampleBufferGetImageBuffer(sample) else { return }
+        guard type == .screen, CMSampleBufferIsValid(sample) else { return }
+        // On every sample, the idle ones too: a window that is resized and then still sends no
+        // new picture, and was left at its old size with a black band where it had shrunk.
+        followResize()
+        guard let pixels = CMSampleBufferGetImageBuffer(sample) else { return }
         // A frame the capture marks as complete carries a new picture; the others (idle, blank) do not.
         if let list = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[String: Any]],
            let raw = list.first?[SCStreamFrameInfo.status.rawValue] as? Int, let status = SCFrameStatus(rawValue: raw), status != .complete {
@@ -200,7 +204,6 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         lock.unlock()
         let seconds = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
         onFrame?(pixels, UInt64(max(0, seconds) * 1_000_000))
-        followResize()
         let size = CGSize(width: CVPixelBufferGetWidth(pixels), height: CVPixelBufferGetHeight(pixels))
         if size != lastSize {
             lastSize = size
