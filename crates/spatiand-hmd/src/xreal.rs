@@ -31,6 +31,7 @@ use crate::{DisplayMode, Hmd, HmdButton, HmdError, HmdEvent, HmdInfo, ImuSample,
 
 // --- MCU (interface 4) ---
 const MCU_HEAD: u8 = 0xFD;
+const MSG_R_DISP_MODE: u16 = 0x0007;
 const MSG_W_DISP_MODE: u16 = 0x0008;
 const MSG_R_BRIGHTNESS: u16 = 0x0003;
 const MSG_W_BRIGHTNESS: u16 = 0x0004;
@@ -180,6 +181,11 @@ impl XrealGlasses {
         };
         this.start_imu_stream()?;
         Ok(this)
+    }
+
+    /// The mode the glasses are in now, as they say it: docs/xreal-air.md §6.
+    pub fn raw_display_mode(&mut self) -> Option<u8> {
+        self.mcu_command(MSG_R_DISP_MODE, &[], "display mode (read)").ok()?.get(1).copied()
     }
 
     /// Run the panel at this refresh rate, in both modes, from the next mode change on.

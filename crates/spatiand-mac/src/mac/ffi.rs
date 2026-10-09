@@ -327,6 +327,12 @@ pub unsafe extern "C" fn sp_paired_host(address: *const c_char, fingerprint: *co
     super::PAIRED.lock().unwrap().push((text(address), text(fingerprint)));
 }
 
+/// Whether the microphone has been allowed: until it has, it is not opened for a host.
+#[no_mangle]
+pub extern "C" fn sp_microphone_allowed(allowed: bool) {
+    super::MICROPHONE_ALLOWED.store(allowed, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// How many pixels a point of this Mac's screen is: 2 on a Retina display.
 #[no_mangle]
 pub extern "C" fn sp_display_scale(scale: f64) {

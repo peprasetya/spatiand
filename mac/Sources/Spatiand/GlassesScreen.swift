@@ -34,6 +34,8 @@ final class GlassesScreen {
     private(set) var status = "Waiting for the glasses"
     /// Said, on the main thread, once the display has gone away.
     var onLost: (() -> Void)?
+    /// How wide the window on the glasses is, in the display's own pixels.
+    private var pixelWidth: CGFloat = 0
     var onChange: (() -> Void)?
 
     var isShowing: Bool { window != nil }
@@ -135,7 +137,12 @@ final class GlassesScreen {
 
         // Take the display from the desktop: nothing else may appear on it, and nothing is
         // composited over a display that has not been captured.
-        if CGDisplayCapture(id) == .success { captured = id } else { print("glasses: could not take the display over") }
+        // Only once it is showing two eyes: a captured display is not looked at again by macOS
+        // when the glasses change what they offer, and the wide picture is never found.
+        let wide = (CGDisplayCopyDisplayMode(id)?.pixelWidth ?? 0) >= 3000
+        if wide {
+            if CGDisplayCapture(id) == .success { captured = id } else { print("glasses: could not take the display over") }
+        }
 
         let w = GlassesWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
@@ -163,6 +170,7 @@ final class GlassesScreen {
         opening = false
 
         let pixels = (Int32(frame.width * scale), Int32(frame.height * scale))
+        pixelWidth = CGFloat(pixels.0)
         sp_glasses(Unmanaged.passUnretained(layer).toOpaque(), pixels.0, pixels.1, id)
         let twoEyes = pixels.0 >= pixels.1 * 3
         say(twoEyes ? "In the glasses, in 3D" : "In the glasses, one eye")
@@ -183,7 +191,9 @@ final class GlassesScreen {
         }
         // The compositor has asked the glasses for two eyes; macOS may still be showing the
         // display in its remembered one-eye mode, and keeps it there until asked.
-        let width = CGDisplayBounds(displayID).width
+        // In pixels: macOS may show the two-eye mode as a doubled 1920 by 540, whose size in
+        // points is as wide as one eye's was.
+        let width = CGFloat(CGDisplayCopyDisplayMode(displayID)?.pixelWidth ?? Int(CGDisplayBounds(displayID).width))
         if width < 3000, Date().timeIntervalSince(lastModeTry) > 1.0, let wide = Self.wideMode(of: displayID) {
             lastModeTry = Date()
             var config: CGDisplayConfigRef?
@@ -191,7 +201,7 @@ final class GlassesScreen {
             CGConfigureDisplayWithDisplayMode(config, displayID, wide, nil)
             CGCompleteDisplayConfiguration(config, .forSession)
         }
-        if abs(window.frame.width - width) > 1 {
+        if abs(pixelWidth - width) > 1 || abs(window.frame.width - CGDisplayBounds(displayID).width) > 1 {
             print("glasses: the display is now \(Int(width)) wide; a new window")
             let id = displayID
             hide()

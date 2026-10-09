@@ -14,6 +14,7 @@
 //  One session a process: when the glasses are unplugged the app starts over (see `main.swift`).
 
 import AppKit
+import AVFoundation
 import CSpatiand
 
 final class Room {
@@ -41,6 +42,7 @@ final class Room {
         // connecting would take them from wherever they are being used.
         if !preview { for host in Hosts.all { sp_paired_host(host.address, host.fingerprint) } }
         sp_display_scale(Double(NSScreen.main?.backingScaleFactor ?? 2))
+        sp_microphone_allowed(AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
         listApplications()
         if let uid = Settings.audioOutputUID, let device = AudioDevices.outputs().first(where: { $0.uid == uid }) {
             sp_audio_output(Int32(bitPattern: device.id))
@@ -76,8 +78,12 @@ final class Room {
     }
 
     /// Give everything back: the display, the pointer, the glasses' mode.
+    private var stopping = false
+
     func stop() {
-        guard running else { return }
+        guard running, !stopping else { return }
+        stopping = true
+        defer { stopping = false }
         soundTimer?.invalidate()
         Notices.shared.stop()
         sound.stopAll()

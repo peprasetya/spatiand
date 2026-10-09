@@ -91,6 +91,8 @@ void sp_paired_host(const char *address, const char *fingerprint);
 
 // How many pixels a point of this Mac's screen is: 2 on a Retina display.
 void sp_display_scale(double scale);
+/// Whether macOS has allowed the microphone: it is not opened for a host until it has.
+void sp_microphone_allowed(bool allowed);
 
 // A window of this Mac's, for the room. id is the app's own and never 0; the size is its
 // picture's, in pixels. hidden lists it without showing it: it is in the room's list of windows

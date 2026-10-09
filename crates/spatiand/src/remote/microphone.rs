@@ -37,6 +37,10 @@ pub struct Microphone {
 impl Microphone {
     /// Start or stop sending, as the host asks. Doing either twice is harmless.
     pub fn want(&mut self, connection: &quinn::Connection, host: &str, wanted: bool) {
+        // On the Mac, opening the microphone before its owner has allowed it puts a question on a
+        // screen they cannot see or click, with the mouse the room's.
+        #[cfg(target_os = "macos")]
+        let wanted = wanted && crate::mac::MICROPHONE_ALLOWED.load(Ordering::Relaxed);
         match (wanted, self.sending.is_some()) {
             (true, false) => self.start(connection, host),
             (false, true) => self.stop(),

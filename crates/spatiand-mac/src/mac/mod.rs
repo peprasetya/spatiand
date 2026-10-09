@@ -141,12 +141,12 @@ pub fn shared() -> &'static Arc<Shared> {
 
 // --- what `backend` asks of the platform it runs on ---
 
-/// macOS draws the glasses' screen at the rate the glasses are in, and the Deck's 72 Hz is the
-/// one they are asked for.
-pub const REFRESH_MHZ: i32 = 72_000;
+/// macOS is offered the glasses' two-eye picture at 60 Hz only: asked for the Deck's 72, the
+/// glasses agree and the Mac goes on showing one eye.
+pub const REFRESH_MHZ: i32 = 60_000;
 /// How far ahead the head is predicted: this frame through the window server on its next
 /// refresh, then scanout.
-pub const PREDICT_AHEAD_S: f64 = 2.0 / 72.0;
+pub const PREDICT_AHEAD_S: f64 = 2.0 / 60.0;
 /// What to do about there being no glasses, under the message that says so.
 pub const PLUG_HINT: &str = "Plug the glasses into this Mac.";
 /// Wi-Fi and Bluetooth are System Settings' own panes, brought here as windows.
@@ -229,9 +229,22 @@ pub fn take_glasses(
     // Not asked again until the next look, whether this works or not: a pair that will not
     // open is not opened sixty times a second.
     *LOOKED.lock().unwrap() = Some((Instant::now(), false));
-    Some(spatiand_hmd::open_any().map(|glasses| {
+    if std::env::var("SPATIAND_HMD").as_deref() == Ok("null") {
+        return Some(spatiand_hmd::open_any());
+    }
+    Some(spatiand_hmd::XrealGlasses::open_any().map(|mut glasses| {
+        use spatiand_hmd::Hmd;
         log::info!("glasses opened: {}", glasses.info().name);
-        glasses
+        glasses.prefer_refresh((REFRESH_MHZ / 1000) as u32);
+        // Glasses left in a two-eye mode by whatever had them last do nothing when asked for
+        // it again, and macOS, which only learns of the wide picture when they change, goes on
+        // offering one eye. Back to one eye first, and a moment for the Mac to see it.
+        if matches!(glasses.raw_display_mode(), Some(0x03 | 0x04 | 0x09)) {
+            log::info!("the glasses were left in a two-eye mode; starting them from one eye");
+            let _ = glasses.set_display_mode(spatiand_hmd::DisplayMode::Mono);
+            std::thread::sleep(std::time::Duration::from_millis(3000));
+        }
+        Box::new(glasses) as Box<dyn spatiand_hmd::Hmd>
     }))
 }
 
@@ -263,6 +276,8 @@ pub fn prepare() {
 /// How many pixels a point of this Mac's screen is, as the app said: a window's picture is
 /// that many times its size.
 pub static DISPLAY_SCALE: Mutex<f64> = Mutex::new(1.0);
+/// Whether macOS has been told this app may use the microphone.
+pub static MICROPHONE_ALLOWED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// What the frame loop does for this Mac's own windows, once a frame.
 ///

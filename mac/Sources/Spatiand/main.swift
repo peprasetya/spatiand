@@ -82,6 +82,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        // One Spatiand at a time: a second would fight the first for the glasses and the host.
+        guard OnlyOne.take() else {
+            print("Spatiand is already running; this one stops")
+            exit(0)
+        }
         handleSignals()
         if let button = item.button {
             button.image = NSImage(systemSymbolName: "eyeglasses", accessibilityDescription: "Spatiand")
@@ -155,6 +160,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Start over as a new process, once this one has gone. Through `open`, so macOS treats the
     /// new one as the app and not as a child of whatever started this.
     private func relaunchForNextPlugIn() {
+        // Once: stopping the room says things have changed, which must not come back here.
+        guard !leaving else { return }
+        leaving = true
+        Room.shared.onChange = nil
+        glasses.onChange = nil
         let bundle = Bundle.main.bundleURL
         guard bundle.pathExtension == "app" else {
             print("the room has ended; not running from an app, so stopping here")
@@ -165,11 +175,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
         // `open` can refuse in the moment after the old one goes (-600); it is asked until it does not.
         relauncher.arguments = ["-c", "while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done; for i in 1 2 3 4 5 6 7 8; do /usr/bin/open -n \"$1\" && exit 0; sleep 0.5; done", "sh", bundle.path]
-        do { try relauncher.run() } catch { print("could not relaunch: \(error)"); return }
+        do { try relauncher.run() } catch { print("could not relaunch: \(error)") }
         print("the room has ended; restarting so the next one starts clean")
         Room.shared.stop()
         exit(0)
     }
+
+    private var leaving = false
 
     /// Glasses plugged in, and the owner has not said to keep everything on the Mac.
     private func glassesWanted() -> Bool {
@@ -602,3 +614,21 @@ application.delegate = delegate
 // A menu-bar app: no Dock icon and no main window.
 application.setActivationPolicy(.accessory)
 application.run()
+
+/// A lock only one running Spatiand holds, let go of by the system when the process ends.
+enum OnlyOne {
+    private static var held: Int32 = -1
+
+    /// Whether this process is the one. Waits a moment, for a predecessor that is on its way out.
+    static func take() -> Bool {
+        let path = NSTemporaryDirectory() + "spatiand.lock"
+        let fd = open(path, O_CREAT | O_RDWR, 0o600)
+        guard fd >= 0 else { return true }
+        for _ in 0..<20 {
+            if flock(fd, LOCK_EX | LOCK_NB) == 0 { held = fd; return true }
+            usleep(100_000)
+        }
+        close(fd)
+        return false
+    }
+}
