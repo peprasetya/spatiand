@@ -249,8 +249,11 @@ pub fn pace() {
     use smithay::backend::egl::ffi::egl;
     let clock = clock();
     if !clock.set.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        // The swap itself never waits: one clock, not two that could each cost a refresh.
-        unsafe { egl::SwapInterval(egl::GetCurrentDisplay(), 0) };
+        // Shown on the display's own refresh, never part-way down it: with an interval of 0 the
+        // layer is not synchronised, and a turning head sees each picture torn across the last.
+        // The wait below only decides when a frame is started.
+        let interval = if std::env::var("SPATIAND_SWAP").as_deref() == Ok("0") { 0 } else { 1 };
+        unsafe { egl::SwapInterval(egl::GetCurrentDisplay(), interval) };
         clock.frames.store(0, std::sync::atomic::Ordering::SeqCst);
     }
     // **Without this the glasses are black.** ANGLE puts its Metal layer into the layer it was

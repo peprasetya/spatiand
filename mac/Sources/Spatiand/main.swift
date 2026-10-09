@@ -550,7 +550,15 @@ if CommandLine.arguments.contains("--selftest-windows") {
         for step in 0..<6 { press(7, at: 4.5 + Double(step) * 0.3) }
         press(2, at: 6.6)
         after(7.5) { sp_screenshot() }
-        after(10) { Room.shared.stop(); exit(0) }
+        // With --and-choose, the first window in the list is brought out: its picture should be
+        // in the second screenshot.
+        if CommandLine.arguments.contains("--and-choose") {
+            press(2, at: 9.0)
+            after(13) { sp_screenshot() }
+            after(16) { Room.shared.stop(); exit(0) }
+        } else {
+            after(10) { Room.shared.stop(); exit(0) }
+        }
     }
     application.run()
 }

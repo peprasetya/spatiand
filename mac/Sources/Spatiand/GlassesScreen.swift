@@ -140,7 +140,10 @@ final class GlassesScreen {
         // Only once it is showing two eyes: a captured display is not looked at again by macOS
         // when the glasses change what they offer, and the wide picture is never found.
         let wide = (CGDisplayCopyDisplayMode(id)?.pixelWidth ?? 0) >= 3000
-        if wide {
+        // And only when asked: while any display is captured macOS keeps this application in
+        // front, and with the mouse given back to the Mac no other application could be chosen.
+        // A window above everything covers the display as well.
+        if wide, ProcessInfo.processInfo.environment["SPATIAND_CAPTURE"] != nil {
             if CGDisplayCapture(id) == .success { captured = id } else { print("glasses: could not take the display over") }
         }
 
