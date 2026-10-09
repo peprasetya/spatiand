@@ -28,12 +28,14 @@ fi
 mkdir -p "$app/Contents/Frameworks" "$app/Contents/Resources"
 cp vendor/angle/libEGL.dylib vendor/angle/libGLESv2.dylib "$app/Contents/Frameworks/"
 cp -R xkbcommon/out/xkb "$app/Contents/Resources/xkb"
+cp Resources/Spatiand.icns "$app/Contents/Resources/Spatiand.icns"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key><string>Spatiand</string>
+    <key>CFBundleIconFile</key><string>Spatiand</string>
     <key>CFBundleDisplayName</key><string>Spatiand</string>
     <key>CFBundleIdentifier</key><string>com.peprasetya.spatiand</string>
     <key>CFBundleExecutable</key><string>Spatiand</string>
