@@ -1,5 +1,10 @@
 # Spatiand on macOS: where the idea stands
 
+> **The room in the glasses was rebuilt on 2026-10-09 as the Deck's own compositor: see
+> [mac.md](mac.md).** What this file says about the room's renderer, menus and input is how it
+> was before, kept for what it records about macOS. Windows on the Mac without glasses, pairing
+> and the Mac as a host are as described here.
+
 A hand-off for a fresh session: what was decided, what was learned, and what is built.
 
 ## What the owner wants

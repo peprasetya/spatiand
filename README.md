@@ -106,17 +106,17 @@ window like a local one's. A session also says whether glasses are on, so a
 virtual-reality application can be asked to be an ordinary window when they are
 not.
 
-**On a Mac** (in [mac/](mac/); see [docs/mac-plan.md](docs/mac-plan.md)).
+**On a Mac** (in [mac/](mac/); see [docs/mac.md](docs/mac.md)).
 A menu-bar app that needs no glasses: a paired host's applications open as
 ordinary Mac windows, with the mouse, keyboard, clipboard (text and images) and
-sound (folded to stereo, played into the output you choose) going with them.
-Plug the glasses in and the same windows go into the room instead: the glasses
-switch to 3D and show windows bent round you, head-tracked by the Deck's own
-tracker, each one's sound placed where it is by the Deck's own renderer. The
-Mac's mouse, trackpad and keyboard steer a pointer in the room until
-Ctrl-Option-G gives them back, and Ctrl-Space opens a menu in the glasses. Windows of the
-Mac itself can be brought into the room too, and the Mac can be a host in its own right: a
-Deck or a Beam Pro pairs with it and opens its applications like a Linux host's.
+sound going with them. Plug the glasses in and the Mac runs the room itself --
+the same compositor as the Deck, built for macOS and drawn through ANGLE, so the
+launcher, settings, pointer and window frames are the Deck's own. The Mac's
+applications are in its launcher and their windows come into the room, clicked
+and typed into as on the Mac; its mouse, trackpad and keyboard steer the room
+until Ctrl-Option-G gives them back. The Mac can also be a host in its own
+right: a Deck or a Beam Pro pairs with it and opens its applications like a
+Linux host's.
 
 **Recording.** The HUD's *Record a video* saves what the glasses show, both
 eyes side by side, remote pictures included, as Matroska in `~/Videos/Spatiand`
