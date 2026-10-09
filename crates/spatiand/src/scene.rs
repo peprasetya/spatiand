@@ -2379,21 +2379,32 @@ impl Scene {
                     }),
                     (0.0, 1.0),
                 );
-                // Its own volume, where it is not as it came: a bar under the speaker, as long
-                // as it is loud -- the button's width is the volume it came at.
-                if (sound.gain - 1.0).abs() > 0.01 && !sound.muted {
-                    let mut bar = mute;
-                    let wide = (sound.gain / 2.0).clamp(0.05, 1.0);
-                    bar.half_u *= wide as f64;
-                    bar.half_v *= 0.09;
-                    bar.v -= mute.half_v * 1.25;
+                // Its own volume: a slider under the speaker while it is pointed at, and
+                // whenever the volume is not as the application made it. The track is silent
+                // to three times over, with a mark where the application's own volume is.
+                if (hot || (sound.gain - 1.0).abs() > 0.01) && !sound.muted {
+                    let mut track = mute;
+                    track.half_u *= 2.4;
+                    track.half_v *= 0.10;
+                    track.v -= mute.half_v * 1.3;
+                    let px = 64.0 * 2.4;
+                    self.rounded.draw(gl, &(eye.view_projection() * furniture(track)), dim([0.03, 0.05, 0.09, 0.85]), (px, 7.0), 3.5);
+                    let share = (sound.gain as f64 / 3.0).clamp(0.02, 1.0);
+                    let mut fill = track;
+                    fill.half_u = track.half_u * share;
+                    fill.u = track.u - track.half_u + fill.half_u;
                     self.rounded.draw(
                         gl,
-                        &(eye.view_projection() * furniture(bar)),
-                        dim(if sound.gain > 1.0 { [1.0, 0.78, 0.35, 0.95] } else { [0.70, 0.85, 1.0, 0.95] }),
-                        (64.0 * wide, 6.0),
-                        3.0,
+                        &(eye.view_projection() * furniture(fill)),
+                        dim(if sound.gain > 1.01 { [1.0, 0.78, 0.35, 0.95] } else { [0.70, 0.85, 1.0, 0.95] }),
+                        (px * share as f32, 7.0),
+                        3.5,
                     );
+                    let mut mark = track;
+                    mark.half_u = track.half_u * 0.02;
+                    mark.half_v *= 1.9;
+                    mark.u = track.u - track.half_u + track.half_u * 2.0 / 3.0;
+                    self.rounded.draw(gl, &(eye.view_projection() * furniture(mark)), dim([1.0, 1.0, 1.0, 0.9]), (3.0, 13.0), 1.5);
                 }
             }
 

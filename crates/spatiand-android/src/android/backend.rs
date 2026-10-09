@@ -187,6 +187,9 @@ pub fn run(
     let mut drag_left_y: Option<f32> = None;
     // Where a finger was when an open menu last moved a row for it. See the menus above.
     let mut menu_swipe: Option<(f32, f32)> = None;
+    // A window's speaker button held: the window, where the pointer was and the volume then,
+    // whether it has been slid, and whether it was muted.
+    let mut speaker_slide: Option<(usize, f32, f32, bool, bool)> = None;
     // How far a wheel has turned over an open menu, short of the next row.
     let mut menu_wheel = 0.0f32;
     super::record::publish_leftovers();
@@ -1478,8 +1481,17 @@ pub fn run(
                             Some(a) if a.zone == Some(Zone::Mute) => {
                                 if let Some(quad) = a.hit.and_then(|(i, _)| windows.get(i)) {
                                     if let Some(id) = runtime.state.layout.id_of(&quad.window) {
-                                        let now = quad.sound.map(|s| s.muted).unwrap_or(false);
-                                        spatial_audio.set_muted(id, !now);
+                                        // **Pressed and let go, it mutes; pressed and slid,
+                                        // it is this window's volume** -- left for quieter,
+                                        // right for louder than the application made it.
+                                        let sound = quad.sound;
+                                        speaker_slide = Some((
+                                            id,
+                                            p.right_pad.x,
+                                            sound.map(|s| s.gain).unwrap_or(1.0),
+                                            false,
+                                            sound.map(|s| s.muted).unwrap_or(false),
+                                        ));
                                     }
                                 }
                             }
@@ -1592,6 +1604,25 @@ pub fn run(
                         }
                     } else if !left_click && left_was_down {
                         pointers.button(&mut runtime.state, BTN_RIGHT, false, time_ms);
+                    }
+                    if let Some((id, from, gain, moved, muted)) = speaker_slide {
+                        if right_click {
+                            let across = p.right_pad.x - from;
+                            let moved = moved || across.abs() > 0.015;
+                            if moved {
+                                // The whole range in about a quarter of the view.
+                                spatial_audio.set_gain(id, (gain + across * 6.0).clamp(0.0, 3.0));
+                                if muted {
+                                    spatial_audio.set_muted(id, false);
+                                }
+                            }
+                            speaker_slide = Some((id, from, gain, moved, muted && !moved));
+                        } else {
+                            if !moved {
+                                spatial_audio.set_muted(id, !muted);
+                            }
+                            speaker_slide = None;
+                        }
                     }
                     right_was_down = right_click;
                     left_was_down = left_click;
