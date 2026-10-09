@@ -370,9 +370,9 @@ pub extern "C" fn sp_window_show(id: u32) {
 /// # Safety
 /// `surface` must be a live `IOSurfaceRef`.
 #[no_mangle]
-pub unsafe extern "C" fn sp_window_picture(id: u32, surface: *const c_void) {
+pub unsafe extern "C" fn sp_window_picture(id: u32, surface: *const c_void, x: u32, y: u32, width: u32, height: u32) {
     if !surface.is_null() {
-        local::picture(id, surface);
+        local::picture(id, surface, (x, y, width, height));
     }
 }
 

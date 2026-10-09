@@ -144,13 +144,22 @@ pub fn show(id: u32) {
 ///
 /// # Safety
 /// `surface` must be a live `IOSurfaceRef`.
-pub unsafe fn picture(id: u32, surface: *const std::ffi::c_void) {
+pub unsafe fn picture(id: u32, surface: *const std::ffi::c_void, content: (u32, u32, u32, u32)) {
     let Some(windows) = WINDOWS.get() else { return };
     let mut entries = windows.entries.lock().unwrap();
     let Some(entry) = entries.get_mut(&id) else { return };
     let surface = Surface::hold(surface);
-    let size = surface.size();
-    entry.output.put(surface, [0.0, 0.0, 1.0, 1.0]);
+    let whole = surface.size();
+    // The window's part of the picture, in pixels; nothing said is all of it.
+    let (x, y, w, h) = content;
+    let inside = w > 0 && h > 0 && x + w <= whole.0 && y + h <= whole.1;
+    let (crop, size) = if inside {
+        let (ww, wh) = (whole.0 as f32, whole.1 as f32);
+        ([x as f32 / ww, y as f32 / wh, (x + w) as f32 / ww, (y + h) as f32 / wh], (w, h))
+    } else {
+        ([0.0, 0.0, 1.0, 1.0], whole)
+    };
+    entry.output.put(surface, crop);
     if size != entry.size {
         entry.size = size;
         send(Command::Show { id, size });

@@ -3689,6 +3689,10 @@ pub fn collect_windows(
         let texture = crate::android::remote_video::substitute(renderer, &surface, texture);
         #[cfg(target_os = "macos")]
         let texture = crate::mac::remote_video::substitute(renderer, &surface, texture);
+        // And the part of that picture which is the window: a capture hands over a picture
+        // bigger than a window that has shrunk, with the window in its corner.
+        #[cfg(target_os = "macos")]
+        let crop = crate::mac::remote_video::crop_of(&surface).unwrap_or(crop);
         // A surface that has become the environment is not also a panel in it. Asked through
         // `is_environment` rather than by listing layers: the list here once said "the two
         // panoramas", and the day a third kind of room arrived it would have been drawn twice.

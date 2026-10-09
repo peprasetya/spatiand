@@ -182,6 +182,17 @@ pub fn substitute(renderer: &mut GlesRenderer, surface: &WlSurface, texture: u32
     })
 }
 
+/// Which part of the picture being shown for this surface is picture, where it is not all of
+/// it, in the scene's order.
+pub fn crop_of(surface: &WlSurface) -> Option<[f32; 4]> {
+    let token = token_of(surface)?;
+    PICTURES.with(|pictures| {
+        let crop = pictures.borrow().slots.get(&token)?.showing.as_ref()?.frame.crop;
+        // The scene's order: (u0, u1, v0, v1).
+        (crop != [0.0, 0.0, 1.0, 1.0]).then_some([crop[0], crop[2], crop[1], crop[3]])
+    })
+}
+
 /// Once a frame, after it is drawn: pictures off screen long enough are let go of, and windows
 /// that are gone give their textures up.
 pub fn end_frame(renderer: &mut GlesRenderer) {

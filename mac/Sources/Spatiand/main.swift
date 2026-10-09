@@ -639,9 +639,12 @@ if CommandLine.arguments.contains("--selftest-resize") {
                 } else {
                     print(String(format: "resize: FAILED, still %dx%d after %.1f s, wanted %dx%d; the main thread waited at most %.0f ms", Int(now.width), Int(now.height), took, Int(last.width), Int(last.height), worstStall * 1000))
                 }
-                MacWindows.resize(window.info, toPoints: before)
-                NSRunningApplication(processIdentifier: window.info.pid)?.terminate()
-                after(1) { Room.shared.stop(); exit(0) }
+                // And smaller again, which is where a black band was left.
+                MacWindows.resize(window.info, toPoints: CGSize(width: before.width - 60, height: before.height - 120))
+                after(3) {
+                    NSRunningApplication(processIdentifier: window.info.pid)?.terminate()
+                    after(1) { Room.shared.stop(); exit(0) }
+                }
             }
             after(2.05) { settled(60) }
         }

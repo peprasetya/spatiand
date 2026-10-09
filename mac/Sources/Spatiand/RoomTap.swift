@@ -43,6 +43,31 @@ final class RoomTap {
     /// a held button and nothing needs doing here.
     private lazy var systemDrags = SystemGestures.enabled().contains("three-finger drag")
 
+    // The Mac's real cursor is put over a window of this Mac's as the room's pointer moves in
+    // it. If that comes back as travel of the mouse it is not the hand's, and is not passed on.
+    private let jumpLock = NSLock()
+    private var jump: (dx: Double, dy: Double, at: Date)?
+
+    func expectJump(dx: Double, dy: Double) {
+        guard hypot(dx, dy) > 24 else { return }
+        jumpLock.lock()
+        jump = (dx, dy, Date())
+        jumpLock.unlock()
+    }
+
+    private func isEcho(_ dx: Double, _ dy: Double) -> Bool {
+        jumpLock.lock()
+        defer { jumpLock.unlock() }
+        guard let j = jump else { return false }
+        if Date().timeIntervalSince(j.at) > 0.15 { jump = nil; return false }
+        let size = hypot(j.dx, j.dy)
+        let same = hypot(dx - j.dx, dy - j.dy) < size * 0.3, opposite = hypot(dx + j.dx, dy + j.dy) < size * 0.3
+        guard same || opposite else { return false }
+        jump = nil
+        print(String(format: "input: the cursor's own jump came back as travel (%.0f, %.0f); not passed on", dx, dy))
+        return true
+    }
+
     var isInstalled: Bool { tap != nil }
 
     /// Whether events may be tapped and posted, asking if they may not.
@@ -145,7 +170,9 @@ final class RoomTap {
 
         switch type {
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
-            sp_pointer(Float(event.getDoubleValueField(.mouseEventDeltaX)), Float(event.getDoubleValueField(.mouseEventDeltaY)), buttons, 0, 0)
+            let dx = event.getDoubleValueField(.mouseEventDeltaX), dy = event.getDoubleValueField(.mouseEventDeltaY)
+            if isEcho(dx, dy) { break }
+            sp_pointer(Float(dx), Float(dy), buttons, 0, 0)
         case .leftMouseDown: buttons |= 1; sp_pointer(0, 0, buttons, 0, 0)
         case .leftMouseUp: buttons &= ~1; sp_pointer(0, 0, buttons, 0, 0)
         case .rightMouseDown: buttons |= 2; sp_pointer(0, 0, buttons, 0, 0)

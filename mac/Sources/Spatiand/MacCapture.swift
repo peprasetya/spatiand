@@ -123,6 +123,7 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var configuredSize = CGSize.zero
     private var lastResize = Date.distantPast
     private var lastSize = CGSize.zero
+    private(set) var lastContent = CGRect.zero
 
     init(_ info: MacWindowInfo) { self.info = info }
 
@@ -181,7 +182,9 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// Where a point of the captured picture, in pixels from its top left, is on the Mac's screen.
     func screenPoint(x: Double, y: Double) -> CGPoint {
         let f = frame()
-        let (w, h) = lastSize.width > 0 ? (lastSize.width, lastSize.height) : (f.width * scale, f.height * scale)
+        // The window's part of the picture, which is what the room shows and counts pixels in.
+        let part = lastContent.width > 0 ? lastContent.size : lastSize
+        let (w, h) = part.width > 0 ? (part.width, part.height) : (f.width * scale, f.height * scale)
         return CGPoint(x: f.minX + CGFloat(x) / w * f.width, y: f.minY + CGFloat(y) / h * f.height)
     }
 
@@ -197,6 +200,16 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         if let list = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[String: Any]],
            let raw = list.first?[SCStreamFrameInfo.status.rawValue] as? Int, let status = SCFrameStatus(rawValue: raw), status != .complete {
             return
+        }
+        if let list = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[String: Any]],
+           let dict = list.first?[SCStreamFrameInfo.contentRect.rawValue], let rect = CGRect(dictionaryRepresentation: dict as! CFDictionary) {
+            let factor = (list.first?[SCStreamFrameInfo.scaleFactor.rawValue] as? NSNumber)?.doubleValue ?? 1
+            let content = CGRect(x: rect.minX * factor, y: rect.minY * factor, width: rect.width * factor, height: rect.height * factor)
+            let whole = CGSize(width: CVPixelBufferGetWidth(pixels), height: CVPixelBufferGetHeight(pixels))
+            if content != lastContent || whole != lastSize {
+                lastContent = content
+                print("capture: \(info.app) picture \(Int(whole.width))x\(Int(whole.height)), of which the window is \(Int(content.width))x\(Int(content.height)) at \(Int(content.minX)),\(Int(content.minY)); the window is \(Int(frame().width))x\(Int(frame().height)) points")
+            }
         }
         lock.lock()
         newest = pixels

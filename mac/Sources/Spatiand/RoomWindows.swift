@@ -200,9 +200,10 @@ final class RoomWindows {
         guard var entry = entries[id], entry.capture == nil else { return }
         let info = entry.info
         let capture = MacCapture(info)
-        capture.onFrame = { pixels, _ in
+        capture.onFrame = { [weak capture] pixels, _ in
             guard let surface = CVPixelBufferGetIOSurface(pixels)?.takeUnretainedValue() else { return }
-            sp_window_picture(id, Unmanaged.passUnretained(surface).toOpaque())
+            let c = capture?.lastContent ?? .zero
+            sp_window_picture(id, Unmanaged.passUnretained(surface).toOpaque(), UInt32(max(0, c.minX)), UInt32(max(0, c.minY)), UInt32(max(0, c.width)), UInt32(max(0, c.height)))
         }
         capture.onEnded = { [weak self] in self?.gone(id) }
         entry.capture = capture
@@ -324,8 +325,17 @@ final class RoomWindows {
         setInside(true)
         guard let p = point(id) else { return }
         // A real pointer, really there: what makes hover, tooltips and the cursor's shape work.
+        // The cursor is put there, which makes no event, and the application is told by an
+        // event of its own. Posted as the mouse's, a move came back as the mouse's travel: the
+        // room's pointer was thrown out of the window the moment it went in.
         let type: CGEventType = down.contains(id) ? .leftMouseDragged : .mouseMoved
-        post(CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: .left))
+        let here = CGEvent(source: nil)?.location ?? p
+        RoomTap.shared.expectJump(dx: Double(p.x - here.x), dy: Double(p.y - here.y))
+        CGWarpMouseCursorPosition(p)
+        if let pid = entries[id]?.info.pid, let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: .left) {
+            event.setIntegerValueField(.eventSourceUserData, value: spatiandEventMark)
+            event.postToPid(pid)
+        }
     }
 
     private func button(_ id: UInt32, code: Int, pressed: Bool) {
