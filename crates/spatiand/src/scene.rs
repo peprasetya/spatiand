@@ -395,6 +395,10 @@ pub struct Scene {
 
     /// One per app in the launcher, in the same order.
     app_labels: Vec<Texture>,
+    /// The line above the launcher's bubbles -- whose applications these are, or what has been
+    /// typed to narrow them -- and the text it was made from.
+    launcher_caption: Option<Texture>,
+    launcher_caption_text: String,
     /// What each bubble shows inside the glass: its icon, or its initial while the icon loads
     /// or where there is none.
     app_glyphs: Vec<Texture>,
@@ -601,6 +605,8 @@ impl Scene {
             speaker_off_glyph,
             glass,
             app_labels: Vec::new(),
+            launcher_caption: None,
+            launcher_caption_text: String::new(),
             app_glyphs: Vec::new(),
             app_initials: Vec::new(),
             labels_built_for: usize::MAX,
@@ -872,6 +878,29 @@ impl Scene {
         // Whatever the launcher is currently showing: groups at the top level, applications
         // inside one. Both are bubbles with a name and an icon, so the rest is identical.
         let launcher = shell.launcher();
+        // The line above them: what has been typed, or else whose applications these are.
+        let caption = match (launcher.query(), launcher.heading()) {
+            (typed, _) if !typed.is_empty() => format!("Search: {typed}"),
+            (_, Some(heading)) => heading,
+            _ => String::new(),
+        };
+        if caption != self.launcher_caption_text {
+            let image = (!caption.is_empty())
+                .then(|| text.render(&caption, px_per_degree * 0.95, 1024, [232, 238, 255, 255]));
+            let old = self.launcher_caption.take();
+            self.launcher_caption = renderer
+                .with_context(|gl| unsafe {
+                    if let Some(old) = old {
+                        gl.DeleteTextures(1, &old.id);
+                    }
+                    image.as_ref().map(|image| Texture {
+                        id: upload_rgba(gl, image),
+                        aspect: image.width as f32 / image.height.max(1) as f32,
+                    })
+                })
+                .map_err(|e| format!("no GL context: {e}"))?;
+            self.launcher_caption_text = caption;
+        }
         let entries: Vec<(String, Option<String>)> = launcher.bubbles();
         // What is shown, not how many: a computer's tab and a group of the same size would
         // otherwise reuse each other's labels, and a computer going offline changes a label
@@ -929,11 +958,12 @@ impl Scene {
         if relabel {
             // Everything else the launcher can show, queued behind what is on screen, so that
             // a group opened later finds its icons already there instead of starting on them.
-            let everything = launcher
-                .groups()
-                .iter()
-                .map(|g| g.icon.to_string())
-                .chain(launcher.apps().iter().filter_map(|a| a.icon.clone()))
+            let everything = [
+                spatiand_shell::launcher::LOCAL_ICON.to_string(),
+                spatiand_shell::launcher::HOST_ICON.to_string(),
+            ]
+            .into_iter()
+            .chain(launcher.apps().iter().filter_map(|a| a.icon.clone()))
                 .chain(launcher.hosts().iter().flat_map(|h| {
                     h.apps.iter().filter_map(|a| a.icon.clone()).collect::<Vec<_>>()
                 }));
@@ -2706,6 +2736,24 @@ impl Scene {
                 label.id,
                 &(eye.view_projection() * model),
                 [1.0, 1.0, 1.0, alpha],
+                (0.0, 1.0),
+            );
+        }
+
+        // The line above the bubbles, clear of the top row however many rows there are.
+        if let Some(caption) = self.launcher_caption {
+            let rows = launcher.visible().len().div_ceil(spatiand_shell::launcher::COLUMNS).max(1);
+            let top = (rows as f32 - 1.0) * 0.5 * spatiand_shell::launcher::ROW_SPACING_DEG;
+            let orientation = self.anchor_quat() * Quat::from_rotation_y(-(top + 3.9).to_radians());
+            let centre = self.menu_origin() + orientation * Vec3::X * spatiand_shell::launcher::ARC_RADIUS_M;
+            let height = 0.030f32;
+            let width = height * caption.aspect.max(0.01);
+            let model = self.panel_model(centre, orientation, width, height);
+            self.quads.draw(
+                gl,
+                caption.id,
+                &(eye.view_projection() * model),
+                [1.0, 1.0, 1.0, 0.9 * self.appear_progress(0)],
                 (0.0, 1.0),
             );
         }

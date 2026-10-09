@@ -232,11 +232,32 @@ pub fn run(
             categories: e.categories,
         })
         .collect();
+    // `SPATIAND_VIEW_APPS=n` makes up that many, for a machine with none to scan: what a long
+    // list looks like, and how typing narrows it.
+    let apps = match std::env::var("SPATIAND_VIEW_APPS").ok().and_then(|n| n.parse::<usize>().ok()) {
+        Some(n) => {
+            const NAMES: [&str; 24] = [
+                "Calculator", "Calendar", "Chrome", "Code", "Console", "Contacts", "Dictionary", "Files", "Firefox",
+                "Mail", "Maps", "Music", "Notes", "Photos", "Preview", "Reminders", "Safari", "Settings", "Terminal",
+                "Text Editor", "Videos", "Visual Studio Code", "Weather", "Xcode",
+            ];
+            (0..n)
+                .map(|i| spatiand_shell::AppEntry {
+                    name: if i < NAMES.len() { NAMES[i].to_string() } else { format!("{} {}", NAMES[i % NAMES.len()], i / NAMES.len() + 1) },
+                    exec: String::new(),
+                    icon: None,
+                    categories: Vec::new(),
+                })
+                .collect()
+        }
+        None => apps,
+    };
     log::info!("launcher: {} application(s)", apps.len());
     // The snapshot always draws the settled arrangement, which is the one people will see for
     // all but the first session.
     let calibrated = true;
     let mut shell = Shell::new(apps, DesktopPanels::ALL, calibrated);
+    shell.set_local_name(&crate::system::machine_name());
 
     // Clients need an output to be told about, and frame callbacks need one to reference.
     let output = smithay::output::Output::new(
@@ -508,12 +529,18 @@ pub fn run(
         let (rows, tabs) = made_up_hosts();
         shell.set_hosts(rows, tabs);
     }
+    // `SPATIAND_VIEW=launcher SPATIAND_VIEW_PAGE=local` opens this machine's applications, and
+    // `SPATIAND_VIEW_TYPE=text` types that into the launcher, to narrow it.
+    if view == View::Launcher && std::env::var("SPATIAND_VIEW_PAGE").as_deref() == Ok("local") {
+        shell.handle(Intent::Accept);
+    }
     // `SPATIAND_VIEW=launcher SPATIAND_VIEW_PAGE=host` opens the first computer's tab.
     if view == View::Launcher && std::env::var("SPATIAND_VIEW_PAGE").as_deref() == Ok("host") {
         // Walked the way a thumb would, row by row: right along a row, then down and back to
         // its start. The first bubble after the groups is the first computer.
         use spatiand_shell::NavDirection::{Down, Left, Right};
-        let target = shell.launcher().groups().len();
+        // The machines are this one and then the computers.
+        let target = if shell.launcher().apps().is_empty() { 0 } else { 1 };
         for _ in 0..shell.launcher().len() * 2 {
             if shell.launcher().cursor() == target {
                 break;
@@ -528,6 +555,9 @@ pub fn run(
             }
         }
         shell.handle(Intent::Accept);
+    }
+    if let Ok(typed) = std::env::var("SPATIAND_VIEW_TYPE") {
+        shell.type_query(&typed);
     }
     if let Ok(command) = std::env::var("SPATIAND_CLIENT") {
         let seconds: f32 = std::env::var("SPATIAND_CLIENT_WAIT")

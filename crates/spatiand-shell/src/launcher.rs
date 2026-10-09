@@ -10,7 +10,6 @@
 //! outer icons are further away and smaller, and the eyes have to re-converge as the cursor
 //! travels. That is tiring in a way that is hard to attribute to layout.
 
-use crate::category::{group_for, Group, GROUPS, OTHER};
 use crate::grid::{Direction, Grid};
 
 /// One launchable application.
@@ -28,6 +27,8 @@ pub struct AppEntry {
 
 /// The icon a remote computer's bubble looks up in the theme.
 pub const HOST_ICON: &str = "network-server";
+/// The icon this machine's own bubble looks up.
+pub const LOCAL_ICON: &str = "computer";
 
 /// Angular spacing between adjacent bubbles, degrees.
 ///
@@ -69,15 +70,17 @@ pub struct BubblePlacement {
 
 /// What the launcher is currently showing.
 ///
-/// Two levels, deliberately. Forty bubbles across four pages is a directory listing you have
-/// to read; "Internet, then Chrome" is two decisions of about five options each. Any deeper
-/// and it becomes a filesystem browser, which is worse than either.
+/// Two levels: a machine, then its applications. The applications used to be filed under
+/// categories first ("Internet, then Chrome"), which is two decisions where the answer to the
+/// first is a guess -- is a terminal a System thing or a Utility? -- and on a Mac, which files
+/// nothing under categories, there was nothing to file by. One list by name, narrowed by typing,
+/// asks only what the application is called.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Level {
-    /// The groups themselves, and a bubble for each remote computer after them.
-    Groups,
-    /// The applications inside one group.
-    Apps(Group),
+    /// The machines: this one, then each remote computer.
+    Machines,
+    /// This machine's applications.
+    Local,
     /// The applications another computer offers. Carries the index into the computers.
     Host(usize),
 }
@@ -113,32 +116,161 @@ pub enum Launch {
     Remote { host: String, app: String },
 }
 
+/// One bubble on show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Item {
+    /// This machine, at the top level.
+    ThisMachine,
+    /// A remote computer, at the top level: its index.
+    Machine(usize),
+    /// One of this machine's applications: its index.
+    Local(usize),
+    /// A remote computer's application: the computer, then the application.
+    Remote(usize, usize),
+}
+
 /// The launcher's state.
 #[derive(Debug, Clone)]
 pub struct Launcher {
+    /// This machine's applications, by name.
     apps: Vec<AppEntry>,
     grid: Grid,
     level: Level,
-    /// Groups that actually contain something, in [`GROUPS`] order.
-    groups: Vec<Group>,
-    /// Remote computers, shown after the groups.
+    /// Remote computers, shown after this one.
     hosts: Vec<HostTab>,
-    /// Where the cursor was in the group list, so backing out returns to it rather than to the
-    /// top -- opening the wrong app and coming back should not cost you your place.
-    group_cursor: usize,
+    /// What this machine is called.
+    local_name: String,
+    /// Where the cursor was among the machines, so backing out returns to it rather than to the
+    /// top -- opening the wrong one and coming back should not cost you your place.
+    machine_cursor: usize,
+    /// What has been typed to narrow the bubbles. Empty shows everything.
+    query: String,
+    /// The bubbles on show: the level's, narrowed by the query.
+    shown: Vec<Item>,
+}
+
+/// How well a name answers what was typed: lower is better, `None` is not at all.
+///
+/// A name that starts with it, then a word in the name that does, then anywhere inside, then
+/// the initials of its words ("vsc" finds Visual Studio Code). Case is ignored.
+fn rank(name: &str, query: &str) -> Option<u32> {
+    let name = name.to_lowercase();
+    let query = query.to_lowercase();
+    if query.is_empty() {
+        return Some(0);
+    }
+    if name.starts_with(&query) {
+        return Some(0);
+    }
+    if name
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|word| word.starts_with(&query))
+    {
+        return Some(1);
+    }
+    if name.contains(&query) {
+        return Some(2);
+    }
+    // The initials of its words: "vsc" for Visual Studio Code. Not its letters in any order
+    // with others between them, which found "Chrome" for "co" and half the list for anything.
+    let initials: String = name
+        .split(|c: char| !c.is_alphanumeric())
+        .filter_map(|word| word.chars().next())
+        .collect();
+    (query.chars().count() > 1 && initials.starts_with(&query)).then_some(3)
 }
 
 impl Launcher {
-    pub fn new(apps: Vec<AppEntry>) -> Self {
-        let groups = occupied_groups(&apps);
-        Self {
-            grid: Grid::new(COLUMNS, groups.len()),
+    pub fn new(mut apps: Vec<AppEntry>) -> Self {
+        apps.sort_by_key(|a| a.name.to_lowercase());
+        let mut this = Self {
+            grid: Grid::new(COLUMNS, 0),
             apps,
-            level: Level::Groups,
-            groups,
+            level: Level::Local,
             hosts: Vec::new(),
-            group_cursor: 0,
+            local_name: "This computer".into(),
+            machine_cursor: 0,
+            query: String::new(),
+            shown: Vec::new(),
+        };
+        this.level = this.root();
+        this.refill(0);
+        this
+    }
+
+    /// What this machine is called, for its bubble among the machines.
+    pub fn set_local_name(&mut self, name: &str) {
+        if !name.trim().is_empty() && name != self.local_name {
+            self.local_name = name.trim().to_string();
         }
+    }
+
+    pub fn local_name(&self) -> &str {
+        &self.local_name
+    }
+
+    /// Where the launcher opens, and where B stops climbing.
+    ///
+    /// The machines, when there is more than one to choose between. With only this one, or only
+    /// one remote computer and nothing here (a Beam Pro), choosing among one is a press for
+    /// nothing, and the launcher opens on its applications.
+    fn root(&self) -> Level {
+        match (self.apps.is_empty(), self.hosts.len()) {
+            (_, 0) => Level::Local,
+            (true, 1) => Level::Host(0),
+            _ => Level::Machines,
+        }
+    }
+
+    /// Work out the bubbles again, keeping the cursor at `cursor` if there is still one there.
+    fn refill(&mut self, cursor: usize) {
+        let query = self.query.trim();
+        let mut ranked: Vec<(u32, usize, Item)> = Vec::new();
+        let mut order = 0usize;
+        let mut push = |ranked: &mut Vec<(u32, usize, Item)>, name: &str, item: Item| {
+            if let Some(r) = rank(name, query) {
+                ranked.push((r, order, item));
+            }
+            order += 1;
+        };
+        match &self.level {
+            // With nothing typed, the machines. Typing here looks through all of them at once.
+            Level::Machines if query.is_empty() => {
+                if !self.apps.is_empty() {
+                    ranked.push((0, 0, Item::ThisMachine));
+                }
+                for i in 0..self.hosts.len() {
+                    ranked.push((0, i + 1, Item::Machine(i)));
+                }
+            }
+            Level::Machines => {
+                for (i, app) in self.apps.iter().enumerate() {
+                    push(&mut ranked, &app.name, Item::Local(i));
+                }
+                for (h, host) in self.hosts.iter().enumerate() {
+                    for (i, app) in host.apps.iter().enumerate() {
+                        push(&mut ranked, &app.name, Item::Remote(h, i));
+                    }
+                }
+            }
+            Level::Local => {
+                for (i, app) in self.apps.iter().enumerate() {
+                    push(&mut ranked, &app.name, Item::Local(i));
+                }
+            }
+            Level::Host(h) => {
+                if let Some(host) = self.hosts.get(*h) {
+                    for (i, app) in host.apps.iter().enumerate() {
+                        push(&mut ranked, &app.name, Item::Remote(*h, i));
+                    }
+                }
+            }
+        }
+        // The best answers first; among equals, the order they were in.
+        ranked.sort_by_key(|(rank, order, _)| (*rank, *order));
+        self.shown = ranked.into_iter().map(|(_, _, item)| item).collect();
+        self.grid = Grid::new(COLUMNS, self.shown.len());
+        self.grid.set_cursor(cursor.min(self.shown.len().saturating_sub(1)));
     }
 
     pub fn hosts(&self) -> &[HostTab] {
@@ -154,152 +286,177 @@ impl Launcher {
         if hosts == self.hosts {
             return;
         }
+        let was_root = self.level == self.root();
         let open = match &self.level {
             Level::Host(i) => self.hosts.get(*i).map(|h| h.address.clone()),
             _ => None,
         };
         self.hosts = hosts;
+        let cursor = self.grid.cursor();
         match &self.level {
-            Level::Host(_) => {
-                match open.and_then(|a| self.hosts.iter().position(|h| h.address == a)) {
-                    Some(i) => {
-                        let cursor = self.grid.cursor();
-                        self.level = Level::Host(i);
-                        self.grid = Grid::new(COLUMNS, self.len());
-                        self.grid.set_cursor(cursor.min(self.len().saturating_sub(1)));
-                    }
-                    None => {
-                        self.level = Level::Groups;
-                        self.grid = Grid::new(COLUMNS, self.len());
-                    }
+            Level::Host(_) => match open.and_then(|a| self.hosts.iter().position(|h| h.address == a)) {
+                Some(i) => {
+                    self.level = Level::Host(i);
+                    self.refill(cursor);
                 }
+                None => {
+                    self.level = self.root();
+                    self.query.clear();
+                    self.refill(0);
+                }
+            },
+            // At the top, and the top has moved: a first computer has arrived, or the last
+            // has gone. Nothing typed and nothing chosen yet, so it is where the top now is.
+            Level::Local if was_root && self.query.is_empty() && cursor == 0 => {
+                self.level = self.root();
+                self.refill(0);
             }
-            Level::Groups => {
-                let cursor = self.grid.cursor();
-                self.grid = Grid::new(COLUMNS, self.len());
-                self.grid.set_cursor(cursor.min(self.len().saturating_sub(1)));
-            }
-            Level::Apps(_) => {}
+            _ => self.refill(cursor),
         }
     }
 
-    /// Every bubble the current level shows: its label, and the icon to look up for it.
+    // --- typing ---
+
+    /// What has been typed to narrow the bubbles.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// More letters: the bubbles are narrowed to the names they find, best first.
+    pub fn type_query(&mut self, text: &str) {
+        let before = self.query.len();
+        self.query.extend(text.chars().filter(|c| !c.is_control()));
+        if self.query.len() != before {
+            self.refill(0);
+        }
+    }
+
+    pub fn query_backspace(&mut self) {
+        if self.query.pop().is_some() {
+            self.refill(0);
+        }
+    }
+
+    /// Forget what was typed. `true` if there was anything.
+    pub fn clear_query(&mut self) -> bool {
+        if self.query.is_empty() {
+            return false;
+        }
+        self.query.clear();
+        self.refill(0);
+        true
+    }
+
+    /// As it is each time it is opened: at the top, with nothing typed.
+    pub fn reset(&mut self) {
+        self.query.clear();
+        self.level = self.root();
+        self.machine_cursor = 0;
+        self.refill(0);
+    }
+
+    // --- what is on show ---
+
+    fn bubble(&self, item: Item) -> (String, Option<String>) {
+        match item {
+            Item::ThisMachine => (self.local_name.clone(), Some(LOCAL_ICON.to_string())),
+            Item::Machine(i) => {
+                let h = &self.hosts[i];
+                let label = if h.online { h.label.clone() } else { format!("{} (offline)", h.label) };
+                (label, Some(HOST_ICON.to_string()))
+            }
+            Item::Local(i) => (self.apps[i].name.clone(), self.apps[i].icon.clone()),
+            Item::Remote(h, i) => {
+                let host = &self.hosts[h];
+                let app = &host.apps[i];
+                // Looking through every machine at once, a remote one's says whose it is.
+                let label = if self.level == Level::Machines {
+                    format!("{} \u{00b7} {}", app.name, host.label)
+                } else {
+                    app.name.clone()
+                };
+                (label, app.icon.clone())
+            }
+        }
+    }
+
+    /// Every bubble on show: its label, and the icon to look up for it.
     ///
     /// One list so the renderer does not need to know what kinds of bubble there are.
     pub fn bubbles(&self) -> Vec<(String, Option<String>)> {
-        match &self.level {
-            Level::Groups => self
-                .groups
-                .iter()
-                .map(|g| (g.label.to_string(), Some(g.icon.to_string())))
-                .chain(self.hosts.iter().map(|h| {
-                    let label = if h.online {
-                        h.label.clone()
-                    } else {
-                        format!("{} (offline)", h.label)
-                    };
-                    (label, Some(HOST_ICON.to_string()))
-                }))
-                .collect(),
-            Level::Apps(_) => self
-                .apps_in_level()
-                .iter()
-                .map(|a| (a.name.clone(), a.icon.clone()))
-                .collect(),
-            Level::Host(i) => self
-                .hosts
-                .get(*i)
-                .map(|h| h.apps.iter().map(|a| (a.name.clone(), a.icon.clone())).collect())
-                .unwrap_or_default(),
-        }
+        self.shown.iter().map(|item| self.bubble(*item)).collect()
     }
 
     pub fn level(&self) -> &Level {
         &self.level
     }
 
-    pub fn groups(&self) -> &[Group] {
-        &self.groups
-    }
-
-    /// The applications in the group currently open, in display order.
-    pub fn apps_in_level(&self) -> Vec<&AppEntry> {
+    /// A heading for what is on show: the machine whose applications these are, or nothing at
+    /// the top.
+    pub fn heading(&self) -> Option<String> {
         match &self.level {
-            Level::Groups | Level::Host(_) => Vec::new(),
-            Level::Apps(group) => self
-                .apps
-                .iter()
-                .filter(|a| group_for(&a.categories) == *group)
-                .collect(),
+            Level::Machines => None,
+            Level::Local => (!self.hosts.is_empty()).then(|| self.local_name.clone()),
+            Level::Host(i) => self.hosts.get(*i).map(|h| h.label.clone()),
         }
     }
 
-    /// How many bubbles the current level shows.
+    /// How many bubbles are on show.
     pub fn len(&self) -> usize {
-        match &self.level {
-            Level::Groups => self.groups.len() + self.hosts.len(),
-            Level::Apps(_) => self.apps_in_level().len(),
-            Level::Host(i) => self.hosts.get(*i).map_or(0, |h| h.apps.len()),
-        }
+        self.shown.len()
     }
 
-    /// Enter the focused group, or return the focused application to launch.
+    /// Enter the focused machine, or return the focused application to launch.
     ///
-    /// `Ok(Some(app))` means launch it; `Ok(None)` means the level changed and there is
-    /// nothing else to do.
+    /// `Some(launch)` means launch it; `None` means the level changed, or there is nothing
+    /// under the cursor.
     pub fn activate(&mut self) -> Option<Launch> {
-        match self.level.clone() {
-            Level::Groups => {
-                let cursor = self.grid.cursor();
-                self.group_cursor = cursor;
-                if let Some(group) = self.groups.get(cursor).copied() {
-                    self.level = Level::Apps(group);
-                } else if cursor - self.groups.len() < self.hosts.len() {
-                    self.level = Level::Host(cursor - self.groups.len());
-                } else {
-                    return None;
-                }
-                self.grid = Grid::new(COLUMNS, self.len());
+        let cursor = self.grid.cursor();
+        match *self.shown.get(cursor)? {
+            Item::ThisMachine => {
+                self.machine_cursor = cursor;
+                self.level = Level::Local;
+                self.refill(0);
                 None
             }
-            Level::Apps(_) => self
-                .apps_in_level()
-                .get(self.grid.cursor())
-                .map(|a| Launch::Local((*a).clone())),
-            Level::Host(i) => {
-                let host = self.hosts.get(i)?;
-                let app = host.apps.get(self.grid.cursor())?;
-                Some(Launch::Remote {
-                    host: host.address.clone(),
-                    app: app.id.clone(),
-                })
+            Item::Machine(i) => {
+                self.machine_cursor = cursor;
+                self.level = Level::Host(i);
+                self.refill(0);
+                None
             }
+            Item::Local(i) => Some(Launch::Local(self.apps[i].clone())),
+            Item::Remote(h, i) => Some(Launch::Remote {
+                host: self.hosts[h].address.clone(),
+                app: self.hosts[h].apps[i].id.clone(),
+            }),
         }
     }
 
-    /// Back out one level. `true` if there was somewhere to go.
+    /// Back out one step. `true` if there was somewhere to go.
     ///
-    /// `false` at the top means the caller should close the launcher entirely — B has to keep
-    /// working rather than becoming inert once you are already at the root.
+    /// What was typed goes first, then the machine is climbed out of. `false` at the top means
+    /// the caller should close the launcher entirely — B has to keep working rather than
+    /// becoming inert once you are already at the root.
     pub fn back(&mut self) -> bool {
-        match self.level {
-            Level::Groups => false,
-            Level::Apps(_) | Level::Host(_) => {
-                self.level = Level::Groups;
-                self.grid = Grid::new(COLUMNS, self.len());
-                self.grid.set_cursor(self.group_cursor);
-                true
-            }
+        if self.clear_query() {
+            return true;
         }
+        if self.level == self.root() {
+            return false;
+        }
+        self.level = Level::Machines;
+        self.refill(self.machine_cursor);
+        true
     }
 
     /// Label for whatever is focused, for the caption under the grid.
     pub fn focused_label(&self) -> Option<String> {
-        self.bubbles().get(self.grid.cursor()).map(|(label, _)| label.clone())
+        self.shown.get(self.grid.cursor()).map(|item| self.bubble(*item).0)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.shown.is_empty()
     }
 
     pub fn apps(&self) -> &[AppEntry] {
@@ -310,27 +467,19 @@ impl Launcher {
         self.grid.cursor()
     }
 
-    /// The focused application, or `None` at the group level.
+    /// The focused application of this machine's, or `None` on anything else.
     pub fn focused(&self) -> Option<AppEntry> {
-        match self.level {
-            Level::Groups | Level::Host(_) => None,
-            Level::Apps(_) => self
-                .apps_in_level()
-                .get(self.grid.cursor())
-                .map(|a| (*a).clone()),
+        match *self.shown.get(self.grid.cursor())? {
+            Item::Local(i) => Some(self.apps[i].clone()),
+            _ => None,
         }
     }
 
-    /// Replace the app list, returning to the group level.
-    ///
-    /// Not merely a resize: a rescan can empty the group that is currently open, and staying
-    /// inside a group that no longer exists shows an empty grid with no way to tell why.
-    pub fn set_apps(&mut self, apps: Vec<AppEntry>) {
+    /// Replace this machine's applications, returning to the top.
+    pub fn set_apps(&mut self, mut apps: Vec<AppEntry>) {
+        apps.sort_by_key(|a| a.name.to_lowercase());
         self.apps = apps;
-        self.groups = occupied_groups(&self.apps);
-        self.level = Level::Groups;
-        self.group_cursor = 0;
-        self.grid = Grid::new(COLUMNS, self.len());
+        self.reset();
     }
 
     /// Put the cursor on a bubble the pointer is over. Only the page on show: a bubble on
@@ -410,22 +559,6 @@ impl Launcher {
     }
 }
 
-/// Groups that contain at least one application, in [`GROUPS`] order.
-///
-/// Empty groups are omitted rather than shown greyed out: a bubble you cannot enter is worse
-/// than an absent one, and on any given machine most of the nine are empty.
-fn occupied_groups(apps: &[AppEntry]) -> Vec<Group> {
-    let mut out: Vec<Group> = GROUPS
-        .iter()
-        .copied()
-        .filter(|g| apps.iter().any(|a| group_for(&a.categories) == *g))
-        .collect();
-    if apps.iter().any(|a| group_for(&a.categories) == OTHER) {
-        out.push(OTHER);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,215 +572,125 @@ mod tests {
         }
     }
 
-    /// A launcher already inside a group, since every app here shares one. Most of these
-    /// tests are about grid geometry, which only exists at the application level.
+    /// A launcher on this machine's applications, which with no other computer is where it opens.
     fn launcher_of(n: usize) -> Launcher {
-        let mut l = Launcher::new((0..n).map(|i| app(&format!("App{i}"))).collect());
-        if n > 0 {
-            l.activate();
-        }
-        l
+        Launcher::new((0..n).map(|i| app(&format!("App{i:02}"))).collect())
     }
 
     #[test]
     fn an_empty_launcher_has_nothing_focused_and_does_not_panic() {
-        let l = Launcher::new(vec![]);
+        let mut l = Launcher::new(Vec::new());
         assert!(l.is_empty());
-        assert!(l.focused().is_none());
+        assert_eq!(l.focused(), None);
+        assert_eq!(l.activate(), None);
         assert!(l.placements().is_empty());
     }
 
     #[test]
     fn the_cursor_starts_on_the_first_app() {
-        let l = launcher_of(8);
-        assert_eq!(l.focused().map(|a| a.name.clone()).as_deref(), Some("App0"));
+        let l = launcher_of(5);
+        assert_eq!(l.focused().unwrap().name, "App00");
+    }
+
+    #[test]
+    fn applications_are_in_order_of_name_whatever_order_they_were_found_in() {
+        let l = Launcher::new(vec![app("zsh"), app("Chrome"), app("alacritty")]);
+        let names: Vec<String> = l.bubbles().into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["alacritty", "Chrome", "zsh"]);
     }
 
     #[test]
     fn pressing_right_moves_the_focus_right_in_the_world() {
-        // The mirror test. Column 0 is leftmost, and +yaw is left, so moving right must make
-        // the yaw DECREASE. A sign slip here makes the D-pad feel inverted.
-        let mut l = launcher_of(5);
+        let mut l = launcher_of(8);
         let before = l.placement(l.cursor()).yaw;
         l.step(Direction::Right);
         let after = l.placement(l.cursor()).yaw;
-        assert!(after < before, "yaw went {before} -> {after}");
+        // Positive yaw is left, so moving right must make it smaller.
+        assert!(after < before, "{before} -> {after}");
     }
 
     #[test]
     fn the_focused_bubble_is_larger_than_the_others() {
-        let l = launcher_of(5);
+        let l = launcher_of(4);
         assert!(l.placement(0).scale > l.placement(1).scale);
     }
 
     #[test]
     fn the_focused_bubble_draws_last() {
-        // It is scaled up, so drawing it before its neighbours lets them clip its edges.
-        let mut l = launcher_of(5);
+        let mut l = launcher_of(8);
         l.step(Direction::Right);
         let order = l.placements();
-        assert_eq!(order.last().map(|(i, _)| *i), Some(l.cursor()));
-        assert_eq!(order.len(), 5, "every app must still be drawn exactly once");
+        assert_eq!(order.last().unwrap().0, l.cursor());
     }
 
     #[test]
     fn a_full_row_is_centred_on_straight_ahead() {
         let l = launcher_of(COLUMNS);
-        let total: f32 = (0..COLUMNS).map(|i| l.placement(i).yaw).sum();
-        assert!(
-            total.abs() < 1e-5,
-            "row should balance about zero, got {total}"
-        );
+        let sum: f32 = (0..COLUMNS).map(|i| l.placement(i).yaw).sum();
+        assert!(sum.abs() < 1e-5, "row is off-centre by {sum}");
     }
 
     #[test]
     fn a_single_row_sits_on_the_eye_line() {
-        // Not below it: a one-row launcher pitched down means looking at your feet to pick an
-        // app, which is the sort of thing that only shows up when wearing the thing.
         let l = launcher_of(3);
-        assert!(l.placement(0).pitch.abs() < 1e-6);
-    }
-
-    #[test]
-    fn extra_rows_are_balanced_above_and_below() {
-        let l = launcher_of(COLUMNS * 2);
-        let top = l.placement(0).pitch;
-        let bottom = l.placement(COLUMNS).pitch;
-        assert!(top > 0.0, "the first row should be the upper one");
-        assert!(
-            (top + bottom).abs() < 1e-6,
-            "rows should straddle the eye line"
-        );
+        for i in 0..3 {
+            assert!(l.placement(i).pitch.abs() < 1e-6);
+        }
     }
 
     #[test]
     fn every_bubble_is_the_same_distance_away() {
-        // The reason the layout is an arc. Equal radius means equal apparent size and one
-        // focal distance for the whole grid -- and, because yaw and pitch are angles about the
-        // viewer, a bubble stays the same distance away as you turn to face it.
-        let l = launcher_of(30);
-        for i in 0..30 {
+        let l = launcher_of(PAGE_SIZE);
+        for i in 0..PAGE_SIZE {
             assert_eq!(l.placement(i).radius, ARC_RADIUS_M);
         }
     }
 
     #[test]
     fn rescanning_the_app_list_keeps_the_cursor_in_range() {
-        let mut l = launcher_of(30);
+        let mut l = launcher_of(9);
         for _ in 0..8 {
             l.step(Direction::Right);
-            l.step(Direction::Down);
         }
         l.set_apps(vec![app("Only")]);
         assert_eq!(l.cursor(), 0);
-        // A rescan returns to the group level -- staying inside a group that the rescan may
-        // have emptied shows a blank grid with no way to tell why.
-        assert_eq!(l.level(), &Level::Groups);
-        l.activate();
-        assert_eq!(l.focused().map(|a| a.name.clone()).as_deref(), Some("Only"));
+        assert_eq!(l.focused().unwrap().name, "Only");
     }
 
     #[test]
     fn a_page_never_spills_past_the_field_of_view() {
-        // The whole reason for paging. A full page must fit inside a comfortable head turn
-        // horizontally and inside the vertical field without tilting -- 23 degrees at the
-        // glasses' aspect, so the rows have to stay within about +-21 degrees.
-        let l = launcher_of(200);
-        for i in l.visible() {
+        // One eye sees 40 degrees across and 23 down. A bubble is about 4.6 degrees and its
+        // label hangs below it.
+        let l = launcher_of(PAGE_SIZE);
+        for i in 0..PAGE_SIZE {
             let p = l.placement(i);
-            assert!(
-                p.yaw.to_degrees().abs() <= 20.0,
-                "bubble {i} at yaw {}",
-                p.yaw.to_degrees()
-            );
-            assert!(
-                p.pitch.to_degrees().abs() <= 21.0,
-                "bubble {i} at pitch {}",
-                p.pitch.to_degrees()
-            );
+            assert!(p.yaw.to_degrees().abs() + 2.3 < 20.0, "bubble {i} is past the side");
+            assert!(p.pitch.to_degrees().abs() + 3.7 < 11.57, "bubble {i} is past the top or bottom");
         }
     }
 
     #[test]
     fn only_one_page_is_drawn_at_a_time() {
-        // 39 apps used to draw 39 bubbles, most of them behind the wearer's head.
-        let l = launcher_of(200);
+        let l = launcher_of(PAGE_SIZE * 2 + 3);
+        assert_eq!(l.pages(), 3);
         assert_eq!(l.placements().len(), PAGE_SIZE);
-        assert!(l.placements().iter().all(|(i, _)| l.visible().contains(i)));
     }
 
     #[test]
     fn moving_past_the_end_of_a_page_turns_to_the_next_one() {
-        let mut l = launcher_of(200);
-        assert_eq!(l.page(), 0);
+        let mut l = launcher_of(PAGE_SIZE + 2);
         for _ in 0..ROWS_PER_PAGE {
             l.step(Direction::Down);
         }
-        assert_eq!(l.page(), 1, "should have paged");
-        // And the cursor's bubble must be on screen, not off the bottom of the previous page.
+        assert_eq!(l.page(), 1);
         assert!(l.visible().contains(&l.cursor()));
     }
 
     #[test]
-    fn the_last_page_is_laid_out_as_if_it_were_full_height() {
-        // A ragged final page must still be centred rather than clinging to the top row.
-        let l = launcher_of(PAGE_SIZE + 2);
-        let mut cursor = Launcher::new(l.apps().to_vec());
-        cursor.activate();
-        while cursor.page() == 0 {
-            if !cursor.step(Direction::Down) && !cursor.step(Direction::Right) {
-                break;
-            }
-        }
-        assert_eq!(cursor.page(), 1);
-        let p = cursor.placement(PAGE_SIZE);
-        assert!(
-            p.pitch.abs() < 1e-6,
-            "a one-row page should sit on the eye line"
-        );
-    }
-
-    #[test]
-    fn a_full_page_fits_the_glasses_field_of_view() {
-        // The binding constraint, and the one that went wrong twice. One eye sees 40 deg
-        // across but only 23 deg vertically, so the rows are what run out of room first -- and
-        // a row that is off the field is only findable by tilting your head.
-        //
-        // Diameter is 0.16 m at a 2 m radius; the focused bubble is 18% larger, and each
-        // carries a label under it.
-        let bubble_half = (0.16f32 * 1.18 / 2.0 / ARC_RADIUS_M).atan().to_degrees();
-        // The lowest thing on a bubble is the bottom of its label, not the bottom of its
-        // glass: scene.rs drops the label by half a focused diameter plus 22 mm, and the label
-        // itself is 22 mm tall. Adding the two extents instead of taking the lower of them
-        // over-counts by a whole bubble radius.
-        let label_bottom = ((0.16f32 * 0.5 * 1.18 + 0.022 + 0.011) / ARC_RADIUS_M)
-            .atan()
-            .to_degrees();
-
-        let widest = (COLUMNS as f32 - 1.0) / 2.0 * COLUMN_SPACING_DEG + bubble_half;
-        assert!(
-            widest <= 20.0,
-            "a row reaches {widest} deg against a 20 deg half-width"
-        );
-
-        let tallest =
-            (ROWS_PER_PAGE as f32 - 1.0) / 2.0 * ROW_SPACING_DEG + bubble_half.max(label_bottom);
-        assert!(
-            tallest <= 11.57,
-            "a page reaches {tallest} deg against an 11.57 deg half-height"
-        );
-    }
-
-    #[test]
     fn there_is_real_space_between_neighbouring_bubbles() {
-        // Otherwise the grid reads as a wall of glass rather than as separate objects, which
-        // is how it looked at 0.30 m bubbles on 11 deg spacing.
-        let bubble_deg = 2.0 * (0.16f32 / 2.0 / ARC_RADIUS_M).atan().to_degrees();
-        assert!(
-            COLUMN_SPACING_DEG > bubble_deg * 1.5,
-            "columns {COLUMN_SPACING_DEG} deg vs {bubble_deg} deg bubbles"
-        );
-        assert!(ROW_SPACING_DEG > bubble_deg * 1.4);
+        let l = launcher_of(PAGE_SIZE);
+        let gap = (l.placement(0).yaw - l.placement(1).yaw).to_degrees().abs();
+        assert!(gap > 4.6 * 1.5, "neighbours are {gap} degrees apart");
     }
 
     fn tab(address: &str, apps: &[&str]) -> HostTab {
@@ -657,55 +700,149 @@ mod tests {
             online: true,
             apps: apps
                 .iter()
-                .map(|a| RemoteEntry {
-                    id: a.to_lowercase(),
-                    name: a.to_string(),
-                    icon: None,
-                })
+                .map(|a| RemoteEntry { id: a.to_lowercase(), name: a.to_string(), icon: None })
                 .collect(),
         }
     }
 
+    // --- machines first ---
+
     #[test]
-    fn a_remote_computer_is_a_bubble_after_the_groups_and_opens_to_its_apps() {
-        let mut l = Launcher::new(vec![app("Editor")]);
-        l.set_hosts(vec![tab("workshop", &["Chrome", "Firestorm"])]);
-        assert_eq!(l.len(), 2, "one group and one computer");
-        assert_eq!(l.bubbles()[1].0, "workshop");
+    fn with_no_other_computer_it_opens_on_this_ones_applications() {
+        let mut l = launcher_of(3);
+        assert_eq!(l.level(), &Level::Local);
+        assert!(!l.back(), "and there is nowhere above them to go");
+    }
+
+    #[test]
+    fn with_another_computer_the_machine_is_chosen_first_and_this_one_is_named() {
+        let mut l = launcher_of(3);
+        l.set_local_name("steamdeck");
+        l.set_hosts(vec![tab("deepmagpie", &["Firefox", "Terminal"])]);
+        assert_eq!(l.level(), &Level::Machines);
+        let names: Vec<String> = l.bubbles().into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["steamdeck", "deepmagpie"]);
+        assert_eq!(l.activate(), None, "opening a machine launches nothing");
+        assert_eq!(l.level(), &Level::Local);
+        assert_eq!(l.len(), 3);
+        assert!(l.back());
+        assert_eq!(l.level(), &Level::Machines);
+    }
+
+    #[test]
+    fn a_remote_computer_opens_to_its_apps_and_launching_names_it() {
+        let mut l = launcher_of(2);
+        l.set_hosts(vec![tab("deepmagpie", &["Firefox", "Terminal"])]);
         l.step(Direction::Right);
-        assert_eq!(l.activate(), None, "opening a tab launches nothing");
+        assert_eq!(l.activate(), None);
         assert_eq!(l.level(), &Level::Host(0));
-        assert_eq!(l.len(), 2);
         l.step(Direction::Right);
         assert_eq!(
             l.activate(),
-            Some(Launch::Remote {
-                host: "workshop".into(),
-                app: "firestorm".into()
-            })
+            Some(Launch::Remote { host: "deepmagpie".into(), app: "terminal".into() })
         );
         assert!(l.back());
-        assert_eq!(l.cursor(), 1, "backing out lands on the computer it came from");
+        assert_eq!(l.cursor(), 1, "back on the machine it came out of");
+    }
+
+    #[test]
+    fn a_device_with_no_applications_of_its_own_and_one_computer_opens_on_that_computer() {
+        // A Beam Pro: everything it runs is somewhere else.
+        let mut l = Launcher::new(Vec::new());
+        l.set_hosts(vec![tab("deepmagpie", &["Firefox"])]);
+        assert_eq!(l.level(), &Level::Host(0));
+        assert!(!l.back());
     }
 
     #[test]
     fn an_offline_computer_says_so_on_its_bubble() {
-        let mut l = Launcher::new(vec![]);
-        let mut t = tab("workshop", &[]);
+        let mut l = launcher_of(1);
+        let mut t = tab("deepmagpie", &[]);
         t.online = false;
         l.set_hosts(vec![t]);
-        assert_eq!(l.bubbles()[0].0, "workshop (offline)");
+        assert!(l.bubbles().iter().any(|(label, _)| label == "deepmagpie (offline)"));
     }
 
     #[test]
     fn a_catalogue_that_changes_while_open_keeps_you_in_the_tab() {
-        let mut l = Launcher::new(vec![]);
-        l.set_hosts(vec![tab("a", &["One"])]);
+        let mut l = launcher_of(1);
+        l.set_hosts(vec![tab("a", &["One"]), tab("b", &["Two"])]);
+        l.step(Direction::Right);
+        l.step(Direction::Right);
         l.activate();
-        l.set_hosts(vec![tab("new", &[]), tab("a", &["One", "Two"])]);
-        assert_eq!(l.level(), &Level::Host(1), "followed by address, not by position");
+        assert_eq!(l.level(), &Level::Host(1));
+        l.set_hosts(vec![tab("x", &[]), tab("a", &["One"]), tab("b", &["Two", "Three"])]);
+        assert_eq!(l.level(), &Level::Host(2), "followed by address, not by position");
         assert_eq!(l.len(), 2);
-        l.set_hosts(vec![tab("new", &[])]);
-        assert_eq!(l.level(), &Level::Groups, "and out, once it is gone");
+        l.set_hosts(vec![tab("a", &["One"])]);
+        assert_eq!(l.level(), &Level::Machines, "and out, once it is gone");
+    }
+
+    // --- typing narrows ---
+
+    #[test]
+    fn typing_narrows_to_the_names_it_finds_best_first() {
+        let mut l = Launcher::new(vec![app("Code"), app("Chrome"), app("Xcode"), app("Visual Studio Code"), app("Notes")]);
+        l.type_query("co");
+        let names: Vec<String> = l.bubbles().into_iter().map(|(n, _)| n).collect();
+        // Starts with it; then a word that does; then anywhere inside.
+        assert_eq!(names, ["Code", "Visual Studio Code", "Xcode"]);
+        assert_eq!(l.focused().unwrap().name, "Code", "and the best is under the cursor");
+    }
+
+    #[test]
+    fn initials_find_a_long_name() {
+        let mut l = Launcher::new(vec![app("Visual Studio Code"), app("Notes")]);
+        l.type_query("vsc");
+        assert_eq!(l.len(), 1);
+        assert_eq!(l.focused().unwrap().name, "Visual Studio Code");
+    }
+
+    #[test]
+    fn backspace_widens_again_and_back_clears_what_was_typed_before_leaving() {
+        let mut l = launcher_of(5);
+        l.type_query("App03");
+        assert_eq!(l.len(), 1);
+        l.query_backspace();
+        assert_eq!(l.len(), 5);
+        assert!(l.back(), "the first B forgets what was typed");
+        assert_eq!(l.query(), "");
+        assert!(!l.back(), "the second leaves");
+    }
+
+    #[test]
+    fn typing_among_the_machines_looks_through_all_of_them() {
+        let mut l = Launcher::new(vec![app("Firefox"), app("Notes")]);
+        l.set_hosts(vec![tab("deepmagpie", &["Firefox", "Terminal"])]);
+        assert_eq!(l.level(), &Level::Machines);
+        l.type_query("fire");
+        let names: Vec<String> = l.bubbles().into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["Firefox", "Firefox \u{00b7} deepmagpie"]);
+        l.step(Direction::Right);
+        assert_eq!(
+            l.activate(),
+            Some(Launch::Remote { host: "deepmagpie".into(), app: "firefox".into() })
+        );
+    }
+
+    #[test]
+    fn opening_again_starts_at_the_top_with_nothing_typed() {
+        let mut l = launcher_of(4);
+        l.set_hosts(vec![tab("deepmagpie", &["Firefox"])]);
+        l.activate();
+        l.type_query("app");
+        l.reset();
+        assert_eq!(l.level(), &Level::Machines);
+        assert_eq!(l.query(), "");
+    }
+
+    #[test]
+    fn nothing_found_is_an_empty_launcher_that_back_recovers_from() {
+        let mut l = launcher_of(3);
+        l.type_query("zzz");
+        assert!(l.is_empty());
+        assert_eq!(l.activate(), None);
+        assert!(l.back());
+        assert_eq!(l.len(), 3);
     }
 }

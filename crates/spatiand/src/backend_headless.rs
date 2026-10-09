@@ -51,6 +51,7 @@ pub fn run(
     // A shell nobody sees, because the hosts report what they serve to one. Applications on a
     // host are started from the host's own control socket, as its settings app does.
     let mut shell = Shell::new(Vec::new(), DesktopPanels::NONE, true);
+    shell.set_local_name(&crate::system::machine_name());
     let mut prefs = crate::prefs::Prefs::load();
     let mut remotes = crate::remote::Remotes::start(&mut runtime.display_handle, &prefs);
     let control = crate::control::Control::start();

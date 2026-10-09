@@ -180,6 +180,7 @@ pub fn run(
     const PRESS_SHOWN: Duration = Duration::from_millis(130);
     let mut keyboard_struck: Vec<(&'static Key, Instant)> = Vec::new();
     let mut nav_repeat = crate::input_map::NavRepeat::default();
+    let mut menu_keys = crate::input_map::MenuKeys::default();
     let mut pointed_events: Vec<ShellEvent> = Vec::new();
     let mut menu_click_was = false;
     let mut keyboard_reach: [Option<spatiand_render::ray::Hit>; 2] = [None, None];
@@ -202,6 +203,7 @@ pub fn run(
     let panels = super::PANELS;
     let calibrated = spatiand_track::config::load_axes().is_some();
     let mut shell = Shell::new(shell_apps, panels, calibrated);
+    shell.set_local_name(&crate::system::machine_name());
     // Where windows pinned to the view go and how big: the wearer's, from last time.
     crate::pip::adopt(&mut runtime.state, &prefs, &mut shell);
     let mut environments = Environments::discover();
@@ -567,6 +569,16 @@ pub fn run(
                         Typed::Key { .. } => {}
                     }
                     continue;
+                }
+                // A menu that is open has the keys: arrows, Enter, Escape, and in the launcher
+                // the letters that narrow it.
+                match typed {
+                    Typed::Key { code, pressed } if menu_keys.key(&mut shell, code, pressed, &mut pointed_events) => continue,
+                    Typed::Char(c) if shell.searches() => {
+                        shell.type_query(&c.to_string());
+                        continue;
+                    }
+                    _ => {}
                 }
                 match typed {
                     Typed::Key { code, pressed } => send_key_state(&mut runtime.state, code, pressed, now),
@@ -1371,6 +1383,9 @@ pub fn run(
                                         if let Some(stroke) = keyboard.press(key) {
                                             if shell.wants_text() {
                                                 typed_event = typed_event.or(type_into_shell(&mut shell, key, &stroke));
+                                            } else if shell.searches() {
+                                                typed_event = typed_event
+                                                    .or(crate::input_map::stroke_in_launcher(&mut shell, key, &stroke));
                                             } else {
                                                 send_stroke(&mut runtime.state, stroke, time_ms);
                                             }

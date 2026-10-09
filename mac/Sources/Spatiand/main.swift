@@ -481,6 +481,31 @@ if let at = CommandLine.arguments.firstIndex(of: "--preview") {
     application.run()
 }
 
+if let at = CommandLine.arguments.firstIndex(of: "--selftest-click") {
+    // --selftest-click [application.app]: the room in a window, an application's window brought
+    // in, and the room's pointer -- which starts in the middle of the view, where the window is --
+    // clicked twice. Pictures before and after are saved (~/screenshots). Moves the Mac's real
+    // pointer and brings the application to the front: not for while the Mac is in use.
+    let path = CommandLine.arguments.dropFirst(at + 1).first ?? "/System/Applications/Calculator.app"
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    func after(_ seconds: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body) }
+    DispatchQueue.main.async {
+        Room.shared.start(preview: true)
+        after(1.5) { sp_control(3, true); after(0.1) { sp_control(3, false) } }
+        after(2) { Room.shared.launch(path: path) }
+        after(6) { sp_pointer(-17, 150, 0, 0, 0); sp_screenshot() }
+        for press in [7.5, 8.5] {
+            after(press) { sp_pointer(0, 0, 1, 0, 0); after(0.1) { sp_pointer(0, 0, 0, 0, 0) } }
+        }
+        after(10) { sp_screenshot() }
+        after(13) { Room.shared.stop(); exit(0) }
+    }
+    application.run()
+}
+
 if CommandLine.arguments.contains("--selftest-local") {
     exit(LocalTests.run())
 }

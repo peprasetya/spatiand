@@ -17,7 +17,7 @@
 use std::time::{Duration, Instant};
 
 use spatiand_input::Control;
-use spatiand_shell::{Intent, NavDirection};
+use spatiand_shell::{Intent, NavDirection, Shell, ShellEvent};
 
 /// Map a control to an intent, or `None` if it means nothing to the shell.
 pub fn intent_for(control: Control) -> Option<Intent> {
@@ -249,4 +249,95 @@ mod tests {
             assert!(all.contains(&wanted), "{wanted:?} is unreachable");
         }
     }
+}
+
+/// A real keyboard's keys while a menu is open.
+///
+/// A menu takes the controller's buttons, and a keyboard's keys are the same thing with more of
+/// them: the arrows walk it, Enter chooses, Escape backs out -- and in the launcher, letters
+/// narrow what is on show. Without this they went to whatever window was behind the menu, which
+/// was typed into by someone looking at a list of applications.
+#[derive(Debug, Default)]
+pub struct MenuKeys {
+    shift: bool,
+}
+
+impl MenuKeys {
+    /// One key going down or up. `true` if the menu took it, and it is not the focused window's.
+    ///
+    /// A menu that is asking for text ([`Shell::wants_text`]) is not this one's: its keys are
+    /// that text, which the caller already handles.
+    pub fn key(&mut self, shell: &mut Shell, code: u32, pressed: bool, events: &mut Vec<ShellEvent>) -> bool {
+        use spatiand_shell::keyboard as kb;
+        if matches!(code, kb::KEY_LEFTSHIFT | 54) {
+            self.shift = pressed;
+            return false;
+        }
+        if !shell.menu_is_open() || shell.wants_text() {
+            return false;
+        }
+        // A key let go of is let go of wherever it went down: the window's, if it was before
+        // the menu opened, and nobody's otherwise.
+        if !pressed {
+            return false;
+        }
+        let intent = match code {
+            103 => Some(Intent::Navigate(NavDirection::Up)),
+            108 => Some(Intent::Navigate(NavDirection::Down)),
+            105 => Some(Intent::Navigate(NavDirection::Left)),
+            106 => Some(Intent::Navigate(NavDirection::Right)),
+            kb::KEY_ENTER | 96 => Some(Intent::Accept),
+            1 => Some(Intent::Back),
+            _ => None,
+        };
+        if let Some(intent) = intent {
+            events.extend(shell.handle(intent));
+            return true;
+        }
+        if shell.searches() {
+            if code == kb::KEY_BACKSPACE {
+                shell.query_backspace();
+            } else if let Some(text) = typed_by(code, self.shift) {
+                shell.type_query(text);
+            }
+        }
+        true
+    }
+}
+
+/// What a key types, on the layout the on-screen keyboard draws: one character, or nothing for
+/// a key that is not a character's.
+fn typed_by(code: u32, shift: bool) -> Option<&'static str> {
+    use spatiand_shell::keyboard as kb;
+    if code == 57 {
+        return Some(" ");
+    }
+    kb::ROWS
+        .iter()
+        .flat_map(|row| row.iter())
+        .find(|key| key.code == code)
+        .map(|key| key.face(shift))
+        .filter(|face| face.chars().count() == 1)
+}
+
+/// A key of the on-screen keyboard pressed while the launcher is open: its letter narrows the
+/// bubbles, backspace widens them again, and Enter opens what is under the cursor.
+pub fn stroke_in_launcher(
+    shell: &mut Shell,
+    key: &spatiand_shell::Key,
+    stroke: &spatiand_shell::keyboard::Stroke,
+) -> Option<ShellEvent> {
+    use spatiand_shell::keyboard as kb;
+    match stroke.code {
+        kb::KEY_BACKSPACE => shell.query_backspace(),
+        kb::KEY_ENTER => return shell.handle(Intent::Accept),
+        57 => shell.type_query(" "),
+        _ => {
+            let face = key.face(stroke.shift);
+            if face.chars().count() == 1 {
+                shell.type_query(face);
+            }
+        }
+    }
+    None
 }

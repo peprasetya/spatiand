@@ -264,6 +264,33 @@ impl Shell {
         self.mode == Mode::Hosts && self.hosts.wants_text()
     }
 
+    /// Whether what is typed narrows what is on show: the launcher's bubbles.
+    ///
+    /// Not [`wants_text`](Self::wants_text), which is a field that cannot be got past without
+    /// typing and so brings a keyboard up by itself. This is an offer: nothing has to be typed,
+    /// and a device with no keys to hand is not shown a keyboard it did not ask for.
+    pub fn searches(&self) -> bool {
+        self.mode == Mode::Launcher
+    }
+
+    /// Letters typed while [`searches`](Self::searches).
+    pub fn type_query(&mut self, text: &str) {
+        if self.searches() {
+            self.launcher.type_query(text);
+        }
+    }
+
+    pub fn query_backspace(&mut self) {
+        if self.searches() {
+            self.launcher.query_backspace();
+        }
+    }
+
+    /// What this machine is called, for the launcher's list of machines.
+    pub fn set_local_name(&mut self, name: &str) {
+        self.launcher.set_local_name(name);
+    }
+
     /// Text typed while [`wants_text`](Self::wants_text).
     pub fn type_text(&mut self, text: &str) {
         if self.wants_text() {
@@ -334,6 +361,10 @@ impl Shell {
             return None;
         }
         self.mode = mode;
+        // The launcher opens at the top with nothing typed, however it was left.
+        if mode == Mode::Launcher {
+            self.launcher.reset();
+        }
         Some(ShellEvent::ModeChanged(mode))
     }
 
@@ -736,8 +767,6 @@ mod tests {
         let apps: Vec<AppEntry> = (0..40).map(|i| app(&format!("app{i}"))).collect();
         let mut s = Shell::new(apps, DesktopPanels::ALL, true);
         s.handle(Intent::ToggleLauncher);
-        // Into the only group, where forty apps fill several pages.
-        s.handle(Intent::Accept);
         let page = s.launcher().visible();
         assert!(s.launcher().pages() > 1);
         assert!(s.point(page.end - 1));
@@ -754,18 +783,20 @@ mod tests {
         assert_eq!(s.mode(), Mode::World);
     }
 
+    fn a_host() -> (Vec<HostRow>, Vec<HostTab>) {
+        let tab = HostTab {
+            label: "deepmagpie".into(),
+            address: "deepmagpie".into(),
+            online: true,
+            apps: vec![RemoteEntry { id: "firefox".into(), name: "Firefox".into(), icon: None }],
+        };
+        (Vec::new(), vec![tab])
+    }
+
     #[test]
-    fn a_enters_a_group_first_and_then_launches() {
+    fn a_launches_the_application_under_the_cursor() {
         let mut s = shell();
         s.handle(Intent::ToggleLauncher);
-        // The first A opens the group and must NOT launch anything.
-        assert_eq!(
-            s.handle(Intent::Accept),
-            None,
-            "entering a group is not a launch"
-        );
-        assert_eq!(s.mode(), Mode::Launcher, "and must leave the launcher open");
-
         s.handle(Intent::Navigate(Direction::Right));
         let event = s.handle(Intent::Accept);
         assert_eq!(event, Some(ShellEvent::Launch(app("beta"))));
@@ -773,10 +804,25 @@ mod tests {
     }
 
     #[test]
-    fn b_climbs_out_of_a_group_before_closing_the_launcher() {
-        // Two levels means B has two jobs, and getting this wrong makes one press throw you
-        // all the way out of the launcher from inside a group.
+    fn with_another_computer_a_chooses_the_machine_first_and_then_launches() {
         let mut s = shell();
+        let (rows, tabs) = a_host();
+        s.set_hosts(rows, tabs);
+        s.handle(Intent::ToggleLauncher);
+        // The first A opens this machine and must NOT launch anything.
+        assert_eq!(s.handle(Intent::Accept), None, "choosing a machine is not a launch");
+        assert_eq!(s.mode(), Mode::Launcher, "and must leave the launcher open");
+        let event = s.handle(Intent::Accept);
+        assert_eq!(event, Some(ShellEvent::Launch(app("alpha"))));
+    }
+
+    #[test]
+    fn b_climbs_out_of_a_machine_before_closing_the_launcher() {
+        // Two levels means B has two jobs, and getting this wrong makes one press throw you
+        // all the way out of the launcher from inside a machine.
+        let mut s = shell();
+        let (rows, tabs) = a_host();
+        s.set_hosts(rows, tabs);
         s.handle(Intent::ToggleLauncher);
         s.handle(Intent::Accept);
         assert_eq!(s.handle(Intent::Back), None, "should climb out, not close");
@@ -786,6 +832,25 @@ mod tests {
             Some(ShellEvent::ModeChanged(Mode::World)),
             "a second B closes it"
         );
+    }
+
+    #[test]
+    fn typing_in_the_launcher_narrows_it_and_opening_it_again_starts_afresh() {
+        let mut s = shell();
+        assert!(!s.searches(), "nothing is narrowed in the world");
+        s.type_query("be");
+        s.handle(Intent::ToggleLauncher);
+        assert!(s.searches());
+        assert!(!s.wants_text(), "an offer to type, not a field that must be filled");
+        assert_eq!(s.launcher().query(), "", "letters typed before it opened are not its");
+        s.type_query("be");
+        assert_eq!(s.launcher().len(), 1);
+        assert_eq!(s.handle(Intent::Back), None, "B forgets what was typed first");
+        assert_eq!(s.launcher().query(), "");
+        s.type_query("be");
+        s.handle(Intent::ToggleLauncher);
+        s.handle(Intent::ToggleLauncher);
+        assert_eq!(s.launcher().query(), "");
     }
 
     #[test]
@@ -840,7 +905,6 @@ mod tests {
     fn navigation_only_reaches_the_surface_that_is_open() {
         let mut s = shell();
         s.handle(Intent::ToggleLauncher);
-        s.handle(Intent::Accept); // into the group, where there is more than one item
         s.handle(Intent::Navigate(Direction::Right));
         assert_eq!(s.launcher().cursor(), 1);
         assert_eq!(s.hud().cursor(), 0, "the HUD should not have moved");

@@ -209,6 +209,13 @@ fn card(shell: &Shell) -> Option<MenuModel> {
                     ),
                     footer: "B back".into(),
                 },
+                None if !launcher.query().is_empty() => MenuModel {
+                    title: format!("Search: {}", launcher.query()),
+                    rows: Vec::new(),
+                    cursor: 0,
+                    detail: "Nothing here is called that.".into(),
+                    footer: "B clears what was typed".into(),
+                },
                 None => MenuModel {
                     title: "No applications".into(),
                     rows: Vec::new(),

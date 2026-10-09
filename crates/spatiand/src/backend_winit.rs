@@ -211,6 +211,7 @@ pub fn run(
     // is done and choosing it by accident would cost the calibration you already had.
     let calibrated = spatiand_track::config::load_axes().is_some();
     let mut shell = Shell::new(apps, panels, calibrated);
+    shell.set_local_name(&crate::system::machine_name());
     let mut environments = Environments::discover();
     shell.set_environments(environments.entries(), environments.choice());
     let mut browser = crate::environment::Browser::new();

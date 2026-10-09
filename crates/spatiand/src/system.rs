@@ -1241,3 +1241,23 @@ Audio
         assert!(devices[0].is_default);
     }
 }
+
+/// What this machine is called, for the launcher's list of machines: its host name, without a
+/// domain.
+pub fn machine_name() -> String {
+    let mut buffer = [0u8; 256];
+    // SAFETY: a buffer of the length said, which the call fills with a C string.
+    let ok = unsafe { libc::gethostname(buffer.as_mut_ptr() as *mut libc::c_char, buffer.len() - 1) } == 0;
+    let name = ok
+        .then(|| std::ffi::CStr::from_bytes_until_nul(&buffer).ok())
+        .flatten()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let name = name.split('.').next().unwrap_or("").trim().to_string();
+    // Android answers "localhost", which names nothing.
+    if name.is_empty() || name == "localhost" {
+        "This device".into()
+    } else {
+        name
+    }
+}

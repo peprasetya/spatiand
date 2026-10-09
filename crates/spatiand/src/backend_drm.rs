@@ -317,6 +317,7 @@ pub fn run(
     let mut keyboard_struck: Vec<(&'static Key, std::time::Instant)> = Vec::new();
     // A direction held in a menu, going on like a held arrow key. See `NavRepeat`.
     let mut nav_repeat = crate::input_map::NavRepeat::default();
+    let mut menu_keys = crate::input_map::MenuKeys::default();
     // What pointing at a menu decided, carried to the start of the next frame: the pointer is
     // worked out after this frame's shell events have already been handled, because it needs
     // this frame's head pose. One frame late is a click nobody can feel.
@@ -401,6 +402,7 @@ pub fn run(
     // is done and choosing it by accident would cost the calibration you already had.
     let calibrated = spatiand_track::config::load_axes().is_some();
     let mut shell = Shell::new(apps, panels, calibrated);
+    shell.set_local_name(&crate::system::machine_name());
     // Where windows pinned to the view go and how big: the wearer's, from last time.
     crate::pip::adopt(&mut runtime.state, &prefs, &mut shell);
     let mut environments = Environments::discover();
@@ -2150,6 +2152,11 @@ pub fn run(
                                 }
                                 continue;
                             }
+                            // A menu that is open has the keys: arrows, Enter, Escape, and in
+                            // the launcher the letters that narrow it.
+                            if menu_keys.key(&mut shell, code, pressed, &mut pointed_events) {
+                                continue;
+                            }
                             let now = started.elapsed().as_millis() as u32;
                             send_key_state(&mut runtime.state, code, pressed, now);
                         }
@@ -2860,6 +2867,10 @@ pub fn run(
                                         if shell.wants_text() {
                                             typed_event = typed_event
                                                 .or(type_into_shell(&mut shell, key, &stroke));
+                                        } else if shell.searches() {
+                                            typed_event = typed_event.or(
+                                                crate::input_map::stroke_in_launcher(&mut shell, key, &stroke),
+                                            );
                                         } else {
                                             send_stroke(&mut runtime.state, stroke, time_ms);
                                         }
@@ -3410,6 +3421,10 @@ pub fn run(
                                         if shell.wants_text() {
                                             typed_event = typed_event
                                                 .or(type_into_shell(&mut shell, key, &stroke));
+                                        } else if shell.searches() {
+                                            typed_event = typed_event.or(
+                                                crate::input_map::stroke_in_launcher(&mut shell, key, &stroke),
+                                            );
                                         } else {
                                             send_stroke(&mut runtime.state, stroke, time_ms);
                                         }
