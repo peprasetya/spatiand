@@ -29,6 +29,9 @@ mkdir -p "$app/Contents/Frameworks" "$app/Contents/Resources"
 cp vendor/angle/libEGL.dylib vendor/angle/libGLESv2.dylib "$app/Contents/Frameworks/"
 cp -R xkbcommon/out/xkb "$app/Contents/Resources/xkb"
 cp Resources/Spatiand.icns "$app/Contents/Resources/Spatiand.icns"
+# What the launcher shows for this Mac and for another computer: looked up as a Linux desktop
+# would look them up, in a theme of the app's own.
+cp -R icons "$app/Contents/Resources/icons"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
