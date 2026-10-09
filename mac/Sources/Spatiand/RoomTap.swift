@@ -49,7 +49,7 @@ final class RoomTap {
     private var jump: (dx: Double, dy: Double, at: Date)?
 
     func expectJump(dx: Double, dy: Double) {
-        guard hypot(dx, dy) > 24 else { return }
+        guard hypot(dx, dy) > 1 else { return }
         jumpLock.lock()
         jump = (dx, dy, Date())
         jumpLock.unlock()
@@ -61,7 +61,8 @@ final class RoomTap {
         guard let j = jump else { return false }
         if Date().timeIntervalSince(j.at) > 0.15 { jump = nil; return false }
         let size = hypot(j.dx, j.dy)
-        let same = hypot(dx - j.dx, dy - j.dy) < size * 0.3, opposite = hypot(dx + j.dx, dy + j.dy) < size * 0.3
+        let slack = max(size * 0.3, 6)
+        let same = hypot(dx - j.dx, dy - j.dy) < slack, opposite = hypot(dx + j.dx, dy + j.dy) < slack
         guard same || opposite else { return false }
         jump = nil
         print(String(format: "input: the cursor's own jump came back as travel (%.0f, %.0f); not passed on", dx, dy))

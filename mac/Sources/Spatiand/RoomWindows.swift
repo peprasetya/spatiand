@@ -329,9 +329,9 @@ final class RoomWindows {
         // event of its own. Posted as the mouse's, a move came back as the mouse's travel: the
         // room's pointer was thrown out of the window the moment it went in.
         let type: CGEventType = down.contains(id) ? .leftMouseDragged : .mouseMoved
-        let here = CGEvent(source: nil)?.location ?? p
-        RoomTap.shared.expectJump(dx: Double(p.x - here.x), dy: Double(p.y - here.y))
-        CGWarpMouseCursorPosition(p)
+        // **The real cursor is not moved for this.** Every move of it comes back as travel of
+        // the mouse (measured: fifty-nine times in a minute of pointing), and the room's pointer
+        // fought its own echo. It is put in place once, when a button goes down.
         if let pid = entries[id]?.info.pid, let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: .left) {
             event.setIntegerValueField(.eventSourceUserData, value: spatiandEventMark)
             event.postToPid(pid)
@@ -348,6 +348,9 @@ final class RoomWindows {
         }
         if pressed {
             if focused != id { focus(id) } else { raise(id) }
+            let here = CGEvent(source: nil)?.location ?? p
+            RoomTap.shared.expectJump(dx: Double(p.x - here.x), dy: Double(p.y - here.y))
+            CGWarpMouseCursorPosition(p)
             // Twice in the same place, soon enough, is a double click: said in the event, since
             // the system that would have counted them never saw them.
             let now = Date()
