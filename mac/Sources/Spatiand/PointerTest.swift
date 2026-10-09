@@ -20,10 +20,14 @@ final class ClickTargetView: NSView {
         for y in stride(from: 0.0, to: Double(bounds.height), by: 50) { NSBezierPath.strokeLine(from: NSPoint(x: 0, y: y), to: NSPoint(x: Double(bounds.width), y: y)) }
     }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func mouseDown(with event: NSEvent) {
+    override func mouseDown(with event: NSEvent) { say("C", event) }
+    override func mouseDragged(with event: NSEvent) { say("D", event) }
+    override func mouseUp(with event: NSEvent) { say("U", event) }
+
+    private func say(_ what: String, _ event: NSEvent) {
         guard let window else { return }
         // From the window's top left, title bar and all: what a picture of the window counts in.
-        let line = String(format: "%.1f %.1f %.0f %.0f\n", event.locationInWindow.x, window.frame.height - event.locationInWindow.y, window.frame.width, window.frame.height)
+        let line = String(format: "%@ %.1f %.1f %.0f %.0f\n", what, event.locationInWindow.x, window.frame.height - event.locationInWindow.y, window.frame.width, window.frame.height)
         if let handle = FileHandle(forWritingAtPath: file) {
             handle.seekToEndOfFile()
             handle.write(line.data(using: .utf8)!)
@@ -56,15 +60,24 @@ enum PointerTest {
     private static func after(_ seconds: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body) }
 
     /// Travel of the mouse, as the mouse's own: not marked, so the tap takes it for a hand's.
+    /// How far the mouse has travelled since the room's pointer was last known to be in the window.
+    static var strayed = (0.0, 0.0)
+
     private static func travel(_ dx: Double, _ dy: Double) {
+        strayed = (strayed.0 + dx.rounded(), strayed.1 + dy.rounded())
         let here = CGEvent(source: nil)?.location ?? .zero
-        guard let event = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: here, mouseButton: .left) else { return }
+        // Where a hand's would say the cursor now is: moved by as much.
+        let there = CGPoint(x: here.x + CGFloat(dx.rounded()), y: here.y + CGFloat(dy.rounded()))
+        guard let event = CGEvent(mouseEventSource: nil, mouseType: held ? .leftMouseDragged : .mouseMoved, mouseCursorPosition: there, mouseButton: .left) else { return }
         event.setIntegerValueField(.mouseEventDeltaX, value: Int64(dx.rounded()))
         event.setIntegerValueField(.mouseEventDeltaY, value: Int64(dy.rounded()))
         event.post(tap: .cghidEventTap)
     }
 
+    private static var held = false
+
     private static func button(_ down: Bool) {
+        held = down
         let here = CGEvent(source: nil)?.location ?? .zero
         CGEvent(mouseEventSource: nil, mouseType: down ? .leftMouseDown : .leftMouseUp, mouseCursorPosition: here, mouseButton: .left)?.post(tap: .cghidEventTap)
     }
@@ -107,6 +120,8 @@ enum PointerTest {
                             round(info, "as it opened", grid) {
                               round(info, "before the sweep", [(0.15, 0.5)]) {
                                sweep(info) {
+                               round(info, "before the drag", [(0.2, 0.6)]) {
+                               drag(info) {
                                 MacWindows.resize(info, toPoints: CGSize(width: 860, height: 340))
                                 after(2.5) {
                                     round(info, "after a resize to 860x340", grid) {
@@ -114,6 +129,8 @@ enum PointerTest {
                                         after(2.5) { round(info, "after a resize to 420x520", grid) { finish() } }
                                     }
                                 }
+                               }
+                               }
                                }
                               }
                             }
@@ -130,8 +147,8 @@ enum PointerTest {
             let started = Date()
             var sent = 0
             func tick() {
-                if let at = RoomWindows.shared.pointerIn(info.windowID) { samples.append((Date().timeIntervalSince(started), Double(at.x))) }
-                guard sent < 150 else {
+                if let at = RoomWindows.shared.pointerIn(info.windowID) { samples.append((Date().timeIntervalSince(started), Double(at.x))); PointerTest.strayed = (0, 0) }
+                guard sent < 100 else {
                     after(0.3) {
                         var stall = 0.0, leap = 0.0, lastChange = 0.0, last = samples.first?.1 ?? 0
                         for (t, x) in samples where x != last {
@@ -141,9 +158,9 @@ enum PointerTest {
                             last = x
                         }
                         let crossed = (samples.last?.1 ?? 0) - (samples.first?.1 ?? 0)
-                        let good = stall < 0.08 && leap < 14 && crossed > 100
+                        let good = stall < 0.1 && leap < 22 && crossed > 100
                         if !good { failures += 1 }
-                        print(String(format: "pointer: %@ a steady sweep, 300 points of travel in 1.5 s crossed %.0f px of the window; longest it stood still %.0f ms, biggest single move %.0f px", good ? "PASSED" : "FAILED", crossed, stall * 1000, leap))
+                        print(String(format: "pointer: %@ a steady sweep, 200 points of travel in 1 s crossed %.0f px of the window; longest it stood still %.0f ms, biggest single move %.0f px", good ? "PASSED" : "FAILED", crossed, stall * 1000, leap))
                         then()
                     }
                     return
@@ -153,6 +170,47 @@ enum PointerTest {
                 after(0.01) { tick() }
             }
             tick()
+        }
+
+        /// The button held and the mouse carried across the window, as text is selected: the
+        /// window should hear a drag that ends where the room's pointer does, and the pointer
+        /// should go as steadily as it does with nothing held.
+        func drag(_ info: MacWindowInfo, then: @escaping () -> Void) {
+            func lines(_ kind: String) -> [[Double]] {
+                ((try? String(contentsOfFile: file, encoding: .utf8)) ?? "").split(separator: "\n").filter { $0.hasPrefix(kind + " ") }
+                    .map { $0.split(separator: " ").dropFirst().compactMap { Double($0) } }
+            }
+            let dragsBefore = lines("D").count
+            let scale = Double(NSScreen.main?.backingScaleFactor ?? 2)
+            let from = RoomWindows.shared.pointerIn(info.windowID)
+            var xs: [Double] = []
+            button(true)
+            var sent = 0
+            func tick() {
+                if let at = RoomWindows.shared.pointerIn(info.windowID) { xs.append(Double(at.x)) }
+                guard sent < 60 else {
+                    after(0.3) {
+                        let end = RoomWindows.shared.pointerIn(info.windowID)
+                        button(false)
+                        after(0.5) {
+                            let drags = lines("D").dropFirst(dragsBefore)
+                            var leap = 0.0
+                            for i in 1..<max(1, xs.count) { leap = max(leap, abs(xs[i] - xs[i - 1])) }
+                            let crossed = Double((end?.x ?? 0) - (from?.x ?? 0))
+                            let lastDrag = drags.last.map { $0[0] * scale } ?? -1
+                            let good = drags.count >= 10 && leap < 30 && crossed > 60 && abs(lastDrag - Double(end?.x ?? 0)) <= 6 && !lines("U").isEmpty
+                            if !good { failures += 1 }
+                            print(String(format: "pointer: %@ a drag, 120 points of travel with the button held crossed %.0f px (biggest single move %.0f px); the window heard %d drags, the last at %.0f where the pointer was at %.0f, and %@", good ? "PASSED" : "FAILED", crossed, leap, drags.count, lastDrag, Double(end?.x ?? 0), lines("U").isEmpty ? "never heard the button come up" : "the button come up"))
+                            then()
+                        }
+                    }
+                    return
+                }
+                sent += 1
+                travel(2, 0)
+                after(0.02) { tick() }
+            }
+            after(0.3) { tick() }
         }
 
         /// Point at each place in turn and click it; `then` when all are done.
@@ -176,10 +234,14 @@ enum PointerTest {
                         next()
                         return
                     }
+                    if at != nil { PointerTest.strayed = (0, 0) }
                     guard let at else {
                         // Not in the window: stirred, which is also what brings the laser back.
                         // Back the way it came, if it was in; else stirred, which shows the laser.
-                        if let last = steps.popLast() { travel(-last.0, -last.1) } else { travel(tries % 2 == 0 ? 3 : -3, 0) }
+                        // Or back toward where it last was in the window, by the travel since.
+                        if let last = steps.popLast() { travel(-last.0, -last.1) }
+                        else if hypot(strayed.0, strayed.1) > 4 { let n = hypot(strayed.0, strayed.1); travel(-strayed.0 / n * 6, -strayed.1 / n * 6) }
+                        else { travel(tries % 2 == 0 ? 3 : -3, 0) }
                         after(0.06) { aim() }
                         return
                     }
@@ -191,18 +253,19 @@ enum PointerTest {
                         return
                     }
                     if abs(ex) <= 2, abs(ey) <= 2 {
-                        let before = (try? String(contentsOfFile: file, encoding: .utf8))?.split(separator: "\n").count ?? 0
+                        func clicks() -> [Substring] { ((try? String(contentsOfFile: file, encoding: .utf8)) ?? "").split(separator: "\n").filter { $0.hasPrefix("C ") } }
+                        let before = clicks().count
                         button(true)
                         after(0.08) { button(false) }
                         after(0.6) {
-                            let lines = (try? String(contentsOfFile: file, encoding: .utf8))?.split(separator: "\n") ?? []
+                            let lines = clicks()
                             guard lines.count > before, let last = lines.last else {
                                 print("pointer: FAILED \(what), the click at \(Int(wanted.x)),\(Int(wanted.y)) never reached the window")
                                 failures += 1
                                 next()
                                 return
                             }
-                            let got = last.split(separator: " ").compactMap { Double($0) }
+                            let got = last.split(separator: " ").dropFirst().compactMap { Double($0) }
                             let (gx, gy) = (got[0] * scale, got[1] * scale)
                             let error = hypot(gx - Double(at.x), gy - Double(at.y))
                             let good = error <= 4

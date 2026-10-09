@@ -43,46 +43,31 @@ final class RoomTap {
     /// a held button and nothing needs doing here.
     private lazy var systemDrags = SystemGestures.enabled().contains("three-finger drag")
 
-    // The Mac's real cursor is put over a window of this Mac's as the room's pointer moves in
-    // it. If that comes back as travel of the mouse it is not the hand's, and is not passed on.
-    private let jumpLock = NSLock()
-    private var jump: (dx: Double, dy: Double, at: Date)?
+    // **Putting the Mac's real cursor somewhere, and the mouse's travel afterwards.** The first
+    // movement heard after the cursor has been put carries the distance it was put, as though
+    // the hand had made it. But that same event also says where the cursor is, which is where
+    // it was put plus what the hand really did: so for that one event the travel is read from
+    // there, exactly, whatever the size. Events already on their way when it was put are told
+    // by their time, and keep the travel they say.
+    private let warpLock = NSLock()
+    private var warped: (to: CGPoint, at: UInt64)?
 
-    func expectJump(dx: Double, dy: Double) {
-        jumpLock.lock()
-        // Two before any travel is heard add up.
-        let before = jump.map { Date().timeIntervalSince($0.at) < 0.5 ? ($0.dx, $0.dy) : (0, 0) } ?? (0, 0)
-        jump = (before.0 + dx, before.1 + dy, Date())
-        jumpLock.unlock()
+    /// Put the real cursor at `point`. From any thread.
+    func warp(to point: CGPoint) {
+        warpLock.lock()
+        CGWarpMouseCursorPosition(point)
+        warped = (point, clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
+        warpLock.unlock()
     }
 
-    /// The next travel heard after the cursor was put somewhere has that jump added to it, as
-    /// if the hand had made it. Taken off again, whatever its size.
-    private func withoutJump(_ dx: Double, _ dy: Double) -> (Double, Double) {
-        jumpLock.lock()
-        defer { jumpLock.unlock() }
-        guard let j = jump else { return (dx, dy) }
-        // Looked for in the travel heard straight after, and not for long: taken off travel
-        // that only resembled it, it would be a leap of the pointer's own.
-        guard Date().timeIntervalSince(j.at) < 0.15 else { jump = nil; return (dx, dy) }
-        let size = hypot(j.dx, j.dy)
-        guard size > 0.5, hypot(dx - j.dx, dy - j.dy) < size * 0.35 + 4 else { return (dx, dy) }
-        jump = nil
-        return (dx - j.dx, dy - j.dy)
-    }
-
-    private func isEcho(_ dx: Double, _ dy: Double) -> Bool {
-        jumpLock.lock()
-        defer { jumpLock.unlock() }
-        guard let j = jump else { return false }
-        if Date().timeIntervalSince(j.at) > 0.15 { jump = nil; return false }
-        let size = hypot(j.dx, j.dy)
-        let slack = max(size * 0.3, 6)
-        let same = hypot(dx - j.dx, dy - j.dy) < slack, opposite = hypot(dx + j.dx, dy + j.dy) < slack
-        guard same || opposite else { return false }
-        jump = nil
-        print(String(format: "input: the cursor's own jump came back as travel (%.0f, %.0f); not passed on", dx, dy))
-        return true
+    private func travel(of event: CGEvent) -> (Double, Double) {
+        let dx = event.getDoubleValueField(.mouseEventDeltaX), dy = event.getDoubleValueField(.mouseEventDeltaY)
+        warpLock.lock()
+        defer { warpLock.unlock() }
+        guard let w = warped, event.timestamp >= w.at else { return (dx, dy) }
+        warped = nil
+        let here = event.location
+        return (Double(here.x - w.to.x), Double(here.y - w.to.y))
     }
 
     /// While set, told of every movement of the mouse the room takes: for tracing.
@@ -192,7 +177,7 @@ final class RoomTap {
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
             let dx = event.getDoubleValueField(.mouseEventDeltaX), dy = event.getDoubleValueField(.mouseEventDeltaY)
             trace?("\(type.rawValue),\(dx),\(dy),\(event.location.x),\(event.location.y)")
-            let (tx, ty) = withoutJump(dx, dy)
+            let (tx, ty) = travel(of: event)
             sp_pointer(Float(tx), Float(ty), buttons, 0, 0)
         case .leftMouseDown: buttons |= 1; sp_pointer(0, 0, buttons, 0, 0)
         case .leftMouseUp: buttons &= ~1; sp_pointer(0, 0, buttons, 0, 0)

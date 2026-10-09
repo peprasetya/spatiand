@@ -343,14 +343,16 @@ final class RoomWindows {
         setInside(true)
         guard let p = point(id) else { return }
         // A real pointer, really there: what makes hover, tooltips and the cursor's shape work.
-        // The cursor is put there, which makes no event, and the application is told by an
-        // event of its own. Posted as the mouse's, a move came back as the mouse's travel: the
-        // room's pointer was thrown out of the window the moment it went in.
-        let type: CGEventType = down.contains(id) ? .leftMouseDragged : .mouseMoved
-        // **The real cursor is not moved for this.** Every move of it comes back as travel of
-        // the mouse (measured: fifty-nine times in a minute of pointing), and the room's pointer
-        // fought its own echo. It is put in place once, when a button goes down.
-        if let pid = entries[id]?.info.pid, let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: .left) {
+        if down.contains(id) {
+            // A drag -- text selected, a slider pulled, a thing carried -- is the real mouse's
+            // or it is nothing: the cursor is put there and the mouse says it was dragged there.
+            RoomTap.shared.warp(to: p)
+            post(CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: p, mouseButton: .left))
+            return
+        }
+        // Only pointed at, the real cursor is left alone and the application is told by an
+        // event of its own: enough for what lights up under a pointer.
+        if let pid = entries[id]?.info.pid, let event = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left) {
             event.setIntegerValueField(.eventSourceUserData, value: spatiandEventMark)
             event.postToPid(pid)
         }
@@ -366,9 +368,7 @@ final class RoomWindows {
         }
         if pressed {
             if focused != id { focus(id) } else { raise(id) }
-            let here = CGEvent(source: nil)?.location ?? p
-            RoomTap.shared.expectJump(dx: Double(p.x - here.x), dy: Double(p.y - here.y))
-            CGWarpMouseCursorPosition(p)
+            RoomTap.shared.warp(to: p)
             // Twice in the same place, soon enough, is a double click: said in the event, since
             // the system that would have counted them never saw them.
             let now = Date()

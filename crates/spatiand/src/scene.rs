@@ -1517,17 +1517,20 @@ impl Scene {
         let right_edge_deg = 18.0f32;
         let yaw = -(right_edge_deg - half_width_deg).to_radians();
         // Near the top of the field (the half-field is 11.57 degrees), clear of a centred window.
-        let pitch = 10.6f32.to_radians();
+        let pitch = 9.9f32.to_radians();
         let head = Quat::from_xyzw(
             orientation.x as f32,
             orientation.y as f32,
             orientation.z as f32,
             orientation.w as f32,
         );
-        let direction = head * (Quat::from_rotation_z(yaw) * Quat::from_rotation_y(-pitch));
+        let toward = head * (Quat::from_rotation_z(yaw) * Quat::from_rotation_y(-pitch));
         let cfg = spatiand_render::StereoConfig::default();
         let centre = head * Vec3::new(cfg.neck_forward_m as f32, 0.0, cfg.neck_up_m as f32)
-            + direction * Vec3::X * distance;
+            + toward * Vec3::X * distance;
+        // Flat to the view, not turned to face the eye: turned, a thing in the corner of the
+        // view is seen at a slant, and its line of text runs uphill.
+        let direction = head;
 
         // A capsule of glass behind it, or the text is unreadable over a bright environment.
         // Built up the way a glass bead is lit: a bright rim, a dark body, light caught along
@@ -1615,7 +1618,7 @@ impl Scene {
         // Under the status bar, by the same right edge: the bar is centred ten degrees up and
         // about two tall with its plate.
         let right_edge_deg = 17.0f32;
-        let top_deg = 9.3f32;
+        let top_deg = 8.9f32;
         let yaw = -(right_edge_deg - 0.5 - width_deg / 2.0).to_radians();
         let pitch = (top_deg - 0.4 - height_deg / 2.0).to_radians();
         let head = Quat::from_xyzw(
@@ -1624,10 +1627,13 @@ impl Scene {
             orientation.z as f32,
             orientation.w as f32,
         );
-        let direction = head * (Quat::from_rotation_z(yaw) * Quat::from_rotation_y(-pitch));
+        let toward = head * (Quat::from_rotation_z(yaw) * Quat::from_rotation_y(-pitch));
         let cfg = spatiand_render::StereoConfig::default();
         let centre = head * Vec3::new(cfg.neck_forward_m as f32, 0.0, cfg.neck_up_m as f32)
-            + direction * Vec3::X * distance;
+            + toward * Vec3::X * distance;
+        // Flat to the view, not turned to face the eye: turned, a thing in the corner of the
+        // view is seen at a slant, and its line of text runs uphill.
+        let direction = head;
         Some((centre, direction, width, height))
     }
 
