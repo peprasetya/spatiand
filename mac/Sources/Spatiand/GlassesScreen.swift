@@ -169,9 +169,12 @@ final class GlassesScreen {
         // And only when asked: while any display is captured macOS keeps this application in
         // front, and with the mouse given back to the Mac no other application could be chosen.
         // A window above everything covers the display as well.
-        // Taken over, the glasses were drawn to at a steady rate; left to the window server, at
-        // half of it. SPATIAND_CAPTURE=0 leaves the display alone, for comparing.
-        if wide, ProcessInfo.processInfo.environment["SPATIAND_CAPTURE"] != "0" {
+        // **Not taken over, unless asked (SPATIAND_CAPTURE=1).** While an application has any
+        // display captured, macOS treats the whole Mac as its: the menu bar goes from every
+        // screen, the Touch Bar's controls stop answering, and no other application can be
+        // brought forward. A window above everything covers the glasses as well. (It was put
+        // back once for the frame rate, which turned out to be the swap interval's doing.)
+        if wide, ProcessInfo.processInfo.environment["SPATIAND_CAPTURE"] == "1" {
             if CGDisplayCapture(id) == .success { captured = id } else { print("glasses: could not take the display over") }
         }
 
