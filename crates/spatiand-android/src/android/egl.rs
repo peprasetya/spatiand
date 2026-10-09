@@ -107,3 +107,6 @@ unsafe impl EGLNativeSurface for AndroidWindow {
 pub fn surface_of(window: &super::NativeWindow) -> AndroidWindow {
     AndroidWindow::new(window.0)
 }
+
+/// Android presents a window's frames at the display's refresh without being asked.
+pub fn pace() {}

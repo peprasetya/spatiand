@@ -132,13 +132,17 @@ pub extern "C" fn sp_running() -> bool {
     shared().running.load(Ordering::SeqCst)
 }
 
-/// The layer on the glasses' screen to draw into, and its size in pixels. A null layer draws
-/// into nothing, at that size: the tests'.
+/// The layer on the glasses' screen to draw into, its size in pixels, and which display it is on
+/// (a `CGDirectDisplayID`; 0 for the Mac's own), whose refresh is the frame clock. A null layer
+/// draws into nothing, at that size: the tests'.
 ///
 /// # Safety
 /// `layer` must be a live `CALayer` or null.
 #[no_mangle]
-pub unsafe extern "C" fn sp_glasses(layer: *mut c_void, width: i32, height: i32) {
+pub unsafe extern "C" fn sp_glasses(layer: *mut c_void, width: i32, height: i32, display: u32) {
+    if !layer.is_null() {
+        super::egl::follow_display(display);
+    }
     shared().glasses.set(Some(NativeWindow::new(layer, (width, height))));
 }
 
@@ -315,6 +319,14 @@ pub extern "C" fn sp_apps_end() {
 #[no_mangle]
 pub unsafe extern "C" fn sp_paired_host(address: *const c_char, fingerprint: *const c_char) {
     super::PAIRED.lock().unwrap().push((text(address), text(fingerprint)));
+}
+
+/// How many pixels a point of this Mac's screen is: 2 on a Retina display.
+#[no_mangle]
+pub extern "C" fn sp_display_scale(scale: f64) {
+    if scale.is_finite() && scale > 0.0 {
+        *super::DISPLAY_SCALE.lock().unwrap() = scale;
+    }
 }
 
 /// A window of this Mac's is to be in the room. `id` is the app's own and never 0.

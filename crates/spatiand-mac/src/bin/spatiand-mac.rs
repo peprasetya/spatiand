@@ -25,7 +25,7 @@ fn main() {
         .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
         .unwrap_or((3840, 1080));
     sp_begin(None, std::ptr::null_mut());
-    unsafe { sp_glasses(std::ptr::null_mut(), w, h) };
+    unsafe { sp_glasses(std::ptr::null_mut(), w, h, 0) };
     let wait = |ms: u64| std::thread::sleep(std::time::Duration::from_millis(ms));
     wait(1500);
     let press = |control: i32| {

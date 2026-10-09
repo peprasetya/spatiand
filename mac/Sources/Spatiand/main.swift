@@ -457,10 +457,17 @@ if let at = CommandLine.arguments.firstIndex(of: "--preview") {
     let args = Array(CommandLine.arguments[(at + 1)...])
     let seconds = Double(args.first ?? "") ?? 20
     setenv("SPATIAND_HMD", "null", 1)
+    // Its own preferences, so that looking at it changes nothing of the owner's.
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
     let application = NSApplication.shared
     application.setActivationPolicy(.accessory)
     DispatchQueue.main.async {
         Room.shared.start(preview: true)
+        // The stand-in glasses do not know which way up they are, and ask; B says never mind.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            sp_control(3, true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { sp_control(3, false) }
+        }
         if args.count > 1 {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { Room.shared.launch(path: args[1]) }
         }

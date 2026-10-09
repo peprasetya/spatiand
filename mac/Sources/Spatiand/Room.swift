@@ -35,7 +35,10 @@ final class Room {
         guard !running else { return }
         running = true
         shareIdentity()
-        for host in Hosts.all { sp_paired_host(host.address, host.fingerprint) }
+        // Not when it is only being looked at: a host shows its windows to one viewer, and
+        // connecting would take them from wherever they are being used.
+        if !preview { for host in Hosts.all { sp_paired_host(host.address, host.fingerprint) } }
+        sp_display_scale(Double(NSScreen.main?.backingScaleFactor ?? 2))
         listApplications()
         if let uid = Settings.audioOutputUID, let device = AudioDevices.outputs().first(where: { $0.uid == uid }) {
             sp_audio_output(Int32(bitPattern: device.id))

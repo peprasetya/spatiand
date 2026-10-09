@@ -76,7 +76,7 @@ final class GlassesScreen {
         w.contentView = view
         w.orderFrontRegardless()
         window = w
-        sp_glasses(Unmanaged.passUnretained(layer).toOpaque(), Int32(frame.width * 2), Int32(frame.height * 2))
+        sp_glasses(Unmanaged.passUnretained(layer).toOpaque(), Int32(frame.width * 2), Int32(frame.height * 2), 0)
         say("In a window on this Mac")
     }
 
@@ -154,7 +154,7 @@ final class GlassesScreen {
         opening = false
 
         let pixels = (Int32(frame.width * scale), Int32(frame.height * scale))
-        sp_glasses(Unmanaged.passUnretained(layer).toOpaque(), pixels.0, pixels.1)
+        sp_glasses(Unmanaged.passUnretained(layer).toOpaque(), pixels.0, pixels.1, id)
         let twoEyes = pixels.0 >= pixels.1 * 3
         say(twoEyes ? "In the glasses, in 3D" : "In the glasses, one eye")
         print("glasses: a window of \(pixels.0)x\(pixels.1) on display \(id), \(twoEyes ? "two eyes" : "one eye")")

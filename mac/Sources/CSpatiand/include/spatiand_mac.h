@@ -41,9 +41,10 @@ void sp_begin(sp_asked_fn callback, void *user);
 void sp_end(void);
 bool sp_running(void);
 
-// The CALayer on the glasses' screen to draw into, and its size in pixels: twice as wide as
-// high and more is two eyes side by side. The layer is retained.
-void sp_glasses(void *layer, int32_t width, int32_t height);
+// The CALayer on the glasses' screen to draw into, its size in pixels (twice as wide as high
+// and more is two eyes side by side), and the CGDirectDisplayID it is on, whose refresh paces
+// the frames (0 for the Mac's own display). The layer is retained.
+void sp_glasses(void *layer, int32_t width, int32_t height, uint32_t display);
 // The glasses' screen has gone. Returns once nothing is drawing into its layer.
 void sp_glasses_gone(void);
 // Whether the glasses' sensors are to be held at all.
@@ -84,6 +85,9 @@ void sp_apps_end(void);
 
 // A computer this Mac has paired with, for the room to connect to. Before sp_begin.
 void sp_paired_host(const char *address, const char *fingerprint);
+
+// How many pixels a point of this Mac's screen is: 2 on a Retina display.
+void sp_display_scale(double scale);
 
 // A window of this Mac's in the room. id is the app's own and never 0.
 void sp_window_open(uint32_t id, const char *bundle, const char *title);

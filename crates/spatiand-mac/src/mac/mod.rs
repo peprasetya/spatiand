@@ -259,3 +259,36 @@ pub fn prepare() {
         }
     }
 }
+
+/// How many pixels a point of this Mac's screen is, as the app said: a window's picture is
+/// that many times its size.
+pub static DISPLAY_SCALE: Mutex<f64> = Mutex::new(1.0);
+
+/// **A Mac window is as big in the room as it is on the Mac, relative to the others.** The room
+/// gives every window the same width -- right on the Deck, where every window is offered the
+/// same 1280 pixels and takes them. A Mac's windows are the sizes their applications made them:
+/// a calculator at the width of a browser is a wall of blurred buttons. So the first time one
+/// has a picture, its width in the room is set from its width in points, at the density the
+/// room's own default window has (1280 points across 1.1 m).
+pub fn size_new_windows(state: &mut crate::Spatiand, windows: &mut [crate::scene::WindowQuad]) {
+    thread_local! {
+        static SIZED: std::cell::RefCell<std::collections::HashSet<usize>> = Default::default();
+    }
+    let scale = *DISPLAY_SCALE.lock().unwrap();
+    let prefix = format!("remote.{}.", local::HOST);
+    for quad in windows.iter_mut() {
+        let Some(id) = state.layout.id_of(&quad.window) else { continue };
+        if quad.pixels.0 <= 16 || SIZED.with(|s| s.borrow().contains(&id)) {
+            continue;
+        }
+        SIZED.with(|s| s.borrow_mut().insert(id));
+        if !state.app_id_of(&quad.window).is_some_and(|a| a.starts_with(&prefix)) {
+            continue;
+        }
+        let Some(mut placement) = state.layout.get(&quad.window) else { continue };
+        let default = crate::window::Placement::default().width;
+        placement.width = (default * quad.pixels.0 as f64 / scale / 1280.0).clamp(0.25, 2.4);
+        state.layout.set(&quad.window, placement);
+        quad.placement = placement;
+    }
+}

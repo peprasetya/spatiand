@@ -163,3 +163,6 @@ pub fn take_glasses(
 pub fn glasses_waiting(shared: &Shared, _holding: bool) -> bool {
     shared.usb.lock().unwrap().is_some()
 }
+
+/// Every window on the Beam Pro is a host's, and is the size the room gives any window.
+pub fn size_new_windows(_state: &mut crate::Spatiand, _windows: &mut [crate::scene::WindowQuad]) {}

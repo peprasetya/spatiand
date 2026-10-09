@@ -990,6 +990,9 @@ pub fn run(
             // Where pinned windows go is worked out from this frame's head, inside the collect.
             runtime.state.pip_head = Some((orientation, crate::pip::view_of(&stereo)));
             let mut windows = crate::scene::collect_windows(&mut renderer, &runtime.state);
+            // A window that has just shown its first picture is given its size in the room,
+            // where the platform has a view on that: a Mac's own windows.
+            super::size_new_windows(&mut runtime.state, &mut windows);
             for quad in windows.iter_mut() {
                 let title = runtime.state.display_title(&quad.window);
                 quad.title = scene.title_texture(&mut renderer, &mut text, &title, ppd);
@@ -1570,6 +1573,9 @@ pub fn run(
                 let mut target = renderer.bind(&mut output.surface)?;
                 let mut frame = renderer.render(&mut target, (w, h).into(), Transform::Normal)?;
                 frame.with_context(|gl| unsafe {
+                    // The glasses' window is current here, which is when a driver that has to be
+                    // told to wait for the display's refresh can be told.
+                    super::egl::pace();
                     gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
                     gl.Disable(ffi::SCISSOR_TEST);
                     gl.ClearColor(0.02, 0.02, 0.05, 1.0);

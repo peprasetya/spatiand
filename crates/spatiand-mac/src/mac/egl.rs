@@ -146,3 +146,131 @@ unsafe impl EGLNativeSurface for Layer {
         Some("Mac/CALayer".into())
     }
 }
+
+// --- the frame clock ---
+//
+// On the Deck a frame is drawn for each of the display's refreshes because the page flip is what
+// the loop waits on, and on Android the window's swap waits the same way. ANGLE's swap on a
+// Metal layer does not wait: asked to, it still returned at once and the loop ran at twice the
+// display's rate, every other frame thrown away and the head predicted for the wrong moment. So
+// the Mac's clock is the display's own: a display link ticks at each refresh, and the loop waits
+// for the tick before it draws.
+
+type DisplayLinkCallback = unsafe extern "C" fn(
+    link: *mut c_void,
+    now: *const c_void,
+    output: *const c_void,
+    flags_in: u64,
+    flags_out: *mut u64,
+    user: *mut c_void,
+) -> i32;
+
+#[link(name = "CoreVideo", kind = "framework")]
+extern "C" {
+    fn CVDisplayLinkCreateWithCGDisplay(display: u32, link: *mut *mut c_void) -> i32;
+    fn CVDisplayLinkCreateWithActiveCGDisplays(link: *mut *mut c_void) -> i32;
+    fn CVDisplayLinkSetOutputCallback(link: *mut c_void, callback: DisplayLinkCallback, user: *mut c_void) -> i32;
+    fn CVDisplayLinkStart(link: *mut c_void) -> i32;
+    fn CVDisplayLinkStop(link: *mut c_void) -> i32;
+    fn CVDisplayLinkRelease(link: *mut c_void);
+}
+
+struct Clock {
+    /// How many refreshes there have been.
+    ticks: std::sync::Mutex<u64>,
+    ticked: std::sync::Condvar,
+    /// The link that is running, and the display it is for.
+    link: std::sync::Mutex<Option<(usize, u32)>>,
+    /// The refresh the loop last drew for.
+    drawn: std::sync::Mutex<u64>,
+    /// Whether the window now being drawn into has been set up.
+    set: std::sync::atomic::AtomicBool,
+}
+
+fn clock() -> &'static Clock {
+    static CLOCK: std::sync::OnceLock<Clock> = std::sync::OnceLock::new();
+    CLOCK.get_or_init(|| Clock {
+        ticks: std::sync::Mutex::new(0),
+        ticked: std::sync::Condvar::new(),
+        link: std::sync::Mutex::new(None),
+        drawn: std::sync::Mutex::new(0),
+        set: std::sync::atomic::AtomicBool::new(false),
+    })
+}
+
+unsafe extern "C" fn refreshed(
+    _link: *mut c_void,
+    _now: *const c_void,
+    _output: *const c_void,
+    _flags_in: u64,
+    _flags_out: *mut u64,
+    _user: *mut c_void,
+) -> i32 {
+    let clock = clock();
+    *clock.ticks.lock().unwrap() += 1;
+    clock.ticked.notify_all();
+    0
+}
+
+/// Tick with this display from now on: the one the glasses' window is on, or 0 for the Mac's own.
+pub fn follow_display(display: u32) {
+    let clock = clock();
+    let mut link = clock.link.lock().unwrap();
+    if let Some((old, _)) = link.take() {
+        unsafe {
+            CVDisplayLinkStop(old as *mut c_void);
+            CVDisplayLinkRelease(old as *mut c_void);
+        }
+    }
+    clock.set.store(false, std::sync::atomic::Ordering::SeqCst);
+    unsafe {
+        let mut made: *mut c_void = std::ptr::null_mut();
+        let status = if display == 0 {
+            CVDisplayLinkCreateWithActiveCGDisplays(&mut made)
+        } else {
+            CVDisplayLinkCreateWithCGDisplay(display, &mut made)
+        };
+        if status != 0 || made.is_null() {
+            log::warn!("frame clock: no display link for display {display} ({status}); frames are not paced");
+            return;
+        }
+        CVDisplayLinkSetOutputCallback(made, refreshed, std::ptr::null_mut());
+        CVDisplayLinkStart(made);
+        *link = Some((made as usize, display));
+    }
+}
+
+/// Wait for the display's next refresh. Called with the glasses' window current, before a frame
+/// is drawn into it.
+pub fn pace() {
+    use smithay::backend::egl::ffi::egl;
+    let clock = clock();
+    if !clock.set.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        // The swap itself never waits: one clock, not two that could each cost a refresh.
+        unsafe { egl::SwapInterval(egl::GetCurrentDisplay(), 0) };
+    }
+    if clock.link.lock().unwrap().is_none() {
+        return;
+    }
+    let mut drawn = clock.drawn.lock().unwrap();
+    let ticks = clock.ticks.lock().unwrap();
+    // A refresh that has already happened since the last frame is drawn for at once; otherwise
+    // the next one is waited for -- but never for long, so a display that has stopped ticking
+    // (asleep, unplugged) slows the session rather than stopping it.
+    let (ticks, _) = clock
+        .ticked
+        .wait_timeout_while(ticks, std::time::Duration::from_millis(50), |now| *now <= *drawn)
+        .unwrap();
+    *drawn = *ticks;
+    // Said every few hundred frames while the clock is being looked at.
+    if std::env::var_os("SPATIAND_CLOCK_DEBUG").is_some() {
+        static STATE: std::sync::Mutex<Option<(std::time::Instant, u64, u32)>> = std::sync::Mutex::new(None);
+        let mut state = STATE.lock().unwrap();
+        let (since, at, frames) = state.get_or_insert((std::time::Instant::now(), *ticks, 0));
+        *frames += 1;
+        if since.elapsed().as_secs() >= 3 {
+            log::info!("frame clock: {} refreshes and {} frames in {:.1}s", *ticks - *at, *frames, since.elapsed().as_secs_f32());
+            *state = Some((std::time::Instant::now(), *ticks, 0));
+        }
+    }
+}
