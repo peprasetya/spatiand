@@ -3200,6 +3200,11 @@ pub fn run(
                         if !waiting {
                             scene.draw_sky(gl, &eye);
                             scene.draw_windows(gl, &eye, &windows);
+                            // The time and the battery, in the corner of the view. Not over a
+                            // menu, which is the whole view while it is open.
+                            if !shell.menu_is_open() {
+                                scene.draw_status(gl, &eye, orientation);
+                            }
                         }
                         // Under the focused window, and drawn before the menus so a menu opened
                         // over it still reads as being in front.

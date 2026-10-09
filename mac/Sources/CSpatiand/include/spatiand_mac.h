@@ -23,6 +23,7 @@ enum {
     SP_LAUNCH = 3,            // open an application and bring its windows in; text is what sp_app gave
     SP_HAPTIC = 4,            // a tick under the finger; a is 0 click, 1 tick, 2 alert
     SP_SAVED = 5,             // a screenshot or a video was saved at text
+    SP_NOTICE_PRESSED = 6,    // the notification on show was pressed
     SP_WINDOW_MOTION = 10,    // the pointer is at (a, b) in window id's own pixels
     SP_WINDOW_LEAVE = 11,     // the pointer left window id
     SP_WINDOW_BUTTON = 12,    // button a (0x110 left, 0x111 right, 0x112 middle) went down (b = 1) or up
@@ -101,6 +102,10 @@ void sp_window_show(uint32_t id);
 void sp_window_picture(uint32_t id, const void *surface);
 void sp_window_title(uint32_t id, const char *title);
 void sp_window_close(uint32_t id);
+
+// A notification to show under the clock: its sender on the first line and what it says on
+// the second, or "" for none. SP_NOTICE_PRESSED says when the wearer presses it.
+void sp_notice(const char *text);
 
 // Play to this Core Audio device; 0 for the system's default output.
 void sp_audio_output(int32_t device);

@@ -327,3 +327,16 @@ pub fn size_new_windows(state: &mut crate::Spatiand, _windows: &mut [crate::scen
     }
     local::on_show(on_show);
 }
+
+/// The notification the app wants shown, or nothing.
+pub static NOTICE: Mutex<String> = Mutex::new(String::new());
+
+/// The notification to show under the status bar: who it is from, then what it says.
+pub fn notice() -> String {
+    NOTICE.lock().map(|n| n.clone()).unwrap_or_default()
+}
+
+/// The card was pressed: the app presses the banner it came from.
+pub fn notice_pressed() {
+    ffi::tell(ffi::Asked::NoticePressed, "");
+}

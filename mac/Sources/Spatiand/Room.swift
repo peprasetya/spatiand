@@ -64,6 +64,8 @@ final class Room {
             if MacWindows.allowed(ask: true) { RoomWindows.shared.start() }
         }
         PadInput.shared.start()
+        // The Mac's notifications, under the clock.
+        if Settings.notifications, RoomTap.allowed(ask: false) { Notices.shared.start() }
         // The sound of each application with a window on show, taken and placed at that window.
         if Settings.soundPlacement, !preview {
             sound.onProblem = { print("sound: \($0)") }
@@ -77,6 +79,7 @@ final class Room {
     func stop() {
         guard running else { return }
         soundTimer?.invalidate()
+        Notices.shared.stop()
         sound.stopAll()
         RoomTap.shared.remove()
         RoomWindows.shared.clear()
@@ -105,6 +108,8 @@ final class Room {
             DispatchQueue.main.async {
                 NSHapticFeedbackManager.defaultPerformer.perform(a == 2 ? .levelChange : (a == 1 ? .alignment : .generic), performanceTime: .now)
             }
+        case SP_NOTICE_PRESSED:
+            DispatchQueue.main.async { Notices.shared.pressed() }
         case SP_SAVED:
             print("saved \(text)")
         default:

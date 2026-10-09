@@ -28,6 +28,8 @@ pub enum Asked {
     Haptic = 4,
     /// A screenshot or a video was saved at `text`.
     Saved = 5,
+    /// The notification on show was pressed.
+    NoticePressed = 6,
     /// The pointer is at (`a`, `b`) in window `id`'s own pixels.
     WindowMotion = 10,
     /// The pointer left window `id`.
@@ -378,6 +380,16 @@ pub unsafe extern "C" fn sp_window_title(id: u32, title: *const c_char) {
 #[no_mangle]
 pub extern "C" fn sp_window_close(id: u32) {
     local::close(id);
+}
+
+/// A notification to show under the clock: who it is from on its first line and what it says on
+/// the second, or nothing to take it away.
+///
+/// # Safety
+/// `text` must be a valid C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn sp_notice(notice: *const c_char) {
+    *super::NOTICE.lock().unwrap() = text(notice);
 }
 
 // --- sound ---

@@ -962,6 +962,8 @@ pub fn run(
                 last_status_update = Instant::now();
             }
             scene.sync_status(&mut renderer, &mut text, &status_text, ppd)?;
+            // A notification of the platform's, if it has one to show.
+            scene.sync_notice(&mut renderer, &mut text, &super::notice(), ppd)?;
             if keyboard.open {
                 scene.sync_keyboard(&mut renderer, &mut text, &keyboard, ppd)?;
                 keyboard_struck.retain(|(_, when)| when.elapsed() < PRESS_SHOWN);
@@ -1378,7 +1380,15 @@ pub fn run(
                     }
 
                     let mut typed = false;
-                    if keyboard_resize.is_none() && right_click && !right_was_down {
+                    // The notification card is pressed like anything else in view, and the press
+                    // is its alone.
+                    if right_click && !right_was_down && !shell.menu_is_open() {
+                        if right_aim.as_ref().is_some_and(|a| scene.notice_hit(&a.ray, orientation)) {
+                            super::notice_pressed();
+                            typed = true;
+                        }
+                    }
+                    if !typed && keyboard_resize.is_none() && right_click && !right_was_down {
                         if let (Some(a), Some(q)) = (right_aim.as_ref(), keyboard_quad.as_ref()) {
                             if let Some(hit) = spatiand_render::intersect_quad(&a.ray, q) {
                                 match keyboard.target_at(hit.u, hit.v) {
@@ -1616,6 +1626,13 @@ pub fn run(
                         if !waiting {
                             scene.draw_sky(gl, &eye);
                             scene.draw_windows(gl, &eye, windows);
+                            // The time and the battery in the corner of the view, and under
+                            // them a notification while there is one. Not over a menu, which is
+                            // the whole view while it is open.
+                            if !shell.menu_is_open() {
+                                scene.draw_status(gl, &eye, orientation);
+                                scene.draw_notice(gl, &eye, orientation);
+                            }
                         }
                         if keyboard_open {
                             let focus = windows.iter().find(|w| w.focused);

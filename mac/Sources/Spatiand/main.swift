@@ -484,6 +484,44 @@ if let at = CommandLine.arguments.firstIndex(of: "--preview") {
     application.run()
 }
 
+if CommandLine.arguments.contains("--selftest-notice-room") {
+    // The room in a window, a notification posted, and a picture of the room with it on show.
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    func after(_ seconds: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body) }
+    DispatchQueue.main.async {
+        Room.shared.start(preview: true)
+        after(1.5) { sp_control(3, true); after(0.1) { sp_control(3, false) } }
+        after(3) {
+            let script = Process()
+            script.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            script.arguments = ["-e", "display notification \"Lunch is at one, at the usual place.\" with title \"Spatiand test\""]
+            try? script.run()
+        }
+        after(6) { sp_screenshot() }
+        after(9) { Room.shared.stop(); exit(0) }
+    }
+    application.run()
+}
+
+if CommandLine.arguments.contains("--selftest-notice") {
+    // Post a notification of our own and say what is read of the banner it makes.
+    let script = Process()
+    script.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    script.arguments = ["-e", "display notification \"The words of the test.\" with title \"Spatiand test\" subtitle \"A subtitle\""]
+    try? script.run()
+    print("accessibility allowed: \(AXIsProcessTrusted())")
+    for attempt in 0..<12 {
+        usleep(500_000)
+        let found = Notices.banners()
+        print("look \(attempt): \(found.count) banner(s) \(found.map { $0.1 })")
+        if !found.isEmpty { break }
+    }
+    exit(0)
+}
+
 if CommandLine.arguments.contains("--selftest-windows") {
     // The room in a window, and its list of windows opened (the settings, then Windows): every
     // window open on this Mac should be in it, put away. A picture is saved (~/screenshots).

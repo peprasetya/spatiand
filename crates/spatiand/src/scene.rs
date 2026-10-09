@@ -452,6 +452,9 @@ pub struct Scene {
     /// The status bar, rebuilt when its text changes.
     status: Option<Texture>,
     status_text: String,
+    /// A notification, shown under the status bar: its texture and its size in degrees.
+    notice: Option<(Texture, f32, f32)>,
+    notice_text: String,
 
     /// The open menu, rasterised a piece at a time.
     ///
@@ -625,6 +628,8 @@ impl Scene {
             keys_built: false,
             status: None,
             status_text: String::new(),
+            notice: None,
+            notice_text: String::new(),
             menu: None,
             menu_model: Default::default(),
             menu_first: 0,
@@ -1529,6 +1534,112 @@ impl Scene {
             [1.0, 1.0, 1.0, 0.95],
             (0.0, 1.0),
         );
+    }
+
+    /// Rebuild the notification card if what it says changed. Nothing to say takes it away.
+    ///
+    /// Who it is from on the first line and what it says after, as the platform hands it over.
+    pub fn sync_notice(
+        &mut self,
+        renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
+        text: &mut TextRenderer,
+        wanted: &str,
+        px_per_degree: f32,
+    ) -> Result<(), String> {
+        if wanted == self.notice_text {
+            return Ok(());
+        }
+        self.notice_text = wanted.to_string();
+        // A card about a third of the view wide at most; what does not fit wraps, and what
+        // would wrap for ever is cut, since it is a glance and not a page.
+        let shortened: String = if wanted.chars().count() > 160 {
+            wanted.chars().take(157).chain("...".chars()).collect()
+        } else {
+            wanted.to_string()
+        };
+        let image = (!shortened.is_empty())
+            .then(|| text.render(&shortened, px_per_degree * 0.62, (px_per_degree * 12.0) as u32, [232, 238, 255, 255]));
+        let old = self.notice.take();
+        self.notice = renderer
+            .with_context(|gl| unsafe {
+                if let Some((t, _, _)) = old {
+                    gl.DeleteTextures(1, &t.id);
+                }
+                image.as_ref().map(|image| {
+                    let texture = Texture {
+                        id: upload_rgba(gl, image),
+                        aspect: image.width as f32 / image.height.max(1) as f32,
+                    };
+                    (texture, image.width as f32 / px_per_degree, image.height as f32 / px_per_degree)
+                })
+            })
+            .map_err(|e| format!("no GL context: {e}"))?;
+        Ok(())
+    }
+
+    /// Where the notification card is, for a head facing `orientation`: its centre, the way it
+    /// faces, and its size in metres. `None` with nothing to show.
+    fn notice_place(&self, orientation: glam::DQuat) -> Option<(Vec3, Quat, f32, f32)> {
+        let (_, width_deg, height_deg) = self.notice?;
+        let distance = 1.5f32;
+        let width = 2.0 * distance * (width_deg / 2.0).to_radians().tan();
+        let height = 2.0 * distance * (height_deg / 2.0).to_radians().tan();
+        // Under the status bar, by the same right edge: the bar is centred ten degrees up and
+        // about two tall with its plate.
+        let right_edge_deg = 17.0f32;
+        let top_deg = 8.3f32;
+        let yaw = -(right_edge_deg - 0.5 - width_deg / 2.0).to_radians();
+        let pitch = (top_deg - 0.4 - height_deg / 2.0).to_radians();
+        let head = Quat::from_xyzw(
+            orientation.x as f32,
+            orientation.y as f32,
+            orientation.z as f32,
+            orientation.w as f32,
+        );
+        let direction = head * (Quat::from_rotation_z(yaw) * Quat::from_rotation_y(-pitch));
+        let cfg = spatiand_render::StereoConfig::default();
+        let centre = head * Vec3::new(cfg.neck_forward_m as f32, 0.0, cfg.neck_up_m as f32)
+            + direction * Vec3::X * distance;
+        Some((centre, direction, width, height))
+    }
+
+    /// Draw the notification card, locked to the head under the status bar.
+    ///
+    /// # Safety
+    /// Context must be current.
+    pub unsafe fn draw_notice(&self, gl: &ffi::Gles2, eye: &Eye, orientation: glam::DQuat) {
+        let (Some((texture, _, _)), Some((centre, direction, width, height))) =
+            (self.notice, self.notice_place(orientation))
+        else {
+            return;
+        };
+        let pad = 0.012f32;
+        let backdrop = self.panel_model(centre, direction, width + pad * 2.0, height + pad * 2.0);
+        self.quads.draw(
+            gl,
+            self.white,
+            &(eye.view_projection() * backdrop),
+            [0.05, 0.07, 0.12, 0.82],
+            (0.0, 1.0),
+        );
+        let model = self.panel_model(centre, direction, width, height);
+        self.quads.draw(gl, texture.id, &(eye.view_projection() * model), [1.0, 1.0, 1.0, 0.97], (0.0, 1.0));
+    }
+
+    /// Whether a ray lands on the notification card: pressing it there is pressing the
+    /// notification.
+    pub fn notice_hit(&self, ray: &Ray, orientation: glam::DQuat) -> bool {
+        let Some((centre, direction, width, height)) = self.notice_place(orientation) else {
+            return false;
+        };
+        let quad = spatiand_render::Quad {
+            centre: centre.as_dvec3(),
+            orientation: direction.as_dquat(),
+            width: width as f64 + 0.024,
+            height: height as f64 + 0.024,
+            bend: None,
+        };
+        spatiand_render::intersect_quad(ray, &quad).is_some()
     }
 
     /// Rebuild the controller picture if its labels changed. No labels hides it: the editor's
