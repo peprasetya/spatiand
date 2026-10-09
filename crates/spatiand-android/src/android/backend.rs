@@ -1267,6 +1267,12 @@ pub fn run(
                                 runtime
                                     .state
                                     .request_size(window, (out.pixels.0 as i32, out.pixels.1 as i32).into());
+                                // A window of the Mac's own is resized once, at the end; until
+                                // then its picture is drawn in the shape being asked for.
+                                #[cfg(target_os = "macos")]
+                                if runtime.state.app_id_of(window).is_some_and(|a| a.starts_with("remote.mac.")) {
+                                    crate::mac::resizing(window, (out.pixels.0 as u32, out.pixels.1 as u32));
+                                }
                             }
                         }
                     }

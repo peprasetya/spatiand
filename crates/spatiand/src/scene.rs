@@ -1506,16 +1506,16 @@ impl Scene {
         // than the same width of bigger letters. The letters are small on purpose -- it is
         // looked at, never pointed at.
         let distance = 1.5f32;
-        let height_deg = 0.65f32;
+        let height_deg = 0.55f32;
         let height = 2.0 * distance * (height_deg / 2.0).to_radians().tan();
         let width = height * bar.aspect.max(0.01);
         let half_width_deg = (width / 2.0 / distance).atan().to_degrees();
 
         // Anchored by its top-right corner, so the bar stays put in the corner whatever it says.
-        let right_edge_deg = 17.0f32;
+        let right_edge_deg = 18.0f32;
         let yaw = -(right_edge_deg - half_width_deg).to_radians();
         // Near the top of the field (the half-field is 11.57 degrees), clear of a centred window.
-        let pitch = 10.0f32.to_radians();
+        let pitch = 10.6f32.to_radians();
         let head = Quat::from_xyzw(
             orientation.x as f32,
             orientation.y as f32,
@@ -1527,15 +1527,26 @@ impl Scene {
         let centre = head * Vec3::new(cfg.neck_forward_m as f32, 0.0, cfg.neck_up_m as f32)
             + direction * Vec3::X * distance;
 
-        // A capsule of dark glass behind it, or the text is unreadable over a bright
-        // environment: a lit rim, then the body, each with ends as round as it is tall.
-        let (plate_w, plate_h) = (width + height * 1.5, height * 1.7);
+        // A capsule of glass behind it, or the text is unreadable over a bright environment.
+        // Built up the way a glass bead is lit: a bright rim, a dark body, light caught along
+        // the top and a little thrown back up from the bottom.
+        let (plate_w, plate_h) = (width + height * 1.6, height * 1.8);
         let px = 64.0 / plate_h;
-        for (grow, tint) in [(1.10f32, [0.75, 0.85, 1.0, 0.22]), (1.0, [0.03, 0.05, 0.09, 0.58])] {
-            let (w, h) = (plate_w + plate_h * (grow - 1.0), plate_h * grow);
+        let up = direction * Vec3::Z;
+        // (wider by, taller by, lifted by, tint) -- all in plate heights.
+        let layers: [(f32, f32, f32, [f32; 4]); 5] = [
+            (0.12, 1.12, 0.0, [0.80, 0.90, 1.0, 0.30]),
+            (0.0, 1.0, 0.0, [0.03, 0.05, 0.10, 0.62]),
+            (-0.10, 0.86, -0.03, [0.10, 0.16, 0.28, 0.35]),
+            (-0.30, 0.30, 0.27, [1.0, 1.0, 1.0, 0.10]),
+            (-0.42, 0.14, -0.37, [0.55, 0.75, 1.0, 0.09]),
+        ];
+        for (wider, taller, lifted, tint) in layers {
+            let (w, h) = (plate_w + plate_h * wider, plate_h * taller);
+            let at = centre + up * (plate_h * lifted);
             self.rounded.draw(
                 gl,
-                &(eye.view_projection() * self.panel_model(centre, direction, w, h)),
+                &(eye.view_projection() * self.panel_model(at, direction, w, h)),
                 tint,
                 (w * px, h * px),
                 h * px * 0.5,
@@ -3693,6 +3704,10 @@ pub fn collect_windows(
         // bigger than a window that has shrunk, with the window in its corner.
         #[cfg(target_os = "macos")]
         let crop = crate::mac::remote_video::crop_of(&surface).unwrap_or(crop);
+        // And while one is being resized, the shape it is being dragged to: the real window
+        // follows when the drag stops, and its picture is stretched until then.
+        #[cfg(target_os = "macos")]
+        let (width, height) = crate::mac::shape_while_resizing(&surface, (width, height));
         // A surface that has become the environment is not also a panel in it. Asked through
         // `is_environment` rather than by listing layers: the list here once said "the two
         // panoramas", and the day a third kind of room arrived it would have been drawn twice.

@@ -355,3 +355,49 @@ pub fn notice() -> String {
 pub fn notice_pressed() {
     ffi::tell(ffi::Asked::NoticePressed, "");
 }
+
+// --- a Mac window's shape while it is dragged by an edge ---
+
+struct Resizing {
+    surface: smithay::reexports::wayland_server::backend::ObjectId,
+    /// What the drag is asking for, in pixels.
+    wanted: (u32, u32),
+    /// The picture's size when the drag began: a new one means the real window has followed.
+    from: Option<(u32, u32)>,
+    at: Instant,
+}
+
+thread_local! {
+    static RESIZING: std::cell::RefCell<Option<Resizing>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A window is being dragged to this size.
+pub fn resizing(window: &smithay::desktop::Window, wanted: (u32, u32)) {
+    use smithay::reexports::wayland_server::Resource;
+    use smithay::wayland::seat::WaylandFocus;
+    let Some(surface) = window.wl_surface().map(|s| s.id()) else { return };
+    RESIZING.with(|r| {
+        let mut r = r.borrow_mut();
+        let from = r.as_ref().filter(|was| was.surface == surface).and_then(|was| was.from);
+        *r = Some(Resizing { surface, wanted, from, at: Instant::now() });
+    });
+}
+
+/// The shape to draw a window in: the one it is being dragged to, from the first frame of the
+/// drag until its picture comes at a new size (or a moment has passed with neither).
+pub fn shape_while_resizing(
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    picture: (u32, u32),
+) -> (u32, u32) {
+    use smithay::reexports::wayland_server::Resource;
+    RESIZING.with(|r| {
+        let mut r = r.borrow_mut();
+        let Some(now) = r.as_mut().filter(|now| now.surface == surface.id()) else { return picture };
+        let from = *now.from.get_or_insert(picture);
+        if from != picture || now.at.elapsed() > std::time::Duration::from_millis(1500) {
+            *r = None;
+            return picture;
+        }
+        (now.wanted.0.max(1), now.wanted.1.max(1))
+    })
+}
