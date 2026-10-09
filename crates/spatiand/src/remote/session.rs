@@ -371,10 +371,16 @@ async fn serve(
                 version: spatiand_stream::VERSION,
                 codecs: vec![Codec::H265, Codec::H264],
                 max_size: (3840, 2160),
-                refresh_mhz: 72_000,
+                // The Mac is offered the glasses' two-eye picture at 60 only.
+                refresh_mhz: if cfg!(target_os = "macos") { 60_000 } else { 72_000 },
                 session: "spatiand".into(),
             },
         );
+        // **This session has a head.** The host remembers the last thing it was told about
+        // glasses, and a Mac's flat windows -- another session altogether -- tell it there are
+        // none: whoever came next, never saying otherwise, had its room-capable applications
+        // started as flat windows. Said before anything is launched.
+        say(&out, ClientMessage::Glasses { on: true });
         for app in config.launch.iter().chain(launch_first.iter()) {
             say(&out, ClientMessage::Launch { app: app.clone() });
         }
