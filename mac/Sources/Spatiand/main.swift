@@ -106,7 +106,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if Settings.hotkeys { hotkeys.enable() }
         Model.shared.onProblem = { PairingUI.alert("Spatiand", $0) }
         Room.shared.onChange = { [weak self] in self?.refreshIcon() }
-        Room.shared.screen.onLost = { [weak self] in self?.relaunchForNextPlugIn() }
+        // The display goes away for a moment whenever the glasses change mode -- which they do as
+        // the room starts, going to two eyes -- and comes back: wait for it again. Unplugged for
+        // good is the USB going, which `refreshIcon` hears.
+        Room.shared.screen.onLost = { Room.shared.screen.start() }
         chooseWorld()
     }
 

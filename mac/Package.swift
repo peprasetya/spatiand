@@ -32,6 +32,8 @@ let package = Package(
                 .linkedFramework("VideoToolbox"),
                 .linkedFramework("IOKit"),
                 .linkedFramework("IOSurface"),
+                .linkedFramework("QuartzCore"),
+                .linkedFramework("Metal"),
             ]
         ),
     ]

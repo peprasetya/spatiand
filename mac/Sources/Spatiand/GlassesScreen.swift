@@ -78,6 +78,15 @@ final class GlassesScreen {
         window = w
         sp_glasses(Unmanaged.passUnretained(layer).toOpaque(), Int32(frame.width * 2), Int32(frame.height * 2), 0)
         say("In a window on this Mac")
+        if ProcessInfo.processInfo.environment["SPATIAND_LAYER_DEBUG"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                print("layer: \(layer) frame \(layer.frame) sublayers \(layer.sublayers?.count ?? 0)")
+                for sub in layer.sublayers ?? [] {
+                    let metal = sub as? CAMetalLayer
+                    print("  sub: \(type(of: sub)) frame \(sub.frame) hidden \(sub.isHidden) opacity \(sub.opacity) drawable \(String(describing: metal?.drawableSize)) device \(String(describing: metal?.device?.name)) sync \(String(describing: metal?.displaySyncEnabled))")
+                }
+            }
+        }
     }
 
     private func wait(tries: Int) {

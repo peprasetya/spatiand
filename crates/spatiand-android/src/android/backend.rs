@@ -1659,6 +1659,8 @@ pub fn run(
                             scene.quads().draw(gl, tex, &(eye.view_projection() * model), [1.0, 1.0, 1.0, 1.0], (0.0, 1.0));
                         }
                     }
+                    // What the platform needs done to a finished frame before it is shown.
+                    super::egl::finish_frame(gl, (w, h));
                     // The recording's copy of the frame, while it is still in the window.
                     if record_now {
                         if let Some(r) = recorder_ref.as_mut() {

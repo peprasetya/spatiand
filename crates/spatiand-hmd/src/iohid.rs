@@ -326,6 +326,21 @@ pub fn open_glasses(driver: &str) -> Result<(&'static DeviceSpec, IoHidPort, IoH
             let (ours, theirs) = UnixDatagram::pair().map_err(|source| HmdError::Io { path: name.clone(), source })?;
             let _ = ours.set_nonblocking(true);
             let _ = theirs.set_nonblocking(true);
+            // Room for a quarter of a second of reports. macOS gives a datagram socket two
+            // kilobytes, which is thirty milliseconds of a thousand reports a second: a frame
+            // that took longer than that lost samples, and the head with them.
+            for socket in [&ours, &theirs] {
+                let size: libc::c_int = 256 * 1024;
+                for option in [libc::SO_SNDBUF, libc::SO_RCVBUF] {
+                    libc::setsockopt(
+                        socket.as_raw_fd(),
+                        libc::SOL_SOCKET,
+                        option,
+                        &size as *const libc::c_int as *const c_void,
+                        std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+                    );
+                }
+            }
             opened.push((device, ours, theirs, name));
         }
 

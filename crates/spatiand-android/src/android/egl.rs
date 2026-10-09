@@ -110,3 +110,9 @@ pub fn surface_of(window: &super::NativeWindow) -> AndroidWindow {
 
 /// Android presents a window's frames at the display's refresh without being asked.
 pub fn pace() {}
+
+/// Nothing: Android's display takes the frame as it is.
+///
+/// # Safety
+/// Called with the frame's context current.
+pub unsafe fn finish_frame(_gl: &smithay::backend::renderer::gles::ffi::Gles2, _size: (i32, i32)) {}

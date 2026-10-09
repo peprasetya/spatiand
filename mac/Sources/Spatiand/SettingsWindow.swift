@@ -51,7 +51,7 @@ struct SettingsView: View {
                 }
             }
             Toggle("Game controllers work as they do on the Deck (cable or Bluetooth)", isOn: $gamepads)
-            Text("A pad's touchpad slides the pointer in the glasses and its press clicks; the PS button opens the menu, which the D-pad, X and O then work. Each window has the controller layout it has on the Deck: copy ~/.config/spatiand/layouts from a Deck into ~/Library/Application Support/Spatiand/layouts to use the same ones.")
+            Text("A pad's touchpad slides the pointer in the glasses and its press clicks; the PS button opens the menu, which the D-pad, X and O then work. Each window has the controller layout it has on the Deck: copy ~/.config/spatiand/layouts from a Deck to the same place on this Mac to use the same ones.")
                 .font(.caption).foregroundColor(.secondary)
             Toggle("Start Spatiand when I log in", isOn: $atLogin)
                 .onChange(of: atLogin) { wanted in

@@ -248,6 +248,11 @@ pub fn pace() {
     if !clock.set.swap(true, std::sync::atomic::Ordering::SeqCst) {
         // The swap itself never waits: one clock, not two that could each cost a refresh.
         unsafe { egl::SwapInterval(egl::GetCurrentDisplay(), 0) };
+        // **Without this the glasses are black.** ANGLE puts its Metal layer into the layer it
+        // was handed, from this thread, which has no run loop to commit that change for it; the
+        // frames were all drawn and presented into a layer the window server had never heard
+        // of. Flushed here, once, with the new window current.
+        flush_layers();
     }
     if clock.link.lock().unwrap().is_none() {
         return;
@@ -273,4 +278,42 @@ pub fn pace() {
             *state = Some((std::time::Instant::now(), *ticks, 0));
         }
     }
+}
+
+/// Commit this thread's pending Core Animation changes: `[CATransaction flush]`.
+fn flush_layers() {
+    #[link(name = "QuartzCore", kind = "framework")]
+    extern "C" {}
+    #[link(name = "objc")]
+    extern "C" {
+        fn objc_getClass(name: *const std::ffi::c_char) -> *mut c_void;
+        fn sel_registerName(name: *const std::ffi::c_char) -> *mut c_void;
+        fn objc_msgSend();
+    }
+    unsafe {
+        let class = objc_getClass(c"CATransaction".as_ptr());
+        if class.is_null() {
+            return;
+        }
+        let send: unsafe extern "C" fn(*mut c_void, *mut c_void) =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        send(class, sel_registerName(c"flush".as_ptr()));
+    }
+}
+
+/// **Make the frame opaque.** The scene blends as it draws and leaves whatever alpha that comes
+/// to, which a display never looks at -- but macOS composites this layer over what is behind it,
+/// and a frame whose alpha is nought is a frame nobody sees: the glasses were black with every
+/// frame drawn correctly. So the alpha of the whole frame is set to one before it is shown.
+///
+/// # Safety
+/// Called with the frame's context current.
+pub unsafe fn finish_frame(gl: &smithay::backend::renderer::gles::ffi::Gles2, size: (i32, i32)) {
+    use smithay::backend::renderer::gles::ffi;
+    gl.Viewport(0, 0, size.0, size.1);
+    gl.Disable(ffi::SCISSOR_TEST);
+    gl.ColorMask(ffi::FALSE, ffi::FALSE, ffi::FALSE, ffi::TRUE);
+    gl.ClearColor(0.0, 0.0, 0.0, 1.0);
+    gl.Clear(ffi::COLOR_BUFFER_BIT);
+    gl.ColorMask(ffi::TRUE, ffi::TRUE, ffi::TRUE, ffi::TRUE);
 }

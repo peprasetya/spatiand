@@ -408,6 +408,9 @@ pub struct Scene {
     /// Rebuilt only when the app list changes; rasterising twenty labels a frame would cost
     /// more than everything else here put together.
     labels_built_for: usize,
+    /// The first bubble `app_labels` and `app_glyphs` are for: they hold the page on show and
+    /// no more.
+    apps_page_start: usize,
     /// When some of the launcher's bubbles were built with an initial standing in for an icon
     /// still loading, how many icons had arrived at the time. The glyphs are rebuilt once more
     /// have.
@@ -610,6 +613,7 @@ impl Scene {
             app_glyphs: Vec::new(),
             app_initials: Vec::new(),
             labels_built_for: usize::MAX,
+            apps_page_start: 0,
             glyphs_waiting_since: None,
             icons: std::collections::HashMap::new(),
             icon_loader: crate::icon::Loader::start(),
@@ -901,7 +905,13 @@ impl Scene {
                 .map_err(|e| format!("no GL context: {e}"))?;
             self.launcher_caption_text = caption;
         }
-        let entries: Vec<(String, Option<String>)> = launcher.bubbles();
+        // **Only the page on show.** Every bubble's label used to be made here, and made again
+        // each time an icon arrived -- unnoticed with the forty applications of a Deck, and two
+        // frames a second for as long as the icons of a Mac's two hundred were coming in.
+        let page = launcher.visible();
+        let page_start = page.start;
+        let entries: Vec<(String, Option<String>)> =
+            launcher.bubbles().into_iter().skip(page.start).take(page.len()).collect();
         // What is shown, not how many: a computer's tab and a group of the same size would
         // otherwise reuse each other's labels, and a computer going offline changes a label
         // without changing the count.
@@ -909,6 +919,7 @@ impl Scene {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             std::mem::discriminant(launcher.level()).hash(&mut hasher);
+            page_start.hash(&mut hasher);
             entries.hash(&mut hasher);
             hasher.finish() as usize
         };
@@ -1018,6 +1029,7 @@ impl Scene {
         self.app_glyphs = new_glyphs;
         self.app_initials = new_initials;
         self.labels_built_for = fingerprint;
+        self.apps_page_start = page_start;
         self.glyphs_waiting_since = waiting.then_some(self.icons_received);
         Ok(())
     }
@@ -2675,7 +2687,10 @@ impl Scene {
                     view_dir: (centre - eye_pos).normalize_or_zero(),
                     light_dir: LIGHT_DIR.normalize(),
                     focus,
-                    icon: self.app_glyphs.get(index).map(|t| t.id),
+                    icon: index
+                        .checked_sub(self.apps_page_start)
+                        .and_then(|i| self.app_glyphs.get(i))
+                        .map(|t| t.id),
                     accent: [0.62, 0.78, 1.0, 1.0],
                     appear,
                 },
@@ -2712,7 +2727,7 @@ impl Scene {
 
         // Labels last, so they are never occluded by a neighbouring bubble's glass.
         for (index, placement) in launcher.placements() {
-            let Some(label) = self.app_labels.get(index) else {
+            let Some(label) = index.checked_sub(self.apps_page_start).and_then(|i| self.app_labels.get(i)) else {
                 continue;
             };
             let orientation = self.anchor_quat()
