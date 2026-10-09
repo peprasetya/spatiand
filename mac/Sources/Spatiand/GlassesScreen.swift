@@ -39,6 +39,9 @@ final class GlassesScreen {
     var onChange: (() -> Void)?
 
     var isShowing: Bool { window != nil }
+    /// The glasses' display while the room is on it, and the window the room is in.
+    var display: CGDirectDisplayID? { window != nil && displayID != 0 ? displayID : nil }
+    var windowNumber: CGWindowID? { window.map { CGWindowID($0.windowNumber) } }
 
     /// XREAL Air identifies itself with EDID vendor 0x3647, product 0x3132.
     static func findDisplay() -> CGDirectDisplayID? {

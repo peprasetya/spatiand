@@ -116,6 +116,10 @@ final class Room {
             }
         case SP_NOTICE_PRESSED:
             DispatchQueue.main.async { Notices.shared.pressed() }
+        case SP_RECORD_START:
+            DispatchQueue.main.async { if #available(macOS 15.0, *) { RoomRecorder.shared.start(screen: self.screen) } else { print("recording: needs macOS 15") } }
+        case SP_RECORD_STOP:
+            DispatchQueue.main.async { if #available(macOS 15.0, *) { RoomRecorder.shared.stop() } else { print("recording: needs macOS 15") } }
         case SP_SAVED:
             print("saved \(text)")
         default:

@@ -33,7 +33,9 @@ enum {
     SP_WINDOW_RESIZE = 16,    // window id should be a by b pixels
     SP_WINDOW_CLOSE = 17,     // window id should close
     SP_WINDOW_SHOWN = 18,     // window id is on show in the room: its picture is wanted
-    SP_WINDOW_HIDDEN = 19,    // window id has been put away: no picture is needed
+    SP_WINDOW_HIDDEN = 19,
+    SP_RECORD_START = 20,     // film what the glasses show, from now
+    SP_RECORD_STOP = 21,      // and stop, and save it    // window id has been put away: no picture is needed
 };
 
 typedef void (*sp_asked_fn)(void *user, int32_t what, uint32_t id, double a, double b, double c,

@@ -51,6 +51,10 @@ pub enum Asked {
     WindowShown = 18,
     /// Window `id` has been put away, and is only in the list: no picture is needed.
     WindowHidden = 19,
+    /// Film what the glasses show, from now.
+    RecordStart = 20,
+    /// And stop, and save it.
+    RecordStop = 21,
 }
 
 pub type Callback =
