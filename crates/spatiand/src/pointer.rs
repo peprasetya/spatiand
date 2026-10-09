@@ -662,6 +662,10 @@ pub fn room_window(state: &Spatiand) -> Option<smithay::desktop::Window> {
 /// Everything the pointer layer remembers between frames.
 #[derive(Debug, Default)]
 pub struct PointerState {
+    /// Whether the pointer is on a window's speaker button, where a scroll is its volume.
+    pub over_speaker: bool,
+    /// How far that has been scrolled since it was last taken, up being louder.
+    pub volume_turn: f64,
     pub drag: Option<Drag>,
     /// Buttons currently held, so a release is only sent for something that was pressed.
     held: Vec<u32>,
@@ -1076,6 +1080,11 @@ impl PointerState {
     /// a wheel scrolls in ugly steps.
     pub fn scroll(&mut self, state: &mut Spatiand, dx: f64, dy: f64, time_ms: u32) {
         state.attention.stir();
+        // Over a window's speaker the scroll is that window's volume, and nothing's page.
+        if self.over_speaker {
+            self.volume_turn -= dy;
+            return;
+        }
         let Some(pointer) = state.seat.get_pointer() else {
             return;
         };

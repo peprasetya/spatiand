@@ -206,6 +206,8 @@ pub struct WindowSound {
     pub sounding: Option<spatiand_audio::Layout>,
     /// Loudest sample in the last block, for how brightly the speaker is lit.
     pub peak: f32,
+    /// This window's own volume: 1 as it comes.
+    pub gain: f32,
 }
 
 /// A popup, already imported, placed in its parent window's own pixels.
@@ -2365,6 +2367,22 @@ impl Scene {
                     }),
                     (0.0, 1.0),
                 );
+                // Its own volume, where it is not as it came: a bar under the speaker, as long
+                // as it is loud -- the button's width is the volume it came at.
+                if (sound.gain - 1.0).abs() > 0.01 && !sound.muted {
+                    let mut bar = mute;
+                    let wide = (sound.gain / 2.0).clamp(0.05, 1.0);
+                    bar.half_u *= wide as f64;
+                    bar.half_v *= 0.09;
+                    bar.v -= mute.half_v * 1.25;
+                    self.rounded.draw(
+                        gl,
+                        &(eye.view_projection() * furniture(bar)),
+                        dim(if sound.gain > 1.0 { [1.0, 0.78, 0.35, 0.95] } else { [0.70, 0.85, 1.0, 0.95] }),
+                        (64.0 * wide, 6.0),
+                        3.0,
+                    );
+                }
             }
 
             }

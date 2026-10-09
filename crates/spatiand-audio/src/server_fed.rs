@@ -63,6 +63,8 @@ pub struct Status {
     pub sounding: Option<Layout>,
     pub peak: f32,
     pub muted: bool,
+    /// This window's own volume: 1 as it comes.
+    pub gain: f32,
 }
 
 pub const SINK_DESCRIPTION: &str = "Spatiand window";
@@ -104,6 +106,8 @@ struct SlotState {
     width: Layout,
     aim: Mutex<Option<(Vec<Speaker>, f64)>>,
     muted: AtomicBool,
+    /// This window's own volume, as an f32's bits.
+    gain: std::sync::atomic::AtomicU32,
     peak: AtomicU32,
     sounding: AtomicU32,
     /// Its sound is made on this machine, not sent over a network: it arrives steadily and
@@ -227,6 +231,7 @@ pub fn feed(slot: Option<Slot>, pcm: &[i16], channels: usize) {
             render.aim(&speakers, off_axis);
         }
     }
+    render.set_gain(f32::from_bits(state.gain.load(Ordering::Relaxed)));
     render.set_muted(state.muted.load(Ordering::Relaxed));
     let frames = input.len() / channels;
     let mut output = vec![0.0f32; frames * 2];
@@ -507,6 +512,7 @@ impl Engine {
                 width: width.layout(),
                 aim: Mutex::new(None),
                 muted: AtomicBool::new(false),
+                gain: std::sync::atomic::AtomicU32::new(1.0f32.to_bits()),
                 peak: AtomicU32::new(0),
                 sounding: AtomicU32::new(0),
                 local: AtomicBool::new(false),
@@ -525,6 +531,12 @@ impl Engine {
             if let Ok(mut aim) = state.aim.lock() {
                 *aim = Some((speakers, off_axis));
             }
+        }
+    }
+
+    pub fn set_gain(&self, slot: Slot, gain: f32) {
+        if let Some(state) = shared().slots.lock().ok().and_then(|s| s.get(&slot).cloned()) {
+            state.gain.store(gain.clamp(0.0, 4.0).to_bits(), Ordering::Relaxed);
         }
     }
 
@@ -559,6 +571,7 @@ impl Engine {
             sounding: layout_from_code(state.sounding.load(Ordering::Relaxed)),
             peak: f32::from_bits(state.peak.load(Ordering::Relaxed)),
             muted: state.muted.load(Ordering::Relaxed),
+            gain: f32::from_bits(state.gain.load(Ordering::Relaxed)),
         })
     }
 

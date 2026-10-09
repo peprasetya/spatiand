@@ -1115,6 +1115,7 @@ pub fn run(
                             muted: status.muted,
                             sounding: status.sounding,
                             peak: status.peak,
+                            gain: status.gain,
                         });
                     }
                 }
@@ -1184,6 +1185,7 @@ pub fn run(
                 last_hands = hands;
             }
 
+            let mut over_speaker: Option<(usize, f32)> = None;
             for aim in [right_aim.as_ref()].into_iter().flatten() {
                 let Some((index, _)) = aim.hit else { continue };
                 let Some(quad) = windows.get_mut(index) else { continue };
@@ -1193,9 +1195,20 @@ pub fn run(
                     Some(Zone::Pin) => quad.pin_hot = true,
                     Some(Zone::Close) => quad.close_hot = true,
                     Some(Zone::Hide) => quad.hide_hot = true,
-                    Some(Zone::Mute) => quad.mute_hot = true,
+                    Some(Zone::Mute) => {
+                        quad.mute_hot = true;
+                        // Scrolled over, the speaker is this window's own volume.
+                        over_speaker = runtime.state.layout.id_of(&quad.window).map(|id| (id, quad.sound.map(|s| s.gain).unwrap_or(1.0)));
+                    }
                     _ => {}
                 }
+            }
+
+            pointers.over_speaker = over_speaker.is_some();
+            let turn = std::mem::take(&mut pointers.volume_turn);
+            if let (Some((id, gain)), true) = (over_speaker, turn != 0.0) {
+                // A notch of a wheel is fifteen, and a tenth of the volume.
+                spatial_audio.set_gain(id, (gain + turn as f32 / 150.0).clamp(0.0, 3.0));
             }
 
             if shell.menu_is_open() || pointers.drag.is_some() {

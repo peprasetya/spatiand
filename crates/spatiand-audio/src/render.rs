@@ -251,6 +251,9 @@ pub struct Binaural {
     dry_target: f32,
     level: f32,
     level_target: f32,
+    /// How loud this window is against the others: 1 as it comes, up to four times that.
+    gain: f32,
+    muted: bool,
     settle: f32,
     peak: f32,
     /// Loudest sample in the last block, per channel. What the shell shows as "this window is
@@ -289,6 +292,8 @@ impl Binaural {
             dry_target: dry,
             level: 1.0,
             level_target: 1.0,
+            gain: 1.0,
+            muted: false,
             settle: 1.0 - (-1.0 / (LEVEL_SETTLE * rate as f32)).exp(),
             peak: 0.0,
             channel_peak: vec![0.0; layout.count()],
@@ -363,11 +368,21 @@ impl Binaural {
 
     /// Silence this stream, or bring it back. Faded, not switched.
     pub fn set_muted(&mut self, muted: bool) {
-        self.level_target = if muted { 0.0 } else { 1.0 };
+        self.muted = muted;
+        self.level_target = if muted { 0.0 } else { self.gain };
     }
 
     pub fn is_muted(&self) -> bool {
-        self.level_target == 0.0
+        self.muted
+    }
+
+    /// This window's own volume: 1 as it comes. Above 1 is louder than the application made it,
+    /// for one that is too quiet beside another.
+    pub fn set_gain(&mut self, gain: f32) {
+        self.gain = gain.clamp(0.0, 4.0);
+        if !self.muted {
+            self.level_target = self.gain;
+        }
     }
 
     pub fn set_directness(&mut self, directness: Directness) {

@@ -323,6 +323,13 @@ impl Audio {
         engine.status(*self.bound.get(&window)?)
     }
 
+    /// One window's own volume: 1 as it comes, more for one too quiet beside another.
+    pub fn set_gain(&self, window: usize, gain: f32) {
+        if let (Some(engine), Some(slot)) = (&self.engine, self.bound.get(&window)) {
+            engine.set_gain(*slot, gain);
+        }
+    }
+
     /// Silence one window, or bring it back.
     pub fn set_muted(&self, window: usize, muted: bool) {
         if let (Some(engine), Some(slot)) = (&self.engine, self.bound.get(&window)) {

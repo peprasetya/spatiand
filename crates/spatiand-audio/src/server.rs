@@ -131,6 +131,8 @@ pub struct Status {
     /// Loudest sample in the last block, before anything here touched it.
     pub peak: f32,
     pub muted: bool,
+    /// This window's own volume: 1 as it comes.
+    pub gain: f32,
 }
 
 /// The SPA channel-position constant for one of our channels.
@@ -198,6 +200,8 @@ struct SlotState {
     /// A new blend, waiting to be picked up. Same discipline as `aim`.
     directness: Mutex<Option<Directness>>,
     muted: AtomicBool,
+    /// This window's own volume, as an f32's bits.
+    gain: std::sync::atomic::AtomicU32,
     /// Last block's peak, as `f32` bits, so the shell can read it without a lock.
     peak: AtomicU32,
     /// What the app negotiated, as a layout code, or 0 for "not yet".
@@ -224,6 +228,7 @@ impl SlotState {
             aim: Mutex::new(None),
             directness: Mutex::new(None),
             muted: AtomicBool::new(false),
+            gain: std::sync::atomic::AtomicU32::new(1.0f32.to_bits()),
             peak: AtomicU32::new(0),
             layout: AtomicU32::new(0),
             sounding: AtomicU32::new(0),
@@ -241,6 +246,7 @@ impl SlotState {
             sounding: layout_from_code(self.sounding.load(Ordering::Relaxed)),
             peak: f32::from_bits(self.peak.load(Ordering::Relaxed)),
             muted: self.muted.load(Ordering::Relaxed),
+            gain: f32::from_bits(self.gain.load(Ordering::Relaxed)),
         }
     }
 }
@@ -365,6 +371,12 @@ impl Engine {
             speakers,
             off_axis,
         });
+    }
+
+    pub fn set_gain(&self, slot: Slot, gain: f32) {
+        if let Some(state) = self.slots.lock().ok().and_then(|s| s.get(&slot).cloned()) {
+            state.gain.store(gain.clamp(0.0, 4.0).to_bits(), Ordering::Relaxed);
+        }
     }
 
     pub fn set_muted(&self, slot: Slot, muted: bool) {
@@ -720,6 +732,7 @@ fn open_slot(
                     render.set_directness(d);
                 }
             }
+            render.set_gain(f32::from_bits(data.state.gain.load(Ordering::Relaxed)));
             render.set_muted(data.state.muted.load(Ordering::Relaxed));
 
             data.input.resize(frames * channels, 0.0);
