@@ -105,6 +105,8 @@ enum PointerTest {
                             RoomTap.shared.hold(true)
                             let grid: [(Double, Double)] = [(0.5, 0.5), (0.2, 0.3), (0.8, 0.3), (0.2, 0.85), (0.8, 0.85), (0.5, 0.2)]
                             round(info, "as it opened", grid) {
+                              round(info, "before the sweep", [(0.15, 0.5)]) {
+                               sweep(info) {
                                 MacWindows.resize(info, toPoints: CGSize(width: 860, height: 340))
                                 after(2.5) {
                                     round(info, "after a resize to 860x340", grid) {
@@ -112,11 +114,45 @@ enum PointerTest {
                                         after(2.5) { round(info, "after a resize to 420x520", grid) { finish() } }
                                     }
                                 }
+                               }
+                              }
                             }
                         }
                     }
                 }
             }
+        }
+
+        /// The mouse moved steadily across the window, two points a hundredth of a second: the
+        /// room's pointer should cross it as steadily, neither sticking nor leaping.
+        func sweep(_ info: MacWindowInfo, then: @escaping () -> Void) {
+            var samples: [(Double, Double)] = []
+            let started = Date()
+            var sent = 0
+            func tick() {
+                if let at = RoomWindows.shared.pointerIn(info.windowID) { samples.append((Date().timeIntervalSince(started), Double(at.x))) }
+                guard sent < 150 else {
+                    after(0.3) {
+                        var stall = 0.0, leap = 0.0, lastChange = 0.0, last = samples.first?.1 ?? 0
+                        for (t, x) in samples where x != last {
+                            stall = max(stall, t - lastChange)
+                            leap = max(leap, abs(x - last))
+                            lastChange = t
+                            last = x
+                        }
+                        let crossed = (samples.last?.1 ?? 0) - (samples.first?.1 ?? 0)
+                        let good = stall < 0.08 && leap < 14 && crossed > 100
+                        if !good { failures += 1 }
+                        print(String(format: "pointer: %@ a steady sweep, 300 points of travel in 1.5 s crossed %.0f px of the window; longest it stood still %.0f ms, biggest single move %.0f px", good ? "PASSED" : "FAILED", crossed, stall * 1000, leap))
+                        then()
+                    }
+                    return
+                }
+                sent += 1
+                travel(2, 0)
+                after(0.01) { tick() }
+            }
+            tick()
         }
 
         /// Point at each place in turn and click it; `then` when all are done.

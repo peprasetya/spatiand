@@ -62,12 +62,12 @@ final class RoomTap {
         jumpLock.lock()
         defer { jumpLock.unlock() }
         guard let j = jump else { return (dx, dy) }
-        jump = nil
-        guard Date().timeIntervalSince(j.at) < 0.5 else { return (dx, dy) }
-        // Only if it is there: an event that was already on its way when the cursor was put
-        // does not carry it.
+        // Looked for in the travel heard straight after, and not for long: taken off travel
+        // that only resembled it, it would be a leap of the pointer's own.
+        guard Date().timeIntervalSince(j.at) < 0.15 else { jump = nil; return (dx, dy) }
         let size = hypot(j.dx, j.dy)
-        guard size > 0.5, hypot(dx - j.dx, dy - j.dy) < hypot(dx, dy) else { if size > 0.5 { jump = j }; return (dx, dy) }
+        guard size > 0.5, hypot(dx - j.dx, dy - j.dy) < size * 0.35 + 4 else { return (dx, dy) }
+        jump = nil
         return (dx - j.dx, dy - j.dy)
     }
 
