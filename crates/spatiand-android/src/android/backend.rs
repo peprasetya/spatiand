@@ -187,6 +187,8 @@ pub fn run(
     let mut drag_left_y: Option<f32> = None;
     // Where a finger was when an open menu last moved a row for it. See the menus above.
     let mut menu_swipe: Option<(f32, f32)> = None;
+    // How far a wheel has turned over an open menu, short of the next row.
+    let mut menu_wheel = 0.0f32;
     super::record::publish_leftovers();
     // How far a finger travels on the touch area, in pad units (2 across), for a menu row.
     const MENU_SWIPE_STEP: f32 = 0.18;
@@ -343,6 +345,22 @@ pub fn run(
 
             // --- input ---
             controller.poll(tracker.orientation());
+            // **A wheel, or two fingers on a trackpad, moves through an open menu** a row at a
+            // time, as it scrolls a page anywhere else: the pointer alone reaches only the rows
+            // in view.
+            if shell.menu_is_open() {
+                menu_wheel += controller.take_wheel().1;
+                while menu_wheel.abs() >= 1.5 {
+                    let up = menu_wheel > 0.0;
+                    menu_wheel -= if up { 1.5 } else { -1.5 };
+                    let direction = if up { spatiand_shell::grid::Direction::Up } else { spatiand_shell::grid::Direction::Down };
+                    if let Some(event) = shell.handle(spatiand_shell::Intent::Navigate(direction)) {
+                        shell_events.push(event);
+                    }
+                }
+            } else {
+                menu_wheel = 0.0;
+            }
             {
                 let c = &controller;
                 if missing.is_none() {
