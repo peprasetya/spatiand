@@ -132,6 +132,14 @@ pub struct TrackerConfig {
     /// seconds, the anchor stops believing its own reference and measures a new one.
     pub mag_relearn_beyond: f64,
     pub mag_relearn_after: f64,
+    /// How long, in seconds, the field may differ in strength or dip from the reference's
+    /// before the reference is given up and measured again where the glasses now are.
+    ///
+    /// A magnet passing by is over in seconds and the old reference is right again after
+    /// it. Glasses that have *moved* -- picked up off a desk beside a laptop and put on, or
+    /// carried to another room -- are in a field that is never coming back, and an anchor
+    /// that waits for it has switched itself off for the rest of the session.
+    pub mag_changed_after: f64,
     /// How long the trim takes to fade once the anchor is no longer accepted, in seconds.
     ///
     /// A paused anchor gives back what it took. Leaving it in place is what turned "the
@@ -164,6 +172,7 @@ impl Default for TrackerConfig {
             mag_trim_within: 10.0,
             mag_relearn_beyond: 25.0,
             mag_relearn_after: 20.0,
+            mag_changed_after: 30.0,
             mag_trim_decay_s: 120.0,
             magnetic_anchor_enabled: true,
         }
@@ -234,6 +243,8 @@ pub struct HeadTracker {
     mag_trim: DVec3,
     /// How long the heading error has been beyond `mag_relearn_beyond`, in seconds.
     mag_lost_for: f64,
+    /// How long the field's strength or dip has been unlike the reference's, in seconds.
+    mag_changed_for: f64,
 
     /// Seconds of continuous near-stillness. The glasses have no wear sensor, so this stands
     /// in for "taken off and put down".
@@ -279,6 +290,7 @@ impl HeadTracker {
             mag_error: 0.0,
             mag_trim: DVec3::ZERO,
             mag_lost_for: 0.0,
+            mag_changed_for: 0.0,
             mag_failures: 0,
             idle_accumulator: 0.0,
             yaw_offset: 0.0,
@@ -602,9 +614,29 @@ impl HeadTracker {
             || inclination_off >= self.config.mag_inclination_tolerance
         {
             self.mag_accepted = false;
+            self.mag_changed_for += dt;
+            if self.mag_changed_for >= self.config.mag_changed_after {
+                log::info!(
+                    "the field has been unlike the magnetic reference for {:.0} s (strength \
+                     {:+.0}%, dip {:+.0} deg); measuring a new one here",
+                    self.mag_changed_for,
+                    (strength / self.mag_reference_strength - 1.0) * 100.0,
+                    (inclination - self.mag_reference_inclination).to_degrees()
+                );
+                self.mag_reference = None;
+                self.mag_samples = 0;
+                self.mag_accumulator = DVec3::ZERO;
+                self.mag_strength_accumulator = 0.0;
+                self.mag_inclination_accumulator = 0.0;
+                self.mag_changed_for = 0.0;
+                self.mag_lost_for = 0.0;
+                self.mag_failures += 1;
+            }
             self.fade_trim(dt);
             return;
         }
+        // Counted down, not cleared: a field at the edge of the tolerance passes now and then.
+        self.mag_changed_for = (self.mag_changed_for - dt).max(0.0);
         self.mag_accepted = true;
 
         let mut error = reference.y.atan2(reference.x) - world.y.atan2(world.x);
@@ -1325,6 +1357,35 @@ mod drift_tests {
             "the trim was still {:.3} deg/s after the anchor stopped",
             (t.bias() - t.gyro_bias()).length()
         );
+    }
+
+    /// Glasses that start the session lying beside a laptop and are then put on: the field at
+    /// the head is another field for good, and the anchor has to start again there.
+    #[test]
+    fn a_field_that_has_changed_for_good_is_anchored_to_again() {
+        let mut t = HeadTracker::new(AxisMap::IDENTITY, TrackerConfig::default());
+        t.set_hard_iron(Some(HardIron::NONE));
+        let feed = |t: &mut HeadTracker, from: u64, seconds: u64, mag: DVec3| {
+            for i in 0..seconds * 1000 {
+                t.integrate(&ImuSample {
+                    timestamp_ns: (from * 1000 + i) * 1_000_000,
+                    gyro: DVec3::ZERO,
+                    accel: DVec3::Z,
+                    mag,
+                    temperature_c: None,
+                });
+            }
+        };
+        feed(&mut t, 0, 40, DVec3::new(0.21, 0.0, -0.21));
+        assert!(t.magnetic_status().accepted, "no anchor in the first field");
+        // Half as strong again, and dipping differently.
+        let moved = DVec3::new(0.10, 0.30, -0.15);
+        feed(&mut t, 40, 20, moved);
+        assert!(!t.magnetic_status().accepted, "a changed field was believed at once");
+        feed(&mut t, 60, 40, moved);
+        let status = t.magnetic_status();
+        assert!(status.locked && status.accepted, "the anchor never started again: {status:?}");
+        assert!(status.error_deg.abs() < 2.0, "the new reference is {:.1} deg out", status.error_deg);
     }
 
     /// The other half of the same question: what the deadband is *worth* when the bias is
