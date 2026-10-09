@@ -185,6 +185,8 @@ struct Clock {
     drawn: std::sync::Mutex<u64>,
     /// Whether the window now being drawn into has been set up.
     set: std::sync::atomic::AtomicBool,
+    /// Frames drawn into it so far.
+    frames: std::sync::atomic::AtomicU64,
 }
 
 fn clock() -> &'static Clock {
@@ -195,6 +197,7 @@ fn clock() -> &'static Clock {
         link: std::sync::Mutex::new(None),
         drawn: std::sync::Mutex::new(0),
         set: std::sync::atomic::AtomicBool::new(false),
+        frames: std::sync::atomic::AtomicU64::new(0),
     })
 }
 
@@ -248,10 +251,16 @@ pub fn pace() {
     if !clock.set.swap(true, std::sync::atomic::Ordering::SeqCst) {
         // The swap itself never waits: one clock, not two that could each cost a refresh.
         unsafe { egl::SwapInterval(egl::GetCurrentDisplay(), 0) };
-        // **Without this the glasses are black.** ANGLE puts its Metal layer into the layer it
-        // was handed, from this thread, which has no run loop to commit that change for it; the
-        // frames were all drawn and presented into a layer the window server had never heard
-        // of. Flushed here, once, with the new window current.
+        clock.frames.store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+    // **Without this the glasses are black.** ANGLE puts its Metal layer into the layer it was
+    // handed, from this thread, which has no run loop to commit that change for it; the frames
+    // were all drawn and presented into a layer the window server had never heard of. And it
+    // does so when it first presents, not when the surface is made -- so committing once, before
+    // the first frame, was a frame too early. Committed after each of a new window's first
+    // frames, and now and then after that; with nothing pending it costs nothing.
+    let frame = clock.frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if frame < 30 || frame % 120 == 0 {
         flush_layers();
     }
     if clock.link.lock().unwrap().is_none() {
