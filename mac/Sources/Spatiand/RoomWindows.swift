@@ -38,6 +38,10 @@ final class RoomWindows {
     /// Applications whose windows are brought in as they open.
     private var following: Set<String> = []
     private var scan: Timer?
+    /// Whether the windows open when the room began have been listed: from then on a new one is shown.
+    private var scanned = false
+    /// Windows that are not windows in their own right, so as not to ask about them again.
+    private var passedOver: Set<CGWindowID> = []
     private var focused: UInt32 = 0
     /// Where the pointer is in each window, in its pixels, as last said.
     private var at: [UInt32: CGPoint] = [:]
@@ -211,13 +215,20 @@ final class RoomWindows {
         Task {
             let all = await MacWindows.list()
             queue.async { [self] in
-                for info in all where !entries.values.contains(where: { $0.info.windowID == info.windowID }) {
-                    // A new window of an application that was opened from the room comes out at
-                    // once; any other waits in the list.
-                    let wanted = following.contains(info.bundle)
+                for info in all where !entries.values.contains(where: { $0.info.windowID == info.windowID }) && !passedOver.contains(info.windowID) {
+                    // Only windows in their own right; see `MacWindows.isOrdinary`.
+                    guard MacWindows.isOrdinary(info) else {
+                        passedOver.insert(info.windowID)
+                        continue
+                    }
+                    // **What was open when the room began waits in the list; what is opened
+                    // while it is going comes out at once**, in front of the wearer -- a new
+                    // browser window asked for with Command-N is wanted where it can be seen.
                     let id = announce(info, hidden: true)
-                    if wanted { sp_window_show(id) }
+                    if scanned || following.contains(info.bundle) { sp_window_show(id) }
                 }
+                scanned = true
+                passedOver.formIntersection(Set(all.map(\.windowID)))
                 for (id, entry) in entries {
                     if let now = all.first(where: { $0.windowID == entry.info.windowID }) {
                         entries[id]?.missed = 0
@@ -292,6 +303,8 @@ final class RoomWindows {
             }
             entries.removeAll()
             following.removeAll()
+            scanned = false
+            passedOver.removeAll()
             publish()
         }
     }

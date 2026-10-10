@@ -56,6 +56,17 @@ enum MacWindows {
         }
     }
 
+    /// Whether this is a window in its own right -- a document, a browser window, a dialog --
+    /// and not something an application puts up beside one: the list under an address bar, a
+    /// tooltip, a menu. Those come and go with every keystroke, and each taken for a window
+    /// was a new window in the room that took the keys from the one being typed in.
+    static func isOrdinary(_ info: MacWindowInfo) -> Bool {
+        guard let window = axWindow(info) else { return false }
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &value) == .success, let subrole = value as? String else { return false }
+        return subrole == (kAXStandardWindowSubrole as String) || subrole == (kAXDialogSubrole as String)
+    }
+
     /// Ask a window to be this size, in points. It may decline: a window has its own limits.
     @discardableResult
     static func resize(_ info: MacWindowInfo, toPoints size: CGSize) -> Bool {
@@ -138,6 +149,8 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         config.height = Int(window.frame.height * scale)
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.showsCursor = false
+        // Where a window has something beside it there are corners that are neither: left clear.
+        config.backgroundColor = .clear
         config.queueDepth = 3
         config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
         self.config = config
@@ -167,7 +180,53 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var cachedFrame: (CGRect, Date)?
 
     /// The window's frame at this moment, in points: it can be moved while it is in the room.
+    /// What the picture is of: the window, or -- while it has something beside it that is part
+    /// of it, a menu dropped from a toolbar, a list hung under a field -- the window and that
+    /// together. The capture is of both, so both are what the room shows and points into.
     func frame() -> CGRect {
+        let window = windowFrame()
+        guard let extent, Date().timeIntervalSince(extentAt) < 1.0, extent.width >= window.width - 1, extent.height >= window.height - 1,
+              extent.width > window.width + 1 || extent.height > window.height + 1 else { return window }
+        return extent
+    }
+    private var extent: CGRect?
+    private var extentAt = Date.distantPast
+    private var extentSize = CGSize.zero
+    private var extentLooked = Date.distantPast
+
+    /// The capture says how big the window and what is beside it are together, but not where:
+    /// that is found among the application's other windows on screen.
+    private func noteExtent(_ size: CGSize) {
+        let window = windowFrame()
+        guard size.width > window.width + 2 || size.height > window.height + 2 else {
+            if extent != nil { print("capture: \(info.app) is by itself again") }
+            extent = nil
+            extentSize = .zero
+            return
+        }
+        extentAt = Date()
+        // Looked for again when the size changes, and now and then while it lasts.
+        guard abs(size.width - extentSize.width) > 1 || abs(size.height - extentSize.height) > 1 || Date().timeIntervalSince(extentLooked) > 0.4 else { return }
+        extentSize = size
+        extentLooked = Date()
+        var all = window
+        let near = window.insetBy(dx: -8, dy: -8)
+        for other in (CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]) ?? [] {
+            guard (other[kCGWindowOwnerPID as String] as? pid_t) == info.pid, (other[kCGWindowNumber as String] as? CGWindowID) != info.windowID,
+                  let bounds = other[kCGWindowBounds as String] as? NSDictionary, let frame = CGRect(dictionaryRepresentation: bounds),
+                  frame.intersects(near), frame.width < window.width * 1.5 else { continue }
+            all = all.union(frame)
+        }
+        // If they do not add up to what the capture says, it is taken to hang down and right.
+        if abs(all.width - size.width) > 8 || abs(all.height - size.height) > 8 {
+            all = CGRect(x: window.minX, y: window.minY, width: size.width, height: size.height)
+        }
+        if all != extent { print("capture: \(info.app) has something beside it: \(Int(all.width))x\(Int(all.height)) together, the window \(Int(window.width))x\(Int(window.height))") }
+        extent = all
+    }
+
+    /// The window's own frame at this moment, in points.
+    private func windowFrame() -> CGRect {
         if let (rect, at) = cachedFrame, Date().timeIntervalSince(at) < 0.1 { return rect }
         var rect = cachedFrame?.0 ?? info.frame
         // Asked for by its number through the list. (The call that takes an array of window
@@ -212,6 +271,14 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         if let list = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[String: Any]],
            let raw = list.first?[SCStreamFrameInfo.status.rawValue] as? Int, let status = SCFrameStatus(rawValue: raw), status != .complete {
             return
+        }
+        // How big what is captured really is, in points: the picture's part that is content,
+        // undone by how much the capture shrank it to fit. Bigger than the window means the
+        // window has something beside it.
+        if let list = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[String: Any]],
+           let dict = list.first?[SCStreamFrameInfo.contentRect.rawValue], let rect = CGRect(dictionaryRepresentation: dict as! CFDictionary),
+           let shrunk = (list.first?[SCStreamFrameInfo.contentScale.rawValue] as? NSNumber)?.doubleValue, shrunk > 0.01 {
+            noteExtent(CGSize(width: rect.width / shrunk, height: rect.height / shrunk))
         }
         if let list = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[String: Any]],
            let dict = list.first?[SCStreamFrameInfo.contentRect.rawValue], let rect = CGRect(dictionaryRepresentation: dict as! CFDictionary) {

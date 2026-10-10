@@ -165,6 +165,9 @@ final class MacHost {
     private func greet() {
         guard let link else { return }
         attached = true
+        openAtAttach = nil
+        openedSince = []
+        passedOver = []
         status = "In use"
         clipboard.connected = true
         link.say(["Welcome": ["version": Self.protocolVersion, "host": Host.current().localizedName ?? ProcessInfo.processInfo.hostName,
@@ -222,6 +225,12 @@ final class MacHost {
 
     // MARK: the windows
 
+    /// The windows that were open when the session attached, those opened since, and those that
+    /// are not windows in their own right.
+    private var openAtAttach: Set<CGWindowID>?
+    private var openedSince: Set<CGWindowID> = []
+    private var passedOver: Set<CGWindowID> = []
+
     private func tick() {
         guard attached else { return }
         sendCatalog(force: false)
@@ -239,7 +248,16 @@ final class MacHost {
 
     private func apply(_ list: [MacWindowInfo]) {
         guard attached, let link else { return }
-        let wanted = list.filter { launched.contains($0.bundle) }
+        // **What was open when the session attached waits to be asked for; what is opened while
+        // it is attached is shared at once**, whichever application's it is -- as in the room.
+        let here = Set(list.map(\.windowID))
+        if openAtAttach == nil { openAtAttach = here }
+        for info in list where !(openAtAttach ?? []).contains(info.windowID) && !openedSince.contains(info.windowID) && !passedOver.contains(info.windowID) {
+            if MacWindows.isOrdinary(info) { openedSince.insert(info.windowID) } else { passedOver.insert(info.windowID) }
+        }
+        openedSince.formIntersection(here)
+        passedOver.formIntersection(here)
+        let wanted = list.filter { (launched.contains($0.bundle) && !passedOver.contains($0.windowID)) || openedSince.contains($0.windowID) }
         let byWindow = Dictionary(uniqueKeysWithValues: wanted.map { ($0.windowID, $0) })
         // Gone.
         for (id, s) in shared where byWindow[s.info.windowID] == nil {

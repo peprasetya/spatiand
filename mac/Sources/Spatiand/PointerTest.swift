@@ -53,6 +53,18 @@ enum PointerTest {
         window.contentView = view
         window.makeKeyAndOrderFront(nil)
         application.activate(ignoringOtherApps: true)
+        // With --with-child, something hung beside the window after a while, sticking out past
+        // its right and bottom edges, as a browser's profile menu does: clicks in it are written too.
+        if CommandLine.arguments.contains("--with-child") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 9) {
+                let child = NSWindow(contentRect: NSRect(x: window.frame.maxX - 120, y: window.frame.minY - 160, width: 320, height: 300), styleMask: [.borderless], backing: .buffered, defer: false)
+                let inside = ClickTargetView(frame: NSRect(x: 0, y: 0, width: 320, height: 300))
+                inside.file = file + ".child"
+                child.contentView = inside
+                window.addChildWindow(child, ordered: .above)
+                child.orderFront(nil)
+            }
+        }
         application.run()
         exit(0)
     }

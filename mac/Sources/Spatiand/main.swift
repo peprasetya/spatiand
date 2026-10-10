@@ -738,6 +738,29 @@ if CommandLine.arguments.contains("--selftest-sound-page") {
     application.run()
 }
 
+if CommandLine.arguments.contains("--selftest-child") {
+    // The room in a window and the click target in it; after a while the target hangs a second
+    // window beside itself, sticking out, as a browser's profile menu does. What the capture
+    // says of each is in the log ("capture:").
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let helper = Process()
+    helper.executableURL = Bundle.main.executableURL
+    helper.arguments = ["--click-target", NSTemporaryDirectory() + "spatiand-clicks.txt", "--with-child"]
+    try? helper.run()
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    func after(_ seconds: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body) }
+    DispatchQueue.main.async {
+        Room.shared.start(preview: true)
+        after(1.5) { sp_control(3, true); after(0.1) { sp_control(3, false) } }
+        after(3) { Task { if let info = await MacWindows.list().first(where: { $0.title == PointerTest.title }) { RoomWindows.shared.bring(info) } else { print("child: FAILED, no target window") } } }
+        after(14) { sp_screenshot() }
+        after(17) { helper.terminate(); Room.shared.stop(); exit(0) }
+    }
+    application.run()
+}
+
 if CommandLine.arguments.contains("--selftest-record") {
     // The room in a window, filmed for four seconds: says where the film is and how big.
     setenv("SPATIAND_HMD", "null", 1)
