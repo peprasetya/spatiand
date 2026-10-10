@@ -380,7 +380,7 @@ async fn serve(
         // glasses, and a Mac's flat windows -- another session altogether -- tell it there are
         // none: whoever came next, never saying otherwise, had its room-capable applications
         // started as flat windows. Said before anything is launched.
-        say(&out, ClientMessage::Glasses { on: true });
+        say(&out, ClientMessage::Glasses { on: super::GLASSES_ON.load(std::sync::atomic::Ordering::Relaxed) });
         for app in config.launch.iter().chain(launch_first.iter()) {
             say(&out, ClientMessage::Launch { app: app.clone() });
         }
@@ -677,6 +677,9 @@ async fn serve(
                         }
                         Some(Command::Clipboard(what)) => {
                             say(&out, ClientMessage::Clipboard(what));
+                        }
+                        Some(Command::Glasses(on)) => {
+                            say(&out, ClientMessage::Glasses { on });
                         }
                         Some(Command::Viewport(viewport)) => {
                             if heads.len() >= REMEMBERED {

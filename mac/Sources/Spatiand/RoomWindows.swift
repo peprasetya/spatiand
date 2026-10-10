@@ -88,11 +88,38 @@ final class RoomWindows {
     /// like, and the main thread -- which is where the mouse and keyboard come in -- waiting
     /// behind that is a pointer that has stopped and a button that never comes up.
     private var showing: [(id: UInt32, info: MacWindowInfo)] = []
+    private var shownCaptures: [UInt32: MacCapture] = [:]
     private func publish() {
         let now = entries.filter { $0.value.capture != nil }.map { (id: $0.key, info: $0.value.info) }
+        var captures: [UInt32: MacCapture] = [:]
+        for (id, entry) in entries { if let capture = entry.capture { captures[id] = capture } }
         insideLock.lock()
+        shownCaptures = captures
         showing = now
         insideLock.unlock()
+    }
+
+    /// The window the left button is down in, while it is: a drag there is the real mouse's.
+    private var dragIn: UInt32?
+    private func noteDrag(_ id: UInt32?) {
+        insideLock.lock()
+        dragIn = id
+        insideLock.unlock()
+    }
+
+    /// While a drag is going on in one of these windows: how far the room's pointer is from
+    /// where the Mac's real cursor is, in the window's pixels (nil with no drag, or no way to say).
+    func dragLag(cursor: CGPoint) -> CGPoint? {
+        insideLock.lock()
+        let id = dragIn
+        let info = id.flatMap { id in showing.first { $0.id == id } }
+        let at = id.flatMap { pointerNow[$0] }
+        let capture = id.flatMap { shownCaptures[$0] }
+        insideLock.unlock()
+        guard id != nil, info != nil else { return nil }
+        guard let at, let capture else { return .zero }
+        let inWindow = capture.pixel(at: cursor)
+        return CGPoint(x: inWindow.x - at.x, y: inWindow.y - at.y)
     }
 
     /// For tests: where the room's pointer is in a window, in its picture's pixels.
@@ -343,13 +370,11 @@ final class RoomWindows {
         setInside(true)
         guard let p = point(id) else { return }
         // A real pointer, really there: what makes hover, tooltips and the cursor's shape work.
-        if down.contains(id) {
-            // A drag -- text selected, a slider pulled, a thing carried -- is the real mouse's
-            // or it is nothing: the cursor is put there and the mouse says it was dragged there.
-            RoomTap.shared.warp(to: p)
-            post(CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: p, mouseButton: .left))
-            return
-        }
+        // **A drag is the real mouse's, untouched.** While the button is down in one of these
+        // windows the hand's own events go straight to the application (see `RoomTap`), with
+        // its own travel and its own cursor -- which an application turning a 3D object holds
+        // still, or hides, as it likes -- and the room's pointer is the one that follows.
+        if down.contains(id) { return }
         // Only pointed at, the real cursor is left alone and the application is told by an
         // event of its own: enough for what lights up under a pointer.
         if let pid = entries[id]?.info.pid, let event = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left) {
@@ -374,12 +399,15 @@ final class RoomWindows {
             let now = Date()
             let near = hypot(p.x - lastClick.1.x, p.y - lastClick.1.y) < 6
             let count = button == .left && near && now.timeIntervalSince(lastClick.0) < NSEvent.doubleClickInterval ? lastClick.2 + 1 : 1
-            if button == .left { lastClick = (now, p, count); down.insert(id) }
+            if button == .left { lastClick = (now, p, count); down.insert(id); noteDrag(id) }
             let event = CGEvent(mouseEventSource: source, mouseType: downType, mouseCursorPosition: p, mouseButton: button)
             event?.setIntegerValueField(.mouseEventClickState, value: Int64(count))
             post(event)
         } else {
-            if button == .left { down.remove(id) }
+            let dragged = button == .left && down.contains(id)
+            if button == .left { down.remove(id); noteDrag(nil) }
+            // Let go where the real cursor is, which is where the drag has taken it.
+            let p = dragged ? (CGEvent(source: nil)?.location ?? p) : p
             let event = CGEvent(mouseEventSource: source, mouseType: upType, mouseCursorPosition: p, mouseButton: button)
             event?.setIntegerValueField(.mouseEventClickState, value: Int64(button == .left ? lastClick.2 : 1))
             post(event)

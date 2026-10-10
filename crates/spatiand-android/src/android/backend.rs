@@ -956,6 +956,7 @@ pub fn run(
             if let Some(channel) = pose_channel.as_mut() {
                 channel.write_slot(slot);
             }
+            remotes.glasses(hmd.is_some());
             if hmd.is_some() {
                 remotes.viewport(&slot, (stereo.per_eye.0 * 2, stereo.per_eye.1));
             }

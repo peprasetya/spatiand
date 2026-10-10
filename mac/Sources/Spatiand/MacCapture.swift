@@ -192,6 +192,14 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         return CGPoint(x: f.minX + CGFloat(x) / w * f.width, y: f.minY + CGFloat(y) / h * f.height)
     }
 
+    /// The other way: where a point of the Mac's screen is in the picture, in its pixels.
+    func pixel(at point: CGPoint) -> CGPoint {
+        let f = frame()
+        let part = lastContent.width > 0 ? lastContent.size : lastSize
+        let (w, h) = part.width > 0 ? (part.width, part.height) : (f.width * scale, f.height * scale)
+        return CGPoint(x: (point.x - f.minX) / max(1, f.width) * w, y: (point.y - f.minY) / max(1, f.height) * h)
+    }
+
     // MARK: SCStreamOutput
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sample: CMSampleBuffer, of type: SCStreamOutputType) {

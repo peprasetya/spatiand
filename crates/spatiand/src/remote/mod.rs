@@ -176,7 +176,14 @@ pub enum Command {
     Clipboard(spatiand_stream::control::Clipboard),
     /// Where the head is now. Sent as a datagram, never down the ordered stream.
     Viewport(spatiand_stream::Viewport),
+    /// The glasses have come on, or off: an application that can be a room or a window is
+    /// whichever suits.
+    Glasses(bool),
 }
+
+/// Whether this session has glasses on, as last noticed: what a host is told when it is
+/// connected to, before anything is started there.
+pub static GLASSES_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// A host being shown in this session.
 pub struct Remote {
@@ -250,6 +257,10 @@ impl Remote {
 
     fn pad(&self, state: spatiand_stream::Pad) {
         let _ = self.commands.send(Command::Pad(state));
+    }
+
+    fn glasses(&self, on: bool) {
+        let _ = self.commands.send(Command::Glasses(on));
     }
 
     fn viewport(&self, viewport: spatiand_stream::Viewport) {
@@ -444,6 +455,20 @@ impl Remotes {
     /// freeze the moment a window in front of it got focus. It is a hundred-odd bytes a frame,
     /// unreliable, and a host with nothing that asked for poses simply writes it into a ring
     /// nobody is reading.
+    /// **Every host is told whenever the glasses come on or go off**, not only when it is
+    /// connected to: an application there that can draw a room for a head, or an ordinary window
+    /// for nobody's, changes over while it runs (`set_glasses` on its control channel). Called
+    /// every frame; says something only when it has changed.
+    pub fn glasses(&mut self, on: bool) {
+        if GLASSES_ON.swap(on, std::sync::atomic::Ordering::Relaxed) == on {
+            return;
+        }
+        log::info!("remote: telling every host the glasses are {}", if on { "on" } else { "off" });
+        for host in &self.hosts {
+            host.glasses(on);
+        }
+    }
+
     pub fn viewport(&mut self, slot: &spatiand_proto::pose::Slot, render_size: (u32, u32)) {
         if self.hosts.is_empty() {
             return;

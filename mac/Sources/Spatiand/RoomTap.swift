@@ -70,6 +70,8 @@ final class RoomTap {
         return (Double(here.x - w.to.x), Double(here.y - w.to.y))
     }
 
+    private var lastFollow = Date.distantPast
+
     /// While set, told of every movement of the mouse the room takes: for tracing.
     var trace: ((String) -> Void)?
 
@@ -172,6 +174,21 @@ final class RoomTap {
         if event.getIntegerValueField(.eventSourceUserData) == spatiandEventMark { return pass }
         if type == .keyDown, event.getIntegerValueField(.keyboardEventAutorepeat) == 0, chord(event) { return nil }
         guard holding else { return pass }
+
+        // **A drag in a window of this Mac's is not taken.** The application gets the hand's own
+        // events -- the only ones that turn a 3D object, select text or pull a slider as it
+        // expects -- and the room's pointer is steered after the real cursor instead: a little
+        // of the way each time, by how far apart they are in the window.
+        // (Only with the button really down: the room hears of its coming up a frame late.)
+        if buttons & 1 != 0, type == .mouseMoved || type == .leftMouseDragged, let lag = RoomWindows.shared.dragLag(cursor: event.location) {
+            let now = Date()
+            if now.timeIntervalSince(lastFollow) > 0.03 {
+                lastFollow = now
+                func step(_ px: CGFloat) -> Float { Float(max(-30, min(30, px * 0.25))) }
+                if abs(lag.x) > 1.5 || abs(lag.y) > 1.5 { sp_pointer(step(lag.x), step(lag.y), buttons, 0, 0) }
+            }
+            return pass
+        }
 
         switch type {
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:

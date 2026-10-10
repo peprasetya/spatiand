@@ -1520,7 +1520,7 @@ impl Scene {
         let right_edge_deg = 18.0f32;
         let yaw = -(right_edge_deg - half_width_deg).to_radians();
         // Near the top of the field (the half-field is 11.57 degrees), clear of a centred window.
-        let pitch = 9.9f32.to_radians();
+        let pitch = 10.5f32.to_radians();
         let head = Quat::from_xyzw(
             orientation.x as f32,
             orientation.y as f32,
@@ -1621,7 +1621,7 @@ impl Scene {
         // Under the status bar, by the same right edge: the bar is centred ten degrees up and
         // about two tall with its plate.
         let right_edge_deg = 17.0f32;
-        let top_deg = 8.9f32;
+        let top_deg = 9.5f32;
         let yaw = -(right_edge_deg - 0.5 - width_deg / 2.0).to_radians();
         let pitch = (top_deg - 0.4 - height_deg / 2.0).to_radians();
         let head = Quat::from_xyzw(
@@ -2931,11 +2931,22 @@ impl Scene {
             let model = self.panel_model(centre, orientation, width, height);
             let alpha =
                 if placement.scale > 1.0 { 1.0 } else { 0.55 } * self.appear_progress(index);
+            // A capsule of dark glass behind the name: white letters alone vanish against a
+            // bright window or a bright sky, which is where the launcher is opened.
+            let (plate_w, plate_h) = (width + height * 1.2, height * 1.5);
+            let px = 48.0 / plate_h;
+            self.rounded.draw(
+                gl,
+                &(eye.view_projection() * self.panel_model(centre, orientation, plate_w, plate_h)),
+                [0.03, 0.05, 0.09, 0.62 * self.appear_progress(index)],
+                (plate_w * px, plate_h * px),
+                plate_h * px * 0.5,
+            );
             self.quads.draw(
                 gl,
                 label.id,
                 &(eye.view_projection() * model),
-                [1.0, 1.0, 1.0, alpha],
+                [1.0, 1.0, 1.0, alpha.max(0.8 * self.appear_progress(index))],
                 (0.0, 1.0),
             );
         }
@@ -2949,6 +2960,15 @@ impl Scene {
             let height = 0.030f32;
             let width = height * caption.aspect.max(0.01);
             let model = self.panel_model(centre, orientation, width, height);
+            let (plate_w, plate_h) = (width + height * 1.2, height * 1.5);
+            let px = 48.0 / plate_h;
+            self.rounded.draw(
+                gl,
+                &(eye.view_projection() * self.panel_model(centre, orientation, plate_w, plate_h)),
+                [0.03, 0.05, 0.09, 0.62 * self.appear_progress(0)],
+                (plate_w * px, plate_h * px),
+                plate_h * px * 0.5,
+            );
             self.quads.draw(
                 gl,
                 caption.id,
