@@ -184,6 +184,12 @@ pub enum HostMessage {
     /// Last in this enum, and must stay so: a session built before it reports it as unknown
     /// rather than mistaking it for something else. See `crate::VERSION`.
     CursorDrawn { window: WindowId, drawn: bool },
+    /// A notification on the host -- a message arrived, a download finished -- for the wearer,
+    /// who cannot see that computer's screen: who it is from on the first line and what it says
+    /// after. Empty takes the last one away. Shown in the corner of the view, not in the room.
+    ///
+    /// After `CursorDrawn`, and for the same reason must stay behind everything before it.
+    Notice { text: String },
 }
 
 /// A window the host has.

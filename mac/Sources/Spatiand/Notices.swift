@@ -19,6 +19,10 @@ final class Notices {
     private var shown = ""
     private var banner: AXUIElement?
 
+    /// Told of each notification as it comes, and of its going (empty): for a session this Mac
+    /// is the host of, whose wearer cannot see this screen.
+    var onShown: ((String) -> Void)?
+
     func start() {
         guard timer == nil else { return }
         let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in self?.look() }
@@ -94,11 +98,13 @@ final class Notices {
             shown = rest.isEmpty ? head : head + "\n" + rest
             since = Date()
             sp_notice(shown)
+            onShown?(shown)
         } else if !shown.isEmpty, Date().timeIntervalSince(since) > 8 {
             // A glance's worth: the banner itself may stay on the Mac's screen much longer.
             shown = ""
             banner = nil
             sp_notice("")
+            onShown?("")
         }
     }
 

@@ -527,6 +527,7 @@ async fn serve(
                                         client.present(window.0, after.0, after.1);
                                     }
                                 }
+                                HostMessage::Notice { text } => super::host_notice_said(text),
                                 HostMessage::CursorDrawn { window, drawn } => {
                                     log::info!(
                                         "remote: window {} on {} {} its own pointer",

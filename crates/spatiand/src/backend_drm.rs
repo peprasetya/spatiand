@@ -2039,6 +2039,8 @@ pub fn run(
                 last_status_update = std::time::Instant::now();
             }
             scene.sync_status(&mut renderer, &mut text, &status_text, ppd)?;
+            // A notification from a host's own screen, which the wearer cannot see.
+            scene.sync_notice(&mut renderer, &mut text, &crate::remote::host_notice(), ppd)?;
             if keyboard.open {
                 scene.sync_keyboard(&mut renderer, &mut text, &keyboard, ppd)?;
                 // A picture of each raised key. Built here rather than in the draw closure,
@@ -3226,6 +3228,7 @@ pub fn run(
                             // menu, which is the whole view while it is open.
                             if !shell.menu_is_open() {
                                 scene.draw_status(gl, &eye, orientation);
+                                scene.draw_notice(gl, &eye, orientation);
                             }
                         }
                         // Under the focused window, and drawn before the menus so a menu opened

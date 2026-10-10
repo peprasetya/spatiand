@@ -181,6 +181,22 @@ pub enum Command {
     Glasses(bool),
 }
 
+/// The last notification a host sent, and when: shown for a glance and then let go of.
+static HOST_NOTICE: std::sync::Mutex<Option<(String, std::time::Instant)>> = std::sync::Mutex::new(None);
+
+pub(crate) fn host_notice_said(text: String) {
+    *HOST_NOTICE.lock().unwrap() = (!text.is_empty()).then(|| (text, std::time::Instant::now()));
+}
+
+/// What a host has just notified of, if it is recent enough to be worth a glance.
+pub fn host_notice() -> String {
+    HOST_NOTICE
+        .lock()
+        .ok()
+        .and_then(|n| n.as_ref().filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(9)).map(|(text, _)| text.clone()))
+        .unwrap_or_default()
+}
+
 /// Whether this session has glasses on, as last noticed: what a host is told when it is
 /// connected to, before anything is started there.
 pub static GLASSES_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);

@@ -74,6 +74,9 @@ final class MacHost {
             return
         }
         link = l
+        // **A notification on this Mac goes to whoever is looking at it from a room.**
+        Notices.shared.onShown = { [weak self] text in self?.link?.say(["Notice": ["text": text]]) }
+        Notices.shared.start()
         l.onJoined = { [unowned self] in joined($0) }
         l.onAttached = { [unowned self] in greet() }
         l.onSaid = { [unowned self] in said($0) }

@@ -1520,7 +1520,7 @@ impl Scene {
         let right_edge_deg = 18.0f32;
         let yaw = -(right_edge_deg - half_width_deg).to_radians();
         // Near the top of the field (the half-field is 11.57 degrees), clear of a centred window.
-        let pitch = 10.5f32.to_radians();
+        let pitch = 10.2f32.to_radians();
         let head = Quat::from_xyzw(
             orientation.x as f32,
             orientation.y as f32,
@@ -1620,8 +1620,10 @@ impl Scene {
         let height = 2.0 * distance * (height_deg / 2.0).to_radians().tan();
         // Under the status bar, by the same right edge: the bar is centred ten degrees up and
         // about two tall with its plate.
-        let right_edge_deg = 17.0f32;
-        let top_deg = 9.5f32;
+        // Its right edge under the status capsule's own: that is the capsule's text edge
+        // (eighteen degrees), and the half degree by which each one's glass runs past its text.
+        let right_edge_deg = 18.5f32;
+        let top_deg = 9.1f32;
         let yaw = -(right_edge_deg - 0.5 - width_deg / 2.0).to_radians();
         let pitch = (top_deg - 0.4 - height_deg / 2.0).to_radians();
         let head = Quat::from_xyzw(

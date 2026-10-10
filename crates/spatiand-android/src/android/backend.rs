@@ -1002,7 +1002,10 @@ pub fn run(
             }
             scene.sync_status(&mut renderer, &mut text, &status_text, ppd)?;
             // A notification of the platform's, if it has one to show.
-            scene.sync_notice(&mut renderer, &mut text, &super::notice(), ppd)?;
+            // This machine's own notification, or failing one, a host's.
+            let said = super::notice();
+            let said = if said.is_empty() { crate::remote::host_notice() } else { said };
+            scene.sync_notice(&mut renderer, &mut text, &said, ppd)?;
             if keyboard.open {
                 scene.sync_keyboard(&mut renderer, &mut text, &keyboard, ppd)?;
                 keyboard_struck.retain(|(_, when)| when.elapsed() < PRESS_SHOWN);
