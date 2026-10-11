@@ -233,7 +233,7 @@ final class RoomTap {
         case .otherMouseUp: buttons &= ~4; sp_pointer(0, 0, buttons, 0, 0)
         case .scrollWheel:
             // Over a window of this Mac's own, macOS scrolls it: the real pointer is over it.
-            if overMacWindow() { return pass }
+            if overMacWindow() { RoomWindows.shared.readyToScroll(); return pass }
             // In pixels where the device says them (a trackpad, a Magic Mouse), else in lines. A
             // notch of a wheel is fifteen of the compositor's units, and so about fifteen pixels.
             let continuous = event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0

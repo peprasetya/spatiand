@@ -378,6 +378,7 @@ impl XwmHandler for Spatiand {
             geometry.size.h = h as i32;
         }
         geometry.loc = (0, 0).into();
+        self.x11_asked_for(&window, geometry.size);
         if let Err(e) = window.configure(geometry) {
             log::warn!("could not answer an X11 configure request: {e}");
         }

@@ -63,6 +63,23 @@ impl ClientData for ClientState {
     fn disconnected(&self, _id: ClientId, _reason: DisconnectReason) {}
 }
 
+/// What is known of how an X11 window takes to being resized.
+///
+/// Most do as they are asked. A game in a window often does not: asked for a size, it answers
+/// with another -- its own proportions, or the only size it has -- and asked again it answers
+/// again. Left alone that is a fight carried on every frame, the window's picture one size and
+/// its frame another, with a black band where they differ and every click landing beside what
+/// it was aimed at. So what it answered is taken as its answer.
+#[derive(Default)]
+pub struct X11Sizing {
+    /// What it was last asked for, and when.
+    pub asked: Option<(smithay::utils::Size<i32, Logical>, std::time::Instant)>,
+    /// What it was asked for that it would not be, and what it said instead.
+    pub refused: Option<(smithay::utils::Size<i32, Logical>, smithay::utils::Size<i32, Logical>)>,
+    /// The width to height it keeps.
+    pub aspect: Option<f64>,
+}
+
 pub struct Spatiand {
     pub display_handle: DisplayHandle,
     /// Windows that have appeared since the render loop last looked, each with the process id
@@ -138,6 +155,9 @@ pub struct Spatiand {
     /// their parent's own surface, which is what they look like everywhere else and what the
     /// Wayland path already does.
     pub x11_popups: Vec<smithay::xwayland::X11Surface>,
+    /// X11 windows that have answered a size they were asked for with one of their own; see
+    /// [`X11Sizing`].
+    pub x11_sizing: std::cell::RefCell<Vec<(smithay::xwayland::X11Surface, X11Sizing)>>,
     /// What the keyboard was last pointed at, so the reconcile below only acts on a change.
     ///
     /// See [`Spatiand::settle_keyboard_focus`].
@@ -340,6 +360,7 @@ impl Spatiand {
             popups: PopupManager::default(),
             x11_pids: std::collections::HashMap::new(),
             x11_popups: Vec::new(),
+            x11_sizing: Default::default(),
             focus_settled: None,
             quiet_hosts: Vec::new(),
             cadence: Default::default(),
@@ -512,7 +533,33 @@ impl Spatiand {
         size: smithay::utils::Size<i32, Logical>,
     ) {
         if let Some(x11) = window.x11_surface() {
+            let mut sizing = self.x11_sizing.borrow_mut();
+            let at = match sizing.iter().position(|(s, _)| s == x11) {
+                Some(at) => at,
+                None => {
+                    sizing.push((x11.clone(), X11Sizing::default()));
+                    sizing.len() - 1
+                }
+            };
+            let known = &mut sizing[at].1;
+            // It was asked for this, near enough, and said what it would be instead: that
+            // stands, or the two of us ask and answer for ever, a frame each.
+            if let Some((asked, _)) = known.refused {
+                if (asked.w - size.w).abs() <= 8 && (asked.h - size.h).abs() <= 8 {
+                    return;
+                }
+            }
+            // The shape it keeps, if it has shown it keeps one: the same area, in that shape.
+            let size = match known.aspect {
+                Some(aspect) if aspect > 0.01 => {
+                    let h = ((size.w as f64 * size.h as f64) / aspect).sqrt();
+                    ((h * aspect).round() as i32, h.round() as i32).into()
+                }
+                _ => size,
+            };
             if x11.geometry().size != size {
+                known.refused = None;
+                known.asked = Some((size, std::time::Instant::now()));
                 if let Err(e) = x11.configure(smithay::utils::Rectangle::new((0, 0).into(), size))
                 {
                     log::warn!("could not resize an X11 window: {e}");
@@ -778,6 +825,17 @@ impl Spatiand {
                 );
             }
         }
+        // And an X11 application's menus, which are windows nobody manages and so are in
+        // neither list above. XWayland times an application's drawing by these: without them
+        // a menu that draws itself with the GPU -- Steam's -- showed the blank it was made
+        // with and waited, a black box where its rows should have been.
+        for x11 in &self.x11_popups {
+            if let Some(surface) = x11.wl_surface() {
+                send_frames_surface_tree(&surface, output, time, Some(std::time::Duration::ZERO), |_, _| {
+                    Some(output.clone())
+                });
+            }
+        }
     }
 
     /// Collect every `wp_presentation` feedback a client has committed and is waiting on.
@@ -807,6 +865,11 @@ impl Spatiand {
             take(&surface);
             for (popup, _) in smithay::desktop::PopupManager::popups_for_surface(&surface) {
                 take(popup.wl_surface());
+            }
+        }
+        for x11 in &self.x11_popups {
+            if let Some(surface) = x11.wl_surface() {
+                take(&surface);
             }
         }
         out
@@ -1436,6 +1499,26 @@ impl Spatiand {
         self.x11_popups.push(surface);
     }
 
+    /// An X11 window asks to be a size. If that is its answer to a size the room has just
+    /// asked it for, it is a window that decides its own shape -- a game that keeps its
+    /// picture's proportions -- and is remembered as one; see [`X11Sizing`].
+    pub fn x11_asked_for(&self, surface: &smithay::xwayland::X11Surface, size: smithay::utils::Size<i32, Logical>) {
+        let mut sizing = self.x11_sizing.borrow_mut();
+        let Some((_, known)) = sizing.iter_mut().find(|(s, _)| s == surface) else { return };
+        let Some((asked, when)) = known.asked else { return };
+        if when.elapsed() > std::time::Duration::from_secs(2) || asked == size || size.w < 8 || size.h < 8 {
+            return;
+        }
+        if known.refused.is_none() {
+            log::info!(
+                "an X11 window asked to be {}x{} answered {}x{}: it keeps its own shape, and is resized in it",
+                asked.w, asked.h, size.w, size.h
+            );
+        }
+        known.refused = Some((asked, size));
+        known.aspect = Some(size.w as f64 / size.h as f64);
+    }
+
     /// Which window an X11 menu should be drawn on.
     ///
     /// The focused X11 window, and failing that the first one there is. X11 gives a menu no
@@ -1460,6 +1543,7 @@ impl Spatiand {
         // A menu closing comes through here too, and closes by being unmapped rather than
         // destroyed -- so this runs for surfaces that are still perfectly alive.
         self.x11_popups.retain(|s| s != surface);
+        self.x11_sizing.borrow_mut().retain(|(s, _)| s != surface);
         let window = self
             .space
             .elements()

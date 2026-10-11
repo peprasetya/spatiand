@@ -3948,10 +3948,16 @@ pub fn collect_windows(
                         origin.y
                     );
                 }
+                // One the size of the window it is on is not a menu but the window's own
+                // picture -- Wine draws a game into one -- and belongs exactly over it,
+                // wherever on its imagined screen the application thinks its window is. Drawn
+                // where X said, a game sat a title bar's height low with a black band above.
+                let covers = (pw as i32 - width as i32).abs() <= 2 && (ph as i32 - height as i32).abs() <= 2;
+                let offset = if covers { (0, 0) } else { (loc.x - origin.x, loc.y - origin.y) };
                 popups.push(PopupQuad {
                     surface: popup_surface,
                     texture,
-                    offset: (loc.x - origin.x, loc.y - origin.y),
+                    offset,
                     pixels: (pw, ph),
                     crop,
                     opaque,

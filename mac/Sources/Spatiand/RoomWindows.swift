@@ -288,6 +288,35 @@ final class RoomWindows {
         abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 3 && abs(a.width - b.width) < 3
     }
 
+    // MARK: scrolling
+
+    private var readied = Date.distantPast
+
+    /// Two fingers are scrolling over one of these windows, and macOS is left to do it: so the
+    /// Mac's real pointer is put where the room's is, which is where macOS scrolls, and the
+    /// window is brought to the top of the Mac's screen if something lies over it there. That
+    /// last is not for the scroll's sake. **A window that is wholly covered is not drawn by its
+    /// application**: a browser scrolled while it lay under another window showed the part of
+    /// the page that had been in view and grey for the rest, since nothing was there to see it.
+    func readyToScroll() {
+        insideLock.lock()
+        let due = Date().timeIntervalSince(readied) > 0.25
+        if due { readied = Date() }
+        insideLock.unlock()
+        guard due else { return }
+        queue.async { [self] in
+            guard let id = at.keys.first, let info = entries[id]?.info, let p = point(id) else { return }
+            if let top = topWindow(at: p, for: info.pid), top.pid != info.pid || (top.id != info.windowID && entries.values.contains(where: { $0.info.windowID == top.id })),
+               let ax = MacWindows.axWindow(info) {
+                AXUIElementPerformAction(ax, kAXRaiseAction as CFString)
+                // Raised among its own application's windows; and that application's above the others'.
+                if top.pid != info.pid { NSRunningApplication(processIdentifier: info.pid)?.activate(options: []) }
+            }
+            let here = CGEvent(source: nil)?.location ?? p
+            if hypot(here.x - p.x, here.y - p.y) > 4 { RoomTap.shared.warp(to: p) }
+        }
+    }
+
     // MARK: the application's menus
 
     /// The menu button on a window's bar: the window is brought forward on the Mac, so that
