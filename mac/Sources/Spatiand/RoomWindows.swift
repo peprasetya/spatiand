@@ -281,9 +281,29 @@ final class RoomWindows {
         }
     }
 
+    /// Whether two frames are of tabs of one window: the same top left corner and width. Not
+    /// the height -- a window that gains a row of tabs grows by it, and the tab left behind
+    /// keeps the height it had.
     private func same(_ a: CGRect, _ b: CGRect) -> Bool {
-        abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 3 && abs(a.width - b.width) < 3 && abs(a.height - b.height) < 3
+        abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 3 && abs(a.width - b.width) < 3
     }
+
+    // MARK: the application's menus
+
+    /// The menu button on a window's bar: the window is brought forward on the Mac, so that
+    /// what is chosen is done to it and not to whichever was in front, and its application's
+    /// menus are read out to the room.
+    func menu(of id: UInt32) {
+        queue.async { [self] in
+            guard let info = entries[id]?.info else { sp_menu_close(); return }
+            focus(id)
+            RoomMenus.shared.onChosen = { [weak self] in self?.queue.async { self?.rescanSoon() } }
+            RoomMenus.shared.open(pid: info.pid, name: info.app)
+        }
+    }
+
+    func menuChosen(_ index: Int) { queue.async { RoomMenus.shared.choose(index) } }
+    func menuBack() { queue.async { RoomMenus.shared.back() } }
 
     /// The window in the room is now this one of the Mac's: another tab of the same window.
     private func becomes(_ id: UInt32, _ info: MacWindowInfo) {

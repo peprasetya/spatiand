@@ -1632,6 +1632,7 @@ pub fn run(
                             #[cfg(target_os = "macos")]
                             crate::mac::audio_device_chosen(_index);
                         }
+                        HudAction::ChooseAppMenu(_) | HudAction::AppMenuBack => {}
                         // The shell has opened the page; ask BlueZ now rather than at the tick.
                         HudAction::OpenBluetooth => bluetooth.refresh(),
                         HudAction::ReturnToDesktop => leaving = true,

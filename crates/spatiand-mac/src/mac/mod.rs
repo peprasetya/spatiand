@@ -415,6 +415,42 @@ pub fn shape_while_resizing(
     })
 }
 
+// --- an application's own menus, as a list in the room ---
+
+/// What the app last said of the menu that is open.
+pub enum AppMenuSaid {
+    /// A level of it: what it is called, and each row's words and what is said under them.
+    Level { title: String, rows: Vec<(String, String)> },
+    Done,
+}
+
+pub static APP_MENU: Mutex<Option<AppMenuSaid>> = Mutex::new(None);
+
+pub fn app_menu_said() -> Option<AppMenuSaid> {
+    APP_MENU.lock().unwrap().take()
+}
+
+/// Whether a window is one of this Mac's own, whose menus are on the Mac's menu bar.
+pub fn has_app_menu(state: &crate::Spatiand, window: &smithay::desktop::Window) -> bool {
+    state.app_id_of(window).is_some_and(|a| a.starts_with(&format!("remote.{}.", local::HOST)))
+}
+
+/// The menu button on a window's bar was pressed: ask for its application's menus.
+pub fn app_menu_wanted(window: &smithay::desktop::Window) {
+    use smithay::reexports::wayland_server::Resource;
+    use smithay::wayland::seat::WaylandFocus;
+    let Some(id) = window.wl_surface().and_then(|s| local::id_of(s.id().protocol_id())) else { return };
+    ffi::tell_window(ffi::Asked::MenuOpen, id, 0.0, 0.0, 0.0);
+}
+
+pub fn app_menu_chosen(index: usize) {
+    ffi::tell_number(ffi::Asked::MenuChoose, index as f64);
+}
+
+pub fn app_menu_back() {
+    ffi::tell(ffi::Asked::MenuBack, "");
+}
+
 // --- the sound devices' list in the settings ---
 
 /// One of this Mac's sound devices: its number, its name, whether it is a microphone, and

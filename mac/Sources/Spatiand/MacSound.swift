@@ -72,25 +72,37 @@ final class MacSound {
     private func sound(_ bundle: String, _ block: [Float], _ rate: Double) {
         guard block.contains(where: { abs($0) > 1e-5 }) else { return }
         lock.lock(); heard[bundle] = Date(); lock.unlock()
-        let stereo = rate > 0 && abs(rate - 48_000) > 1 ? Self.resampled(block, from: rate) : block
+        let stereo = rate > 0 && abs(rate - 48_000) > 1 ? resampled(bundle, block, from: rate) : block
         var pcm = [Int16](repeating: 0, count: stereo.count)
         for i in 0..<stereo.count { pcm[i] = Int16(max(-1, min(1, stereo[i])) * 32767) }
         sp_app_sound(bundle, pcm, UInt32(pcm.count / 2), 2)
     }
 
+    /// Where each application's sound has got to between two of its samples, and the last of
+    /// the block before: so that one block runs on into the next with nothing lost or said
+    /// twice. (Each block made the right length by itself was a fraction of a sample short,
+    /// every block, and a click where two met.)
+    private var carried: [String: (phase: Double, last: (Float, Float))] = [:]
+
     /// Interleaved stereo to 48 kHz by straight lines between samples: a Mac whose output runs at 44.1 kHz.
-    private static func resampled(_ block: [Float], from rate: Double) -> [Float] {
+    private func resampled(_ bundle: String, _ block: [Float], from rate: Double) -> [Float] {
         let frames = block.count / 2
-        let count = Int(Double(frames) * 48_000 / rate)
-        guard frames > 1, count > 1 else { return block }
-        var out = [Float](repeating: 0, count: count * 2)
-        for i in 0..<count {
-            let position = Double(i) * rate / 48_000
-            let a = min(frames - 1, Int(position)), b = min(frames - 1, a + 1)
+        guard frames > 0 else { return block }
+        let step = rate / 48_000
+        var (position, last) = carried[bundle] ?? (0, (block[0], block[1]))
+        var out: [Float] = []
+        out.reserveCapacity(Int(Double(frames) / step) * 2 + 4)
+        // From just before this block's first sample to its last.
+        while position <= Double(frames - 1) {
+            let a = Int(position.rounded(.down))
             let t = Float(position - Double(a))
-            out[i * 2] = block[a * 2] * (1 - t) + block[b * 2] * t
-            out[i * 2 + 1] = block[a * 2 + 1] * (1 - t) + block[b * 2 + 1] * t
+            let (l0, r0) = a < 0 ? last : (block[a * 2], block[a * 2 + 1])
+            let b = min(frames - 1, a + 1)
+            out.append(l0 * (1 - t) + block[b * 2] * t)
+            out.append(r0 * (1 - t) + block[b * 2 + 1] * t)
+            position += step
         }
+        carried[bundle] = (position - Double(frames), (block[(frames - 1) * 2], block[(frames - 1) * 2 + 1]))
         return out
     }
 

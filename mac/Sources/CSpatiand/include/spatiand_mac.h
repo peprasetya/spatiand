@@ -38,6 +38,9 @@ enum {
     SP_RECORD_STOP = 21,      // and stop, and save it
     SP_AUDIO_LIST = 22,       // say what sound devices there are (sp_audio_devices_begin...)
     SP_AUDIO_CHOOSE = 23,     // use device id: the microphone if a is 1, else the output    // window id has been put away: no picture is needed
+    SP_MENU_OPEN = 24,        // say the menus of window id's application, from the top (sp_menu_begin...)
+    SP_MENU_CHOOSE = 25,      // row a of the menu last said was chosen
+    SP_MENU_BACK = 26,        // up a level, or out from the top
 };
 
 typedef void (*sp_asked_fn)(void *user, int32_t what, uint32_t id, double a, double b, double c,
@@ -115,6 +118,11 @@ void sp_window_show(uint32_t id);
 void sp_window_picture(uint32_t id, const void *surface, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 /// Whether a window's picture has parts that are nothing, to be seen through.
 void sp_window_clear(uint32_t id, bool on);
+/// A level of an application's menu: begin with what it is called, each row, end. And done with.
+void sp_menu_begin(const char *title);
+void sp_menu_row(const char *label, const char *detail);
+void sp_menu_end(void);
+void sp_menu_close(void);
 void sp_window_title(uint32_t id, const char *title);
 void sp_window_close(uint32_t id);
 

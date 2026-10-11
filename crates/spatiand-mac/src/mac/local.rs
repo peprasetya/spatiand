@@ -290,6 +290,12 @@ pub fn wanted(surface: u32) -> Option<(u32, Wanted)> {
     Some((*id, wanted))
 }
 
+/// Which of this Mac's windows a surface is, and no more.
+pub fn id_of(surface: u32) -> Option<u32> {
+    let entries = WINDOWS.get()?.entries.lock().ok()?;
+    entries.iter().find(|(_, e)| e.surface == Some(surface)).map(|(id, _)| *id)
+}
+
 /// Which of this Mac's windows are on show this frame. The app is told of each that has come
 /// out or been put away since the last, so that only what can be seen is captured.
 pub fn on_show(now: std::collections::HashSet<u32>) {

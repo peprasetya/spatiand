@@ -167,6 +167,9 @@ pub enum Zone {
     /// Only ever reached when the window is actually making a sound: a button that is not
     /// drawn must not be pressable, or the bar has an invisible dead spot in it.
     Mute,
+    /// The menu button, at the left of the bar: the application's own menus, as a list. Only
+    /// on a window whose menus are not in it -- a Mac's, whose menu bar is on the Mac's screen.
+    Menu,
     /// The client's own surface. Everything here is forwarded.
     Content,
     /// The frame. Grab to resize.
@@ -345,6 +348,16 @@ impl Frame {
     /// The application's icon, at the left of the bar. Decoration only — nothing to press.
     pub fn icon(&self) -> Box2 {
         self.furniture(false)
+    }
+
+    /// The menu button, where the icon would be: the top left, where a menu bar begins.
+    pub fn menu(&self) -> Box2 {
+        self.furniture(false)
+    }
+
+    /// The icon on a window that has a menu button: one place in from it.
+    pub fn icon_beside_menu(&self) -> Box2 {
+        self.furniture_at(false, 1)
     }
 
     /// The close button, at the right of the bar.
@@ -745,7 +758,10 @@ pub fn aim(ray: Ray, windows: &[WindowQuad]) -> Aim {
         Some(_) => Some(Zone::Content),
         None => hit.and_then(|(index, h)| {
             let window = windows.get(index)?;
-            Some(Frame::of(window.pixels, &window.placement).zone(h.u, h.v, window.sound.is_some()))
+            let frame = Frame::of(window.pixels, &window.placement);
+            let zone = frame.zone(h.u, h.v, window.sound.is_some());
+            // The menu button is a piece of the bar on the windows that have one.
+            Some(if window.has_menu && zone == Zone::Title && frame.menu().contains(h.u, h.v) { Zone::Menu } else { zone })
         }),
     };
     Aim {

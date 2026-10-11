@@ -92,6 +92,9 @@ pub enum Mode {
     Pinned,
     /// Sound devices: where sound comes out and which microphone listens. From the HUD.
     Audio,
+    /// An application's own menu, as a list: opened from a window's title bar, for a window
+    /// whose menus are somewhere the wearer cannot see.
+    AppMenu,
 }
 
 /// A menu control, passed through to the controller layout editor.
@@ -171,6 +174,8 @@ pub struct Shell {
     hud: Hud,
     pinned: Hud,
     audio: Hud,
+    app_menu: Hud,
+    app_menu_title: String,
     launcher: Launcher,
     environments: EnvironmentPicker,
     files: FileBrowser,
@@ -188,6 +193,8 @@ impl Shell {
             hud: Hud::with_calibration(panels, calibrated),
             pinned: Hud::pinned(),
             audio: Hud::audio(),
+            app_menu: Hud::app_menu(),
+            app_menu_title: String::new(),
             launcher: Launcher::new(apps),
             environments: EnvironmentPicker::default(),
             files: FileBrowser::default(),
@@ -220,6 +227,28 @@ impl Shell {
     /// The sound devices' list.
     pub fn audio(&self) -> &Hud {
         &self.audio
+    }
+
+    pub fn app_menu(&self) -> &Hud {
+        &self.app_menu
+    }
+
+    pub fn app_menu_title(&self) -> &str {
+        &self.app_menu_title
+    }
+
+    /// Show a level of an application's own menu, in place of whatever is open.
+    pub fn open_app_menu(&mut self, title: &str, rows: &[(String, String)]) {
+        self.app_menu_title = title.to_string();
+        self.app_menu.set_app_menu(rows);
+        self.mode = Mode::AppMenu;
+    }
+
+    /// The application's menu is done with: back to the world.
+    pub fn close_app_menu(&mut self) {
+        if self.mode == Mode::AppMenu {
+            self.mode = Mode::World;
+        }
     }
 
     /// Offer the sound devices' list in the settings; see [`Hud::offer_audio`].
@@ -405,6 +434,7 @@ impl Shell {
             Mode::Bluetooth => self.bluetooth.select(index),
             Mode::Pinned => self.pinned.select(index),
             Mode::Audio => self.audio.select(index),
+            Mode::AppMenu => self.app_menu.select(index),
             Mode::Controller | Mode::World => false,
         }
     }
@@ -483,6 +513,8 @@ impl Shell {
                     (false, _) => self.enter(Mode::Hud),
                 },
                 Mode::Bluetooth | Mode::Pinned | Mode::Audio => self.enter(Mode::Hud),
+                // Up a level, or out: the compositor knows which, and says.
+                Mode::AppMenu => Some(ShellEvent::Hud(HudAction::AppMenuBack)),
                 _ => self.enter(Mode::World),
             },
             Intent::Navigate(direction) => {
@@ -516,6 +548,7 @@ impl Shell {
                     Mode::Bluetooth => self.bluetooth.step(direction),
                     Mode::Pinned => self.pinned.step(direction),
                     Mode::Audio => self.audio.step(direction),
+                    Mode::AppMenu => self.app_menu.step(direction),
                     Mode::Controller => false,
                     // In the world the D-pad will move focus between windows; until windows
                     // are drawn there is nothing to move between.
@@ -561,6 +594,8 @@ impl Shell {
                 Mode::Pinned => Some(ShellEvent::Hud(self.pinned.activate())),
                 // The list stays up, and says which is in use once the choice has taken.
                 Mode::Audio => Some(ShellEvent::Hud(self.audio.activate())),
+                // Stays up: a row may open another level, and the compositor closes it otherwise.
+                Mode::AppMenu => Some(ShellEvent::Hud(self.app_menu.activate())),
                 Mode::Environment => match self.environments.activate() {
                     EnvironmentAction::Choose(choice) => {
                         self.mode = Mode::World;

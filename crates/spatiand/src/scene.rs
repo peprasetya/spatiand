@@ -163,6 +163,10 @@ pub struct WindowQuad {
     pub sound: Option<WindowSound>,
     /// True while a pointer is over the mute button.
     pub mute_hot: bool,
+    /// The window has a menu button on its bar: its application's menus are not in it.
+    pub has_menu: bool,
+    /// True while a pointer is over the menu button.
+    pub menu_hot: bool,
     /// Menus and dropdowns this window has open, innermost last.
     pub popups: Vec<PopupQuad>,
     /// What the client said this surface is: mono or stereo, and how packed. Default for a
@@ -2129,7 +2133,7 @@ impl Scene {
                 // fit would be unreadably small, and what identifies a window is how it starts.
                 // Centred when it fits, which is what a short title always did.
                 let bar_width = height * frame.width() as f32;
-                let icon_box = frame.icon();
+                let icon_box = if window.has_menu { frame.icon_beside_menu() } else { frame.icon() };
                 let left_edge = (icon_box.u + icon_box.half_u) as f32;
                 let outer = if window.sound.is_some() {
                     frame.mute()
@@ -2138,10 +2142,18 @@ impl Scene {
                 };
                 let right_edge = (outer.u - outer.half_u) as f32;
                 // A little air either side, so the text does not touch the furniture.
-                let gap = (icon_box.half_u as f32) * 0.5;
+                let gap = (icon_box.half_u as f32) * 0.8;
                 let room = ((right_edge - left_edge - gap * 2.0) * bar_width).max(0.0);
+                // A title a little too long is made a little smaller, down to three quarters:
+                // still easily read, and whole. Longer than that it is cut, at that size.
+                let fit = if label_width > room && room > 0.0 { (room / label_width).max(0.75) } else { 1.0 };
+                let (label_width, label_height) = (label_width * fit, label_height * fit);
+                // Centred on the bar when that keeps it clear of the furniture at both ends,
+                // and otherwise in the middle of the space there is.
+                let space_centre = -((left_edge + right_edge) * 0.5 - 0.5) * bar_width;
                 let (shown_width, shift, uv_end) = if label_width <= room {
-                    (label_width, 0.0, 1.0)
+                    let clear = label_width * 0.5 <= (0.5 - left_edge - gap).min(right_edge - gap - 0.5) * bar_width;
+                    (label_width, if clear { 0.0 } else { space_centre }, 1.0)
                 } else {
                     // Left-aligned in the space there is. `y` runs the way the furniture's does:
                     // positive towards the left of the bar.
@@ -2183,11 +2195,39 @@ impl Scene {
                 )
             };
 
+            // The menu button, on a window whose application's menus are somewhere else: three
+            // bars on a disc, at the top left where a menu bar begins.
+            if window.has_menu && !frame.overlay {
+                let menu = frame.menu();
+                let hot = window.menu_hot;
+                let disc = if hot {
+                    [0.86, 0.94, 1.0, 0.60]
+                } else if window.focused {
+                    [0.86, 0.92, 1.0, 0.28]
+                } else {
+                    [0.80, 0.86, 1.0, 0.15]
+                };
+                self.rounded.draw(gl, &(eye.view_projection() * furniture(menu)), dim(disc), (64.0, 64.0), 32.0);
+                for row in [-1.0f64, 0.0, 1.0] {
+                    let mut bar = menu;
+                    bar.half_u = menu.half_u * 0.42;
+                    bar.half_v = menu.half_v * 0.055;
+                    bar.v = menu.v + menu.half_v * 0.30 * row;
+                    self.rounded.draw(
+                        gl,
+                        &(eye.view_projection() * furniture(bar)),
+                        dim(if hot { [1.0, 1.0, 1.0, 1.0] } else { [0.92, 0.95, 1.0, if window.focused { 0.90 } else { 0.55 }] }),
+                        (27.0, 3.5),
+                        1.75,
+                    );
+                }
+            }
+
             if let Some(icon) = window.icon.filter(|_| !frame.overlay) {
                 // Inset a little inside its box: an icon drawn to the full square touches the
                 // glass around it, and the whole point of the furniture being smaller than the
                 // bar is that it reads as sitting *in* the bar.
-                let mut box2 = frame.icon();
+                let mut box2 = if window.has_menu { frame.icon_beside_menu() } else { frame.icon() };
                 box2.half_u *= 0.82;
                 box2.half_v *= 0.82;
                 self.quads.draw(
@@ -2580,6 +2620,7 @@ impl Scene {
             | Mode::Hosts
             | Mode::Bluetooth
             | Mode::Audio
+            | Mode::AppMenu
             | Mode::Pinned => {
                 self.draw_card(gl, eye, fov)
             }
@@ -3958,6 +3999,11 @@ pub fn collect_windows(
             // Both filled in by the backend, which is where the audio engine lives.
             sound: None,
             mute_hot: false,
+            #[cfg(target_os = "macos")]
+            has_menu: !placement.pip && crate::mac::has_app_menu(state, &window),
+            #[cfg(not(target_os = "macos"))]
+            has_menu: false,
+            menu_hot: false,
             popups,
             xr,
             fade: crate::xr::fade_of(&surface, &state.attention),

@@ -111,12 +111,21 @@ final class MacTap {
         var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
         AudioObjectGetPropertyData(tap, &address, 0, nil, &size, &format)
         let channels = max(1, Int(format.mChannelsPerFrame))
-        let rate = format.mSampleRate > 0 ? format.mSampleRate : 48_000
+        // **The rate the sound arrives at is the device's it is read through**, which runs on the
+        // output's clock: with headphones at 44.1 kHz it arrives at 44.1 kHz, whatever the tap
+        // says its own format is. Taken for 48 kHz it was a twelfth short every second, and
+        // the sound stopped and started as what was waiting to be played ran out.
+        var nominal = Float64(0)
+        var nominalAddress = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyNominalSampleRate, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var nominalSize = UInt32(MemoryLayout<Float64>.size)
+        AudioObjectGetPropertyData(aggregate, &nominalAddress, 0, nil, &nominalSize, &nominal)
+        let rate = nominal > 0 ? nominal : format.mSampleRate > 0 ? format.mSampleRate : 48_000
         let interleaved = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
 
         let micStreams = Self.inputStreams(ofDeviceWithUID: output)
         let debug = ProcessInfo.processInfo.environment["SPATIAND_DEBUG_TAP"] != nil
         if debug { print("tap: the output device has \(micStreams) input stream(s) of its own") }
+        if debug { print("tap: read at \(nominal) Hz") }
         if debug { print("tap: \(objects.count) process(es), format \(format.mSampleRate) Hz, \(channels) channel(s), interleaved \(interleaved), output \(output)") }
         var calls = 0
         let result = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregate, queue) { [weak self] _, input, _, _, _ in

@@ -413,7 +413,7 @@ pub fn run(
                         }
                     }
                     ShellEvent::Hud(action) => match action {
-                        HudAction::OpenHosts | HudAction::OpenBluetooth | HudAction::OpenAudio | HudAction::ChooseAudio(_) => {}
+                        HudAction::OpenHosts | HudAction::OpenBluetooth | HudAction::OpenAudio | HudAction::ChooseAudio(_) | HudAction::ChooseAppMenu(_) | HudAction::AppMenuBack => {}
                         HudAction::OpenSwitcher => {
                             shell.set_windows(runtime.state.open_windows())
                         }

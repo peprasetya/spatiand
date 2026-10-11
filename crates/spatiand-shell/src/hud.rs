@@ -77,6 +77,10 @@ pub enum HudAction {
     OpenAudio,
     /// Use the device on this row of that list.
     ChooseAudio(usize),
+    /// Choose this row of an application's own menu, shown as a list.
+    ChooseAppMenu(usize),
+    /// Go up a level in an application's own menu, or out of it from the top.
+    AppMenuBack,
     /// Move pinned windows to the next corner of the view.
     PipCorner,
     /// Switch pinned windows between their two sizes.
@@ -146,6 +150,12 @@ pub struct HudItem {
     pub detail: &'static str,
     pub action: HudAction,
 }
+
+const NO_APP_MENU: HudItem = HudItem {
+    label: "Nothing in this menu",
+    detail: "",
+    action: HudAction::AppMenuBack,
+};
 
 const NO_AUDIO: HudItem = HudItem {
     label: "Looking for sound devices",
@@ -355,6 +365,27 @@ impl Hud {
 
     pub fn cursor(&self) -> usize {
         self.cursor
+    }
+
+    /// An application's own menu, as a list: empty until the compositor says what is in it.
+    pub fn app_menu() -> Self {
+        Self { items: vec![NO_APP_MENU], cursor: 0 }
+    }
+
+    /// What an application's menu shows at the level it is open at: each row's words, and
+    /// what is said under the list while it is the one pointed at. From the top each time.
+    pub fn set_app_menu(&mut self, rows: &[(String, String)]) {
+        let items: Vec<HudItem> = rows
+            .iter()
+            .enumerate()
+            .map(|(index, (label, detail))| HudItem {
+                label: keep(label.clone()),
+                detail: keep(detail.clone()),
+                action: HudAction::ChooseAppMenu(index),
+            })
+            .collect();
+        self.items = if items.is_empty() { vec![NO_APP_MENU] } else { items };
+        self.cursor = 0;
     }
 
     /// The sound devices' list, empty until the compositor says what there is.

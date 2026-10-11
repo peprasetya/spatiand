@@ -59,6 +59,14 @@ pub enum Asked {
     AudioList = 22,
     /// Use sound device `id`: as the microphone if `a` is 1, else for sound to come out of.
     AudioChoose = 23,
+    /// Say what is in the menus of the application window `id` belongs to, from the top,
+    /// with `sp_menu_begin` and the rest.
+    MenuOpen = 24,
+    /// Row `a` of the menu last said was chosen: say the level it opens, or do it and say
+    /// the menu is done with (`sp_menu_close`).
+    MenuChoose = 25,
+    /// Up a level: say that one, or that the menu is done with if this was the top.
+    MenuBack = 26,
 }
 
 pub type Callback =
@@ -354,6 +362,41 @@ pub extern "C" fn sp_microphone_allowed(allowed: bool) {
 
 thread_local! {
     static AUDIO_BEING_SAID: std::cell::RefCell<Vec<super::AudioDevice>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A level of an application's menu, said from one thread: begin with what it is called,
+/// each row, end.
+///
+/// # Safety
+/// `title` must be a valid C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn sp_menu_begin(title: *const c_char) {
+    let title = text(title);
+    MENU_BEING_SAID.with(|menu| *menu.borrow_mut() = (title, Vec::new()));
+}
+
+/// # Safety
+/// `label` and `detail` must be valid C strings or null.
+#[no_mangle]
+pub unsafe extern "C" fn sp_menu_row(label: *const c_char, detail: *const c_char) {
+    let row = (text(label), text(detail));
+    MENU_BEING_SAID.with(|menu| menu.borrow_mut().1.push(row));
+}
+
+#[no_mangle]
+pub extern "C" fn sp_menu_end() {
+    let (title, rows) = MENU_BEING_SAID.with(|menu| std::mem::take(&mut *menu.borrow_mut()));
+    *super::APP_MENU.lock().unwrap() = Some(super::AppMenuSaid::Level { title, rows });
+}
+
+/// The application's menu is done with: something was chosen, or it was backed out of.
+#[no_mangle]
+pub extern "C" fn sp_menu_close() {
+    *super::APP_MENU.lock().unwrap() = Some(super::AppMenuSaid::Done);
+}
+
+thread_local! {
+    static MENU_BEING_SAID: std::cell::RefCell<(String, Vec<(String, String)>)> = Default::default();
 }
 
 /// The sound devices, said from one thread: begin, each device, end.

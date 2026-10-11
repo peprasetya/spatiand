@@ -355,6 +355,13 @@ pub fn run(
             if let Some(devices) = crate::mac::audio_devices_changed() {
                 shell.set_audio(&devices);
             }
+            // An application's own menus, a level at a time as the app reads them.
+            #[cfg(target_os = "macos")]
+            match crate::mac::app_menu_said() {
+                Some(crate::mac::AppMenuSaid::Level { title, rows }) => shell.open_app_menu(&title, &rows),
+                Some(crate::mac::AppMenuSaid::Done) => shell.close_app_menu(),
+                None => {}
+            }
             // **A wheel, or two fingers on a trackpad, moves through an open menu** a row at a
             // time, as it scrolls a page anywhere else: the pointer alone reaches only the rows
             // in view.
@@ -809,6 +816,14 @@ pub fn run(
                         HudAction::ChooseAudio(_index) => {
                             #[cfg(target_os = "macos")]
                             crate::mac::audio_device_chosen(_index);
+                        }
+                        HudAction::ChooseAppMenu(_index) => {
+                            #[cfg(target_os = "macos")]
+                            crate::mac::app_menu_chosen(_index);
+                        }
+                        HudAction::AppMenuBack => {
+                            #[cfg(target_os = "macos")]
+                            crate::mac::app_menu_back();
                         }
                         HudAction::OpenBluetooth => {}
                         HudAction::ReturnToDesktop => super::return_to_desktop(),
@@ -1270,6 +1285,7 @@ pub fn run(
                     Some(Zone::Pin) => quad.pin_hot = true,
                     Some(Zone::Close) => quad.close_hot = true,
                     Some(Zone::Hide) => quad.hide_hot = true,
+                    Some(Zone::Menu) => quad.menu_hot = true,
                     Some(Zone::Mute) => {
                         quad.mute_hot = true;
                         // Scrolled over, the speaker is this window's own volume.
@@ -1545,6 +1561,14 @@ pub fn run(
                                             sound.map(|s| s.muted).unwrap_or(false),
                                         ));
                                     }
+                                }
+                            }
+                            // Its application's own menus, as a list.
+                            Some(a) if a.zone == Some(Zone::Menu) => {
+                                #[cfg(target_os = "macos")]
+                                if let Some(quad) = a.hit.and_then(|(i, _)| windows.get(i)) {
+                                    runtime.state.focus_window(&quad.window);
+                                    crate::mac::app_menu_wanted(&quad.window);
                                 }
                             }
                             // Pinned to the glass or let go, whichever the window is not.

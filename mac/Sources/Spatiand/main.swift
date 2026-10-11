@@ -765,6 +765,42 @@ if CommandLine.arguments.contains("--selftest-child") {
     application.run()
 }
 
+if let at = CommandLine.arguments.firstIndex(of: "--selftest-menu") {
+    // --selftest-menu <application>: the room in a window, that application's first window
+    // brought into it, its menu button pressed, the third menu opened, and backed out of.
+    // Three screenshots: the bar's menus, what is in the third, and the window after.
+    let name = CommandLine.arguments.dropFirst(at + 1).first ?? ""
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    func after(_ seconds: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body) }
+    DispatchQueue.main.async {
+        Room.shared.start(preview: true)
+        after(1.5) { sp_control(3, true); after(0.1) { sp_control(3, false) } }
+        after(3) {
+            Task {
+                guard let info = await MacWindows.list().first(where: { $0.app == name }) else { print("menu: FAILED, no window of \(name)"); return }
+                RoomWindows.shared.bring(info)
+                DispatchQueue.main.async {
+                    after(4) {
+                        guard let shown = RoomWindows.shared.shownWindow(bundle: info.bundle) else { print("menu: FAILED, the window is not on show"); return }
+                        RoomWindows.shared.menu(of: shown.id)
+                    }
+                    after(6) { sp_screenshot() }
+                    after(7) { RoomWindows.shared.menuChosen(2) }
+                    after(9) { sp_screenshot() }
+                    after(10) { RoomWindows.shared.menuBack() }
+                    after(11) { RoomWindows.shared.menuBack() }
+                    after(13) { sp_screenshot() }
+                }
+            }
+        }
+        after(22) { Room.shared.stop(); exit(0) }
+    }
+    application.run()
+}
+
 if let at = CommandLine.arguments.firstIndex(of: "--selftest-app-sound") {
     // --selftest-app-sound <application>: the room in a window, that application's first window
     // brought into it, and twenty seconds of whatever it is playing taken for the room. What

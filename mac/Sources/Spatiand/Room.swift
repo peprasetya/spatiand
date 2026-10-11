@@ -117,6 +117,12 @@ final class Room {
             }
         case SP_NOTICE_PRESSED:
             DispatchQueue.main.async { Notices.shared.pressed() }
+        case SP_MENU_OPEN:
+            RoomWindows.shared.menu(of: id)
+        case SP_MENU_CHOOSE:
+            RoomWindows.shared.menuChosen(Int(a))
+        case SP_MENU_BACK:
+            RoomWindows.shared.menuBack()
         case SP_AUDIO_LIST:
             DispatchQueue.main.async { RoomSoundDevices.say() }
         case SP_AUDIO_CHOOSE:
