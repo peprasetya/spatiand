@@ -2381,32 +2381,38 @@ impl Scene {
                     }),
                     (0.0, 1.0),
                 );
-                // Its own volume: a slider under the speaker while it is pointed at, and
-                // whenever the volume is not as the application made it. The track is silent
-                // to three times over, with a mark where the application's own volume is.
+                // Its own volume, as a knob's: a ring of marks inside the button's rim, shown
+                // while it is pointed at and whenever the volume is not as the application
+                // made it. As the application made it is twelve o'clock; softer is lit round
+                // to the left, to silence at half past seven, and louder round to the right,
+                // to three times over at half past four.
                 if (hot || (sound.gain - 1.0).abs() > 0.01) && !sound.muted {
-                    let mut track = mute;
-                    track.half_u *= 2.4;
-                    track.half_v *= 0.10;
-                    track.v -= mute.half_v * 1.3;
-                    let px = 64.0 * 2.4;
-                    self.rounded.draw(gl, &(eye.view_projection() * furniture(track)), dim([0.03, 0.05, 0.09, 0.85]), (px, 7.0), 3.5);
-                    let share = (sound.gain as f64 / 3.0).clamp(0.02, 1.0);
-                    let mut fill = track;
-                    fill.half_u = track.half_u * share;
-                    fill.u = track.u - track.half_u + fill.half_u;
-                    self.rounded.draw(
-                        gl,
-                        &(eye.view_projection() * furniture(fill)),
-                        dim(if sound.gain > 1.01 { [1.0, 0.78, 0.35, 0.95] } else { [0.70, 0.85, 1.0, 0.95] }),
-                        (px * share as f32, 7.0),
-                        3.5,
-                    );
-                    let mut mark = track;
-                    mark.half_u = track.half_u * 0.02;
-                    mark.half_v *= 1.9;
-                    mark.u = track.u - track.half_u + track.half_u * 2.0 / 3.0;
-                    self.rounded.draw(gl, &(eye.view_projection() * furniture(mark)), dim([1.0, 1.0, 1.0, 0.9]), (3.0, 13.0), 1.5);
+                    const SWEEP: f32 = 135.0;
+                    const STEP: f32 = 9.0;
+                    let turned = if sound.gain <= 1.0 { -(1.0 - sound.gain) * SWEEP } else { (sound.gain - 1.0) / 2.0 * SWEEP };
+                    let steps = (SWEEP / STEP) as i32;
+                    for i in -steps..=steps {
+                        let at = i as f32 * STEP;
+                        let lit = i != 0 && ((turned < 0.0 && at < 0.0 && at >= turned - STEP * 0.5) || (turned > 0.0 && at > 0.0 && at <= turned + STEP * 0.5));
+                        let (sin, cos) = at.to_radians().sin_cos();
+                        let mut dot = mute;
+                        let size: f64 = if i == 0 { 0.10 } else if lit { 0.085 } else { 0.05 };
+                        dot.half_u = mute.half_u * size;
+                        dot.half_v = mute.half_v * size;
+                        dot.u = mute.u + mute.half_u * 0.80 * sin as f64;
+                        dot.v = mute.v - mute.half_v * 0.80 * cos as f64;
+                        let colour = if i == 0 {
+                            [1.0, 1.0, 1.0, 0.95]
+                        } else if lit && turned > 0.0 {
+                            [1.0, 0.78, 0.35, 1.0]
+                        } else if lit {
+                            [0.62, 0.84, 1.0, 1.0]
+                        } else {
+                            [0.03, 0.05, 0.09, 0.55]
+                        };
+                        let px = disc_px * size as f32;
+                        self.rounded.draw(gl, &(eye.view_projection() * furniture(dot)), dim(colour), (px, px), px * 0.5);
+                    }
                 }
             }
 

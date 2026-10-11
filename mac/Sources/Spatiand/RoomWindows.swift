@@ -221,6 +221,19 @@ final class RoomWindows {
                         passedOver.insert(info.windowID)
                         continue
                     }
+                    // **A tab is not a window.** Each tab of a window is a window of its own to
+                    // the Mac, of which only the one chosen is on screen: so a new tab, or
+                    // another tab chosen, is a window appearing exactly where one of the same
+                    // application's has just gone from the screen. That is the same window in
+                    // the room, showing something else -- not a second one beside it.
+                    if let (id, _) = entries.first(where: { _, entry in
+                        guard entry.info.pid == info.pid, !all.contains(where: { $0.windowID == entry.info.windowID }) else { return false }
+                        let was = MacWindows.bounds(entry.info.windowID) ?? entry.info.frame
+                        return abs(was.minX - info.frame.minX) < 3 && abs(was.minY - info.frame.minY) < 3 && abs(was.width - info.frame.width) < 3 && abs(was.height - info.frame.height) < 3
+                    }) {
+                        becomes(id, info)
+                        continue
+                    }
                     // **What was open when the room began waits in the list; what is opened
                     // while it is going comes out at once**, in front of the wearer -- a new
                     // browser window asked for with Command-N is wanted where it can be seen.
@@ -244,6 +257,30 @@ final class RoomWindows {
                     }
                 }
             }
+        }
+    }
+
+    /// The window in the room is now this one of the Mac's: another tab of the same window.
+    private func becomes(_ id: UInt32, _ info: MacWindowInfo) {
+        guard let entry = entries[id] else { return }
+        print("windows: \(info.app) has another tab in front, \u{201C}\(info.title)\u{201D}; it is the same window, \(id)")
+        entry.capture?.onEnded = nil
+        entry.capture?.onFrame = nil
+        entry.capture?.invalidate()
+        entries[id] = Entry(info: info, capture: nil)
+        sp_window_title(id, info.title.isEmpty ? info.app : info.app + " \u{2014} " + info.title)
+        if entry.capture != nil { shown(id) } else { publish() }
+    }
+
+    /// Look again soon: after a key with Command or a click, either of which may have opened a
+    /// window or chosen a tab, and neither of which should wait for the next look in its turn.
+    private var lookingSoon = false
+    private func rescanSoon() {
+        guard !lookingSoon else { return }
+        lookingSoon = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [self] in
+            queue.async { self.lookingSoon = false }
+            rescan()
         }
     }
 
@@ -461,6 +498,7 @@ final class RoomWindows {
         } else {
             let dragged = button == .left && down.contains(id)
             if button == .left { down.remove(id); noteDrag(nil) }
+            rescanSoon()
             // Let go where the real cursor is, which is where the drag has taken it.
             let p = dragged ? (CGEvent(source: nil)?.location ?? p) : p
             let event = CGEvent(mouseEventSource: source, mouseType: upType, mouseCursorPosition: p, mouseButton: button)
@@ -495,6 +533,7 @@ final class RoomWindows {
         event?.flags = RoomTap.shared.flags
         if isRepeat { event?.setIntegerValueField(.keyboardEventAutorepeat, value: 1) }
         post(event)
+        if !down, RoomTap.shared.flags.contains(.maskCommand) { rescanSoon() }
     }
 
     private func close(_ id: UInt32) {

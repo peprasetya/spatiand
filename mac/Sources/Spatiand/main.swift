@@ -109,6 +109,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if Room.shared.running, RoomTap.shared.holding { Self.press(0) } else { self?.settings.show() }
         }
         if Settings.hotkeys { hotkeys.enable() }
+        hotkeys.onWorlds = { if Room.shared.running, RoomTap.allowed(ask: false) { RoomTap.shared.toggle() } }
+        hotkeys.enableWorlds()
         Model.shared.onProblem = { PairingUI.alert("Spatiand", $0) }
         Room.shared.onChange = { [weak self] in self?.refreshIcon() }
         // The display goes away for a moment whenever the glasses change mode -- which they do as
@@ -746,7 +748,9 @@ if CommandLine.arguments.contains("--selftest-child") {
     setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
     let helper = Process()
     helper.executableURL = Bundle.main.executableURL
-    helper.arguments = ["--click-target", NSTemporaryDirectory() + "spatiand-clicks.txt", "--with-child"]
+    // --tab: a second tab instead of something hung beside, chosen and then the first again.
+    let tab = CommandLine.arguments.contains("--tab")
+    helper.arguments = ["--click-target", NSTemporaryDirectory() + "spatiand-clicks.txt", tab ? "--with-tab" : "--with-child"]
     try? helper.run()
     let application = NSApplication.shared
     application.setActivationPolicy(.accessory)
@@ -756,7 +760,7 @@ if CommandLine.arguments.contains("--selftest-child") {
         after(1.5) { sp_control(3, true); after(0.1) { sp_control(3, false) } }
         after(3) { Task { if let info = await MacWindows.list().first(where: { $0.title == PointerTest.title }) { RoomWindows.shared.bring(info) } else { print("child: FAILED, no target window") } } }
         after(14) { sp_screenshot() }
-        after(17) { helper.terminate(); Room.shared.stop(); exit(0) }
+        after(tab ? 22 : 17) { helper.terminate(); Room.shared.stop(); exit(0) }
     }
     application.run()
 }

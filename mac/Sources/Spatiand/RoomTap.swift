@@ -16,8 +16,31 @@ import CSpatiand
 /// What marks an event as posted by Spatiand itself: the tap lets these through.
 let spatiandEventMark: Int64 = 0x5350_4154
 
+// How an application that is not in front hides the pointer: the window server lets a connection
+// that has said so set the cursor from the background. Not in any header; what every tool that
+// hides the pointer for a presentation or a game streamed elsewhere does.
+@_silgen_name("_CGSDefaultConnection")
+private func _CGSDefaultConnection() -> Int32
+@_silgen_name("CGSSetConnectionProperty")
+private func CGSSetConnectionProperty(_ connection: Int32, _ target: Int32, _ key: CFString, _ value: CFTypeRef) -> Int32
+
 final class RoomTap {
     static let shared = RoomTap()
+    private var cursorHidden = false
+    private var lastToggle = Date.distantPast
+
+    /// The Mac's own pointer, out of sight while the room has the mouse: it still moves under
+    /// the hand, over the Mac's screen and onto the glasses' picture, pointing at nothing.
+    private func hideCursor(_ hide: Bool) {
+        guard hide != cursorHidden else { return }
+        cursorHidden = hide
+        if hide {
+            _ = CGSSetConnectionProperty(_CGSDefaultConnection(), _CGSDefaultConnection(), "SetsCursorInBackground" as CFString, kCFBooleanTrue)
+            CGDisplayHideCursor(CGMainDisplayID())
+        } else {
+            CGDisplayShowCursor(CGMainDisplayID())
+        }
+    }
 
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
@@ -132,13 +155,19 @@ final class RoomTap {
             // after being put somewhere, which is what posting at a window does.
             CGEventSource(stateID: .combinedSessionState)?.localEventsSuppressionInterval = 0
         }
+        hideCursor(on)
         sp_pointer_held(on)
         sp_pointer(0, 0, 0, 0, 0)
         print("input: the mouse and keyboard are \(on ? "the room's" : "this Mac's")")
         DispatchQueue.main.async { [weak self] in self?.onChange?() }
     }
 
-    func toggle() { hold(!holding) }
+    /// Heard twice for one press where both the tap and the system's hot key hear it: once is meant.
+    func toggle() {
+        guard Date().timeIntervalSince(lastToggle) > 0.3 else { return }
+        lastToggle = Date()
+        hold(!holding)
+    }
 
     private func chord(_ event: CGEvent) -> Bool {
         let code = event.getIntegerValueField(.keyboardEventKeycode)

@@ -1187,6 +1187,15 @@ pub fn run(
                 }
             }
 
+            // For looking at the speaker's knob without a sound to make one: every window is
+            // given a speaker at this volume, as though pointed at.
+            if let Some(gain) = std::env::var("SPATIAND_TEST_KNOB").ok().and_then(|v| v.parse::<f32>().ok()) {
+                for quad in windows.iter_mut() {
+                    quad.sound = Some(crate::scene::WindowSound { muted: false, sounding: None, peak: 0.0, gain });
+                    quad.mute_hot = true;
+                }
+            }
+
             // --- pointing and clicking ---
             let time_ms = started.elapsed().as_millis() as u32;
             let origin = eye_centre(orientation, &stereo);
@@ -1525,12 +1534,12 @@ pub fn run(
                                 if let Some(quad) = a.hit.and_then(|(i, _)| windows.get(i)) {
                                     if let Some(id) = runtime.state.layout.id_of(&quad.window) {
                                         // **Pressed and let go, it mutes; pressed and slid,
-                                        // it is this window's volume** -- left for quieter,
-                                        // right for louder than the application made it.
+                                        // it is this window's volume** -- left or down for
+                                        // quieter, right or up for louder than the application made it.
                                         let sound = quad.sound;
                                         speaker_slide = Some((
                                             id,
-                                            p.right_pad.x,
+                                            p.right_pad.x + p.right_pad.y,
                                             sound.map(|s| s.gain).unwrap_or(1.0),
                                             false,
                                             sound.map(|s| s.muted).unwrap_or(false),
@@ -1650,7 +1659,8 @@ pub fn run(
                     }
                     if let Some((id, from, gain, moved, muted)) = speaker_slide {
                         if right_click {
-                            let across = p.right_pad.x - from;
+                            // Right or up for louder, left or down for softer.
+                            let across = p.right_pad.x + p.right_pad.y - from;
                             let moved = moved || across.abs() > 0.015;
                             if moved {
                                 // The whole range in about a quarter of the view.

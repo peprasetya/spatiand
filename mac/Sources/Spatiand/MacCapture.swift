@@ -67,6 +67,13 @@ enum MacWindows {
         return subrole == (kAXStandardWindowSubrole as String) || subrole == (kAXDialogSubrole as String)
     }
 
+    /// Where a window is, on screen or not, in points.
+    static func bounds(_ id: CGWindowID) -> CGRect? {
+        guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]],
+              let bounds = list.first?[kCGWindowBounds as String] as? NSDictionary else { return nil }
+        return CGRect(dictionaryRepresentation: bounds)
+    }
+
     /// Ask a window to be this size, in points. It may decline: a window has its own limits.
     @discardableResult
     static func resize(_ info: MacWindowInfo, toPoints size: CGSize) -> Bool {

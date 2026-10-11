@@ -1081,8 +1081,10 @@ impl PointerState {
     pub fn scroll(&mut self, state: &mut Spatiand, dx: f64, dy: f64, time_ms: u32) {
         state.attention.stir();
         // Over a window's speaker the scroll is that window's volume, and nothing's page.
+        // The way the fingers go: down or left for softer, up or right for louder. (A page
+        // goes the other way to the fingers, which is why these signs look backwards.)
         if self.over_speaker {
-            self.volume_turn -= dy;
+            self.volume_turn += dy - dx;
             return;
         }
         let Some(pointer) = state.seat.get_pointer() else {

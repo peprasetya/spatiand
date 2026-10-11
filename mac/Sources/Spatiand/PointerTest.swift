@@ -81,6 +81,18 @@ enum PointerTest {
                 child.orderFront(nil)
             }
         }
+        // With --with-tab, a second tab after a while, chosen: to the Mac another window, in
+        // the same place, with the first gone from the screen.
+        if CommandLine.arguments.contains("--with-tab") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 9) {
+                let second = NSWindow(contentRect: window.frame, styleMask: [.titled, .resizable, .closable], backing: .buffered, defer: false)
+                second.title = title + " two"
+                second.contentView = ClickTargetView(frame: NSRect(x: 0, y: 0, width: 640, height: 420))
+                window.addTabbedWindow(second, ordered: .above)
+                second.makeKeyAndOrderFront(nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { window.makeKeyAndOrderFront(nil) }
+            }
+        }
         application.run()
         exit(0)
     }
