@@ -114,31 +114,48 @@ final class MacTap {
         let rate = format.mSampleRate > 0 ? format.mSampleRate : 48_000
         let interleaved = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
 
+        let micStreams = Self.inputStreams(ofDeviceWithUID: output)
         let debug = ProcessInfo.processInfo.environment["SPATIAND_DEBUG_TAP"] != nil
+        if debug { print("tap: the output device has \(micStreams) input stream(s) of its own") }
         if debug { print("tap: \(objects.count) process(es), format \(format.mSampleRate) Hz, \(channels) channel(s), interleaved \(interleaved), output \(output)") }
         var calls = 0
         let result = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregate, queue) { [weak self] _, input, _, _, _ in
             calls += 1
             if debug, calls == 1 || calls % 200 == 0 {
                 let list = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
-                print("tap: call \(calls), \(list.count) buffer(s), \(list.first?.mDataByteSize ?? 0) bytes, \(list.first?.mNumberChannels ?? 0) channel(s)")
+                let each = list.map { b -> String in
+                    let n = Int(b.mDataByteSize) / 4
+                    let p = b.mData?.assumingMemoryBound(to: Float.self)
+                    var peak: Float = 0
+                    for i in 0..<n { peak = max(peak, abs(p?[i] ?? 0)) }
+                    return "\(b.mNumberChannels) ch \(b.mDataByteSize) bytes peak \(peak)"
+                }
+                print("tap: call \(calls), \(list.count) buffer(s): \(each.joined(separator: "; "))")
             }
             guard let self, let sink = self.onSound else { return }
             let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
-            guard let first = buffers.first, let data = first.mData else { return }
-            let frames = Int(first.mDataByteSize) / (MemoryLayout<Float>.size * (interleaved ? channels : 1))
+            // **The tap's sound comes after the output device's own inputs.** A device that
+            // plays and also listens -- the glasses have a microphone -- hands its microphone
+            // over first, in the same list; read as the application's sound, that was the
+            // room's noise played in place of a film. And each buffer says for itself how many
+            // channels it holds: what the tap says of its format is not how it arrives here.
+            let at = min(micStreams, buffers.count - 1)
+            guard at >= 0, let data = buffers[at].mData else { return }
+            let held = max(1, Int(buffers[at].mNumberChannels))
+            let frames = Int(buffers[at].mDataByteSize) / (MemoryLayout<Float>.size * held)
             guard frames > 0 else { return }
             var out = [Float](repeating: 0, count: frames * 2)
-            if interleaved {
-                let p = data.assumingMemoryBound(to: Float.self)
+            let p = data.assumingMemoryBound(to: Float.self)
+            if held >= 2 {
                 for i in 0..<frames {
-                    out[i * 2] = p[i * channels]
-                    out[i * 2 + 1] = p[i * channels + min(1, channels - 1)]
+                    out[i * 2] = p[i * held]
+                    out[i * 2 + 1] = p[i * held + 1]
                 }
             } else {
-                let l = data.assumingMemoryBound(to: Float.self)
-                let r = buffers.count > 1 ? buffers[1].mData?.assumingMemoryBound(to: Float.self) : nil
-                for i in 0..<frames { out[i * 2] = l[i]; out[i * 2 + 1] = r?[i] ?? l[i] }
+                // One channel to a buffer: the next is the right, if there is a next.
+                let r = at + 1 < buffers.count && buffers[at + 1].mNumberChannels == 1 && buffers[at + 1].mDataByteSize == buffers[at].mDataByteSize
+                    ? buffers[at + 1].mData?.assumingMemoryBound(to: Float.self) : nil
+                for i in 0..<frames { out[i * 2] = p[i]; out[i * 2 + 1] = r?[i] ?? p[i] }
             }
             sink(out, rate)
         }
@@ -170,6 +187,20 @@ final class MacTap {
     /// Whether more of the application's processes are playing now than when the tap was made: a browser opening a
     /// tab's helper. The tap is then made again, with them in it.
     func needsRefresh() -> Bool { !Set(processObjects()).isSubset(of: processes) }
+
+    /// How many streams of sound a device takes in, itself: a microphone's.
+    private static func inputStreams(ofDeviceWithUID uid: String) -> Int {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyTranslateUIDToDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var device = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        var name = uid as CFString
+        guard withUnsafePointer(to: &name, { AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, UInt32(MemoryLayout<CFString>.size), $0, &size, &device) }) == noErr,
+              device != kAudioObjectUnknown else { return 0 }
+        var streams = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams, mScope: kAudioObjectPropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+        var bytes: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(device, &streams, 0, nil, &bytes) == noErr else { return 0 }
+        return Int(bytes) / MemoryLayout<AudioObjectID>.size
+    }
 
     private static func defaultOutputUID() -> String {
         let device = property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice, as: AudioObjectID.self, default: 0)

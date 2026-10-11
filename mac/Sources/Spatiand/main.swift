@@ -765,6 +765,26 @@ if CommandLine.arguments.contains("--selftest-child") {
     application.run()
 }
 
+if let at = CommandLine.arguments.firstIndex(of: "--selftest-app-sound") {
+    // --selftest-app-sound <application>: the room in a window, that application's first window
+    // brought into it, and twenty seconds of whatever it is playing taken for the room. What
+    // the tap and the sound engine say is in the log.
+    let name = CommandLine.arguments.dropFirst(at + 1).first ?? ""
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("SPATIAND_DEBUG_TAP", "1", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    DispatchQueue.main.async {
+        Room.shared.start(preview: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            Task { if let info = await MacWindows.list().first(where: { $0.app == name }) { RoomWindows.shared.bring(info) } else { print("app sound: FAILED, no window of \(name)") } }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 24) { Room.shared.stop(); exit(0) }
+    }
+    application.run()
+}
+
 if CommandLine.arguments.contains("--selftest-record") {
     // The room in a window, filmed for four seconds: says where the film is and how big.
     setenv("SPATIAND_HMD", "null", 1)
