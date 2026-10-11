@@ -380,6 +380,8 @@ async fn serve(
         // glasses, and a Mac's flat windows -- another session altogether -- tell it there are
         // none: whoever came next, never saying otherwise, had its room-capable applications
         // started as flat windows. Said before anything is launched.
+        // What the host was offering last time is asked for afresh.
+        super::offered_gone(&config.host, None);
         say(&out, ClientMessage::Glasses { on: super::GLASSES_ON.load(std::sync::atomic::Ordering::Relaxed) });
         for app in config.launch.iter().chain(launch_first.iter()) {
             say(&out, ClientMessage::Launch { app: app.clone() });
@@ -426,6 +428,7 @@ async fn serve(
                                     }
                                 }
                                 HostMessage::Opened(info) => {
+                                    super::offered_gone(&config.host, Some(info.window.0));
                                     log::info!(
                                         "remote: window {} is {} on {}",
                                         info.window.0, info.app, config.host
@@ -510,6 +513,7 @@ async fn serve(
                                     }
                                 }
                                 HostMessage::Closed { window } => {
+                                    super::offered_gone(&config.host, Some(window.0));
                                     client.close(window.0);
                                     streams.remove(&window.0);
                                     windows.remove(&window.0);
@@ -528,6 +532,9 @@ async fn serve(
                                     }
                                 }
                                 HostMessage::Notice { text } => super::host_notice_said(text),
+                                HostMessage::Offered { window, title } => {
+                                    super::offered_said(&config.host, window.0, title);
+                                }
                                 HostMessage::CursorDrawn { window, drawn } => {
                                     log::info!(
                                         "remote: window {} on {} {} its own pointer",
@@ -678,6 +685,9 @@ async fn serve(
                         }
                         Some(Command::Clipboard(what)) => {
                             say(&out, ClientMessage::Clipboard(what));
+                        }
+                        Some(Command::Show(window)) => {
+                            say(&out, ClientMessage::Show { window: spatiand_stream::WindowId(window) });
                         }
                         Some(Command::Glasses(on)) => {
                             say(&out, ClientMessage::Glasses { on });

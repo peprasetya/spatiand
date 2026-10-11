@@ -168,6 +168,8 @@ final class MacHost {
         openAtAttach = nil
         openedSince = []
         passedOver = []
+        offered = [:]
+        askedFor = []
         status = "In use"
         clipboard.connected = true
         link.say(["Welcome": ["version": Self.protocolVersion, "host": Host.current().localizedName ?? ProcessInfo.processInfo.hostName,
@@ -230,6 +232,10 @@ final class MacHost {
     private var openAtAttach: Set<CGWindowID>?
     private var openedSince: Set<CGWindowID> = []
     private var passedOver: Set<CGWindowID> = []
+    /// Windows offered to the session and not yet asked for, by the number each was offered
+    /// under; and the ones it has asked for.
+    private var offered: [UInt16: MacWindowInfo] = [:]
+    private var askedFor: Set<CGWindowID> = []
 
     private func tick() {
         guard attached else { return }
@@ -251,13 +257,28 @@ final class MacHost {
         // **What was open when the session attached waits to be asked for; what is opened while
         // it is attached is shared at once**, whichever application's it is -- as in the room.
         let here = Set(list.map(\.windowID))
-        if openAtAttach == nil { openAtAttach = here }
+        if openAtAttach == nil {
+            openAtAttach = here
+            // **What is already open on this Mac is offered**: in the session's list of windows,
+            // put away, each to be asked for. Nothing of them is captured or sent until then.
+            for info in list where !launched.contains(info.bundle) && MacWindows.isOrdinary(info) {
+                let id = nextID
+                nextID = nextID == UInt16.max ? 1 : nextID + 1
+                offered[id] = info
+                link.say(["Offered": ["window": Int(id), "title": info.title.isEmpty ? info.app : info.app + " \u{2014} " + info.title]])
+            }
+        }
+        // An offered window that has closed is off the list.
+        for (id, info) in offered where !here.contains(info.windowID) {
+            offered[id] = nil
+            link.say(["Closed": ["window": Int(id)]])
+        }
         for info in list where !(openAtAttach ?? []).contains(info.windowID) && !openedSince.contains(info.windowID) && !passedOver.contains(info.windowID) {
             if MacWindows.isOrdinary(info) { openedSince.insert(info.windowID) } else { passedOver.insert(info.windowID) }
         }
         openedSince.formIntersection(here)
         passedOver.formIntersection(here)
-        let wanted = list.filter { (launched.contains($0.bundle) && !passedOver.contains($0.windowID)) || openedSince.contains($0.windowID) }
+        let wanted = list.filter { (launched.contains($0.bundle) && !passedOver.contains($0.windowID)) || openedSince.contains($0.windowID) || askedFor.contains($0.windowID) }
         let byWindow = Dictionary(uniqueKeysWithValues: wanted.map { ($0.windowID, $0) })
         // Gone.
         for (id, s) in shared where byWindow[s.info.windowID] == nil {
@@ -288,8 +309,15 @@ final class MacHost {
 
     private func share(_ info: MacWindowInfo) {
         guard let link else { return }
-        let id = nextID
-        nextID = nextID == UInt16.max ? 1 : nextID + 1
+        // Under the number it was offered with, if it was: that is the one the session knows.
+        let id: UInt16
+        if let was = offered.first(where: { $0.value.windowID == info.windowID })?.key {
+            id = was
+            offered[was] = nil
+        } else {
+            id = nextID
+            nextID = nextID == UInt16.max ? 1 : nextID + 1
+        }
         let s = Shared(id: id, info: info)
         shared[id] = s
         let scale = NSScreen.screens.first { $0.frame.intersects(info.frame) }?.backingScaleFactor ?? 2
@@ -376,6 +404,11 @@ final class MacHost {
         switch name {
         case "Launch":
             if let app = fields["app"] as? String { launch(app) }
+        case "Show":
+            if let id = windowNumber(fields), let info = offered[id] {
+                askedFor.insert(info.windowID)
+                reconcile()
+            }
         case "Close":
             if let id = windowNumber(fields), let s = shared[id] { close(s.info) }
         case "Configure":

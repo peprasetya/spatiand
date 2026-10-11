@@ -397,7 +397,7 @@ pub fn run(
                         }
                         if let Some(intent) = intent_for(*control) {
                             if intent == spatiand_shell::Intent::ToggleSwitcher {
-                                shell.set_windows(runtime.state.open_windows());
+                                shell.set_windows(crate::remote::with_offered(runtime.state.open_windows()));
                             }
                             if let Some(event) = shell.handle(intent) {
                                 shell_events.push(event);
@@ -673,6 +673,10 @@ pub fn run(
                         sky_loader.load(&environments);
                     }
                     ShellEvent::FocusWindow(id) => {
+                        // A window a host is offering, not one of the room's: asked for there.
+                        if remotes.show_offered(id) {
+                            continue;
+                        }
                         let window = runtime
                             .state
                             .space
@@ -716,7 +720,7 @@ pub fn run(
                             .cloned();
                         if let Some(window) = window {
                             runtime.state.pin_window(&window, pinned);
-                            shell.refresh_windows(runtime.state.open_windows());
+                            shell.refresh_windows(crate::remote::with_offered(runtime.state.open_windows()));
                         }
                     }
                     // Hiding keeps the application running and its sound going; it only stops
@@ -739,7 +743,7 @@ pub fn run(
                             } else {
                                 runtime.state.show_window(&window);
                             }
-                            shell.refresh_windows(runtime.state.open_windows());
+                            shell.refresh_windows(crate::remote::with_offered(runtime.state.open_windows()));
                         }
                     }
                     ShellEvent::Controller(intent) => {
@@ -791,7 +795,7 @@ pub fn run(
                         HudAction::PipSize => {
                             crate::pip::toggle_size(&mut runtime.state, &mut prefs, &mut shell)
                         }
-                        HudAction::OpenSwitcher => shell.set_windows(runtime.state.open_windows()),
+                        HudAction::OpenSwitcher => shell.set_windows(crate::remote::with_offered(runtime.state.open_windows())),
                         HudAction::ControllerLayout => controls.open_editor(),
                         HudAction::ToggleKeyboard => {
                             keyboard.open = !keyboard.open;
@@ -1060,7 +1064,7 @@ pub fn run(
             if shell.mode() == Mode::Switcher
                 && !(runtime.state.arrived_windows.is_empty() && runtime.state.departed_windows.is_empty())
             {
-                shell.refresh_windows(runtime.state.open_windows());
+                shell.refresh_windows(crate::remote::with_offered(runtime.state.open_windows()));
             }
             let mut sinks_changed = false;
             for (id, pid, app_id) in std::mem::take(&mut runtime.state.arrived_windows) {

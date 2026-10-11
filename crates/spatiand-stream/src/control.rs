@@ -117,6 +117,9 @@ pub enum ClientMessage {
     /// Last in this enum, and must stay so: a host built before it reads an unknown variant
     /// rather than mistaking it for something else. See `crate::VERSION`.
     Glasses { on: bool },
+    /// Show a window the host offered ([`HostMessage::Offered`]). Answered with `Opened` and
+    /// its pictures, as for any other.
+    Show { window: WindowId },
 }
 
 /// What the host sends.
@@ -190,6 +193,12 @@ pub enum HostMessage {
     ///
     /// After `CursorDrawn`, and for the same reason must stay behind everything before it.
     Notice { text: String },
+    /// A window that is open on the host and not being shown: listed in the session, put away,
+    /// until the wearer asks for it ([`ClientMessage::Show`]). For a host whose windows are its
+    /// own desktop's -- a Mac -- where what is open was opened by whoever sits at it, not by
+    /// this session. `Closed` takes it off the list; `Opened` with the same number means it is
+    /// now being shown.
+    Offered { window: WindowId, title: String },
 }
 
 /// A window the host has.

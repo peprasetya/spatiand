@@ -179,6 +179,44 @@ pub enum Command {
     /// The glasses have come on, or off: an application that can be a room or a window is
     /// whichever suits.
     Glasses(bool),
+    /// Show a window the host has offered.
+    Show(u32),
+}
+
+/// Windows that hosts have open and are not showing: which host, its number there, what it is
+/// called, and a number of this session's own for the list of windows.
+static OFFERED: std::sync::Mutex<Vec<(String, u32, String, usize)>> = std::sync::Mutex::new(Vec::new());
+/// Clear of anything the compositor numbers its own windows with.
+const OFFERED_FROM: usize = 1 << 40;
+
+pub(crate) fn offered_said(host: &str, window: u32, title: String) {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(OFFERED_FROM);
+    let mut offered = OFFERED.lock().unwrap();
+    match offered.iter_mut().find(|o| o.0 == host && o.1 == window) {
+        Some(known) => known.2 = title,
+        None => offered.push((host.to_string(), window, title, NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))),
+    }
+}
+
+/// Shown now, or closed there: off the list either way. `None` is every window of that host's.
+pub(crate) fn offered_gone(host: &str, window: Option<u32>) {
+    OFFERED.lock().unwrap().retain(|o| o.0 != host || window.is_some_and(|w| o.1 != w));
+}
+
+/// The compositor's list of windows, with what hosts are offering after it: put away, to be
+/// asked for like any hidden window.
+pub fn with_offered(mut windows: Vec<spatiand_shell::WindowEntry>) -> Vec<spatiand_shell::WindowEntry> {
+    for (_, _, title, id) in OFFERED.lock().unwrap().iter() {
+        windows.push(spatiand_shell::WindowEntry {
+            id: *id,
+            title: title.clone(),
+            current: false,
+            hidden: true,
+            pinned: false,
+            room: false,
+        });
+    }
+    windows
 }
 
 /// The last notification a host sent, and when: shown for a glance and then let go of.
@@ -277,6 +315,10 @@ impl Remote {
 
     fn glasses(&self, on: bool) {
         let _ = self.commands.send(Command::Glasses(on));
+    }
+
+    fn show(&self, window: u32) {
+        let _ = self.commands.send(Command::Show(window));
     }
 
     fn viewport(&self, viewport: spatiand_stream::Viewport) {
@@ -471,6 +513,20 @@ impl Remotes {
     /// freeze the moment a window in front of it got focus. It is a hundred-odd bytes a frame,
     /// unreliable, and a host with nothing that asked for poses simply writes it into a ring
     /// nobody is reading.
+    /// The wearer chose something in the list of windows: if it is a window a host is offering,
+    /// ask that host to show it, and say so.
+    pub fn show_offered(&mut self, id: usize) -> bool {
+        if id < OFFERED_FROM {
+            return false;
+        }
+        let found = OFFERED.lock().unwrap().iter().find(|o| o.3 == id).map(|o| (o.0.clone(), o.1));
+        let Some((host, window)) = found else { return false };
+        for remote in self.hosts.iter().filter(|r| r.host == host) {
+            remote.show(window);
+        }
+        true
+    }
+
     /// **Every host is told whenever the glasses come on or go off**, not only when it is
     /// connected to: an application there that can draw a room for a head, or an ordinary window
     /// for nobody's, changes over while it runs (`set_glasses` on its control channel). Called

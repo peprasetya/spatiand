@@ -1111,7 +1111,7 @@ pub fn run(
                             // date. This is also what lets the shell decline to open with
                             // nothing open.
                             if intent == spatiand_shell::Intent::ToggleSwitcher {
-                                shell.set_windows(runtime.state.open_windows());
+                                shell.set_windows(crate::remote::with_offered(runtime.state.open_windows()));
                             }
                             if let Some(event) = shell.handle(intent) {
                                 shell_events.push(event);
@@ -1448,6 +1448,10 @@ pub fn run(
                     // window is over there somewhere" -- is the problem the switcher exists to
                     // solve.
                     ShellEvent::FocusWindow(id) => {
+                        // A window a host is offering, not one of the room's: asked for there.
+                        if remotes.show_offered(id) {
+                            continue;
+                        }
                         let window = runtime
                             .state
                             .space
@@ -1510,7 +1514,7 @@ pub fn run(
                             } else {
                                 runtime.state.show_window(&window);
                             }
-                            shell.refresh_windows(runtime.state.open_windows());
+                            shell.refresh_windows(crate::remote::with_offered(runtime.state.open_windows()));
                         }
                     }
                     // Pinning keeps the window running exactly as it was; it only moves it from
@@ -1525,7 +1529,7 @@ pub fn run(
                             .cloned();
                         if let Some(window) = window {
                             runtime.state.pin_window(&window, pinned);
-                            shell.refresh_windows(runtime.state.open_windows());
+                            shell.refresh_windows(crate::remote::with_offered(runtime.state.open_windows()));
                         }
                     }
                     ShellEvent::Controller(intent) => {
@@ -1606,7 +1610,7 @@ pub fn run(
                         // The shell has already switched mode; all that is owed is the list,
                         // exactly as for the environment picker.
                         HudAction::OpenSwitcher => {
-                            shell.set_windows(runtime.state.open_windows())
+                            shell.set_windows(crate::remote::with_offered(runtime.state.open_windows()))
                         }
                         // The shell has already switched to the editor; what is owed is the editor,
                         // opened on whatever is in front of the wearer.
@@ -2197,7 +2201,7 @@ pub fn run(
                 && !(runtime.state.arrived_windows.is_empty()
                     && runtime.state.departed_windows.is_empty())
             {
-                shell.refresh_windows(runtime.state.open_windows());
+                shell.refresh_windows(crate::remote::with_offered(runtime.state.open_windows()));
             }
             let mut sinks_changed = false;
             for (id, pid, app_id) in std::mem::take(&mut runtime.state.arrived_windows) {

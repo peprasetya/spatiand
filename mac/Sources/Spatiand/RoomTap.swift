@@ -224,6 +224,14 @@ final class RoomTap {
             if let bit = Self.modifierBit(code) { sp_key(code, event.flags.rawValue & bit != 0) }
         default:
             guard type.rawValue == 29, let gesture = NSEvent(cgEvent: event) else { break }
+            // **The Touch Bar's touches come the same way as the trackpad's**, and are not the
+            // room's: taken with the rest, the bar went dead for as long as the room had the
+            // mouse. A finger on a screen is a direct touch; one on a trackpad is not.
+            if gesture.type == .directTouch { return pass }
+            if gesture.type == .gesture || gesture.type == .beginGesture || gesture.type == .endGesture {
+                let touches = gesture.allTouches()
+                if !touches.isEmpty, touches.allSatisfy({ $0.type == .direct }) { return pass }
+            }
             if gesture.type == .magnify {
                 // Over a window of this Mac's own, the pinch is that application's.
                 if overMacWindow() { return pass }
