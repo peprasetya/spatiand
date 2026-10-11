@@ -226,10 +226,11 @@ final class RoomWindows {
                     // another tab chosen, is a window appearing exactly where one of the same
                     // application's has just gone from the screen. That is the same window in
                     // the room, showing something else -- not a second one beside it.
+                    // (Told at once by the application no longer counting the one that went
+                    // among its windows; it is a moment longer on the screen's own list.)
                     if let (id, _) = entries.first(where: { _, entry in
-                        guard entry.info.pid == info.pid, !all.contains(where: { $0.windowID == entry.info.windowID }) else { return false }
-                        let was = MacWindows.bounds(entry.info.windowID) ?? entry.info.frame
-                        return abs(was.minX - info.frame.minX) < 3 && abs(was.minY - info.frame.minY) < 3 && abs(was.width - info.frame.width) < 3 && abs(was.height - info.frame.height) < 3
+                        guard entry.info.pid == info.pid, same(MacWindows.bounds(entry.info.windowID) ?? entry.info.frame, info.frame) else { return false }
+                        return !all.contains(where: { $0.windowID == entry.info.windowID }) || MacWindows.axWindow(entry.info) == nil
                     }) {
                         becomes(id, info)
                         continue
@@ -239,6 +240,26 @@ final class RoomWindows {
                     // browser window asked for with Command-N is wanted where it can be seen.
                     let id = announce(info, hidden: true)
                     if scanned || following.contains(info.bundle) { sp_window_show(id) }
+                }
+                // And one taken for a new window all the same, because the tab it replaced had
+                // not yet gone when it was found: put right now that it has. The window that
+                // was in the room stays where it is and shows the tab; the other goes.
+                for (id, entry) in entries where entry.capture != nil && !all.contains(where: { $0.windowID == entry.info.windowID }) {
+                    let was = MacWindows.bounds(entry.info.windowID) ?? entry.info.frame
+                    guard let (other, now) = entries.first(where: { key, e in
+                        key != id && e.info.pid == entry.info.pid && all.contains(where: { $0.windowID == e.info.windowID }) && same(was, MacWindows.bounds(e.info.windowID) ?? e.info.frame)
+                    }) else { continue }
+                    let info = now.info
+                    now.capture?.onEnded = nil
+                    now.capture?.onFrame = nil
+                    now.capture?.invalidate()
+                    entries[other] = nil
+                    at[other] = nil
+                    down.remove(other)
+                    if focused == other { focused = id }
+                    sp_window_close(other)
+                    becomes(id, info)
+                    break
                 }
                 scanned = true
                 passedOver.formIntersection(Set(all.map(\.windowID)))
@@ -258,6 +279,10 @@ final class RoomWindows {
                 }
             }
         }
+    }
+
+    private func same(_ a: CGRect, _ b: CGRect) -> Bool {
+        abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 3 && abs(a.width - b.width) < 3 && abs(a.height - b.height) < 3
     }
 
     /// The window in the room is now this one of the Mac's: another tab of the same window.
