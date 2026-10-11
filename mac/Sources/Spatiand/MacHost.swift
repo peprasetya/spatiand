@@ -503,7 +503,14 @@ final class MacHost {
         case "Motion":
             guard let x = (fields["x"] as? NSNumber)?.doubleValue, let y = (fields["y"] as? NSNumber)?.doubleValue else { return }
             let type: CGEventType = pressedDown ? (pressedButton == .right ? .rightMouseDragged : .leftMouseDragged) : .mouseMoved
-            MacInput.mouse(type, button: pressedButton, at: s.capture.screenPoint(x: x, y: y), clicks: 1, window: info.windowID, pid: info.pid)
+            let point = s.capture.screenPoint(x: x, y: y)
+            let (down, button) = (pressedDown, pressedButton)
+            // Carried with the button down, it is the real pointer that is carried; only
+            // pointed, the application is told and the real pointer is left where it is.
+            MacInput.real.async {
+                if down { MacInput.realMouse(type, button: button, at: point, clicks: 1) }
+                else { MacInput.mouse(type, button: button, at: point, clicks: 1, window: info.windowID, pid: info.pid) }
+            }
             lastPoint = (x, y)
         case "Button":
             guard let code = (fields["button"] as? NSNumber)?.intValue, let down = fields["pressed"] as? Bool else { return }
@@ -527,13 +534,25 @@ final class MacHost {
                 default: return down ? .leftMouseDown : .leftMouseUp
                 }
             }()
-            MacInput.mouse(type, button: button, at: point, clicks: clicks, window: info.windowID, pid: info.pid)
+            let others = Set(shared.values.map(\.info.windowID)).union(offered.values.map(\.windowID))
+            MacInput.real.async {
+                if down { MacInput.bringForward(info, at: point, others: others) }
+                MacInput.realMouse(type, button: button, at: point, clicks: clicks)
+            }
         case "Scroll":
             let h = (fields["horizontal"] as? NSNumber)?.doubleValue ?? 0
             let v = (fields["vertical"] as? NSNumber)?.doubleValue ?? 0
             // A notch is a few units and a trackpad's pixels are many; a notch is about forty pixels.
             func pixels(_ d: Double) -> Int32 { Int32(-d * (abs(d) <= 3 ? 40 : 1)) }
-            MacInput.scroll(dx: pixels(h), dy: pixels(v), at: s.capture.screenPoint(x: lastPoint.0, y: lastPoint.1), window: info.windowID, pid: info.pid)
+            let point = s.capture.screenPoint(x: lastPoint.0, y: lastPoint.1)
+            let others = Set(shared.values.map(\.info.windowID)).union(offered.values.map(\.windowID))
+            let again = Date().timeIntervalSince(scrolledAt) > 0.5
+            scrolledAt = Date()
+            MacInput.real.async {
+                // Scrolled where the real pointer is, so the window has to be what is under it.
+                if again { MacInput.bringForward(info, at: point, others: others) }
+                MacInput.realScroll(dx: pixels(h), dy: pixels(v), at: point)
+            }
         case "Key":
             guard let code = (fields["code"] as? NSNumber)?.uint32Value, let down = fields["pressed"] as? Bool else { return }
             if down { held.insert(code) } else { held.remove(code) }
@@ -547,5 +566,6 @@ final class MacHost {
     }
 
     private var pressedDown = false
+    private var scrolledAt = Date.distantPast
     private var lastPoint: (Double, Double) = (0, 0)
 }

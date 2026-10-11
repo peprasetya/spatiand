@@ -753,6 +753,17 @@ impl Scene {
         }
     }
 
+    /// Pin an opening menu to a direction in the room: a window's, for a menu that is that
+    /// window's own.
+    pub fn anchor_menu_at(&mut self, mode: Mode, yaw: f64, pitch: f64) {
+        if self.anchored_for != Some(mode) {
+            (self.anchor_yaw, self.anchor_pitch) = (yaw as f32, pitch as f32);
+            self.anchored_for = Some(mode);
+            self.anchored_at = std::time::Instant::now();
+            self.closing = None;
+        }
+    }
+
     /// Treat the open menu as having finished arriving.
     ///
     /// For the snapshot backend, whose one frame should show a menu the way a wearer sees it a

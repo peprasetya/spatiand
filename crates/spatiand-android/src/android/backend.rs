@@ -192,6 +192,11 @@ pub fn run(
     let mut speaker_slide: Option<(usize, f32, f32, bool, bool)> = None;
     // How far a wheel has turned over an open menu, short of the next row.
     let mut menu_wheel = 0.0f32;
+    // Where the window is whose application's menu is open, for the menu to open over it.
+    #[allow(unused_mut, unused_variables)]
+    let mut app_menu_at: Option<(f64, f64)> = None;
+    // Where the pointer's pad was last frame while a menu was open: see where it is used.
+    let mut menu_pad_was: Option<(f32, f32)> = None;
     super::record::publish_leftovers();
     // How far a finger travels on the touch area, in pad units (2 across), for a menu row.
     const MENU_SWIPE_STEP: f32 = 0.18;
@@ -358,8 +363,16 @@ pub fn run(
             // An application's own menus, a level at a time as the app reads them.
             #[cfg(target_os = "macos")]
             match crate::mac::app_menu_said() {
-                Some(crate::mac::AppMenuSaid::Level { title, rows }) => shell.open_app_menu(&title, &rows),
-                Some(crate::mac::AppMenuSaid::Done) => shell.close_app_menu(),
+                Some(crate::mac::AppMenuSaid::Level { title, rows }) => {
+                    shell.open_app_menu(&title, &rows);
+                    // Over the window it is the menu of, not wherever the wearer happens to look.
+                    let (yaw, pitch) = app_menu_at.unwrap_or_else(|| crate::window::facing(tracker.recentred_orientation()));
+                    scene.anchor_menu_at(Mode::AppMenu, yaw, pitch);
+                }
+                Some(crate::mac::AppMenuSaid::Done) => {
+                    shell.close_app_menu();
+                    scene.forget_anchor();
+                }
                 None => {}
             }
             // **A wheel, or two fingers on a trackpad, moves through an open menu** a row at a
@@ -377,6 +390,7 @@ pub fn run(
                 }
             } else {
                 menu_wheel = 0.0;
+                menu_pad_was = None;
             }
             {
                 let c = &controller;
@@ -1230,7 +1244,14 @@ pub fn run(
                 .map(|p| {
                     let ray = ray_from_pad(p.right_pad.x, p.right_pad.y, orientation, origin, &pointer_config);
                     let target = scene.menu_target(&shell, &ray, (stereo.h_fov_deg, stereo.v_fov_deg()));
-                    if let Some((crate::scene::MenuTarget::Row(index), _)) = target {
+                    // **Only a pointer that has moved chooses the row it is on.** One at rest
+                    // over the list chose its row again every frame, so a wheel or a swipe
+                    // moved the highlight and had it put straight back: the list would not
+                    // scroll for as long as the pointer was anywhere on it.
+                    let here = (p.right_pad.x, p.right_pad.y);
+                    let moved = menu_pad_was.map_or(true, |was: (f32, f32)| (here.0 - was.0).abs() + (here.1 - was.1).abs() > 0.003);
+                    menu_pad_was = Some(here);
+                    if let Some((crate::scene::MenuTarget::Row(index), _)) = target.filter(|_| moved) {
                         // A tick per row crossed, as on the Deck.
                         if shell.point(index) {
                             controller.pulse(spatiand_input::HapticPad::Right, spatiand_input::Feel::Tick);
@@ -1253,6 +1274,11 @@ pub fn run(
             if let Some(target) = menu_pointed {
                 if pad_click {
                     controller.pulse(spatiand_input::HapticPad::Right, spatiand_input::Feel::Click);
+                    // What is pressed is the row under the pointer, wherever the highlight
+                    // had been scrolled to.
+                    if let crate::scene::MenuTarget::Row(index) = target {
+                        shell.point(index);
+                    }
                     let intent = match target {
                         crate::scene::MenuTarget::Row(_) => spatiand_shell::Intent::Accept,
                         crate::scene::MenuTarget::Back => spatiand_shell::Intent::Back,
@@ -1568,6 +1594,7 @@ pub fn run(
                                 #[cfg(target_os = "macos")]
                                 if let Some(quad) = a.hit.and_then(|(i, _)| windows.get(i)) {
                                     runtime.state.focus_window(&quad.window);
+                                    app_menu_at = Some((quad.placement.yaw, quad.placement.pitch));
                                     crate::mac::app_menu_wanted(&quad.window);
                                 }
                             }

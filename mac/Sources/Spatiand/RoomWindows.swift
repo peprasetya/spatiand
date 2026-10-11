@@ -289,11 +289,11 @@ final class RoomWindows {
         }
     }
 
-    /// Whether two frames are of tabs of one window: the same top left corner and width. Not
-    /// the height -- a window that gains a row of tabs grows by it, and the tab left behind
-    /// keeps the height it had.
+    /// Whether two frames are of tabs of one window: the same left edge and width. Not the
+    /// height, nor quite the top -- a window that gains a row of tabs grows by it, up or down,
+    /// and the tab left behind keeps the shape it had until it is next chosen.
     private func same(_ a: CGRect, _ b: CGRect) -> Bool {
-        abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 3 && abs(a.width - b.width) < 3
+abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) < 3
     }
 
     // MARK: scrolling
@@ -491,20 +491,7 @@ final class RoomWindows {
     /// The window on top at this point of the Mac's screen, and whose it is.
     /// Among ordinary windows and whatever `pid` has up: the system's own see-through sheets
     /// (the one notifications come down on covers the whole screen) are over everything, always.
-    private func topWindow(at p: CGPoint, for pid: pid_t) -> (pid: pid_t, id: CGWindowID)? {
-        let mine = ProcessInfo.processInfo.processIdentifier
-        for window in (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? [] {
-            guard let owner = window[kCGWindowOwnerPID as String] as? pid_t, owner != mine,
-                  let number = window[kCGWindowNumber as String] as? CGWindowID,
-                  owner == pid || (window[kCGWindowLayer as String] as? Int ?? 0) == 0,
-                  (window[kCGWindowAlpha as String] as? Double ?? 1) > 0.01,
-                  let bounds = window[kCGWindowBounds as String] as? NSDictionary, let frame = CGRect(dictionaryRepresentation: bounds),
-                  frame.contains(p) else { continue }
-            // The first found is the one on top: the list is front to back.
-            return (owner, number)
-        }
-        return nil
-    }
+    private func topWindow(at p: CGPoint, for pid: pid_t) -> (pid: pid_t, id: CGWindowID)? { MacInput.top(at: p, for: pid) }
 
     private func focus(_ id: UInt32) {
         focused = id

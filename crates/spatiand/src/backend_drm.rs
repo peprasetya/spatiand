@@ -322,6 +322,12 @@ pub fn run(
     // worked out after this frame's shell events have already been handled, because it needs
     // this frame's head pose. One frame late is a click nobody can feel.
     let mut pointed_events: Vec<ShellEvent> = Vec::new();
+    // The left thumb's travel over an open menu, short of the next row, in pad units; and how
+    // much of it is a row.
+    let mut menu_scroll = 0.0f32;
+    const MENU_SCROLL_STEP: f32 = 0.16;
+    // Where the pointer's pad was last frame while a menu was open.
+    let mut menu_pad_was: Option<(f32, f32)> = None;
     // Whether the right pad was clicked last frame, for a click's edge in a menu.
     let mut menu_click_was = false;
     // Where each ray meets the keyboard, as `[right, left]`, so the reticle can be put *on* it.
@@ -2357,7 +2363,13 @@ pub fn run(
                     );
                     let target =
                         scene.menu_target(&shell, &ray, (stereo.h_fov_deg, stereo.v_fov_deg()));
-                    if let Some((crate::scene::MenuTarget::Row(index), _)) = target {
+                    // **Only a pointer that has moved chooses the row it is on.** One at rest
+                    // over the list chose its row again every frame, so the left pad moved
+                    // the highlight and had it put straight back.
+                    let here = (p.right_pad.x, p.right_pad.y);
+                    let moved = menu_pad_was.map_or(true, |was: (f32, f32)| (here.0 - was.0).abs() + (here.1 - was.1).abs() > 0.003);
+                    menu_pad_was = Some(here);
+                    if let Some((crate::scene::MenuTarget::Row(index), _)) = target.filter(|_| moved) {
                         // A tick per row crossed, as the D-pad's steps are felt as presses.
                         if shell.point(index) {
                             if let Some(c) = controller.as_ref() {
@@ -2395,6 +2407,11 @@ pub fn run(
                 {
                     if let Some(c) = controller.as_ref() {
                         c.pulse(spatiand_input::HapticPad::Right, spatiand_input::Feel::Click);
+                    }
+                    // What is pressed is the row under the pointer, wherever the highlight
+                    // had been scrolled to.
+                    if let crate::scene::MenuTarget::Row(index) = target {
+                        shell.point(index);
                     }
                     let intent = match target {
                         crate::scene::MenuTarget::Row(_) => spatiand_shell::Intent::Accept,
@@ -2469,8 +2486,34 @@ pub fn run(
             // pads entirely, and a drag uses that same thumb to set the window's distance. The
             // ground it covers meanwhile has to be forgotten rather than saved up, or it all
             // arrives as one scroll the moment the thumb is handed back.
-            if shell.menu_is_open() || pointers.drag.is_some() {
-                left_scroll.forget();
+            //
+            // **In a menu it is the wheel still, and what it turns is the list**: a row for
+            // every step of the thumb's travel, up revealing what is below as a page does. The
+            // pointer reaches only the rows in view.
+            if shell.menu_is_open() {
+                match deck_input.as_ref().map(|p| left_scroll.update(&p.left_pad)) {
+                    Some(spatiand_input::Scroll::By { dy, .. }) => {
+                        menu_scroll += dy;
+                        while menu_scroll.abs() >= MENU_SCROLL_STEP {
+                            let down = menu_scroll > 0.0;
+                            menu_scroll -= if down { MENU_SCROLL_STEP } else { -MENU_SCROLL_STEP };
+                            let direction = if down { spatiand_shell::grid::Direction::Down } else { spatiand_shell::grid::Direction::Up };
+                            if let Some(c) = controller.as_ref() {
+                                c.pulse(spatiand_input::HapticPad::Left, spatiand_input::Feel::Tick);
+                            }
+                            if let Some(event) = shell.handle(spatiand_shell::Intent::Navigate(direction)) {
+                                pointed_events.push(event);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            } else {
+                menu_scroll = 0.0;
+                menu_pad_was = None;
+                if pointers.drag.is_some() {
+                    left_scroll.forget();
+                }
             }
 
             // A menu takes the pointer away -- except a menu asking for text, which needs it to

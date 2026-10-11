@@ -52,6 +52,8 @@ const MIN_HALF_WIDTH: f64 = 14.0 * std::f64::consts::PI / 180.0;
 /// two for their own supervisor. Eight is comfortably past anything real and stops a cycle in
 /// a malformed `/proc` from being an infinite loop.
 const ANCESTRY_DEPTH: usize = 8;
+/// How long after a launch a window nobody can trace is taken to be that application's.
+const UNCLAIMED_FOR: std::time::Duration = std::time::Duration::from_secs(45);
 
 /// The rate everything runs at.
 ///
@@ -63,6 +65,8 @@ pub struct Audio {
     engine: Option<Engine>,
     /// Slots given out at launch, waiting for a window to claim them.
     launched: Vec<(u32, Slot)>,
+    /// When each sink was claimed, for [`Self::unclaimed`].
+    claimed_at: Vec<(Slot, std::time::Instant)>,
     /// Which window owns which slot.
     bound: HashMap<usize, Slot>,
     /// How wide each sink was opened, so its channels are aimed as the ones it actually has.
@@ -89,6 +93,7 @@ impl Audio {
         Audio {
             engine,
             launched: Vec::new(),
+            claimed_at: Vec::new(),
             bound: HashMap::new(),
             widths: HashMap::new(),
             keyed: HashMap::new(),
@@ -135,6 +140,8 @@ impl Audio {
         // the dead app's.
         self.launched.retain(|(p, _)| *p != pid);
         self.launched.push((pid, slot));
+        self.claimed_at.retain(|(s, at)| *s != slot && at.elapsed() < UNCLAIMED_FOR);
+        self.claimed_at.push((slot, std::time::Instant::now()));
         // Bounded, so a long session of opening and closing apps does not accumulate. The
         // oldest entries are the least likely to still be waiting for a window.
         if self.launched.len() > 64 {
@@ -147,16 +154,30 @@ impl Audio {
         if self.engine.is_none() || self.bound.contains_key(&window) {
             return;
         }
-        let Some(pid) = client_pid else {
-            log::debug!("a window arrived without a process; its sound stays where it is");
-            return;
-        };
-        let Some(slot) = self.slot_of_process(pid) else {
-            log::debug!("no sink was claimed for pid {pid}; its sound stays where it is");
+        let Some(slot) = client_pid.and_then(|pid| self.slot_of_process(pid)).or_else(|| self.unclaimed()) else {
+            log::debug!("no sink was claimed for {client_pid:?}; its sound stays where it is");
             return;
         };
         self.bound.insert(window, slot);
         log::info!("window {window} sounds through slot {slot}");
+    }
+
+    /// The sink of the application launched last, if it is still running and has no window
+    /// yet: whose a window is when its process cannot be traced to a launch.
+    ///
+    /// **A sandboxed X11 application says a process number that means nothing outside its
+    /// sandbox.** A Flatpak has process numbers of its own, and an X11 window carries the one
+    /// the application knows itself by -- 2, or 30 -- so walking up from it never reaches the
+    /// `flatpak` that was launched. Its sound went into the sink made for it and its window
+    /// was never told so: played, and not placed. So a window nobody can trace is taken to be
+    /// the one that was being waited for.
+    fn unclaimed(&self) -> Option<Slot> {
+        self.claimed_at.iter().rev().find_map(|(slot, at)| {
+            let waiting = at.elapsed() < UNCLAIMED_FOR
+                && !self.bound.values().any(|held| held == slot)
+                && self.launched.iter().any(|(pid, held)| held == slot && process_alive(*pid));
+            waiting.then_some(*slot)
+        })
     }
 
     /// Give a window the sink kept under `key`, opening one if this is the first window with
