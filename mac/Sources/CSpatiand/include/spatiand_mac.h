@@ -113,6 +113,8 @@ void sp_window_show(uint32_t id);
 // Its newest picture, an IOSurfaceRef, held for as long as it is shown.
 // x, y, width, height: the part of the surface that is the window, in pixels; a width of 0 is all of it.
 void sp_window_picture(uint32_t id, const void *surface, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+/// Whether a window's picture has parts that are nothing, to be seen through.
+void sp_window_clear(uint32_t id, bool on);
 void sp_window_title(uint32_t id, const char *title);
 void sp_window_close(uint32_t id);
 

@@ -190,6 +190,8 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         return extent
     }
     private var extent: CGRect?
+    /// Whether the picture is of the window and something beside it, with corners that are neither.
+    var hasBeside: Bool { extent != nil }
     private var extentAt = Date.distantPast
     private var extentSize = CGSize.zero
     private var extentLooked = Date.distantPast

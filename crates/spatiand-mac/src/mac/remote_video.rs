@@ -193,6 +193,11 @@ pub fn crop_of(surface: &WlSurface) -> Option<[f32; 4]> {
     })
 }
 
+/// Whether this surface's picture has parts that are nothing, to be seen through.
+pub fn clear_of(surface: &WlSurface) -> bool {
+    token_of(surface).and_then(lookup).is_some_and(|output| output.clear())
+}
+
 /// Once a frame, after it is drawn: pictures off screen long enough are let go of, and windows
 /// that are gone give their textures up.
 pub fn end_frame(renderer: &mut GlesRenderer) {

@@ -117,6 +117,9 @@ pub struct Frame {
 #[derive(Default)]
 pub struct Output {
     latest: Mutex<Option<Frame>>,
+    /// The picture has parts that are nothing -- the corners between a window and what hangs
+    /// beside it -- and is to be drawn with them seen through.
+    clear: std::sync::atomic::AtomicBool,
 }
 
 impl Output {
@@ -134,6 +137,14 @@ impl Output {
         if let Ok(mut latest) = self.latest.lock() {
             *latest = Some(Frame { surface, crop, size });
         }
+    }
+
+    pub fn set_clear(&self, on: bool) {
+        self.clear.store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn clear(&self) -> bool {
+        self.clear.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The newest picture, if one has arrived since the last was taken.

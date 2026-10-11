@@ -19,7 +19,7 @@ pub use axis::{AxisMap, CURRENT_VERSION as AXIS_MAP_VERSION};
 pub use hard_iron::{FitState, HardIron};
 pub use memory::SensorMemory;
 pub use calibration::{Phase, PhaseCollector};
-pub use smoothing::{OneEuroFilter, PoseSmoother};
+pub use smoothing::{OneEuroFilter, PoseSmoother, Steady};
 pub use tracker::{Euler, HeadTracker, MagneticStatus, TrackerConfig};
 
 /// How far ahead to predict, in seconds. One frame at 72 Hz — the refresh the glasses run at

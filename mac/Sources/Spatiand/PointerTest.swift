@@ -38,6 +38,11 @@ final class ClickTargetView: NSView {
     }
 }
 
+/// A window with no title bar that may still have the keys, as a bubble or a popover has.
+final class KeyableWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+}
+
 enum PointerTest {
     static let title = "Spatiand click target"
 
@@ -57,11 +62,22 @@ enum PointerTest {
         // its right and bottom edges, as a browser's profile menu does: clicks in it are written too.
         if CommandLine.arguments.contains("--with-child") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 9) {
-                let child = NSWindow(contentRect: NSRect(x: window.frame.maxX - 120, y: window.frame.minY - 160, width: 320, height: 300), styleMask: [.borderless], backing: .buffered, defer: false)
+                let child = KeyableWindow(contentRect: NSRect(x: window.frame.maxX - 120, y: window.frame.minY - 160, width: 320, height: 300), styleMask: [.borderless], backing: .buffered, defer: false)
                 let inside = ClickTargetView(frame: NSRect(x: 0, y: 0, width: 320, height: 300))
                 inside.file = file + ".child"
                 child.contentView = inside
                 window.addChildWindow(child, ordered: .above)
+                // With --child-leaves it is as a browser's bubble is: it has the keys, and goes
+                // the moment it loses them -- as it does when the window it hangs from is
+                // brought forward. A click in it that is never heard is that having happened.
+                if CommandLine.arguments.contains("--child-leaves") {
+                    child.makeKeyAndOrderFront(nil)
+                    NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: child, queue: .main) { _ in
+                        try? "gone at \(Date().timeIntervalSince1970), the application \(NSApp.isActive ? "active" : "not active"), the key window \(NSApp.keyWindow?.title ?? "none")\n".write(toFile: file + ".left", atomically: true, encoding: .utf8)
+                        child.orderOut(nil)
+                    }
+                    return
+                }
                 child.orderFront(nil)
             }
         }
@@ -101,7 +117,10 @@ enum PointerTest {
         try? FileManager.default.removeItem(atPath: file)
         let helper = Process()
         helper.executableURL = Bundle.main.executableURL
-        helper.arguments = ["--click-target", file]
+        // --popup: the target hangs a bubble beside itself, and the bubble is what is clicked.
+        let popup = CommandLine.arguments.contains("--popup")
+        for extra in [".child", ".left"] { try? FileManager.default.removeItem(atPath: file + extra) }
+        helper.arguments = ["--click-target", file] + (popup ? ["--with-child", "--child-leaves"] : [])
         try? helper.run()
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
@@ -129,6 +148,21 @@ enum PointerTest {
                             guard RoomTap.shared.install() else { print("pointer: FAILED, no event tap"); failures += 1; finish(); return }
                             RoomTap.shared.hold(true)
                             let grid: [(Double, Double)] = [(0.5, 0.5), (0.2, 0.3), (0.8, 0.3), (0.2, 0.85), (0.8, 0.85), (0.5, 0.2)]
+                            if popup {
+                                // The bubble comes nine seconds after the target does; it hangs 200
+                                // points past the right edge and 160 below the bottom one.
+                                after(6) {
+                                    let size = MacWindows.currentFrame(info)?.size ?? info.frame.size
+                                    let scale = Double(NSScreen.main?.backingScaleFactor ?? 2)
+                                    let corner = ((Double(size.width) - 120) * scale, (Double(size.height) - 140) * scale)
+                                    let places = [(150.0, 250.0), (260.0, 120.0), (60.0, 60.0)].map { CGPoint(x: corner.0 + $0.0 * scale, y: corner.1 + $0.1 * scale) }
+                                    round(info, "in what hangs beside the window", [], pixels: places, into: file + ".child", from: corner) {
+                                        if let left = try? String(contentsOfFile: file + ".left", encoding: .utf8) { print("pointer: FAILED, what hung beside the window went away: \(left)"); failures += 1 }
+                                        finish()
+                                    }
+                                }
+                                return
+                            }
                             round(info, "as it opened", grid) {
                               round(info, "before the sweep", [(0.15, 0.5)]) {
                                sweep(info) {
@@ -226,14 +260,16 @@ enum PointerTest {
         }
 
         /// Point at each place in turn and click it; `then` when all are done.
-        func round(_ info: MacWindowInfo, _ what: String, _ places: [(Double, Double)], then: @escaping () -> Void) {
+        /// Or, with `pixels`, at those places of the picture, the clicks written to `into` by
+        /// something whose top left is at `from` in the picture.
+        func round(_ info: MacWindowInfo, _ what: String, _ places: [(Double, Double)], pixels: [CGPoint]? = nil, into: String? = nil, from: (Double, Double) = (0, 0), then: @escaping () -> Void) {
             let size = MacWindows.currentFrame(info)?.size ?? info.frame.size
             let scale = Double(NSScreen.main?.backingScaleFactor ?? 2)
-            var left = places
+            let file = into ?? file
+            var left = pixels ?? places.map { CGPoint(x: $0.0 * Double(size.width) * scale, y: $0.1 * Double(size.height) * scale) }
             func next() {
                 guard !left.isEmpty else { then(); return }
-                let place = left.removeFirst()
-                let wanted = CGPoint(x: place.0 * Double(size.width) * scale, y: place.1 * Double(size.height) * scale)
+                let wanted = left.removeFirst()
                 var tries = 0
                 var settled = 0
                 var steps: [(Double, Double)] = []
@@ -267,6 +303,7 @@ enum PointerTest {
                     if abs(ex) <= 2, abs(ey) <= 2 {
                         func clicks() -> [Substring] { ((try? String(contentsOfFile: file, encoding: .utf8)) ?? "").split(separator: "\n").filter { $0.hasPrefix("C ") } }
                         let before = clicks().count
+                        if into != nil { print("pointer: pressing at \(Date().timeIntervalSince1970)") }
                         button(true)
                         after(0.08) { button(false) }
                         after(0.6) {
@@ -278,7 +315,7 @@ enum PointerTest {
                                 return
                             }
                             let got = last.split(separator: " ").dropFirst().compactMap { Double($0) }
-                            let (gx, gy) = (got[0] * scale, got[1] * scale)
+                            let (gx, gy) = (got[0] * scale + from.0, got[1] * scale + from.1)
                             let error = hypot(gx - Double(at.x), gy - Double(at.y))
                             let good = error <= 4
                             if !good { failures += 1 }

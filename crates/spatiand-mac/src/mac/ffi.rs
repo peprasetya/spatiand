@@ -419,6 +419,13 @@ pub unsafe extern "C" fn sp_window_picture(id: u32, surface: *const c_void, x: u
     }
 }
 
+/// Whether a window's picture has parts that are nothing, to be seen through: it does while a
+/// menu or a list hangs beside the window and the picture is of both.
+#[no_mangle]
+pub extern "C" fn sp_window_clear(id: u32, on: bool) {
+    local::clear(id, on);
+}
+
 /// # Safety
 /// `title` must be a valid C string or null.
 #[no_mangle]

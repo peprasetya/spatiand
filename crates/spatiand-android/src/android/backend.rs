@@ -920,6 +920,26 @@ pub fn run(
             // Two frames ahead: this one through Android's compositor on its next tick, then
             // scanout -- the Beam Pro's latency, measured as smoothest.
             let orientation = tracker.predicted_orientation(super::PREDICT_AHEAD_S, spatiand_track::DEFAULT_PREDICTION_MAX_DEGREES);
+            // Held steady against the wearer's own pulse; see `spatiand_track::Steady`. On the
+            // Mac, where it was asked for, and off with SPATIAND_STEADY=0.
+            #[cfg(target_os = "macos")]
+            let orientation = {
+                thread_local! {
+                    static STEADY: std::cell::RefCell<(spatiand_track::Steady, Instant)> =
+                        std::cell::RefCell::new((spatiand_track::Steady::default(), Instant::now()));
+                    static WANTED: bool = std::env::var("SPATIAND_STEADY").map_or(true, |v| v != "0");
+                }
+                if WANTED.with(|w| *w) {
+                    STEADY.with(|s| {
+                        let mut s = s.borrow_mut();
+                        let dt = s.1.elapsed().as_secs_f64();
+                        s.1 = Instant::now();
+                        s.0.filter(orientation, dt)
+                    })
+                } else {
+                    orientation
+                }
+            };
 
             {
                 let dt = last_tick.elapsed();

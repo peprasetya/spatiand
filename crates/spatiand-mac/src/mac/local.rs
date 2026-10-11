@@ -166,6 +166,16 @@ pub unsafe fn picture(id: u32, surface: *const std::ffi::c_void, content: (u32, 
     }
 }
 
+/// A window has something hanging beside it, or no longer has: while it does, the picture is
+/// of both, and the corners that are neither are seen through.
+pub fn clear(id: u32, on: bool) {
+    if let Some(windows) = WINDOWS.get() {
+        if let Some(entry) = windows.entries.lock().unwrap().get(&id) {
+            entry.output.set_clear(on);
+        }
+    }
+}
+
 pub fn retitle(id: u32, title: &str) {
     send(Command::Title { id, title: title.to_string() });
 }

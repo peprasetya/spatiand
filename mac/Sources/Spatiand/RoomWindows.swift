@@ -252,9 +252,16 @@ final class RoomWindows {
         guard var entry = entries[id], entry.capture == nil else { return }
         let info = entry.info
         let capture = MacCapture(info)
+        var seenThrough = false
         capture.onFrame = { [weak capture] pixels, _ in
             guard let surface = CVPixelBufferGetIOSurface(pixels)?.takeUnretainedValue() else { return }
             let c = capture?.lastContent ?? .zero
+            // With a menu hung beside it the picture has corners that are nothing: seen through.
+            let beside = capture?.hasBeside ?? false
+            if beside != seenThrough {
+                seenThrough = beside
+                sp_window_clear(id, beside)
+            }
             sp_window_picture(id, Unmanaged.passUnretained(surface).toOpaque(), UInt32(max(0, c.minX)), UInt32(max(0, c.minY)), UInt32(max(0, c.width)), UInt32(max(0, c.height)))
         }
         capture.onEnded = { [weak self] in self?.gone(id) }
@@ -362,6 +369,24 @@ final class RoomWindows {
         }
     }
 
+    /// The window on top at this point of the Mac's screen, and whose it is.
+    /// Among ordinary windows and whatever `pid` has up: the system's own see-through sheets
+    /// (the one notifications come down on covers the whole screen) are over everything, always.
+    private func topWindow(at p: CGPoint, for pid: pid_t) -> (pid: pid_t, id: CGWindowID)? {
+        let mine = ProcessInfo.processInfo.processIdentifier
+        for window in (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? [] {
+            guard let owner = window[kCGWindowOwnerPID as String] as? pid_t, owner != mine,
+                  let number = window[kCGWindowNumber as String] as? CGWindowID,
+                  owner == pid || (window[kCGWindowLayer as String] as? Int ?? 0) == 0,
+                  (window[kCGWindowAlpha as String] as? Double ?? 1) > 0.01,
+                  let bounds = window[kCGWindowBounds as String] as? NSDictionary, let frame = CGRect(dictionaryRepresentation: bounds),
+                  frame.contains(p) else { continue }
+            // The first found is the one on top: the list is front to back.
+            return (owner, number)
+        }
+        return nil
+    }
+
     private func focus(_ id: UInt32) {
         focused = id
         if id != 0 { raise(id) }
@@ -405,7 +430,24 @@ final class RoomWindows {
         default: (button, downType, upType) = (.left, .leftMouseDown, .leftMouseUp)
         }
         if pressed {
-            if focused != id { focus(id) } else { raise(id) }
+            // **Not brought forward when the press is on what the application has put up
+            // itself.** A list of profiles, a bubble, a popover is a window of its own that
+            // goes away when another of the application's windows is made the main one --
+            // which bringing the window forward does. So a press on one closed it, and what
+            // was pressed in it was never chosen. Where what is on top at that point is the
+            // window itself, or something of the application's that is not one of its windows,
+            // there is nothing to bring: the application is made the active one and no more.
+            if let info = entries[id]?.info, let top = topWindow(at: p, for: info.pid), top.pid == info.pid,
+               top.id == info.windowID || !entries.values.contains(where: { $0.info.windowID == top.id }) {
+                focused = id
+                let app = NSRunningApplication(processIdentifier: info.pid)
+                if top.id != info.windowID { print("windows: a press on something \(info.app) has put up beside its window; the window is left where it is\(app?.isActive == true ? "" : ", and the application made the active one")") }
+                if app?.isActive != true {
+                    app?.activate(options: [])
+                    let deadline = Date().addingTimeInterval(0.25)
+                    while app?.isActive != true, Date() < deadline { usleep(5_000) }
+                }
+            } else if focused != id { focus(id) } else { raise(id) }
             RoomTap.shared.warp(to: p)
             // Twice in the same place, soon enough, is a double click: said in the event, since
             // the system that would have counted them never saw them.
