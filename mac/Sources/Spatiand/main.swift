@@ -750,7 +750,9 @@ if CommandLine.arguments.contains("--selftest-child") {
     helper.executableURL = Bundle.main.executableURL
     // --tab: a second tab instead of something hung beside, chosen and then the first again.
     let tab = CommandLine.arguments.contains("--tab")
-    helper.arguments = ["--click-target", NSTemporaryDirectory() + "spatiand-clicks.txt", tab ? "--with-tab" : "--with-child"]
+    // --goes: what hangs beside is taken away again after four seconds.
+    let goes = CommandLine.arguments.contains("--goes")
+    helper.arguments = ["--click-target", NSTemporaryDirectory() + "spatiand-clicks.txt", tab ? "--with-tab" : "--with-child"] + (goes ? ["--child-goes"] : [])
     try? helper.run()
     let application = NSApplication.shared
     application.setActivationPolicy(.accessory)
@@ -760,7 +762,83 @@ if CommandLine.arguments.contains("--selftest-child") {
         after(1.5) { sp_control(3, true); after(0.1) { sp_control(3, false) } }
         after(3) { Task { if let info = await MacWindows.list().first(where: { $0.title == PointerTest.title }) { RoomWindows.shared.bring(info) } else { print("child: FAILED, no target window") } } }
         after(14) { sp_screenshot() }
-        after(tab ? 22 : 17) { helper.terminate(); Room.shared.stop(); exit(0) }
+        after(tab || goes ? 22 : 17) { helper.terminate(); Room.shared.stop(); exit(0) }
+    }
+    application.run()
+}
+
+if let at = CommandLine.arguments.firstIndex(of: "--selftest-hover") {
+    // --selftest-hover <application> <part of a title> [--raise]: the room in a window, that
+    // window brought into it, a screenshot, the pointer moved about over it as the room does
+    // it, and another. With --raise the window is first brought to the top of the Mac's screen.
+    let rest = Array(CommandLine.arguments.dropFirst(at + 1))
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    func after(_ seconds: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body) }
+    DispatchQueue.main.async {
+        Room.shared.start(preview: true)
+        after(1.5) { sp_control(3, true); after(0.1) { sp_control(3, false) } }
+        after(3) {
+            Task {
+                guard let info = await MacWindows.list().first(where: { $0.app == rest.first && $0.title.contains(rest.dropFirst().first ?? "") }) else { print("hover: FAILED, no such window"); return }
+                RoomWindows.shared.bring(info)
+                DispatchQueue.main.async {
+                    if rest.contains("--raise") {
+                        after(1) { if let ax = MacWindows.axWindow(info) { AXUIElementPerformAction(ax, kAXRaiseAction as CFString) }; NSRunningApplication(processIdentifier: info.pid)?.activate(options: []) }
+                    }
+                    after(5) { print("hover: before"); sp_screenshot() }
+                    for i in 0..<40 {
+                        after(6 + Double(i) * 0.05) {
+                            let p = CGPoint(x: info.frame.minX + info.frame.width * (0.3 + 0.01 * Double(i)), y: info.frame.minY + info.frame.height * (0.3 + 0.01 * Double(i)))
+                            let event = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)
+                            event?.setIntegerValueField(.eventSourceUserData, value: spatiandEventMark)
+                            event?.postToPid(info.pid)
+                        }
+                    }
+                    after(8.5) { print("hover: moved about"); sp_screenshot() }
+                    after(12) { print("hover: and a while after"); sp_screenshot() }
+                }
+            }
+        }
+        after(16) { Room.shared.stop(); exit(0) }
+    }
+    application.run()
+}
+
+if CommandLine.arguments.contains("--selftest-terminal-tabs") {
+    // The room in a window, Terminal's front window brought into it, and then Command-T, and
+    // the first tab chosen again, as keys to Terminal. What is found of each window is in the log.
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("SPATIAND_DEBUG_TABS", "1", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    func after(_ seconds: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body) }
+    func key(_ code: CGKeyCode, _ flags: CGEventFlags) {
+        for down in [true, false] {
+            let e = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)
+            e?.flags = flags
+            e?.setIntegerValueField(.eventSourceUserData, value: spatiandEventMark)
+            e?.post(tap: .cghidEventTap)
+            usleep(30_000)
+        }
+    }
+    DispatchQueue.main.async {
+        Room.shared.start(preview: true)
+        after(3) {
+            Task {
+                guard let info = await MacWindows.list().first(where: { $0.app == "Terminal" && $0.title.hasPrefix(CommandLine.arguments.last ?? "") }) else { print("tabs: FAILED, no test window of Terminal's") ; return }
+                RoomWindows.shared.bring(info)
+                DispatchQueue.main.async {
+                    after(4) { NSRunningApplication(processIdentifier: info.pid)?.activate(options: []); if let ax = MacWindows.axWindow(info) { AXUIElementPerformAction(ax, kAXRaiseAction as CFString) } }
+                    after(10) { print("tabs: the tab before"); key(0x21, [.maskCommand, .maskShift]) }
+                    after(16) { print("tabs: the tab after"); key(0x1E, [.maskCommand, .maskShift]) }
+                }
+            }
+        }
+        after(24) { Room.shared.stop(); exit(0) }
     }
     application.run()
 }

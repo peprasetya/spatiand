@@ -226,6 +226,12 @@ final class RoomWindows {
                     // another tab chosen, is a window appearing exactly where one of the same
                     // application's has just gone from the screen. That is the same window in
                     // the room, showing something else -- not a second one beside it.
+                    if ProcessInfo.processInfo.environment["SPATIAND_DEBUG_TABS"] != nil {
+                        print("tabs: new \(info.app) window \(info.windowID) at \(info.frame)")
+                        for (id, entry) in entries where entry.info.pid == info.pid {
+                            print("tabs:   known \(id) window \(entry.info.windowID) at \(String(describing: MacWindows.bounds(entry.info.windowID))), on the screen's list \(all.contains(where: { $0.windowID == entry.info.windowID })), among the application's \(MacWindows.axWindow(entry.info) != nil), shown \(entry.capture != nil)")
+                        }
+                    }
                     // (Told at once by the application no longer counting the one that went
                     // among its windows; it is a moment longer on the screen's own list.)
                     if let (id, _) = entries.first(where: { _, entry in
@@ -266,8 +272,10 @@ final class RoomWindows {
                 for (id, entry) in entries {
                     if let now = all.first(where: { $0.windowID == entry.info.windowID }) {
                         entries[id]?.missed = 0
+                        // Where it is now is kept as well as what it is called: it is where a
+                        // tab that takes its place will be.
+                        if !now.title.isEmpty || now.frame != entry.info.frame { entries[id]?.info = now.title.isEmpty ? MacWindowInfo(windowID: now.windowID, pid: now.pid, bundle: now.bundle, app: now.app, title: entry.info.title, frame: now.frame) : now }
                         if now.title != entry.info.title, !now.title.isEmpty {
-                            entries[id]?.info = now
                             sp_window_title(id, now.app + " \u{2014} " + now.title)
                         }
                     } else if entry.capture == nil {

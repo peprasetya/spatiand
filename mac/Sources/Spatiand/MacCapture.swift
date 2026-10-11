@@ -67,11 +67,15 @@ enum MacWindows {
         return subrole == (kAXStandardWindowSubrole as String) || subrole == (kAXDialogSubrole as String)
     }
 
-    /// Where a window is, on screen or not, in points.
+    /// Where a window is, on screen or not, in points. (Asked for by its number alone, a
+    /// window that is not on screen is not found: a tab that is not the one chosen. So it is
+    /// looked for among them all.)
     static func bounds(_ id: CGWindowID) -> CGRect? {
-        guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]],
-              let bounds = list.first?[kCGWindowBounds as String] as? NSDictionary else { return nil }
-        return CGRect(dictionaryRepresentation: bounds)
+        for window in (CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]]) ?? [] where (window[kCGWindowNumber as String] as? CGWindowID) == id {
+            guard let bounds = window[kCGWindowBounds as String] as? NSDictionary else { return nil }
+            return CGRect(dictionaryRepresentation: bounds)
+        }
+        return nil
     }
 
     /// Ask a window to be this size, in points. It may decline: a window has its own limits.
@@ -127,6 +131,8 @@ enum MacWindows {
 final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     let info: MacWindowInfo
     private var stream: SCStream?
+    private let samples = DispatchQueue(label: "spatiand.maccapture", qos: .userInteractive)
+    private var watch: DispatchSourceTimer?
     private let lock = NSLock()
     private var newest: CVPixelBuffer?
     private var generation = 0
@@ -163,14 +169,36 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         self.config = config
         configuredSize = window.frame.size
         let s = SCStream(filter: filter, configuration: config, delegate: self)
-        try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "spatiand.maccapture", qos: .userInteractive))
+        try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: samples)
         try await s.startCapture()
         stream = s
+        // **Looked at twice a second whether or not a picture comes.** The capture is made to
+        // fit when the window changes size, or something hangs beside it, or stops hanging --
+        // and that was done only as pictures arrived. A page that is still sends none: so a
+        // tooltip that came and went left the capture the size of the window and the tooltip
+        // together, for good, with the window squeezed into it and grey round it.
+        let timer = DispatchSource.makeTimerSource(queue: samples)
+        timer.schedule(deadline: .now() + 0.5, repeating: 0.5)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            // Whether what hung beside it still does is seen by looking, not by the time since
+            // a picture last said so: a menu left open and still sends no pictures either.
+            if self.extent != nil, self.together(with: self.windowFrame()) == nil {
+                print("capture: \(self.info.app) is by itself again")
+                self.extent = nil
+                self.extentSize = .zero
+            }
+            self.followResize()
+        }
+        timer.resume()
+        watch = timer
     }
 
     enum CaptureError: Error { case gone }
 
     func invalidate() {
+        watch?.cancel()
+        watch = nil
         let s = stream
         stream = nil
         Task { try? await s?.stopCapture() }
@@ -192,7 +220,7 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// together. The capture is of both, so both are what the room shows and points into.
     func frame() -> CGRect {
         let window = windowFrame()
-        guard let extent, Date().timeIntervalSince(extentAt) < 1.0, extent.width >= window.width - 1, extent.height >= window.height - 1,
+        guard let extent, extent.width >= window.width - 1, extent.height >= window.height - 1,
               extent.width > window.width + 1 || extent.height > window.height + 1 else { return window }
         return extent
     }
@@ -218,20 +246,32 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         guard abs(size.width - extentSize.width) > 1 || abs(size.height - extentSize.height) > 1 || Date().timeIntervalSince(extentLooked) > 0.4 else { return }
         extentSize = size
         extentLooked = Date()
+        // Only what is really there on the screen is believed. What the capture says of its
+        // size is not, by itself: while it is being made to fit, that is a size in between,
+        // and taken at its word it once made a window shorter than it was.
+        guard let all = together(with: window) else {
+            if extent != nil { print("capture: \(info.app) is by itself again") }
+            extent = nil
+            return
+        }
+        if all != extent { print("capture: \(info.app) has something beside it: \(Int(all.width))x\(Int(all.height)) together, the window \(Int(window.width))x\(Int(window.height))") }
+        extent = all
+    }
+
+    /// The window and whatever else of its application's is on screen against it, as one
+    /// rectangle; nil if there is nothing against it.
+    private func together(with window: CGRect) -> CGRect? {
         var all = window
+        var found = false
         let near = window.insetBy(dx: -8, dy: -8)
         for other in (CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]) ?? [] {
             guard (other[kCGWindowOwnerPID as String] as? pid_t) == info.pid, (other[kCGWindowNumber as String] as? CGWindowID) != info.windowID,
                   let bounds = other[kCGWindowBounds as String] as? NSDictionary, let frame = CGRect(dictionaryRepresentation: bounds),
                   frame.intersects(near), frame.width < window.width * 1.5 else { continue }
             all = all.union(frame)
+            found = true
         }
-        // If they do not add up to what the capture says, it is taken to hang down and right.
-        if abs(all.width - size.width) > 8 || abs(all.height - size.height) > 8 {
-            all = CGRect(x: window.minX, y: window.minY, width: size.width, height: size.height)
-        }
-        if all != extent { print("capture: \(info.app) has something beside it: \(Int(all.width))x\(Int(all.height)) together, the window \(Int(window.width))x\(Int(window.height))") }
-        extent = all
+        return found ? all : nil
     }
 
     /// The window's own frame at this moment, in points.

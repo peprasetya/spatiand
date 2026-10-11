@@ -79,6 +79,10 @@ enum PointerTest {
                     return
                 }
                 child.orderFront(nil)
+                // With --child-goes it is taken away again, from a window that is otherwise still.
+                if CommandLine.arguments.contains("--child-goes") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 4) { window.removeChildWindow(child); child.orderOut(nil) }
+                }
             }
         }
         // With --with-tab, a second tab after a while, chosen: to the Mac another window, in
