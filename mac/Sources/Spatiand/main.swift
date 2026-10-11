@@ -767,6 +767,26 @@ if CommandLine.arguments.contains("--selftest-child") {
     application.run()
 }
 
+if let at = CommandLine.arguments.firstIndex(of: "--picture-settings") {
+    // --picture-settings <file>: the settings window, on the page SPATIAND_SETTINGS_PAGE says,
+    // drawn into a PNG. For looking at it without sitting at the Mac.
+    let file = CommandLine.arguments.dropFirst(at + 1).first ?? NSTemporaryDirectory() + "settings.png"
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    let settings = SettingsWindow(hotkeyStatus: { "Both chords are active." })
+    DispatchQueue.main.async {
+        settings.show()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            if let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(settings.number), [.boundsIgnoreFraming, .bestResolution]) {
+                let rep = NSBitmapImageRep(cgImage: image)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: file))
+            }
+            exit(0)
+        }
+    }
+    application.run()
+}
+
 if let at = CommandLine.arguments.firstIndex(of: "--selftest-hover") {
     // --selftest-hover <application> <part of a title> [--raise]: the room in a window, that
     // window brought into it, a screenshot, the pointer moved about over it as the room does
