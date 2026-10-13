@@ -19,6 +19,8 @@ pub mod player;
 pub mod screen;
 #[cfg(feature = "engine")]
 mod sound;
+#[cfg(feature = "engine")]
+pub mod still;
 
 pub use audio::{AudioSummary, SPATIAND_LAYOUTS};
 pub use hints::{ContainerHints, ContainerStereo};

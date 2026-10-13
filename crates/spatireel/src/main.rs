@@ -15,6 +15,7 @@ mod library;
 mod play;
 
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{channel, Receiver, Sender};
 
 use spatiand_app::ui::{theme, Button, Grid, Input, Painter, Shape, Tile};
 use spatiand_app::{App, Event, Key, WindowId};
@@ -35,11 +36,42 @@ struct Library {
     trail: Vec<usize>,
     /// What went wrong opening the last film chosen, said until something else is.
     trouble: Option<String>,
+    /// Films whose pictures have been asked for, and the pictures as they come: made by a
+    /// thread of their own, kept only here, and made again the next time the folder is shown.
+    asked: Vec<bool>,
+    /// Pictures of a folder that has been left, to be let go of at the next drawing.
+    left: Vec<spatiand_app::ui::Texture>,
+    wanted: Sender<(PathBuf, usize, u64)>,
+    made: Receiver<(usize, u64, Option<spatiand_media::still::Still>)>,
+    /// Which showing of a folder a picture is for: one that arrives for a folder since left
+    /// is not put on a tile of this one.
+    showing: u64,
+}
+
+/// The thread that makes a library's pictures, one at a time, in the order asked.
+fn stills() -> (Sender<(PathBuf, usize, u64)>, Receiver<(usize, u64, Option<spatiand_media::still::Still>)>) {
+    let (wanted, asked) = channel::<(PathBuf, usize, u64)>();
+    let (done, made) = channel();
+    let _ = std::thread::Builder::new().name("stills".into()).spawn(move || {
+        for (path, index, showing) in asked {
+            let still = spatiand_media::still::grab(&path.to_string_lossy(), 480);
+            if done.send((index, showing, still)).is_err() {
+                return;
+            }
+        }
+    });
+    (wanted, made)
 }
 
 impl Library {
     fn at(folder: PathBuf) -> Library {
+        let (wanted, made) = stills();
         let mut library = Library {
+            asked: Vec::new(),
+            left: Vec::new(),
+            wanted,
+            made,
+            showing: 0,
             folder: PathBuf::new(),
             entries: Vec::new(),
             tiles: Vec::new(),
@@ -55,6 +87,7 @@ impl Library {
     }
 
     fn show(&mut self, folder: PathBuf, cursor: usize) {
+        self.left.extend(self.tiles.iter().filter_map(|tile| tile.picture));
         self.entries = library::list(&folder);
         self.tiles = self
             .entries
@@ -66,6 +99,27 @@ impl Library {
             .collect();
         self.folder = folder;
         self.grid.cursor = cursor;
+        self.asked = vec![false; self.entries.len()];
+        self.showing += 1;
+    }
+
+    /// Ask for the pictures of the films on show, and put on their tiles the ones that have
+    /// come. Returns whether any did.
+    fn pictures(&mut self, p: &mut Painter, gl: &spatiand_app::Gl) -> bool {
+        for index in self.grid.in_view() {
+            if self.entries[index].kind == Kind::Film && !std::mem::replace(&mut self.asked[index], true) {
+                let _ = self.wanted.send((self.entries[index].path.clone(), index, self.showing));
+            }
+        }
+        let mut came = false;
+        for (index, showing, still) in self.made.try_iter() {
+            let (Some(still), true) = (still, showing == self.showing) else { continue };
+            if let Some(tile) = self.tiles.get_mut(index) {
+                tile.picture = p.texture(gl, &still.rgba, still.width, still.height).ok();
+                came = true;
+            }
+        }
+        came
     }
 
     fn go_up(&mut self) -> bool {
@@ -76,6 +130,9 @@ impl Library {
     }
 
     fn draw(&mut self, p: &mut Painter, gl: &spatiand_app::Gl) {
+        for old in self.left.drain(..) {
+            p.forget(gl, old);
+        }
         let mut all = p.bounds().inset(theme::PAD);
         let mut top = all.take_top(Button::HEIGHT);
         if self.folder.parent().is_some() {
@@ -204,10 +261,14 @@ impl Reel {
                 return Ok(());
             }
         }
+        // A picture for a tile is a reason to draw, as much as anything the wearer does.
+        let (library, painter) = (&mut self.library, &mut self.painter);
+        if let (Some(p), Ok(gl)) = (painter.as_mut(), self.app.gl()) {
+            self.dirty |= library.pictures(p, gl);
+        }
         if !std::mem::take(&mut self.dirty) {
             return Ok(());
         }
-        let (library, painter) = (&mut self.library, &mut self.painter);
         self.app.draw(self.window, |gl, size| {
             let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
             p.begin(gl, size, 1.0, theme::GROUND);
@@ -221,7 +282,8 @@ impl Reel {
         loop {
             // While a film plays there is a next picture to be on time for; otherwise only
             // the wearer can make anything change.
-            let wait = self.playing.as_ref().map(Playing::next_wake);
+            // In the library, a look now and then for the pictures its tiles are waiting on.
+            let wait = self.playing.as_ref().map(Playing::next_wake).or(Some(std::time::Duration::from_millis(200)));
             for event in self.app.wait(wait)? {
                 if !self.handle(event) {
                     return Ok(());

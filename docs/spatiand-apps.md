@@ -123,7 +123,7 @@ it has not been in front of anybody's eyes.
 | Launcher | `Level::Own`, the "Spatiand" bubble always first; `crates/spatiand/src/own.rs` lists the programs found beside the compositor (or in `SPATIAND_APPS_DIR`) and starts them. `mac/make-app.sh` puts SpatiReel in the bundle. |
 | `crates/spatiand-media` | `vibrefy-media` moved in: `layout`, `hints`, `audio`, `mesh` as they were (hints now read FFmpeg's stereo and spherical side data), and a new engine on FFmpeg in place of libmpv — `player` (reader, picture and sound threads, the sound's clock, seeking, sound-track choice), `sound` (cpal), `screen` (planes to colour in a shader, and a view from inside a sphere). VideoToolbox pictures stay on the GPU. |
 | `crates/vibrefy-api` | Moved in unchanged, for step 4. Taken from vibrefyApp's working tree at `254e043` plus its uncommitted changes. `vibrefy-wl` and the egui screens were not moved: the SDK and the toolkit replace them. |
-| `crates/spatireel` | A library of this machine's folders and films, and a film playing: flat, side by side and over-under (full and half), VR180 and VR360 (one eye, side by side, stacked). Flat films are a window whose eyes the room samples from the file's own frame; spheres are the room's sky with the window as controls; with one picture, or the sky refused, one eye in the window and a sphere looked about in by dragging. A menu corrects what a film was taken to be and chooses its sound track. |
+| `crates/spatireel` | A library of this machine's folders and films -- each film's tile a frame of it, made on a thread and held in memory only -- and a film playing: flat, side by side and over-under (full and half), VR180 and VR360 (one eye, side by side, stacked). Flat films are a window whose eyes the room samples from the file's own frame; spheres are the room's sky with the window as controls; with one picture, or the sky refused, one eye in the window and a sphere looked about in by dragging. A menu corrects what a film was taken to be and chooses its sound track. |
 
 **Checked**, all on an Intel Mac with the snapshot backend (`SPATIAND_CLIENT=… spatiand-mac`),
 which runs the real compositor and the real application as two processes and draws one eye to
@@ -151,8 +151,7 @@ never run. The Beam Pro: nothing built.
 * The Deck: VAAPI pictures kept on the GPU (they are decoded in software now); sound through
   cpal's ALSA has not been tried against Spatiand's per-window sinks; installing the programs
   beside the compositor.
-* SpatiReel: pictures for the library's tiles (a frame of the film, held in memory); subtitles;
-  HDR; surround placed in the room (sound is whatever the device's default layout is);
+* SpatiReel: subtitles; HDR; surround placed in the room (sound is whatever the device's default layout is);
   playback speed and sync offsets; VR360 looked about in with the keys; on a Mac the room does
   not yet place an application's sound at its window.
 * The pose channel is not in the SDK yet (SpatiLoupe's 3D objects will want it).
