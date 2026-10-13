@@ -71,6 +71,9 @@
 //! ```text
 //! SPATIAND_BACKEND=snapshot SPATIAND_CLIENT=foot SPATIAND_SNAPSHOT=/tmp/win.png spatiand
 //! ```
+//!
+//! `SPATIAND_SNAPSHOT_MODE=flat` tells clients the wearer sees one picture rather than two
+//! (`spatiand_xr_v1.display_mode`), for looking at what a Spatiand application does in 2D.
 
 use std::path::PathBuf;
 
@@ -559,6 +562,11 @@ pub fn run(
     if let Ok(typed) = std::env::var("SPATIAND_VIEW_TYPE") {
         shell.type_query(&typed);
     }
+    // A snapshot is one eye of a two-eye session unless told otherwise, which is how a client
+    // that draws differently for one picture than for two is looked at both ways.
+    runtime
+        .state
+        .set_display_stereo(std::env::var("SPATIAND_SNAPSHOT_MODE").as_deref() != Ok("flat"));
     if let Ok(command) = std::env::var("SPATIAND_CLIENT") {
         let seconds: f32 = std::env::var("SPATIAND_CLIENT_WAIT")
             .ok()

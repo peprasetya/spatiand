@@ -440,3 +440,19 @@ pub mod pose {
         }
     }
 }
+
+/// How a picture that is not in shared memory is named to the compositor.
+///
+/// Not Wayland, and here because both ends must agree on it exactly. A window whose picture
+/// lives where `wl_shm` cannot carry it is given an ordinary shared-memory buffer of the
+/// picture's size -- so that it is a window of the right shape like any other -- whose first
+/// bytes say where the picture really is, and the compositor draws that instead.
+pub mod handover {
+    /// A Mac's: the buffer begins with this, then the number of a *global* `IOSurface`
+    /// (four bytes), then eight bytes that are the same for every picture of one window and
+    /// different for every window. All little-endian. The application rewrites the number for
+    /// each picture and commits; the compositor reads it every frame, holds the surface it
+    /// names -- raising its use count, which is how the application knows not to draw into it
+    /// -- and lets go of the one before. "SPSF".
+    pub const MAC_SURFACE_MAGIC: u32 = 0x4653_5053;
+}

@@ -255,14 +255,45 @@ pub fn reset(surface: &WlSurface) {
 
 impl GlobalDispatch<SpatiandXrV1, ()> for Spatiand {
     fn bind(
-        _state: &mut Self,
+        state: &mut Self,
         _handle: &DisplayHandle,
         _client: &Client,
         resource: New<SpatiandXrV1>,
         _global_data: &(),
         data_init: &mut DataInit<'_, Self>,
     ) {
-        data_init.init(resource, ());
+        let global = data_init.init(resource, ());
+        // Said at once, so a client lays itself out for one picture or two before it has
+        // drawn anything, and never from a guess.
+        if global.version() >= 6 {
+            global.display_mode(display_mode(state.display_stereo));
+        }
+        state.xr_globals.push(global);
+    }
+}
+
+fn display_mode(stereo: bool) -> spatiand_xr_v1::DisplayMode {
+    if stereo {
+        spatiand_xr_v1::DisplayMode::Stereo
+    } else {
+        spatiand_xr_v1::DisplayMode::Flat
+    }
+}
+
+impl Spatiand {
+    /// The backend's word on whether each eye is drawn its own picture, passed on to every
+    /// client that can do something about it. Cheap to call every frame: it says nothing
+    /// unless the answer changed.
+    pub fn set_display_stereo(&mut self, stereo: bool) {
+        if std::mem::replace(&mut self.display_stereo, stereo) == stereo {
+            return;
+        }
+        log::info!("clients are told the wearer now sees {}", if stereo { "two pictures" } else { "one picture" });
+        for global in &self.xr_globals {
+            if global.version() >= 6 {
+                global.display_mode(display_mode(stereo));
+            }
+        }
     }
 }
 
@@ -308,6 +339,15 @@ impl Dispatch<SpatiandXrV1, ()> for Spatiand {
             spatiand_xr_v1::Request::Destroy => {}
             _ => {}
         }
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: smithay::reexports::wayland_server::backend::ClientId,
+        resource: &SpatiandXrV1,
+        _data: &(),
+    ) {
+        state.xr_globals.retain(|global| global != resource);
     }
 }
 

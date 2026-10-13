@@ -1,0 +1,32 @@
+[package]
+name = "spatiand-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "What a Spatiand application is written against: a window in the room, its input, GL, and the room's own widgets"
+
+# The whole of what an application sees. Underneath is the cut-down Wayland the compositor
+# speaks on the Deck, the Mac and the Beam Pro alike, and one way of handing over a picture
+# per platform; none of it is in this crate's interface, so none of it is an application's
+# business. See docs/spatiand-apps.md.
+[dependencies]
+spatiand-proto = { path = "../spatiand-proto", features = ["client"] }
+# The room's own text and its measurements, so an application's lists are the room's lists.
+spatiand-render = { path = "../spatiand-render" }
+log.workspace = true
+libc = "0.2"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+# What a key means: the compositor sends its keymap, and this reads it.
+xkbcommon = "0.8"
+memmap2 = "0.9"
+# The versions the OpenXR runtime already builds against, so the tree has one of each.
+glow = "0.16"
+khronos-egl = { version = "6", features = ["dynamic"] }
+libloading = "0.8"
+
+[dev-dependencies]
+env_logger.workspace = true
+png = "0.17"

@@ -295,6 +295,7 @@ pub fn run(
         let (w, h) = output.size;
         let on_glasses = hmd.is_some() && w >= h * 3;
         log::info!("presenting at {w}x{h}, stereo: {on_glasses}");
+        runtime.state.set_display_stereo(on_glasses);
 
         // Side by side, once the glasses are open and the window is not already double-width.
         if let Some(x) = hmd.as_mut() {

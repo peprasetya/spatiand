@@ -17,7 +17,8 @@ use std::ffi::c_void;
 use smithay::backend::egl::ffi::egl;
 use smithay::backend::renderer::gles::{ffi, GlesRenderer};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use spatiand_video::mac::{lookup, Frame, PLACEHOLDER_MAGIC};
+use spatiand_proto::handover::MAC_SURFACE_MAGIC;
+use spatiand_video::mac::{lookup, Frame, Surface, PLACEHOLDER_MAGIC};
 
 const IOSURFACE_ANGLE: u32 = 0x3454;
 const IOSURFACE_PLANE_ANGLE: i32 = 0x345A;
@@ -46,7 +47,7 @@ struct Slot {
 
 #[derive(Default)]
 struct Pictures {
-    slots: HashMap<u32, Slot>,
+    slots: HashMap<u64, Slot>,
     retired: VecDeque<(Showing, u64)>,
     frame: u64,
     complained: bool,
@@ -57,22 +58,55 @@ thread_local! {
     static PICTURES: RefCell<Pictures> = RefCell::new(Pictures::default());
 }
 
-/// The token in a surface's buffer, if its buffer is a placeholder.
-fn token_of(surface: &WlSurface) -> Option<u32> {
+/// Where a placeholder says its window's pictures are.
+#[derive(Clone, Copy)]
+enum Source {
+    /// In this process: an output, found by its token.
+    Token(u32),
+    /// In another -- a Spatiand application's: a global surface by its number, and the name of
+    /// the window's run of them. See `spatiand_proto::handover`.
+    Shared { surface: u32, stream: u64 },
+}
+
+impl Source {
+    /// What this window's slot is kept under. An application's are told apart from tokens by
+    /// the top bit, which no token has.
+    fn key(self) -> u64 {
+        match self {
+            Source::Token(token) => token as u64,
+            Source::Shared { stream, .. } => stream | 1 << 63,
+        }
+    }
+}
+
+/// What a surface's buffer names, if its buffer is a placeholder.
+fn source_of(surface: &WlSurface) -> Option<Source> {
     use smithay::backend::renderer::utils::with_renderer_surface_state;
     let buffer = with_renderer_surface_state(surface, |st| st.buffer().cloned()).flatten()?;
     smithay::wayland::shm::with_buffer_contents(&buffer, |ptr, len, data| {
         let at = data.offset as usize;
-        if len < at + 8 {
+        if len < at + 16 {
             return None;
         }
-        let head = unsafe { std::slice::from_raw_parts(ptr.add(at), 8) };
-        let magic = u32::from_le_bytes([head[0], head[1], head[2], head[3]]);
-        let token = u32::from_le_bytes([head[4], head[5], head[6], head[7]]);
-        (magic == PLACEHOLDER_MAGIC).then_some(token)
+        let head = unsafe { std::slice::from_raw_parts(ptr.add(at), 16) };
+        let word = |i: usize| u32::from_le_bytes([head[i], head[i + 1], head[i + 2], head[i + 3]]);
+        match word(0) {
+            PLACEHOLDER_MAGIC => Some(Source::Token(word(4))),
+            MAC_SURFACE_MAGIC => {
+                Some(Source::Shared { surface: word(4), stream: word(8) as u64 | (word(12) as u64) << 32 })
+            }
+            _ => None,
+        }
     })
     .ok()
     .flatten()
+}
+
+fn token_of(surface: &WlSurface) -> Option<u32> {
+    match source_of(surface)? {
+        Source::Token(token) => Some(token),
+        Source::Shared { .. } => None,
+    }
 }
 
 /// The config the current context was made with, which a pbuffer for it must share.
@@ -121,17 +155,37 @@ unsafe fn let_go(display: *const c_void, showing: Showing) {
 /// The texture to draw for this surface: its newest picture if it is a placeholder's, and
 /// `texture` -- its own -- otherwise.
 pub fn substitute(renderer: &mut GlesRenderer, surface: &WlSurface, texture: u32) -> u32 {
-    let Some(token) = token_of(surface) else {
+    let Some(source) = source_of(surface) else {
         return texture;
     };
-    let Some(output) = lookup(token) else {
-        return texture;
+    let output = match source {
+        Source::Token(token) => match lookup(token) {
+            Some(output) => Some(output),
+            None => return texture,
+        },
+        Source::Shared { .. } => None,
     };
+    let token = source.key();
     PICTURES.with(|pictures| {
         let mut pictures = pictures.borrow_mut();
         let pictures = &mut *pictures;
         let frame_no = pictures.frame;
-        let fresh = output.take_latest();
+        let fresh = match source {
+            Source::Token(_) => output.and_then(|output| output.take_latest()),
+            // A new picture is a new number in the placeholder; the same number is the picture
+            // already held, which the application will not draw into while it is.
+            Source::Shared { surface: id, .. } => {
+                let showing = pictures.slots.get(&token).and_then(|slot| slot.showing.as_ref());
+                if showing.is_some_and(|showing| showing.frame.surface.id() == id) {
+                    None
+                } else {
+                    Surface::open(id).map(|surface| {
+                        let size = surface.size();
+                        Frame { surface, crop: [0.0, 0.0, 1.0, 1.0], size }
+                    })
+                }
+            }
+        };
         let drawn = renderer.with_context(|gl| unsafe {
             let display = egl::GetCurrentDisplay();
             let slot = pictures.slots.entry(token).or_insert_with(|| {
@@ -185,7 +239,7 @@ pub fn substitute(renderer: &mut GlesRenderer, surface: &WlSurface, texture: u32
 /// Which part of the picture being shown for this surface is picture, where it is not all of
 /// it, in the scene's order.
 pub fn crop_of(surface: &WlSurface) -> Option<[f32; 4]> {
-    let token = token_of(surface)?;
+    let token = token_of(surface)? as u64;
     PICTURES.with(|pictures| {
         let crop = pictures.borrow().slots.get(&token)?.showing.as_ref()?.frame.crop;
         // The scene's order: (u0, u1, v0, v1).
@@ -212,10 +266,13 @@ pub fn end_frame(renderer: &mut GlesRenderer) {
                 let (showing, _) = pictures.retired.pop_front().unwrap();
                 let_go(display, showing);
             }
-            let stale: Vec<u32> = pictures
+            // An application's window has no output to ask after: its slot goes when nothing
+            // has asked for it for a while, and comes back if anything does.
+            let gone = |key: u64| key >> 63 == 1 || lookup(key as u32).is_none();
+            let stale: Vec<u64> = pictures
                 .slots
                 .iter()
-                .filter(|(token, slot)| lookup(**token).is_none() && now > slot.last_used + RETIRE_AFTER)
+                .filter(|(token, slot)| gone(**token) && now > slot.last_used + RETIRE_AFTER)
                 .map(|(token, _)| *token)
                 .collect();
             for token in stale {

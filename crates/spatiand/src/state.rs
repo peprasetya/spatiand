@@ -208,6 +208,11 @@ pub struct Spatiand {
     /// first served. Claimed when the request arrives rather than when it commits, because
     /// two clients asking in the same frame have to get different answers.
     pub sky_owner: Option<WlSurface>,
+    /// Every client's `spatiand_xr_v1`, to be told when the wearer goes between one picture
+    /// and two. See [`Spatiand::set_display_stereo`].
+    pub xr_globals: Vec<spatiand_proto::server::spatiand_xr_v1::SpatiandXrV1>,
+    /// Whether each eye is being drawn its own picture, as the backend last said.
+    pub display_stereo: bool,
     /// Clients waiting to be handed the shared-memory pose channel.
     pub pose_clients:
         Vec<spatiand_proto::server::spatiand_xr_pose_channel_v1::SpatiandXrPoseChannelV1>,
@@ -299,7 +304,7 @@ impl Spatiand {
         // Stereo, head-locked and immersive surfaces. Binding it says nothing and changes
         // nothing: an application that ignores it is an ordinary window, which is the whole
         // design. See `crate::xr` and the protocol XML.
-        dh.create_global::<Self, spatiand_proto::server::spatiand_xr_v1::SpatiandXrV1, _>(5, ());
+        dh.create_global::<Self, spatiand_proto::server::spatiand_xr_v1::SpatiandXrV1, _>(6, ());
 
         // The screen clients see. Refresh is a placeholder until a backend reports the real
         // one; the size is the size every toplevel is offered.
@@ -371,6 +376,8 @@ impl Spatiand {
             xwayland_shell_state,
             xr_surfaces: Vec::new(),
             sky_owner: None,
+            xr_globals: Vec::new(),
+            display_stereo: false,
             pose_clients: Vec::new(),
             pose_channels_to_open: false,
             attention: crate::attention::Attention::default(),

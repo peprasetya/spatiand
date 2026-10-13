@@ -52,7 +52,7 @@
     The per-frame values are not on the wire at all -- see the pose channel.
   </description>
 
-  <interface name="spatiand_xr_v1" version="5">
+  <interface name="spatiand_xr_v1" version="6">
     <description summary="stereoscopic and head-tracked surfaces">
       The factory. Binding it says nothing and changes nothing.
     </description>
@@ -89,6 +89,28 @@
       <entry name="bad_layer" value="1" summary="layer value not in the enum"/>
       <entry name="bad_layout" value="2" summary="eye layout value not in the enum"/>
       <entry name="bad_anchor" value="3" summary="resize anchor value not in the enum"/>
+    </enum>
+
+    <event name="display_mode" since="6">
+      <description summary="whether the wearer is being shown one picture or two">
+        Sent once when the global is bound, and again whenever it changes --
+        the glasses unplugged from a Mac, which then shows its windows on its
+        own screen; a headset that has only just gone into its two-eye mode.
+
+        Nothing a client has claimed is taken away by it: an eye layout is
+        still honoured in "flat", by showing one eye's half to both. It is for
+        the client that has a choice -- one that can draw a model once or
+        twice, or that would rather show a film's left eye at full sharpness
+        than have it halved -- to make it at the moment it matters and not
+        from a guess. A flat window that binds this and ignores the event is
+        an ordinary window and stays one.
+      </description>
+      <arg name="mode" type="uint" enum="display_mode"/>
+    </event>
+
+    <enum name="display_mode" since="6">
+      <entry name="flat" value="0" summary="one picture, the same for both eyes or on a screen"/>
+      <entry name="stereo" value="1" summary="each eye is drawn its own picture"/>
     </enum>
   </interface>
 

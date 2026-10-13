@@ -4009,6 +4009,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatiand-app"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "glow",
+ "khronos-egl",
+ "libc",
+ "libloading",
+ "log",
+ "memmap2",
+ "png 0.17.16",
+ "spatiand-proto",
+ "spatiand-render",
+ "wayland-client",
+ "wayland-protocols",
+ "xkbcommon",
+]
+
+[[package]]
 name = "spatiand-audio"
 version = "0.1.0"
 dependencies = [

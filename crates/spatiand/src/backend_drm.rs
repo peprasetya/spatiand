@@ -826,6 +826,7 @@ pub fn run(
             }
         }
         log::info!("presenting at {w}x{h}, stereo: {on_glasses}");
+        runtime.state.set_display_stereo(on_glasses);
         say!(crate::startup::Stage::World);
         // Now that there is a renderer, clients can be offered dmabuf -- the formats come from
         // it, and there is nothing truthful to advertise before it exists.
