@@ -72,7 +72,7 @@ final class Room {
         // The sound of each application with a window on show, taken and placed at that window.
         if Settings.soundPlacement, !preview || ProcessInfo.processInfo.environment["SPATIAND_DEBUG_TAP"] != nil {
             sound.onProblem = { print("sound: \($0)") }
-            let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.sound.reconcile(wanted: RoomWindows.shared.onShow) }
+            let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.sound.reconcile(wanted: RoomWindows.shared.onShow, screen: RoomWindows.shared.screenOnShow) }
             RunLoop.main.add(t, forMode: .common)
             soundTimer = t
         }

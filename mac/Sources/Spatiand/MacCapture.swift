@@ -156,6 +156,8 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// The display this is a picture of, when it is a screen's and not a window's.
     private var display: CGDirectDisplayID?
     var isScreen: Bool { info.display != nil }
+    /// A screen's picture at the size it looks rather than in every pixel it is drawn with.
+    var pointsOnly = false
 
     /// A whole screen: everything on it but Spatiand's own windows, with the Mac's pointer in
     /// the picture, since in a screen that is the pointer.
@@ -176,7 +178,7 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         let filter = SCContentFilter(display: found, excludingApplications: mine, exceptingWindows: [])
         let config = SCStreamConfiguration()
         let mode = CGDisplayCopyDisplayMode(id)
-        let pixels = CGSize(width: mode?.pixelWidth ?? found.width, height: mode?.pixelHeight ?? found.height)
+        let pixels = pointsOnly ? CGSize(width: found.width, height: found.height) : CGSize(width: mode?.pixelWidth ?? found.width, height: mode?.pixelHeight ?? found.height)
         scale = pixels.width / CGFloat(max(1, found.width))
         config.width = Int(pixels.width)
         config.height = Int(pixels.height)

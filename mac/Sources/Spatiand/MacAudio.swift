@@ -21,13 +21,22 @@ final class MacAudio: NSObject, SCStreamOutput, SCStreamDelegate {
     var onSound: ((Data) -> Void)?
     var onEnded: (() -> Void)?
 
-    init(bundle: String) { self.bundle = bundle }
+    /// For a screen's sound -- everything this Mac plays -- the applications left out of it:
+    /// the ones with windows of their own in the session, which have streams of their own.
+    private let apart: Set<String>
+    init(bundle: String, apart: Set<String> = []) { self.bundle = bundle; self.apart = apart }
 
     func start() async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
-        guard let app = content.applications.first(where: { $0.bundleIdentifier == bundle }),
-              let display = content.displays.first else { throw MacCapture.CaptureError.gone }
-        let filter = SCContentFilter(display: display, including: [app], exceptingWindows: [])
+        guard let display = content.displays.first else { throw MacCapture.CaptureError.gone }
+        let filter: SCContentFilter
+        if bundle == MacScreens.bundle {
+            let mine = ProcessInfo.processInfo.processIdentifier
+            filter = SCContentFilter(display: display, excludingApplications: content.applications.filter { apart.contains($0.bundleIdentifier) || $0.processID == mine }, exceptingWindows: [])
+        } else {
+            guard let app = content.applications.first(where: { $0.bundleIdentifier == bundle }) else { throw MacCapture.CaptureError.gone }
+            filter = SCContentFilter(display: display, including: [app], exceptingWindows: [])
+        }
         let config = SCStreamConfiguration()
         config.capturesAudio = true
         config.sampleRate = 48_000

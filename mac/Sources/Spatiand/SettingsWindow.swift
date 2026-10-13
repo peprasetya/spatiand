@@ -21,6 +21,7 @@ struct SettingsView: View {
     let hotkeyStatus: () -> String
 
     @AppStorage("hostEnabled", store: Defaults.store) private var hostEnabled = false
+    @AppStorage("virtualScreen", store: Defaults.store) private var virtualScreen = "1920x1080"
 
     /// Which page is open; a test may say which to begin on.
     @State private var page = Int(ProcessInfo.processInfo.environment["SPATIAND_SETTINGS_PAGE"] ?? "") ?? 0
@@ -52,6 +53,13 @@ struct SettingsView: View {
             }
             Section {
                 Toggle("Show this Mac\u{2019}s notifications under the clock", isOn: $notifications)
+            }
+            Section("Virtual screen") {
+                Picker("Size", selection: $virtualScreen) {
+                    ForEach(MacScreens.sizes, id: \.name) { Text($0.name).tag("\($0.width)x\($0.height)") }
+                }
+                .onChange(of: virtualScreen) { _ in MacScreens.forget() }
+                note("A screen of its own for this Mac, shown only in the glasses or on a device using this Mac: bring it out from the list of windows, under Screens. macOS takes it for a monitor, so windows can be put on it and it is arranged in System Settings \u{2192} Displays. Changing the size closes it; it is made again when next brought out.")
             }
         }
         .formStyle(.grouped)

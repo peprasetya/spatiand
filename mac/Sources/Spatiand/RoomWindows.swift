@@ -87,6 +87,13 @@ final class RoomWindows {
         return out
     }
 
+    /// Whether a screen is among what is on show: its sound is everything else's.
+    var screenOnShow: Bool {
+        insideLock.lock()
+        defer { insideLock.unlock() }
+        return showing.contains { $0.info.display != nil }
+    }
+
     /// The windows on show, kept for whoever asks from another thread. **Nothing waits for the
     /// queue**: it does things to other applications that take as long as those applications
     /// like, and the main thread -- which is where the mouse and keyboard come in -- waiting

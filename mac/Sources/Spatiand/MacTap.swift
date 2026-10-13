@@ -27,7 +27,17 @@ final class MacTap {
     private(set) var running = false
     private(set) var lastError = ""
 
-    init(bundle: String, pid: pid_t) { self.bundle = bundle; appPID = pid }
+    init(bundle: String, pid: pid_t) { self.bundle = bundle; appPID = pid; excluding = nil }
+
+    /// Everything this Mac plays, but for some applications -- the ones whose sound is taken by
+    /// taps of their own -- and Spatiand itself: the sound of a whole screen.
+    private let excluding: [pid_t]?
+    init(everythingBut pids: [pid_t]) {
+        bundle = MacScreens.bundle
+        appPID = 0
+        excluding = pids + [ProcessInfo.processInfo.processIdentifier]
+    }
+    var isEverything: Bool { excluding != nil }
 
     // MARK: finding who plays
 
@@ -64,6 +74,8 @@ final class MacTap {
         guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &list) == noErr else { return [] }
         return list.filter { object in
             let pid = Self.property(object, kAudioProcessPropertyPID, as: pid_t.self, default: -1)
+            // For a tap of everything, these are the ones left out of it.
+            if let excluding { return pid > 0 && excluding.contains { Self.descends(pid, from: $0) } }
             return pid > 0 && Self.descends(pid, from: appPID)
         }
     }
@@ -76,11 +88,11 @@ final class MacTap {
     func start() -> Bool {
         stop()
         let objects = processObjects()
-        guard !objects.isEmpty else { lastError = "nothing of \(bundle) is playing yet"; return false }
+        guard !objects.isEmpty || excluding != nil else { lastError = "nothing of \(bundle) is playing yet"; return false }
         if ProcessInfo.processInfo.environment["SPATIAND_DEBUG_TAP"] != nil {
             for o in objects { print("tap: process object \(o) pid \(Self.property(o, kAudioProcessPropertyPID, as: pid_t.self, default: -1)) running output \(Self.property(o, kAudioProcessPropertyIsRunningOutput, as: UInt32.self, default: 9))") }
         }
-        let description = CATapDescription(stereoMixdownOfProcesses: objects)
+        let description = excluding == nil ? CATapDescription(stereoMixdownOfProcesses: objects) : CATapDescription(stereoGlobalTapButExcludeProcesses: objects)
         description.uuid = UUID()
         description.muteBehavior = .mutedWhenTapped
         description.isPrivate = true
@@ -195,7 +207,7 @@ final class MacTap {
 
     /// Whether more of the application's processes are playing now than when the tap was made: a browser opening a
     /// tab's helper. The tap is then made again, with them in it.
-    func needsRefresh() -> Bool { !Set(processObjects()).isSubset(of: processes) }
+    func needsRefresh() -> Bool { excluding == nil ? !Set(processObjects()).isSubset(of: processes) : Set(processObjects()) != processes }
 
     /// How many streams of sound a device takes in, itself: a microphone's.
     private static func inputStreams(ofDeviceWithUID uid: String) -> Int {

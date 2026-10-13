@@ -19,7 +19,24 @@ enum MacScreens {
     static let bundle = "spatiand.screen"
     /// The display a screen stands for until the virtual one has been made.
     static let virtualToBe: CGDirectDisplayID = 0x0FFF_FFF0
-    static let virtualSize = (width: 1920, height: 1080)
+    /// The sizes a virtual screen can be made: the owner's choice, in the settings.
+    static let sizes: [(name: String, width: Int, height: Int)] = [
+        ("1920 \u{00D7} 1080", 1920, 1080), ("2560 \u{00D7} 1440", 2560, 1440), ("3840 \u{00D7} 2160 (4K)", 3840, 2160),
+        ("2560 \u{00D7} 1080 (wide)", 2560, 1080), ("3440 \u{00D7} 1440 (wide)", 3440, 1440), ("3840 \u{00D7} 1080 (very wide)", 3840, 1080),
+        ("1920 \u{00D7} 1200", 1920, 1200), ("1080 \u{00D7} 1920 (tall)", 1080, 1920),
+    ]
+    static var virtualSize: (width: Int, height: Int) {
+        let parts = (Defaults.store.string(forKey: "virtualScreen") ?? "1920x1080").split(separator: "x").compactMap { Int($0) }
+        return parts.count == 2 && parts[0] >= 640 && parts[1] >= 360 ? (parts[0], parts[1]) : (1920, 1080)
+    }
+
+    /// The virtual screen is let go of: the next time it is asked for it is made anew, at the
+    /// size then chosen. What was on it is moved by macOS to another screen.
+    static func forget() {
+        lock.lock()
+        virtual = nil
+        lock.unlock()
+    }
 
     private static let lock = NSLock()
     private static var virtual: SPVirtualDisplay?
@@ -66,7 +83,7 @@ enum MacScreens {
         defer { lock.unlock() }
         if let virtual, virtual.displayID != 0 { return virtual.displayID }
         guard let made = SPVirtualDisplay(width: UInt32(virtualSize.width), height: UInt32(virtualSize.height), hiDPI: false,
-                                          serialNumber: 0x5350_0001, name: "Spatiand") else {
+                                          serialNumber: UInt32(0x5350_0000 + (virtualSize.width << 4 ^ virtualSize.height) & 0xFFFF), name: "Spatiand") else {
             print("screens: a virtual screen could not be made")
             return nil
         }

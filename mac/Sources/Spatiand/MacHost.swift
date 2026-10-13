@@ -313,7 +313,12 @@ final class MacHost {
             share(info)
         }
         // Sound for the applications with a window, and none for the ones that have none left.
-        let bundles = Set(shared.values.filter { $0.info.display == nil }.map { $0.info.bundle })
+        let bundles = Set(shared.values.map { $0.info.bundle })
+        // A screen's sound is everything but the applications that have streams of their own:
+        // taken again when which those are changes.
+        let apart = bundles.subtracting([MacScreens.bundle])
+        if let screen = sounds[MacScreens.bundle], apart != screenSoundApart { screen.invalidate(); sounds[MacScreens.bundle] = nil }
+        screenSoundApart = apart
         for (bundle, a) in sounds where !bundles.contains(bundle) { a.invalidate(); sounds[bundle] = nil }
         for bundle in bundles where sounds[bundle] == nil && Date().timeIntervalSince(soundFailed[bundle] ?? .distantPast) > 30 {
             listen(to: bundle)
@@ -334,8 +339,11 @@ final class MacHost {
         let s = Shared(id: id, info: info)
         shared[id] = s
         // A screen's picture is in its own pixels, which are not always two to a point.
-        let screenScale: CGFloat? = info.display.flatMap { $0 == MacScreens.virtualToBe ? 1 : CGDisplayCopyDisplayMode($0).map { CGFloat($0.pixelWidth) / max(1, CGFloat($0.width)) } }
-        let scale = screenScale ?? NSScreen.screens.first { $0.frame.intersects(info.frame) }?.backingScaleFactor ?? 2
+        // **A screen is sent at the size it looks**, not at the size macOS draws it before
+        // scaling it down: 1792 across and not 3584. That is what is seen on it, at a
+        // quarter of the pixels to encode, send and decode.
+        s.capture.pointsOnly = info.display != nil
+        let scale = info.display != nil ? 1 : NSScreen.screens.first { $0.frame.intersects(info.frame) }?.backingScaleFactor ?? 2
         link.say(["Opened": ["window": Int(id), "app": info.bundle, "title": info.display != nil ? "Screen \u{2014} " + info.title : info.title,
                              "width": Int(info.frame.width * scale), "height": Int(info.frame.height * scale), "parent": NSNull()]])
         s.capture.onFrame = { [weak self, weak s] pixels, micros in
@@ -354,8 +362,10 @@ final class MacHost {
         }
     }
 
+    private var screenSoundApart: Set<String> = []
+
     private func listen(to bundle: String) {
-        let audio = MacAudio(bundle: bundle)
+        let audio = MacAudio(bundle: bundle, apart: screenSoundApart)
         sounds[bundle] = audio
         audio.onSound = { [weak self] pcm in self?.link?.audio(app: bundle, channels: 2, pcm) }
         audio.onEnded = { [weak self] in

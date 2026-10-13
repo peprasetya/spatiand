@@ -21,6 +21,8 @@ final class MacSound {
     /// Applications let go of for want of sound, and until when; and which have been told of.
     private var restUntil: [String: Date] = [:]
     private var told: Set<String> = []
+    /// The applications left out of the screen's sound when its tap was made.
+    private var screenApart: [pid_t] = []
     private let lock = NSLock()
     /// Said, on the main thread, when the sound could not be taken: the reason, for the hint.
     var onProblem: ((String) -> Void)?
@@ -28,9 +30,25 @@ final class MacSound {
     var bundles: [String] { Array(taps.keys) }
 
     /// Make the taps match the applications that have a window in the room. Called about once a second.
-    func reconcile(wanted: [String: pid_t]) {
+    func reconcile(wanted: [String: pid_t], screen: Bool = false) {
         guard #available(macOS 14.2, *) else { return }
-        for bundle in Array(taps.keys) where wanted[bundle] == nil { drop(bundle) }
+        // **A screen on show has the sound of everything on it**: all this Mac plays, but for
+        // the applications that have windows of their own in the room, whose sound is at
+        // those. Made again whenever which applications those are changes.
+        let apart = wanted.values.sorted()
+        if screen {
+            if let existing = taps[MacScreens.bundle] as? MacTap {
+                if apart != screenApart { existing.stop(); taps[MacScreens.bundle] = nil } else if existing.needsRefresh() { existing.start() }
+            }
+            if taps[MacScreens.bundle] == nil {
+                let tap = MacTap(everythingBut: apart)
+                tap.onSound = { [weak self] block, rate in self?.sound(MacScreens.bundle, block, rate) }
+                if tap.start() { taps[MacScreens.bundle] = tap; screenApart = apart; print("sound: a screen is on show, and has the sound of everything but \(wanted.keys.sorted())") }
+            }
+        } else if taps[MacScreens.bundle] != nil {
+            drop(MacScreens.bundle)
+        }
+        for bundle in Array(taps.keys) where wanted[bundle] == nil && bundle != MacScreens.bundle { drop(bundle) }
         for (bundle, pid) in wanted {
             if let until = restUntil[bundle], until > Date() { continue }
             if let existing = taps[bundle] as? MacTap {
