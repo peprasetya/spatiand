@@ -2300,6 +2300,8 @@ pub fn run(
                         kind,
                         focused: runtime.state.layout.is_focused(window),
                         launcher: crate::audio::is_launcher(runtime.state.app_id_of(window).as_deref()),
+                        marked: crate::audio::says_it_plays(runtime.state.title_of(window).as_deref()),
+                        held: false,
                     });
                 }
                 spatial_audio.aim_all(&sources, head);

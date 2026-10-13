@@ -197,6 +197,7 @@ pub fn run(
     let mut app_menu_at: Option<(f64, f64)> = None;
     // Where the pointer's pad was last frame while a menu was open: see where it is used.
     let mut menu_pad_was: Option<(f32, f32)> = None;
+    let mut test_turn = std::env::var_os("SPATIAND_TEST_TURN").map(|_| TestTurn::new());
     super::record::publish_leftovers();
     // How far a finger travels on the touch area, in pad units (2 across), for a menu row.
     const MENU_SWIPE_STEP: f32 = 0.18;
@@ -1154,6 +1155,14 @@ pub fn run(
             // new filters once a direction has moved further than anyone can hear.
             if spatial_audio.is_on() {
                 let head = tracker.orientation();
+                // A test with no head to turn: SPATIAND_TEST_TURN turns the one the sound is
+                // placed for, a sixth of a circle left, back, right, back, four seconds each,
+                // and says once a second how loud each ear is. A window straight ahead must be
+                // heard to cross from one ear to the other.
+                let head = match test_turn.as_mut() {
+                    Some(turn) => turn.head(head),
+                    None => head,
+                };
                 // Every window that could be what an app's sound is coming from -- including
                 // the one that has become the room, which has no quad to be found among and
                 // so was silently left out of this for as long as environments have existed.
@@ -1194,6 +1203,8 @@ pub fn run(
                         kind,
                         focused: runtime.state.layout.is_focused(window),
                         launcher: crate::audio::is_launcher(runtime.state.app_id_of(window).as_deref()),
+                        marked: crate::audio::says_it_plays(runtime.state.title_of(window).as_deref()),
+                        held: false,
                     });
                 }
                 spatial_audio.aim_all(&sources, head);
@@ -2105,4 +2116,41 @@ fn save_screenshot(pixels: Vec<u8>, width: u32, height: u32) {
             Err(e) => log::warn!("could not save a screenshot: {e}"),
         }
     });
+}
+
+/// A head turned for a test, and each ear's loudness as it turns: see `SPATIAND_TEST_TURN`.
+struct TestTurn {
+    began: std::time::Instant,
+    heard: std::sync::Arc<spatiand_audio::ring::Ring>,
+    said: u64,
+}
+
+impl TestTurn {
+    fn new() -> TestTurn {
+        let heard = std::sync::Arc::new(spatiand_audio::ring::Ring::new(48_000 * 2 * 4));
+        spatiand_audio::server::record_heard(Some(heard.clone()));
+        TestTurn { began: std::time::Instant::now(), heard, said: 0 }
+    }
+
+    fn head(&mut self, head: glam::DQuat) -> glam::DQuat {
+        let seconds = self.began.elapsed().as_secs();
+        let degrees = [0.0, 60.0, 0.0, -60.0][(seconds / 4 % 4) as usize];
+        if seconds != self.said {
+            self.said = seconds;
+            let mut pcm = vec![0f32; self.heard.available()];
+            self.heard.read(&mut pcm);
+            let (mut left, mut right) = (0f64, 0f64);
+            for pair in pcm.chunks_exact(2) {
+                left += (pair[0] as f64).powi(2);
+                right += (pair[1] as f64).powi(2);
+            }
+            let frames = (pcm.len() / 2).max(1) as f64;
+            log::info!(
+                "test turn: head {degrees:+.0} degrees, left ear {:.4}, right ear {:.4}",
+                (left / frames).sqrt(),
+                (right / frames).sqrt()
+            );
+        }
+        head * glam::DQuat::from_axis_angle(glam::DVec3::Z, f64::to_radians(degrees))
+    }
 }

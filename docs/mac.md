@@ -111,6 +111,12 @@ not connect to hosts. `--selftest-click` moves the real pointer: not while the M
 * **Sound.** An application with a window in the room is tapped (a Core Audio process tap) and
   heard from where its window is; the speaker on the bar mutes it, and scrolled or slid it is that
   window's own volume, shown as a ring. A screen on show has the sound of everything else.
+  An application is every process it answers for, not only its children: Safari's pages are
+  played by a WebKit service. A browser is one sound for all its windows, and macOS does not
+  say which is playing: it is placed at the window that says so in its title (Chrome's
+  speaker mark), or else at the one in front when the sound began, and stays there until it
+  has been quiet for twenty seconds. Two windows of one browser playing at once are heard
+  from one place.
 * Pinching on a title bar moves the window nearer or further; three fingers drag; four fingers
   swipe up for the launcher, down to back out, and tap to recentre. Two fingers, or a wheel,
   move through an open menu.
@@ -148,7 +154,7 @@ when run from the bundle. **The ones marked ✋ move the Mac's real pointer.**
 | `--selftest-child [--goes] [--tab]` | a window with something beside it, which then goes; or with a second tab chosen |
 | `--selftest-terminal-tabs <title>` | switches the tabs of a real Terminal window |
 | `--selftest-menu <App>` | opens an application's menus as a list, and one level of them |
-| `--selftest-app-sound <App>` | takes a playing application's sound for the room |
+| `--selftest-app-sound <App>` | takes a playing application's sound for the room; with `SPATIAND_TEST_TURN=1` turns the head it is placed for and says how loud each ear is |
 | `--selftest-screen [--virtual]` | brings a screen into the room |
 | `--selftest-windows [--and-choose]` | the list of windows |
 | `--selftest-hover <App> <title>` | moves over a window as the room does |
