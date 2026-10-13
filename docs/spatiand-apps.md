@@ -167,7 +167,7 @@ snapshot backend, pictures going over as dmabufs.
   native library directory, and the phantom-process monitor switched off.
 * Subtitles while a film is the sky (they are drawn over a window, and the sky is not one).
 * Dolby Vision that has no HDR10-compatible layer (profile 5) is shown with the wrong colours.
-* Vibrefy's random suggestions; signing in to Vibrefy by any way but a code.
+* Signing in to Vibrefy by any way but a code.
 * On a Mac the room does not yet place an application's sound at its window.
 * The pose channel is not in the SDK yet (SpatiLoupe's 3D objects will want it).
 * Step 5: the storage service and SpatiShelf, SpatiLoupe, SpatiQuill.
