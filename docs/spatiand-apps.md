@@ -134,11 +134,11 @@ VideoToolbox decoding. Unit tests for the launcher, the layouts and hints, the c
 the library and the staging table.
 
 **Not checked**: anything on real glasses, on any platform. Sound, beyond its clock running
-(tests are muted with `SPATIAND_MEDIA_MUTE=1`); lip-sync by ear. The Deck: the compositor's
-Linux-only files (`backend_drm.rs`, `backend_winit.rs`, `main.rs`) have not been compiled with
-these changes — the Deck was asleep, and deepmagpie has not the compositor's build
-dependencies — though the SDK, `gl/linux.rs` and the gallery do build there; the dmabuf path has
-never run. The Beam Pro: nothing built.
+(tests are muted with `SPATIAND_MEDIA_MUTE=1`); lip-sync by ear. The Deck beyond this: the
+compositor with these changes was built there (in `/home/deck/spatiand-apps`, not the tree the
+session runs) and the gallery drawn through its snapshot backend, pictures going over as
+dmabufs -- but SpatiReel and `spatiand-media` have not been built on the Deck, and nothing of
+this is deployed to it. The Beam Pro: nothing built.
 
 **Not done yet, of steps 1 to 3**
 * The Mac without glasses: its 2D mode is the Swift app with no compositor, so there is nothing
