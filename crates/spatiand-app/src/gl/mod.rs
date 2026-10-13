@@ -22,6 +22,8 @@ use crate::WindowId;
 mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
+#[cfg(target_os = "macos")]
+pub use mac::SurfaceTexture;
 
 pub(crate) type Egl = egl::DynamicInstance<egl::EGL1_4>;
 

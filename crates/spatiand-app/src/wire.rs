@@ -17,6 +17,7 @@ use wayland_client::protocol::{
 };
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1};
+use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 use spatiand_proto::client::{spatiand_xr_surface_v1, spatiand_xr_v1};
@@ -47,6 +48,7 @@ pub(crate) struct Window {
     xdg: xdg_surface::XdgSurface,
     toplevel: xdg_toplevel::XdgToplevel,
     xr: Option<spatiand_xr_surface_v1::SpatiandXrSurfaceV1>,
+    viewport: Option<wp_viewport::WpViewport>,
     /// The compositor has said its first word, before which nothing may be attached.
     configured: bool,
     /// The size the compositor last asked for, waiting for the configure that settles it.
@@ -69,6 +71,7 @@ pub(crate) struct Wire {
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     dmabuf: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>,
     xr: Option<spatiand_xr_v1::SpatiandXrV1>,
+    viewporter: Option<wp_viewporter::WpViewporter>,
     pub(crate) mode: Mode,
     windows: HashMap<WindowId, Window>,
     ids: HashMap<wl_surface::WlSurface, WindowId>,
@@ -109,6 +112,7 @@ impl Wire {
         let _seat: wl_seat::WlSeat = globals.bind(&handle, 5..=9, ()).map_err(|e| format!("no seat: {e}"))?;
         let dmabuf = globals.bind(&handle, 3..=3, ()).ok();
         let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=6, ()).ok();
+        let viewporter = globals.bind(&handle, 1..=1, ()).ok();
         // A compositor with the room's protocol and no word on the mode is an older Spatiand,
         // which has only ever had two eyes; one without the protocol is somebody's desktop.
         let mode = match &xr {
@@ -122,6 +126,7 @@ impl Wire {
             shm,
             dmabuf,
             xr,
+            viewporter,
             mode,
             windows: HashMap::new(),
             ids: HashMap::new(),
@@ -158,6 +163,7 @@ impl Wire {
                 xdg,
                 toplevel,
                 xr: None,
+                viewport: None,
                 configured: false,
                 asked: None,
                 shm: Vec::new(),
@@ -182,6 +188,9 @@ impl Wire {
         }
         if let Some(xr) = window.xr {
             xr.destroy();
+        }
+        if let Some(viewport) = window.viewport {
+            viewport.destroy();
         }
         window.toplevel.destroy();
         window.xdg.destroy();
@@ -270,6 +279,24 @@ impl Wire {
         if let Some(xr) = self.xr_of(id) {
             if xr.version() >= 4 {
                 xr.set_cursor_drawn(drawn as u32);
+            }
+        }
+    }
+
+    /// The size the window is, where that is not its picture's: a film whose two eyes are
+    /// side by side in a picture twice as wide as either. `None` is the picture's own size.
+    pub(crate) fn set_shape(&mut self, id: WindowId, shape: Option<(u32, u32)>) {
+        let Some(viewporter) = self.viewporter.as_ref() else { return };
+        let Some(window) = self.windows.get_mut(&id) else { return };
+        match shape {
+            Some((width, height)) => {
+                let viewport = window.viewport.get_or_insert_with(|| viewporter.get_viewport(&window.surface, &self.handle, ()));
+                viewport.set_destination(width.max(1) as i32, height.max(1) as i32);
+            }
+            None => {
+                if let Some(viewport) = window.viewport.take() {
+                    viewport.destroy();
+                }
             }
         }
     }
@@ -668,6 +695,8 @@ ignore! {
     wl_surface::WlSurface => (),
     zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1 => (),
     zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1 => (),
+    wp_viewporter::WpViewporter => (),
+    wp_viewport::WpViewport => (),
 }
 
 impl Dispatch<wl_seat::WlSeat, ()> for Wire {

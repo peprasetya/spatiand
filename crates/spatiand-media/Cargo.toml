@@ -1,0 +1,26 @@
+[package]
+name = "spatiand-media"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "What a film is and how it is played: FFmpeg, each platform's decoder, and the layouts of two eyes"
+
+# The Vibrefy Rust port's `vibrefy-media`, moved here (docs/spatiand-apps.md), with its engine
+# changed from libmpv to FFmpeg and each platform's own decoder. What needs neither -- what a
+# file is, read off its name and its container -- is `layout` and `hints`, and is tested alone:
+# `cargo test -p spatiand-media --no-default-features`.
+[features]
+default = ["engine"]
+engine = ["dep:rsmpeg", "dep:cpal", "dep:spatiand-app"]
+
+[dependencies]
+log.workspace = true
+glam = "0.29"
+libc = "0.2"
+spatiand-app = { path = "../spatiand-app", optional = true }
+# The same binding, pinned the same way, as `spatiand-video`: the Deck has FFmpeg 7.1's
+# libraries and vendored headers for them.
+rsmpeg = { version = "0.18", default-features = false, features = ["ffmpeg7_1", "link_system_ffmpeg"], optional = true }
+cpal = { version = "0.15", optional = true }

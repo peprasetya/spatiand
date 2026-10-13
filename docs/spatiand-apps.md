@@ -1,7 +1,7 @@
 # Spatiand's own applications
 
-The plan for Spatiand's first-party applications, as agreed on 2026-10-13. Nothing here is
-built yet. It is written so that a session which was not part of the discussion can build from
+The plan for Spatiand's first-party applications, as agreed on 2026-10-13, and at its end what
+has been built of it. It is written so that a session which was not part of the discussion can build from
 it: what was decided, what each application must do, what already exists to build on, what is
 still open, and the order to build in.
 
@@ -33,6 +33,7 @@ SpatiandOS; that is far off and not a goal here.
 | Beam Pro storage | All shared storage, through the "all files access" permission granted once. No root. |
 | First app | **SpatiReel.** |
 | Packaging | All apps ship inside Spatiand on each platform. SpatiWorld stays separate. |
+| Android processes | **Bundled native executables**, shipped in the APK's library directory (as `lib<name>.so`) and started by the compositor, as on the Deck and the Mac: one way of starting an app everywhere, and a tab that crashes takes nothing with it. Android counts them as "phantom" child processes, so its monitor of those is to be switched off once over adb (no root). |
 
 ## Requirements per app
 
@@ -90,10 +91,8 @@ SpatiandOS; that is far off and not a goal here.
 
 ## Still open
 
-1. Android process model: bundled native executables run from the APK, or in-process — which
-   decides how per-tab processes are done on the Beam Pro.
-2. The browser, the music player, the Wi-Fi/Bluetooth manager.
-3. The icons.
+1. The browser, the music player, the Wi-Fi/Bluetooth manager.
+2. The icons: `assets/apps/*.svg` are stand-ins in the Spatiand icon's colours.
 
 ## Build order (for the session that builds)
 
@@ -110,3 +109,50 @@ Each app runs unchanged on the Deck, the Mac (2D and glasses, switching live whe
 are unplugged) and the Beam Pro; snapshot pictures per screen; SpatiReel against real Vibrefy,
 Jellyfin and Emby servers, a local file and a DLNA server, with progress checked on the server
 afterwards.
+
+## Built so far (2026-10-13, branch `spatiand-apps`)
+
+Steps 1 to 3 of the build order, on the Mac. What each claim rests on is said, because most of
+it has not been in front of anybody's eyes.
+
+| | |
+|---|---|
+| `crates/spatiand-app` | The SDK: windows, input (keys through the compositor's keymap, with repeat), GL, eye layouts, layers, a window's shape apart from its picture's size (`wp_viewporter`), and `Mode` — one picture or two — as an event. `ui` is the room's look as widgets: list, poster grid, tabs, text field, button. `examples/gallery.rs` shows all of them. |
+| `spatiand_xr_v1` version 6 | `display_mode` (flat / stereo), sent at bind and on change. The Deck's and the Beam Pro's backends say what they are presenting; **nothing yet says "flat" on a Mac when the glasses are unplugged**, because the Mac's 2D mode does not run the compositor at all (below). |
+| A picture without a copy | Mac: drawn into a *global* `IOSurface`, named by number in the window's placeholder (`spatiand_proto::handover`, `mac/remote_video.rs`). Deck: a texture exported as a dmabuf (`gl/linux.rs`). Anywhere it fails, and on Android for now, the picture is read back and sent as `wl_shm`. |
+| Launcher | `Level::Own`, the "Spatiand" bubble always first; `crates/spatiand/src/own.rs` lists the programs found beside the compositor (or in `SPATIAND_APPS_DIR`) and starts them. `mac/make-app.sh` puts SpatiReel in the bundle. |
+| `crates/spatiand-media` | `vibrefy-media` moved in: `layout`, `hints`, `audio`, `mesh` as they were (hints now read FFmpeg's stereo and spherical side data), and a new engine on FFmpeg in place of libmpv — `player` (reader, picture and sound threads, the sound's clock, seeking, sound-track choice), `sound` (cpal), `screen` (planes to colour in a shader, and a view from inside a sphere). VideoToolbox pictures stay on the GPU. |
+| `crates/vibrefy-api` | Moved in unchanged, for step 4. Taken from vibrefyApp's working tree at `254e043` plus its uncommitted changes. `vibrefy-wl` and the egui screens were not moved: the SDK and the toolkit replace them. |
+| `crates/spatireel` | A library of this machine's folders and films, and a film playing: flat, side by side and over-under (full and half), VR180 and VR360 (one eye, side by side, stacked). Flat films are a window whose eyes the room samples from the file's own frame; spheres are the room's sky with the window as controls; with one picture, or the sky refused, one eye in the window and a sphere looked about in by dragging. A menu corrects what a film was taken to be and chooses its sound track. |
+
+**Checked**, all on an Intel Mac with the snapshot backend (`SPATIAND_CLIENT=… spatiand-mac`),
+which runs the real compositor and the real application as two processes and draws one eye to
+a PNG: the gallery's widgets, clicks and keys; the launcher's top level and the Spatiand level;
+every layout above, left eye and right; one-picture mode (`SPATIAND_SNAPSHOT_MODE=flat`); the
+sky at several headings; the menu, seeking, pausing, going back to the library; software and
+VideoToolbox decoding. Unit tests for the launcher, the layouts and hints, the colour matrix,
+the library and the staging table.
+
+**Not checked**: anything on real glasses, on any platform. Sound, beyond its clock running
+(tests are muted with `SPATIAND_MEDIA_MUTE=1`); lip-sync by ear. The Deck: the compositor's
+Linux-only files (`backend_drm.rs`, `backend_winit.rs`, `main.rs`) have not been compiled with
+these changes — the Deck was asleep, and deepmagpie has not the compositor's build
+dependencies — though the SDK, `gl/linux.rs` and the gallery do build there; the dmabuf path has
+never run. The Beam Pro: nothing built.
+
+**Not done yet, of steps 1 to 3**
+* The Mac without glasses: its 2D mode is the Swift app with no compositor, so there is nothing
+  for an application to connect to. Either the compositor runs there too with its windows shown
+  as Mac windows, or the apps get a second way in; this meets the other session's work on
+  `mac-compositor` and wants deciding with it.
+* Android: the programs in the APK (`android/build.sh`), FFmpeg built for it, MediaCodec, an
+  `AHardwareBuffer` handed over the socket, and `SPATIAND_APPS_DIR` set from the native library
+  directory.
+* The Deck: VAAPI pictures kept on the GPU (they are decoded in software now); sound through
+  cpal's ALSA has not been tried against Spatiand's per-window sinks; installing the programs
+  beside the compositor.
+* SpatiReel: pictures for the library's tiles (a frame of the film, held in memory); subtitles;
+  HDR; surround placed in the room (sound is whatever the device's default layout is);
+  playback speed and sync offsets; VR360 looked about in with the keys; on a Mac the room does
+  not yet place an application's sound at its window.
+* The pose channel is not in the SDK yet (SpatiLoupe's 3D objects will want it).

@@ -255,6 +255,14 @@ impl App {
         self.wire.set_eyes(window, eyes, swapped);
     }
 
+    /// The size the window is, in the pixels the pointer is told in, where that is not its
+    /// picture's size: a film with its two eyes side by side is a picture twice as wide as
+    /// the window it is shown in, and a picture drawn finer than the window is sharper for it.
+    /// `None` goes back to the picture's own size. From the next picture on.
+    pub fn set_shape(&mut self, window: WindowId, shape: Option<(u32, u32)>) {
+        self.wire.set_shape(window, shape);
+    }
+
     /// What the window is in the room, from its next picture on. Silence is the yes: a claim
     /// that cannot be honoured comes back as [`Event::LayerRefused`].
     pub fn set_layer(&mut self, window: WindowId, layer: Layer) {

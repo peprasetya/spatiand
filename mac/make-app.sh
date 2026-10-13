@@ -16,6 +16,15 @@ app="$stage/Spatiand.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
 cp .build/release/Spatiand "$app/Contents/MacOS/Spatiand"
+# Spatiand's own applications, each a program beside the app's, which is where the launcher
+# looks for them (crates/spatiand/src/own.rs). SpatiReel links the FFmpeg this Mac has
+# (Homebrew's): the app is for this Mac. bindgen wants to be told where libclang is.
+if (cd .. && LIBCLANG_PATH="${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib}" \
+    MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release -p spatireel); then
+  cp ../target/release/spatireel "$app/Contents/MacOS/spatireel"
+else
+  echo "warning: SpatiReel did not build (is FFmpeg installed?); the app is made without it"
+fi
 # The measured head: the library that reads SOFA files and the dataset (built once; see tools/build-hrtf.sh).
 ./tools/build-hrtf.sh || echo "warning: no measured head; sound will be placed by the parametric one"
 if [ -f Resources/hrtf/libmysofa.1.dylib ]; then
@@ -69,11 +78,13 @@ IDENTITY=$(security find-identity -p codesigning 2>/dev/null | grep -F "\"$IDENT
 if [ -n "$IDENTITY" ]; then
   # What is inside is signed first, with the same certificate.
   for lib in "$app"/Contents/Frameworks/*.dylib; do [ -f "$lib" ] && codesign --force --sign "$IDENTITY" "$lib" >/dev/null 2>&1; done
+  for own in spatireel; do [ -f "$app/Contents/MacOS/$own" ] && codesign --force --sign "$IDENTITY" "$app/Contents/MacOS/$own" >/dev/null 2>&1; done
   codesign --force --sign "$IDENTITY" --identifier com.peprasetya.spatiand "$app" >/dev/null 2>&1 \
     && echo "signed with \"$IDENTITY_NAME\" ($IDENTITY): permissions survive rebuilds" \
     || { echo "warning: could not sign with \"$IDENTITY_NAME\"; signing ad hoc"; codesign --force --sign - "$app" >/dev/null 2>&1 || true; }
 else
   for lib in "$app"/Contents/Frameworks/*.dylib; do [ -f "$lib" ] && codesign --force --sign - "$lib" >/dev/null 2>&1; done
+  for own in spatireel; do [ -f "$app/Contents/MacOS/$own" ] && codesign --force --sign - "$app/Contents/MacOS/$own" >/dev/null 2>&1; done
   codesign --force --sign - "$app" >/dev/null 2>&1 || echo "warning: could not sign"
   echo "note: signed ad hoc, so each rebuild asks for Screen Recording and Accessibility again;"
   echo "      create the \"$IDENTITY_NAME\" certificate (see HoloFrame) to stop that"

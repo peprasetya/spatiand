@@ -4224,6 +4224,12 @@ pub fn sky_surface(
         .flatten() else {
             continue;
         };
+        // A Spatiand application's film is a picture in a decoder's memory or its own, named
+        // by a placeholder like any other window's there.
+        #[cfg(target_os = "android")]
+        let texture = crate::android::remote_video::substitute(renderer, &surface, texture);
+        #[cfg(target_os = "macos")]
+        let texture = crate::mac::remote_video::substitute(renderer, &surface, texture);
         // Client textures arrive with GL's *default* sampler state, which is
         // NEAREST_MIPMAP_LINEAR. A texture with no mipmaps and a mipmap filter is incomplete,
         // and an incomplete texture samples as opaque black -- so the room goes black while

@@ -142,3 +142,66 @@ impl Shared {
         }
     }
 }
+
+/// Somebody else's `IOSurface` -- a decoder's picture -- as a texture to sample, with no copy.
+pub struct SurfaceTexture {
+    pub texture: glow::Texture,
+    pbuffer: egl::Surface,
+}
+
+impl Gl {
+    /// One plane of an `IOSurface` as a texture: `channels` is 1 for a plane of single bytes
+    /// (a picture's brightness), 2 for pairs (its two colour differences, interleaved), 4 for
+    /// a whole BGRA picture. The surface must outlive the texture.
+    ///
+    /// # Safety
+    /// `surface` must be a live `IOSurfaceRef` with such a plane of that size.
+    pub unsafe fn surface_texture(&self, surface: *const c_void, plane: u32, size: (u32, u32), channels: u8) -> Result<SurfaceTexture, String> {
+        use glow::HasContext;
+        let (format, texture_format) = match channels {
+            1 => (glow::RED as egl::Int, egl::TEXTURE_RGBA),
+            2 => (glow::RG as egl::Int, egl::TEXTURE_RGBA),
+            _ => (GL_BGRA_EXT, egl::TEXTURE_RGBA),
+        };
+        let attributes = [
+            egl::WIDTH, size.0 as egl::Int,
+            egl::HEIGHT, size.1 as egl::Int,
+            IOSURFACE_PLANE_ANGLE, plane as egl::Int,
+            egl::TEXTURE_TARGET, egl::TEXTURE_2D,
+            TEXTURE_INTERNAL_FORMAT_ANGLE, format,
+            egl::TEXTURE_FORMAT, texture_format,
+            TEXTURE_TYPE_ANGLE, glow::UNSIGNED_BYTE as egl::Int,
+            egl::NONE,
+        ];
+        let pbuffer = self
+            .egl
+            .create_pbuffer_from_client_buffer(self.display, IOSURFACE_ANGLE, egl::ClientBuffer::from_ptr(surface as *mut c_void), self.config, &attributes)
+            .map_err(|e| format!("ANGLE would not wrap a decoder's surface: {e}"))?;
+        let g = self.api();
+        let texture = g.create_texture()?;
+        g.bind_texture(glow::TEXTURE_2D, Some(texture));
+        if let Err(e) = self.egl.bind_tex_image(self.display, pbuffer, egl::BACK_BUFFER) {
+            g.delete_texture(texture);
+            let _ = self.egl.destroy_surface(self.display, pbuffer);
+            return Err(format!("a decoder's surface would not become a texture: {e}"));
+        }
+        for (name, value) in [
+            (glow::TEXTURE_MIN_FILTER, glow::LINEAR),
+            (glow::TEXTURE_MAG_FILTER, glow::LINEAR),
+            (glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE),
+            (glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE),
+        ] {
+            g.tex_parameter_i32(glow::TEXTURE_2D, name, value as i32);
+        }
+        Ok(SurfaceTexture { texture, pbuffer })
+    }
+
+    pub fn release_surface_texture(&self, held: SurfaceTexture) {
+        use glow::HasContext;
+        unsafe {
+            let _ = self.egl.release_tex_image(self.display, held.pbuffer, egl::BACK_BUFFER);
+            let _ = self.egl.destroy_surface(self.display, held.pbuffer);
+            self.api().delete_texture(held.texture);
+        }
+    }
+}
