@@ -263,6 +263,7 @@ on purpose — it is shown precisely when there is no headset to ask.
 | | |
 |---|---|
 | [docs/apps.md](docs/apps.md) | Writing an application for Spatiand: window sizing, audio layouts, and the stereo and immersive-video protocols as they are specified so far |
+| [docs/spatiand-apps.md](docs/spatiand-apps.md) | Spatiand's own applications — SpatiShelf, SpatiReel, SpatiLoupe, SpatiQuill: the plan, not yet built |
 | [docs/x11.md](docs/x11.md) | Why X11 runs and is not supported |
 | [docs/input-mapper.md](docs/input-mapper.md) | Controller layouts and the virtual gamepad a game sees |
 | [docs/openxr.md](docs/openxr.md) | The OpenXR runtime: how it works, how to run a game with it (native, Proton, remote), what is missing |
