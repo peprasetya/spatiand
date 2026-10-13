@@ -273,6 +273,12 @@ pub extern "C" fn sp_recentre() {
     super::recentre_requested().store(true, Ordering::SeqCst);
 }
 
+/// Close the window that has the keyboard, as the cross on its bar does.
+#[no_mangle]
+pub extern "C" fn sp_close_window() {
+    super::close_requested().store(true, Ordering::SeqCst);
+}
+
 /// Save a picture of what the glasses show, as the settings' screenshot does.
 #[no_mangle]
 pub extern "C" fn sp_screenshot() {

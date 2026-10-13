@@ -20,13 +20,31 @@ pub struct Entry {
 
 /// What FFmpeg will play that is a film rather than a song or a picture, by how it is named.
 const FILMS: &[&str] = &[
-    "mp4", "m4v", "mkv", "webm", "mov", "avi", "ts", "m2ts", "mts", "mpg", "mpeg", "wmv", "flv", "ogv", "3gp", "vob",
+    "mp4", "m4v", "mkv", "webm", "mov", "avi", "ts", "m2ts", "mts", "mpg", "mpeg", "wmv", "flv", "ogv", "3gp", "vob", "strm",
 ];
 
 pub fn is_film(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| FILMS.iter().any(|known| e.eq_ignore_ascii_case(known)))
+}
+
+fn is_package(name: &str) -> bool {
+    let Some((_, ending)) = name.rsplit_once('.') else { return false };
+    let ending = ending.to_lowercase();
+    ending.ends_with("library") || ["app", "theater", "bundle", "framework", "photoslibrary", "plugin", "kext"].contains(&ending.as_str())
+}
+
+/// Where a film really is. A `.strm` file is one line saying where: the convention every
+/// media server shares for a film that is a stream somewhere else.
+pub fn source(path: &Path) -> String {
+    let is_pointer = path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("strm"));
+    if is_pointer {
+        if let Some(line) = std::fs::read_to_string(path).ok().and_then(|text| text.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string)) {
+            return line;
+        }
+    }
+    path.to_string_lossy().into_owned()
 }
 
 /// Where films are kept on this kind of machine, if such a place exists; the home folder if
@@ -62,6 +80,11 @@ pub fn list(folder: &Path) -> Vec<Entry> {
             // Through a link, to what it points at: a library kept on another disk is usually
             // reached by one.
             let kind = if path.is_dir() {
+                // A Mac keeps some things in folders that are not folders to anyone using
+                // one: an application, a library of a program's own.
+                if is_package(&name) {
+                    return None;
+                }
                 Kind::Folder
             } else if is_film(&path) {
                 Kind::Film

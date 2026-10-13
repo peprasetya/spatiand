@@ -124,6 +124,13 @@ pub fn recentre_requested() -> &'static AtomicBool {
     &REQUESTED
 }
 
+/// The app asking for the window that has the keyboard to be closed, as its bar's cross does:
+/// a keyboard's way to it, for a wearer with no controller to hand.
+pub fn close_requested() -> &'static AtomicBool {
+    static REQUESTED: AtomicBool = AtomicBool::new(false);
+    &REQUESTED
+}
+
 /// The app asking for a picture of what the glasses show, saved as the HUD's screenshot is.
 pub fn screenshot_requested() -> &'static AtomicBool {
     static REQUESTED: AtomicBool = AtomicBool::new(false);

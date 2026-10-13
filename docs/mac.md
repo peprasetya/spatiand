@@ -84,7 +84,7 @@ not connect to hosts. `--selftest-click` moves the real pointer: not while the M
 ## In the glasses
 
 * Control-Option-G switches the mouse and keyboard between the room and the Mac's own screen.
-  Control-Space is the launcher, Control-Tab the settings, Control-Option-R recentres. While the
+  Control-Space is the launcher, Control-Tab the settings, Control-Option-R recentres, Control-Option-W closes the window that has the keyboard. While the
   room has the mouse the Mac's own pointer is hidden.
 * The launcher lists this Mac (by name) and each paired computer; a machine opens to all its
   applications by name, and typing narrows them. Opening a Mac application brings its windows in.

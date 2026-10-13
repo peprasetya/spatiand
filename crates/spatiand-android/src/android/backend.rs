@@ -345,6 +345,11 @@ pub fn run(
             if super::recentre_requested().swap(false, std::sync::atomic::Ordering::SeqCst) {
                 shell_events.push(ShellEvent::Hud(HudAction::Recentre));
             }
+            if super::close_requested().swap(false, std::sync::atomic::Ordering::SeqCst) {
+                if let Some(id) = runtime.state.layout.focused_id() {
+                    shell_events.push(ShellEvent::CloseWindow(id));
+                }
+            }
             let mut pads: Option<spatiand_input::ControllerState> = None;
 
             let missing = if hmd.is_none() {

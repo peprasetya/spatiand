@@ -75,6 +75,8 @@ void sp_key_evdev(uint32_t code, bool pressed);
 // 7 down, 8 left, 9 right, 10 menu, 11 view.
 void sp_control(int32_t control, bool pressed);
 void sp_recentre(void);
+// Close the window that has the keyboard.
+void sp_close_window(void);
 void sp_screenshot(void);
 
 // Game controllers. Buttons: 0 A, 1 B, 2 X, 3 Y, 4 L1, 5 R1, 6 L2, 7 R2, 8 select, 9 start,

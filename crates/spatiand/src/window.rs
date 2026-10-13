@@ -442,6 +442,11 @@ impl WindowLayout {
     }
 
     /// Where the focused window sits, if there is one.
+    /// Which window has the keyboard, by the number the shell knows it by.
+    pub fn focused_id(&self) -> Option<usize> {
+        self.focused
+    }
+
     pub fn focused_placement(&self) -> Option<Placement> {
         self.placements.get(&self.focused?).copied()
     }

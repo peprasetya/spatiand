@@ -54,7 +54,9 @@ fn stills() -> (Sender<(PathBuf, usize, u64)>, Receiver<(usize, u64, Option<spat
     let (done, made) = channel();
     let _ = std::thread::Builder::new().name("stills".into()).spawn(move || {
         for (path, index, showing) in asked {
-            let still = spatiand_media::still::grab(&path.to_string_lossy(), 480);
+            // Not a pointer to a stream: that would be a call to somebody's server for a tile.
+            let pointer = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("strm"));
+            let still = if pointer { None } else { spatiand_media::still::grab(&path.to_string_lossy(), 480) };
             if done.send((index, showing, still)).is_err() {
                 return;
             }
@@ -106,9 +108,12 @@ impl Library {
     /// Ask for the pictures of the films on show, and put on their tiles the ones that have
     /// come. Returns whether any did.
     fn pictures(&mut self, p: &mut Painter, gl: &spatiand_app::Gl) -> bool {
+        // The grid's idea of what is on show is from when it was last drawn, which may have
+        // been another folder with more in it: nothing is asked for that this one has not got.
         for index in self.grid.in_view() {
-            if self.entries[index].kind == Kind::Film && !std::mem::replace(&mut self.asked[index], true) {
-                let _ = self.wanted.send((self.entries[index].path.clone(), index, self.showing));
+            let Some(entry) = self.entries.get(index) else { break };
+            if entry.kind == Kind::Film && !std::mem::replace(&mut self.asked[index], true) {
+                let _ = self.wanted.send((entry.path.clone(), index, self.showing));
             }
         }
         let mut came = false;
@@ -188,7 +193,7 @@ struct Reel {
 impl Reel {
     fn play(&mut self, path: &Path) {
         let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-        let opened = self.app.gl().and_then(|gl| Playing::open(gl, &path.to_string_lossy(), &name));
+        let opened = self.app.gl().and_then(|gl| Playing::open(gl, &library::source(path), &name));
         match opened {
             Ok(playing) => {
                 self.app.set_title(self.window, &library::title(&name));

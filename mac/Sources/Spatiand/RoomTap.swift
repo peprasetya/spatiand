@@ -179,6 +179,8 @@ final class RoomTap {
         guard holding else { return false }
         // Control-Option-R: where the wearer is looking becomes the middle.
         if control, option, plain, code == 0x0F { sp_recentre(); return true }
+        // Control-Option-W: close the window that has the keyboard, as the cross on its bar does.
+        if control, option, plain, code == 0x0D { sp_close_window(); return true }
         if control, !option, plain {
             // Control-Space: the launcher. Control-Tab: the settings.
             if code == 0x31 { press(1); return true }
