@@ -25,6 +25,30 @@ pub struct Server {
 }
 
 const WATCHING: &str = "\u{1}watching";
+const RANDOM: &str = "\u{1}random";
+
+/// Numbers in no particular order, which is all a shuffle wants: no dependency for it.
+struct Dice(u64);
+
+impl Dice {
+    fn new() -> Dice {
+        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
+        Dice(seed | 1)
+    }
+
+    fn below(&mut self, limit: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % limit.max(1) as u64) as usize
+    }
+
+    fn shuffle<T>(&mut self, things: &mut [T]) {
+        for i in (1..things.len()).rev() {
+            things.swap(i, self.below(i + 1));
+        }
+    }
+}
 
 fn item(media: &MediaItem) -> Item {
     let folder = media.kind.is_browsable();
@@ -50,6 +74,41 @@ impl Server {
         Server { client, account }
     }
 
+    /// Films from here and there in the library, in no order: the server keeps no such list
+    /// (its web page shuffles one folder), so this wanders -- a folder chosen at random, and
+    /// from it another, for a dozen folders or so -- and shuffles what it passed.
+    fn random(&self) -> Result<Vec<Item>, String> {
+        let mut dice = Dice::new();
+        let mut films: Vec<Item> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let top: Vec<MediaItem> = self.client.browse("").map_err(|e| e.to_string())?.items().cloned().collect();
+        let mut folders: Vec<MediaItem> = top.iter().filter(|m| m.kind.is_browsable()).cloned().collect();
+        films.extend(top.iter().filter(|m| m.is_video()).map(item));
+        for _ in 0..12 {
+            if folders.is_empty() || films.len() >= 60 {
+                break;
+            }
+            let folder = folders.swap_remove(dice.below(folders.len()));
+            if !seen.insert(folder.path.clone()) {
+                continue;
+            }
+            // A folder that will not open is one fewer to choose from, not the end of it.
+            let Ok(listing) = self.client.browse(&folder.path) else { continue };
+            for media in listing.items() {
+                if media.kind.is_browsable() {
+                    folders.push(media.clone());
+                } else if media.is_video() {
+                    films.push(item(media));
+                }
+            }
+        }
+        let mut unique = std::collections::HashSet::new();
+        films.retain(|film| unique.insert(film.key.clone()));
+        dice.shuffle(&mut films);
+        films.truncate(24);
+        Ok(films)
+    }
+
     /// A client not yet signed in, to pair with.
     pub fn client(address: &str) -> VibrefyClient {
         VibrefyClient::new(address)
@@ -70,6 +129,7 @@ impl Source for Server {
 
     fn list(&self, folder: Option<&Item>) -> Result<Vec<Item>, String> {
         match folder {
+            Some(folder) if folder.key == RANDOM => self.random(),
             Some(folder) if folder.key == WATCHING => {
                 // The stream addresses need the session's number, which only a listing gives.
                 self.client.browse("").map_err(|e| e.to_string())?;
@@ -81,6 +141,9 @@ impl Source for Server {
                 let mut items: Vec<Item> = Vec::new();
                 if folder.is_none() && self.client.watching().is_ok_and(|w| !w.is_empty()) {
                     items.push(Item { key: WATCHING.into(), title: "Continue watching".into(), folder: true, ..Item::default() });
+                }
+                if folder.is_none() {
+                    items.push(Item { key: RANDOM.into(), title: "Something at random".into(), folder: true, ..Item::default() });
                 }
                 // A thing may be on more than one of the server's shelves; here it is once.
                 items.extend(listing.items().filter(|m| m.kind.is_browsable() || m.is_video()).filter(|m| seen.insert(m.path.clone())).map(item));
