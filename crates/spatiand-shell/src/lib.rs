@@ -137,6 +137,8 @@ pub enum ShellEvent {
     /// (`false`). The list stays open and is refreshed.
     PinWindow { id: usize, pinned: bool },
     /// Start this application on that computer.
+    /// Start one of Spatiand's own applications, which Spatiand carries and runs here.
+    LaunchOwn(AppEntry),
     LaunchRemote { host: String, app: String },
     /// Start pairing with a computer at this address.
     PairHost(String),
@@ -373,6 +375,11 @@ impl Shell {
 
     pub fn set_apps(&mut self, apps: Vec<AppEntry>) {
         self.launcher.set_apps(apps);
+    }
+
+    /// Spatiand's own applications, shown first in the launcher. See [`Launcher::set_own`].
+    pub fn set_own_apps(&mut self, own: Vec<AppEntry>, icon: Option<String>) {
+        self.launcher.set_own(own, icon);
     }
 
     /// Hand the picker the current list. The compositor calls this on startup and again
@@ -624,6 +631,7 @@ impl Shell {
                     self.mode = Mode::World;
                     Some(match launch {
                         Launch::Local(app) => ShellEvent::Launch(app),
+                        Launch::Own(app) => ShellEvent::LaunchOwn(app),
                         Launch::Remote { host, app } => ShellEvent::LaunchRemote { host, app },
                     })
                 }

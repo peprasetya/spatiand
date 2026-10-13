@@ -1009,6 +1009,8 @@ impl Scene {
                 spatiand_shell::launcher::HOST_ICON.to_string(),
             ]
             .into_iter()
+            .chain(launcher.own_icon().map(str::to_string))
+            .chain(launcher.own().iter().filter_map(|a| a.icon.clone()))
             .chain(launcher.apps().iter().filter_map(|a| a.icon.clone()))
                 .chain(launcher.hosts().iter().flat_map(|h| {
                     h.apps.iter().filter_map(|a| a.icon.clone()).collect::<Vec<_>>()

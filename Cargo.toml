@@ -21,6 +21,7 @@ members = [
     "crates/spatiand-android",
     "crates/spatiand-openxr",
     "crates/spatiand-app",
+    "crates/spatireel",
 ]
 
 # Crates scaffolded but not yet implemented are deliberately left out of `members`

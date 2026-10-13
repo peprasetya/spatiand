@@ -261,6 +261,7 @@ pub fn run(
     let calibrated = true;
     let mut shell = Shell::new(apps, DesktopPanels::ALL, calibrated);
     shell.set_local_name(&crate::system::machine_name());
+    crate::own::adopt(&mut shell);
 
     // Clients need an output to be told about, and frame callbacks need one to reference.
     let output = smithay::output::Output::new(
@@ -532,32 +533,39 @@ pub fn run(
         let (rows, tabs) = made_up_hosts();
         shell.set_hosts(rows, tabs);
     }
-    // `SPATIAND_VIEW=launcher SPATIAND_VIEW_PAGE=local` opens this machine's applications, and
-    // `SPATIAND_VIEW_TYPE=text` types that into the launcher, to narrow it.
-    if view == View::Launcher && std::env::var("SPATIAND_VIEW_PAGE").as_deref() == Ok("local") {
-        shell.handle(Intent::Accept);
-    }
-    // `SPATIAND_VIEW=launcher SPATIAND_VIEW_PAGE=host` opens the first computer's tab.
-    if view == View::Launcher && std::env::var("SPATIAND_VIEW_PAGE").as_deref() == Ok("host") {
-        // Walked the way a thumb would, row by row: right along a row, then down and back to
-        // its start. The first bubble after the groups is the first computer.
-        use spatiand_shell::NavDirection::{Down, Left, Right};
-        // The machines are this one and then the computers.
-        let target = if shell.launcher().apps().is_empty() { 0 } else { 1 };
-        for _ in 0..shell.launcher().len() * 2 {
-            if shell.launcher().cursor() == target {
-                break;
-            }
-            let before = shell.launcher().cursor();
-            shell.handle(Intent::Navigate(Right));
-            if shell.launcher().cursor() == before {
-                shell.handle(Intent::Navigate(Down));
-                for _ in 0..spatiand_shell::launcher::COLUMNS {
-                    shell.handle(Intent::Navigate(Left));
+    // `SPATIAND_VIEW=launcher SPATIAND_VIEW_PAGE=own` opens Spatiand's own applications,
+    // `=local` this machine's and `=host` the first computer's tab; `SPATIAND_VIEW_TYPE=text`
+    // types that into the launcher, to narrow it.
+    if view == View::Launcher {
+        // The top level is Spatiand's own, if there are any, then this machine, if it has
+        // applications, then the computers.
+        let own = usize::from(!shell.launcher().own().is_empty());
+        let local = usize::from(!shell.launcher().apps().is_empty());
+        let target = match std::env::var("SPATIAND_VIEW_PAGE").as_deref() {
+            Ok("own") if own == 1 => Some(0),
+            Ok("local") => Some(own),
+            Ok("host") => Some(own + local),
+            _ => None,
+        };
+        if let Some(target) = target.filter(|_| shell.launcher().level() == &spatiand_shell::Level::Machines) {
+            // Walked the way a thumb would, row by row: right along a row, then down and back
+            // to its start.
+            use spatiand_shell::NavDirection::{Down, Left, Right};
+            for _ in 0..shell.launcher().len() * 2 {
+                if shell.launcher().cursor() == target {
+                    break;
+                }
+                let before = shell.launcher().cursor();
+                shell.handle(Intent::Navigate(Right));
+                if shell.launcher().cursor() == before {
+                    shell.handle(Intent::Navigate(Down));
+                    for _ in 0..spatiand_shell::launcher::COLUMNS {
+                        shell.handle(Intent::Navigate(Left));
+                    }
                 }
             }
+            shell.handle(Intent::Accept);
         }
-        shell.handle(Intent::Accept);
     }
     if let Ok(typed) = std::env::var("SPATIAND_VIEW_TYPE") {
         shell.type_query(&typed);

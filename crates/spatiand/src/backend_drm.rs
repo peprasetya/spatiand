@@ -409,6 +409,7 @@ pub fn run(
     let calibrated = spatiand_track::config::load_axes().is_some();
     let mut shell = Shell::new(apps, panels, calibrated);
     shell.set_local_name(&crate::system::machine_name());
+    crate::own::adopt(&mut shell);
     // Where windows pinned to the view go and how big: the wearer's, from last time.
     crate::pip::adopt(&mut runtime.state, &prefs, &mut shell);
     let mut environments = Environments::discover();
@@ -1432,6 +1433,22 @@ pub fn run(
                                 }
                             }
                             Err(e) => log::warn!("could not launch {}: {e}", app.name),
+                        }
+                    }
+                    ShellEvent::LaunchOwn(app) => {
+                        // A sink of its own, as for anything launched, so a film's sound is
+                        // where its window is from its first note.
+                        let claim =
+                            spatial_audio.prepare_launch(crate::audio::width_for(&app.categories));
+                        let env: Vec<(String, String)> =
+                            claim.as_ref().map(|(_, e)| e.clone()).unwrap_or_default();
+                        match spatiand_platform::launch(&app.exec, &runtime.state.socket_name, &env) {
+                            Ok(pid) => {
+                                if let Some((slot, _)) = claim {
+                                    spatial_audio.launched(pid, slot);
+                                }
+                            }
+                            Err(e) => log::warn!("could not start {}: {e}", app.name),
                         }
                     }
                     ShellEvent::ChooseEnvironment(choice) => {

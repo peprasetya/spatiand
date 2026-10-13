@@ -29,6 +29,8 @@ pub struct AppEntry {
 pub const HOST_ICON: &str = "network-server";
 /// The icon this machine's own bubble looks up.
 pub const LOCAL_ICON: &str = "computer";
+/// What the bubble for Spatiand's own applications is called.
+pub const OWN_LABEL: &str = "Spatiand";
 
 /// Angular spacing between adjacent bubbles, degrees.
 ///
@@ -77,8 +79,11 @@ pub struct BubblePlacement {
 /// asks only what the application is called.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Level {
-    /// The machines: this one, then each remote computer.
+    /// The machines: Spatiand's own applications first, then this one, then each remote
+    /// computer.
     Machines,
+    /// Spatiand's own applications, which run here whatever "here" is.
+    Own,
     /// This machine's applications.
     Local,
     /// The applications another computer offers. Carries the index into the computers.
@@ -113,12 +118,19 @@ pub struct HostTab {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Launch {
     Local(AppEntry),
+    /// One of Spatiand's own applications: a program Spatiand carries and starts itself, not
+    /// one the machine has installed.
+    Own(AppEntry),
     Remote { host: String, app: String },
 }
 
 /// One bubble on show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Item {
+    /// Spatiand's own applications, at the top level: always the first bubble.
+    Spatiand,
+    /// One of Spatiand's own applications: its index.
+    Own(usize),
     /// This machine, at the top level.
     ThisMachine,
     /// A remote computer, at the top level: its index.
@@ -134,6 +146,11 @@ enum Item {
 pub struct Launcher {
     /// This machine's applications, by name.
     apps: Vec<AppEntry>,
+    /// Spatiand's own applications, in the order they were given: there are a handful, and
+    /// where each is does not move when another is added.
+    own: Vec<AppEntry>,
+    /// The picture for the bubble they are behind.
+    own_icon: Option<String>,
     grid: Grid,
     level: Level,
     /// Remote computers, shown after this one.
@@ -186,6 +203,8 @@ impl Launcher {
         let mut this = Self {
             grid: Grid::new(COLUMNS, 0),
             apps,
+            own: Vec::new(),
+            own_icon: None,
             level: Level::Local,
             hosts: Vec::new(),
             local_name: "This computer".into(),
@@ -215,6 +234,11 @@ impl Launcher {
     /// one remote computer and nothing here (a Beam Pro), choosing among one is a press for
     /// nothing, and the launcher opens on its applications.
     fn root(&self) -> Level {
+        // Spatiand's own are one more place to choose between, and the first of them; with
+        // nothing else at all they are the launcher.
+        if !self.own.is_empty() {
+            return if self.apps.is_empty() && self.hosts.is_empty() { Level::Own } else { Level::Machines };
+        }
         match (self.apps.is_empty(), self.hosts.len()) {
             (_, 0) => Level::Local,
             (true, 1) => Level::Host(0),
@@ -236,14 +260,21 @@ impl Launcher {
         match &self.level {
             // With nothing typed, the machines. Typing here looks through all of them at once.
             Level::Machines if query.is_empty() => {
+                // First, and not by its name: it is not a machine among the machines.
+                if !self.own.is_empty() {
+                    ranked.push((0, 0, Item::Spatiand));
+                }
                 if !self.apps.is_empty() {
-                    ranked.push((0, 0, Item::ThisMachine));
+                    ranked.push((0, 1, Item::ThisMachine));
                 }
                 for i in 0..self.hosts.len() {
-                    ranked.push((0, i + 1, Item::Machine(i)));
+                    ranked.push((0, i + 2, Item::Machine(i)));
                 }
             }
             Level::Machines => {
+                for (i, app) in self.own.iter().enumerate() {
+                    push(&mut ranked, &app.name, Item::Own(i));
+                }
                 for (i, app) in self.apps.iter().enumerate() {
                     push(&mut ranked, &app.name, Item::Local(i));
                 }
@@ -256,6 +287,11 @@ impl Launcher {
             Level::Local => {
                 for (i, app) in self.apps.iter().enumerate() {
                     push(&mut ranked, &app.name, Item::Local(i));
+                }
+            }
+            Level::Own => {
+                for (i, app) in self.own.iter().enumerate() {
+                    push(&mut ranked, &app.name, Item::Own(i));
                 }
             }
             Level::Host(h) => {
@@ -359,6 +395,8 @@ impl Launcher {
 
     fn bubble(&self, item: Item) -> (String, Option<String>) {
         match item {
+            Item::Spatiand => (OWN_LABEL.to_string(), self.own_icon.clone()),
+            Item::Own(i) => (self.own[i].name.clone(), self.own[i].icon.clone()),
             Item::ThisMachine => (self.local_name.clone(), Some(LOCAL_ICON.to_string())),
             Item::Machine(i) => {
                 let h = &self.hosts[i];
@@ -396,7 +434,8 @@ impl Launcher {
     pub fn heading(&self) -> Option<String> {
         match &self.level {
             Level::Machines => None,
-            Level::Local => (!self.hosts.is_empty()).then(|| self.local_name.clone()),
+            Level::Own => (self.root() != Level::Own).then(|| OWN_LABEL.to_string()),
+            Level::Local => (!self.hosts.is_empty() || !self.own.is_empty()).then(|| self.local_name.clone()),
             Level::Host(i) => self.hosts.get(*i).map(|h| h.label.clone()),
         }
     }
@@ -413,6 +452,13 @@ impl Launcher {
     pub fn activate(&mut self) -> Option<Launch> {
         let cursor = self.grid.cursor();
         match *self.shown.get(cursor)? {
+            Item::Spatiand => {
+                self.machine_cursor = cursor;
+                self.level = Level::Own;
+                self.refill(0);
+                None
+            }
+            Item::Own(i) => Some(Launch::Own(self.own[i].clone())),
             Item::ThisMachine => {
                 self.machine_cursor = cursor;
                 self.level = Level::Local;
@@ -473,6 +519,26 @@ impl Launcher {
             Item::Local(i) => Some(self.apps[i].clone()),
             _ => None,
         }
+    }
+
+    /// Spatiand's own applications, and the picture for the bubble they are behind. Kept in
+    /// the order given.
+    pub fn set_own(&mut self, own: Vec<AppEntry>, icon: Option<String>) {
+        if own == self.own && icon == self.own_icon {
+            return;
+        }
+        self.own = own;
+        self.own_icon = icon;
+        self.reset();
+    }
+
+    pub fn own(&self) -> &[AppEntry] {
+        &self.own
+    }
+
+    /// The picture for the bubble Spatiand's own applications are behind.
+    pub fn own_icon(&self) -> Option<&str> {
+        self.own_icon.as_deref()
     }
 
     /// Replace this machine's applications, returning to the top.
@@ -706,6 +772,72 @@ mod tests {
     }
 
     // --- machines first ---
+
+    fn own(names: &[&str]) -> Vec<AppEntry> {
+        names.iter().map(|n| app(n)).collect()
+    }
+
+    #[test]
+    fn spatiands_own_are_the_first_bubble_whatever_the_machines_are_called() {
+        // "aardvark" sorts before "Spatiand" and still comes after it: the entry is first
+        // because of what it is.
+        let mut launcher = launcher_of(3);
+        launcher.set_local_name("aardvark");
+        launcher.set_hosts(vec![tab("10.0.0.2", &["Editor"])]);
+        launcher.set_own(own(&["SpatiShelf", "SpatiReel"]), None);
+        assert_eq!(launcher.level(), &Level::Machines);
+        let labels: Vec<String> = launcher.bubbles().into_iter().map(|(label, _)| label).collect();
+        assert_eq!(labels, ["Spatiand", "aardvark", "10.0.0.2"]);
+    }
+
+    #[test]
+    fn spatiands_own_open_in_the_order_given_and_launch_as_their_own_kind() {
+        let mut launcher = launcher_of(3);
+        launcher.set_own(own(&["SpatiShelf", "SpatiReel", "SpatiLoupe", "SpatiQuill"]), None);
+        // This machine has applications, so there is a choice to make, with no other computer.
+        assert_eq!(launcher.level(), &Level::Machines);
+        assert_eq!(launcher.activate(), None);
+        assert_eq!(launcher.level(), &Level::Own);
+        assert_eq!(launcher.heading().as_deref(), Some("Spatiand"));
+        let labels: Vec<String> = launcher.bubbles().into_iter().map(|(label, _)| label).collect();
+        assert_eq!(labels, ["SpatiShelf", "SpatiReel", "SpatiLoupe", "SpatiQuill"]);
+        launcher.step(Direction::Right);
+        assert_eq!(launcher.activate(), Some(Launch::Own(app("SpatiReel"))));
+        assert!(launcher.back());
+        assert_eq!(launcher.level(), &Level::Machines);
+        assert_eq!(launcher.cursor(), 0);
+    }
+
+    #[test]
+    fn the_machines_after_spatiands_own_open_as_they_always_did() {
+        let mut launcher = launcher_of(3);
+        launcher.set_hosts(vec![tab("10.0.0.2", &["Editor"])]);
+        launcher.set_own(own(&["SpatiReel"]), None);
+        launcher.step(Direction::Right);
+        assert_eq!(launcher.activate(), None);
+        assert_eq!(launcher.level(), &Level::Local);
+        assert!(launcher.back());
+        launcher.step(Direction::Right);
+        assert_eq!(launcher.activate(), None);
+        assert_eq!(launcher.level(), &Level::Host(0));
+    }
+
+    #[test]
+    fn typing_among_the_machines_finds_spatiands_own_too() {
+        let mut launcher = launcher_of(3);
+        launcher.set_own(own(&["SpatiReel"]), None);
+        launcher.type_query("reel");
+        assert_eq!(launcher.activate(), Some(Launch::Own(app("SpatiReel"))));
+    }
+
+    #[test]
+    fn with_nothing_but_spatiands_own_the_launcher_opens_on_them() {
+        let mut launcher = Launcher::new(Vec::new());
+        launcher.set_own(own(&["SpatiReel"]), None);
+        assert_eq!(launcher.level(), &Level::Own);
+        assert_eq!(launcher.heading(), None);
+        assert!(!launcher.back());
+    }
 
     #[test]
     fn with_no_other_computer_it_opens_on_this_ones_applications() {

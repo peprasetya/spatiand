@@ -1,0 +1,23 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SpatiReel: a play mark on a strip of film">
+  <!-- The ground and the three colours are assets/icons/spatiand.svg's, so the four read as
+       one family with it. A stand-in until the icons are drawn properly. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.25" y2="1">
+      <stop offset="0" stop-color="#2f3358"/>
+      <stop offset="0.5" stop-color="#15172e"/>
+      <stop offset="1" stop-color="#08090f"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16e6c0"/>
+      <stop offset="0.45" stop-color="#37a6f7"/>
+      <stop offset="1" stop-color="#8f6bf2"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="232" y="300" width="560" height="424" rx="56" fill="url(#ink)" opacity="0.22"/>
+  <g fill="#0b0d1a" opacity="0.55">
+    <rect x="262" y="330" width="48" height="48" rx="12"/><rect x="262" y="488" width="48" height="48" rx="12"/><rect x="262" y="646" width="48" height="48" rx="12"/>
+    <rect x="714" y="330" width="48" height="48" rx="12"/><rect x="714" y="488" width="48" height="48" rx="12"/><rect x="714" y="646" width="48" height="48" rx="12"/>
+  </g>
+  <path d="M 438 392 L 438 632 A 24 24 0 0 0 474 653 L 668 533 A 24 24 0 0 0 668 491 L 474 371 A 24 24 0 0 0 438 392 Z" fill="url(#ink)"/>
+</svg>

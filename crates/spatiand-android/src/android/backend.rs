@@ -215,6 +215,7 @@ pub fn run(
     let calibrated = spatiand_track::config::load_axes().is_some() || cfg!(target_os = "macos");
     let mut shell = Shell::new(shell_apps, panels, calibrated);
     shell.set_local_name(&crate::system::machine_name());
+    crate::own::adopt(&mut shell);
     // On a Mac the menu bar that chooses where sound comes out is out of sight in the glasses.
     #[cfg(target_os = "macos")]
     shell.offer_audio();
@@ -678,6 +679,7 @@ pub fn run(
                         }
                     }
                     ShellEvent::Launch(app) => super::launch_local(&app),
+                    ShellEvent::LaunchOwn(app) => crate::own::launch(&app, &runtime.state.socket_name, &[]),
                     ShellEvent::ChooseEnvironment(choice) => {
                         environments.select(choice);
                         sky_loader.load(&environments);

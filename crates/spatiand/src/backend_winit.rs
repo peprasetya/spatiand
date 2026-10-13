@@ -212,6 +212,7 @@ pub fn run(
     let calibrated = spatiand_track::config::load_axes().is_some();
     let mut shell = Shell::new(apps, panels, calibrated);
     shell.set_local_name(&crate::system::machine_name());
+    crate::own::adopt(&mut shell);
     let mut environments = Environments::discover();
     shell.set_environments(environments.entries(), environments.choice());
     let mut browser = crate::environment::Browser::new();
@@ -337,6 +338,7 @@ pub fn run(
                             log::warn!("could not launch {}: {e}", app.name);
                         }
                     }
+                    ShellEvent::LaunchOwn(app) => crate::own::launch(&app, &runtime.state.socket_name, &[]),
                     ShellEvent::ChooseEnvironment(choice) => {
                         environments.select(choice);
                         sky_image = environments.current();

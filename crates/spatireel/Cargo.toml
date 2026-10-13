@@ -1,0 +1,13 @@
+[package]
+name = "spatireel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SpatiReel: Spatiand's video player"
+
+[dependencies]
+spatiand-app = { path = "../spatiand-app" }
+log.workspace = true
+env_logger.workspace = true
