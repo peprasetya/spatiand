@@ -41,6 +41,7 @@ fn main() -> Result<(), String> {
             detail: Some(format!("{}", 1980 + n)),
             picture: None,
             progress: (n % 4 == 1).then_some(n as f32 / 40.0),
+            ..Tile::default()
         })
         .collect();
 

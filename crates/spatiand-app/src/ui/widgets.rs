@@ -265,6 +265,12 @@ pub struct Tile {
     pub picture: Option<Texture>,
     /// How far through it the wearer is, 0 to 1, drawn as a bar along the picture's foot.
     pub progress: Option<f32>,
+    /// What stands where its picture would be, for a tile that will never have one: a
+    /// mark, in place of the first letter of its name.
+    pub glyph: Option<String>,
+    /// The colours of that place, top and foot, for a tile that is a kind of thing rather
+    /// than a thing: the room's dim blue otherwise.
+    pub tint: Option<([f32; 4], [f32; 4])>,
 }
 
 /// A grid of pictures with their names under them, scrolling by the row.
@@ -309,9 +315,14 @@ fn draw_tile(p: &mut Painter, gl: &Gl, cell: Rect, picture: f32, tile: &Tile, se
             // Its name, large, where its picture will be: a tile that is still loading, or
             // has no picture, says what it is rather than being a grey box among grey boxes.
             p.fill(gl, frame, theme::ROW_RADIUS, theme::GROUND);
-            p.gradient(gl, frame, theme::ROW_RADIUS, [0.36, 0.48, 0.78, 0.26], [0.16, 0.20, 0.36, 0.14]);
-            let initial: String = tile.title.chars().find(|c| c.is_alphanumeric()).into_iter().collect();
-            p.label(gl, &initial.to_uppercase(), frame, picture.min(cell.w) * 0.36, [1.0, 1.0, 1.0, 0.16], 0.5);
+            let (top, foot) = tile.tint.unwrap_or(([0.36, 0.48, 0.78, 0.26], [0.16, 0.20, 0.36, 0.14]));
+            p.gradient(gl, frame, theme::ROW_RADIUS, top, foot);
+            let initial: String = match tile.glyph.as_deref() {
+                Some(glyph) => glyph.to_string(),
+                None => tile.title.chars().find(|c| c.is_alphanumeric()).into_iter().collect::<String>().to_uppercase(),
+            };
+            let ink = if tile.tint.is_some() { [1.0, 1.0, 1.0, 0.82] } else { [1.0, 1.0, 1.0, 0.16] };
+            p.label(gl, &initial, frame, picture.min(cell.w) * 0.36, ink, 0.5);
         }
     }
     if let Some(progress) = tile.progress.filter(|p| *p > 0.0) {

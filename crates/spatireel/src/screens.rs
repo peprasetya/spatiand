@@ -130,25 +130,20 @@ pub struct Home {
 
 impl Home {
     pub fn new(sources: &[Entry], ticket: u64) -> Home {
+        let tinted = |color: [f32; 4]| Some(([color[0], color[1], color[2], 0.55], [color[0] * 0.35, color[1] * 0.35, color[2] * 0.5, 0.35]));
         let mut places: Vec<Tile> = sources
             .iter()
-            .map(|entry| Tile {
-                title: entry.source.label(),
-                detail: Some(
-                    match &entry.kind {
-                        Kind::Local => "Folders and films here".to_string(),
-                        Kind::Server(Account::Jellyfin(account)) => format!("Signed in as {}", account.user),
-                        Kind::Server(Account::Vibrefy(account)) => account.account.clone().map_or("Paired".to_string(), |who| format!("Signed in as {who}")),
-                        Kind::Dlna => "On this network".to_string(),
-                    },
-                ),
-                ..Tile::default()
+            .map(|entry| {
+                let (detail, glyph, tint) = match &entry.kind {
+                    Kind::Local => ("Folders and films here".to_string(), "\u{25b6}", look::TEAL),
+                    Kind::Server(Account::Jellyfin(account)) => (format!("Signed in as {}", account.user), if account.flavour == Flavour::Emby { "E" } else { "J" }, look::VIOLET),
+                    Kind::Server(Account::Vibrefy(account)) => (account.account.clone().map_or("Paired".to_string(), |who| format!("Signed in as {who}")), "V", look::BLUE),
+                    Kind::Dlna => ("On this network".to_string(), "\u{25c9}", [0.55, 0.62, 0.78, 1.0]),
+                };
+                Tile { title: entry.source.label(), detail: Some(detail), glyph: Some(glyph.into()), tint: tinted(tint), ..Tile::default() }
             })
             .collect();
-        places.push(Tile { title: "+".into(), detail: Some("Jellyfin, Emby or Vibrefy".into()), ..Tile::default() });
-        // The last tile is named for what it does; its picture is the plus.
-        let last = places.len() - 1;
-        places[last].title = "Add a server".into();
+        places.push(Tile { title: "Add a server".into(), detail: Some("Jellyfin, Emby or Vibrefy".into()), glyph: Some("+".into()), ..Tile::default() });
         let mut home = Home {
             ticket,
             films: Vec::new(),
@@ -187,6 +182,7 @@ impl Home {
                         detail: Some(label.to_string()),
                         picture: None,
                         progress: Some(item.progress.unwrap_or(0.5).clamp(0.04, 1.0)),
+                        ..Tile::default()
                     },
                     item,
                     asked: false,
@@ -363,7 +359,7 @@ impl Browse {
                 self.grid.shape = Shape::of(items.iter().filter(|i| i.pictured).filter_map(|i| i.aspect), Shape::Wide);
                 self.tiles = items
                     .iter()
-                    .map(|item| Tile { title: item.title.clone(), detail: item.detail.clone(), picture: None, progress: item.progress })
+                    .map(|item| Tile { title: item.title.clone(), detail: item.detail.clone(), progress: item.progress, glyph: item.folder.then(|| "\u{25a4}".to_string()), ..Tile::default() })
                     .collect();
                 self.asked = vec![false; items.len()];
                 let came_from = self.came_from.take().and_then(|key| items.iter().position(|item| item.key == key));
@@ -563,7 +559,13 @@ impl Add {
                 look::shelf(p, gl, &mut all, "What kind", true);
                 let tiles: Vec<Tile> = [("Jellyfin", "A name and a password"), ("Emby", "A name and a password"), ("Vibrefy", "A code, approved on a device signed in")]
                     .into_iter()
-                    .map(|(title, detail)| Tile { title: title.into(), detail: Some(detail.into()), ..Tile::default() })
+                    .zip([look::VIOLET, [0.32, 0.78, 0.42, 1.0], look::BLUE])
+                    .map(|((title, detail), c)| Tile {
+                        title: title.into(),
+                        detail: Some(detail.into()),
+                        tint: Some(([c[0], c[1], c[2], 0.55], [c[0] * 0.35, c[1] * 0.35, c[2] * 0.5, 0.35])),
+                        ..Tile::default()
+                    })
                     .collect();
                 self.kinds.draw(p, gl, all.take_top(Strip::height(Shape::Wide, 300.0)), &tiles, 300.0);
             }
