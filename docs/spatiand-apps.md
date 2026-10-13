@@ -110,48 +110,64 @@ are unplugged) and the Beam Pro; snapshot pictures per screen; SpatiReel against
 Jellyfin and Emby servers, a local file and a DLNA server, with progress checked on the server
 afterwards.
 
-## Built so far (2026-10-13, branch `spatiand-apps`)
+## Built so far (2026-10-13/14, branch `spatiand-apps`)
 
-Steps 1 to 3 of the build order, on the Mac. What each claim rests on is said, because most of
-it has not been in front of anybody's eyes.
+Steps 1 to 4 of the build order: the SDK and toolkit, the launcher's entry, and SpatiReel with
+local files and all four kinds of server. What each claim rests on is said, because most of it
+has not been in front of anybody's eyes.
 
 | | |
 |---|---|
-| `crates/spatiand-app` | The SDK: windows, input (keys through the compositor's keymap, with repeat), GL, eye layouts, layers, a window's shape apart from its picture's size (`wp_viewporter`), and `Mode` — one picture or two — as an event. `ui` is the room's look as widgets: list, poster grid, tabs, text field, button. `examples/gallery.rs` shows all of them. |
-| `spatiand_xr_v1` version 6 | `display_mode` (flat / stereo), sent at bind and on change. The Deck's and the Beam Pro's backends say what they are presenting; **nothing yet says "flat" on a Mac when the glasses are unplugged**, because the Mac's 2D mode does not run the compositor at all (below). |
+| `crates/spatiand-app` | The SDK: windows, input (keys through the compositor's keymap, with repeat), GL, eye layouts, layers, a window's shape apart from its picture's size (`wp_viewporter`), and `Mode` -- one picture or two -- as an event. `ui` is the room's look as widgets: list, poster grid, shelf (a row of tiles), tabs, text field (plain or secret), button; gradients and glows. `examples/gallery.rs` shows them. |
+| `spatiand_xr_v1` version 6 | `display_mode` (flat / stereo), sent at bind and on change. |
 | A picture without a copy | Mac: drawn into a *global* `IOSurface`, named by number in the window's placeholder (`spatiand_proto::handover`, `mac/remote_video.rs`). Deck: a texture exported as a dmabuf (`gl/linux.rs`). Anywhere it fails, and on Android for now, the picture is read back and sent as `wl_shm`. |
-| Launcher | `Level::Own`, the "Spatiand" bubble always first; `crates/spatiand/src/own.rs` lists the programs found beside the compositor (or in `SPATIAND_APPS_DIR`) and starts them. `mac/make-app.sh` puts SpatiReel in the bundle. |
-| `crates/spatiand-media` | `vibrefy-media` moved in: `layout`, `hints`, `audio`, `mesh` as they were (hints now read FFmpeg's stereo and spherical side data), and a new engine on FFmpeg in place of libmpv — `player` (reader, picture and sound threads, the sound's clock, seeking, sound-track choice), `sound` (cpal), `screen` (planes to colour in a shader, and a view from inside a sphere). VideoToolbox pictures stay on the GPU. |
-| `crates/vibrefy-api` | Moved in unchanged, for step 4. Taken from vibrefyApp's working tree at `254e043` plus its uncommitted changes. `vibrefy-wl` and the egui screens were not moved: the SDK and the toolkit replace them. |
-| `crates/spatireel` | A library of this machine's folders and films -- each film's tile a frame of it, made on a thread and held in memory only -- and a film playing: flat, side by side and over-under (full and half), VR180 and VR360 (one eye, side by side, stacked). Flat films are a window whose eyes the room samples from the file's own frame; spheres are the room's sky with the window as controls; with one picture, or the sky refused, one eye in the window and a sphere looked about in by dragging. A menu corrects what a film was taken to be and chooses its sound track. |
+| Launcher | `Level::Own`, the "Spatiand" bubble always first; `crates/spatiand/src/own.rs` lists the programs found beside the compositor (or in `SPATIAND_APPS_DIR`) and starts them. `mac/make-app.sh` puts SpatiReel in the bundle. On a Mac, Control-Option-W closes the window that has the keyboard. |
+| `crates/spatiand-media` | `vibrefy-media` moved in (`layout`, `hints`, `audio`, `mesh`), and an engine on FFmpeg in place of libmpv: `player` (reader, picture, sound and subtitle threads; the sound's clock; seeking; track choice; speed; a lip-sync offset), `sound` (cpal on a Mac; a `pw-cat` of its own on Linux, its channels named so the room's sink places a 5.1 or 7.1.4 film's channels), `screen` (planes to colour in a shader, HDR10/HLG brought down to SDR, a view from inside a sphere), `subs` (ASS text, picture subtitles, `.srt`), `stretch` (speed without a change of pitch), `still` (one frame, for a tile). Pictures stay on the GPU with VideoToolbox, and with VAAPI for H.264. |
+| `crates/vibrefy-api` | Moved in unchanged, from vibrefyApp's working tree at `254e043` plus its uncommitted changes. `vibrefy-wl` and the egui screens were not moved: the SDK and the toolkit replace them. |
+| `crates/spatireel` | **Home**: what is part watched, from every source at once, each with its picture and whose it is; then the sources. **Sources** (`source/`): this machine's folders (up to the root; `.strm` pointers played; where each film was left is kept), Jellyfin and Emby (sign in by name and password; a token is kept, never the password; posters; `static` streams so nothing is transcoded; the server's own word for a 3D film's packing; play, progress and stop reported), Vibrefy (paired by code; browse; streams; progress), DLNA (found by SSDP; browsed; played; no place kept). **A film**: every layout; a menu for layout, sound track, subtitles, speed and sync; resumed where it was left. Tiles are posters or frames by what the folder's pictures mostly are. Lists and pictures are fetched on threads and held in memory only. What is kept is `~/.config/spatiand/spatireel.json`. |
+| `tools/fake-jellyfin.py`, `fake-vibrefy.py`, `fake-dlna.py` | Stand-ins for the servers, to look at SpatiReel without one. |
 
-**Checked**, all on an Intel Mac with the snapshot backend (`SPATIAND_CLIENT=… spatiand-mac`),
+**Checked**, on an Intel Mac with the snapshot backend (`SPATIAND_CLIENT=... spatiand-mac`),
 which runs the real compositor and the real application as two processes and draws one eye to
-a PNG: the gallery's widgets, clicks and keys; the launcher's top level and the Spatiand level;
-every layout above, left eye and right; one-picture mode (`SPATIAND_SNAPSHOT_MODE=flat`); the
-sky at several headings; the menu, seeking, pausing, going back to the library; software and
-VideoToolbox decoding. Unit tests for the launcher, the layouts and hints, the colour matrix,
-the library and the staging table.
+a PNG, driven by scripted clicks and keys:
+the widgets; the launcher's levels; every layout, left eye and right; one-picture mode; the sky
+at several headings; menus, seeking, pausing; the owner's own folders from `~/Movies` up to `/`
+and a real twenty-minute film with far seeks; signing in to the stand-in Jellyfin by typing
+into the form, and to the stand-in Emby; pairing with the stand-in Vibrefy; discovering,
+browsing and playing from the stand-in DLNA server; each server being told where a film was
+left, and the home screen then offering it; subtitles from an `.srt` in each eye of a 3D film
+and from a film's own track; the place a film at 2x and 0.75x has got to. An HDR10 file made
+from an ordinary picture comes out within a little of that picture. On deepmagpie (Linux,
+Radeon): SpatiReel builds; one frame of an H.264 film decoded by VAAPI and drawn from its
+dmabufs matches the same frame decoded in software. On the Deck, in a tree that is not the
+session's: the compositor with the SDK's changes builds and the gallery draws through its
+snapshot backend, pictures going over as dmabufs.
 
-**Not checked**: anything on real glasses, on any platform. Sound, beyond its clock running
-(tests are muted with `SPATIAND_MEDIA_MUTE=1`); lip-sync by ear. The Deck beyond this: the
-compositor with these changes was built there (in `/home/deck/spatiand-apps`, not the tree the
-session runs) and the gallery drawn through its snapshot backend, pictures going over as
-dmabufs -- but SpatiReel and `spatiand-media` have not been built on the Deck, and nothing of
-this is deployed to it. The Beam Pro: nothing built.
+**Not checked**
+* Anything on real glasses. The owner opened SpatiReel in the Mac room once, on the first
+  build, and browsed (finding two crashes, since fixed); no film has been watched in glasses.
+* **Any real server.** There is no Jellyfin, Emby, Vibrefy or DLNA server this session could
+  reach; the stand-ins answer what the documentation says the real ones answer. Expect
+  differences.
+* Sound, by ear: lip-sync, the stretcher's quality, surround on the Deck (`pw-cat` with named
+  channels has never run in a Spatiand session).
+* SpatiReel on the Deck at all: built only on deepmagpie. Nothing is deployed to the Deck.
+* Picture subtitles (PGS, VobSub) on a real disc's track: the code path has not had one.
+* HEVC through VAAPI: **it is switched off on Linux**, because one HEVC file (encoded by a
+  Mac) hung deepmagpie's GPU decoder when given to VAAPI from the test tool, and the kernel
+  reset the GPU. HEVC is decoded in software there until that is understood
+  (`SPATIAND_MEDIA_HARDWARE=all` overrides).
 
-**Not done yet, of steps 1 to 3**
+**Not done yet**
 * The Mac without glasses: its 2D mode is the Swift app with no compositor, so there is nothing
-  for an application to connect to. Either the compositor runs there too with its windows shown
-  as Mac windows, or the apps get a second way in; this meets the other session's work on
-  `mac-compositor` and wants deciding with it.
-* Android: the programs in the APK (`android/build.sh`), FFmpeg built for it, MediaCodec, an
-  `AHardwareBuffer` handed over the socket, and `SPATIAND_APPS_DIR` set from the native library
-  directory.
-* The Deck: VAAPI pictures kept on the GPU (they are decoded in software now); sound through
-  cpal's ALSA has not been tried against Spatiand's per-window sinks; installing the programs
-  beside the compositor.
-* SpatiReel: subtitles; HDR; surround placed in the room (sound is whatever the device's default layout is);
-  playback speed and sync offsets; VR360 looked about in with the keys; on a Mac the room does
-  not yet place an application's sound at its window.
+  for an application to connect to, and nothing says "flat" when the glasses are unplugged.
+  This meets the other session's work on `mac-compositor` and wants deciding with it.
+* The Beam Pro: the programs in the APK (`android/build.sh`), FFmpeg built for Android,
+  MediaCodec, an `AHardwareBuffer` handed over the socket, `SPATIAND_APPS_DIR` set from the
+  native library directory, and the phantom-process monitor switched off.
+* Subtitles while a film is the sky (they are drawn over a window, and the sky is not one).
+* Dolby Vision that has no HDR10-compatible layer (profile 5) is shown with the wrong colours.
+* Vibrefy's random suggestions; signing in to Vibrefy by any way but a code.
+* On a Mac the room does not yet place an application's sound at its window.
 * The pose channel is not in the SDK yet (SpatiLoupe's 3D objects will want it).
+* Step 5: the storage service and SpatiShelf, SpatiLoupe, SpatiQuill.
