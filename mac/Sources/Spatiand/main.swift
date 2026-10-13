@@ -536,6 +536,30 @@ if CommandLine.arguments.contains("--selftest-notice") {
     exit(0)
 }
 
+if CommandLine.arguments.contains("--selftest-screen") {
+    // The room in a window and a screen of this Mac's brought into it: the first it has, or
+    // with --virtual one made for the purpose. A picture is saved (~/screenshots).
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    func after(_ seconds: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body) }
+    DispatchQueue.main.async {
+        Room.shared.start(preview: true)
+        after(1.5) { sp_control(3, true); after(0.1) { sp_control(3, false) } }
+        after(3) {
+            let screens = MacScreens.list(excluding: nil)
+            let virtual = CommandLine.arguments.contains("--virtual")
+            guard let info = screens.first(where: { ($0.display == MacScreens.virtualToBe) == virtual }) else { print("screen: FAILED, none"); return }
+            print("screen: bringing \(info.title)")
+            RoomWindows.shared.bring(info)
+        }
+        after(10) { sp_screenshot() }
+        after(13) { Room.shared.stop(); exit(0) }
+    }
+    application.run()
+}
+
 if CommandLine.arguments.contains("--selftest-windows") {
     // The room in a window, and its list of windows opened (the settings, then Windows): every
     // window open on this Mac should be in it, put away. A picture is saved (~/screenshots).
@@ -549,7 +573,9 @@ if CommandLine.arguments.contains("--selftest-windows") {
         Room.shared.start(preview: true)
         press(3, at: 1.5)
         press(0, at: 4.0)
-        for step in 0..<6 { press(7, at: 4.5 + Double(step) * 0.3) }
+        // How far down the settings the list of windows is: it moves as rows are added above it.
+        let down = Int(ProcessInfo.processInfo.environment["SPATIAND_TEST_STEPS"] ?? "") ?? 5
+        for step in 0..<down { press(7, at: 4.5 + Double(step) * 0.3) }
         press(2, at: 6.6)
         after(7.5) { sp_screenshot() }
         // With --and-choose, the first window in the list is brought out: its picture should be

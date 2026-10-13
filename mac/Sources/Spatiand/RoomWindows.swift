@@ -83,7 +83,7 @@ final class RoomWindows {
         insideLock.lock()
         defer { insideLock.unlock() }
         var out: [String: pid_t] = [:]
-        for (_, info) in showing where !info.bundle.isEmpty { out[info.bundle] = info.pid }
+        for (_, info) in showing where !info.bundle.isEmpty && info.display == nil { out[info.bundle] = info.pid }
         return out
     }
 
@@ -212,10 +212,17 @@ final class RoomWindows {
 
     private func rescan() {
         guard MacWindows.allowed(ask: false) else { return }
+        // Every screen but the one the room itself is on. A screen is listed with the windows
+        // and waits there: it is never brought out unasked.
+        let glasses = Room.shared.screen.display
         Task {
-            let all = await MacWindows.list()
+            let all = await MacWindows.list() + MacScreens.list(excluding: glasses)
             queue.async { [self] in
                 for info in all where !entries.values.contains(where: { $0.info.windowID == info.windowID }) && !passedOver.contains(info.windowID) {
+                    if info.display != nil {
+                        _ = announce(info, hidden: true)
+                        continue
+                    }
                     // Only windows in their own right; see `MacWindows.isOrdinary`.
                     guard MacWindows.isOrdinary(info) else {
                         passedOver.insert(info.windowID)
@@ -314,7 +321,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         guard due else { return }
         queue.async { [self] in
             guard let id = at.keys.first, let info = entries[id]?.info, let p = point(id) else { return }
-            if let top = topWindow(at: p, for: info.pid), top.pid != info.pid || (top.id != info.windowID && entries.values.contains(where: { $0.info.windowID == top.id })),
+            if info.display == nil, let top = topWindow(at: p, for: info.pid), top.pid != info.pid || (top.id != info.windowID && entries.values.contains(where: { $0.info.windowID == top.id })),
                let ax = MacWindows.axWindow(info) {
                 AXUIElementPerformAction(ax, kAXRaiseAction as CFString)
                 // Raised among its own application's windows; and that application's above the others'.
@@ -474,7 +481,8 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
     /// Bring the window's application to the front and the window to the top of it, and wait --
     /// briefly -- until it is: a click made before then lands on whatever was there.
     private func raise(_ id: UInt32) {
-        guard let entry = entries[id] else { return }
+        // A screen is not a window of anything's to bring forward.
+        guard let entry = entries[id], entry.info.display == nil else { return }
         let info = entry.info
         if let ax = MacWindows.axWindow(info) {
             AXUIElementPerformAction(ax, kAXRaiseAction as CFString)
@@ -519,6 +527,13 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         // its own travel and its own cursor -- which an application turning a 3D object holds
         // still, or hides, as it likes -- and the room's pointer is the one that follows.
         if down.contains(id) { return }
+        // **In a screen the pointer is the Mac's real one**: put where the room's is, and moved
+        // as a mouse moves it, so that whatever is under it there knows.
+        if entries[id]?.info.display != nil {
+            RoomTap.shared.warp(to: p)
+            post(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left))
+            return
+        }
         // Only pointed at, the real cursor is left alone and the application is told by an
         // event of its own: enough for what lights up under a pointer.
         if let pid = entries[id]?.info.pid, let event = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left) {
@@ -543,7 +558,9 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             // was pressed in it was never chosen. Where what is on top at that point is the
             // window itself, or something of the application's that is not one of its windows,
             // there is nothing to bring: the application is made the active one and no more.
-            if let info = entries[id]?.info, let top = topWindow(at: p, for: info.pid), top.pid == info.pid,
+            if entries[id]?.info.display != nil {
+                focused = id
+            } else if let info = entries[id]?.info, let top = topWindow(at: p, for: info.pid), top.pid == info.pid,
                top.id == info.windowID || !entries.values.contains(where: { $0.info.windowID == top.id }) {
                 focused = id
                 let app = NSRunningApplication(processIdentifier: info.pid)
@@ -595,7 +612,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             return
         }
         // To the window the room says has the keys, whatever the Mac has in front by now.
-        if down, focused != 0, let pid = entries[focused]?.info.pid, NSWorkspace.shared.frontmostApplication?.processIdentifier != pid {
+        if down, focused != 0, entries[focused]?.info.display == nil, let pid = entries[focused]?.info.pid, NSWorkspace.shared.frontmostApplication?.processIdentifier != pid {
             raise(focused)
         }
         let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(code), keyDown: down)

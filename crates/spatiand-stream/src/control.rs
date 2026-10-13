@@ -199,6 +199,10 @@ pub enum HostMessage {
     /// this session. `Closed` takes it off the list; `Opened` with the same number means it is
     /// now being shown.
     Offered { window: WindowId, title: String },
+    /// The same, for a whole screen of the host's rather than a window on it: offered, shown
+    /// when asked for with `Show`, and from then on a window like any other -- whose picture
+    /// is everything on that screen, and whose pointer is the host's own.
+    OfferedScreen { window: WindowId, title: String },
 }
 
 /// A window the host has.

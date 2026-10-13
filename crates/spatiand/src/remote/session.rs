@@ -533,7 +533,10 @@ async fn serve(
                                 }
                                 HostMessage::Notice { text } => super::host_notice_said(text),
                                 HostMessage::Offered { window, title } => {
-                                    super::offered_said(&config.host, window.0, title);
+                                    super::offered_said(&config.host, window.0, title, false);
+                                }
+                                HostMessage::OfferedScreen { window, title } => {
+                                    super::offered_said(&config.host, window.0, title, true);
                                 }
                                 HostMessage::CursorDrawn { window, drawn } => {
                                     log::info!(

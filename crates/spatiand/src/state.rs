@@ -902,6 +902,10 @@ impl Spatiand {
                     hidden: self.layout.is_hidden(window),
                     pinned: self.layout.is_pinned(window),
                     room: Self::is_environment(window),
+                    // A screen of a Mac's, its own or a host's, is announced as a window of an
+                    // application called this; see the Mac app's `MacScreens`.
+                    screen: self.app_id_of(window).is_some_and(|a| a.ends_with(".spatiand.screen")),
+                    heading: false,
                 })
             })
             .collect()

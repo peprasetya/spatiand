@@ -2829,6 +2829,17 @@ impl Scene {
             let Some(row) = menu.rows.get(index) else {
                 continue;
             };
+            // A heading is the name of what is under it: small, dim, and never the one chosen.
+            if self.menu_model.rows.get(index).is_some_and(|r| r.heading) {
+                text_in(
+                    panel::Rect { x: rect.x + panel::ROW_INSET, w: rect.w - panel::ROW_INSET * 2.0, y: rect.y + rect.h * 0.18, h: rect.h * 0.82 },
+                    &row.label,
+                    TRAILING_EM,
+                    INK_TRAILING,
+                    false,
+                );
+                continue;
+            }
             let selected = index == self.menu_model.cursor;
             if selected {
                 panel_rect(*rect, ROW_SELECTED, panel::ROW_RADIUS);

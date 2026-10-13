@@ -252,8 +252,12 @@ final class MacHost {
         }
     }
 
-    private func apply(_ list: [MacWindowInfo]) {
+    private func apply(_ windows: [MacWindowInfo]) {
         guard attached, let link else { return }
+        // This Mac's screens with its windows: each a thing that can be shown, and none of
+        // them shown until it is asked for.
+        let screens = MacScreens.list(excluding: nil)
+        let list = windows + screens
         // **What was open when the session attached waits to be asked for; what is opened while
         // it is attached is shared at once**, whichever application's it is -- as in the room.
         let here = Set(list.map(\.windowID))
@@ -261,19 +265,28 @@ final class MacHost {
             openAtAttach = here
             // **What is already open on this Mac is offered**: in the session's list of windows,
             // put away, each to be asked for. Nothing of them is captured or sent until then.
-            for info in list where !launched.contains(info.bundle) && MacWindows.isOrdinary(info) {
+            for info in windows where !launched.contains(info.bundle) && MacWindows.isOrdinary(info) {
                 let id = nextID
                 nextID = nextID == UInt16.max ? 1 : nextID + 1
                 offered[id] = info
                 link.say(["Offered": ["window": Int(id), "title": info.title.isEmpty ? info.app : info.app + " \u{2014} " + info.title]])
             }
         }
+        // A screen is offered whenever it is neither on offer nor being shown: when the session
+        // attaches, when a display is plugged in, and again when one that was shown is closed.
+        for info in screens where !askedFor.contains(info.windowID) && !offered.values.contains(where: { $0.windowID == info.windowID })
+            && !shared.values.contains(where: { $0.info.windowID == info.windowID }) {
+            let id = nextID
+            nextID = nextID == UInt16.max ? 1 : nextID + 1
+            offered[id] = info
+            link.say(["OfferedScreen": ["window": Int(id), "title": info.title]])
+        }
         // An offered window that has closed is off the list.
         for (id, info) in offered where !here.contains(info.windowID) {
             offered[id] = nil
             link.say(["Closed": ["window": Int(id)]])
         }
-        for info in list where !(openAtAttach ?? []).contains(info.windowID) && !openedSince.contains(info.windowID) && !passedOver.contains(info.windowID) {
+        for info in windows where !(openAtAttach ?? []).contains(info.windowID) && !openedSince.contains(info.windowID) && !passedOver.contains(info.windowID) {
             if MacWindows.isOrdinary(info) { openedSince.insert(info.windowID) } else { passedOver.insert(info.windowID) }
         }
         openedSince.formIntersection(here)
@@ -300,7 +313,7 @@ final class MacHost {
             share(info)
         }
         // Sound for the applications with a window, and none for the ones that have none left.
-        let bundles = Set(shared.values.map { $0.info.bundle })
+        let bundles = Set(shared.values.filter { $0.info.display == nil }.map { $0.info.bundle })
         for (bundle, a) in sounds where !bundles.contains(bundle) { a.invalidate(); sounds[bundle] = nil }
         for bundle in bundles where sounds[bundle] == nil && Date().timeIntervalSince(soundFailed[bundle] ?? .distantPast) > 30 {
             listen(to: bundle)
@@ -320,8 +333,10 @@ final class MacHost {
         }
         let s = Shared(id: id, info: info)
         shared[id] = s
-        let scale = NSScreen.screens.first { $0.frame.intersects(info.frame) }?.backingScaleFactor ?? 2
-        link.say(["Opened": ["window": Int(id), "app": info.bundle, "title": info.title,
+        // A screen's picture is in its own pixels, which are not always two to a point.
+        let screenScale: CGFloat? = info.display.flatMap { $0 == MacScreens.virtualToBe ? 1 : CGDisplayCopyDisplayMode($0).map { CGFloat($0.pixelWidth) / max(1, CGFloat($0.width)) } }
+        let scale = screenScale ?? NSScreen.screens.first { $0.frame.intersects(info.frame) }?.backingScaleFactor ?? 2
+        link.say(["Opened": ["window": Int(id), "app": info.bundle, "title": info.display != nil ? "Screen \u{2014} " + info.title : info.title,
                              "width": Int(info.frame.width * scale), "height": Int(info.frame.height * scale), "parent": NSNull()]])
         s.capture.onFrame = { [weak self, weak s] pixels, micros in
             guard let self, let s else { return }
@@ -410,7 +425,10 @@ final class MacHost {
                 reconcile()
             }
         case "Close":
-            if let id = windowNumber(fields), let s = shared[id] { close(s.info) }
+            if let id = windowNumber(fields), let s = shared[id] {
+                // A screen is not closed, only no longer shown: and then on offer again.
+                if s.info.display != nil { askedFor.remove(s.info.windowID); reconcile() } else { close(s.info) }
+            }
         case "Configure":
             if let id = windowNumber(fields), let s = shared[id], let w = (fields["width"] as? NSNumber)?.doubleValue,
                let h = (fields["height"] as? NSNumber)?.doubleValue {
@@ -508,7 +526,8 @@ final class MacHost {
             // Carried with the button down, it is the real pointer that is carried; only
             // pointed, the application is told and the real pointer is left where it is.
             MacInput.real.async {
-                if down { MacInput.realMouse(type, button: button, at: point, clicks: 1) }
+                // In a screen the pointer is the Mac's real one, pressed or not.
+                if down || info.display != nil { MacInput.realMouse(type, button: button, at: point, clicks: 1) }
                 else { MacInput.mouse(type, button: button, at: point, clicks: 1, window: info.windowID, pid: info.pid) }
             }
             lastPoint = (x, y)
@@ -536,7 +555,7 @@ final class MacHost {
             }()
             let others = Set(shared.values.map(\.info.windowID)).union(offered.values.map(\.windowID))
             MacInput.real.async {
-                if down { MacInput.bringForward(info, at: point, others: others) }
+                if down, info.display == nil { MacInput.bringForward(info, at: point, others: others) }
                 MacInput.realMouse(type, button: button, at: point, clicks: clicks)
             }
         case "Scroll":
@@ -550,7 +569,7 @@ final class MacHost {
             scrolledAt = Date()
             MacInput.real.async {
                 // Scrolled where the real pointer is, so the window has to be what is under it.
-                if again { MacInput.bringForward(info, at: point, others: others) }
+                if again, info.display == nil { MacInput.bringForward(info, at: point, others: others) }
                 MacInput.realScroll(dx: pixels(h), dy: pixels(v), at: point)
             }
         case "Key":
@@ -559,7 +578,8 @@ final class MacHost {
             // The modifiers ride on the keys that follow; they are not keys of their own here.
             if [42, 54, 29, 97, 56, 100, 125, 126, 58].contains(code) { return }
             guard let mac = Self.macKey[code] else { return }
-            MacInput.key(code: mac, flags: NSEvent.ModifierFlags(rawValue: UInt(flags(for: info.bundle).rawValue)), down: down, pid: info.pid)
+            // A screen's keys go to whatever has the keys on the Mac, as a keyboard's do.
+            MacInput.key(code: mac, flags: NSEvent.ModifierFlags(rawValue: UInt(flags(for: info.bundle).rawValue)), down: down, pid: info.display != nil ? nil : info.pid)
         default:
             break
         }

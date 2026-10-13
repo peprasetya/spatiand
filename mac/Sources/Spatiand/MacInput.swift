@@ -111,10 +111,14 @@ enum MacInput {
         key(code: event.keyCode, flags: event.modifierFlags, down: down, pid: pid)
     }
 
-    static func key(code: UInt16, flags: NSEvent.ModifierFlags, down: Bool, pid: pid_t) {
+    /// To an application, or with no application named to the system, which gives it to whichever has the keys.
+    static func key(code: UInt16, flags: NSEvent.ModifierFlags, down: Bool, pid: pid_t?) {
         guard let cg = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(code), keyDown: down) else { return }
         cg.flags = CGEventFlags(rawValue: UInt64(flags.rawValue) & 0xFFFF_0000)
-        cg.postToPid(pid)
+        if let pid { cg.postToPid(pid) } else {
+            cg.setIntegerValueField(.eventSourceUserData, value: spatiandEventMark)
+            cg.post(tap: .cghidEventTap)
+        }
     }
 
     /// A modifier key going down or up on its own.

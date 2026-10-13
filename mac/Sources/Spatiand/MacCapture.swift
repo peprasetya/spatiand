@@ -27,6 +27,8 @@ struct MacWindowInfo: Equatable {
     let title: String
     /// In points, in the global space with its origin at the top left of the main display.
     let frame: CGRect
+    /// Set when this is not a window but a whole screen, shown as one; see `MacScreens`.
+    var display: CGDirectDisplayID? = nil
 }
 
 enum MacWindows {
@@ -151,7 +153,48 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     init(_ info: MacWindowInfo) { self.info = info }
 
+    /// The display this is a picture of, when it is a screen's and not a window's.
+    private var display: CGDirectDisplayID?
+    var isScreen: Bool { info.display != nil }
+
+    /// A whole screen: everything on it but Spatiand's own windows, with the Mac's pointer in
+    /// the picture, since in a screen that is the pointer.
+    private func startScreen(_ wanted: CGDirectDisplayID) async throws {
+        guard let id = MacScreens.resolve(wanted) else { throw CaptureError.gone }
+        // One just made takes a moment to be something that can be captured.
+        var found: SCDisplay?
+        var all: SCShareableContent?
+        for _ in 0..<20 {
+            all = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            found = all?.displays.first { $0.displayID == id }
+            if found != nil { break }
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+        guard let found, let all else { throw CaptureError.gone }
+        display = id
+        let mine = all.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
+        let filter = SCContentFilter(display: found, excludingApplications: mine, exceptingWindows: [])
+        let config = SCStreamConfiguration()
+        let mode = CGDisplayCopyDisplayMode(id)
+        let pixels = CGSize(width: mode?.pixelWidth ?? found.width, height: mode?.pixelHeight ?? found.height)
+        scale = pixels.width / CGFloat(max(1, found.width))
+        config.width = Int(pixels.width)
+        config.height = Int(pixels.height)
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+        config.showsCursor = true
+        config.queueDepth = 3
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        self.config = config
+        configuredSize = CGDisplayBounds(id).size
+        let s = SCStream(filter: filter, configuration: config, delegate: self)
+        try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: samples)
+        try await s.startCapture()
+        stream = s
+        print("capture: the screen \(info.title), display \(id), \(Int(pixels.width))x\(Int(pixels.height))")
+    }
+
     func start() async throws {
+        if let wanted = info.display { return try await startScreen(wanted) }
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
         guard let window = content.windows.first(where: { $0.windowID == info.windowID }) else { throw CaptureError.gone }
         let screenScale = NSScreen.screens.first { $0.frame.intersects(window.frame) }?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
@@ -234,6 +277,8 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// The capture says how big the window and what is beside it are together, but not where:
     /// that is found among the application's other windows on screen.
     private func noteExtent(_ size: CGSize) {
+        // A screen has nothing beside it.
+        guard info.display == nil else { return }
         let window = windowFrame()
         guard size.width > window.width + 2 || size.height > window.height + 2 else {
             if extent != nil { print("capture: \(info.app) is by itself again") }
@@ -276,6 +321,7 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     /// The window's own frame at this moment, in points.
     private func windowFrame() -> CGRect {
+        if info.display != nil { return display.map { CGDisplayBounds($0) } ?? info.frame }
         if let (rect, at) = cachedFrame, Date().timeIntervalSince(at) < 0.1 { return rect }
         var rect = cachedFrame?.0 ?? info.frame
         // Asked for by its number through the list. (The call that takes an array of window

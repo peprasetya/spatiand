@@ -185,16 +185,16 @@ pub enum Command {
 
 /// Windows that hosts have open and are not showing: which host, its number there, what it is
 /// called, and a number of this session's own for the list of windows.
-static OFFERED: std::sync::Mutex<Vec<(String, u32, String, usize)>> = std::sync::Mutex::new(Vec::new());
+static OFFERED: std::sync::Mutex<Vec<(String, u32, String, usize, bool)>> = std::sync::Mutex::new(Vec::new());
 /// Clear of anything the compositor numbers its own windows with.
 const OFFERED_FROM: usize = 1 << 40;
 
-pub(crate) fn offered_said(host: &str, window: u32, title: String) {
+pub(crate) fn offered_said(host: &str, window: u32, title: String, screen: bool) {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(OFFERED_FROM);
     let mut offered = OFFERED.lock().unwrap();
     match offered.iter_mut().find(|o| o.0 == host && o.1 == window) {
         Some(known) => known.2 = title,
-        None => offered.push((host.to_string(), window, title, NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))),
+        None => offered.push((host.to_string(), window, title, NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed), screen)),
     }
 }
 
@@ -206,14 +206,13 @@ pub(crate) fn offered_gone(host: &str, window: Option<u32>) {
 /// The compositor's list of windows, with what hosts are offering after it: put away, to be
 /// asked for like any hidden window.
 pub fn with_offered(mut windows: Vec<spatiand_shell::WindowEntry>) -> Vec<spatiand_shell::WindowEntry> {
-    for (_, _, title, id) in OFFERED.lock().unwrap().iter() {
+    for (_, _, title, id, screen) in OFFERED.lock().unwrap().iter() {
         windows.push(spatiand_shell::WindowEntry {
             id: *id,
             title: title.clone(),
-            current: false,
             hidden: true,
-            pinned: false,
-            room: false,
+            screen: *screen,
+            ..Default::default()
         });
     }
     windows

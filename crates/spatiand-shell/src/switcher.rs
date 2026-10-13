@@ -21,7 +21,7 @@
 use crate::grid::Direction;
 
 /// One open window, as the switcher needs to know it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WindowEntry {
     /// The compositor's own identifier. Opaque here: the shell has no window handles.
     pub id: usize,
@@ -36,6 +36,30 @@ pub struct WindowEntry {
     /// immersive film. It has no title bar to press close on, so this list is the only way to
     /// end one, which is why it is listed at all.
     pub room: bool,
+    /// A whole screen of another computer's, or of this one's, shown as a window: listed apart
+    /// from the windows of applications.
+    pub screen: bool,
+    /// Not a window at all but the name of the group the rows under it belong to. Never
+    /// chosen: the highlight steps over it.
+    pub heading: bool,
+}
+
+/// The list in the order it is shown: as given, unless some of it is screens -- then the screens
+/// first under a heading of their own, and the applications' windows under another.
+fn grouped(entries: Vec<WindowEntry>) -> Vec<WindowEntry> {
+    let entries: Vec<WindowEntry> = entries.into_iter().filter(|e| !e.heading).collect();
+    if !entries.iter().any(|e| e.screen) {
+        return entries;
+    }
+    let heading = |title: &str, id: usize| WindowEntry { id, title: title.into(), heading: true, ..Default::default() };
+    let (screens, windows): (Vec<_>, Vec<_>) = entries.into_iter().partition(|e| e.screen);
+    let mut out = vec![heading("Screens", usize::MAX)];
+    out.extend(screens);
+    if !windows.is_empty() {
+        out.push(heading("Applications", usize::MAX - 1));
+        out.extend(windows);
+    }
+    out
 }
 
 /// The switcher's state.
@@ -51,12 +75,25 @@ impl Switcher {
     /// The cursor lands on the window *after* the current one, wrapping — the Cmd-Tab rule.
     /// With one window it lands on that one, which is a switcher that does nothing, correctly.
     pub fn show(&mut self, entries: Vec<WindowEntry>) {
+        let entries = grouped(entries);
         let current = entries.iter().position(|e| e.current);
         self.cursor = match current {
             Some(i) if !entries.is_empty() => (i + 1) % entries.len(),
             _ => 0,
         };
         self.entries = entries;
+        self.off_heading(true);
+    }
+
+    /// The highlight is never on a heading: moved on from one, the way it was going.
+    fn off_heading(&mut self, forward: bool) {
+        let n = self.entries.len();
+        for _ in 0..n {
+            if !self.entries.get(self.cursor).is_some_and(|e| e.heading) {
+                return;
+            }
+            self.cursor = if forward { (self.cursor + 1) % n } else { (self.cursor + n - 1) % n };
+        }
     }
 
     /// Hand it a fresh list while it stays open, keeping the highlight on the same window.
@@ -65,11 +102,13 @@ impl Switcher {
     /// after every close or hide would send the highlight skipping down the list from under
     /// the thumb that is working through it.
     pub fn refresh(&mut self, entries: Vec<WindowEntry>) {
+        let entries = grouped(entries);
         let was = self.activate();
         self.cursor = was
             .and_then(|id| entries.iter().position(|e| e.id == id))
             .unwrap_or_else(|| self.cursor.min(entries.len().saturating_sub(1)));
         self.entries = entries;
+        self.off_heading(true);
     }
 
     pub fn entries(&self) -> &[WindowEntry] {
@@ -94,7 +133,7 @@ impl Switcher {
     /// thought of as a row: every switcher anyone has used is horizontal.
     /// Put the cursor on a row the pointer is over.
     pub fn select(&mut self, index: usize) -> bool {
-        if index >= self.entries.len() || index == self.cursor {
+        if index >= self.entries.len() || index == self.cursor || self.entries[index].heading {
             return false;
         }
         self.cursor = index;
@@ -102,20 +141,19 @@ impl Switcher {
     }
 
     pub fn step(&mut self, direction: Direction) -> bool {
-        if self.entries.len() < 2 {
+        if self.entries.iter().filter(|e| !e.heading).count() < 2 {
             return false;
         }
         let n = self.entries.len();
-        self.cursor = match direction {
-            Direction::Up | Direction::Left => (self.cursor + n - 1) % n,
-            Direction::Down | Direction::Right => (self.cursor + 1) % n,
-        };
+        let forward = matches!(direction, Direction::Down | Direction::Right);
+        self.cursor = if forward { (self.cursor + 1) % n } else { (self.cursor + n - 1) % n };
+        self.off_heading(forward);
         true
     }
 
     /// Which window to switch to, or `None` when there are no windows at all.
     pub fn activate(&self) -> Option<usize> {
-        self.entries.get(self.cursor).map(|e| e.id)
+        self.entries.get(self.cursor).filter(|e| !e.heading).map(|e| e.id)
     }
 }
 
@@ -132,6 +170,7 @@ mod tests {
                 hidden: false,
                 pinned: false,
                 room: false,
+                ..Default::default()
             })
             .collect()
     }
@@ -199,5 +238,30 @@ mod tests {
         assert_eq!(s.cursor(), 2);
         s.step(Direction::Left);
         assert_eq!(s.cursor(), 1);
+    }
+
+    #[test]
+    fn screens_are_listed_first_under_a_heading_the_highlight_steps_over() {
+        let mut list = windows(3, 0);
+        list[2].screen = true;
+        let mut s = Switcher::default();
+        s.show(list);
+        let titles: Vec<&str> = s.entries().iter().map(|e| e.title.as_str()).collect();
+        assert_eq!(titles, ["Screens", "window 2", "Applications", "window 0", "window 1"]);
+        // Opened on the window after the one in front, as ever.
+        assert_eq!(s.activate(), Some(10));
+        s.step(Direction::Up);
+        assert_eq!(s.activate(), Some(0));
+        // Up from the first application is the screen: the heading between is not a stop.
+        s.step(Direction::Up);
+        assert_eq!(s.activate(), Some(20));
+        assert!(!s.select(0), "a heading is not chosen by pointing at it");
+    }
+
+    #[test]
+    fn with_no_screens_the_list_is_as_it_was() {
+        let mut s = Switcher::default();
+        s.show(windows(3, 0));
+        assert_eq!(s.entries().len(), 3);
     }
 }

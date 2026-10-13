@@ -112,6 +112,11 @@ async fn main() {
                 match message {
                     Some((message, rest)) => {
                         println!("{message:?}");
+                        // `--show-screens` asks for every screen the host offers, to prove one
+                        // can be had: its pictures are then counted with the rest.
+                        if let (HostMessage::OfferedScreen { window, .. }, true) = (&message, args.iter().any(|a| a == "--show-screens")) {
+                            say(&connection, ClientMessage::Show { window: *window }).await;
+                        }
                         control = Box::pin(read_control(rest));
                     }
                     None => break,

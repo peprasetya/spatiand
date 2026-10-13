@@ -653,8 +653,8 @@ impl Shell {
 mod tests {
     fn listed(hidden: bool) -> Vec<WindowEntry> {
         vec![
-            WindowEntry { id: 3, title: "a".into(), current: true, hidden: false, pinned: false, room: false },
-            WindowEntry { id: 7, title: "b".into(), current: false, hidden, pinned: false, room: false },
+            WindowEntry { id: 3, title: "a".into(), current: true, hidden: false, pinned: false, room: false, ..Default::default() },
+            WindowEntry { id: 7, title: "b".into(), current: false, hidden, pinned: false, room: false, ..Default::default() },
         ]
     }
 

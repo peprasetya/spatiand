@@ -21,6 +21,8 @@ pub struct MenuRow {
     /// Set to the right of the label, dimmer: a status rather than a name. Whether an
     /// environment is the one you are inside, whether a listing entry is a folder.
     pub trailing: Option<String>,
+    /// The name of the group the rows under it belong to: drawn small and dim, never chosen.
+    pub heading: bool,
 }
 
 impl MenuRow {
@@ -28,6 +30,7 @@ impl MenuRow {
         Self {
             label: label.into(),
             trailing: None,
+            heading: false,
         }
     }
 
@@ -35,6 +38,15 @@ impl MenuRow {
         Self {
             label: label.into(),
             trailing: Some(trailing.into()),
+            heading: false,
+        }
+    }
+
+    fn heading(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            trailing: None,
+            heading: true,
         }
     }
 }
@@ -258,7 +270,9 @@ fn card(shell: &Shell) -> Option<MenuModel> {
                         // Spelt out rather than marked, for the same reason as the
                         // environment list: a glyph read through optics at an angle is a
                         // box as often as it is a tick.
-                        if w.hidden {
+                        if w.heading {
+                            MenuRow::heading(w.title.to_uppercase())
+                        } else if w.hidden {
                             MenuRow::with(w.title.clone(), "Hidden")
                         } else if w.pinned {
                             MenuRow::with(w.title.clone(), "Pinned to your view")
@@ -459,6 +473,7 @@ pub fn from_editor(view: &spatiand_mapper::editor::View) -> MenuModel {
             .map(|r| MenuRow {
                 label: r.label.clone(),
                 trailing: r.value.clone(),
+                heading: false,
             })
             .collect(),
         cursor: view.cursor,
