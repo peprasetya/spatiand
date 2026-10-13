@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+#[cfg(not(target_os = "linux"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 /// How much decoded sound waits to be heard, in seconds: enough that a busy moment is not a
@@ -55,23 +56,37 @@ struct Inner {
 
 pub(crate) struct Sound {
     inner: std::sync::Arc<Inner>,
-    /// The device's stream, which plays for as long as this is kept. Not `Send` on every
-    /// platform, and never touched again: it is here only to be dropped.
-    stream: Mutex<Option<SendStream>>,
+    /// What keeps the sound going, dropped to stop it.
+    going: Mutex<Option<Going>>,
 }
 
-struct SendStream(#[allow(dead_code)] cpal::Stream);
+#[cfg(not(target_os = "linux"))]
+struct Going(#[allow(dead_code)] cpal::Stream);
 // SAFETY: the stream is made, played, and then only ever dropped; nothing calls into it from
 // two threads.
-unsafe impl Send for SendStream {}
+#[cfg(not(target_os = "linux"))]
+unsafe impl Send for Going {}
+
+/// On the Deck: the `pw-cat` the samples are written to, and the word that stops the thread
+/// writing them.
+#[cfg(target_os = "linux")]
+struct Going {
+    child: std::process::Child,
+    stop: std::sync::Arc<AtomicBool>,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for Going {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
 
 impl Sound {
-    pub(crate) fn open() -> Result<Sound, String> {
-        let device = cpal::default_host().default_output_device().ok_or("this machine has nowhere for sound to go")?;
-        let supported = device.default_output_config().map_err(|e| format!("the sound device would not say what it takes: {e}"))?;
-        let config: cpal::StreamConfig = supported.config();
-        let (rate, channels) = (config.sample_rate.0, config.channels);
-        let inner = std::sync::Arc::new(Inner {
+    fn inner(rate: u32, channels: u16) -> std::sync::Arc<Inner> {
+        std::sync::Arc::new(Inner {
             waiting: Mutex::new(Waiting::default()),
             heard: Mutex::new(None),
             paused: AtomicBool::new(false),
@@ -80,7 +95,17 @@ impl Sound {
             volume: AtomicU32::new(if std::env::var_os("SPATIAND_MEDIA_MUTE").is_some() { 0f32 } else { 1f32 }.to_bits()),
             rate,
             channels,
-        });
+        })
+    }
+
+    /// Open the machine's sound for a track of `wanted` channels.
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn open(_wanted: u16) -> Result<Sound, String> {
+        let device = cpal::default_host().default_output_device().ok_or("this machine has nowhere for sound to go")?;
+        let supported = device.default_output_config().map_err(|e| format!("the sound device would not say what it takes: {e}"))?;
+        let config: cpal::StreamConfig = supported.config();
+        let (rate, channels) = (config.sample_rate.0, config.channels);
+        let inner = Sound::inner(rate, channels);
         let feed = inner.clone();
         let stream = device
             .build_output_stream(
@@ -97,7 +122,73 @@ impl Sound {
             .map_err(|e| format!("the sound device would not open: {e}"))?;
         stream.play().map_err(|e| format!("the sound device would not start: {e}"))?;
         log::info!("sound: {channels} channels at {rate} Hz");
-        Ok(Sound { inner, stream: Mutex::new(Some(SendStream(stream))) })
+        Ok(Sound { inner, going: Mutex::new(Some(Going(stream))) })
+    }
+
+    /// Open a `pw-cat` of our own for a track of `wanted` channels.
+    ///
+    /// A child of this process, so it has this process's environment -- and that is where
+    /// Spatiand says which window's sink the sound is for (`PIPEWIRE_PROPS`, docs/apps.md).
+    /// The sink places channels by what they are, so the track is given one of the counts it
+    /// knows, each channel named: a 5.1 film's six stay six and are heard from six places.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn open(wanted: u16) -> Result<Sound, String> {
+        use std::io::Write;
+        let channels = crate::audio::nearest_placeable(wanted.max(1));
+        let map = match channels {
+            1 => "MONO",
+            2 => "FL,FR",
+            6 => "FL,FR,FC,LFE,RL,RR",
+            8 => "FL,FR,FC,LFE,RL,RR,SL,SR",
+            10 => "FL,FR,FC,LFE,RL,RR,TFL,TFR,TRL,TRR",
+            _ => "FL,FR,FC,LFE,RL,RR,SL,SR,TFL,TFR,TRL,TRR",
+        };
+        let rate = 48_000u32;
+        let mut child = std::process::Command::new("pw-cat")
+            .args(["--playback", "--raw", "--format", "f32", "--rate", &rate.to_string(), "--channels", &channels.to_string()])
+            .args(["--channel-map", map, "--latency", "40ms", "--media-role", "Movie", "-"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("pw-cat would not start: {e}"))?;
+        let mut pipe = child.stdin.take().ok_or("pw-cat has nowhere to be written to")?;
+        let inner = Sound::inner(rate, channels);
+        let feed = inner.clone();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let stopped = stop.clone();
+        std::thread::Builder::new()
+            .name("film-speaker".into())
+            .spawn(move || {
+                // A hundredth of a second at a time, on the clock: written as fast as the
+                // pipe would take it, the pipe would hold a sixth of a second nobody could
+                // account for. What is written now is heard about this much later.
+                const BEHIND: Duration = Duration::from_millis(70);
+                let step = Duration::from_millis(10);
+                let mut block = vec![0f32; (rate as usize / 100) * channels as usize];
+                let mut due = Instant::now();
+                while !stopped.load(Ordering::Relaxed) {
+                    let now = Instant::now();
+                    if now < due {
+                        std::thread::sleep(due - now);
+                    } else if now - due > Duration::from_millis(250) {
+                        // Held up -- the machine slept, or stalled: start again from now
+                        // and not with a burst to catch up.
+                        due = now;
+                    }
+                    due += step;
+                    feed.fill(&mut block, Instant::now() + BEHIND);
+                    // SAFETY: f32 has no bytes that are not sound; the machine's own order
+                    // is the order `f32` on the command line means.
+                    let bytes = unsafe { std::slice::from_raw_parts(block.as_ptr() as *const u8, block.len() * 4) };
+                    if pipe.write_all(bytes).is_err() {
+                        return;
+                    }
+                }
+            })
+            .map_err(|e| format!("no thread for sound: {e}"))?;
+        log::info!("sound: {channels} channels at {rate} Hz through pw-cat ({map})");
+        Ok(Sound { inner, going: Mutex::new(Some(Going { child, stop })) })
     }
 
     pub(crate) fn rate(&self) -> u32 {
@@ -170,7 +261,7 @@ impl Sound {
     }
 
     pub(crate) fn stop(&self) {
-        self.stream.lock().unwrap().take();
+        self.going.lock().unwrap().take();
     }
 }
 

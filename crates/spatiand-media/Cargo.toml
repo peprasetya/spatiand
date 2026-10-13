@@ -13,7 +13,7 @@ description = "What a film is and how it is played: FFmpeg, each platform's deco
 # `cargo test -p spatiand-media --no-default-features`.
 [features]
 default = ["engine"]
-engine = ["dep:rsmpeg", "dep:cpal", "dep:spatiand-app"]
+engine = ["dep:rsmpeg", "dep:spatiand-app"]
 
 [dependencies]
 log.workspace = true
@@ -23,4 +23,9 @@ spatiand-app = { path = "../spatiand-app", optional = true }
 # The same binding, pinned the same way, as `spatiand-video`: the Deck has FFmpeg 7.1's
 # libraries and vendored headers for them.
 rsmpeg = { version = "0.18", default-features = false, features = ["ffmpeg7_1", "link_system_ffmpeg"], optional = true }
-cpal = { version = "0.15", optional = true }
+
+# The sound device, where there is one to open: a Mac's, a phone's. On the Deck sound goes to
+# PipeWire through a `pw-cat` of our own instead (`sound.rs`), which is what lets the room
+# place it -- and needs no ALSA headers, which the Deck's build container has not got.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+cpal = "0.15"

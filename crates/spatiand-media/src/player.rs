@@ -26,6 +26,7 @@ use rsmpeg::ffi;
 
 use crate::hints::{ContainerHints, ContainerStereo};
 use crate::sound::{Block, Sound};
+use crate::subs::{self, Cue, Words};
 
 /// How many decoded pictures wait to be shown. Each is a frame of GPU or main memory, and a
 /// 4K one is not small: enough to ride out an uneven decode, no more.
@@ -133,6 +134,10 @@ pub struct Info {
     pub audio: Vec<Track>,
     /// Which of `audio` is playing.
     pub audio_playing: Option<usize>,
+    /// The subtitles the file carries. `channels` means nothing for these.
+    pub subtitles: Vec<Track>,
+    /// Which of `subtitles` is on show, if any.
+    pub subtitle_showing: Option<usize>,
 }
 
 struct Packet(*mut ffi::AVPacket);
@@ -209,6 +214,11 @@ struct Shared {
     target: Mutex<(f64, bool)>,
     /// Which sound stream the reader passes on; changed by choosing a track.
     audio_stream: AtomicU64,
+    /// Which subtitle stream the reader passes on, if any.
+    subtitle_stream: AtomicU64,
+    subtitle: Queue,
+    /// The subtitles decoded so far since the last seek, in order of their starts.
+    cues: Mutex<Vec<Arc<Cue>>>,
     /// The reader has reached the end of the file.
     read_out: AtomicBool,
     /// And each decoder has emptied what it was given since.
@@ -225,6 +235,9 @@ pub struct Player {
     threads: Vec<JoinHandle<()>>,
     /// The picture on show, kept so it can be drawn again.
     showing: Option<Arc<Picture>>,
+    /// How much later than its sound a picture is shown, in seconds: for a film whose two
+    /// were put together out of step.
+    lip: f64,
 }
 
 /// What is opened, owned by the reader thread once it starts.
@@ -388,6 +401,16 @@ impl Player {
             }
             for (index, stream) in streams.iter().enumerate() {
                 let parameters = (**stream).codecpar;
+                if (*parameters).codec_type == ffi::AVMEDIA_TYPE_SUBTITLE {
+                    info.subtitles.push(Track {
+                        stream: index,
+                        codec: text(ffi::avcodec_get_name((*parameters).codec_id)).unwrap_or_default(),
+                        profile: None,
+                        channels: 0,
+                        language: tag((**stream).metadata, c"language"),
+                        title: tag((**stream).metadata, c"title"),
+                    });
+                }
                 if (*parameters).codec_type != ffi::AVMEDIA_TYPE_AUDIO {
                     continue;
                 }
@@ -405,7 +428,8 @@ impl Player {
                 });
             }
 
-            let sound = Sound::open().map_err(|e| log::warn!("no sound: {e}")).ok().map(Arc::new);
+            let wanted = info.audio_playing.and_then(|index| info.audio.get(index)).map_or(2, |track| track.channels);
+            let sound = audio_stream.and_then(|_| Sound::open(wanted).map_err(|e| log::warn!("no sound: {e}")).ok()).map(Arc::new);
             let shared = Arc::new(Shared {
                 stop: AtomicBool::new(false),
                 paused: AtomicBool::new(false),
@@ -419,6 +443,9 @@ impl Player {
                 seek: Mutex::new(None),
                 target: Mutex::new((0.0, false)),
                 audio_stream: AtomicU64::new(audio_stream.map_or(NO_STREAM, |s| s as u64)),
+                subtitle_stream: AtomicU64::new(NO_STREAM),
+                subtitle: Queue::default(),
+                cues: Mutex::new(Vec::new()),
                 read_out: AtomicBool::new(false),
                 video_out: AtomicBool::new(video_stream.is_none()),
                 audio_out: AtomicBool::new(audio_stream.is_none()),
@@ -450,6 +477,11 @@ impl Player {
                 let shared = shared.clone();
                 threads.push(spawn("sound", move || decode_sound(streams, start, shared)));
             }
+            if !info.subtitles.is_empty() {
+                let streams: Vec<SendPointer<ffi::AVStream>> = streams.iter().map(|s| SendPointer(*s)).collect();
+                let shared = shared.clone();
+                threads.push(spawn("words", move || decode_words(streams, start, shared)));
+            }
             {
                 let source = Source { format, video_stream, start };
                 let shared = shared.clone();
@@ -464,7 +496,7 @@ impl Player {
                 info.duration,
                 info.hardware.unwrap_or("decoded in software"),
             );
-            Ok(Player { shared, info, threads, showing: None })
+            Ok(Player { shared, info, threads, showing: None, lip: 0.0 })
         }
     }
 
@@ -525,6 +557,37 @@ impl Player {
         self.seek(now);
     }
 
+    /// Show one of the file's subtitle tracks, by its place in [`Info::subtitles`], or none.
+    pub fn set_subtitle(&mut self, index: Option<usize>) {
+        let stream = index.and_then(|i| self.info.subtitles.get(i)).map_or(NO_STREAM, |track| track.stream as u64);
+        self.info.subtitle_showing = index.filter(|_| stream != NO_STREAM);
+        self.shared.subtitle_stream.store(stream, Ordering::Relaxed);
+        self.shared.cues.lock().unwrap().clear();
+        if stream != NO_STREAM {
+            // From where the film is, so that what is being said now is on show now and not
+            // from the next line on.
+            let now = self.position();
+            self.seek((now - 4.0).max(0.0));
+        }
+    }
+
+    /// The subtitle to show now, from the file's own track.
+    pub fn subtitle(&self) -> Option<Arc<Cue>> {
+        let now = self.position();
+        let cues = self.shared.cues.lock().unwrap();
+        let before = cues.partition_point(|cue| cue.start <= now);
+        cues[..before].iter().rev().take(4).find(|cue| cue.end > now).cloned()
+    }
+
+    /// Show pictures this much later than their sound (earlier, if negative).
+    pub fn set_lip(&mut self, seconds: f64) {
+        self.lip = seconds.clamp(-2.0, 2.0);
+    }
+
+    pub fn lip(&self) -> f64 {
+        self.lip
+    }
+
     pub fn set_volume(&self, volume: f32) {
         if let Some(sound) = self.shared.sound.as_ref() {
             sound.set_volume(volume);
@@ -545,7 +608,7 @@ impl Player {
     pub fn picture(&mut self) -> (Option<Arc<Picture>>, bool) {
         let shared = &self.shared;
         let serial = shared.serial.load(Ordering::Relaxed);
-        let now = self.position();
+        let now = self.position() - self.lip;
         let mut fresh = None;
         {
             let mut target = shared.target.lock().unwrap();
@@ -589,6 +652,7 @@ impl Drop for Player {
         self.shared.room.notify_all();
         self.shared.video.arrived.notify_all();
         self.shared.audio.arrived.notify_all();
+        self.shared.subtitle.arrived.notify_all();
         if let Some(sound) = self.shared.sound.as_ref() {
             sound.stop();
         }
@@ -621,6 +685,8 @@ fn read(source: Source, shared: Arc<Shared>) {
                 shared.serial.fetch_add(1, Ordering::Relaxed);
                 shared.video.clear();
                 shared.audio.clear();
+                shared.subtitle.clear();
+                shared.cues.lock().unwrap().clear();
                 shared.pictures.lock().unwrap().clear();
                 shared.room.notify_all();
                 if let Some(sound) = shared.sound.as_ref() {
@@ -651,6 +717,8 @@ fn read(source: Source, shared: Arc<Shared>) {
                 Some(&shared.video)
             } else if stream as u64 == shared.audio_stream.load(Ordering::Relaxed) && shared.sound.is_some() {
                 Some(&shared.audio)
+            } else if stream as u64 == shared.subtitle_stream.load(Ordering::Relaxed) {
+                Some(&shared.subtitle)
             } else {
                 None
             };
@@ -809,7 +877,16 @@ fn decode_sound(streams: Vec<SendPointer<ffi::AVStream>>, start: f64, shared: Ar
         let mut serial = shared.serial.load(Ordering::Relaxed);
         let (rate, channels) = (sound.rate() as c_int, sound.channels() as c_int);
         let mut to: ffi::AVChannelLayout = std::mem::zeroed();
-        ffi::av_channel_layout_default(&mut to, channels);
+        // The height layouts by name: for ten and twelve channels FFmpeg's own guess is not
+        // the order the room's sink names them in.
+        let named = match channels {
+            10 => Some(c"5.1.4"),
+            12 => Some(c"7.1.4"),
+            _ => None,
+        };
+        if named.map_or(true, |name| ffi::av_channel_layout_from_string(&mut to, name.as_ptr()) < 0) {
+            ffi::av_channel_layout_default(&mut to, channels);
+        }
         while !shared.stop.load(Ordering::Relaxed) {
             let Ok((packet, packet_serial)) = shared.audio.pop() else { continue };
             if packet_serial != shared.serial.load(Ordering::Relaxed) {
@@ -888,6 +965,99 @@ fn decode_sound(streams: Vec<SendPointer<ffi::AVStream>>, start: f64, shared: Ar
         ffi::av_frame_free(&mut frame);
         ffi::swr_free(&mut resampler);
         ffi::av_channel_layout_uninit(&mut to);
+    }
+}
+
+/// The words: a subtitle track's packets made into cues as they come. There are few of them
+/// and each is small, so nothing here waits for room.
+fn decode_words(streams: Vec<SendPointer<ffi::AVStream>>, start: f64, shared: Arc<Shared>) {
+    unsafe {
+        let mut decoder: Option<(u64, Decoder)> = None;
+        while !shared.stop.load(Ordering::Relaxed) {
+            let Ok((packet, serial)) = shared.subtitle.pop() else { continue };
+            let Some(packet) = packet else { continue };
+            if serial != shared.serial.load(Ordering::Relaxed) {
+                continue;
+            }
+            let wanted = shared.subtitle_stream.load(Ordering::Relaxed);
+            if (*packet.0).stream_index as u64 != wanted {
+                continue;
+            }
+            if decoder.as_ref().map(|(stream, _)| *stream) != Some(wanted) {
+                decoder = streams.get(wanted as usize).and_then(|stream| open_decoder(stream.0, false).ok()).map(|(decoder, _)| (wanted, decoder));
+            }
+            let Some((_, decoder)) = decoder.as_ref() else { continue };
+            let mut said: ffi::AVSubtitle = std::mem::zeroed();
+            let mut got: c_int = 0;
+            if ffi::avcodec_decode_subtitle2(decoder.context, &mut said, &mut got, packet.0) < 0 || got == 0 {
+                continue;
+            }
+            let stamp = (*packet.0).pts;
+            let begins = if said.pts != ffi::AV_NOPTS_VALUE {
+                said.pts as f64 / ffi::AV_TIME_BASE as f64 - start
+            } else if stamp != ffi::AV_NOPTS_VALUE {
+                stamp as f64 * decoder.time_base - start
+            } else {
+                ffi::avsubtitle_free(&mut said);
+                continue;
+            } + said.start_display_time as f64 / 1000.0;
+            // How long: what the subtitle says, or its packet, or a few seconds -- a disc's
+            // picture says nothing and is ended by the next one.
+            let shown = said.end_display_time.saturating_sub(said.start_display_time) as f64 / 1000.0;
+            let lasts = if shown > 0.0 && said.end_display_time != u32::MAX {
+                shown
+            } else if (*packet.0).duration > 0 {
+                (*packet.0).duration as f64 * decoder.time_base
+            } else {
+                6.0
+            };
+            let (frame_w, frame_h) = ((*decoder.context).width.max(1) as f32, (*decoder.context).height.max(1) as f32);
+            let rects = if said.rects.is_null() { &[][..] } else { std::slice::from_raw_parts(said.rects, said.num_rects as usize) };
+            let mut lines: Vec<String> = Vec::new();
+            let mut pictures: Vec<Words> = Vec::new();
+            for rect in rects {
+                let rect = &**rect;
+                if !rect.ass.is_null() {
+                    lines.push(subs::plain(&CStr::from_ptr(rect.ass).to_string_lossy()));
+                } else if !rect.text.is_null() {
+                    lines.push(CStr::from_ptr(rect.text).to_string_lossy().trim().to_string());
+                } else if !rect.data[0].is_null() && !rect.data[1].is_null() && rect.w > 0 && rect.h > 0 {
+                    // Each byte of the picture is a place in a list of 256 colours.
+                    let (w, h, stride) = (rect.w as usize, rect.h as usize, rect.linesize[0] as usize);
+                    let colours = std::slice::from_raw_parts(rect.data[1] as *const u32, 256);
+                    let mut rgba = Vec::with_capacity(w * h * 4);
+                    for row in 0..h {
+                        for index in std::slice::from_raw_parts(rect.data[0].add(row * stride), w) {
+                            let argb = colours[*index as usize];
+                            rgba.extend_from_slice(&[(argb >> 16) as u8, (argb >> 8) as u8, argb as u8, (argb >> 24) as u8]);
+                        }
+                    }
+                    pictures.push(Words::Picture {
+                        rgba,
+                        width: rect.w as u32,
+                        height: rect.h as u32,
+                        place: [rect.x as f32 / frame_w, rect.y as f32 / frame_h, rect.w as f32 / frame_w, rect.h as f32 / frame_h],
+                    });
+                }
+            }
+            ffi::avsubtitle_free(&mut said);
+            let mut cues = shared.cues.lock().unwrap();
+            if serial != shared.serial.load(Ordering::Relaxed) {
+                continue;
+            }
+            // A picture with nothing in it is how a disc says "take the last one down".
+            if let Some(last) = cues.last_mut().filter(|last| last.end > begins && matches!(last.words, Words::Picture { .. })) {
+                *last = Arc::new(Cue { end: begins, ..(**last).clone() });
+            }
+            let text = lines.into_iter().filter(|line| !line.is_empty()).collect::<Vec<_>>().join("\n");
+            let words = (!text.is_empty()).then_some(Words::Text(text)).into_iter().chain(pictures);
+            for words in words {
+                cues.push(Arc::new(Cue { start: begins, end: begins + lasts, words }));
+            }
+            // What is long past is not kept: a film has thousands.
+            let now = begins;
+            cues.retain(|cue| cue.end > now - 30.0);
+        }
     }
 }
 

@@ -15,7 +15,10 @@
 
 use std::time::{Duration, Instant};
 
-use spatiand_app::ui::{theme, Button, Input, List, Painter, Rect, Row};
+use std::sync::Arc;
+
+use spatiand_app::ui::{theme, Button, Input, List, Painter, Rect, Row, Texture};
+use spatiand_media::subs::{self, Cue, Words};
 use spatiand_app::{Anchor, App, EyeLayout, Gl, Key, Layer, Mode, WindowId};
 use spatiand_media::hints;
 use spatiand_media::player::Player;
@@ -73,6 +76,7 @@ pub fn staging(layout: &VideoLayout, mode: Mode, in_the_room: bool, sky_refused:
 const WINDOW: (f32, f32) = (1920.0, 1080.0);
 /// The controls on their own, with the film all round.
 const CONTROLS_ALONE: (u32, u32) = (1280, 250);
+const CONTROLS_WITH_MENU: (u32, u32) = (1280, 860);
 const CONTROLS_SHOWN: Duration = Duration::from_secs(3);
 
 /// The size a window showing a picture of this shape is: as large as fits in [`WINDOW`].
@@ -108,6 +112,20 @@ enum Choice {
     Packing(Packing),
     Swap,
     Sound(usize),
+    Words(Said),
+    /// Subtitles, or pictures against sound, a quarter of a second earlier or later.
+    WordsBy(f64),
+    LipBy(f64),
+}
+
+/// Where the subtitles on show come from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Said {
+    Nothing,
+    /// The `.srt` beside the film.
+    Beside,
+    /// One of the film's own tracks.
+    Track(usize),
 }
 
 pub struct Playing {
@@ -136,6 +154,31 @@ pub struct Playing {
     seeking: bool,
     /// Something changed that the next picture must show.
     pub dirty: bool,
+    /// The subtitles from a file beside the film, if there is one.
+    beside: Vec<Cue>,
+    said: Said,
+    /// How much later than the film says the subtitles are shown.
+    words_late: f64,
+    /// The subtitle last drawn, so that a new one is a reason to draw; and a picture
+    /// subtitle's texture, kept for as long as it is the one on show.
+    words_shown: Option<Arc<Cue>>,
+    words_picture: Option<(usize, Texture)>,
+}
+
+/// The `.srt` that goes with a film on this machine: the one with its name, or with its
+/// name and a language after it (`Film.en.srt`).
+fn beside(film: &str) -> Vec<Cue> {
+    let path = std::path::Path::new(film);
+    let (Some(folder), Some(stem)) = (path.parent(), path.file_stem().and_then(|s| s.to_str())) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(folder) else { return Vec::new() };
+    let mut found: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("srt")) && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(stem)))
+        .collect();
+    // The plainest name first: `Film.srt` before `Film.fr.srt`.
+    found.sort_by_key(|p| p.as_os_str().len());
+    found.first().and_then(|p| std::fs::read(p).ok()).map(|bytes| subs::srt(&String::from_utf8_lossy(&bytes))).unwrap_or_default()
 }
 
 impl Playing {
@@ -155,6 +198,8 @@ impl Playing {
         let layout = said.map_or(named, |said| VideoLayout { projection: named.projection, ..said });
         let swapped = info.eyes_swapped;
         let name = title;
+        let beside = beside(url);
+        let said = if beside.is_empty() { Said::Nothing } else { Said::Beside };
         log::info!("{name}: taken to be {:?}, {:?}, {:?}", layout.projection, layout.stereo, layout.packing);
         Ok(Playing {
             name: name.to_string(),
@@ -179,6 +224,11 @@ impl Playing {
             bar: Rect::default(),
             seeking: false,
             dirty: true,
+            beside,
+            said,
+            words_late: 0.0,
+            words_shown: None,
+            words_picture: None,
         })
     }
 
@@ -245,6 +295,9 @@ impl Playing {
                 let eye_h = if self.layout.stereo == StereoLayout::OverUnder { frame.1 / 2 } else { frame.1 }.max(2);
                 (((eye_h as f32 * aspect / 2.0).round() as u32 * 2, eye_h), fitted(aspect))
             }
+            // With the film all round, the window is the controls -- and grows upwards from
+            // its foot, which stays where it was, to hold the menu while that is open.
+            Staging::Sky { .. } if self.menu.is_some() => (CONTROLS_WITH_MENU, CONTROLS_WITH_MENU),
             Staging::Sky { .. } => (CONTROLS_ALONE, CONTROLS_ALONE),
             Staging::Look { .. } => (fitted(16.0 / 9.0), fitted(16.0 / 9.0)),
         };
@@ -307,9 +360,16 @@ impl Playing {
         self.arrange(app, window);
         let (picture, new) = self.player.picture();
         let shown = self.controls_shown();
-        if !new && !self.dirty {
+        let cue = self.cue();
+        let words_changed = match (&cue, &self.words_shown) {
+            (Some(now), Some(before)) => !Arc::ptr_eq(now, before),
+            (None, None) => false,
+            _ => true,
+        };
+        if !new && !self.dirty && !words_changed {
             return Ok(false);
         }
+        self.words_shown = cue.clone();
         self.dirty = false;
         let staging = self.staging;
         let one_eye = self.one_eye();
@@ -345,7 +405,8 @@ impl Playing {
                 Staging::Look { half } => this.screen.look(gl, size, whole, one_eye, half, gaze),
                 Staging::Sky { .. } => {}
             }
-            if !shown && !matches!(staging, Staging::Sky { .. }) {
+            let alone = matches!(staging, Staging::Sky { .. });
+            if !shown && !alone && cue.is_none() {
                 return;
             }
             let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
@@ -360,13 +421,77 @@ impl Playing {
                 }
                 _ => &[Rect::new(0.0, 0.0, whole[2], whole[3])],
             };
-            for part in parts {
+            for (eye, part) in parts.iter().enumerate() {
                 p.begin_over(gl, size, *part, logical);
-                this.controls(p, gl, &name, position, duration, paused, matches!(staging, Staging::Sky { .. }));
+                if let (Some(cue), false) = (cue.as_ref(), alone) {
+                    // In a film with two eyes the words stand a little in front of the
+                    // screen: each eye's are moved towards the other's side, so that the
+                    // eyes cross slightly to read them, as they do for anything nearer.
+                    let nearer = if parts.len() == 2 { logical.0 * 0.0035 } else { 0.0 };
+                    let first_is_left = !this.swapped;
+                    let shift = if (eye == 0) == first_is_left { nearer } else { -nearer };
+                    this.words(p, gl, cue, shift, if shown { 230.0 } else { 0.0 });
+                }
+                if shown || alone {
+                    this.controls(p, gl, &name, position, duration, paused, alone);
+                }
                 p.end(gl);
             }
         })?;
         Ok(true)
+    }
+
+    /// The subtitle to show now, wherever subtitles are coming from.
+    fn cue(&self) -> Option<Arc<Cue>> {
+        match self.said {
+            Said::Nothing => None,
+            Said::Beside => subs::at(&self.beside, self.player.position() - self.words_late).cloned().map(Arc::new).map(|cue| {
+                // The same cue is the same thing each time it is asked for, or every picture
+                // would look like a new subtitle.
+                match &self.words_shown {
+                    Some(before) if **before == *cue => before.clone(),
+                    _ => cue,
+                }
+            }),
+            Said::Track(_) => self.player.subtitle(),
+        }
+    }
+
+    /// Draw a subtitle: at the foot of the picture, `lifted` above it when the controls are
+    /// there, and `shift` to the right.
+    fn words(&mut self, p: &mut Painter, gl: &Gl, cue: &Arc<Cue>, shift: f32, lifted: f32) {
+        let all = p.bounds();
+        match &cue.words {
+            Words::Text(text) => {
+                // A size that is the same part of the picture whatever the window: a little
+                // over a degree in the glasses, which is what a line to be read at a glance is.
+                let em = all.h * 0.046;
+                let lines: Vec<&str> = text.lines().collect();
+                let mut y = all.bottom() - all.h * 0.06 - lifted - lines.len() as f32 * em * 1.35;
+                for line in lines {
+                    let row = Rect::new(all.x + all.w * 0.06 + shift, y, all.w * 0.88, em * 1.35);
+                    // Dark all round the letters, then the letters: readable over snow.
+                    for (dx, dy) in [(-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0), (2.0, 3.0)] {
+                        p.label(gl, line, Rect { x: row.x + dx, y: row.y + dy, ..row }, em, [0.0, 0.0, 0.0, 0.85], 0.5);
+                    }
+                    p.label(gl, line, row, em, [1.0, 1.0, 1.0, 1.0], 0.5);
+                    y += em * 1.35;
+                }
+            }
+            Words::Picture { rgba, width, height, place } => {
+                let key = Arc::as_ptr(cue) as usize;
+                if self.words_picture.map(|(held, _)| held) != Some(key) {
+                    if let Some((_, old)) = self.words_picture.take() {
+                        p.forget(gl, old);
+                    }
+                    self.words_picture = p.texture(gl, rgba, *width, *height).ok().map(|texture| (key, texture));
+                }
+                if let Some((_, texture)) = self.words_picture {
+                    let rect = Rect::new(all.x + place[0] * all.w + shift, all.y + place[1] * all.h - lifted.min(all.h * place[1]), place[2] * all.w, place[3] * all.h);
+                    p.image(gl, texture, rect, [0.0, 0.0, 1.0, 1.0], 0.0, [1.0, 1.0, 1.0, 1.0], false);
+                }
+            }
+        }
     }
 
     /// The controls: over the foot of the film, or all the window is.
@@ -449,6 +574,24 @@ impl Playing {
                 rows.push((Row::with(label, mark(info.audio_playing == Some(index))), Some(Choice::Sound(index))));
             }
         }
+        let offset = |seconds: f64| if seconds == 0.0 { "in step".to_string() } else { format!("{seconds:+.2} s") };
+        let tracks = &self.player.info().subtitles;
+        if !tracks.is_empty() || !self.beside.is_empty() {
+            rows.push((Row::heading("Subtitles"), None));
+            rows.push((Row::with("None", mark(self.said == Said::Nothing)), Some(Choice::Words(Said::Nothing))));
+            if !self.beside.is_empty() {
+                rows.push((Row::with("From the file beside the film", mark(self.said == Said::Beside)), Some(Choice::Words(Said::Beside))));
+            }
+            for (index, track) in tracks.iter().enumerate() {
+                let what = track.title.clone().or(track.language.clone()).unwrap_or_else(|| format!("Track {}", index + 1));
+                rows.push((Row::with(format!("{what} \u{b7} {}", track.codec), mark(self.said == Said::Track(index))), Some(Choice::Words(Said::Track(index)))));
+            }
+            rows.push((Row::with("Subtitles earlier", offset(self.words_late)), Some(Choice::WordsBy(-0.25))));
+            rows.push((Row::with("Subtitles later", offset(self.words_late)), Some(Choice::WordsBy(0.25))));
+        }
+        rows.push((Row::heading("Picture against sound"), None));
+        rows.push((Row::with("Picture earlier", offset(self.player.lip())), Some(Choice::LipBy(-0.05))));
+        rows.push((Row::with("Picture later", offset(self.player.lip())), Some(Choice::LipBy(0.05))));
         let mut list = List::default();
         list.cursor = 1;
         self.menu = Some((list, rows));
@@ -465,6 +608,18 @@ impl Playing {
             Choice::Packing(packing) => self.layout.packing = packing,
             Choice::Swap => self.swapped = !self.swapped,
             Choice::Sound(index) => self.player.set_audio(index),
+            Choice::Words(said) => {
+                self.said = said;
+                self.player.set_subtitle(match said {
+                    Said::Track(index) => Some(index),
+                    _ => None,
+                });
+            }
+            Choice::WordsBy(seconds) => self.words_late = ((self.words_late + seconds) * 100.0).round() / 100.0,
+            Choice::LipBy(seconds) => {
+                let lip = ((self.player.lip() + seconds) * 100.0).round() / 100.0;
+                self.player.set_lip(lip);
+            }
         }
         // Open again, on the same row, with the marks where they now are.
         let cursor = self.menu.as_ref().map_or(1, |(list, _)| list.cursor);

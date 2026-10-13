@@ -354,8 +354,10 @@ impl Reel {
             _ => {}
         }
         self.dirty = true;
-        // What the wearer does in the film's own surface is not for the controls.
-        if event.window().is_some_and(|window| window != self.window) {
+        // Where the pointer is in the film's own surface is not where it is in the controls;
+        // but a key is a key whichever of the two the room has given the keyboard to, and
+        // the film's surface, being the newer, is usually the one.
+        if event.window().is_some_and(|window| window != self.window) && !matches!(event, Event::Key { .. }) {
             return true;
         }
         let Some(input) = Input::of(&event, 1.0) else { return true };
