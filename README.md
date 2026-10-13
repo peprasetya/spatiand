@@ -113,10 +113,13 @@ sound going with them. Plug the glasses in and the Mac runs the room itself --
 the same compositor as the Deck, built for macOS and drawn through ANGLE, so the
 launcher, settings, pointer and window frames are the Deck's own. The Mac's
 applications are in its launcher and their windows come into the room, clicked
-and typed into as on the Mac; its mouse, trackpad and keyboard steer the room
-until Ctrl-Option-G gives them back. The Mac can also be a host in its own
-right: a Deck or a Beam Pro pairs with it and opens its applications like a
-Linux host's.
+and typed into as on the Mac, each with its sound placed where it is and a menu
+button on its bar that opens the application's own menus as a list; its mouse,
+trackpad and keyboard steer the room until Ctrl-Option-G gives them back. A
+whole screen can be a window too -- one the Mac has, or a virtual one made for
+the purpose, which macOS takes for a monitor. The Mac can also be a host in its
+own right: a Deck or a Beam Pro pairs with it, finds its open windows and its
+screens in the list of windows, and uses them like a Linux host's.
 
 **Recording.** The HUD's *Record a video* saves what the glasses show, both
 eyes side by side, remote pictures included, as Matroska in `~/Videos/Spatiand`
@@ -157,6 +160,11 @@ Listed because finding out by hitting them is worse.
   * **Object audio.** Atmos and DTS:X never reach the OS as objects on Linux, so
     what arrives is channels. Real object audio needs a protocol an application
     would have to speak; it does not exist yet.
+  * **The Mac is new, and less worn-in than the Deck.** The room on a Mac and
+    the Mac as a host work, on one Intel MacBook Pro; an Apple Silicon Mac has
+    not been tried, the glasses run at 60 Hz there rather than 72, and
+    [docs/mac.md](docs/mac.md) lists what has only been checked without glasses
+    on.
   * **Anything but this hardware.** The traits and a null backend exist so that
     other headsets are a table entry rather than a rewrite. Nobody has tried one.
 

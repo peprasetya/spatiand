@@ -20,6 +20,10 @@ the Deck's code, not a likeness of it.
  │ PadInput       controllers  │ sp_pad_*   │ mac/pads.rs     GamepadState, as on Android│
  │ Notices        banners      │ sp_notice  │ scene.rs        the card under the clock   │
  │ MacSound       app taps     │sp_app_sound│ spatiand-audio  server_fed.rs + Core Audio │
+ │ RoomMenus      an app's own │ sp_menu_*  │ spatiand-shell  a list, like the settings  │
+ │                menus        │            │                                            │
+ │ MacScreens     displays, a  │ sp_window_*│ mac/local.rs    a screen is a window       │
+ │                virtual one  │            │                                            │
  └─────────────────────────────┘            │ ── and the frame loop itself:              │
    2D mode, pairing, the Mac as a host:     │    spatiand-android/src/android/backend.rs │
    unchanged (spatiand-mac-core)            └───────────────────────────────────────────┘
@@ -80,30 +84,96 @@ not connect to hosts. `--selftest-click` moves the real pointer: not while the M
 ## In the glasses
 
 * Control-Option-G switches the mouse and keyboard between the room and the Mac's own screen.
-  Control-Space is the launcher, Control-Tab the settings, Control-Option-R recentres.
+  Control-Space is the launcher, Control-Tab the settings, Control-Option-R recentres. While the
+  room has the mouse the Mac's own pointer is hidden.
 * The launcher lists this Mac (by name) and each paired computer; a machine opens to all its
   applications by name, and typing narrows them. Opening a Mac application brings its windows in.
-* Every window open on the Mac is in the settings' Windows list, put away; choosing one brings
-  it out. Only windows on show are captured.
+* **The settings' Windows list** has every window open on the Mac, put away, under
+  *Applications*; choosing one brings it out. Only windows on show are captured. A window opened
+  while the room is going comes out at once. A tab is not a window: a new tab, or another tab
+  chosen, is the same window in the room showing something else.
+* **Screens** are in the same list, above the applications: each display the Mac has but the
+  glasses, and a virtual one. A screen is a window whose picture is everything on that display
+  and whose pointer is the Mac's real one. The virtual screen is a `CGVirtualDisplay`
+  (`mac/Sources/CSpatiand/SPVirtualDisplay.m`, from HoloFrame): macOS takes it for a monitor, so
+  windows can be put on it and it is arranged in System Settings. It is made the first time it is
+  brought out, at the size chosen in Spatiand's settings (Glasses → Virtual screen), and lasts
+  until Spatiand quits.
 * What is done inside a Mac window is done to the real window with the real pointer, with its
-  application in front. Scrolling and pinching over one are left to macOS itself.
+  application in front -- except a press on something the application has put up itself (a
+  browser's list of profiles), which bringing the window forward would close. A drag is the
+  hand's own events, passed through. Scrolling and pinching over one are left to macOS itself.
+* What hangs beside a window -- a menu dropped from a toolbar, a tooltip past the edge -- is in
+  its picture, and the corners that are neither are seen through.
+* **A menu button** at the left of a Mac window's bar opens its application's own menus as one of
+  the room's lists, read and pressed through Accessibility (`RoomMenus.swift`): the Mac's menu
+  bar is on the Mac's screen, out of sight.
+* **Sound.** An application with a window in the room is tapped (a Core Audio process tap) and
+  heard from where its window is; the speaker on the bar mutes it, and scrolled or slid it is that
+  window's own volume, shown as a ring. A screen on show has the sound of everything else.
 * Pinching on a title bar moves the window nearer or further; three fingers drag; four fingers
-  swipe up for the launcher, down to back out, and tap to recentre.
+  swipe up for the launcher, down to back out, and tap to recentre. Two fingers, or a wheel,
+  move through an open menu.
+* *Sound devices* in the settings chooses the output and the microphone; *Record a video* films
+  the glasses' view (macOS 15) to `~/Movies/Spatiand`.
+* The view is held steady against the wearer's pulse (`spatiand_track::Steady`,
+  `SPATIAND_STEADY=0` to compare).
 * From a Mac, Command is sent to a host as Control.
 
-## Not checked on real glasses yet (2026-10-09)
+## The Mac as a host
 
-Everything above was run with stand-in glasses in a window. With real ones, untested: the
-IOKit transport and the switch to two eyes; the window on the glasses' display and its pacing
-at 72 Hz; the event tap while wearing them; trackpad gestures; sound taps; a host's windows
-decoded by the new VideoToolbox path.
+Switched on in Spatiand's settings (Computers), and paired from its menu. To a Deck or a Beam
+Pro it is a host like the Linux one, with these differences, which are a Mac's:
+
+* **Its windows are already open, on a screen of its own.** So at attach each is *offered*
+  (`HostMessage::Offered`) and listed put away in the device's list of windows; nothing is
+  captured until one is asked for (`ClientMessage::Show`). A window opened afterwards is shown at
+  once. Its screens are offered the same way (`OfferedScreen`), and a screen that is closed is on
+  offer again.
+* **What a device does in a window is done with the Mac's real pointer**, the window brought
+  forward first: an event addressed to an application in the background is ignored by anything a
+  browser's engine draws.
+* A screen is sent at the size it looks, not at the size macOS draws it before scaling it down,
+  and with the sound of everything that has no stream of its own.
+* The Mac's notifications are sent to the device and shown under its clock.
+
+## Tests that need no glasses
+
+All are modes of the app itself; what they print is in `~/Library/Logs/Spatiand/spatiand.log`
+when run from the bundle. **The ones marked ✋ move the Mac's real pointer.**
+
+| | |
+|---|---|
+| `--selftest-pointer` ✋ | points at and clicks a window of its own, sweeps, drags, resizes it; `--popup` clicks in a bubble hung beside it |
+| `--selftest-child [--goes] [--tab]` | a window with something beside it, which then goes; or with a second tab chosen |
+| `--selftest-terminal-tabs <title>` | switches the tabs of a real Terminal window |
+| `--selftest-menu <App>` | opens an application's menus as a list, and one level of them |
+| `--selftest-app-sound <App>` | takes a playing application's sound for the room |
+| `--selftest-screen [--virtual]` | brings a screen into the room |
+| `--selftest-windows [--and-choose]` | the list of windows |
+| `--selftest-hover <App> <title>` | moves over a window as the room does |
+| `--picture-settings <file>` | the settings window, to a PNG (`SPATIAND_SETTINGS_PAGE=0…4`) |
+| `--serve-host <s>` | this Mac as a host only; `crates/spatiand-stream/examples/probe-session` connects to it (`--show-screens`) |
+
+## Checked on real glasses, and not
+
+On an Intel MacBook Pro with XREAL Air glasses, in use: the room at 60 Hz in two eyes, the
+pointer, clicks, drags and resizes in Mac windows, tabs, the menu button, a browser's pop-ups,
+sound from an application's window, and a host's windows.
+
+Only with stand-in glasses in a window, or only against a test client: a screen in the room and
+its pointer; a device using this Mac's screens; the virtual screen at sizes other than
+1920 × 1080; a HiDPI screen sent at the size it looks. Not tried at all: an Apple Silicon Mac.
+
+**The glasses run at 60 Hz on a Mac**, not the Deck's 72: macOS does not offer the two-eye
+mode at 72.
 
 ## Not done
 
 * Game controllers in windows on this Mac without glasses (they went through the removed
   `pads.rs`); in the room they work through the Deck's mapper.
-* Recording the glasses' view (`mac/record.rs` is a stub).
 * Five-finger gestures; four-finger sideways.
 * The microphone to a host (`spatiand-video`'s `voice` is a stub on the Mac, as on Android).
 * Notifications on the Beam Pro: `android::notice()` returns nothing; the card and its press
   are in the shared scene and loop.
+* The settings' *Sound devices* page is the Mac's only.
