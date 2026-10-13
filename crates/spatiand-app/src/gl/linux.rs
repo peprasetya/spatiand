@@ -92,3 +92,85 @@ impl Shared {
         }
     }
 }
+
+/// Somebody else's dmabuf -- one plane of a decoder's picture -- as a texture to sample, with
+/// no copy.
+pub struct DmabufTexture {
+    pub texture: glow::Texture,
+    image: egl::Image,
+}
+
+const LINUX_DMA_BUF_EXT: egl::Enum = 0x3270;
+const LINUX_DRM_FOURCC_EXT: egl::Attrib = 0x3271;
+const DMA_BUF_PLANE0_FD_EXT: egl::Attrib = 0x3272;
+const DMA_BUF_PLANE0_OFFSET_EXT: egl::Attrib = 0x3273;
+const DMA_BUF_PLANE0_PITCH_EXT: egl::Attrib = 0x3274;
+const DMA_BUF_PLANE0_MODIFIER_LO_EXT: egl::Attrib = 0x3443;
+const DMA_BUF_PLANE0_MODIFIER_HI_EXT: egl::Attrib = 0x3444;
+/// "No modifier was said", which is not the same as a modifier of nought.
+pub const NO_MODIFIER: u64 = 0x00ff_ffff_ffff_ffff;
+
+type ImageTarget = unsafe extern "C" fn(u32, *mut c_void);
+
+impl Gl {
+    /// One plane of a dmabuf as a texture: `fourcc` says what a pixel of it is (`R8  ` for a
+    /// picture's brightness, `GR88` for its two colour differences side by side). The
+    /// descriptor is only borrowed, and must outlive the texture.
+    pub fn dmabuf_texture(&self, fd: std::os::fd::BorrowedFd<'_>, offset: u32, pitch: u32, modifier: u64, size: (u32, u32), fourcc: u32) -> Result<DmabufTexture, String> {
+        use glow::HasContext;
+        use std::os::fd::AsRawFd;
+        let modern = self.egl.upcast::<egl::EGL1_5>().ok_or("EGL is older than 1.5")?;
+        let target = self.egl.get_proc_address("glEGLImageTargetTexture2DOES").ok_or("this GL cannot take an image as a texture")?;
+        // SAFETY: the one function of GL_OES_EGL_image, by its published shape.
+        let target: ImageTarget = unsafe { std::mem::transmute(target) };
+        let mut attributes: Vec<egl::Attrib> = vec![
+            egl::WIDTH as egl::Attrib, size.0 as egl::Attrib,
+            egl::HEIGHT as egl::Attrib, size.1 as egl::Attrib,
+            LINUX_DRM_FOURCC_EXT, fourcc as egl::Attrib,
+            DMA_BUF_PLANE0_FD_EXT, fd.as_raw_fd() as egl::Attrib,
+            DMA_BUF_PLANE0_OFFSET_EXT, offset as egl::Attrib,
+            DMA_BUF_PLANE0_PITCH_EXT, pitch as egl::Attrib,
+        ];
+        if modifier != NO_MODIFIER {
+            attributes.extend([DMA_BUF_PLANE0_MODIFIER_LO_EXT, (modifier & 0xffff_ffff) as egl::Attrib, DMA_BUF_PLANE0_MODIFIER_HI_EXT, (modifier >> 32) as egl::Attrib]);
+        }
+        attributes.push(egl::ATTRIB_NONE);
+        unsafe {
+            let image = modern
+                .create_image(self.display, egl::Context::from_ptr(egl::NO_CONTEXT), LINUX_DMA_BUF_EXT, egl::ClientBuffer::from_ptr(std::ptr::null_mut()), &attributes)
+                .map_err(|e| format!("a decoder's picture would not be imported: {e}"))?;
+            let g = self.api();
+            let texture = match g.create_texture() {
+                Ok(texture) => texture,
+                Err(e) => {
+                    let _ = modern.destroy_image(self.display, image);
+                    return Err(e);
+                }
+            };
+            g.bind_texture(glow::TEXTURE_2D, Some(texture));
+            target(glow::TEXTURE_2D, image.as_ptr());
+            for (name, value) in [
+                (glow::TEXTURE_MIN_FILTER, glow::LINEAR),
+                (glow::TEXTURE_MAG_FILTER, glow::LINEAR),
+                (glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE),
+                (glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE),
+            ] {
+                g.tex_parameter_i32(glow::TEXTURE_2D, name, value as i32);
+            }
+            if g.get_error() != glow::NO_ERROR {
+                g.delete_texture(texture);
+                let _ = modern.destroy_image(self.display, image);
+                return Err("a decoder's picture would not become a texture".into());
+            }
+            Ok(DmabufTexture { texture, image })
+        }
+    }
+
+    pub fn release_dmabuf_texture(&self, held: DmabufTexture) {
+        use glow::HasContext;
+        unsafe { self.api().delete_texture(held.texture) };
+        if let Some(modern) = self.egl.upcast::<egl::EGL1_5>() {
+            let _ = modern.destroy_image(self.display, held.image);
+        }
+    }
+}

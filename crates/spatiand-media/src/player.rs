@@ -52,6 +52,44 @@ pub enum Pixels {
     Nv12,
     /// A `CVPixelBuffer` from VideoToolbox, two planes like [`Pixels::Nv12`], on the GPU.
     VideoToolbox,
+    /// A VAAPI surface lent as dmabufs, two planes like [`Pixels::Nv12`], on the GPU.
+    Dmabuf,
+}
+
+/// One plane of a [`Pixels::Dmabuf`] picture: where it is in which descriptor.
+#[derive(Debug, Clone, Copy)]
+pub struct DmabufPlane {
+    pub fd: std::os::fd::RawFd,
+    pub offset: u32,
+    pub pitch: u32,
+    pub modifier: u64,
+}
+
+// `libavutil/hwcontext_drm.h`, which the bindings do not carry.
+#[repr(C)]
+struct DrmObject {
+    fd: c_int,
+    size: usize,
+    format_modifier: u64,
+}
+#[repr(C)]
+struct DrmPlane {
+    object_index: c_int,
+    offset: isize,
+    pitch: isize,
+}
+#[repr(C)]
+struct DrmLayer {
+    format: u32,
+    nb_planes: c_int,
+    planes: [DrmPlane; 4],
+}
+#[repr(C)]
+struct DrmFrame {
+    nb_objects: c_int,
+    objects: [DrmObject; 4],
+    nb_layers: c_int,
+    layers: [DrmLayer; 4],
 }
 
 /// How a picture's numbers become colours.
@@ -90,6 +128,25 @@ impl Picture {
             let stride = frame.linesize[index] as usize;
             let rows = if index == 0 { self.height as usize } else { (self.height as usize).div_ceil(2) };
             (std::slice::from_raw_parts(frame.data[index], stride * rows), stride)
+        }
+    }
+
+    /// The planes of a [`Pixels::Dmabuf`] picture, brightness first: however the driver
+    /// grouped them into layers, they come out in the order they are in the picture.
+    pub fn dmabuf_planes(&self) -> Vec<DmabufPlane> {
+        if self.pixels != Pixels::Dmabuf {
+            return Vec::new();
+        }
+        unsafe {
+            let described = &*((*self.frame).data[0] as *const DrmFrame);
+            let mut planes = Vec::new();
+            for layer in described.layers.iter().take(described.nb_layers.clamp(0, 4) as usize) {
+                for plane in layer.planes.iter().take(layer.nb_planes.clamp(0, 4) as usize) {
+                    let Some(object) = described.objects.get(plane.object_index.max(0) as usize) else { continue };
+                    planes.push(DmabufPlane { fd: object.fd, offset: plane.offset as u32, pitch: plane.pitch as u32, modifier: object.format_modifier });
+                }
+            }
+            planes
         }
     }
 
@@ -263,9 +320,11 @@ impl Drop for Decoder {
 #[cfg(target_os = "macos")]
 const HARDWARE: Option<(ffi::AVHWDeviceType, ffi::AVPixelFormat, &str)> =
     Some((ffi::AV_HWDEVICE_TYPE_VIDEOTOOLBOX, ffi::AV_PIX_FMT_VIDEOTOOLBOX, "VideoToolbox"));
-// VAAPI and MediaCodec are asked for the same way and are not wired to a way of showing
-// their pictures yet: until they are, the Deck and the Beam Pro decode in software.
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+const HARDWARE: Option<(ffi::AVHWDeviceType, ffi::AVPixelFormat, &str)> = Some((ffi::AV_HWDEVICE_TYPE_VAAPI, ffi::AV_PIX_FMT_VAAPI, "VAAPI"));
+// MediaCodec is asked for the same way and is not wired to a way of showing its pictures
+// yet: until it is, the Beam Pro decodes in software.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 const HARDWARE: Option<(ffi::AVHWDeviceType, ffi::AVPixelFormat, &str)> = None;
 
 unsafe extern "C" fn choose_format(_context: *mut ffi::AVCodecContext, offered: *const ffi::AVPixelFormat) -> ffi::AVPixelFormat {
@@ -292,7 +351,15 @@ unsafe fn open_decoder(stream: *mut ffi::AVStream, hardware: bool) -> Result<(De
     ffi::avcodec_parameters_to_context(context, parameters);
     (*context).pkt_timebase = (*stream).time_base;
     let mut on_gpu = false;
-    if let (true, Some((kind, _, _))) = (hardware && (*parameters).codec_type == ffi::AVMEDIA_TYPE_VIDEO, HARDWARE) {
+    // On Linux, H.264 only for now. An HEVC file (one a Mac's encoder made) hung the decoder
+    // of an AMD GPU when given to VAAPI from here on 2026-10-13, and the kernel reset the
+    // whole GPU to get it back -- which on a Deck is the room going down with the film.
+    // Until that is understood, HEVC and the rest are decoded in software there;
+    // `SPATIAND_MEDIA_HARDWARE=all` asks for the GPU regardless.
+    let trusted = !cfg!(target_os = "linux")
+        || (*parameters).codec_id == ffi::AV_CODEC_ID_H264
+        || std::env::var("SPATIAND_MEDIA_HARDWARE").as_deref() == Ok("all");
+    if let (true, Some((kind, _, _))) = (hardware && trusted && (*parameters).codec_type == ffi::AVMEDIA_TYPE_VIDEO, HARDWARE) {
         let mut device = ptr::null_mut();
         if ffi::av_hwdevice_ctx_create(&mut device, kind, ptr::null(), ptr::null_mut(), 0) >= 0 {
             (*context).hw_device_ctx = device;
@@ -749,6 +816,7 @@ unsafe fn colour_of(frame: *const ffi::AVFrame) -> Colour {
 /// be, and otherwise brought to main memory and to three eight-bit planes.
 unsafe fn settle(frame: *mut ffi::AVFrame, scaler: &mut *mut ffi::SwsContext) -> Option<(*mut ffi::AVFrame, Pixels)> {
     let format = (*frame).format;
+    let _ = format;
     #[cfg(target_os = "macos")]
     if format == ffi::AV_PIX_FMT_VIDEOTOOLBOX {
         // Eight-bit pictures stay where they are. Ten-bit ones are two sixteen-bit planes
@@ -759,6 +827,23 @@ unsafe fn settle(frame: *mut ffi::AVFrame, scaler: &mut *mut ffi::SwsContext) ->
             let kept = ffi::av_frame_alloc();
             ffi::av_frame_move_ref(kept, frame);
             return Some((kept, Pixels::VideoToolbox));
+        }
+    }
+    #[cfg(target_os = "linux")]
+    if format == ffi::AV_PIX_FMT_VAAPI {
+        // An eight-bit picture is lent as it is: mapped, not copied, and the mapping keeps
+        // the surface until the picture is dropped. Anything else comes down to main memory.
+        let frames = (*frame).hw_frames_ctx;
+        let software = if frames.is_null() { ffi::AV_PIX_FMT_NONE } else { (*((*frames).data as *const ffi::AVHWFramesContext)).sw_format };
+        if software == ffi::AV_PIX_FMT_NV12 && std::env::var("SPATIAND_MEDIA_COPY").is_err() {
+            let mut lent = ffi::av_frame_alloc();
+            (*lent).format = ffi::AV_PIX_FMT_DRM_PRIME;
+            if ffi::av_hwframe_map(lent, frame, (ffi::AV_HWFRAME_MAP_READ | ffi::AV_HWFRAME_MAP_DIRECT) as c_int) >= 0 {
+                ffi::av_frame_copy_props(lent, frame);
+                ffi::av_frame_unref(frame);
+                return Some((lent, Pixels::Dmabuf));
+            }
+            ffi::av_frame_free(&mut lent);
         }
     }
     let mut held = ffi::av_frame_alloc();

@@ -29,3 +29,11 @@ rsmpeg = { version = "0.18", default-features = false, features = ["ffmpeg7_1", 
 # place it -- and needs no ALSA headers, which the Deck's build container has not got.
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 cpal = "0.15"
+
+[dev-dependencies]
+env_logger.workspace = true
+png = "0.17"
+
+[[example]]
+name = "frame"
+required-features = ["engine"]

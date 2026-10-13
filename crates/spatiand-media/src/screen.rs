@@ -130,6 +130,8 @@ pub struct Screen {
     /// A picture on the GPU already, as textures that are its own memory.
     #[cfg(target_os = "macos")]
     borrowed: Vec<spatiand_app::gl::SurfaceTexture>,
+    #[cfg(target_os = "linux")]
+    borrowed: Vec<spatiand_app::gl::DmabufTexture>,
     /// The picture the textures hold, kept for as long as they do.
     loaded: Option<Arc<Picture>>,
 }
@@ -186,7 +188,7 @@ impl Screen {
                 _corners: corners,
                 at: NAMES.map(|name| g.get_uniform_location(program, name)),
                 planes,
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
                 borrowed: Vec::new(),
                 loaded: None,
             })
@@ -208,6 +210,10 @@ impl Screen {
         #[cfg(target_os = "macos")]
         for held in self.borrowed.drain(..) {
             gl.release_surface_texture(held);
+        }
+        #[cfg(target_os = "linux")]
+        for held in self.borrowed.drain(..) {
+            gl.release_dmabuf_texture(held);
         }
         let _ = gl;
         self.loaded = None;
@@ -242,6 +248,33 @@ impl Screen {
                     }
                     g.pixel_store_i32(glow::UNPACK_ROW_LENGTH, 0);
                 }
+                Pixels::Dmabuf => {
+                    #[cfg(target_os = "linux")]
+                    {
+                        use std::os::fd::BorrowedFd;
+                        // "R8  " and "GR88": a byte of brightness, two bytes of colour.
+                        const R8: u32 = u32::from_le_bytes(*b"R8  ");
+                        const GR88: u32 = u32::from_le_bytes(*b"GR88");
+                        let planes = picture.dmabuf_planes();
+                        if planes.len() < 2 {
+                            log::warn!("a decoded picture was lent with {} planes", planes.len());
+                            return;
+                        }
+                        for (plane, size, fourcc) in [(planes[0], (w as u32, h as u32), R8), (planes[1], (half.0 as u32, half.1 as u32), GR88)] {
+                            // SAFETY: the descriptor is the picture's, which is held below
+                            // for as long as the texture is.
+                            let fd = BorrowedFd::borrow_raw(plane.fd);
+                            match gl.dmabuf_texture(fd, plane.offset, plane.pitch, plane.modifier, size, fourcc) {
+                                Ok(held) => self.borrowed.push(held),
+                                Err(e) => {
+                                    log::warn!("{e}");
+                                    self.clear(gl);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
                 Pixels::VideoToolbox => {
                     #[cfg(target_os = "macos")]
                     {
@@ -270,11 +303,15 @@ impl Screen {
     unsafe fn bind(&self, gl: &Gl, view: (u32, u32), rect: [f32; 4], uv: [f32; 4]) -> bool {
         let Some(picture) = self.loaded.as_ref() else { return false };
         let g = gl.api();
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         let borrowed: Vec<glow::Texture> = self.borrowed.iter().map(|held| held.texture).collect();
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let borrowed: Vec<glow::Texture> = Vec::new();
-        let textures: &[glow::Texture] = if picture.pixels == Pixels::VideoToolbox { &borrowed } else { &self.planes };
+        let on_gpu = matches!(picture.pixels, Pixels::VideoToolbox | Pixels::Dmabuf);
+        if on_gpu && borrowed.len() < 2 {
+            return false;
+        }
+        let textures: &[glow::Texture] = if on_gpu { &borrowed } else { &self.planes };
         let two = picture.pixels != Pixels::Planar420;
         g.use_program(Some(self.program));
         g.bind_vertex_array(Some(self.vao));

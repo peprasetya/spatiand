@@ -24,6 +24,8 @@ mod linux;
 mod mac;
 #[cfg(target_os = "macos")]
 pub use mac::SurfaceTexture;
+#[cfg(target_os = "linux")]
+pub use linux::DmabufTexture;
 
 pub(crate) type Egl = egl::DynamicInstance<egl::EGL1_4>;
 
@@ -72,7 +74,9 @@ fn library() -> Result<std::path::PathBuf, String> {
 }
 
 impl Gl {
-    pub(crate) fn new() -> Result<Gl, String> {
+    /// A context of its own, with no window anywhere: what [`crate::App::gl`] makes, and what a
+    /// tool that only wants to draw into memory can make without a room to connect to.
+    pub fn new() -> Result<Gl, String> {
         let path = library()?;
         // SAFETY: the platform's EGL, or ANGLE's, loaded once and kept for the process's life.
         let egl: Egl = unsafe { Egl::load_required_from_filename(&path) }
