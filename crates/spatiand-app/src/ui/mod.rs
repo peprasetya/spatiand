@@ -16,7 +16,7 @@ mod paint;
 mod widgets;
 
 pub use paint::{Painter, Texture};
-pub use widgets::{Button, Field, Grid, List, Row, Shape, Tabs, Tile, Typed};
+pub use widgets::{Button, Field, Grid, List, Row, Shape, Strip, Tabs, Tile, Typed};
 
 use crate::{Event, Key, Modifiers};
 

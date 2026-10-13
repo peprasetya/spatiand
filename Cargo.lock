@@ -2034,6 +2034,7 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png 0.18.1",
@@ -4472,9 +4473,15 @@ name = "spatireel"
 version = "0.1.0"
 dependencies = [
  "env_logger",
+ "image",
  "log",
+ "roxmltree",
+ "serde",
+ "serde_json",
  "spatiand-app",
  "spatiand-media",
+ "ureq",
+ "vibrefy-api",
 ]
 
 [[package]]

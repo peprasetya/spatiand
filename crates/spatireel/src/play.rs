@@ -139,11 +139,22 @@ pub struct Playing {
 }
 
 impl Playing {
-    pub fn open(gl: &Gl, path: &str, name: &str) -> Result<Playing, String> {
-        let player = Player::open(path)?;
+    /// Play what is at `url`. `name` is the file's name, for what it says of the film's layout;
+    /// `said` is a layout the film's source vouches for, which outranks the name; `title` is
+    /// what the wearer calls it; `resume` is where to take it up, in seconds.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open(gl: &Gl, url: &str, options: &[(String, String)], name: &str, title: &str, said: Option<VideoLayout>, resume: f64) -> Result<Playing, String> {
+        let mut player = Player::open_with(url, options)?;
+        if resume > 5.0 {
+            player.seek(resume);
+        }
         let info = player.info();
-        let layout = hints::detect(name, info.hints);
+        let named = hints::detect(name, info.hints);
+        // A source that says how the eyes are packed is believed for that; where the picture
+        // goes -- a screen, a dome -- it never says, and the name still may.
+        let layout = said.map_or(named, |said| VideoLayout { projection: named.projection, ..said });
         let swapped = info.eyes_swapped;
+        let name = title;
         log::info!("{name}: taken to be {:?}, {:?}, {:?}", layout.projection, layout.stereo, layout.packing);
         Ok(Playing {
             name: name.to_string(),

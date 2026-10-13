@@ -348,10 +348,23 @@ unsafe fn read_hints(stream: *mut ffi::AVStream) -> (ContainerHints, bool) {
 impl Player {
     /// Open a file or anything else FFmpeg can read by name, and start it playing.
     pub fn open(url: &str) -> Result<Player, String> {
+        Player::open_with(url, &[])
+    }
+
+    /// As [`Player::open`], with what FFmpeg is to be told about how to fetch it: `headers`
+    /// for a server that wants a cookie with every request, say.
+    pub fn open_with(url: &str, options: &[(String, String)]) -> Result<Player, String> {
         let name = CString::new(url).map_err(|_| "a name with a nul in it".to_string())?;
         unsafe {
             let mut format = ptr::null_mut();
-            let opened = ffi::avformat_open_input(&mut format, name.as_ptr(), ptr::null(), ptr::null_mut());
+            let mut told: *mut ffi::AVDictionary = ptr::null_mut();
+            for (key, value) in options {
+                if let (Ok(key), Ok(value)) = (CString::new(key.as_str()), CString::new(value.as_str())) {
+                    ffi::av_dict_set(&mut told, key.as_ptr(), value.as_ptr(), 0);
+                }
+            }
+            let opened = ffi::avformat_open_input(&mut format, name.as_ptr(), ptr::null(), &mut told);
+            ffi::av_dict_free(&mut told);
             if opened < 0 {
                 return Err(format!("could not open {url}: {}", error_text(opened)));
             }

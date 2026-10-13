@@ -41,6 +41,10 @@ in vec2 v_uv;
 uniform vec4 u_rect;
 uniform vec2 u_scale;
 uniform vec4 u_color;
+// What the colour becomes by the foot of the rectangle; the same, for one colour throughout.
+uniform vec4 u_color2;
+// How far the edge fades over, in logical pixels: 0 is a clean edge, more is a glow.
+uniform float u_soft;
 uniform float u_radius;
 // 0: the colour. 1: a texture with its own alpha, tinted. 2: a texture with none.
 uniform int u_kind;
@@ -55,8 +59,9 @@ void main() {
     float dist = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - u_radius;
     // One of the picture's pixels of softness either side of the edge.
     float soft = 0.7 / min(u_scale.x, u_scale.y);
-    float cover = 1.0 - smoothstep(-soft, soft, dist);
-    vec4 c = u_color;
+    float cover = u_soft > 0.0 ? 1.0 - smoothstep(-u_soft, 0.0, dist) : 1.0 - smoothstep(-soft, soft, dist);
+    cover *= cover * (u_soft > 0.0 ? 1.0 : 1.0 / max(cover, 0.0001));
+    vec4 c = mix(u_color, u_color2, clamp(v_at.y / max(u_rect.w, 0.0001), 0.0, 1.0));
     if (u_kind == 1) {
         c *= texture(u_texture, v_uv);
     } else if (u_kind == 2) {
@@ -105,7 +110,7 @@ pub struct Painter {
     program: glow::Program,
     vao: glow::VertexArray,
     _corners: glow::Buffer,
-    at: [Option<glow::UniformLocation>; 9],
+    at: [Option<glow::UniformLocation>; 11],
     text: TextRenderer,
     set: HashMap<TextKey, Set>,
     frame: u64,
@@ -154,7 +159,7 @@ impl Painter {
             g.enable_vertex_attrib_array(0);
             g.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 0, 0);
             g.bind_vertex_array(None);
-            let at = ["u_rect", "u_view", "u_uv", "u_color", "u_radius", "u_kind", "u_texture", "u_scale", "u_origin"]
+            let at = ["u_rect", "u_view", "u_uv", "u_color", "u_radius", "u_kind", "u_texture", "u_scale", "u_origin", "u_color2", "u_soft"]
                 .map(|name| g.get_uniform_location(program, name));
             Ok(Painter {
                 program,
@@ -238,8 +243,17 @@ impl Painter {
     }
 
     fn quad(&self, gl: &Gl, rect: Rect, radius: f32, color: Color, kind: i32, uv: [f32; 4]) {
-        if rect.w <= 0.0 || rect.h <= 0.0 || color[3] <= 0.0 {
+        self.shaded(gl, rect, radius, color, color, 0.0, kind, uv);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn shaded(&self, gl: &Gl, rect: Rect, radius: f32, color: Color, foot: Color, soft: f32, kind: i32, uv: [f32; 4]) {
+        if rect.w <= 0.0 || rect.h <= 0.0 || (color[3] <= 0.0 && foot[3] <= 0.0) {
             return;
+        }
+        unsafe {
+            gl.api().uniform_4_f32(self.at[9].as_ref(), foot[0], foot[1], foot[2], foot[3]);
+            gl.api().uniform_1_f32(self.at[10].as_ref(), soft);
         }
         let g = gl.api();
         unsafe {
@@ -256,6 +270,17 @@ impl Painter {
     /// A rectangle with rounded corners.
     pub fn fill(&mut self, gl: &Gl, rect: Rect, radius: f32, color: Color) {
         self.quad(gl, rect, radius, color, 0, [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    /// A rectangle whose colour runs from `top` at its head to `foot` at its foot.
+    pub fn gradient(&mut self, gl: &Gl, rect: Rect, radius: f32, top: Color, foot: Color) {
+        self.shaded(gl, rect, radius, top, foot, 0.0, 0, [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    /// Light spilling from a rounded rectangle: `color` at `rect`'s edge, gone `spread`
+    /// logical pixels out. Drawn before the thing that glows.
+    pub fn glow(&mut self, gl: &Gl, rect: Rect, radius: f32, color: Color, spread: f32) {
+        self.shaded(gl, rect.inset(-spread), radius + spread, color, color, spread, 0, [0.0, 0.0, 1.0, 1.0]);
     }
 
     /// A picture, stretched over `rect`. `uv` is the part of it to show: (left, top, right,

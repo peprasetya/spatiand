@@ -286,6 +286,48 @@ pub struct Grid {
 
 const CAPTION: f32 = theme::ROW_EM * 0.72;
 const CAPTION_DETAIL: f32 = theme::FOOTER_EM * 0.92;
+/// The room a tile's two lines of words take under its picture.
+const CAPTION_ROOM: f32 = CAPTION * 1.4 + CAPTION_DETAIL * 1.4 + 10.0;
+
+/// One tile: its picture, `picture` tall, and its words under it. The one the cursor is on
+/// stands in a ring of the room's blue with light spilling from it -- found at a glance from
+/// across a room, which a faint wash is not.
+#[allow(clippy::too_many_arguments)]
+fn draw_tile(p: &mut Painter, gl: &Gl, cell: Rect, picture: f32, tile: &Tile, selected: bool, focused: bool, hover: bool) {
+    let frame = Rect { h: picture, ..cell };
+    if selected && focused {
+        p.glow(gl, frame, theme::ROW_RADIUS, [0.30, 0.62, 1.0, 0.42], 22.0);
+        p.fill(gl, frame.inset(-3.0), theme::ROW_RADIUS + 3.0, theme::MARK);
+    } else if selected {
+        p.fill(gl, frame.inset(-2.0), theme::ROW_RADIUS + 2.0, [1.0, 1.0, 1.0, 0.28]);
+    } else if hover {
+        p.fill(gl, frame.inset(-2.0), theme::ROW_RADIUS + 2.0, [1.0, 1.0, 1.0, 0.16]);
+    }
+    match tile.picture {
+        Some(texture) => p.cover(gl, texture, frame, theme::ROW_RADIUS, theme::INK),
+        None => {
+            // Its name, large, where its picture will be: a tile that is still loading, or
+            // has no picture, says what it is rather than being a grey box among grey boxes.
+            p.fill(gl, frame, theme::ROW_RADIUS, theme::GROUND);
+            p.gradient(gl, frame, theme::ROW_RADIUS, [0.36, 0.48, 0.78, 0.26], [0.16, 0.20, 0.36, 0.14]);
+            let initial: String = tile.title.chars().find(|c| c.is_alphanumeric()).into_iter().collect();
+            p.label(gl, &initial.to_uppercase(), frame, picture.min(cell.w) * 0.36, [1.0, 1.0, 1.0, 0.16], 0.5);
+        }
+    }
+    if let Some(progress) = tile.progress.filter(|p| *p > 0.0) {
+        // A shade for the bar to be read against, whatever the picture is.
+        p.gradient(gl, Rect { y: frame.bottom() - 46.0, h: 46.0, ..frame }, theme::ROW_RADIUS, [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.6]);
+        let bar = Rect::new(frame.x + 12.0, frame.bottom() - 15.0, frame.w - 24.0, 5.0);
+        p.fill(gl, bar, 2.5, [1.0, 1.0, 1.0, 0.25]);
+        p.fill(gl, Rect { w: bar.w * progress.min(1.0), ..bar }, 2.5, theme::MARK);
+    }
+    let name = Rect::new(cell.x + 4.0, frame.bottom() + 10.0, cell.w - 8.0, CAPTION * 1.4);
+    p.label(gl, &tile.title, name, CAPTION, if selected { theme::INK } else { theme::INK_ROW }, 0.0);
+    if let Some(detail) = tile.detail.as_deref() {
+        let under = Rect { y: name.bottom(), h: CAPTION_DETAIL * 1.4, ..name };
+        p.label(gl, detail, under, CAPTION_DETAIL, theme::INK_HINT, 0.0);
+    }
+}
 
 impl Grid {
     pub fn contains(&self, x: f32, y: f32) -> bool {
@@ -309,12 +351,12 @@ impl Grid {
         let gap = theme::TILE_GAP;
         // The selection's wash stands a little proud of the tile, so the tiles stand in from
         // the edge by as much.
-        let edge = 10.0;
+        let edge = 12.0;
         let inner = rect.w - edge * 2.0;
         self.columns = (((inner + gap) / (self.shape.width() + gap)).floor() as usize).max(1);
         let width = (inner - gap * (self.columns - 1) as f32) / self.columns as f32;
         let picture = width / self.shape.aspect();
-        let caption = CAPTION * 1.4 + CAPTION_DETAIL * 1.4 + 10.0;
+        let caption = CAPTION_ROOM;
         self.row_height = picture + caption + gap;
         let rows = tiles.len().div_ceil(self.columns);
         let content = rows as f32 * self.row_height - gap + edge * 2.0;
@@ -342,35 +384,7 @@ impl Grid {
                 continue;
             }
             self.placed.push((index, cell));
-            let selected = index == self.cursor;
-            if selected {
-                let wash = if self.focused { theme::SELECTED } else { theme::SELECTED_AWAY };
-                p.fill(gl, cell.inset(-edge), theme::ROW_RADIUS + 4.0, wash);
-            } else if self.hover == Some(index) {
-                p.fill(gl, cell.inset(-edge), theme::ROW_RADIUS + 4.0, theme::HOVER);
-            }
-            let frame = Rect { h: picture, ..cell };
-            match tile.picture {
-                Some(texture) => p.cover(gl, texture, frame, theme::ROW_RADIUS, theme::INK),
-                None => {
-                    // Its name, large, where its picture will be: a tile that is still loading
-                    // says what it is rather than being a grey box among grey boxes.
-                    p.fill(gl, frame, theme::ROW_RADIUS, theme::RAISED);
-                    let initial: String = tile.title.chars().find(|c| c.is_alphanumeric()).into_iter().collect();
-                    p.label(gl, &initial.to_uppercase(), frame, picture.min(width) * 0.36, theme::SEPARATOR, 0.5);
-                }
-            }
-            if let Some(progress) = tile.progress.filter(|p| *p > 0.0) {
-                let bar = Rect::new(frame.x + 10.0, frame.bottom() - 14.0, frame.w - 20.0, 5.0);
-                p.fill(gl, bar, 2.5, [0.0, 0.0, 0.0, 0.55]);
-                p.fill(gl, Rect { w: bar.w * progress.min(1.0), ..bar }, 2.5, theme::MARK);
-            }
-            let name = Rect::new(cell.x + 4.0, frame.bottom() + 8.0, cell.w - 8.0, CAPTION * 1.4);
-            p.label(gl, &tile.title, name, CAPTION, if selected { theme::INK } else { theme::INK_ROW }, 0.0);
-            if let Some(detail) = tile.detail.as_deref() {
-                let under = Rect { y: name.bottom(), h: CAPTION_DETAIL * 1.4, ..name };
-                p.label(gl, detail, under, CAPTION_DETAIL, theme::INK_HINT, 0.0);
-            }
+            draw_tile(p, gl, cell, picture, tile, index == self.cursor, self.focused, self.hover == Some(index));
         }
         p.unclip(gl);
         if content > rect.h {
@@ -463,6 +477,113 @@ impl Grid {
     }
 }
 
+// --- strip ---
+
+/// One row of tiles, going off to the right: a shelf.
+#[derive(Debug, Default)]
+pub struct Strip {
+    pub cursor: usize,
+    pub focused: bool,
+    pub shape: Shape,
+    /// How far along the content the left of the view is.
+    scroll: f32,
+    area: Rect,
+    total: usize,
+    placed: Vec<(usize, Rect)>,
+    hover: Option<usize>,
+    pressed: Option<usize>,
+}
+
+impl Strip {
+    /// How tall a strip of tiles `width` wide is.
+    pub fn height(shape: Shape, width: f32) -> f32 {
+        width / shape.aspect() + CAPTION_ROOM + 28.0
+    }
+
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        self.area.contains(x, y)
+    }
+
+    /// Which tiles are on show, or nearly.
+    pub fn in_view(&self) -> std::ops::Range<usize> {
+        let (first, last) = self.placed.iter().fold((usize::MAX, 0), |(a, b), (i, _)| (a.min(*i), b.max(*i + 1)));
+        if first == usize::MAX {
+            0..self.total.min(8)
+        } else {
+            first..(last + 2).min(self.total)
+        }
+    }
+
+    /// Draw `tiles`, each `width` wide, in a row across `rect`.
+    pub fn draw(&mut self, p: &mut Painter, gl: &Gl, rect: Rect, tiles: &[Tile], width: f32) {
+        self.area = rect;
+        self.total = tiles.len();
+        self.cursor = self.cursor.min(tiles.len().saturating_sub(1));
+        let (gap, edge) = (theme::TILE_GAP, 14.0);
+        let picture = width / self.shape.aspect();
+        let step = width + gap;
+        let content = tiles.len() as f32 * step - gap + edge * 2.0;
+        let left = self.cursor as f32 * step;
+        if left < self.scroll {
+            self.scroll = left;
+        } else if left + width + edge * 2.0 > self.scroll + rect.w {
+            self.scroll = left + width + edge * 2.0 - rect.w;
+        }
+        self.scroll = self.scroll.clamp(0.0, (content - rect.w).max(0.0));
+        self.placed.clear();
+        p.clip(gl, rect);
+        for (index, tile) in tiles.iter().enumerate() {
+            let cell = Rect::new(rect.x + edge + index as f32 * step - self.scroll, rect.y + edge, width, picture + CAPTION_ROOM);
+            if cell.right() < rect.x || cell.x > rect.right() {
+                continue;
+            }
+            self.placed.push((index, cell));
+            draw_tile(p, gl, cell, picture, tile, index == self.cursor, self.focused, self.hover == Some(index));
+        }
+        p.unclip(gl);
+    }
+
+    /// Returns the tile chosen, if this chose one.
+    pub fn input(&mut self, input: &Input) -> Option<usize> {
+        match input {
+            Input::Pointer { x, y } => {
+                self.hover = self.area.contains(*x, *y).then(|| self.placed.iter().find(|(_, r)| r.contains(*x, *y)).map(|(i, _)| *i)).flatten()
+            }
+            Input::PointerLeft => {
+                self.hover = None;
+                self.pressed = None;
+            }
+            Input::Press { pressed: true } => {
+                self.pressed = self.hover;
+                if let Some(tile) = self.hover {
+                    self.cursor = tile;
+                }
+            }
+            Input::Press { pressed: false } => {
+                let pressed = self.pressed.take();
+                if pressed.is_some() && pressed == self.hover {
+                    return pressed;
+                }
+            }
+            Input::Scroll { dx, dy } if self.hover.is_some() => {
+                // A wheel has one direction and a shelf has one too.
+                self.scroll = (self.scroll + dx + dy).max(0.0);
+                self.cursor = self.placed.iter().map(|(i, _)| *i).min().unwrap_or(self.cursor).max(self.cursor.min(self.placed.iter().map(|(i, _)| *i).max().unwrap_or(0)));
+            }
+            Input::Key { key, .. } if self.focused => match key {
+                Key::Left => self.cursor = self.cursor.saturating_sub(1),
+                Key::Right => self.cursor = (self.cursor + 1).min(self.total.saturating_sub(1)),
+                Key::Home => self.cursor = 0,
+                Key::End => self.cursor = self.total.saturating_sub(1),
+                Key::Enter if self.total > 0 => return Some(self.cursor),
+                _ => {}
+            },
+            _ => {}
+        }
+        None
+    }
+}
+
 // --- tabs ---
 
 /// A line of names, one of them the one being shown.
@@ -540,6 +661,8 @@ pub struct Field {
     pub focused: bool,
     /// Shown, dim, while there is no text: what the field is for.
     pub hint: String,
+    /// What is typed is not to be read over a shoulder: drawn as dots.
+    pub secret: bool,
     /// Where the caret is, in characters from the start.
     caret: usize,
     area: Rect,
@@ -579,7 +702,8 @@ impl Field {
         }
         // What is before the caret decides where the caret is; a field too full to show it
         // all slides left so that the caret is never out of sight.
-        let before: String = self.text.chars().take(self.caret).collect();
+        let shown: String = if self.secret { "\u{2022}".repeat(self.text.chars().count()) } else { self.text.clone() };
+        let before: String = shown.chars().take(self.caret).collect();
         // A trailing space has no ink and so no width as far as the text setter is concerned:
         // measured with something after it, and that something taken off again.
         let stop = p.measure(gl, "|", theme::ROW_EM, wide).0;
@@ -587,8 +711,8 @@ impl Field {
         let slide = (caret - text.w + 6.0).max(0.0);
         p.clip(gl, text);
         if !self.text.is_empty() {
-            let (_, h) = p.measure(gl, &self.text, theme::ROW_EM, wide);
-            p.text(gl, &self.text, text.x - slide, text.y + (text.h - h) * 0.5, theme::ROW_EM, wide, theme::INK);
+            let (_, h) = p.measure(gl, &shown, theme::ROW_EM, wide);
+            p.text(gl, &shown, text.x - slide, text.y + (text.h - h) * 0.5, theme::ROW_EM, wide, theme::INK);
         }
         p.unclip(gl);
         if self.focused {
