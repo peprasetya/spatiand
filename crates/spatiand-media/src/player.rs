@@ -48,6 +48,8 @@ fn error_text(code: c_int) -> String {
 pub enum Pixels {
     /// Three planes, eight bits: Y, then U and V at half size each way.
     Planar420,
+    /// Three planes like [`Pixels::Planar420`], ten bits in sixteen: what an HDR film is.
+    Planar420Ten,
     /// Two planes, eight bits: Y, then U and V interleaved at half size.
     Nv12,
     /// A `CVPixelBuffer` from VideoToolbox, two planes like [`Pixels::Nv12`], on the GPU.
@@ -101,6 +103,18 @@ pub struct Colour {
     pub wide: bool,
     /// The whole range of a byte, rather than broadcast's 16 to 235.
     pub full_range: bool,
+    /// How its numbers stand for light: an ordinary film's gamma, or one of HDR's two curves.
+    pub light: Light,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Light {
+    #[default]
+    Ordinary,
+    /// SMPTE 2084, "PQ": HDR10, and the layer of Dolby Vision that HDR10 players can show.
+    Pq,
+    /// Hybrid log-gamma: broadcast HDR.
+    Hlg,
 }
 
 /// One decoded picture, held until it is dropped.
@@ -271,6 +285,8 @@ struct Shared {
     target: Mutex<(f64, bool)>,
     /// Which sound stream the reader passes on; changed by choosing a track.
     audio_stream: AtomicU64,
+    /// How fast the film is played: 1 is as it was made.
+    speed: std::sync::atomic::AtomicU32,
     /// Which subtitle stream the reader passes on, if any.
     subtitle_stream: AtomicU64,
     subtitle: Queue,
@@ -510,6 +526,7 @@ impl Player {
                 seek: Mutex::new(None),
                 target: Mutex::new((0.0, false)),
                 audio_stream: AtomicU64::new(audio_stream.map_or(NO_STREAM, |s| s as u64)),
+                speed: std::sync::atomic::AtomicU32::new(1f32.to_bits()),
                 subtitle_stream: AtomicU64::new(NO_STREAM),
                 subtitle: Queue::default(),
                 cues: Mutex::new(Vec::new()),
@@ -600,7 +617,7 @@ impl Player {
                 if shared.paused.load(Ordering::Relaxed) || !shown {
                     wall.time
                 } else {
-                    wall.time + wall.since.elapsed().as_secs_f64()
+                    wall.time + wall.since.elapsed().as_secs_f64() * f32::from_bits(shared.speed.load(Ordering::Relaxed)) as f64
                 }
             }
         };
@@ -644,6 +661,21 @@ impl Player {
         let cues = self.shared.cues.lock().unwrap();
         let before = cues.partition_point(|cue| cue.start <= now);
         cues[..before].iter().rev().take(4).find(|cue| cue.end > now).cloned()
+    }
+
+    /// Play faster or slower than the film was made, its sound's pitch staying where it was.
+    pub fn set_speed(&mut self, speed: f32) {
+        let speed = speed.clamp(0.5, 3.0);
+        let now = self.position();
+        *self.shared.wall.lock().unwrap() = Wall { time: now, since: Instant::now() };
+        self.shared.speed.store(speed.to_bits(), Ordering::Relaxed);
+        if let Some(sound) = self.shared.sound.as_ref() {
+            sound.set_speed(speed);
+        }
+    }
+
+    pub fn speed(&self) -> f32 {
+        f32::from_bits(self.shared.speed.load(Ordering::Relaxed))
     }
 
     /// Show pictures this much later than their sound (earlier, if negative).
@@ -809,6 +841,11 @@ unsafe fn colour_of(frame: *const ffi::AVFrame) -> Colour {
         hd: space == ffi::AVCOL_SPC_BT709 || (space == ffi::AVCOL_SPC_UNSPECIFIED && (*frame).height >= 720),
         wide: space == ffi::AVCOL_SPC_BT2020_NCL || space == ffi::AVCOL_SPC_BT2020_CL,
         full_range: (*frame).color_range == ffi::AVCOL_RANGE_JPEG,
+        light: match (*frame).color_trc {
+            trc if trc == ffi::AVCOL_TRC_SMPTE2084 => Light::Pq,
+            trc if trc == ffi::AVCOL_TRC_ARIB_STD_B67 => Light::Hlg,
+            _ => Light::Ordinary,
+        },
     }
 }
 
@@ -861,17 +898,25 @@ unsafe fn settle(frame: *mut ffi::AVFrame, scaler: &mut *mut ffi::SwsContext) ->
     let _ = format;
     let pixels = match (*held).format {
         f if f == ffi::AV_PIX_FMT_YUV420P || f == ffi::AV_PIX_FMT_YUVJ420P => Some(Pixels::Planar420),
+        f if f == ffi::AV_PIX_FMT_YUV420P10LE => Some(Pixels::Planar420Ten),
         f if f == ffi::AV_PIX_FMT_NV12 => Some(Pixels::Nv12),
         _ => None,
     };
     if let Some(pixels) = pixels {
         return Some((held, pixels));
     }
-    // Anything else -- ten bits, 4:2:2, a palette -- is converted. Colours are left as they
-    // are: only the layout changes, so the same matrix still applies afterwards.
+    // Anything else -- 4:2:2, a palette, ten bits packed another way -- is converted: to ten
+    // bits if it had more than eight, so that an HDR film keeps the steps its curve needs.
+    let deep = {
+        let described = ffi::av_pix_fmt_desc_get((*held).format);
+        !described.is_null() && (*described).comp[0].depth > 8
+    };
+    let (to, kind) = if deep { (ffi::AV_PIX_FMT_YUV420P10LE, Pixels::Planar420Ten) } else { (ffi::AV_PIX_FMT_YUV420P, Pixels::Planar420) };
+    // Colours are left as they are: only the layout changes, so the same matrix still
+    // applies afterwards.
     let (width, height) = ((*held).width, (*held).height);
     *scaler = ffi::sws_getCachedContext(
-        *scaler, width, height, (*held).format, width, height, ffi::AV_PIX_FMT_YUV420P, ffi::SWS_BILINEAR as c_int,
+        *scaler, width, height, (*held).format, width, height, to, ffi::SWS_BILINEAR as c_int,
         ptr::null_mut(), ptr::null_mut(), ptr::null(),
     );
     if scaler.is_null() {
@@ -879,7 +924,7 @@ unsafe fn settle(frame: *mut ffi::AVFrame, scaler: &mut *mut ffi::SwsContext) ->
         return None;
     }
     let mut plain = ffi::av_frame_alloc();
-    (*plain).format = ffi::AV_PIX_FMT_YUV420P;
+    (*plain).format = to;
     (*plain).width = width;
     (*plain).height = height;
     if ffi::av_frame_get_buffer(plain, 0) < 0 {
@@ -890,7 +935,7 @@ unsafe fn settle(frame: *mut ffi::AVFrame, scaler: &mut *mut ffi::SwsContext) ->
     ffi::sws_scale(*scaler, (*held).data.as_ptr() as *const *const u8, (*held).linesize.as_ptr(), 0, height, (*plain).data.as_mut_ptr(), (*plain).linesize.as_mut_ptr());
     ffi::av_frame_copy_props(plain, held);
     ffi::av_frame_free(&mut held);
-    Some((plain, Pixels::Planar420))
+    Some((plain, kind))
 }
 
 fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu: bool, start: f64, shared: Arc<Shared>) {
@@ -961,6 +1006,9 @@ fn decode_sound(streams: Vec<SendPointer<ffi::AVStream>>, start: f64, shared: Ar
         let mut made_for = (0, 0, 0);
         let mut serial = shared.serial.load(Ordering::Relaxed);
         let (rate, channels) = (sound.rate() as c_int, sound.channels() as c_int);
+        let mut stretch = crate::stretch::Stretch::new(rate as u32, channels as u16);
+        // The film's time of the next sound the stretcher gives, while it is in use.
+        let mut stretched_to: Option<f64> = None;
         let mut to: ffi::AVChannelLayout = std::mem::zeroed();
         // The height layouts by name: for ten and twelve channels FFmpeg's own guess is not
         // the order the room's sink names them in.
@@ -992,6 +1040,8 @@ fn decode_sound(streams: Vec<SendPointer<ffi::AVStream>>, start: f64, shared: Ar
             if packet_serial != serial {
                 ffi::avcodec_flush_buffers(decoder.context);
                 serial = packet_serial;
+                stretch.reset();
+                stretched_to = None;
             }
             let ending = packet.is_none();
             if let Some(packet) = packet.as_ref() {
@@ -1032,6 +1082,24 @@ fn decode_sound(streams: Vec<SendPointer<ffi::AVStream>>, start: f64, shared: Ar
                 if time.is_finite() && time + length < target {
                     continue;
                 }
+                // At any pace but the film's own the sound goes through the stretcher, which
+                // gives back a different amount of it and knows what moment of the film each
+                // of its samples is.
+                let speed = f32::from_bits(shared.speed.load(Ordering::Relaxed)) as f64;
+                let (samples, time) = if (speed - 1.0).abs() < 0.001 {
+                    if stretched_to.take().is_some() {
+                        stretch.reset();
+                    }
+                    (samples, time)
+                } else {
+                    let at = *stretched_to.get_or_insert(if time.is_finite() { time } else { 0.0 });
+                    let out = stretch.feed(&samples, speed);
+                    stretched_to = Some(at + (out.len() / channels as usize) as f64 / rate as f64 * speed);
+                    if out.is_empty() {
+                        continue;
+                    }
+                    (out, at)
+                };
                 let block = Block { samples, time, serial };
                 while !sound.offer(&block) {
                     if shared.stop.load(Ordering::Relaxed) || serial != shared.serial.load(Ordering::Relaxed) {

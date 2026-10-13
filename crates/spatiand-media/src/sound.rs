@@ -50,6 +50,8 @@ struct Inner {
     heard: Mutex<Option<Heard>>,
     paused: AtomicBool,
     volume: AtomicU32,
+    /// How fast the film is going: a second of sound heard is this many seconds of film.
+    speed: AtomicU32,
     rate: u32,
     channels: u16,
 }
@@ -93,9 +95,20 @@ impl Sound {
             // `SPATIAND_MEDIA_MUTE=1` keeps the device and its clock and plays nothing: a film
             // looked at by a test should not be heard by whoever is at the machine.
             volume: AtomicU32::new(if std::env::var_os("SPATIAND_MEDIA_MUTE").is_some() { 0f32 } else { 1f32 }.to_bits()),
+            speed: AtomicU32::new(1f32.to_bits()),
             rate,
             channels,
         })
+    }
+
+    pub(crate) fn set_speed(&self, speed: f32) {
+        // From where the film is now, at the new pace.
+        let now = self.time_now();
+        if let (Some(heard), Some(now)) = (self.inner.heard.lock().unwrap().as_mut(), now) {
+            heard.time = now;
+            heard.at = Instant::now();
+        }
+        self.inner.speed.store(speed.to_bits(), Ordering::Relaxed);
     }
 
     /// Open the machine's sound for a track of `wanted` channels.
@@ -241,10 +254,11 @@ impl Sound {
     fn time_now(&self) -> Option<f64> {
         let heard = (*self.inner.heard.lock().unwrap())?;
         let now = Instant::now();
+        let speed = f32::from_bits(self.inner.speed.load(Ordering::Relaxed)) as f64;
         Some(if heard.running && now >= heard.at {
-            heard.time + (now - heard.at).as_secs_f64()
+            heard.time + (now - heard.at).as_secs_f64() * speed
         } else if heard.running {
-            heard.time - (heard.at - now).as_secs_f64()
+            heard.time - (heard.at - now).as_secs_f64() * speed
         } else {
             heard.time
         })
@@ -279,8 +293,9 @@ impl Inner {
                 let Some((samples, time, serial)) = waiting.blocks.front() else { break };
                 if first.is_none() && time.is_finite() {
                     // The moment of the film the first sample written here belongs to.
-                    let into = (taken / self.channels as usize) as f64 / self.rate as f64;
-                    let before = (written / self.channels as usize) as f64 / self.rate as f64;
+                    let speed = f32::from_bits(self.speed.load(Ordering::Relaxed)) as f64;
+                    let into = (taken / self.channels as usize) as f64 / self.rate as f64 * speed;
+                    let before = (written / self.channels as usize) as f64 / self.rate as f64 * speed;
                     first = Some((time + into - before, *serial));
                 }
                 let take = (samples.len() - taken).min(out.len() - written);

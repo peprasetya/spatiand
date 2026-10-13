@@ -16,7 +16,7 @@ use glam::{Mat3, Vec3};
 use spatiand_app::glow::{self, HasContext};
 use spatiand_app::Gl;
 
-use crate::player::{Colour, Picture, Pixels};
+use crate::player::{Colour, Light, Picture, Pixels};
 
 const VERTEX: &str = r#"#version 300 es
 precision highp float;
@@ -42,6 +42,9 @@ uniform sampler2D u_v;
 uniform int u_planes;
 uniform mat3 u_matrix;
 uniform vec3 u_offset;
+uniform float u_deep;
+// 0: an ordinary film. 1: PQ. 2: HLG.
+uniform int u_light;
 // The part of the picture to show: left, top, right, bottom.
 uniform vec4 u_uv;
 // 0: flat. Otherwise how many radians of longitude the picture covers, looked at from inside.
@@ -60,7 +63,42 @@ vec3 colour(vec2 uv) {
         yuv.y = texture(u_u, uv).r;
         yuv.z = texture(u_v, uv).r;
     }
-    return clamp(u_matrix * (yuv - u_offset), 0.0, 1.0);
+    // Ten bits in sixteen read as a fraction of sixteen: `u_deep` makes them a fraction of ten.
+    vec3 rgb = u_matrix * (yuv * u_deep - u_offset);
+    if (u_light == 0) {
+        return clamp(rgb, 0.0, 1.0);
+    }
+    // An HDR film's numbers stand for far more light than these glasses give. They are turned
+    // into light, the light is brought within what there is, and that is turned back into the
+    // numbers an ordinary picture has.
+    rgb = clamp(rgb, 0.0, 1.0);
+    vec3 nits;
+    if (u_light == 1) {
+        // SMPTE 2084, backwards.
+        vec3 p = pow(rgb, vec3(1.0 / 78.84375));
+        nits = 10000.0 * pow(max(p - 0.8359375, 0.0) / (18.8515625 - 18.6875 * p), vec3(1.0 / 0.1593017578125));
+    } else {
+        // Hybrid log-gamma, backwards, and then as a thousand-nit screen would show it.
+        vec3 scene = mix(rgb * rgb / 3.0, (exp((rgb - 0.55991073) / 0.17883277) + 0.28466892) / 12.0, step(0.5, rgb));
+        float y = dot(scene, vec3(0.2627, 0.6780, 0.0593));
+        nits = 1000.0 * scene * pow(max(y, 1e-6), 0.2);
+    }
+    // White on paper is 203 nits in an HDR film and all there is in an ordinary one. Above
+    // it the light is rolled off, by its brightness and not channel by channel, so that a
+    // bright colour keeps its colour.
+    vec3 linear = nits / 203.0;
+    float y = dot(linear, vec3(0.2627, 0.6780, 0.0593));
+    // Up to three quarters of white it is left alone -- most of any picture, which is then
+    // exactly as bright as it was meant -- and from there to a thousand nits is eased into
+    // the quarter that is left.
+    float knee = 0.75;
+    float peak = 1000.0 / 203.0;
+    float over = clamp((y - knee) / (peak - knee), 0.0, 1.0);
+    float rolled = y <= knee ? y : knee + (1.0 - knee) * (1.0 - exp(-4.0 * over)) / (1.0 - exp(-4.0));
+    linear *= rolled / max(y, 1e-6);
+    // From HDR's wide colours to an ordinary screen's.
+    linear = mat3(1.6605, -0.1246, -0.0182, -0.5876, 1.1329, -0.1006, -0.0728, -0.0083, 1.1187) * linear;
+    return pow(clamp(linear, 0.0, 1.0), vec3(1.0 / 2.2));
 }
 
 void main() {
@@ -124,7 +162,7 @@ pub struct Screen {
     program: glow::Program,
     vao: glow::VertexArray,
     _corners: glow::Buffer,
-    at: [Option<glow::UniformLocation>; 12],
+    at: [Option<glow::UniformLocation>; 14],
     /// Textures of its own, for a picture in main memory.
     planes: [glow::Texture; 3],
     /// A picture on the GPU already, as textures that are its own memory.
@@ -134,10 +172,12 @@ pub struct Screen {
     borrowed: Vec<spatiand_app::gl::DmabufTexture>,
     /// The picture the textures hold, kept for as long as they do.
     loaded: Option<Arc<Picture>>,
+    /// The textures hold ten bits in sixteen, to be scaled up as they are read.
+    deep: bool,
 }
 
-const NAMES: [&str; 12] =
-    ["u_rect", "u_view", "u_y", "u_u", "u_v", "u_planes", "u_matrix", "u_offset", "u_uv", "u_span", "u_gaze", "u_tan"];
+const NAMES: [&str; 14] =
+    ["u_rect", "u_view", "u_y", "u_u", "u_v", "u_planes", "u_matrix", "u_offset", "u_uv", "u_span", "u_gaze", "u_tan", "u_deep", "u_light"];
 
 impl Screen {
     pub fn new(gl: &Gl) -> Result<Screen, String> {
@@ -191,6 +231,7 @@ impl Screen {
                 #[cfg(any(target_os = "macos", target_os = "linux"))]
                 borrowed: Vec::new(),
                 loaded: None,
+                deep: false,
             })
         }
     }
@@ -230,6 +271,31 @@ impl Screen {
         let half = ((w + 1) / 2, (h + 1) / 2);
         unsafe {
             match picture.pixels {
+                Pixels::Planar420Ten => {
+                    // Sixteen bits a sample where the GPU will have them as a texture it can
+                    // smooth; brought down to eight where it will not.
+                    let sixteen = g.supported_extensions().contains("GL_EXT_texture_norm16");
+                    self.deep = sixteen;
+                    g.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+                    for (index, (pw, ph)) in [(w, h), half, half].into_iter().enumerate() {
+                        let (data, stride) = picture.plane(index);
+                        g.bind_texture(glow::TEXTURE_2D, Some(self.planes[index]));
+                        if sixteen {
+                            const R16: u32 = 0x822A;
+                            g.pixel_store_i32(glow::UNPACK_ROW_LENGTH, stride as i32 / 2);
+                            g.tex_image_2d(glow::TEXTURE_2D, 0, R16 as i32, pw, ph, 0, glow::RED, glow::UNSIGNED_SHORT, glow::PixelUnpackData::Slice(Some(data)));
+                        } else {
+                            let mut eight = Vec::with_capacity((pw * ph) as usize);
+                            for row in 0..ph as usize {
+                                let line = &data[row * stride..row * stride + pw as usize * 2];
+                                eight.extend(line.chunks_exact(2).map(|pair| (u16::from_le_bytes([pair[0], pair[1]]) >> 2) as u8));
+                            }
+                            g.pixel_store_i32(glow::UNPACK_ROW_LENGTH, 0);
+                            g.tex_image_2d(glow::TEXTURE_2D, 0, glow::R8 as i32, pw, ph, 0, glow::RED, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(Some(&eight)));
+                        }
+                    }
+                    g.pixel_store_i32(glow::UNPACK_ROW_LENGTH, 0);
+                }
                 Pixels::Planar420 | Pixels::Nv12 => {
                     let two = picture.pixels == Pixels::Nv12;
                     let shapes: &[(i32, i32, u32, u32, i32)] = if two {
@@ -312,7 +378,7 @@ impl Screen {
             return false;
         }
         let textures: &[glow::Texture] = if on_gpu { &borrowed } else { &self.planes };
-        let two = picture.pixels != Pixels::Planar420;
+        let two = !matches!(picture.pixels, Pixels::Planar420 | Pixels::Planar420Ten);
         g.use_program(Some(self.program));
         g.bind_vertex_array(Some(self.vao));
         g.disable(glow::BLEND);
@@ -331,6 +397,16 @@ impl Screen {
         g.uniform_matrix_3_f32_slice(self.at[6].as_ref(), false, &matrix.to_cols_array());
         g.uniform_3_f32(self.at[7].as_ref(), offset.x, offset.y, offset.z);
         g.uniform_4_f32(self.at[8].as_ref(), uv[0], uv[1], uv[2], uv[3]);
+        let deep = picture.pixels == Pixels::Planar420Ten && self.deep;
+        g.uniform_1_f32(self.at[12].as_ref(), if deep { 65535.0 / 1023.0 } else { 1.0 });
+        g.uniform_1_i32(
+            self.at[13].as_ref(),
+            match picture.colour.light {
+                Light::Ordinary => 0,
+                Light::Pq => 1,
+                Light::Hlg => 2,
+            },
+        );
         true
     }
 
@@ -384,7 +460,7 @@ mod tests {
 
     #[test]
     fn broadcast_black_and_white_come_out_black_and_white() {
-        let colour = Colour { hd: true, wide: false, full_range: false };
+        let colour = Colour { hd: true, wide: false, full_range: false, light: Light::Ordinary };
         let black = rgb(colour, [16.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0]);
         let white = rgb(colour, [235.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0]);
         assert!(black.abs().max_element() < 0.005, "{black}");
@@ -393,7 +469,7 @@ mod tests {
 
     #[test]
     fn a_full_range_picture_is_not_stretched_again() {
-        let colour = Colour { hd: true, wide: false, full_range: true };
+        let colour = Colour { hd: true, wide: false, full_range: true, light: Light::Ordinary };
         let grey = rgb(colour, [0.5, 128.0 / 255.0, 128.0 / 255.0]);
         assert!((grey - Vec3::splat(0.5)).abs().max_element() < 0.005, "{grey}");
     }
@@ -406,9 +482,9 @@ mod tests {
         let y = kr;
         let (cb, cr) = ((0.0 - y) / (2.0 * (1.0 - kb)), (1.0 - y) / (2.0 * (1.0 - kr)));
         let yuv = [y, cb + 128.0 / 255.0, cr + 128.0 / 255.0];
-        let right = rgb(Colour { hd: true, wide: false, full_range: true }, yuv);
+        let right = rgb(Colour { hd: true, wide: false, full_range: true, light: Light::Ordinary }, yuv);
         assert!((right - Vec3::X).abs().max_element() < 0.01, "{right}");
-        let wrong = rgb(Colour { hd: false, wide: false, full_range: true }, yuv);
+        let wrong = rgb(Colour { hd: false, wide: false, full_range: true, light: Light::Ordinary }, yuv);
         assert!((wrong - Vec3::X).abs().max_element() > 0.03, "{wrong}");
     }
 }

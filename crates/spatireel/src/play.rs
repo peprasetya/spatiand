@@ -116,6 +116,7 @@ enum Choice {
     /// Subtitles, or pictures against sound, a quarter of a second earlier or later.
     WordsBy(f64),
     LipBy(f64),
+    Speed(f32),
 }
 
 /// Where the subtitles on show come from.
@@ -190,6 +191,10 @@ impl Playing {
         let mut player = Player::open_with(url, options)?;
         if resume > 5.0 {
             player.seek(resume);
+        }
+        // `SPATIREEL_SPEED=1.5` starts at that pace, for a test that cannot reach the menu.
+        if let Some(speed) = std::env::var("SPATIREEL_SPEED").ok().and_then(|s| s.parse().ok()) {
+            player.set_speed(speed);
         }
         let info = player.info();
         let named = hints::detect(name, info.hints);
@@ -589,6 +594,11 @@ impl Playing {
             rows.push((Row::with("Subtitles earlier", offset(self.words_late)), Some(Choice::WordsBy(-0.25))));
             rows.push((Row::with("Subtitles later", offset(self.words_late)), Some(Choice::WordsBy(0.25))));
         }
+        rows.push((Row::heading("How fast"), None));
+        for speed in [0.75f32, 1.0, 1.25, 1.5, 2.0] {
+            let label = if speed == 1.0 { "As it was made".to_string() } else { format!("{speed}\u{d7}") };
+            rows.push((Row::with(label, mark((self.player.speed() - speed).abs() < 0.01)), Some(Choice::Speed(speed))));
+        }
         rows.push((Row::heading("Picture against sound"), None));
         rows.push((Row::with("Picture earlier", offset(self.player.lip())), Some(Choice::LipBy(-0.05))));
         rows.push((Row::with("Picture later", offset(self.player.lip())), Some(Choice::LipBy(0.05))));
@@ -615,6 +625,7 @@ impl Playing {
                     _ => None,
                 });
             }
+            Choice::Speed(speed) => self.player.set_speed(speed),
             Choice::WordsBy(seconds) => self.words_late = ((self.words_late + seconds) * 100.0).round() / 100.0,
             Choice::LipBy(seconds) => {
                 let lip = ((self.player.lip() + seconds) * 100.0).round() / 100.0;

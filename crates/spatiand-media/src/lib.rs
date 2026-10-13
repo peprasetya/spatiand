@@ -12,6 +12,7 @@ pub mod audio;
 pub mod hints;
 pub mod layout;
 pub mod mesh;
+pub mod stretch;
 pub mod subs;
 
 #[cfg(feature = "engine")]
