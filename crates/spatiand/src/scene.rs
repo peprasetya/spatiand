@@ -137,6 +137,9 @@ pub struct WindowQuad {
     /// buffer twice as wide so that each eye gets its full width -- and so does a buffer scale.
     /// Reading the texture here drew such a window twice as wide as it asked to be.
     pub pixels: (u32, u32),
+    /// The texture's own size, in its pixels: what a test reads back to see the window's own
+    /// picture.
+    pub buffer: (u32, u32),
     /// Which part of the texture the surface is, as `(u0, u1, v0, v1)`. The whole of it unless
     /// the client cropped with a viewport. Sampling reads this; nothing about shape does.
     pub crop: [f32; 4],
@@ -4015,6 +4018,7 @@ pub fn collect_windows(
             surface: surface.clone(),
             texture,
             pixels: (width, height),
+            buffer: (buffer.0 as u32, buffer.1 as u32),
             crop,
             placement,
             focused: state.layout.is_focused(&window),

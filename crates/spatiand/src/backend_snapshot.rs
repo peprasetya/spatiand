@@ -693,6 +693,47 @@ pub fn run(
                             }
                             windows = crate::scene::collect_windows(&mut renderer, &runtime.state);
                         }
+                        // `SPATIAND_STEPS`: a script, in order, with mid-run pictures of the
+                        // window. See [`Scripted`].
+                        let mut pointer_at = (0.5f64, 0.5f64);
+                        for step in scripted_steps() {
+                            let mut settle = 0.5f32;
+                            match &step {
+                                Scripted::Wait(seconds) => settle = *seconds,
+                                Scripted::Window(_) | Scripted::Dump(_) => settle = 0.0,
+                                _ => {}
+                            }
+                            if let Scripted::Window(title) = &step {
+                                std::env::set_var("SPATIAND_WINDOW", title);
+                            }
+                            if let Scripted::Dump(path) = &step {
+                                if let Some(first) = chosen_window(&runtime.state, &windows) {
+                                    if let Err(e) = dump_texture(&mut renderer, first.texture, first.buffer, path) {
+                                        log::warn!("could not dump the window to {path}: {e}");
+                                    }
+                                } else {
+                                    log::warn!("no window to dump to {path}");
+                                }
+                            }
+                            act_scripted(&mut runtime.state, &windows, &step, &mut pointer_at);
+                            let answered = std::time::Instant::now() + std::time::Duration::from_secs_f32(settle);
+                            loop {
+                                let screen = runtime.state.screen.clone();
+                                runtime.state.send_frames(&screen, std::time::Duration::ZERO);
+                                runtime.state.space.refresh();
+                                display.dispatch_clients(&mut runtime.state)?;
+                                display.flush_clients()?;
+                                event_loop.dispatch(Some(std::time::Duration::from_millis(16)), runtime)?;
+                                crate::dmabuf::settle(&mut runtime.state, &mut renderer);
+                                crate::window::apply_resize_anchors(&mut runtime.state);
+                                runtime.state.settle_keyboard_focus();
+                                runtime.state.fit_screen_to_windows();
+                                if std::time::Instant::now() >= answered {
+                                    break;
+                                }
+                            }
+                            windows = crate::scene::collect_windows(&mut renderer, &runtime.state);
+                        }
                         // Said either way, because a window still standing looks exactly like
                         // one that was never asked -- and the answer is the point of asking.
                         if asked_to_close {
@@ -1446,6 +1487,264 @@ fn click_on_the_window(
         );
         pointer.frame(state);
     }
+}
+
+/// One step of `SPATIAND_STEPS`, a script run in order once the client has drawn: steps are
+/// separated by `;`, each `what:arguments`, and each is given half a second to be answered.
+///
+/// ```text
+/// click:u,v  rclick:u,v  move:u,v  down:u,v  up:u,v  drag:u,v,u,v  scroll:dx,dy
+/// key:28  key:ctrl+shift+20  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
+/// ```
+///
+/// Positions are fractions across the chosen window; `scroll` is in pixels where the pointer
+/// last was; `key` is an evdev code with modifiers held; `type` is US-keyboard text; `dump`
+/// writes the window's own picture, as `SPATIAND_DUMP_WINDOW` does, then and there -- so one
+/// run can photograph every screen it passes through. `window` chooses which window the
+/// steps after it act on, by a part of its title.
+#[derive(Debug, Clone, PartialEq)]
+enum Scripted {
+    Click(f64, f64, u32),
+    Move(f64, f64),
+    Down(f64, f64),
+    Up(f64, f64),
+    Drag(f64, f64, f64, f64),
+    Scroll(f64, f64),
+    Key(Vec<u32>, u32),
+    Type(String),
+    Wait(f32),
+    Dump(String),
+    Window(String),
+}
+
+fn scripted_steps() -> Vec<Scripted> {
+    let Ok(raw) = std::env::var("SPATIAND_STEPS") else { return Vec::new() };
+    let numbers = |text: &str| -> Vec<f64> { text.split(',').filter_map(|n| n.trim().parse().ok()).collect() };
+    raw.split(';')
+        .filter_map(|step| {
+            let (what, rest) = step.trim().split_once(':').unwrap_or((step.trim(), ""));
+            let n = numbers(rest);
+            Some(match (what, n.as_slice()) {
+                ("click", [u, v]) => Scripted::Click(*u, *v, crate::pointer::BTN_LEFT),
+                ("rclick", [u, v]) => Scripted::Click(*u, *v, crate::pointer::BTN_RIGHT),
+                ("move", [u, v]) => Scripted::Move(*u, *v),
+                ("down", [u, v]) => Scripted::Down(*u, *v),
+                ("up", [u, v]) => Scripted::Up(*u, *v),
+                ("drag", [a, b, c, d]) => Scripted::Drag(*a, *b, *c, *d),
+                ("scroll", [dx, dy]) => Scripted::Scroll(*dx, *dy),
+                ("wait", [seconds]) => Scripted::Wait(*seconds as f32),
+                ("key", _) => {
+                    let mut held = Vec::new();
+                    let mut code = None;
+                    for part in rest.split('+') {
+                        match part.trim() {
+                            "ctrl" => held.push(29),
+                            "shift" => held.push(42),
+                            "alt" => held.push(56),
+                            "logo" | "super" => held.push(125),
+                            number => code = number.parse().ok(),
+                        }
+                    }
+                    Scripted::Key(held, code?)
+                }
+                ("type", _) => Scripted::Type(rest.to_string()),
+                ("dump", _) => Scripted::Dump(rest.to_string()),
+                ("window", _) => Scripted::Window(rest.to_string()),
+                _ => {
+                    log::warn!("SPATIAND_STEPS: not understood: {step:?}");
+                    return None;
+                }
+            })
+        })
+        .collect()
+}
+
+/// The evdev code for a character on a US keyboard, and whether Shift is held for it.
+fn us_key(c: char) -> Option<(u32, bool)> {
+    const ROW_DIGITS: &str = "1234567890";
+    const SHIFTED_DIGITS: &str = "!@#$%^&*()";
+    const QWERTY: [(&str, u32); 3] = [("qwertyuiop", 16), ("asdfghjkl", 30), ("zxcvbnm", 44)];
+    if let Some(i) = ROW_DIGITS.find(c) {
+        return Some((2 + i as u32, false));
+    }
+    if let Some(i) = SHIFTED_DIGITS.find(c) {
+        return Some((2 + i as u32, true));
+    }
+    let lower = c.to_ascii_lowercase();
+    for (row, first) in QWERTY {
+        if let Some(i) = row.find(lower) {
+            return Some((first + i as u32, c.is_ascii_uppercase()));
+        }
+    }
+    Some(match c {
+        ' ' => (57, false),
+        '\n' => (28, false),
+        '\t' => (15, false),
+        '-' => (12, false),
+        '_' => (12, true),
+        '=' => (13, false),
+        '+' => (13, true),
+        '[' => (26, false),
+        '{' => (26, true),
+        ']' => (27, false),
+        '}' => (27, true),
+        ';' => (39, false),
+        ':' => (39, true),
+        '\'' => (40, false),
+        '"' => (40, true),
+        '`' => (41, false),
+        '~' => (41, true),
+        '\\' => (43, false),
+        '|' => (43, true),
+        ',' => (51, false),
+        '<' => (51, true),
+        '.' => (52, false),
+        '>' => (52, true),
+        '/' => (53, false),
+        '?' => (53, true),
+        _ => return None,
+    })
+}
+
+fn key_event(state: &mut Spatiand, code: u32, pressed: bool) {
+    use smithay::backend::input::KeyState;
+    use smithay::input::keyboard::{FilterResult, Keycode};
+    use smithay::utils::SERIAL_COUNTER;
+    let Some(keyboard) = state.seat.get_keyboard() else { return };
+    let key_state = if pressed { KeyState::Pressed } else { KeyState::Released };
+    keyboard.input::<(), _>(state, Keycode::new(code + 8), key_state, SERIAL_COUNTER.next_serial(), 300, |_, _, _| FilterResult::Forward);
+}
+
+fn pointer_event(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], at: (f64, f64), button: Option<(u32, bool)>) {
+    use smithay::input::pointer::{ButtonEvent, MotionEvent};
+    use smithay::utils::{Point, SERIAL_COUNTER};
+    let Some(window) = chosen_window(state, windows) else {
+        log::warn!("a scripted pointer step with no window to point at");
+        return;
+    };
+    let Some(pointer) = state.seat.get_pointer() else { return };
+    let surface = window.surface.clone();
+    let location = Point::from((at.0.clamp(0.0, 1.0) * window.pixels.0 as f64, at.1.clamp(0.0, 1.0) * window.pixels.1 as f64));
+    if button.is_some_and(|(_, pressed)| pressed) {
+        let w = window.window.clone();
+        state.focus_window(&w);
+    }
+    pointer.motion(state, Some((surface, Point::from((0.0, 0.0)))), &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time: 100 });
+    pointer.frame(state);
+    if let Some((button, pressed)) = button {
+        let button_state = if pressed { smithay::backend::input::ButtonState::Pressed } else { smithay::backend::input::ButtonState::Released };
+        pointer.button(state, &ButtonEvent { button, state: button_state, serial: SERIAL_COUNTER.next_serial(), time: 110 });
+        pointer.frame(state);
+    }
+}
+
+fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step: &Scripted, at: &mut (f64, f64)) {
+    use smithay::backend::input::{Axis, AxisSource};
+    use smithay::input::pointer::AxisFrame;
+    log::info!("step: {step:?}");
+    match step {
+        Scripted::Click(u, v, button) => {
+            *at = (*u, *v);
+            pointer_event(state, windows, *at, Some((*button, true)));
+            pointer_event(state, windows, *at, Some((*button, false)));
+        }
+        Scripted::Move(u, v) => {
+            *at = (*u, *v);
+            pointer_event(state, windows, *at, None);
+        }
+        Scripted::Down(u, v) => {
+            *at = (*u, *v);
+            pointer_event(state, windows, *at, Some((crate::pointer::BTN_LEFT, true)));
+        }
+        Scripted::Up(u, v) => {
+            *at = (*u, *v);
+            pointer_event(state, windows, *at, Some((crate::pointer::BTN_LEFT, false)));
+        }
+        Scripted::Drag(a, b, c, d) => {
+            pointer_event(state, windows, (*a, *b), Some((crate::pointer::BTN_LEFT, true)));
+            for i in 1..=12 {
+                let t = i as f64 / 12.0;
+                pointer_event(state, windows, (a + (c - a) * t, b + (d - b) * t), None);
+            }
+            *at = (*c, *d);
+            pointer_event(state, windows, *at, Some((crate::pointer::BTN_LEFT, false)));
+        }
+        Scripted::Scroll(dx, dy) => {
+            pointer_event(state, windows, *at, None);
+            let Some(pointer) = state.seat.get_pointer() else { return };
+            let mut frame = AxisFrame::new(120).source(AxisSource::Wheel);
+            if *dx != 0.0 {
+                frame = frame.value(Axis::Horizontal, *dx);
+            }
+            if *dy != 0.0 {
+                frame = frame.value(Axis::Vertical, *dy);
+            }
+            pointer.axis(state, frame);
+            pointer.frame(state);
+        }
+        Scripted::Key(held, code) => {
+            if let Some(window) = chosen_window(state, windows).map(|w| w.window.clone()) {
+                state.focus_window(&window);
+            }
+            for m in held {
+                key_event(state, *m, true);
+            }
+            key_event(state, *code, true);
+            key_event(state, *code, false);
+            for m in held.iter().rev() {
+                key_event(state, *m, false);
+            }
+        }
+        Scripted::Type(text) => {
+            if let Some(window) = chosen_window(state, windows).map(|w| w.window.clone()) {
+                state.focus_window(&window);
+            }
+            for c in text.chars() {
+                let Some((code, shift)) = us_key(c) else {
+                    log::warn!("type: no key for {c:?}");
+                    continue;
+                };
+                if shift {
+                    key_event(state, 42, true);
+                }
+                key_event(state, code, true);
+                key_event(state, code, false);
+                if shift {
+                    key_event(state, 42, false);
+                }
+            }
+        }
+        Scripted::Wait(_) | Scripted::Dump(_) | Scripted::Window(_) => {}
+    }
+}
+
+/// A window's texture, read straight back and written as a PNG: the application's own
+/// picture, with no room around it.
+fn dump_texture(renderer: &mut GlesRenderer, tex: u32, size: (u32, u32), path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let (tw, th) = (size.0 as i32, size.1 as i32);
+    let raw = renderer.with_context(|gl| unsafe {
+        gl.BindTexture(ffi::TEXTURE_2D, tex);
+        let mut fbo = 0;
+        gl.GenFramebuffers(1, &mut fbo);
+        gl.BindFramebuffer(ffi::FRAMEBUFFER, fbo);
+        gl.FramebufferTexture2D(ffi::FRAMEBUFFER, ffi::COLOR_ATTACHMENT0, ffi::TEXTURE_2D, tex, 0);
+        let mut raw = Vec::new();
+        if gl.CheckFramebufferStatus(ffi::FRAMEBUFFER) == ffi::FRAMEBUFFER_COMPLETE {
+            if tw > 0 && th > 0 {
+                raw = vec![0u8; (tw * th * 4) as usize];
+                gl.ReadPixels(0, 0, tw, th, ffi::RGBA, ffi::UNSIGNED_BYTE, raw.as_mut_ptr() as *mut _);
+            }
+        }
+        gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+        gl.DeleteFramebuffers(1, &fbo);
+        raw
+    })?;
+    if raw.is_empty() {
+        return Err("the texture could not be read".into());
+    }
+    image::save_buffer(path, &raw, tw as u32, th as u32, image::ColorType::Rgba8)?;
+    log::info!("dumped the window ({tw}x{th}) to {path}");
+    Ok(())
 }
 
 /// Two computers to draw when there is no real one to ask: one there, one asleep.
