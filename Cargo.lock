@@ -4774,6 +4774,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatiand-storage"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "log",
+ "serde",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
 name = "spatiand-stream"
 version = "0.1.0"
 dependencies = [
@@ -4829,6 +4840,7 @@ dependencies = [
  "resvg",
  "spatiand-app",
  "spatiand-media",
+ "spatiand-storage",
 ]
 
 [[package]]
@@ -4857,6 +4869,21 @@ dependencies = [
  "spatiand-media",
  "ureq",
  "vibrefy-api",
+]
+
+[[package]]
+name = "spatishelf"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "image",
+ "libc",
+ "log",
+ "serde",
+ "serde_json",
+ "spatiand-app",
+ "spatiand-media",
+ "spatiand-storage",
 ]
 
 [[package]]

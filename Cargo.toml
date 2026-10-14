@@ -26,6 +26,8 @@ members = [
     "crates/spatireel",
     "crates/spatiloupe",
     "crates/spatiquill",
+    "crates/spatiand-storage",
+    "crates/spatishelf",
 ]
 
 [workspace.package]

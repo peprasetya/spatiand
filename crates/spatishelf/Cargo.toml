@@ -1,0 +1,23 @@
+[package]
+name = "spatishelf"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SpatiShelf: Spatiand's file manager"
+
+# See docs/spatiand-apps.md. One process holds the window; every tab is a process of its own
+# (`spatishelf --tab`) that lists, makes pictures and copies, so that a folder that hangs or a
+# file that crashes a decoder takes only its own tab. Remotes are the storage service's
+# (`spatiand-storage`): places like any other, with nothing mounted.
+[dependencies]
+spatiand-app = { path = "../spatiand-app" }
+spatiand-media = { path = "../spatiand-media" }
+spatiand-storage = { path = "../spatiand-storage" }
+log.workspace = true
+env_logger.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+libc = "0.2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
