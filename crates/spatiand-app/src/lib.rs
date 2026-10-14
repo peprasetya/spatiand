@@ -193,6 +193,8 @@ pub struct App {
     gl: Option<Gl>,
     /// Each window's size, and what it is drawn into once it has been drawn.
     windows: HashMap<WindowId, ((u32, u32), Option<gl::Target>)>,
+    /// Files whose being readable is a reason to wake: see [`App::watch`].
+    watched: Vec<i32>,
 }
 
 impl App {
@@ -200,7 +202,7 @@ impl App {
     /// the room -- its icon, its controller layout, where its sound is placed.
     pub fn connect(app_id: &str) -> Result<App, String> {
         let (wire, queue) = wire::Wire::connect()?;
-        let mut app = App { app_id: app_id.to_string(), wire, queue, gl: None, windows: HashMap::new() };
+        let mut app = App { app_id: app_id.to_string(), wire, queue, gl: None, windows: HashMap::new(), watched: Vec::new() };
         // Once round, so the mode is the compositor's word and not this crate's guess by the
         // time anything is decided on it.
         app.queue.roundtrip(&mut app.wire).map_err(|e| format!("lost Spatiand: {e}"))?;
@@ -341,6 +343,18 @@ impl App {
         self.wire.show_pixels(window, size, fill)
     }
 
+    /// Wake [`App::wait`] when `fd` has something to read -- a child process's output, a
+    /// socket -- as well as for the room. What is read, and when, is the application's.
+    pub fn watch(&mut self, fd: i32) {
+        if !self.watched.contains(&fd) {
+            self.watched.push(fd);
+        }
+    }
+
+    pub fn unwatch(&mut self, fd: i32) {
+        self.watched.retain(|&w| w != fd);
+    }
+
     /// Wait for something to happen, for at most `timeout`, and say what did. Sends whatever
     /// the application has said since the last call, so nothing reaches the room until this is
     /// called.
@@ -352,7 +366,7 @@ impl App {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
-        wire::pump(&mut self.wire, &mut self.queue, wake.map(|at| at.saturating_duration_since(now)))?;
+        wire::pump(&mut self.wire, &mut self.queue, wake.map(|at| at.saturating_duration_since(now)), &self.watched)?;
         self.wire.repeat(Instant::now());
         Ok(std::mem::take(&mut self.wire.events))
     }

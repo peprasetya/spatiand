@@ -544,7 +544,7 @@ fn memory(bytes: usize) -> Result<std::fs::File, String> {
 }
 
 /// Send what is pending, and wait up to `timeout` for the compositor to say something.
-pub(crate) fn pump(wire: &mut Wire, queue: &mut EventQueue<Wire>, timeout: Option<Duration>) -> Result<(), String> {
+pub(crate) fn pump(wire: &mut Wire, queue: &mut EventQueue<Wire>, timeout: Option<Duration>, watched: &[i32]) -> Result<(), String> {
     let lost = |e: &dyn std::fmt::Display| format!("lost Spatiand: {e}");
     queue.dispatch_pending(wire).map_err(|e| lost(&e))?;
     queue.flush().map_err(|e| lost(&e))?;
@@ -555,10 +555,12 @@ pub(crate) fn pump(wire: &mut Wire, queue: &mut EventQueue<Wire>, timeout: Optio
         queue.dispatch_pending(wire).map_err(|e| lost(&e))?;
         return Ok(());
     };
-    let mut fd = libc::pollfd { fd: guard.connection_fd().as_raw_fd(), events: libc::POLLIN, revents: 0 };
+    // The application's own files too -- a child's output -- so that it is woken for them.
+    let mut fds = vec![libc::pollfd { fd: guard.connection_fd().as_raw_fd(), events: libc::POLLIN, revents: 0 }];
+    fds.extend(watched.iter().map(|&fd| libc::pollfd { fd, events: libc::POLLIN, revents: 0 }));
     let wait = timeout.map_or(-1, |t| t.as_millis().min(i32::MAX as u128) as i32);
-    let ready = unsafe { libc::poll(&mut fd, 1, wait) };
-    if ready > 0 {
+    let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, wait) };
+    if ready > 0 && fds[0].revents != 0 {
         match guard.read() {
             Ok(_) => {}
             Err(wayland_client::backend::WaylandError::Io(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {}

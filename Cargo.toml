@@ -25,6 +25,7 @@ members = [
     "crates/vibrefy-api",
     "crates/spatireel",
     "crates/spatiloupe",
+    "crates/spatiquill",
 ]
 
 [workspace.package]

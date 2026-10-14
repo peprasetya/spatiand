@@ -1624,7 +1624,8 @@ fn pointer_event(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], at:
     };
     let Some(pointer) = state.seat.get_pointer() else { return };
     let surface = window.surface.clone();
-    let location = Point::from((at.0.clamp(0.0, 1.0) * window.pixels.0 as f64, at.1.clamp(0.0, 1.0) * window.pixels.1 as f64));
+    // Past the edges too: a drag that leaves its window is what a tab torn off its bar is.
+    let location = Point::from((at.0.clamp(-1.0, 2.0) * window.pixels.0 as f64, at.1.clamp(-1.0, 2.0) * window.pixels.1 as f64));
     if button.is_some_and(|(_, pressed)| pressed) {
         let w = window.window.clone();
         state.focus_window(&w);
