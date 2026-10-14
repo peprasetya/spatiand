@@ -24,6 +24,7 @@ members = [
     "crates/spatiand-media",
     "crates/vibrefy-api",
     "crates/spatireel",
+    "crates/spatiloupe",
 ]
 
 [workspace.package]

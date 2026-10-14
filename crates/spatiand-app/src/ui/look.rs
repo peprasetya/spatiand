@@ -1,10 +1,10 @@
-//! How SpatiReel looks: the room's own ground and type, with the three colours of the
+//! How Spatiand's own applications look: the room's own ground and type, with the three colours of the
 //! Spatiand mark -- teal, blue, violet -- as light behind it rather than as paint on it.
 
 use std::time::Instant;
 
-use spatiand_app::ui::{theme, Color, Painter, Rect};
-use spatiand_app::Gl;
+use super::{theme, Color, Painter, Rect};
+use crate::Gl;
 
 pub const TEAL: Color = [0.086, 0.902, 0.753, 1.0];
 pub const BLUE: Color = [0.216, 0.651, 0.969, 1.0];
@@ -81,4 +81,22 @@ pub fn foot(p: &mut Painter, gl: &Gl, all: &mut Rect, hint: &str, trouble: Optio
         Some(trouble) => p.label(gl, trouble, line, theme::FOOTER_EM, TROUBLE, 0.0),
         None => p.label(gl, hint, line, theme::FOOTER_EM, theme::INK_HINT, 0.0),
     };
+}
+
+/// A pane floating over what is behind it -- a picture, a page -- dark enough to read on
+/// whatever that is, with the room's faint rim.
+pub fn glass(p: &mut Painter, gl: &Gl, rect: Rect, radius: f32, strength: f32) {
+    p.glow(gl, rect, radius, [0.0, 0.0, 0.0, 0.30 * strength], 26.0);
+    p.gradient(gl, rect, radius, [0.075, 0.088, 0.135, 0.86 * strength], [0.040, 0.046, 0.070, 0.90 * strength]);
+    p.fill(gl, Rect { h: 1.5, ..rect.inset(radius * 0.6) }, 0.75, [1.0, 1.0, 1.0, 0.10 * strength]);
+}
+
+/// A small rounded word on a wash of colour: what a thing is, at a glance ("3D", "PDF").
+pub fn chip(p: &mut Painter, gl: &Gl, x: f32, y: f32, text: &str, color: Color) -> f32 {
+    let em = theme::FOOTER_EM * 0.85;
+    let (w, _) = p.measure(gl, text, em, 8192.0 / p.scale());
+    let rect = Rect::new(x, y, w + 24.0, em * 1.9);
+    p.fill(gl, rect, rect.h * 0.5, faint(color, 0.22));
+    p.label(gl, text, rect, em, [color[0] * 0.5 + 0.5, color[1] * 0.5 + 0.5, color[2] * 0.5 + 0.5, 1.0], 0.5);
+    rect.w
 }

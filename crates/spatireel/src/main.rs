@@ -16,7 +16,6 @@
 //! ```
 
 mod library;
-mod look;
 mod play;
 mod screens;
 mod source;
@@ -27,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use spatiand_app::ui::{theme, Input, Painter};
+use spatiand_app::ui::{look, theme, Input, Painter};
 use spatiand_app::{App, Event, WindowId};
 
 use play::{Outcome, Playing};

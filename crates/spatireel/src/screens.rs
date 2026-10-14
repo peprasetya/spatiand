@@ -14,7 +14,8 @@ use spatiand_media::still::Still;
 
 use crate::source::jellyfin::Flavour;
 use crate::source::Item;
-use crate::{library, look, Account, Entry, Kind};
+use crate::{library, Account, Entry, Kind};
+use spatiand_app::ui::look;
 
 /// What a screen would like to happen.
 pub enum Act {

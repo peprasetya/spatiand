@@ -12,6 +12,7 @@
 //! scrolled), are drawn into a rectangle each frame, and are handed what the wearer did as
 //! [`Input`].
 
+pub mod look;
 mod paint;
 mod widgets;
 

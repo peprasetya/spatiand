@@ -6,3 +6,5 @@
 *.log
 .DS_Store
 /spatiand-logs/
+# Fetched, not built: tools/fetch-pdfium.sh.
+/third_party/pdfium/
