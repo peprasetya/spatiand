@@ -194,7 +194,8 @@ tabs, vim on the other screen, `kill -9` of one tab's process (the others went o
 tear-off into a window, a tab dropped onto another window, selection, scrollback.
 SpatiShelf: home, tiles, list, menu, a remote (alias and WebDAV stand-ins) with pictures,
 **a WebDAV remote added through the form** and browsed, the "other apps" pane, a file copied
-from this machine to the remote by copy and paste in a second tab (it arrived). The storage
+from this machine to the remote by copy and paste in a second tab (it arrived); SpatiReel
+playing a film from that remote by the WebDAV address SpatiShelf hands it. The storage
 service by hand: remotes made, listed, range reads and PROPFIND over WebDAV, refused without
 the token. The launcher's Spatiand bubble lists all four from the installed app.
 **On the Deck** (snapshot backend, headless, outside the session): SpatiQuill with bash,
@@ -210,8 +211,6 @@ SpatiLoupe with a GLB in both eyes, HEIC and a PDF, SpatiShelf with pictures.
   made from an ordinary picture. The detection rule may need tuning on real ones.
 * Any real cloud remote (Google Drive and the like, and their browser sign-in): only stand-ins.
   Native applications through the WebDAV folder (Finder's mount) were not tried.
-* SpatiReel playing a remote file through the storage service's WebDAV (it is given the URL;
-  FFmpeg reads HTTP, but no film was played that way).
 
 **Not done yet**
 * Clipboard on the Deck and the Beam Pro beyond `wl-copy` if present: the SDK has no
