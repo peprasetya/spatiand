@@ -1,0 +1,26 @@
+[package]
+name = "spatiloupe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SpatiLoupe: Spatiand's viewer, for pictures, stereo photographs, PDFs and 3D objects"
+
+# See docs/spatiand-apps.md. Pictures by the `image` crate, and what it cannot read (HEIF,
+# AVIF, JPEG 2000) by FFmpeg through `spatiand-media`; PDFs by PDFium, loaded at run time from
+# beside the program (tools/fetch-pdfium.sh); glTF by a small renderer of its own.
+[dependencies]
+spatiand-app = { path = "../spatiand-app" }
+spatiand-media = { path = "../spatiand-media" }
+log.workspace = true
+env_logger.workspace = true
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff", "ico", "tga", "pnm", "qoi", "hdr", "exr"] }
+kamadak-exif = "0.6"
+resvg = "0.45"
+pdfium-render = { version = "0.9", default-features = false, features = ["pdfium_latest", "thread_safe"] }
+gltf = { version = "1.4", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_materials_unlit"] }
+glam = "0.29"
+
+[dev-dependencies]
+png = "0.17"
