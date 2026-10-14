@@ -1,0 +1,17 @@
+[package]
+name = "spatiand-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "How a Spatiand application reaches the storage service: rclone's remotes, as virtual places"
+
+# The service itself is Go, with rclone linked in (`storage/`); this is its client, shared by
+# SpatiShelf, SpatiLoupe and SpatiReel so that `remote:path` means the same to all of them.
+[dependencies]
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ureq = { version = "2", features = ["json"] }
+base64 = "0.22"
