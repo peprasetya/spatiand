@@ -106,8 +106,10 @@ impl Shown {
         }
     }
 
-    /// Where the picture is drawn, to fill `area` as it is zoomed and moved.
+    /// Where the picture is drawn, to fill `area` as it is zoomed and moved: below the bar
+    /// along the top, so that a tall picture is not under it.
     fn placed(&self, area: Rect) -> Rect {
+        let area = stage(area);
         let aspect = self.eye_aspect();
         let (pw, _) = self.eye_pixels();
         let fit_w = (area.w * 0.94).min(area.h * 0.92 * aspect);
@@ -121,6 +123,7 @@ impl Shown {
     }
 
     fn fit_scale(&self, area: Rect) -> f32 {
+        let area = stage(area);
         let aspect = self.eye_aspect();
         let fit_w = (area.w * 0.94).min(area.h * 0.92 * aspect);
         self.eye_pixels().0 / fit_w
@@ -152,6 +155,7 @@ impl Shown {
     /// Keep the picture over the window: zoomed in, its edge never comes inside the window.
     fn clamp(&mut self, area: Rect) {
         let placed = self.placed(area);
+        let area = stage(area);
         for (centre, size, room) in [(&mut self.centre.0, placed.w, area.w), (&mut self.centre.1, placed.h, area.h)] {
             if size <= room {
                 *centre = 0.5;
@@ -178,6 +182,11 @@ impl Shown {
         }
         uv
     }
+}
+
+/// The part of the window a picture is fitted to: all of it but the bar along the top.
+fn stage(all: Rect) -> Rect {
+    Rect::new(all.x, all.y + 96.0, all.w, (all.h - 96.0 - 12.0).max(1.0))
 }
 
 /// Whether a picture of this shape holding two views has squeezed each to half: a film's

@@ -36,7 +36,7 @@ use setup::Setup;
 
 const WINDOW: (u32, u32) = (1440, 900);
 const BAR: f32 = 66.0;
-const SIDE: f32 = 330.0;
+const SIDE: f32 = 350.0;
 const TILE: f32 = 176.0;
 const ROW: f32 = 54.0;
 
@@ -374,11 +374,11 @@ impl Shelf {
             // The kind is said in the foot when it is open; here there is room for the name.
             rows.push((Row::new(remote.name.clone()), SideRow::Go(Place::Remote(remote.name.clone(), String::new()))));
         }
-        rows.push((Row::new("+  New remote"), SideRow::AddRemote));
+        rows.push((Row::new("+  Add remote"), SideRow::AddRemote));
         if spatiand_storage::own_rclone_config().is_some() {
             rows.push((Row::new("From rclone"), SideRow::Import));
         }
-        rows.push((Row::new("For other apps"), SideRow::Network));
+        rows.push((Row::new("Other apps"), SideRow::Network));
         self.side_rows = rows.iter().map(|(_, r)| r.clone()).collect();
         SIDE_LABELS.with(|l| *l.borrow_mut() = rows.into_iter().map(|(r, _)| r).collect());
     }

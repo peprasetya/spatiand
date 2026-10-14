@@ -2,3 +2,4 @@ build/
 jniLibs/
 spatiand.apk
 spatiand.apk.idsig
+build-storage/

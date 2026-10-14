@@ -60,10 +60,26 @@ fn directories() -> Vec<PathBuf> {
     if let Some(named) = std::env::var_os("SPATIAND_APPS_DIR") {
         found.push(PathBuf::from(named));
     }
+    if let Some(native) = native_library_dir() {
+        found.push(native);
+    }
     if let Some(beside) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(PathBuf::from)) {
         found.push(beside);
     }
     found
+}
+
+/// On Android, the APK's native library folder: where `libspatiand.so` -- this code -- was
+/// loaded from, read off the process's own map of what it has loaded.
+fn native_library_dir() -> Option<PathBuf> {
+    if !cfg!(target_os = "android") {
+        return None;
+    }
+    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+    maps.lines()
+        .filter_map(|line| line.split_whitespace().last())
+        .find(|path| path.ends_with("/libspatiand.so"))
+        .and_then(|path| std::path::Path::new(path).parent().map(PathBuf::from))
 }
 
 fn program(own: &Own) -> Option<PathBuf> {
@@ -118,7 +134,15 @@ pub fn adopt(shell: &mut spatiand_shell::Shell) {
 
 /// Start one, as a client of this compositor.
 pub fn launch(app: &AppEntry, wayland_display: &str, extra: &[(String, String)]) {
-    if let Err(e) = spatiand_platform::launch(&app.exec, wayland_display, extra) {
+    let mut extra = extra.to_vec();
+    // On Android the programs and the libraries they need (FFmpeg, PDFium) are all in the
+    // APK's library folder, and nothing tells the dynamic linker so but this.
+    if let Some(native) = native_library_dir() {
+        let dir = native.to_string_lossy().into_owned();
+        extra.push(("SPATIAND_APPS_DIR".into(), dir.clone()));
+        extra.push(("LD_LIBRARY_PATH".into(), dir));
+    }
+    if let Err(e) = spatiand_platform::launch(&app.exec, wayland_display, &extra) {
         log::warn!("could not start {}: {e}", app.name);
     }
 }

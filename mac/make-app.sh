@@ -17,14 +17,29 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
 cp .build/release/Spatiand "$app/Contents/MacOS/Spatiand"
 # Spatiand's own applications, each a program beside the app's, which is where the launcher
-# looks for them (crates/spatiand/src/own.rs). SpatiReel links the FFmpeg this Mac has
-# (Homebrew's): the app is for this Mac. bindgen wants to be told where libclang is.
-if (cd .. && LIBCLANG_PATH="${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib}" \
-    MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release -p spatireel); then
-  cp ../target/release/spatireel "$app/Contents/MacOS/spatireel"
+# looks for them (crates/spatiand/src/own.rs). SpatiReel, SpatiLoupe and SpatiShelf link the
+# FFmpeg this Mac has (Homebrew's): the app is for this Mac. bindgen wants to be told where
+# libclang is. Each is built on its own, so that one that does not build leaves the others.
+OWN="spatireel spatiloupe spatiquill spatishelf"
+for own in $OWN; do
+  if (cd .. && LIBCLANG_PATH="${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib}" \
+      MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release -p "$own"); then
+    cp "../target/release/$own" "$app/Contents/MacOS/$own"
+  else
+    echo "warning: $own did not build; the app is made without it"
+  fi
+done
+# The storage service the applications reach remotes through: Go, with rclone linked in.
+if command -v go >/dev/null && ../storage/build.sh mac "$app/Contents/MacOS/spatiand-storage"; then
+  OWN="$OWN spatiand-storage"
 else
-  echo "warning: SpatiReel did not build (is FFmpeg installed?); the app is made without it"
+  echo "warning: the storage service did not build (is Go installed?); remotes will not be reachable"
 fi
+# PDFium, which SpatiLoupe draws PDFs with, beside the programs that load it.
+case "$(uname -m)" in arm64) pdfium=mac-arm64 ;; *) pdfium=mac-x64 ;; esac
+../tools/fetch-pdfium.sh "$pdfium" && mkdir -p "$app/Contents/Frameworks" \
+  && cp "../third_party/pdfium/$pdfium/lib/libpdfium.dylib" "$app/Contents/Frameworks/" \
+  || echo "warning: no PDFium; SpatiLoupe will not open PDFs"
 # The measured head: the library that reads SOFA files and the dataset (built once; see tools/build-hrtf.sh).
 ./tools/build-hrtf.sh || echo "warning: no measured head; sound will be placed by the parametric one"
 if [ -f Resources/hrtf/libmysofa.1.dylib ]; then
@@ -78,13 +93,13 @@ IDENTITY=$(security find-identity -p codesigning 2>/dev/null | grep -F "\"$IDENT
 if [ -n "$IDENTITY" ]; then
   # What is inside is signed first, with the same certificate.
   for lib in "$app"/Contents/Frameworks/*.dylib; do [ -f "$lib" ] && codesign --force --sign "$IDENTITY" "$lib" >/dev/null 2>&1; done
-  for own in spatireel; do [ -f "$app/Contents/MacOS/$own" ] && codesign --force --sign "$IDENTITY" "$app/Contents/MacOS/$own" >/dev/null 2>&1; done
+  for own in $OWN; do [ -f "$app/Contents/MacOS/$own" ] && codesign --force --sign "$IDENTITY" "$app/Contents/MacOS/$own" >/dev/null 2>&1; done
   codesign --force --sign "$IDENTITY" --identifier com.peprasetya.spatiand "$app" >/dev/null 2>&1 \
     && echo "signed with \"$IDENTITY_NAME\" ($IDENTITY): permissions survive rebuilds" \
     || { echo "warning: could not sign with \"$IDENTITY_NAME\"; signing ad hoc"; codesign --force --sign - "$app" >/dev/null 2>&1 || true; }
 else
   for lib in "$app"/Contents/Frameworks/*.dylib; do [ -f "$lib" ] && codesign --force --sign - "$lib" >/dev/null 2>&1; done
-  for own in spatireel; do [ -f "$app/Contents/MacOS/$own" ] && codesign --force --sign - "$app/Contents/MacOS/$own" >/dev/null 2>&1; done
+  for own in $OWN; do [ -f "$app/Contents/MacOS/$own" ] && codesign --force --sign - "$app/Contents/MacOS/$own" >/dev/null 2>&1; done
   codesign --force --sign - "$app" >/dev/null 2>&1 || echo "warning: could not sign"
   echo "note: signed ad hoc, so each rebuild asks for Screen Recording and Accessibility again;"
   echo "      create the \"$IDENTITY_NAME\" certificate (see HoloFrame) to stop that"
