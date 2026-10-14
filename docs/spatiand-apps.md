@@ -112,7 +112,7 @@ afterwards.
 
 ## Built so far (2026-10-13/14, branch `spatiand-apps`)
 
-Steps 1 to 4 of the build order: the SDK and toolkit, the launcher's entry, and SpatiReel with
+All five steps of the build order (step 5 is in its own section below). Steps 1 to 4: the SDK and toolkit, the launcher's entry, and SpatiReel with
 local files and all four kinds of server. What each claim rests on is said, because most of it
 has not been in front of anybody's eyes.
 
@@ -169,5 +169,55 @@ snapshot backend, pictures going over as dmabufs.
 * Dolby Vision that has no HDR10-compatible layer (profile 5) is shown with the wrong colours.
 * Signing in to Vibrefy by any way but a code.
 * On a Mac the room does not yet place an application's sound at its window.
-* The pose channel is not in the SDK yet (SpatiLoupe's 3D objects will want it).
-* Step 5: the storage service and SpatiShelf, SpatiLoupe, SpatiQuill.
+* The pose channel is not in the SDK yet: SpatiLoupe's objects are drawn in stereo for an
+  assumed window (1.3 m wide, 1.6 m away), not from the head's real place.
+
+## Step 5, built 2026-10-14: the storage service, SpatiShelf, SpatiLoupe, SpatiQuill
+
+| | |
+|---|---|
+| `storage/` (`spatiand-storage`) | Go, with **rclone v1.72 linked in as a library** (every backend). Remotes in Spatiand's own `~/.config/spatiand/rclone.conf`; the user's own rclone remotes are copied in only when asked ("From rclone"). Answers on 127.0.0.1 behind a token kept in `storage.token` beside the remotes: `/rc/<method>` is rclone's remote control (lists, copies, moves, deletes, `config/create` and its questions); `/dav/<remote>/...` is each remote as WebDAV, for streaming and for native applications. rclone's file cache is **off**: nothing is kept on disk. Where it is: `$XDG_RUNTIME_DIR/spatiand-storage.json`. Started by the first application that wants it, detached; a second start finds the first. `storage/build.sh mac|linux|android` builds it from the Mac for all three (no cgo). *The "fork" is upstream v1.72 as a Go module: no patch has been needed; a `replace` line in `go.mod` makes it a fork the day one is.* |
+| `crates/spatiand-storage` | Its Rust client. `remote:path` is a **virtual place** to every application; files stream by URL (FFmpeg) or are read into memory. |
+| `crates/spatishelf` | **Every tab a process** (`spatishelf --tab`): it lists, makes pictures (images, film frames, HEIF; remote pictures read into memory) and copies. Sidebar of places (per platform; `/sdcard` places on Android) and remotes; tiles or a list; several chosen (click with Control/Shift, Space, Control-A); path bar; back, forward, up; type to jump, Control-F to filter; copy, cut, paste (local by itself, anything with a remote through rclone, as a job with a progress bar); rename, new folder, trash (the Mac's, freedesktop's on Linux; remotes and Android delete for good, after asking); a menu on the right button; open with SpatiLoupe, SpatiReel, SpatiQuill (folders) or the platform's own (`open`, `xdg-open`; a remote's file by its WebDAV address). **Add remote**: every kind rclone has, searchable, its main options as a form, then rclone's own questions one at a time (OAuth kinds open the browser and wait). "Other apps": the WebDAV address, name and password, and a button that mounts it in Finder (Mac) or opens it in the file manager (Linux). |
+| `crates/spatiloupe` | Pictures by the `image` crate, and HEIF (a phone's tile grid put together), AVIF and JPEG 2000 by FFmpeg; SVG by resvg; moving GIF, APNG, WebP; EXIF shown; zoom about the pointer, pan, rotate, a strip of the folder's other files, an info pane; controls on glass that fade. **Stereo photographs**: MPO pairs, side by side, crossed, over and under, told by name (`_sbs`, `.jps`...) or by the picture itself (the two halves' detail compared), squeezed pairs recognised by a film's shape; in the room each eye is given its view, flat the left one; the packing can be changed, eyes swapped, depth moved (`,` `.`). **PDF** by PDFium (`tools/fetch-pdfium.sh`, shipped beside the programs): pages down a column drawn at the size shown, search with the results marked, the outline. **glTF/GLB** by its own renderer: metallic-roughness PBR (base colour, metal-rough, normal, occlusion, emission, cut-out and see-through), lit by three lights and a studio sky, a soft shadow, 4x MSAA; in the room drawn for each eye with off-axis frusta; drag to turn, scroll to near. Remote files (`remote:path`) and folders open as local ones do. |
+| `crates/spatiquill` | **Every tab a process** (`spatiquill --tab`) holding a pseudo-terminal and alacritty's emulator (`alacritty_terminal` 0.26), sending its screen to the window; one process holds every window, and a second start opens a window in it. Glyphs from the platform's monospaced face through cosmic-text into one atlas, the whole screen one draw: colour (16, 256, true), bold, italic, underline, emoji, wide CJK. Tabs named by the running program or the folder; dragged along the bar to reorder, **off the window into a window of its own, or onto another SpatiQuill window**. Selection copies (to the Mac's clipboard by `pbcopy`, to Wayland's by `wl-copy` if it is there); paste; scrollback with a marker; mouse to programs that ask for it; a crashed tab offers a new shell and the others go on. |
+| SDK | `App::watch(fd)`: an application woken for its own files. `ui::look` (backdrop, rule, glass, chip) shared by all four. |
+| Snapshot backend | `SPATIAND_STEPS`: clicks, drags (past the window's edge too), scrolls, keys with modifiers, typed text, waits, `window:<title>` and `dump:<png>` of the window's own picture at any point -- how all of the above was driven. |
+| Packaging | **Mac**: `mac/make-app.sh` puts all four, the storage service and PDFium in the bundle. **Deck**: all four build in the `holo` container; PDFium and the storage service are copied beside them. **Beam Pro**: `android/build.sh` builds FFmpeg 7.1 for Android (`android/ffmpeg/`, MediaCodec), the four as `lib<name>.so`, PDFium and the storage service into the APK; the compositor finds them in the APK's library folder and gives them `LD_LIBRARY_PATH`; `android/setup.sh` grants all-files access and switches the phantom-process monitor off. |
+
+**Checked** (Mac, snapshot backend with `SPATIAND_STEPS`, the real compositor and the
+applications as their own processes): SpatiLoupe's folder grid, JPEG, HEIC, JPEG 2000, SVG,
+GIF, a stereo pair to each eye and flat, zoom and pan, rotation, the info pane, a 36-megapixel
+HEIC, PDF pages, search and its marks, three Khronos sample GLBs in both eyes, dragged and
+zoomed, a remote's PDF and folder. SpatiQuill: zsh with colour, emoji and CJK, two and three
+tabs, vim on the other screen, `kill -9` of one tab's process (the others went on), reorder,
+tear-off into a window, a tab dropped onto another window, selection, scrollback.
+SpatiShelf: home, tiles, list, menu, a remote (alias and WebDAV stand-ins) with pictures,
+**a WebDAV remote added through the form** and browsed, the "other apps" pane, a file copied
+from this machine to the remote by copy and paste in a second tab (it arrived). The storage
+service by hand: remotes made, listed, range reads and PROPFIND over WebDAV, refused without
+the token. The launcher's Spatiand bubble lists all four from the installed app.
+**On the Deck** (snapshot backend, headless, outside the session): SpatiQuill with bash,
+SpatiLoupe with a GLB in both eyes, HEIC and a PDF, SpatiShelf with pictures.
+
+**Not checked**
+* Anything in glasses, on any platform; sound by ear.
+* **The Beam Pro at all**: it did not answer adb, so the APK is built and nothing in it has
+  run. Unknowns there: the programs starting from the library folder, FFmpeg's MediaCodec,
+  sound through cpal/oboe from a program with no Java, a pseudo-terminal under the app's uid,
+  `/sdcard` with all-files access, HOME for the programs (the app's files folder).
+* Stereo photographs from a real stereo camera or the Beam Pro's album: the pairs checked were
+  made from an ordinary picture. The detection rule may need tuning on real ones.
+* Any real cloud remote (Google Drive and the like, and their browser sign-in): only stand-ins.
+  Native applications through the WebDAV folder (Finder's mount) were not tried.
+* SpatiReel playing a remote file through the storage service's WebDAV (it is given the URL;
+  FFmpeg reads HTTP, but no film was played that way).
+
+**Not done yet**
+* Clipboard on the Deck and the Beam Pro beyond `wl-copy` if present: the SDK has no
+  `wl_data_device` yet.
+* SpatiShelf: dragging files between tabs or onto remotes (copy and paste only); opening in
+  Android's own applications.
+* SpatiLoupe: Apple's spatial HEIC (two images in one file) shows its first eye only; glTF
+  animation and skinning are not played.
+* SpatiReel's own browsing of remotes (it opens what SpatiShelf hands it).
