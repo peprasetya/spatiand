@@ -120,9 +120,13 @@ impl Pdf {
                     return;
                 }
             };
-            let document = match pdfium.load_pdf_from_file(&path, None) {
+            let loaded = match crate::place::remote(&path) {
+                Some(_) => crate::place::read(&path).map_err(|e| e).and_then(|bytes| pdfium.load_pdf_from_byte_vec(bytes, None).map_err(|e| e.to_string())),
+                None => pdfium.load_pdf_from_file(&path, None).map_err(|e| e.to_string()),
+            };
+            let document = match loaded {
                 Ok(document) => document,
-                Err(PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError)) => {
+                Err(e) if e.contains("Password") => {
                     let _ = tell.send(Answer::Failed("This PDF is locked with a password.".into()));
                     return;
                 }

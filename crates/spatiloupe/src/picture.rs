@@ -62,7 +62,13 @@ fn fit(image: DynamicImage, largest: u32) -> DynamicImage {
 /// Read the picture at `path`, at most `largest` pixels a side: [`LARGEST`] to look at, a few
 /// hundred for a tile.
 pub fn read(path: &Path, largest: u32) -> Result<Picture, String> {
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    // What FFmpeg reads, it reads from the file or the stream itself.
+    if ["heic", "heif", "hif", "avif", "jp2", "j2k", "jpf", "jpx", "j2c", "jxl"].contains(&ending(path).as_str()) {
+        let mut picture = by_ffmpeg(path, largest)?;
+        picture.eyes = stereo::guess(path, picture.width, picture.height, &picture.rgba);
+        return Ok(picture);
+    }
+    let bytes = crate::place::read(path)?;
     read_bytes(path, &bytes, largest)
 }
 
@@ -164,7 +170,7 @@ fn moving(bytes: &[u8], format: Option<image::ImageFormat>, largest: u32) -> Opt
 }
 
 fn by_ffmpeg(path: &Path, largest: u32) -> Result<Picture, String> {
-    let still = spatiand_media::still::grab(&path.to_string_lossy(), largest).ok_or("not a picture this can read")?;
+    let still = spatiand_media::still::grab(&crate::place::source(path), largest).ok_or("not a picture this can read")?;
     let image = RgbaImage::from_raw(still.width, still.height, still.rgba).ok_or("a picture of the wrong size")?;
     let image = fit(DynamicImage::ImageRgba8(image), largest).to_rgba8();
     let original = (still.width, still.height);

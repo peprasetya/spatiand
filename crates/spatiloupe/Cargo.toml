@@ -13,6 +13,7 @@ description = "SpatiLoupe: Spatiand's viewer, for pictures, stereo photographs, 
 [dependencies]
 spatiand-app = { path = "../spatiand-app" }
 spatiand-media = { path = "../spatiand-media" }
+spatiand-storage = { path = "../spatiand-storage" }
 log.workspace = true
 env_logger.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff", "ico", "tga", "pnm", "qoi", "hdr", "exr"] }

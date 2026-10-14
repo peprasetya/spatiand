@@ -701,7 +701,7 @@ impl View {
 
     fn about(&self) -> Vec<(String, String)> {
         let mut rows = vec![("Name".to_string(), self.entry.name.clone())];
-        if let Some(folder) = self.entry.path.parent() {
+        if let Some(folder) = crate::place::parent(&self.entry.path) {
             rows.push(("Folder".to_string(), folder.display().to_string()));
         }
         rows.push(("Size".to_string(), size_words(self.entry.size)));

@@ -55,17 +55,14 @@ pub fn home() -> PathBuf {
 
 /// A folder's folders, then the files SpatiLoupe shows, each by name.
 pub fn list(folder: &Path) -> Result<Vec<Entry>, String> {
-    let read = std::fs::read_dir(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
-    let mut entries: Vec<Entry> = read
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
+    let mut entries: Vec<Entry> = crate::place::list(folder)?
+        .into_iter()
+        .filter_map(|(name, is_dir, size)| {
             if name.starts_with('.') {
                 return None;
             }
-            let path = entry.path();
-            let meta = std::fs::metadata(&path).ok()?;
-            let kind = if meta.is_dir() {
+            let path = crate::place::join(folder, &name);
+            let kind = if is_dir {
                 if is_package(&name) {
                     return None;
                 }
@@ -73,7 +70,7 @@ pub fn list(folder: &Path) -> Result<Vec<Entry>, String> {
             } else {
                 kind_of(&path)?
             };
-            Some(Entry { name, path, kind, size: meta.len() })
+            Some(Entry { name, path, kind, size })
         })
         .collect();
     entries.sort_by(|a, b| (a.kind != Kind::Folder).cmp(&(b.kind != Kind::Folder)).then_with(|| natural(&a.name, &b.name)));
@@ -274,12 +271,12 @@ impl Folder {
         self.take_arrived(p, gl);
         let mut all = p.bounds().inset(theme::PAD);
         let mut top = all.take_top(Button::HEIGHT);
-        if self.path.parent().is_some() {
+        if crate::place::parent(&self.path).is_some() {
             let width = Button::width(p, gl, "\u{2191}  Up");
             self.up.draw(p, gl, top.take_left(width), "\u{2191}  Up");
             top.take_left(22.0);
         }
-        let name = self.path.file_name().map_or_else(|| self.path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let name = crate::place::name(&self.path);
         let taken = p.label(gl, &name, top, theme::TITLE_EM * 0.9, theme::INK, 0.0);
         let count = match self.state {
             State::Ready => {
@@ -304,8 +301,8 @@ impl Folder {
 
     pub fn input(&mut self, input: &Input) -> Chose {
         if self.up.input(input) || matches!(input, Input::Key { key: Key::Backspace, .. }) {
-            if let Some(parent) = self.path.parent() {
-                return Chose::Folder(parent.to_path_buf());
+            if let Some(parent) = crate::place::parent(&self.path) {
+                return Chose::Folder(parent);
             }
             return Chose::Nothing;
         }

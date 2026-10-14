@@ -104,7 +104,13 @@ fn rgba_of(data: &gltf::image::Data) -> Option<Vec<u8>> {
 
 impl Scene {
     pub fn read(path: &Path) -> Result<Scene, String> {
-        let (document, buffers, images) = gltf::import(path).map_err(|e| match e {
+        // A remote's object is read whole and taken apart in memory: a GLB carries everything
+        // it needs; a .gltf that points at other files can only be opened from this machine.
+        let imported = match crate::place::remote(path) {
+            Some(_) => crate::place::read(path).map_err(|e| gltf::Error::Io(std::io::Error::other(e))).and_then(|bytes| gltf::import_slice(&bytes)),
+            None => gltf::import(path),
+        };
+        let (document, buffers, images) = imported.map_err(|e| match e {
             gltf::Error::UnsupportedScheme => "it points at files on the network".to_string(),
             gltf::Error::Validation(_) => "it is not a well-formed glTF file".to_string(),
             e => e.to_string(),

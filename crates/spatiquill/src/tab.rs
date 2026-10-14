@@ -227,7 +227,7 @@ pub fn run() -> io::Result<()> {
     let listener = Listener(events);
     let size = Size { cols: cols as usize, rows: rows as usize };
     let term = Arc::new(FairMutex::new(Term::new(Config::default(), &size, listener.clone())));
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let home = std::env::var_os("SPATIQUILL_FOLDER").or_else(|| std::env::var_os("HOME")).map(std::path::PathBuf::from);
     let mut env = HashMap::new();
     env.insert("TERM".to_string(), "xterm-256color".to_string());
     env.insert("COLORTERM".to_string(), "truecolor".to_string());

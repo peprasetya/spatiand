@@ -58,9 +58,15 @@ struct Tab {
 }
 
 impl Tab {
-    fn spawn() -> Result<Tab, String> {
+    fn spawn(folder: Option<&str>) -> Result<Tab, String> {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let mut child = Command::new(exe).arg("--tab").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().map_err(|e| format!("a tab would not start: {e}"))?;
+        let mut command = Command::new(exe);
+        // Where its shell starts: a folder SpatiShelf opened it in, or home.
+        match folder.filter(|f| std::path::Path::new(f).is_dir()) {
+            Some(folder) => command.env("SPATIQUILL_FOLDER", folder),
+            None => command.env_remove("SPATIQUILL_FOLDER"),
+        };
+        let mut child = command.arg("--tab").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().map_err(|e| format!("a tab would not start: {e}"))?;
         let stdin = child.stdin.take().ok_or("no way to talk to the tab")?;
         let stdout = child.stdout.take().ok_or("no way to hear the tab")?;
         unsafe {
@@ -204,7 +210,11 @@ impl Quill {
     }
 
     fn new_tab(&mut self) -> Option<u64> {
-        match Tab::spawn() {
+        self.new_tab_in(None)
+    }
+
+    fn new_tab_in(&mut self, folder: Option<&str>) -> Option<u64> {
+        match Tab::spawn(folder) {
             Ok(tab) => {
                 self.app.watch(tab.stdout.as_raw_fd());
                 let id = self.next_tab;
@@ -242,7 +252,11 @@ impl Quill {
     }
 
     fn new_window(&mut self) {
-        if let Some(tab) = self.new_tab() {
+        self.new_window_in(None);
+    }
+
+    fn new_window_in(&mut self, folder: Option<&str>) {
+        if let Some(tab) = self.new_tab_in(folder) {
             self.open_window(vec![tab]);
         }
     }
@@ -896,19 +910,20 @@ impl Quill {
                 }
             }
             // Another start of SpatiQuill, asking for a window.
-            let mut asked_windows = 0;
+            let mut asked_windows: Vec<Option<String>> = Vec::new();
             if let Some((listener, _)) = self.listener.as_ref() {
                 while let Ok((mut stream, _)) = listener.accept() {
                     let mut asked = String::new();
                     let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
                     let _ = stream.read_to_string(&mut asked);
-                    if asked.trim() == "window" {
-                        asked_windows += 1;
+                    if let Some(rest) = asked.trim().strip_prefix("window") {
+                        let folder = rest.trim();
+                        asked_windows.push((!folder.is_empty()).then(|| folder.to_string()));
                     }
                 }
             }
-            for _ in 0..asked_windows {
-                self.new_window();
+            for folder in asked_windows {
+                self.new_window_in(folder.as_deref());
             }
             if self.wins.is_empty() {
                 return Ok(());
@@ -1005,8 +1020,9 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     // Already running in this room: that SpatiQuill opens the window.
     let path = socket_path();
+    let folder = std::env::args().nth(1).or_else(|| std::env::var("SPATIQUILL_FOLDER").ok()).filter(|f| !f.is_empty());
     if let Ok(mut stream) = UnixStream::connect(&path) {
-        if stream.write_all(b"window").is_ok() {
+        if stream.write_all(format!("window {}", folder.clone().unwrap_or_default()).as_bytes()).is_ok() {
             log::info!("SpatiQuill is already running; it opens the window");
             return;
         }
@@ -1036,7 +1052,7 @@ fn main() {
             let fd = l.as_raw_fd();
             quill.app.watch(fd);
         }
-        quill.new_window();
+        quill.new_window_in(folder.as_deref());
         if quill.wins.is_empty() {
             return Err("no tab would start".into());
         }

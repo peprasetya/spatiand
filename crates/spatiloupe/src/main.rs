@@ -15,6 +15,7 @@ mod folder;
 mod model;
 mod pdf;
 mod picture;
+mod place;
 mod stereo;
 mod view;
 
@@ -120,7 +121,7 @@ impl Loupe {
         let mut folder = Folder::new(path.clone(), ticket);
         folder.cursor_on = cursor_on;
         self.folder = folder;
-        let title = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let title = place::name(&path);
         self.calls.send(Box::new(move || Some(Done::Listed { ticket, result: folder::list(&path) }))).ok();
         self.app.set_title(self.window, &format!("{title} \u{2014} SpatiLoupe"));
         self.dirty = true;
@@ -159,7 +160,7 @@ impl Loupe {
             self.left.push(view);
         }
         let path = self.folder.path.clone();
-        let title = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let title = place::name(&path);
         self.app.set_title(self.window, &format!("{title} \u{2014} SpatiLoupe"));
         self.dirty = true;
     }
@@ -374,9 +375,11 @@ fn main() {
         };
         match asked {
             Some(path) if path.is_dir() => loupe.list(path, None),
+            // A remote's folder: `remote:` or `remote:folder/`.
+            Some(path) if place::remote(&path).is_some_and(|(_, p)| p.is_empty() || p.ends_with('/') || folder::kind_of(&path).is_none()) => loupe.list(path, None),
             Some(path) => {
-                let path = std::fs::canonicalize(&path).unwrap_or(path);
-                let folder = path.parent().map(Path::to_path_buf).unwrap_or_else(folder::home);
+                let path = if place::remote(&path).is_some() { path } else { std::fs::canonicalize(&path).unwrap_or(path) };
+                let folder = place::parent(&path).unwrap_or_else(folder::home);
                 loupe.opening = Some(path.clone());
                 loupe.list(folder, Some(path));
             }
