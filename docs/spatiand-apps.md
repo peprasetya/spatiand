@@ -220,3 +220,17 @@ SpatiLoupe with a GLB in both eyes, HEIC and a PDF, SpatiShelf with pictures.
 * SpatiLoupe: Apple's spatial HEIC (two images in one file) shows its first eye only; glTF
   animation and skinning are not played.
 * SpatiReel's own browsing of remotes (it opens what SpatiShelf hands it).
+
+## 2026-10-15: from the owner's first look
+
+| | |
+|---|---|
+| Spatiand would not start again after the glasses were unplugged | Its single-instance lock was inherited by every program it started, and the storage service -- which outlives everything by design -- kept it. The lock is close-on-exec now, and the storage service is started holding nothing inherited. |
+| Every Mac window came into the room at once | A hidden Mac window missing from one two-second scan was dropped, and found again as "new" (new windows come out at once). Now two scans running are needed, only a window number above any seen is new, and no more than two come out of their own accord a scan. *The input that stopped reaching Mac windows afterwards was not reproduced.* |
+| SpatiReel's controls came back when the head moved | The pointer is cast from the head, so it crosses a window whenever the wearer looks about, and the application cannot tell. `spatiand_xr_v1` v7 adds `hands`: the room tells applications when a hand stirred (pad, mouse, button, key -- never the head). SpatiReel and SpatiLoupe wake their controls on that and on presses. |
+| SpatiReel's sound bypassed the room | On the Mac and the Beam Pro an application of Spatiand's own now hands its sound to the session (`$XDG_RUNTIME_DIR/spatiand-sound`, `crates/spatiand/src/own.rs`), which places it at the window through the HRTF -- every channel of a 5.1 or 7.1 film -- with the window's own mute and volume. On the Deck it already went to the window's PipeWire sink. |
+| Buttons were words | The room's icons (`spatiand_app::ui::Icon`), drawn for Spatiand, on every application's buttons, sidebars, tab bars and tiles. |
+| SpatiShelf's Shift- and Control-click | Read from the keyboard's state at the click (`App::modifiers`), not from the last key event. |
+| No rclone in SpatiShelf's words | Only in its About, with the licences. Its remotes were already its own list; "Import remotes" brings in the user's. |
+| One folder for every application's settings | `~/.config/spatiand/apps` (shared) and `~/.config/spatiand/local` (this machine's alone: tokens, a device's name to a media server), files moved there from where they were. |
+| Settings the same on every paired machine | `crates/spatiand-sync`: whenever a Spatiand is linked to a host (the Mac is both), they exchange what changed in `apps/`, newest version of each file winning, deletions remembered; so every machine ever linked to another ends with one set of settings. Spoken by the session (Deck, Mac, Beam Pro), the Linux `spatiand-host` and the Mac's own host. **Not run over a real link yet**: checked by tests (two machines converging, a deletion travelling, nothing outside the folder touched, the messages on the wire and as the Mac host's JSON) and built on the Mac and on deepmagpie; deepmagpie's running host is the old one until it is rebuilt and restarted. |
