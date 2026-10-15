@@ -22,6 +22,8 @@ wayland-protocols = { version = "0.32", features = ["client"] }
 # What a key means: the compositor sends its keymap, and this reads it.
 xkbcommon = "0.8"
 memmap2 = "0.9"
+# The room's icons, drawn from SVG at the size they are shown.
+resvg = "0.45"
 # The versions the OpenXR runtime already builds against, so the tree has one of each.
 glow = "0.16"
 khronos-egl = { version = "6", features = ["dynamic"] }

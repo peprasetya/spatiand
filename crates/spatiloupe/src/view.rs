@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use spatiand_app::glow::{self, HasContext};
-use spatiand_app::ui::{look, theme, Button, Field, Input, List, Painter, Rect, Row, Shape, Strip, Texture, Tile, Typed};
+use spatiand_app::ui::{look, theme, Button, Field, Icon, Input, List, Painter, Rect, Row, Shape, Strip, Texture, Tile, Typed};
 use spatiand_app::{Gl, Key};
 
 use crate::folder::{size_words, Entry};
@@ -645,21 +645,21 @@ impl View {
         self.bar = bar;
         look::glass(p, gl, bar, 22.0, alpha);
         let mut inner = bar.inset(12.0);
-        let back = inner.take_left(Button::width(p, gl, "\u{2039}  Folder"));
-        self.back.draw(p, gl, back, "\u{2039}  Folder");
+        let back = inner.take_left(Button::icon_width(p, gl, "Folder"));
+        self.back.draw_icon(p, gl, back, Icon::Back, "Folder");
         inner.take_left(20.0);
         let (name, detail) = self.title_words();
         // On the right: what kind of pair it is, and where in the folder.
         let place = format!("{} / {}", self.strip.cursor + 1, self.files.len().max(1));
         let place_w = p.measure(gl, &place, theme::DETAIL_EM, 8192.0).0;
-        let info_w = Button::width(p, gl, "Info");
+        let info_w = Button::HEIGHT;
         let mut right = Rect { x: inner.right() - info_w, w: info_w, ..inner };
-        self.info_button.draw(p, gl, right, "Info");
+        self.info_button.draw_icon(p, gl, right, Icon::Info, "");
         if let Doc::Picture(shown) = &self.doc {
             let label = if shown.eyes().is_stereo() { format!("3D  \u{b7}  {}", short(shown.eyes())) } else { "2D".to_string() };
-            let width = Button::width(p, gl, &label);
+            let width = Button::icon_width(p, gl, &label);
             right = Rect { x: right.x - width - 10.0, w: width, ..right };
-            self.layout.draw(p, gl, right, &label);
+            self.layout.draw_icon(p, gl, right, if shown.eyes().is_stereo() { Icon::Cube } else { Icon::Eye }, &label);
         }
         let place_rect = Rect { x: right.x - place_w - 22.0, w: place_w, ..inner };
         p.label(gl, &place, place_rect, theme::DETAIL_EM, ink(theme::INK_HINT), 1.0);

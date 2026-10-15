@@ -996,7 +996,7 @@ fn draw_bar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, tabs: &HashMa
             if win.hover == Hover::Close(id) {
                 p.fill(gl, close, 13.0, [1.0, 1.0, 1.0, 0.14]);
             }
-            p.label(gl, "\u{2715}", close, theme::FOOTER_EM * 0.8, theme::INK_DETAIL, 0.5);
+            spatiand_app::ui::draw_icon(p, gl, spatiand_app::ui::Icon::Close, close.inset(4.0), theme::INK_DETAIL);
         }
         win.placed.push((id, rect, close));
     }
@@ -1004,7 +1004,7 @@ fn draw_bar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, tabs: &HashMa
     if win.hover == Hover::Plus {
         p.fill(gl, win.plus, 22.0, theme::HOVER);
     }
-    p.label(gl, "+", win.plus, theme::ROW_EM, theme::INK_DETAIL, 0.5);
+    spatiand_app::ui::draw_icon(p, gl, spatiand_app::ui::Icon::Plus, win.plus.inset(10.0), theme::INK_DETAIL);
 }
 
 fn main() {

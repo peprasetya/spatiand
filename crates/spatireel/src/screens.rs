@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use spatiand_app::ui::{theme, Button, Field, Grid, Input, Painter, Rect, Shape, Strip, Texture, Tile, Typed};
+use spatiand_app::ui::{theme, Button, Icon, Field, Grid, Input, Painter, Rect, Shape, Strip, Texture, Tile, Typed};
 use spatiand_app::{Gl, Key};
 use spatiand_media::still::Still;
 
@@ -136,15 +136,21 @@ impl Home {
             .iter()
             .map(|entry| {
                 let (detail, glyph, tint) = match &entry.kind {
-                    Kind::Local => ("Folders and films here".to_string(), "\u{25b6}", look::TEAL),
+                    Kind::Local => ("Folders and films here".to_string(), "", look::TEAL),
                     Kind::Server(Account::Jellyfin(account)) => (format!("Signed in as {}", account.user), if account.flavour == Flavour::Emby { "E" } else { "J" }, look::VIOLET),
                     Kind::Server(Account::Vibrefy(account)) => (account.account.clone().map_or("Paired".to_string(), |who| format!("Signed in as {who}")), "V", look::BLUE),
-                    Kind::Dlna => ("On this network".to_string(), "\u{25c9}", [0.55, 0.62, 0.78, 1.0]),
+                    Kind::Dlna => ("On this network".to_string(), "", [0.55, 0.62, 0.78, 1.0]),
                 };
-                Tile { title: entry.source.label(), detail: Some(detail), glyph: Some(glyph.into()), tint: tinted(tint), ..Tile::default() }
+                // This machine and the network have icons; a server is its kind's letter.
+                let icon = match &entry.kind {
+                    Kind::Local => Some(Icon::Film),
+                    Kind::Dlna => Some(Icon::Server),
+                    _ => None,
+                };
+                Tile { title: entry.source.label(), detail: Some(detail), glyph: (!glyph.is_empty()).then(|| glyph.into()), icon, tint: tinted(tint), ..Tile::default() }
             })
             .collect();
-        places.push(Tile { title: "Add a server".into(), detail: Some("Jellyfin, Emby or Vibrefy".into()), glyph: Some("+".into()), ..Tile::default() });
+        places.push(Tile { title: "Add a server".into(), detail: Some("Jellyfin, Emby or Vibrefy".into()), icon: Some(Icon::Plus), ..Tile::default() });
         let mut home = Home {
             ticket,
             films: Vec::new(),
@@ -360,7 +366,7 @@ impl Browse {
                 self.grid.shape = Shape::of(items.iter().filter(|i| i.pictured).filter_map(|i| i.aspect), Shape::Wide);
                 self.tiles = items
                     .iter()
-                    .map(|item| Tile { title: item.title.clone(), detail: item.detail.clone(), progress: item.progress, glyph: item.folder.then(|| "\u{25a4}".to_string()), ..Tile::default() })
+                    .map(|item| Tile { title: item.title.clone(), detail: item.detail.clone(), progress: item.progress, icon: item.folder.then_some(Icon::Folder), ..Tile::default() })
                     .collect();
                 self.asked = vec![false; items.len()];
                 let came_from = self.came_from.take().and_then(|key| items.iter().position(|item| item.key == key));
@@ -401,12 +407,11 @@ impl Browse {
         let mut all = p.bounds().inset(theme::PAD);
         // The ways out, then where this is.
         let mut top = all.take_top(Button::HEIGHT);
-        let width = Button::width(p, gl, "\u{2039}  Home");
-        self.home.draw(p, gl, top.take_left(width), "\u{2039}  Home");
+        let width = Button::icon_width(p, gl, "Home");
+        self.home.draw_icon(p, gl, top.take_left(width), Icon::Home, "Home");
         top.take_left(12.0);
         if self.local || !self.trail.is_empty() {
-            let width = Button::width(p, gl, "\u{2191}  Up");
-            self.up.draw(p, gl, top.take_left(width), "\u{2191}  Up");
+            self.up.draw_icon(p, gl, top.take_left(Button::HEIGHT), Icon::Up, "");
             top.take_left(22.0);
         }
         let title = if self.local {
@@ -542,8 +547,8 @@ impl Add {
     fn draw(&mut self, p: &mut Painter, gl: &Gl) {
         let mut all = p.bounds().inset(theme::PAD);
         let mut top = all.take_top(Button::HEIGHT);
-        let width = Button::width(p, gl, "\u{2039}  Back");
-        self.back.draw(p, gl, top.take_left(width), "\u{2039}  Back");
+        let width = Button::icon_width(p, gl, "Back");
+        self.back.draw_icon(p, gl, top.take_left(width), Icon::Back, "Back");
         top.take_left(22.0);
         let title = match self.stage {
             Stage::Pick => "Add a server".to_string(),

@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use std::sync::Arc;
 
-use spatiand_app::ui::{theme, Button, Input, List, Painter, Rect, Row, Texture};
+use spatiand_app::ui::{theme, Button, Input, List, Painter, Rect, Row, Texture, Icon};
 use spatiand_media::subs::{self, Cue, Words};
 use spatiand_app::{Anchor, App, EyeLayout, Gl, Key, Layer, Mode, WindowId};
 use spatiand_media::hints;
@@ -541,14 +541,14 @@ impl Playing {
 
         panel.take_top(10.0);
         let mut row = panel.take_top(Button::HEIGHT.min(panel.h));
-        let play = if paused { "Play" } else { "Pause" };
-        let width = Button::width(p, gl, "Pause").max(Button::width(p, gl, "Play"));
-        self.toggle.draw(p, gl, row.take_left(width), play);
+        // Round, and lit: the one control a film is mostly about.
+        let toggle = row.take_left(Button::HEIGHT);
+        self.toggle.draw_icon(p, gl, toggle, if paused { Icon::Play } else { Icon::Pause }, "");
         row.take_left(12.0);
-        let width = Button::width(p, gl, "Picture and sound");
-        self.options.draw(p, gl, row.take_left(width), "Picture and sound");
-        let width = Button::width(p, gl, "Library");
-        self.back.draw(p, gl, Rect { x: row.right() - width, w: width, ..row }, "Library");
+        let width = Button::icon_width(p, gl, "Picture and sound");
+        self.options.draw_icon(p, gl, row.take_left(width), Icon::Options, "Picture and sound");
+        let width = Button::icon_width(p, gl, "Library");
+        self.back.draw_icon(p, gl, Rect { x: row.right() - width, w: width, ..row }, Icon::Back, "Library");
 
         if let Some((list, rows)) = self.menu.as_mut() {
             let rows: Vec<Row> = rows.iter().map(|(row, _)| row.clone()).collect();

@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use spatiand_app::ui::{look, theme, Button, Grid, Input, Painter, Rect, Shape, Texture, Tile};
+use spatiand_app::ui::{look, theme, Button, Icon, Grid, Input, Painter, Rect, Shape, Texture, Tile};
 use spatiand_app::{Gl, Key};
 
 /// What a file is, to SpatiLoupe.
@@ -178,13 +178,13 @@ impl Folder {
                 self.tiles = entries
                     .iter()
                     .map(|e| {
-                        let (glyph, tint, detail) = match e.kind {
-                            Kind::Folder => (Some("\u{25a4}".to_string()), Some(([0.20, 0.55, 0.62, 0.40], [0.10, 0.22, 0.32, 0.25])), None),
-                            Kind::Model => (Some("\u{25c6}".to_string()), Some(([0.45, 0.36, 0.85, 0.45], [0.18, 0.14, 0.40, 0.25])), Some(format!("3D object  \u{b7}  {}", size_words(e.size)))),
-                            Kind::Pdf => (None, None, Some(format!("PDF  \u{b7}  {}", size_words(e.size)))),
-                            Kind::Picture => (None, None, Some(size_words(e.size))),
+                        let (icon, tint, detail) = match e.kind {
+                            Kind::Folder => (Some(Icon::Folder), Some(([0.20, 0.55, 0.62, 0.40], [0.10, 0.22, 0.32, 0.25])), None),
+                            Kind::Model => (Some(Icon::Cube), Some(([0.45, 0.36, 0.85, 0.45], [0.18, 0.14, 0.40, 0.25])), Some(format!("3D object  \u{b7}  {}", size_words(e.size)))),
+                            Kind::Pdf => (Some(Icon::Document), None, Some(format!("PDF  \u{b7}  {}", size_words(e.size)))),
+                            Kind::Picture => (Some(Icon::Picture), None, Some(size_words(e.size))),
                         };
-                        Tile { title: e.name.clone(), detail, glyph, tint, ..Tile::default() }
+                        Tile { title: e.name.clone(), detail, icon, tint, ..Tile::default() }
                     })
                     .collect();
                 self.asked = vec![false; entries.len()];
@@ -272,8 +272,7 @@ impl Folder {
         let mut all = p.bounds().inset(theme::PAD);
         let mut top = all.take_top(Button::HEIGHT);
         if crate::place::parent(&self.path).is_some() {
-            let width = Button::width(p, gl, "\u{2191}  Up");
-            self.up.draw(p, gl, top.take_left(width), "\u{2191}  Up");
+            self.up.draw_icon(p, gl, top.take_left(Button::HEIGHT), Icon::Up, "");
             top.take_left(22.0);
         }
         let name = crate::place::name(&self.path);

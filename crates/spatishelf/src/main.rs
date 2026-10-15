@@ -27,7 +27,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use spatiand_app::ui::{look as room, theme, Button, Field, Input, List, Painter, Rect, Row, Texture, Typed};
+use spatiand_app::ui::{draw_icon, look as room, theme, Button, Field, Icon, Input, List, Painter, Rect, Row, Texture, Typed};
 use spatiand_app::{App, Button as PointerButton, Event, Key, Modifiers, WindowId};
 use spatiand_storage::{Remote, Storage};
 
@@ -369,18 +369,33 @@ impl Shelf {
     fn rebuild_side(&mut self) {
         let mut rows = vec![(Row::heading("PLACES"), SideRow::Heading)];
         for (name, place) in places() {
-            rows.push((Row::new(name), SideRow::Go(place)));
+            let icon = match name.as_str() {
+                "Home" | "Phone" => Icon::Home,
+                "Desktop" => Icon::Desktop,
+                "Documents" => Icon::Document,
+                "Downloads" => Icon::Download,
+                "Pictures" | "Camera" => Icon::Picture,
+                "Films" => Icon::Film,
+                "Music" => Icon::Music,
+                _ => Icon::Drive,
+            };
+            rows.push((Row::new(name).icon(icon), SideRow::Go(place)));
         }
         rows.push((Row::heading("REMOTES"), SideRow::Heading));
         for remote in &self.remotes {
             // The kind is said in the foot when it is open; here there is room for the name.
-            rows.push((Row::new(remote.name.clone()), SideRow::Go(Place::Remote(remote.name.clone(), String::new()))));
+            let icon = match remote.kind.as_str() {
+                "sftp" | "smb" | "ftp" | "webdav" | "http" => Icon::Server,
+                "alias" | "local" => Icon::Folder,
+                _ => Icon::Cloud,
+            };
+            rows.push((Row::new(remote.name.clone()).icon(icon), SideRow::Go(Place::Remote(remote.name.clone(), String::new()))));
         }
-        rows.push((Row::new("+  Add remote"), SideRow::AddRemote));
+        rows.push((Row::new("Add remote").icon(Icon::Plus), SideRow::AddRemote));
         if spatiand_storage::own_rclone_config().is_some() {
-            rows.push((Row::new("Import remotes"), SideRow::Import));
+            rows.push((Row::new("Import remotes").icon(Icon::Import), SideRow::Import));
         }
-        rows.push((Row::new("Other apps"), SideRow::Network));
+        rows.push((Row::new("Other apps").icon(Icon::Link), SideRow::Network));
         self.side_rows = rows.iter().map(|(_, r)| r.clone()).collect();
         SIDE_LABELS.with(|l| *l.borrow_mut() = rows.into_iter().map(|(r, _)| r).collect());
     }
@@ -1307,16 +1322,16 @@ impl Shelf {
         // The main pane.
         let mut main = Rect::new(SIDE + 8.0, BAR + 6.0, all.w - SIDE - 22.0, all.h - BAR - 20.0);
         let mut head = main.take_top(Button::HEIGHT);
-        for (button, label) in [(&mut self.backward, "\u{2039}"), (&mut self.forward, "\u{203a}"), (&mut self.up, "\u{2191}")] {
-            button.draw(p, gl, head.take_left(Button::HEIGHT), label);
+        for (button, icon) in [(&mut self.backward, Icon::Back), (&mut self.forward, Icon::Forward), (&mut self.up, Icon::Up)] {
+            button.draw_icon(p, gl, head.take_left(Button::HEIGHT), icon, "");
             head.take_left(8.0);
         }
         head.take_left(10.0);
-        let view_label = if self.view == View::Grid { "List" } else { "Tiles" };
-        let vw = Button::width(p, gl, view_label);
+        let (view_icon, view_label) = if self.view == View::Grid { (Icon::List, "List") } else { (Icon::Grid, "Tiles") };
+        let vw = Button::icon_width(p, gl, view_label);
         let view_rect = Rect { x: head.right() - vw, w: vw, ..head };
         head.w -= vw + 12.0;
-        self.view_button.draw(p, gl, view_rect, view_label);
+        self.view_button.draw_icon(p, gl, view_rect, view_icon, view_label);
         if self.filtering || !self.filter_field.text.is_empty() {
             let fw = 340.0f32.min(head.w * 0.4);
             self.filter_field.hint = "Find in this folder".into();
@@ -1396,7 +1411,7 @@ impl Shelf {
                 if close.inset(-6.0).contains(self.pointer.0, self.pointer.1) {
                     p.fill(gl, close, 13.0, [1.0, 1.0, 1.0, 0.14]);
                 }
-                p.label(gl, "\u{2715}", close, theme::FOOTER_EM * 0.8, theme::INK_DETAIL, 0.5);
+                draw_icon(p, gl, Icon::Close, close.inset(4.0), theme::INK_DETAIL);
             }
             self.placed_tabs.push((rect, close));
         }
@@ -1404,7 +1419,7 @@ impl Shelf {
         if self.plus.contains(self.pointer.0, self.pointer.1) {
             p.fill(gl, self.plus, 22.0, theme::HOVER);
         }
-        p.label(gl, "+", self.plus, theme::ROW_EM, theme::INK_DETAIL, 0.5);
+        draw_icon(p, gl, Icon::Plus, self.plus.inset(10.0), theme::INK_DETAIL);
     }
 
     fn paint_content(&mut self, p: &mut Painter, gl: &spatiand_app::Gl, area: Rect) {

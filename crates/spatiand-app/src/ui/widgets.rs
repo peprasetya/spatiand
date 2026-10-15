@@ -24,6 +24,8 @@ pub struct Row {
     pub trailing: Option<String>,
     /// The name of the group the rows under it belong to: small, dim, never chosen.
     pub heading: bool,
+    /// Drawn before the label: what kind of place, or thing, the row is.
+    pub icon: Option<super::Icon>,
 }
 
 impl Row {
@@ -32,11 +34,17 @@ impl Row {
     }
 
     pub fn with(label: impl Into<String>, trailing: impl Into<String>) -> Row {
-        Row { label: label.into(), trailing: Some(trailing.into()), heading: false }
+        Row { label: label.into(), trailing: Some(trailing.into()), ..Row::default() }
     }
 
     pub fn heading(label: impl Into<String>) -> Row {
-        Row { label: label.into(), trailing: None, heading: true }
+        Row { label: label.into(), heading: true, ..Row::default() }
+    }
+
+    /// The same row with an icon before its label.
+    pub fn icon(mut self, icon: super::Icon) -> Row {
+        self.icon = Some(icon);
+        self
     }
 }
 
@@ -96,6 +104,13 @@ impl List {
                 label.w = (label.w - taken - 24.0).max(0.0);
             }
             let ink = if selected { theme::INK } else { theme::INK_ROW };
+            if let Some(icon) = row.icon {
+                let side = theme::ROW_EM * 0.95;
+                let mark = Rect::new(label.x, at.y + (at.h - side) * 0.5, side, side);
+                super::icons::draw(p, gl, icon, mark, if selected { theme::MARK } else { theme::INK_DETAIL });
+                label.x += side + 18.0;
+                label.w = (label.w - side - 18.0).max(0.0);
+            }
             p.label(gl, &row.label, label, theme::ROW_EM, ink, 0.0);
         }
         if scrolls && visible > 0 {
@@ -271,6 +286,8 @@ pub struct Tile {
     /// The colours of that place, top and foot, for a tile that is a kind of thing rather
     /// than a thing: the room's dim blue otherwise.
     pub tint: Option<([f32; 4], [f32; 4])>,
+    /// An icon in place of the picture, for a tile that is a kind of thing -- a folder.
+    pub icon: Option<super::Icon>,
 }
 
 /// A grid of pictures with their names under them, scrolling by the row.
@@ -322,7 +339,15 @@ fn draw_tile(p: &mut Painter, gl: &Gl, cell: Rect, picture: f32, tile: &Tile, se
                 None => tile.title.chars().find(|c| c.is_alphanumeric()).into_iter().collect::<String>().to_uppercase(),
             };
             let ink = if tile.tint.is_some() { [1.0, 1.0, 1.0, 0.82] } else { [1.0, 1.0, 1.0, 0.16] };
-            p.label(gl, &initial, frame, picture.min(cell.w) * 0.36, ink, 0.5);
+            match tile.icon {
+                Some(icon) => {
+                    let side = picture.min(cell.w) * 0.34;
+                    super::icons::draw(p, gl, icon, Rect::new(frame.x + (frame.w - side) * 0.5, frame.y + (frame.h - side) * 0.5, side, side), ink);
+                }
+                None => {
+                    p.label(gl, &initial, frame, picture.min(cell.w) * 0.36, ink, 0.5);
+                }
+            }
         }
     }
     if let Some(progress) = tile.progress.filter(|p| *p > 0.0) {
@@ -815,6 +840,43 @@ impl Button {
         p.fill(gl, rect, theme::ROW_RADIUS, ground);
         let ink = if self.focused || self.hover { theme::INK } else { theme::INK_ROW };
         p.label(gl, label, rect, theme::ROW_EM * 0.86, ink, 0.5);
+    }
+
+    /// The width a button with this icon and label would like; an icon alone is a square.
+    pub fn icon_width(p: &mut Painter, gl: &Gl, label: &str) -> f32 {
+        if label.is_empty() {
+            Self::HEIGHT
+        } else {
+            Self::width(p, gl, label) + theme::ROW_EM * 0.9 + 12.0
+        }
+    }
+
+    /// A button with an icon, and a label after it unless `label` is empty -- then it is round.
+    pub fn draw_icon(&mut self, p: &mut Painter, gl: &Gl, rect: Rect, icon: super::Icon, label: &str) {
+        self.area = rect;
+        let lit = self.focused || (self.pressed && self.hover);
+        let ground = if lit {
+            theme::SELECTED
+        } else if self.hover {
+            [1.0, 1.0, 1.0, 0.11]
+        } else {
+            theme::RAISED
+        };
+        let radius = if label.is_empty() { rect.h.min(rect.w) * 0.5 } else { theme::ROW_RADIUS };
+        if self.hover || lit {
+            p.glow(gl, rect, radius, [0.30, 0.62, 1.0, 0.18], 12.0);
+        }
+        p.fill(gl, rect, radius, ground);
+        let ink = if self.focused || self.hover { theme::INK } else { theme::INK_ROW };
+        let side = (theme::ROW_EM * 0.9).min(rect.h * 0.6);
+        if label.is_empty() {
+            super::icons::draw(p, gl, icon, Rect::new(rect.x + (rect.w - side) * 0.5, rect.y + (rect.h - side) * 0.5, side, side), ink);
+        } else {
+            let mark = Rect::new(rect.x + theme::ROW_INSET * 0.8, rect.y + (rect.h - side) * 0.5, side, side);
+            super::icons::draw(p, gl, icon, mark, ink);
+            let text = Rect { x: mark.right() + 12.0, w: rect.right() - mark.right() - 12.0 - theme::ROW_INSET * 0.8, ..rect };
+            p.label(gl, label, text, theme::ROW_EM * 0.86, ink, 0.0);
+        }
     }
 
     /// Returns whether it was pressed.

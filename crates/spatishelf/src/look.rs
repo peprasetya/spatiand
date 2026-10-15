@@ -2,7 +2,7 @@
 //! kind of thing it is on a wash of that kind's colour -- the Spatiand mark's colours and their
 //! neighbours, so that a folder of mixed things reads at a glance from across a room.
 
-use spatiand_app::ui::{look, theme, Color, Painter, Rect, Texture};
+use spatiand_app::ui::{draw_icon, look, theme, Color, Icon, Painter, Rect, Texture};
 use spatiand_app::Gl;
 
 use crate::proto::Kind;
@@ -23,18 +23,18 @@ pub fn tint(kind: Kind) -> (Color, Color) {
     ([r, g, b, 0.34], [r * 0.4, g * 0.4, b * 0.4, 0.20])
 }
 
-pub fn glyph(kind: Kind) -> &'static str {
+pub fn icon(kind: Kind) -> Icon {
     match kind {
-        Kind::Folder => "\u{25a4}",
-        Kind::Picture => "\u{25e9}",
-        Kind::Film => "\u{25b6}",
-        Kind::Music => "\u{266a}",
-        Kind::Pdf => "PDF",
-        Kind::Model => "\u{25c6}",
-        Kind::Document => "\u{2261}",
-        Kind::Archive => "\u{25a3}",
-        Kind::Code => "</>",
-        Kind::Other => "\u{2022}",
+        Kind::Folder => Icon::Folder,
+        Kind::Picture => Icon::Picture,
+        Kind::Film => Icon::Film,
+        Kind::Music => Icon::Music,
+        Kind::Pdf => Icon::Document,
+        Kind::Model => Icon::Cube,
+        Kind::Document => Icon::Document,
+        Kind::Archive => Icon::Drive,
+        Kind::Code => Icon::Terminal,
+        Kind::Other => Icon::Document,
     }
 }
 
@@ -53,8 +53,11 @@ pub fn face(p: &mut Painter, gl: &Gl, rect: Rect, kind: Kind, picture: Option<Te
         None => {
             let (top, foot) = tint(kind);
             p.gradient(gl, rect, radius, top, foot);
-            let em = (rect.h * 0.34).min(rect.w * 0.30) * if glyph(kind).len() > 2 { 0.7 } else { 1.0 };
-            p.label(gl, glyph(kind), rect, em, [1.0, 1.0, 1.0, 0.85], 0.5);
+            let side = rect.w.min(rect.h) * 0.42;
+            draw_icon(p, gl, icon(kind), Rect::new(rect.x + (rect.w - side) * 0.5, rect.y + (rect.h - side) * 0.5, side, side), [1.0, 1.0, 1.0, 0.88]);
+            if kind == Kind::Pdf && rect.h > 60.0 {
+                p.label(gl, "PDF", Rect { y: rect.bottom() - rect.h * 0.24, h: rect.h * 0.18, ..rect }, rect.h * 0.11, [1.0, 1.0, 1.0, 0.7], 0.5);
+            }
         }
     }
 }
