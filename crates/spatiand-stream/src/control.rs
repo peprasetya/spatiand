@@ -120,6 +120,10 @@ pub enum ClientMessage {
     /// Show a window the host offered ([`HostMessage::Offered`]). Answered with `Opened` and
     /// its pictures, as for any other.
     Show { window: WindowId },
+    /// Spatiand's applications' settings, kept the same on every paired machine. See
+    /// [`ConfigSync`]. Last, so that a host that predates it reads every other message as
+    /// before, and this one as something it does not know and passes over.
+    ConfigSync(ConfigSync),
 }
 
 /// What the host sends.
@@ -203,6 +207,10 @@ pub enum HostMessage {
     /// when asked for with `Show`, and from then on a window like any other -- whose picture
     /// is everything on that screen, and whose pointer is the host's own.
     OfferedScreen { window: WindowId, title: String },
+    /// The answer to a session's [`ClientMessage::ConfigSync`], and what changed here since.
+    /// Only ever said to a session that has said one first, so that a session that predates
+    /// it is never sent a message it cannot read.
+    ConfigSync(ConfigSync),
 }
 
 /// A window the host has.
@@ -429,12 +437,47 @@ pub enum Clipboard {
     Data { mime_type: String, bytes: Vec<u8> },
 }
 
+/// Spatiand's applications' settings (`~/.config/spatiand/apps`), kept the same on every
+/// machine that is paired: servers signed in to, remotes, where films were left.
+///
+/// Symmetrical: either side says what it has, asks for what is newer at the other, and sends
+/// what is newer at itself. The newest version of a file wins; a deletion is a version too.
+/// `crates/spatiand-sync` is the logic, shared by every end.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConfigSync {
+    /// Every file this end has, and every file it has deleted.
+    Manifest { files: Vec<ConfigFile> },
+    /// Send these.
+    Want { paths: Vec<String> },
+    /// One file, or its deletion when there are no bytes.
+    File { path: String, modified_ms: u64, bytes: Option<Vec<u8>> },
+}
+
+/// One file of the settings: its path under the folder, when it last changed (ms since 1970),
+/// what is in it (a hash), or that it was deleted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigFile {
+    pub path: String,
+    pub modified_ms: u64,
+    pub hash: u64,
+    pub deleted: bool,
+}
+
 /// Text at or under this size travels with the offer; anything bigger waits to be asked for.
 pub const CLIPBOARD_EAGER_BYTES: u32 = 256 * 1024;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_cross_as_the_mac_host_writes_them() {
+        // The Mac's own host speaks JSON (serde's), and hands it to the same logic.
+        let message = HostMessage::ConfigSync(ConfigSync::Want { paths: vec!["spatireel.json".into()] });
+        let json = serde_json::to_string(&message).unwrap();
+        assert_eq!(json, r#"{"ConfigSync":{"Want":{"paths":["spatireel.json"]}}}"#);
+        assert_eq!(serde_json::from_str::<HostMessage>(&json).unwrap(), message);
+    }
 
     #[test]
     fn every_message_survives_the_wire() {
@@ -460,6 +503,8 @@ mod tests {
             ClientMessage::Bandwidth(Bandwidth::default()),
             ClientMessage::Glasses { on: false },
             ClientMessage::Glasses { on: true },
+            ClientMessage::ConfigSync(ConfigSync::Manifest { files: vec![ConfigFile { path: "spatireel.json".into(), modified_ms: 1_791_989_283_000, hash: 42, deleted: false }] }),
+            ClientMessage::ConfigSync(ConfigSync::File { path: "storage/remotes.conf".into(), modified_ms: 7, bytes: Some(b"[drive]".to_vec()) }),
             ClientMessage::Viewport(Viewport {
                 seq: 9,
                 time_us: 1_234_567,

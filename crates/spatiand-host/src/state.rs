@@ -171,6 +171,11 @@ pub struct Host {
     /// Where to post to the session, once there is a network. The clipboard needs it from
     /// inside a protocol handler, where nothing else is reachable.
     pub out: Option<tokio::sync::mpsc::UnboundedSender<crate::net::ToSession>>,
+    /// Spatiand's applications' settings, kept the same as the session's: made when a session
+    /// first says it keeps them (`ClientMessage::ConfigSync`), and only then talked about.
+    pub settings: Option<spatiand_sync::Sync>,
+    /// Whether the session attached now keeps them.
+    pub settings_peer: bool,
     /// The event loop, which serving an X11 selection needs in order to wait on a pipe.
     pub loop_handle: smithay::reexports::calloop::LoopHandle<'static, Host>,
     /// Windows that have appeared or gone since the last time anyone looked.
@@ -281,6 +286,8 @@ impl Host {
             event_clock: Default::default(),
             clipboard: crate::clipboard::Clipboard::new(),
             out: None,
+            settings: None,
+            settings_peer: false,
             loop_handle: loop_handle.clone(),
             arrived: Vec::new(),
             departed: Vec::new(),

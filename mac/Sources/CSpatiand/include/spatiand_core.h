@@ -67,6 +67,14 @@ void sp_host_stop(sp_host *host);
 char *sp_host_fingerprint(sp_host *host);
 // Say something to the session: a HostMessage as JSON (bytes as base64).
 void sp_host_say(sp_host *host, const char *json);
+
+// Spatiand's applications' settings, kept the same as a session's (crates/spatiand-sync):
+// a ConfigSync the session said, as JSON, in; the JSON array of ConfigSyncs to say back, out.
+// `sp_settings_changed` is what changed here since, once a session keeps them. Both returns
+// are freed with `sp_settings_free`.
+char *sp_settings_said(const char *json);
+char *sp_settings_changed(void);
+void sp_settings_free(char *text);
 // One picture of one window: an Annex B access unit, parameter sets first on a keyframe.
 void sp_host_video(sp_host *host, uint16_t window, int32_t keyframe, uint64_t captured_us,
                    const uint8_t *data, size_t length);

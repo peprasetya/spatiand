@@ -11,6 +11,7 @@
 //  newest winning, and a device is served nothing until it has been paired.
 
 import AppKit
+import CSpatiand
 import ApplicationServices
 import CoreMedia
 import ScreenCaptureKit
@@ -155,6 +156,7 @@ final class MacHost {
     }
 
     private func left(_ refused: Bool) {
+        settingsPeer = false
         detach()
         status = running ? "Waiting for a device" : "Off"
         onChange?()
@@ -241,6 +243,11 @@ final class MacHost {
         guard attached else { return }
         sendCatalog(force: false)
         reconcile()
+        // What changed in the settings here, every few seconds, to a session that keeps them.
+        if settingsPeer, Date().timeIntervalSince(settingsLooked) >= 3 {
+            settingsLooked = Date()
+            sayAll(settingsReplies(sp_settings_changed()))
+        }
     }
 
     /// Share the windows of every application a session has launched, and stop sharing ones that have gone.
@@ -422,11 +429,33 @@ final class MacHost {
         (fields["window"] as? NSNumber).map { UInt16(truncatingIfNeeded: $0.intValue) }
     }
 
+    /// Whether the session attached now keeps Spatiand's applications' settings.
+    private var settingsPeer = false
+    private var settingsLooked = Date.distantPast
+
+    private func settingsReplies(_ text: UnsafeMutablePointer<CChar>?) -> [Any] {
+        guard let text else { return [] }
+        defer { sp_settings_free(text) }
+        let json = String(cString: text)
+        return ((try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [Any]) ?? []
+    }
+
+    private func sayAll(_ replies: [Any]) {
+        for reply in replies { link?.say(["ConfigSync": reply]) }
+    }
+
     private func said(_ message: [String: Any]) {
         guard let (name, body) = message.first else { return }
         let fields = body as? [String: Any] ?? [:]
         if ProcessInfo.processInfo.environment["SPATIAND_DEBUG"] != nil, name != "InputAt" { print("host: session said \(name) \(fields)") }
         switch name {
+        case "ConfigSync":
+            // Spatiand's applications' settings: handed to the shared logic, and its answers
+            // said back. From now on, what changes here is said too (see `tick`).
+            settingsPeer = true
+            if let data = try? JSONSerialization.data(withJSONObject: body, options: [.fragmentsAllowed]), let text = String(data: data, encoding: .utf8) {
+                sayAll(settingsReplies(sp_settings_said(text)))
+            }
         case "Launch":
             if let app = fields["app"] as? String { launch(app) }
         case "Show":

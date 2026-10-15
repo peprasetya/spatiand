@@ -34,6 +34,7 @@ smithay = { path = "../../mac/vendor/smithay" }
 # behind `spatiand_core.h`. Here so that the app links one Rust library, not two.
 spatiand-mac-core = { path = "../spatiand-mac-core" }
 spatiand-stream = { path = "../spatiand-stream" }
+spatiand-sync = { path = "../spatiand-sync" }
 spatiand-video = { path = "../spatiand-video" }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }

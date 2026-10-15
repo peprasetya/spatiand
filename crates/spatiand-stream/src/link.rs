@@ -41,24 +41,25 @@ pub async fn say(connection: &quinn::Connection, message: &ClientMessage) -> Res
 
 /// Read one message from the host's control stream, and hand the stream back for the next.
 ///
-/// `None` is the stream ending, for whatever reason: the host closing, the link dropping, or
-/// something unreadable, which is treated as the end rather than skipped because a length
-/// prefix that cannot be trusted leaves nothing after it that can be.
+/// `None` is the stream ending, for whatever reason: the host closing, the link dropping, or a
+/// length that cannot be trusted, which leaves nothing after it that can be. A message whole by
+/// its length that this session does not know -- a newer host's -- is skipped.
 pub async fn hear(mut stream: quinn::RecvStream) -> Option<(HostMessage, quinn::RecvStream)> {
-    let mut length = [0u8; 4];
-    stream.read_exact(&mut length).await.ok()?;
-    let length = u32::from_le_bytes(length) as usize;
-    if length > MAX_CONTROL {
-        log::warn!("a control message claiming {length} bytes is not one");
-        return None;
-    }
-    let mut bytes = vec![0u8; length];
-    stream.read_exact(&mut bytes).await.ok()?;
-    match crate::from_bytes::<HostMessage>(&bytes) {
-        Ok(message) => Some((message, stream)),
-        Err(e) => {
-            log::warn!("unreadable control message: {e}");
-            None
+    loop {
+        let mut length = [0u8; 4];
+        stream.read_exact(&mut length).await.ok()?;
+        let length = u32::from_le_bytes(length) as usize;
+        if length > MAX_CONTROL {
+            log::warn!("a control message claiming {length} bytes is not one");
+            return None;
+        }
+        let mut bytes = vec![0u8; length];
+        stream.read_exact(&mut bytes).await.ok()?;
+        match crate::from_bytes::<HostMessage>(&bytes) {
+            Ok(message) => return Some((message, stream)),
+            // A message whole, by its length, that this end does not know -- a newer host's:
+            // skipped, and the next one read. Only a length that cannot be trusted ends it.
+            Err(e) => log::warn!("a control message this session does not know: {e}"),
         }
     }
 }

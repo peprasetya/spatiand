@@ -1,0 +1,16 @@
+[package]
+name = "spatiand-sync"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Spatiand's applications' settings, kept the same on every paired machine"
+
+# One logic for every end: the Spatiand session on the Deck, the Mac and the Beam Pro, the host
+# on a Linux machine, and the Mac's own host (through the Mac app's C calls).
+[dependencies]
+spatiand-stream = { path = "../spatiand-stream" }
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true

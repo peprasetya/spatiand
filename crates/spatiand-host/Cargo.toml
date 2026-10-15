@@ -10,6 +10,7 @@ license.workspace = true
 # headset is.
 [dependencies]
 spatiand-stream = { path = "../spatiand-stream" }
+spatiand-sync = { path = "../spatiand-sync" }
 # The pose ring's layout and its writer, shared with the session. See `pose`.
 spatiand-proto = { path = "../spatiand-proto" }
 spatiand-host-catalog = { path = "../spatiand-host-catalog" }

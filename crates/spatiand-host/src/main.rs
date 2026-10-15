@@ -520,6 +520,7 @@ fn run_host(
                         }
                     }
                     FromSession::Left => {
+                        host.settings_peer = false;
                         attached = false;
                         // What the session was holding goes with it. What was copied here
                         // stays, so a paste between two applications on this machine still
@@ -556,6 +557,15 @@ fn run_host(
 
         if paired_checked.elapsed() >= Duration::from_secs(1) {
             paired_checked = Instant::now();
+            // What changed in the settings here -- by another session, before this one came --
+            // said to a session that keeps them.
+            if host.settings_peer {
+                if let (Some(settings), Some(out)) = (host.settings.as_mut(), host.out.as_ref()) {
+                    if let Some(changed) = settings.changed() {
+                        let _ = out.send(crate::net::ToSession::Control(HostMessage::ConfigSync(changed)));
+                    }
+                }
+            }
             let now = modified(&paired_path);
             if now != paired_seen {
                 paired_seen = now;
@@ -1331,6 +1341,16 @@ fn said(
     use spatiand_stream::ClientMessage as Says;
     match message {
         Says::Clipboard(what) => clipboard_said(host, what),
+        Says::ConfigSync(what) => {
+            host.settings_peer = true;
+            let settings = host.settings.get_or_insert_with(spatiand_sync::Sync::open_default);
+            let replies = settings.handle(what);
+            if let Some(out) = host.out.as_ref() {
+                for reply in replies {
+                    let _ = out.send(crate::net::ToSession::Control(HostMessage::ConfigSync(reply)));
+                }
+            }
+        }
         Says::Bandwidth(b) => {
             let kbit = b.max_kbit.clamp(1_000, 400_000);
             if host.session_max_kbit != Some(kbit) {

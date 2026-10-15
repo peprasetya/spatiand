@@ -4522,6 +4522,7 @@ dependencies = [
  "spatiand-render",
  "spatiand-shell",
  "spatiand-stream",
+ "spatiand-sync",
  "spatiand-track",
  "spatiand-video",
  "thiserror 2.0.20",
@@ -4558,6 +4559,7 @@ dependencies = [
  "spatiand-render",
  "spatiand-shell",
  "spatiand-stream",
+ "spatiand-sync",
  "spatiand-track",
  "spatiand-video",
  "thiserror 2.0.20",
@@ -4633,6 +4635,7 @@ dependencies = [
  "spatiand-platform",
  "spatiand-proto",
  "spatiand-stream",
+ "spatiand-sync",
  "tokio",
  "toml",
 ]
@@ -4689,6 +4692,7 @@ dependencies = [
  "spatiand-mapper",
  "spatiand-render",
  "spatiand-stream",
+ "spatiand-sync",
  "spatiand-track",
  "tokio",
 ]
@@ -4797,9 +4801,20 @@ dependencies = [
  "rcgen",
  "rustls",
  "serde",
+ "serde_json",
  "sha2",
  "tokio",
  "toml",
+]
+
+[[package]]
+name = "spatiand-sync"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "spatiand-stream",
 ]
 
 [[package]]

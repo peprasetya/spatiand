@@ -383,6 +383,11 @@ async fn serve(
         // What the host was offering last time is asked for afresh.
         super::offered_gone(&config.host, None);
         say(&out, ClientMessage::Glasses { on: super::GLASSES_ON.load(std::sync::atomic::Ordering::Relaxed) });
+        // Spatiand's applications' settings, the same here and there: what this machine has,
+        // said first; a host that knows of it answers, one that does not ignores it.
+        let mut settings = spatiand_sync::Sync::open_default();
+        let mut settings_looked = Instant::now();
+        say(&out, ClientMessage::ConfigSync(settings.hello()));
         for app in config.launch.iter().chain(launch_first.iter()) {
             say(&out, ClientMessage::Launch { app: app.clone() });
         }
@@ -479,6 +484,11 @@ async fn serve(
                                             windows.insert(window.0, Reassembler::new());
                                         }
                                         Err(e) => log::error!("remote: window {}: {e}", window.0),
+                                    }
+                                }
+                                HostMessage::ConfigSync(what) => {
+                                    for reply in settings.handle(what) {
+                                        say(&out, ClientMessage::ConfigSync(reply));
                                     }
                                 }
                                 HostMessage::Clipboard(what) => {
@@ -717,6 +727,14 @@ async fn serve(
                     }
                 }
                 _ = tokio::time::sleep(Duration::from_millis(2)) => {}
+            }
+
+            // What changed in the settings here, said every few seconds.
+            if settings_looked.elapsed() >= Duration::from_secs(3) {
+                settings_looked = Instant::now();
+                if let Some(changed) = settings.changed() {
+                    say(&out, ClientMessage::ConfigSync(changed));
+                }
             }
 
             // --- decode and show whatever is waiting ---

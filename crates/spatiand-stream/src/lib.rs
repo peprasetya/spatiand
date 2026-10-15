@@ -45,7 +45,7 @@ pub mod video;
 
 pub use catalog::{App, AppKind, AudioMode, Catalog, Detach, Eyes, Layer, PadProfile};
 pub use control::{
-    Bandwidth, ClientMessage, EventClock, HostMessage, Input, Pad, Viewport, WindowId,
+    Bandwidth, ClientMessage, ConfigFile, ConfigSync, EventClock, HostMessage, Input, Pad, Viewport, WindowId,
     WindowInfo, CONTROL_MAGIC,
 };
 pub use transport::{pairing_code, Fingerprint, Gate, Identity, Trust};

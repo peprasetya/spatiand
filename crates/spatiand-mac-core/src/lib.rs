@@ -10,6 +10,7 @@
 //! reassembly of frames, with callbacks where the probe printed.
 
 pub mod host;
+pub mod settings;
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::PathBuf;
