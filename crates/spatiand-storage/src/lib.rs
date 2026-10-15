@@ -124,7 +124,7 @@ impl Storage {
             // it, and a lock or a socket it inherited would be held as long as it runs.
             unsafe {
                 command.pre_exec(|| {
-                    let top = libc::getdtablesize().clamp(64, 65536);
+                    let top = (libc::sysconf(libc::_SC_OPEN_MAX) as i32).clamp(64, 65536);
                     for fd in 3..top {
                         libc::close(fd);
                     }

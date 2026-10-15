@@ -158,6 +158,9 @@ pub fn launch(app: &AppEntry, wayland_display: &str, extra: &[(String, String)])
 /// compositor can read) of the spatial audio engine -- the same as a Mac
 /// application's, with the same mute and volume on its bar -- and every channel of a film,
 /// 5.1 or 7.1, is placed in the room through the HRTF.
+///
+/// Not on the Deck, where an application plays into its window's PipeWire sink.
+#[cfg(any(target_os = "macos", target_os = "android"))]
 pub mod sound {
     use std::collections::HashMap;
     use std::io::Read;
