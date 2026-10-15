@@ -250,7 +250,7 @@ fn size_of(path: &Path) -> u64 {
 fn rclone_job(storage: &Storage, method: &str, mut input: serde_json::Value, what: &str, report: &mut dyn FnMut(u64, u64, &str)) -> Result<(), String> {
     input["_async"] = json!(true);
     let started = storage.rc(method, input)?;
-    let job = started.get("jobid").and_then(|j| j.as_i64()).ok_or("rclone did not start the job")?;
+    let job = started.get("jobid").and_then(|j| j.as_i64()).ok_or("the storage service did not start the job")?;
     loop {
         std::thread::sleep(Duration::from_millis(400));
         let status = storage.rc("job/status", json!({"jobid": job}))?;

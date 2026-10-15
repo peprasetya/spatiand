@@ -379,7 +379,7 @@ impl Setup {
                 }
                 p.unclip(gl);
                 if provider.options.is_empty() {
-                    look::message(p, gl, Rect { y: all.y + 140.0, h: 80.0, ..all }, "Nothing more is needed here: rclone asks the rest itself.", theme::INK_DETAIL);
+                    look::message(p, gl, Rect { y: all.y + 140.0, h: 80.0, ..all }, "Nothing more is needed here: anything else is asked next, one question at a time.", theme::INK_DETAIL);
                 }
             }
             Step::Asked { question, .. } => {

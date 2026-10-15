@@ -71,15 +71,51 @@ func runtimeFile() string {
 	return filepath.Join(dir, "spatiand-storage.json")
 }
 
+// Where Spatiand keeps every application's settings (spatiand_app::config): `apps/` is what
+// every paired machine shares, `local/` this machine's own.
+func spatiandConfig() string {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" || !filepath.IsAbs(base) {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			home = os.TempDir()
+		}
+		base = filepath.Join(home, ".config")
+	}
+	if named := os.Getenv("SPATIAND_APPS_CONFIG"); named != "" {
+		return named
+	}
+	return filepath.Join(base, "spatiand")
+}
+
+// The remotes: shared with every paired machine. Moved here from where an earlier build kept
+// them, the first time.
 func configPath() string {
 	if named := os.Getenv("SPATIAND_STORAGE_CONFIG"); named != "" {
 		return named
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		home = os.TempDir()
+	path := filepath.Join(spatiandConfig(), "apps", "storage", "remotes.conf")
+	adopt(path, filepath.Join(spatiandConfig(), "rclone.conf"))
+	return path
+}
+
+// The token native applications are let in with: this machine's own.
+func tokenPath() string {
+	if named := os.Getenv("SPATIAND_STORAGE_CONFIG"); named != "" {
+		return filepath.Join(filepath.Dir(named), "storage.token")
 	}
-	return filepath.Join(home, ".config", "spatiand", "rclone.conf")
+	path := filepath.Join(spatiandConfig(), "local", "storage.token")
+	adopt(path, filepath.Join(spatiandConfig(), "storage.token"))
+	return path
+}
+
+func adopt(path, legacy string) {
+	os.MkdirAll(filepath.Dir(path), 0o700)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if _, err := os.Stat(legacy); err == nil {
+			os.Rename(legacy, path)
+		}
+	}
 }
 
 // alreadyRunning says whether the service named in the runtime file answers.
@@ -359,7 +395,7 @@ func main() {
 
 	// The same token from one start to the next, so that a network folder a native file
 	// manager has remembered goes on opening.
-	tokenFile := filepath.Join(filepath.Dir(configPath()), "storage.token")
+	tokenFile := tokenPath()
 	token := ""
 	if kept, err := os.ReadFile(tokenFile); err == nil && len(strings.TrimSpace(string(kept))) >= 16 {
 		token = strings.TrimSpace(string(kept))

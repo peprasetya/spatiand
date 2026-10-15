@@ -221,6 +221,7 @@ enum Overlay {
     Ask { what: Asking, field: Field, ok: Button, cancel: Button },
     Confirm { text: String, action: Action, ok: Button, cancel: Button },
     Network { connect: Button, close: Button },
+    About { close: Button },
     Setup(Box<Setup>),
 }
 
@@ -246,6 +247,7 @@ enum Action {
     Refresh,
     ToggleHidden,
     Forget(String),
+    About,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -376,7 +378,7 @@ impl Shelf {
         }
         rows.push((Row::new("+  Add remote"), SideRow::AddRemote));
         if spatiand_storage::own_rclone_config().is_some() {
-            rows.push((Row::new("From rclone"), SideRow::Import));
+            rows.push((Row::new("Import remotes"), SideRow::Import));
         }
         rows.push((Row::new("Other apps"), SideRow::Network));
         self.side_rows = rows.iter().map(|(_, r)| r.clone()).collect();
@@ -547,7 +549,7 @@ impl Shelf {
                 Done::Imported(Ok(names)) => {
                     self.refresh_remotes();
                     if names.is_empty() {
-                        self.say("Your rclone remotes are here already.");
+                        self.say("Those remotes are here already.");
                     } else {
                         self.say(format!("Brought in {}.", names.join(", ")));
                     }
@@ -631,6 +633,7 @@ impl Shelf {
                     tab.refilter(!hidden);
                 }
             }
+            Action::About => self.overlay = Overlay::About { close: Button::default() },
             Action::Forget(name) => {
                 self.overlay = Overlay::Confirm { text: format!("Forget the remote {name}? Its files are not touched; only SpatiShelf's way to them goes."), action: Action::Forget(name), ok: Button::default(), cancel: Button::default() };
             }
@@ -745,6 +748,7 @@ impl Shelf {
         entries.push(("New folder\u{2026}".into(), Action::NewFolder));
         entries.push((if self.hidden { "Hide hidden files" } else { "Show hidden files" }.into(), Action::ToggleHidden));
         entries.push(("Refresh".into(), Action::Refresh));
+        entries.push(("About SpatiShelf".into(), Action::About));
         let mut list = List::default();
         list.focused = true;
         self.overlay = Overlay::Menu { at: self.pointer, list, entries };
@@ -936,6 +940,12 @@ impl Shelf {
                             Err(e) => self.fail(e),
                         }
                     }
+                }
+                return;
+            }
+            Overlay::About { close } => {
+                if close.input(&input) || matches!(input, Input::Key { key: Key::Escape | Key::Enter, .. }) {
+                    self.overlay = Overlay::None;
                 }
                 return;
             }
@@ -1564,7 +1574,7 @@ impl Shelf {
         }
         if let Place::Remote(r, _) = &tab.place {
             let kind = self.remotes.iter().find(|x| x.name == *r).map(|x| kind_word(&x.kind)).unwrap_or_default();
-            words += &format!("    {r}{}  \u{b7}  through rclone", if kind.is_empty() { String::new() } else { format!("  \u{b7}  {kind}") });
+            words += &format!("    {r}{}", if kind.is_empty() { String::new() } else { format!("  \u{b7}  {kind}") });
         }
         look::status(p, gl, foot, &words, false);
     }
@@ -1637,6 +1647,18 @@ impl Shelf {
                     connect.draw(p, gl, Rect { x: buttons.right() - w, w, ..buttons }, if cfg!(target_os = "macos") { "Connect in Finder" } else { "Open in the file manager" });
                     buttons.w -= w + 12.0;
                 }
+                close.draw(p, gl, Rect { x: buttons.right() - 180.0, w: 180.0, ..buttons }, "Done");
+            }
+            Overlay::About { close } => {
+                let pane = Rect::new(all.w * 0.5 - 460.0, all.h * 0.2, 920.0, 480.0);
+                p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);
+                room::glass(p, gl, pane, 24.0, 1.0);
+                let mut inner = pane.inset(30.0);
+                p.label(gl, "SpatiShelf", inner.take_top(50.0), theme::TITLE_EM * 0.8, theme::INK, 0.0);
+                let text = "Spatiand's file manager. Remotes are reached through Spatiand's storage service, which is built on rclone (MIT License, copyright Nick Craig-Wood and the rclone contributors). PDF pages are drawn by PDFium (BSD and Apache 2.0, the Chromium authors); films and pictures are read by FFmpeg (LGPL 2.1).";
+                let (_, h) = p.text(gl, text, inner.x, inner.y, theme::DETAIL_EM, inner.w, theme::INK_DETAIL);
+                inner.take_top(h);
+                let buttons = inner.take_bottom(Button::HEIGHT);
                 close.draw(p, gl, Rect { x: buttons.right() - 180.0, w: 180.0, ..buttons }, "Done");
             }
             Overlay::Setup(setup) => {
