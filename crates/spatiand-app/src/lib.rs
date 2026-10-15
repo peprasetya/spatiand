@@ -210,6 +210,12 @@ impl App {
         Ok(app)
     }
 
+    /// Shift, Control, Alt and the logo key as they are held now: what a click is to be read
+    /// with (Shift-click, Control-click), since a pointer's button says nothing of the keys.
+    pub fn modifiers(&self) -> Modifiers {
+        self.wire.keyboard.held_modifiers()
+    }
+
     pub fn mode(&self) -> Mode {
         self.wire.mode
     }

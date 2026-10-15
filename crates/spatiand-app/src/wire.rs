@@ -77,7 +77,7 @@ pub(crate) struct Wire {
     ids: HashMap<wl_surface::WlSurface, WindowId>,
     next_window: u32,
     pub(crate) events: Vec<Event>,
-    keyboard: Keyboard,
+    pub(crate) keyboard: Keyboard,
     pointer_on: Option<WindowId>,
     keyboard_on: Option<WindowId>,
     /// Buffers of a GPU's pictures the compositor has finished with: (window, key).

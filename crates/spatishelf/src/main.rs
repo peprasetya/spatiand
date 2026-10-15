@@ -824,6 +824,10 @@ impl Shelf {
                 self.app().resize(window, size);
             }
             Event::Key { modifiers, .. } => self.modifiers = *modifiers,
+            // What is held at the moment of a click, from the keyboard's own state: a key event
+            // is not sent for Shift or Control pressed on their own, so the last one seen
+            // could say Control long after it was let go.
+            Event::Button { .. } => self.modifiers = self.app().modifiers(),
             Event::PointerMoved { x, y, .. } => {
                 self.pointer = (*x, *y);
                 setup::POINTER.with(|p| p.set((*x, *y)));

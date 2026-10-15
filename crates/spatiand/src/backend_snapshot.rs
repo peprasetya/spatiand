@@ -1494,7 +1494,7 @@ fn click_on_the_window(
 ///
 /// ```text
 /// click:u,v  rclick:u,v  move:u,v  down:u,v  up:u,v  drag:u,v,u,v  scroll:dx,dy
-/// key:28  key:ctrl+shift+20  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
+/// key:28  key:ctrl+shift+20  keydown:42  keyup:42  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
 /// ```
 ///
 /// Positions are fractions across the chosen window; `scroll` is in pixels where the pointer
@@ -1511,6 +1511,8 @@ enum Scripted {
     Drag(f64, f64, f64, f64),
     Scroll(f64, f64),
     Key(Vec<u32>, u32),
+    /// A key held down, or let go: `keydown:42` holds Shift for the clicks after it.
+    Hold(u32, bool),
     Type(String),
     Wait(f32),
     Dump(String),
@@ -1547,6 +1549,8 @@ fn scripted_steps() -> Vec<Scripted> {
                     }
                     Scripted::Key(held, code?)
                 }
+                ("keydown", [code]) => Scripted::Hold(*code as u32, true),
+                ("keyup", [code]) => Scripted::Hold(*code as u32, false),
                 ("type", _) => Scripted::Type(rest.to_string()),
                 ("dump", _) => Scripted::Dump(rest.to_string()),
                 ("window", _) => Scripted::Window(rest.to_string()),
@@ -1715,6 +1719,7 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
                 }
             }
         }
+        Scripted::Hold(code, down) => key_event(state, *code, *down),
         Scripted::Wait(_) | Scripted::Dump(_) | Scripted::Window(_) => {}
     }
 }

@@ -51,6 +51,14 @@ impl Keyboard {
         }
     }
 
+    /// The modifiers held now, as the compositor last said: for a click, which a key event does
+    /// not come with.
+    pub(crate) fn held_modifiers(&self) -> Modifiers {
+        let Some(state) = self.state.as_ref() else { return Modifiers::default() };
+        let on = |name: &str| state.mod_name_is_active(name, xkb::STATE_MODS_DEPRESSED) || state.mod_name_is_active(name, xkb::STATE_MODS_LATCHED);
+        Modifiers { shift: on(xkb::MOD_NAME_SHIFT), control: on(xkb::MOD_NAME_CTRL), alt: on(xkb::MOD_NAME_ALT), logo: on(xkb::MOD_NAME_LOGO) }
+    }
+
     pub(crate) fn repeat_info(&mut self, rate: i32, delay: i32) {
         self.rate = rate.max(0) as u32;
         self.delay = Duration::from_millis(delay.max(0) as u64);
