@@ -111,6 +111,7 @@ impl Hands {
 /// The one idle clock.
 #[derive(Debug, Default)]
 pub struct Attention {
+    stirs: u64,
     /// How long since the wearer last did anything.
     idle_for: Duration,
     /// How long they had been idle at the moment before that — which is what says how faded
@@ -123,6 +124,12 @@ impl Attention {
     pub fn stir(&mut self) {
         self.before_wake = self.idle_for;
         self.idle_for = Duration::ZERO;
+        self.stirs = self.stirs.wrapping_add(1);
+    }
+
+    /// How many times the wearer's hands have stirred: what `spatiand_xr_v1.hands` passes on.
+    pub fn stirs(&self) -> u64 {
+        self.stirs
     }
 
     /// Advance one frame.

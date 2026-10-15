@@ -297,6 +297,27 @@ impl Spatiand {
     }
 }
 
+/// The stirs last passed on, and when: `spatiand_xr_v1.hands` is said at most every 120 ms.
+static HANDS_TOLD: std::sync::Mutex<(u64, Option<std::time::Instant>)> = std::sync::Mutex::new((0, None));
+
+impl Spatiand {
+    /// Tell every client that can hear it that the wearer's hands stirred, if they have since
+    /// it was last said. Called with each frame's callbacks.
+    pub fn tell_hands(&self) {
+        let stirs = self.attention.stirs();
+        let Ok(mut told) = HANDS_TOLD.lock() else { return };
+        if told.0 == stirs || told.1.is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(120)) {
+            return;
+        }
+        *told = (stirs, Some(std::time::Instant::now()));
+        for global in &self.xr_globals {
+            if global.version() >= 7 {
+                global.hands();
+            }
+        }
+    }
+}
+
 impl Dispatch<SpatiandXrV1, ()> for Spatiand {
     fn request(
         state: &mut Self,

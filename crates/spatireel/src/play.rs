@@ -146,6 +146,8 @@ pub struct Playing {
     turning: Option<(f32, f32)>,
     pointer: (f32, f32),
     controls_until: Instant,
+    /// Whether the room has ever said the wearer's hands stirred (`Event::Hands`).
+    hands_heard: bool,
     toggle: Button,
     back: Button,
     options: Button,
@@ -222,6 +224,7 @@ impl Playing {
             turning: None,
             pointer: (0.0, 0.0),
             controls_until: Instant::now() + CONTROLS_SHOWN,
+            hands_heard: false,
             toggle: Button::default(),
             back: Button::default(),
             options: Button::default(),
@@ -261,6 +264,13 @@ impl Playing {
             || self.player.paused()
             || Instant::now() < self.controls_until
             || std::env::var("SPATIREEL_CONTROLS").as_deref() == Ok("stay")
+    }
+
+    /// The room says the wearer's hands did something (`Event::Hands`): the controls come back.
+    /// From then on, pointer motion alone no longer brings them, since it sweeps with the head.
+    pub fn hands(&mut self) {
+        self.hands_heard = true;
+        self.stir();
     }
 
     fn stir(&mut self) {
@@ -651,7 +661,12 @@ impl Playing {
     pub fn input(&mut self, input: &Input) -> Outcome {
         self.dirty = true;
         let was_shown = self.controls_shown();
-        self.stir();
+        // Motion is the head's as often as the hand's: only a room too old to say which
+        // (no `Event::Hands` ever) has it wake the controls.
+        let motion = matches!(input, Input::Pointer { .. } | Input::PointerLeft);
+        if !motion || !self.hands_heard {
+            self.stir();
+        }
         if let Input::Pointer { x, y } = input {
             // Held down on a sphere seen through the window: the view turns with the hand.
             if let (Some((from_x, from_y)), Staging::Look { .. }) = (self.turning, self.staging) {

@@ -52,7 +52,7 @@
     The per-frame values are not on the wire at all -- see the pose channel.
   </description>
 
-  <interface name="spatiand_xr_v1" version="6">
+  <interface name="spatiand_xr_v1" version="7">
     <description summary="stereoscopic and head-tracked surfaces">
       The factory. Binding it says nothing and changes nothing.
     </description>
@@ -106,6 +106,21 @@
         an ordinary window and stays one.
       </description>
       <arg name="mode" type="uint" enum="display_mode"/>
+    </event>
+
+    <event name="hands" since="7">
+      <description summary="the wearer's hands did something">
+        A pad touched or moved, a mouse moved, a button, a scroll, a key:
+        whatever wakes the room's own idle clock (set_idle_fade), and
+        **never the head**. Sent at most a few times a second, whatever the
+        surface under the pointer.
+
+        A pointer's motion over a surface is not this: the pointer is cast
+        from the head, so it sweeps across surfaces whenever the wearer looks
+        about. A client fading controls of its own -- drawn into its own
+        picture, where set_idle_fade cannot reach -- wakes them on this and on
+        a press, and not on motion.
+      </description>
     </event>
 
     <enum name="display_mode" since="6">

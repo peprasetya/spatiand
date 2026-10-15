@@ -217,6 +217,13 @@ impl Loupe {
             Event::CloseRequested { .. } => return false,
             Event::Ready { .. } => self.ready = true,
             Event::Mode(mode) => log::info!("the wearer now sees {mode:?}"),
+            Event::Hands => {
+                if let Some(view) = self.view.as_mut() {
+                    view.hands();
+                    self.dirty = true;
+                }
+                return true;
+            }
             _ => {}
         }
         self.dirty = true;

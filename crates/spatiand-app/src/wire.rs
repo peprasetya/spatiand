@@ -111,7 +111,7 @@ impl Wire {
         let shm = globals.bind(&handle, 1..=2, ()).map_err(|e| format!("no wl_shm: {e}"))?;
         let _seat: wl_seat::WlSeat = globals.bind(&handle, 5..=9, ()).map_err(|e| format!("no seat: {e}"))?;
         let dmabuf = globals.bind(&handle, 3..=3, ()).ok();
-        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=6, ()).ok();
+        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=7, ()).ok();
         let viewporter = globals.bind(&handle, 1..=1, ()).ok();
         // A compositor with the room's protocol and no word on the mode is an older Spatiand,
         // which has only ever had two eyes; one without the protocol is somebody's desktop.
@@ -579,6 +579,10 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Wire {
 
 impl Dispatch<spatiand_xr_v1::SpatiandXrV1, ()> for Wire {
     fn event(state: &mut Self, _: &spatiand_xr_v1::SpatiandXrV1, event: spatiand_xr_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let spatiand_xr_v1::Event::Hands = event {
+            state.events.push(Event::Hands);
+            return;
+        }
         if let spatiand_xr_v1::Event::DisplayMode { mode } = event {
             let mode = match mode {
                 WEnum::Value(spatiand_xr_v1::DisplayMode::Flat) => Mode::Flat,

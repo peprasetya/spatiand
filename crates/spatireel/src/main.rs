@@ -345,6 +345,12 @@ impl Reel {
             Event::CloseRequested { .. } => self.stop(false),
             Event::Ready { window, .. } if *window == self.window => self.ready = true,
             Event::Mode(mode) => log::info!("the wearer now sees {mode:?}"),
+            Event::Hands => {
+                if let Some((playing, _)) = self.playing.as_mut() {
+                    playing.hands();
+                }
+                return true;
+            }
             Event::LayerRefused { window, .. } | Event::LayerLost { window, .. } => {
                 if let Some((playing, _)) = self.playing.as_mut().filter(|(p, _)| p.sky() == Some(*window)) {
                     playing.sky_was_refused();

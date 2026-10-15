@@ -140,6 +140,10 @@ pub struct Modifiers {
 pub enum Event {
     /// The wearer went between one picture and two.
     Mode(Mode),
+    /// The wearer's hands did something -- a pad, a mouse, a button, a key -- and not the head:
+    /// what controls an application fades itself are to wake on. Pointer motion over a window
+    /// is not this, since the pointer sweeps with the head.
+    Hands,
     /// A window may now be drawn. `suggested` is the size the compositor would give a window
     /// it knows nothing about, for an application with no idea of its own.
     Ready { window: WindowId, suggested: Option<(u32, u32)> },
@@ -169,7 +173,7 @@ impl Event {
     /// The window an event is about, if it is about one.
     pub fn window(&self) -> Option<WindowId> {
         match self {
-            Event::Mode(_) => None,
+            Event::Mode(_) | Event::Hands => None,
             Event::Ready { window, .. }
             | Event::Resized { window, .. }
             | Event::CloseRequested { window }

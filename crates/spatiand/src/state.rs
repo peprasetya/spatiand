@@ -304,7 +304,7 @@ impl Spatiand {
         // Stereo, head-locked and immersive surfaces. Binding it says nothing and changes
         // nothing: an application that ignores it is an ordinary window, which is the whole
         // design. See `crate::xr` and the protocol XML.
-        dh.create_global::<Self, spatiand_proto::server::spatiand_xr_v1::SpatiandXrV1, _>(6, ());
+        dh.create_global::<Self, spatiand_proto::server::spatiand_xr_v1::SpatiandXrV1, _>(7, ());
 
         // The screen clients see. Refresh is a placeholder until a backend reports the real
         // one; the size is the size every toplevel is offered.
@@ -813,6 +813,7 @@ impl Spatiand {
     /// immediately without waiting to be asked, which is why it worked and every real
     /// application did not.
     pub fn send_frames(&self, output: &Output, time: std::time::Duration) {
+        self.tell_hands();
         use smithay::desktop::utils::send_frames_surface_tree;
         use smithay::wayland::seat::WaylandFocus;
         for window in self.space.elements() {

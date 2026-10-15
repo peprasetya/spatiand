@@ -304,6 +304,7 @@ pub struct View {
     info_button: Button,
     info: bool,
     last_stir: Instant,
+    hands_heard: bool,
     pointer: (f32, f32),
     pressed_at: Option<(f32, f32, Instant)>,
     dragging: bool,
@@ -333,6 +334,7 @@ impl View {
             info_button: Button::default(),
             info: false,
             last_stir: Instant::now(),
+            hands_heard: false,
             pointer: (0.0, 0.0),
             pressed_at: None,
             dragging: false,
@@ -750,8 +752,18 @@ impl View {
         }
     }
 
-    pub fn input(&mut self, input: &Input) -> Want {
+    /// The room says the wearer's hands stirred: the controls come back, and from now on
+    /// pointer motion alone (which sweeps with the head) does not bring them.
+    pub fn hands(&mut self) {
+        self.hands_heard = true;
         self.stir();
+    }
+
+    pub fn input(&mut self, input: &Input) -> Want {
+        let motion = matches!(input, Input::Pointer { .. } | Input::PointerLeft);
+        if !motion || !self.hands_heard || self.pressed_at.is_some() {
+            self.stir();
+        }
         let all = self.bounds;
         if let Input::Pointer { x, y } = input {
             let (dx, dy) = (x - self.pointer.0, y - self.pointer.1);
