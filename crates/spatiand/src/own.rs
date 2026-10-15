@@ -146,3 +146,103 @@ pub fn launch(app: &AppEntry, wayland_display: &str, extra: &[(String, String)])
         log::warn!("could not start {}: {e}", app.name);
     }
 }
+
+/// Sound from Spatiand's own applications, placed where their windows are.
+///
+/// On the Mac and the Beam Pro there is no PipeWire to play into a window's sink, so an
+/// application of Spatiand's own hands its sound to the session instead: it connects to
+/// `$XDG_RUNTIME_DIR/spatiand-sound`, says `SPSN`, its channel count (u16), rate (u32, 48000)
+/// and application id (u16 length, then the bytes), and then writes interleaved little-endian
+/// 16-bit samples as they are to be heard. The session gives the windows of that application
+/// id a slot (by id and not by process: a Mac's Wayland clients have no process number the
+/// compositor can read) of the spatial audio engine -- the same as a Mac
+/// application's, with the same mute and volume on its bar -- and every channel of a film,
+/// 5.1 or 7.1, is placed in the room through the HRTF.
+pub mod sound {
+    use std::collections::HashMap;
+    use std::io::Read;
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::sync::{Mutex, OnceLock};
+
+    use spatiand_audio::server::Slot;
+
+    /// Each sounding application, by its id, and its windows' slot once it has one.
+    fn senders() -> &'static Mutex<HashMap<String, Option<Slot>>> {
+        static SENDERS: OnceLock<Mutex<HashMap<String, Option<Slot>>>> = OnceLock::new();
+        SENDERS.get_or_init(Default::default)
+    }
+
+    pub fn socket_path() -> Option<std::path::PathBuf> {
+        std::env::var_os("XDG_RUNTIME_DIR").map(|d| std::path::PathBuf::from(d).join("spatiand-sound"))
+    }
+
+    fn serve(mut stream: UnixStream) {
+        let mut head = [0u8; 12];
+        if let Err(e) = stream.read_exact(&mut head) {
+            log::warn!("a sound connection said nothing: {e}");
+            return;
+        }
+        if &head[..4] != b"SPSN" {
+            return;
+        }
+        let channels = u16::from_le_bytes([head[4], head[5]]).max(1) as usize;
+        let length = u16::from_le_bytes([head[10], head[11]]) as usize;
+        let mut id = vec![0u8; length.min(256)];
+        if stream.read_exact(&mut id).is_err() {
+            return;
+        }
+        let app = String::from_utf8_lossy(&id).into_owned();
+        log::info!("sound from {app}: {channels} channels");
+        senders().lock().unwrap().entry(app.clone()).or_insert(None);
+        // A hundredth of a second at a time, as it comes.
+        let mut bytes = vec![0u8; 480 * channels * 2];
+        let mut pcm = vec![0i16; 480 * channels];
+        let ended = loop {
+            if let Err(e) = stream.read_exact(&mut bytes) {
+                break e;
+            }
+            for (sample, pair) in pcm.iter_mut().zip(bytes.chunks_exact(2)) {
+                *sample = i16::from_le_bytes([pair[0], pair[1]]);
+            }
+            let slot = senders().lock().unwrap().get(&app).copied().flatten();
+            spatiand_audio::server::feed_local(slot, &pcm, channels);
+        };
+        senders().lock().unwrap().remove(&app);
+        log::info!("sound from {app} has ended ({ended})");
+    }
+
+    /// Start listening, once, where the session's own applications will look.
+    pub fn listen() {
+        static STARTED: OnceLock<()> = OnceLock::new();
+        STARTED.get_or_init(|| {
+            let Some(path) = socket_path() else { return };
+            let _ = std::fs::remove_file(&path);
+            match UnixListener::bind(&path) {
+                Ok(listener) => {
+                    let _ = std::thread::Builder::new().name("own-sound".into()).spawn(move || {
+                        for stream in listener.incoming().flatten() {
+                            let _ = std::thread::Builder::new().name("own-sound-in".into()).spawn(move || serve(stream));
+                        }
+                    });
+                    log::info!("Spatiand's applications' sound is taken at {}", path.display());
+                }
+                Err(e) => log::warn!("no socket for Spatiand's applications' sound: {e}"),
+            }
+        });
+    }
+
+    /// The applications sounding that have no slot yet, by id.
+    pub fn waiting() -> Vec<String> {
+        senders().lock().unwrap().iter().filter(|(_, s)| s.is_none()).map(|(a, _)| a.clone()).collect()
+    }
+
+    /// Say which slot a sounding application's windows have.
+    pub fn assign(app: &str, slot: Slot) {
+        if let Some(entry) = senders().lock().unwrap().get_mut(app) {
+            if entry.is_none() {
+                log::info!("sound from {app} is placed through slot {slot}");
+            }
+            *entry = Some(slot);
+        }
+    }
+}

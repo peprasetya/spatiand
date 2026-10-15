@@ -172,6 +172,10 @@ pub fn run(
         ..Default::default()
     };
     let mut spatial_audio = crate::audio::Audio::new(prefs.spatial_audio, prefs.directness());
+    // Spatiand's own applications hand their sound to the session (crate::own::sound).
+    if spatial_audio.is_on() {
+        crate::own::sound::listen();
+    }
     type KeyboardResize = (f32, f64);
     let mut keyboard_resize: Option<KeyboardResize> = None;
     let mut keyboard_border_hot = false;
@@ -232,7 +236,7 @@ pub fn run(
     let mut calibration: Option<Calibration> = None;
     let mut tracker = HeadTracker::new(stored.unwrap_or(AxisMap::XREAL_AIR), TrackerConfig::default());
     let mut sensor_memory = spatiand_track::SensorMemory::new();
-    let mut awaiting_app_id: Vec<(usize, Instant)> = Vec::new();
+    let mut awaiting_app_id: Vec<(usize, Instant, Option<u32>)> = Vec::new();
     // Asked once per pair of glasses, when they are opened: the display then goes away and
     // comes back double-width, which is a rebuild.
     let mut stereo_asked = false;
@@ -1124,31 +1128,52 @@ pub fn run(
                 shell.refresh_windows(crate::remote::with_offered(runtime.state.open_windows()));
             }
             let mut sinks_changed = false;
+            // One of Spatiand's own applications: its sound comes over `own::sound`, from its
+            // process, and every window it opens shares that process's slot.
+            let own_app = |app_id: &str| app_id.starts_with("id.prasetya.spatiand.");
             for (id, pid, app_id) in std::mem::take(&mut runtime.state.arrived_windows) {
                 match app_id {
                     Some(app_id) if app_id.starts_with("remote.") => {
                         spatial_audio.adopt_keyed(id, &app_id, crate::remote::sound_width(&app_id));
                         sinks_changed = true;
                     }
-                    Some(_) => spatial_audio.adopt(id, pid),
-                    None => {
-                        spatial_audio.adopt(id, pid);
-                        awaiting_app_id.push((id, Instant::now()));
+                    Some(app_id) if own_app(&app_id) => {
+                        spatial_audio.adopt_keyed(id, &format!("own:{app_id}"), spatiand_audio::server::Width::Full);
                     }
+                    Some(_) => spatial_audio.adopt(id, pid),
+                    None => awaiting_app_id.push((id, Instant::now(), pid)),
                 }
             }
-            awaiting_app_id.retain(|(id, since)| match runtime.state.app_id_of_id(*id) {
+            awaiting_app_id.retain(|(id, since, pid)| match runtime.state.app_id_of_id(*id) {
                 Some(app_id) => {
                     if app_id.starts_with("remote.") {
                         spatial_audio.adopt_keyed(*id, &app_id, crate::remote::sound_width(&app_id));
                         sinks_changed = true;
+                    } else if own_app(&app_id) {
+                        spatial_audio.adopt_keyed(*id, &format!("own:{app_id}"), spatiand_audio::server::Width::Full);
+                    } else {
+                        spatial_audio.adopt(*id, *pid);
                     }
                     false
                 }
-                None => since.elapsed() < Duration::from_secs(10),
+                None if since.elapsed() < Duration::from_secs(10) => true,
+                None => {
+                    spatial_audio.adopt(*id, *pid);
+                    false
+                }
             });
+            // A process of Spatiand's own sounding before its slot was known: told it now.
+            let unplaced = crate::own::sound::waiting();
+            if !unplaced.is_empty() {
+                let sinks = spatial_audio.keyed_sinks();
+                for app in unplaced {
+                    if let Some(slot) = sinks.get(&format!("own:{app}")).and_then(|s| spatiand_audio::server::slot_of_sink(s)) {
+                        crate::own::sound::assign(&app, slot);
+                    }
+                }
+            }
             for id in std::mem::take(&mut runtime.state.departed_windows) {
-                awaiting_app_id.retain(|(w, _)| *w != id);
+                awaiting_app_id.retain(|(w, _, _)| *w != id);
                 spatial_audio.forget(id);
                 sinks_changed = true;
             }

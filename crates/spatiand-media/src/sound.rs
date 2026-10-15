@@ -63,7 +63,20 @@ pub(crate) struct Sound {
 }
 
 #[cfg(not(target_os = "linux"))]
-struct Going(#[allow(dead_code)] cpal::Stream);
+enum Going {
+    Device(#[allow(dead_code)] cpal::Stream),
+    /// Into the room: the thread writing to the session's socket, and the word that stops it.
+    Room(std::sync::Arc<AtomicBool>),
+}
+
+#[cfg(not(target_os = "linux"))]
+impl Drop for Going {
+    fn drop(&mut self) {
+        if let Going::Room(stop) = self {
+            stop.store(true, Ordering::Relaxed);
+        }
+    }
+}
 // SAFETY: the stream is made, played, and then only ever dropped; nothing calls into it from
 // two threads.
 #[cfg(not(target_os = "linux"))]
@@ -111,9 +124,78 @@ impl Sound {
         self.inner.speed.store(speed.to_bits(), Ordering::Relaxed);
     }
 
-    /// Open the machine's sound for a track of `wanted` channels.
+    /// Open the room's sound for a track of `wanted` channels, or the machine's if there is
+    /// no room to hand it to.
     #[cfg(not(target_os = "linux"))]
-    pub(crate) fn open(_wanted: u16) -> Result<Sound, String> {
+    pub(crate) fn open(wanted: u16) -> Result<Sound, String> {
+        match Sound::open_room(wanted) {
+            Some(sound) => Ok(sound),
+            None => Sound::open_device(),
+        }
+    }
+
+    /// **Into the room**, where there is a session to hand sound to (the Mac, the Beam Pro):
+    /// every channel of the film, placed at its window through Spatiand's HRTF and under the
+    /// window's own mute and volume -- not straight out of the machine's speakers past it. The
+    /// session's side is `crates/spatiand/src/own.rs`'s `sound`.
+    #[cfg(not(target_os = "linux"))]
+    fn open_room(wanted: u16) -> Option<Sound> {
+        use std::io::Write;
+        if std::env::var("SPATIAND_MEDIA_ROOM").as_deref() == Ok("off") {
+            return None;
+        }
+        let path = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join("spatiand-sound");
+        let mut socket = std::os::unix::net::UnixStream::connect(&path).ok()?;
+        let channels = crate::audio::nearest_placeable(wanted.max(1));
+        let rate = 48_000u32;
+        let mut head = b"SPSN".to_vec();
+        head.extend_from_slice(&channels.to_le_bytes());
+        head.extend_from_slice(&rate.to_le_bytes());
+        // Whose sound it is: the session gives that application's windows the slot.
+        let app = std::env::var("SPATIAND_APP_ID").unwrap_or_else(|_| "id.prasetya.spatiand.spatireel".into());
+        head.extend_from_slice(&(app.len() as u16).to_le_bytes());
+        head.extend_from_slice(app.as_bytes());
+        socket.write_all(&head).ok()?;
+        let inner = Sound::inner(rate, channels);
+        let feed = inner.clone();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let stopped = stop.clone();
+        std::thread::Builder::new()
+            .name("film-to-room".into())
+            .spawn(move || {
+                // As the Deck's writer does: a hundredth of a second at a time, on the clock,
+                // heard about this much after it is written.
+                const BEHIND: Duration = Duration::from_millis(60);
+                let step = Duration::from_millis(10);
+                let mut block = vec![0f32; (rate as usize / 100) * channels as usize];
+                let mut bytes = vec![0u8; block.len() * 2];
+                let mut due = Instant::now();
+                while !stopped.load(Ordering::Relaxed) {
+                    let now = Instant::now();
+                    if now < due {
+                        std::thread::sleep(due - now);
+                    } else if now - due > Duration::from_millis(250) {
+                        due = now;
+                    }
+                    due += step;
+                    feed.fill(&mut block, Instant::now() + BEHIND);
+                    for (sample, out) in block.iter().zip(bytes.chunks_exact_mut(2)) {
+                        out.copy_from_slice(&((sample.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
+                    }
+                    if let Err(e) = socket.write_all(&bytes) {
+                        log::warn!("the room stopped taking sound: {e}");
+                        return;
+                    }
+                }
+            })
+            .ok()?;
+        log::info!("sound: {channels} channels at {rate} Hz into the room, placed at the window");
+        Some(Sound { inner, going: Mutex::new(Some(Going::Room(stop))) })
+    }
+
+    /// The machine's own sound device, for a film played with no room around it.
+    #[cfg(not(target_os = "linux"))]
+    fn open_device() -> Result<Sound, String> {
         let device = cpal::default_host().default_output_device().ok_or("this machine has nowhere for sound to go")?;
         let supported = device.default_output_config().map_err(|e| format!("the sound device would not say what it takes: {e}"))?;
         let config: cpal::StreamConfig = supported.config();
@@ -135,7 +217,7 @@ impl Sound {
             .map_err(|e| format!("the sound device would not open: {e}"))?;
         stream.play().map_err(|e| format!("the sound device would not start: {e}"))?;
         log::info!("sound: {channels} channels at {rate} Hz");
-        Ok(Sound { inner, going: Mutex::new(Some(Going(stream))) })
+        Ok(Sound { inner, going: Mutex::new(Some(Going::Device(stream))) })
     }
 
     /// Open a `pw-cat` of our own for a track of `wanted` channels.
