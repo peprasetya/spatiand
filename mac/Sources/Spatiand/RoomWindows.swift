@@ -40,6 +40,10 @@ final class RoomWindows {
     private var scan: Timer?
     /// Whether the windows open when the room began have been listed: from then on a new one is shown.
     private var scanned = false
+    /// The highest window number seen so far. macOS numbers windows upwards and never reuses
+    /// one in a session, so only a window above this is one opened just now -- a window that
+    /// was missing from one scan and is back is not new, and is not brought out.
+    private var highest: CGWindowID = 0
     /// Windows that are not windows in their own right, so as not to ask about them again.
     private var passedOver: Set<CGWindowID> = []
     private var focused: UInt32 = 0
@@ -225,6 +229,7 @@ final class RoomWindows {
         Task {
             let all = await MacWindows.list() + MacScreens.list(excluding: glasses)
             queue.async { [self] in
+                var broughtThisScan = 0
                 for info in all where !entries.values.contains(where: { $0.info.windowID == info.windowID }) && !passedOver.contains(info.windowID) {
                     if info.display != nil {
                         _ = announce(info, hidden: true)
@@ -259,7 +264,14 @@ final class RoomWindows {
                     // while it is going comes out at once**, in front of the wearer -- a new
                     // browser window asked for with Command-N is wanted where it can be seen.
                     let id = announce(info, hidden: true)
-                    if scanned || following.contains(info.bundle) { sp_window_show(id) }
+                    let opened = scanned && info.windowID > highest
+                    // Never a crowd at once: what macOS lists can come back short for a scan
+                    // and whole the next, and a burst of windows each being captured has
+                    // brought the Mac to its knees. Two a scan; the rest wait in the list.
+                    if (opened && broughtThisScan < 2) || following.contains(info.bundle) {
+                        broughtThisScan += 1
+                        sp_window_show(id)
+                    }
                 }
                 // And one taken for a new window all the same, because the tab it replaced had
                 // not yet gone when it was found: put right now that it has. The window that
@@ -282,6 +294,7 @@ final class RoomWindows {
                     break
                 }
                 scanned = true
+                highest = max(highest, all.map(\.windowID).max() ?? 0)
                 passedOver.formIntersection(Set(all.map(\.windowID)))
                 for (id, entry) in entries {
                     if let now = all.first(where: { $0.windowID == entry.info.windowID }) {
@@ -295,8 +308,10 @@ final class RoomWindows {
                     } else if entry.capture == nil {
                         // Gone from the Mac's screen, and not one being shown (whose capture
                         // says when it ends): after a second look, gone from the list.
+                        // Two scans running -- four seconds -- not one: a single short list
+                        // from macOS is not every window closing.
                         entries[id]?.missed += 1
-                        if entry.missed >= 1 { gone(id) }
+                        if entry.missed >= 2 { gone(id) }
                     }
                 }
             }
@@ -444,6 +459,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             entries.removeAll()
             following.removeAll()
             scanned = false
+            highest = 0
             passedOver.removeAll()
             publish()
         }

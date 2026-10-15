@@ -120,6 +120,17 @@ impl Storage {
         {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
+            // Nothing of this application's but the three standard ones: the service outlives
+            // it, and a lock or a socket it inherited would be held as long as it runs.
+            unsafe {
+                command.pre_exec(|| {
+                    let top = libc::getdtablesize().clamp(64, 65536);
+                    for fd in 3..top {
+                        libc::close(fd);
+                    }
+                    Ok(())
+                });
+            }
         }
         command.spawn().map_err(|e| format!("the storage service would not start: {e}"))?;
         let started = Instant::now();

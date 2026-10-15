@@ -1003,7 +1003,10 @@ enum OnlyOne {
     /// Whether this process is the one. Waits a moment, for a predecessor that is on its way out.
     static func take() -> Bool {
         let path = NSTemporaryDirectory() + "spatiand.lock"
-        let fd = open(path, O_CREAT | O_RDWR, 0o600)
+        // Close-on-exec: every program Spatiand starts would otherwise inherit the lock, and
+        // one that outlives Spatiand (the storage service does, by design) would hold it, so
+        // that no Spatiand could start again until it was killed.
+        let fd = open(path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
         guard fd >= 0 else { return true }
         for _ in 0..<20 {
             if flock(fd, LOCK_EX | LOCK_NB) == 0 { held = fd; return true }
