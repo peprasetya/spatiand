@@ -827,9 +827,9 @@ fn anonymous_file() -> io::Result<OwnedFd> {
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn anonymous_file() -> io::Result<OwnedFd> {
     // A POSIX shared memory object, unlinked the moment it is open: only its descriptor names
-    // it, which is what is handed over.
+    // it, which is what is handed over. The Mac takes no name longer than 31 bytes (PSHMNAMLEN).
     for _ in 0..8 {
-        let name = std::ffi::CString::new(format!("/spatimesh.{}.{}", std::process::id(), crate::store::new_id())).unwrap();
+        let name = std::ffi::CString::new(format!("/smesh.{:x}.{}", std::process::id(), &crate::store::new_id()[..10])).unwrap();
         let fd = unsafe { libc::shm_open(name.as_ptr(), libc::O_CREAT | libc::O_EXCL | libc::O_RDWR, 0o600 as libc::c_uint) };
         if fd >= 0 {
             unsafe {
@@ -991,6 +991,19 @@ mod tests {
     use super::*;
     use crate::engine::{fake::Fake, Engine};
     use std::time::Duration;
+
+    /// Memory for pictures, as every platform makes it (the Mac's shared memory objects take no
+    /// name past 31 bytes), many times over, written and read back through a second mapping.
+    #[test]
+    fn memory_for_pictures_is_made() {
+        for _ in 0..32 {
+            let mut a = Shared::new(400 * 300 * 4).expect("memory for a picture");
+            a.bytes_mut()[1234] = 42;
+            let fd: OwnedFd = unsafe { OwnedFd::from_raw_fd(libc::dup(a.raw_fd())) };
+            let b = Shared::map(fd, a.len(), false).unwrap();
+            assert_eq!(b.bytes()[1234], 42);
+        }
+    }
 
     #[test]
     fn every_message_comes_back_the_same() {

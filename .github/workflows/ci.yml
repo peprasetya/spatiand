@@ -160,5 +160,9 @@ jobs:
       # extension and a Firefox one, end to end (crates/spatimesh/tests/common).
       - name: SpatiMesh's WebKit engine, in the runner's own session
         run: SPATIMESH_WEBKIT_REQUIRED=1 MACOSX_DEPLOYMENT_TARGET=14.0 cargo test -p spatimesh-webkit --locked
+      # What SpatiMesh's window does without an engine (the wire, its memory for pictures, the
+      # extension runtime, the store) on the Mac's own system calls.
+      - name: SpatiMesh's own tests, on the Mac
+        run: MACOSX_DEPLOYMENT_TARGET=14.0 cargo test -p spatimesh --lib --locked
       - name: The shared crates' tests
         run: cargo test -p spatiand-shell -p spatiand-track -p spatiand-stream -p spatiand-mac-core --locked
