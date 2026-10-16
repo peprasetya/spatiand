@@ -86,6 +86,26 @@ fn fitted(aspect: f32) -> (u32, u32) {
     (((w / 2.0).round() * 2.0) as u32, ((h / 2.0).round() * 2.0) as u32)
 }
 
+/// The most of a film's picture worth drawing into a window, per eye: the glasses' own panel,
+/// which a window never fills. A film's frame drawn at its own size was a 4K picture -- or two
+/// eyes of one side by side -- made and handed over every frame, in every SpatiReel at once;
+/// on the Mac, where a window's picture is copied to the room rather than shared, that was
+/// most of the machine.
+const EYE_MOST: (f32, f32) = (1920.0, 1080.0);
+
+/// `frame`, scaled down (never up) so that each eye of it fits [`EYE_MOST`].
+fn capped(frame: (u32, u32), eyes: EyeLayout) -> (u32, u32) {
+    let (w, h) = (frame.0.max(2) as f32, frame.1.max(2) as f32);
+    let (eye_w, eye_h) = match eyes {
+        EyeLayout::SideBySide => (w / 2.0, h),
+        EyeLayout::TopBottom => (w, h / 2.0),
+        _ => (w, h),
+    };
+    let scale = (EYE_MOST.0 / eye_w).min(EYE_MOST.1 / eye_h).min(1.0);
+    let even = |v: f32| (((v * scale) / 2.0).round() * 2.0).max(2.0) as u32;
+    (even(w), even(h))
+}
+
 fn clock(seconds: f64) -> String {
     let seconds = seconds.max(0.0) as u64;
     let (h, m, s) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
@@ -309,11 +329,11 @@ impl Playing {
         let (aspect, frame) = self.eye_shape();
         let (picture, shape) = match staging {
             // The file's own frame, and the window the shape of one eye of it.
-            Staging::Window { .. } => (frame, fitted(aspect)),
+            Staging::Window { eyes } => (capped(frame, eyes), fitted(aspect)),
             // One eye, at the size it is in the file down and its true shape across.
             Staging::OneEye => {
                 let eye_h = if self.layout.stereo == StereoLayout::OverUnder { frame.1 / 2 } else { frame.1 }.max(2);
-                (((eye_h as f32 * aspect / 2.0).round() as u32 * 2, eye_h), fitted(aspect))
+                (capped(((eye_h as f32 * aspect / 2.0).round() as u32 * 2, eye_h), EyeLayout::Mono), fitted(aspect))
             }
             // With the film all round, the window is the controls -- and grows upwards from
             // its foot, which stays where it was, to hold the menu while that is open.
@@ -822,6 +842,16 @@ mod tests {
         assert_eq!(fitted(16.0 / 9.0), (1920, 1080));
         assert_eq!(fitted(2.39), (1920, 804));
         assert_eq!(fitted(4.0 / 3.0), (1440, 1080));
+    }
+
+    #[test]
+    fn a_large_film_is_drawn_no_larger_than_the_glasses_show_it() {
+        assert_eq!(capped((3840, 2160), EyeLayout::Mono), (1920, 1080));
+        // Both eyes side by side: each eye at most the panel, so twice as wide in all.
+        assert_eq!(capped((7680, 2160), EyeLayout::SideBySide), (3840, 1080));
+        assert_eq!(capped((1920, 2160), EyeLayout::TopBottom), (1920, 2160));
+        // Smaller than that, it is left alone.
+        assert_eq!(capped((1280, 720), EyeLayout::Mono), (1280, 720));
     }
 
     #[test]
