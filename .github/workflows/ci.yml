@@ -90,6 +90,16 @@ jobs:
           . "$HOME/.cargo/env" 2>/dev/null || true
           RUSTFLAGS="-L native=$GITHUB_WORKSPACE/android/xkbcommon/out" \
             cargo ndk -t arm64-v8a -P 34 build --release -p spatimesh --locked
+      - name: The app's Java, and SpatiMesh's Android engine speaking SpatiMesh's wire
+        run: |
+          . ~/.spatiand-ci-env
+          android/libs/fetch.sh
+          out=$(mktemp -d)
+          javac --release 17 -Xlint:-options -Xlint:-deprecation \
+            -classpath "$ANDROID_HOME/platforms/android-34/android.jar:$(ls android/libs/*.jar | tr '\n' ':')" \
+            -d "$out/app" $(find android/src -name '*.java')
+          javac --release 17 -d "$out/test" android/src/id/prasetya/spatiand/mesh/Wire.java android/test/WireTest.java
+          java -cp "$out/test" WireTest
       - name: The APK
         # android/build.sh was written on a Mac; this is its first run anywhere else, so it
         # reports and does not fail the build until it has been seen to work.

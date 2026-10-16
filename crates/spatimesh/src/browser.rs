@@ -292,7 +292,7 @@ impl Browser {
         let profiles: Vec<String> = self.hosts.keys().cloned().collect();
         for profile in profiles {
             let messages = match self.hosts.get_mut(&profile) {
-                Some(host) => host.link.receive_from_host(),
+                Some(host) => host.receive(),
                 None => continue,
             };
             for (message, fds) in messages {
@@ -308,8 +308,9 @@ impl Browser {
     fn engine_gone(&mut self, profile: &str) {
         let Some(host) = self.hosts.remove(profile) else { return };
         self.app.unwatch(host.link.raw_fd());
-        let why = match &host.engine {
-            Some(e) if e.starts_with("failed") => e.clone(),
+        let why = match (&host.failed, &host.engine) {
+            (Some(why), _) => format!("The engine for this profile's pages could not be started: {why}"),
+            (None, Some(e)) if e.starts_with("failed") => e.clone(),
             _ => "The engine showing this profile's pages stopped".to_string(),
         };
         log::warn!("the engine for {profile} has gone: {why}");
@@ -1430,7 +1431,7 @@ impl Browser {
             let engine_note = self.hosts.get(&window.profile).and_then(|h| h.engine.clone());
             let program_note = match &self.program {
                 Program::Fake(why) => Some(format!("No web engine: {why}. Pages are flat colours.")),
-                Program::Path(_) => None,
+                _ => None,
             };
             let starting = engine_note.is_none();
             let (painter, wins, views, tabs) = (&mut self.painter, &mut self.wins, &self.views, &self.tabs);

@@ -1053,3 +1053,94 @@ mod tests {
         let _ = Fake::new().pump(Duration::ZERO, &mut canvas);
     }
 }
+
+#[cfg(test)]
+mod golden {
+    //! The bytes of a few messages, as Android's engine (android/src/.../mesh/Wire.java) must
+    //! read and write them. android/test/WireTest.java checks the Java side against the same
+    //! bytes; a change to the wire here fails this test until both are brought up to date
+    //! (`cargo test -p spatimesh golden -- --nocapture` prints the new bytes).
+    use super::*;
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn to_host() -> Vec<(ToHost, &'static str)> {
+        vec![
+            (
+                ToHost::Open { tab: 7, url: "https://example.com/ä".into(), view: View::new(1580, 868, 1.25) },
+                "012e00000007000000000000001600000068747470733a2f2f6578616d706c652e636f6d2fc3a42c060000640300000000a03f",
+            ),
+            (
+                ToHost::Pointer { tab: 7, x: 12.5, y: 40.0, button: Some((Button::Left, true)), modifiers: Modifiers { shift: true, ..Default::default() } },
+                "091300000007000000000000000000484100002042010101",
+            ),
+            (
+                ToHost::Scroll { tab: 7, x: 1.0, y: 2.0, dx: 0.0, dy: -120.0, modifiers: Modifiers::default() },
+                "0b1900000007000000000000000000803f00000040000000000000f0c200",
+            ),
+            (
+                ToHost::Key {
+                    tab: 7,
+                    key: KeyPress {
+                        code: 30,
+                        key: spatiand_app::Key::Char('a'),
+                        text: Some("a".into()),
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers { control: true, ..Default::default() },
+                    },
+                },
+                "0c1a00000007000000000000001e0000000f61000000010000006101010002",
+            ),
+            (ToHost::Choose { tab: 7, index: Some(2) }, "120c000000070000000000000002000000"),
+            (ToHost::Answer { tab: 7, accepted: true, text: Some("yes".into()) }, "13110000000700000000000000010103000000796573"),
+            (ToHost::Release { tab: 7, buffer: 1 }, "1009000000070000000000000001"),
+            (ToHost::Quit, "1100000000"),
+        ]
+    }
+
+    fn from_host() -> Vec<(FromHost, &'static str)> {
+        vec![
+            (
+                FromHost::Hello { engine: "Android System WebView 140".into() },
+                "011e0000001a000000416e64726f69642053797374656d205765625669657720313430",
+            ),
+            (
+                FromHost::Buffers { tab: 7, width: 1580, height: 868, format: Format::Rgba, count: 2 },
+                "021200000007000000000000002c060000640300000102",
+            ),
+            (
+                FromHost::Picture { tab: 7, buffer: 0, changed: vec![Rect::whole(1580, 868)] },
+                "031d0000000700000000000000000100000000000000000000002c06000064030000",
+            ),
+            (FromHost::Happened(Happened::Title { tab: 7, title: "Ä title".into() }), "0a14000000070000000000000008000000c384207469746c65"),
+            (FromHost::Happened(Happened::Progress { tab: 7, progress: 0.5, loading: true }), "0c0d00000007000000000000000000003f01"),
+            (
+                FromHost::Happened(Happened::OpenTab { opener: 7, url: "https://a/".into(), background: false }),
+                "111700000007000000000000000a00000068747470733a2f2f612f00",
+            ),
+            (
+                FromHost::Happened(Happened::Dialog { tab: 7, kind: DialogKind::Confirm, message: "Sure?".into(), text: String::new() }),
+                "161600000007000000000000000105000000537572653f00000000",
+            ),
+        ]
+    }
+
+    #[test]
+    fn the_bytes_android_reads_and_writes() {
+        let mut changed = 0;
+        for (message, bytes) in to_host() {
+            let made = hex(&message.encode());
+            println!("TO   {made}");
+            changed += (made != bytes) as usize;
+        }
+        for (message, bytes) in from_host() {
+            let made = hex(&message.encode());
+            println!("FROM {made}");
+            changed += (made != bytes) as usize;
+        }
+        assert_eq!(changed, 0, "the wire changed: bring android/test/WireTest.java and Wire.java up to date");
+    }
+}

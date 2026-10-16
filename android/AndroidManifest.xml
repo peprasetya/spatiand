@@ -53,5 +53,13 @@
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
             </intent-filter>
         </receiver>
+        <!-- SpatiMesh's web engines (docs/spatimesh.md): a process for each profile whose pages
+             are open, as WebView allows a process one profile's data. Four kept profiles at
+             once and the private one; bound for SpatiMesh by mesh/MeshLauncher.java. -->
+        <service android:name=".mesh.MeshEngine$Slot0" android:process=":mesh0" android:exported="false" />
+        <service android:name=".mesh.MeshEngine$Slot1" android:process=":mesh1" android:exported="false" />
+        <service android:name=".mesh.MeshEngine$Slot2" android:process=":mesh2" android:exported="false" />
+        <service android:name=".mesh.MeshEngine$Slot3" android:process=":mesh3" android:exported="false" />
+        <service android:name=".mesh.MeshEngine$Private" android:process=":meshprivate" android:exported="false" />
     </application>
 </manifest>
