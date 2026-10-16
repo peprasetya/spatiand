@@ -1,0 +1,24 @@
+[package]
+name = "spatimesh-cef"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SpatiMesh's engine host on SteamOS: Steam's own Chromium (CEF)"
+
+# A program of its own, started by SpatiMesh's window process, one per profile in use
+# (docs/spatimesh.md). Its native half is C against CEF's headers (native/cef.c), built where
+# CEF_ROOT names a CEF distribution of the version Steam ships; libcef.so itself is Steam's,
+# loaded when the program starts. Built without CEF_ROOT, it says so when started.
+[dependencies]
+spatimesh = { path = "../spatimesh" }
+spatimesh-shim = { path = "../spatimesh-shim" }
+
+[dev-dependencies]
+spatiand-app = { path = "../spatiand-app" }
+libc = "0.2"
+serde_json.workspace = true
+
+[build-dependencies]
+cc = "1"

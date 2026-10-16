@@ -210,16 +210,24 @@ pub fn run(
     let mut renderer = {
         let node =
             std::env::var("SPATIAND_RENDER_NODE").unwrap_or_else(|_| "/dev/dri/renderD128".into());
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&node)?;
-        let gbm = GbmDevice::new(DeviceFd::from(std::os::fd::OwnedFd::from(file)))?;
-        let egl_display = unsafe { EGLDisplay::new(gbm)? };
+        let egl_display = match std::fs::OpenOptions::new().read(true).write(true).open(&node) {
+            Ok(file) => {
+                let gbm = GbmDevice::new(DeviceFd::from(std::os::fd::OwnedFd::from(file)))?;
+                log::info!("offscreen renderer on {node}");
+                unsafe { EGLDisplay::new(gbm)? }
+            }
+            // No GPU at all -- a container, a CI runner: Mesa's software device draws the same
+            // frame, slowly. Clients hand their pictures over as shared memory then.
+            Err(e) => {
+                let device = smithay::backend::egl::EGLDevice::enumerate()?
+                    .find(|d| d.extensions().iter().any(|x| x == "EGL_MESA_device_software"))
+                    .ok_or_else(|| format!("{node}: {e}, and no software EGL device either"))?;
+                log::info!("offscreen renderer in software ({node}: {e})");
+                unsafe { EGLDisplay::new(device)? }
+            }
+        };
         let egl_context = EGLContext::new(&egl_display)?;
-        let renderer = unsafe { GlesRenderer::new(egl_context)? };
-        log::info!("offscreen renderer ready on {node}");
-        renderer
+        unsafe { GlesRenderer::new(egl_context)? }
     };
     // The Mac has no render node: ANGLE's display, with no surface. See `mac::egl`.
     #[cfg(target_os = "macos")]

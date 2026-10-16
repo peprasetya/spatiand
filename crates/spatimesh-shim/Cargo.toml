@@ -1,0 +1,15 @@
+[package]
+name = "spatimesh-shim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SpatiMesh's engine interface over the C half every engine program provides"
+
+# Linked only by the engine programs, each of which compiles the native half (`spatimesh_*`)
+# this calls; nothing else may depend on it, or it would not link.
+[dependencies]
+spatimesh = { path = "../spatimesh" }
+spatiand-app = { path = "../spatiand-app" }
+serde_json.workspace = true

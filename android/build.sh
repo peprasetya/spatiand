@@ -12,6 +12,8 @@ SDK=${ANDROID_HOME:-$HOME/Library/Android/sdk}
 BT=$SDK/build-tools/36.0.0
 JAR=$SDK/platforms/android-34/android.jar
 NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
+# The NDK's tools are in a folder named for the machine building: a Mac's or Linux's.
+HOST_TAG=$(case "$(uname -s)" in Darwin) echo darwin-x86_64 ;; *) echo linux-x86_64 ;; esac)
 OUT=build
 
 # --- Rust ---
@@ -28,12 +30,12 @@ PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
 # remotes through the storage service, which is Go and built for Android from this Mac.
 ffmpeg/build.sh
 FF=$(pwd)/ffmpeg/out
+[ "$(uname -s)" = Darwin ] && export LIBCLANG_PATH=${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib}
 PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
-    LIBCLANG_PATH=${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib} \
     FFMPEG_INCLUDE_DIR=$FF/include FFMPEG_LIBS_DIR=$FF/lib FFMPEG_LINK_MODE=dynamic \
-    BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$NDK/toolchains/llvm/prebuilt/darwin-x86_64/sysroot" \
+    BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/sysroot" \
     RUSTFLAGS="-L native=$(pwd)/xkbcommon/out -L native=$FF/lib -C link-arg=-lc++abi" \
-    cargo ndk -t arm64-v8a -P 34 build --release -p spatireel -p spatiloupe -p spatiquill -p spatishelf
+    cargo ndk -t arm64-v8a -P 34 build --release -p spatireel -p spatiloupe -p spatiquill -p spatishelf -p spatimesh
 ../tools/fetch-pdfium.sh android-arm64
 STORAGE=$(pwd)/$OUT-storage
 mkdir -p "$STORAGE"
@@ -63,7 +65,7 @@ $BT/d8 --release --min-api 34 --lib $JAR --output $OUT/dex $(find $OUT/classes -
 
 # --- the APK ---
 cp jniLibs/arm64-v8a/libspatiand.so eglshim/out/libeglshim.so mysofa/out/libmysofa.so $OUT/apk/lib/arm64-v8a/
-for own in spatireel spatiloupe spatiquill spatishelf; do
+for own in spatireel spatiloupe spatiquill spatishelf spatimesh; do
     cp ../target/aarch64-linux-android/release/$own $OUT/apk/lib/arm64-v8a/lib$own.so
 done
 for lib in avcodec avdevice avfilter avformat avutil swresample swscale; do
@@ -74,6 +76,13 @@ cp ../third_party/pdfium/android-arm64/lib/libpdfium.so $OUT/apk/lib/arm64-v8a/
 cp $OUT/dex/classes.dex $OUT/apk/
 (cd $OUT/apk && zip -qr ../base.apk classes.dex lib)
 $BT/zipalign -f -p 4 $OUT/base.apk $OUT/aligned.apk
+# Signed with the debug key Android Studio makes; made here the same way where there is none
+# (a machine that never had Android Studio, such as CI).
+if [ ! -f "$HOME/.android/debug.keystore" ]; then
+    mkdir -p "$HOME/.android"
+    keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android \
+        -alias androiddebugkey -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000 >/dev/null
+fi
 $BT/apksigner sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android \
     --out spatiand.apk $OUT/aligned.apk 2>/dev/null
 echo "built $(pwd)/spatiand.apk"

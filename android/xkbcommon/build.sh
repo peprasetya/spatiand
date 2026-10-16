@@ -18,6 +18,8 @@ DATA_SHA=196ff18533382f64e057ea49df2bb486bd4275a4cc0917361edb560b8756dada
 SDK=${ANDROID_HOME:-$HOME/Library/Android/sdk}
 NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
 API=34
+# The NDK's tools are in a folder named for the machine building: a Mac's or Linux's.
+HOST_TAG=$(case "$(uname -s)" in Darwin) echo darwin-x86_64 ;; *) echo linux-x86_64 ;; esac)
 BISON=${BISON:-/usr/local/opt/bison/bin/bison}
 
 [ -f out/libxkbcommon.a ] && [ -f out/xkb/rules/evdev ] && exit 0
@@ -63,8 +65,8 @@ cat > work/config.h <<'EOF'
 #define HAVE_ASPRINTF 1
 EOF
 
-CC="$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android$API-clang"
-AR="$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+CC="$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin/aarch64-linux-android$API-clang"
+AR="$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin/llvm-ar"
 SOURCES="
 src/compose/parser.c src/compose/paths.c src/compose/state.c src/compose/table.c
 src/xkbcomp/action.c src/xkbcomp/ast-build.c src/xkbcomp/compat.c src/xkbcomp/expr.c

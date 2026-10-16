@@ -4861,6 +4861,71 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatimesh"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "env_logger",
+ "flate2",
+ "libc",
+ "log",
+ "percent-encoding",
+ "png 0.17.16",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "spatiand-app",
+ "spatiand-sync",
+ "url",
+]
+
+[[package]]
+name = "spatimesh-cef"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "libc",
+ "serde_json",
+ "spatiand-app",
+ "spatimesh",
+ "spatimesh-shim",
+]
+
+[[package]]
+name = "spatimesh-shim"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spatiand-app",
+ "spatimesh",
+]
+
+[[package]]
+name = "spatimesh-webkit"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "serde_json",
+ "spatimesh",
+ "spatimesh-shim",
+]
+
+[[package]]
+name = "spatimesh-webkitgtk"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "libc",
+ "log",
+ "pkg-config",
+ "serde_json",
+ "spatiand-app",
+ "spatimesh",
+ "spatimesh-shim",
+]
+
+[[package]]
 name = "spatiquill"
 version = "0.1.0"
 dependencies = [
