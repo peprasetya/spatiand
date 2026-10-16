@@ -1,55 +1,61 @@
 //! SpatiMesh: Spatiand's web browser.
 //!
 //! A full browser (docs/spatimesh.md), drawn straight into the room, on the platform's own web
-//! engine. This is its first step: a window of its own in the room.
+//! engine: this is the window process, which holds every SpatiMesh window and draws what is
+//! around the page; the pages are drawn by an engine host per profile (`engines.rs`), each
+//! tab's page in a process of the engine's own. Starting SpatiMesh again opens a window in the
+//! one already running, so that a tab can be dragged between any two of its windows.
+//!
+//! ```text
+//! spatimesh [--private] [address]
+//! ```
 
-use std::time::Duration;
+mod browser;
+mod engines;
+mod page;
 
-use spatiand_app::ui::{look, theme, Painter, Rect};
-use spatiand_app::{App, Event};
+use std::io::Write;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::PathBuf;
 
-const WINDOW: (u32, u32) = (1600, 1000);
+use spatiand_app::App;
 
-fn run() -> Result<(), String> {
-    let mut app = App::connect("id.prasetya.spatiand.spatimesh")?;
-    let window = app.open("SpatiMesh", WINDOW);
-    let mut painter: Option<Painter> = None;
-    let mut size = WINDOW;
-    let mut dirty = false;
-    loop {
-        for event in app.wait(Some(Duration::from_millis(1000)))? {
-            match event {
-                Event::Ready { .. } => dirty = true,
-                Event::Resized { width, height, .. } => {
-                    size = (width.max(320), height.max(240));
-                    app.resize(window, size);
-                    dirty = true;
-                }
-                Event::CloseRequested { .. } => {
-                    app.close(window);
-                    return Ok(());
-                }
-                _ => {}
-            }
-        }
-        if dirty {
-            dirty = false;
-            app.draw(window, |gl, picture| {
-                let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
-                p.begin(gl, picture, picture.1 as f32 / size.1 as f32, theme::GROUND);
-                look::backdrop(p, gl);
-                let all = p.bounds();
-                let line = Rect::new(0.0, all.h * 0.5 - 40.0, all.w, 80.0);
-                p.label(gl, "SpatiMesh", line, theme::TITLE_EM, theme::INK, 0.5);
-                p.end(gl);
-            })?;
-        }
-    }
+/// Where a running SpatiMesh listens for another start: one per room, by its socket's name.
+fn socket_path() -> PathBuf {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let display = std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-0".into());
+    let display = display.rsplit('/').next().unwrap_or("wayland").to_string();
+    dir.join(format!("spatimesh-{display}.sock"))
 }
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    if let Err(e) = run() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let private = args.iter().any(|a| a == "--private");
+    let url = args.iter().find(|a| !a.starts_with("--")).cloned();
+    // Already running in this room: that SpatiMesh opens the window.
+    let path = socket_path();
+    if let Ok(mut stream) = UnixStream::connect(&path) {
+        let asked = format!("window {} {}", if private { "private" } else { "kept" }, url.clone().unwrap_or_default());
+        if stream.write_all(asked.trim_end().as_bytes()).is_ok() {
+            log::info!("SpatiMesh is already running; it opens the window");
+            return;
+        }
+    }
+    let _ = std::fs::remove_file(&path);
+    let listener = UnixListener::bind(&path).ok().inspect(|l| {
+        let _ = l.set_nonblocking(true);
+    });
+    let run = || -> Result<(), String> {
+        let app = App::connect("id.prasetya.spatiand.spatimesh")?;
+        let mut browser = browser::Browser::new(app, listener);
+        let profile = if private { spatimesh::profiles::PRIVATE.to_string() } else { spatimesh::profiles::list(&spatimesh::store::Store::open())[0].id.clone() };
+        browser.new_window(&profile, url.as_deref());
+        browser.run()
+    };
+    let ended = run();
+    let _ = std::fs::remove_file(&path);
+    if let Err(e) = ended {
         log::error!("{e}");
         std::process::exit(1);
     }
