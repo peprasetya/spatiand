@@ -9,6 +9,7 @@
 pub mod address;
 pub mod bookmarks;
 pub mod engine;
+pub mod extensions;
 pub mod host;
 pub mod profiles;
 pub mod settings;

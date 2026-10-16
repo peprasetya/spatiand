@@ -1774,7 +1774,7 @@ mod tests {
         assert_eq!(page.x, MARGIN);
         assert_eq!(page.right(), WINDOW.0 as f32 - MARGIN);
         assert_eq!(page.bottom(), WINDOW.1 as f32 - MARGIN);
-        assert!(PAGE_TOP >= TOOL_TOP + TOOL_H, "the page starts below the toolbar");
+        const { assert!(PAGE_TOP >= TOOL_TOP + TOOL_H, "the page starts below the toolbar") };
     }
 
     #[test]

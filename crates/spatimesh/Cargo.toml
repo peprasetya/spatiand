@@ -18,6 +18,12 @@ env_logger.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 libc = "0.2"
+# Extensions: their packages (zip, inflated), Chrome's ids (SHA-256 of a key, given in base64),
+# and the URLs their patterns are matched against.
+flate2 = "1"
+sha2 = "0.10"
+base64 = "0.22"
+url = "2"
 
 [dev-dependencies]
 # What keeps Spatiand's applications' settings the same on every machine, for the test that

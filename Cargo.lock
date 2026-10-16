@@ -4864,13 +4864,17 @@ dependencies = [
 name = "spatimesh"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "env_logger",
+ "flate2",
  "libc",
  "log",
  "serde",
  "serde_json",
+ "sha2",
  "spatiand-app",
  "spatiand-sync",
+ "url",
 ]
 
 [[package]]
