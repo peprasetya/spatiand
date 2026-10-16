@@ -156,5 +156,9 @@ jobs:
         run: cd mac && swift build
       - name: SpatiMesh, and its WebKit engine
         run: MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p spatimesh -p spatimesh-webkit --locked
+      # Real pages in WebKit's own processes (the runner's session has a window server): a Chrome
+      # extension and a Firefox one, end to end (crates/spatimesh/tests/common).
+      - name: SpatiMesh's WebKit engine, in the runner's own session
+        run: SPATIMESH_WEBKIT_REQUIRED=1 MACOSX_DEPLOYMENT_TARGET=14.0 cargo test -p spatimesh-webkit --locked
       - name: The shared crates' tests
         run: cargo test -p spatiand-shell -p spatiand-track -p spatiand-stream -p spatiand-mac-core --locked
