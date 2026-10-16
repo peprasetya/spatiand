@@ -139,15 +139,16 @@ pages' processes is on unless `SPATIMESH_CEF_NO_SANDBOX=1` (CI sets it: the runn
 allow Chromium's sandbox). New windows and middle-clicked links become SpatiMesh tabs;
 script dialogs are SpatiMesh's; a `<select>` asks SpatiMesh for its list by a script put into
 each page when it has loaded (before that, and inside frames, Chromium's own list is drawn
-over the page); context menus are refused. Not done yet: each tab's sound (CEF plays it
-itself for now: not placed in the room), file choosers (Chromium's own GTK one may appear),
-downloads (refused). CI runs the same six tests as WebKitGTK's against CEF's 126.
+over the page); context menus and file choosers are refused (no window of Chromium's own);
+downloads come into the profile's cache and are moved into `~/Downloads` when finished. Not
+done yet: each tab's sound (CEF plays it itself for now: not placed in the room). CI runs the
+same six tests as WebKitGTK's against CEF's 126; downloads are not among them.
 
 More to check on the Deck: the layout of `cef_settings_t` depends on how a CEF was built
 (whether it keeps the "Alloy bootstrap", as CEF's own 126 builds do); a Steam build without it
-would pass the hash check and still be read wrongly. Turning on `SPATIMESH_CEF_LOG=1` makes
-Chromium say what goes wrong; `SPATIMESH_CEF_OZONE=x11|wayland` picks how it talks to the
-display.
+would pass the hash check and still be read wrongly. Chromium's errors go where the host's own
+messages go (Spatiand's applications' log); `SPATIMESH_CEF_LOG=1` makes it say more, and
+`SPATIMESH_CEF_OZONE=x11|wayland` picks how it talks to the display.
 
 ## Extensions: what each engine allows (findings, before building)
 
@@ -163,12 +164,15 @@ folder, `.zip`, `.crx` or `.xpi`, read the manifest, list it in the profile. Wha
   `WKWebExtensionWindow`) and draw its popups. Not there: what Safari lacks too -- blocking
   `webRequest` (Manifest V2 uBlock Origin; its Lite version works), `debugger`, Chrome-only and
   Firefox-only APIs. **macOS 14 to 15.3: none.**
-* **SteamOS (CEF): Chrome's own extension system, with a question.** CEF's Chrome runtime is
+* **SteamOS (CEF): Chrome's own extension system, with questions.** CEF's Chrome runtime is
   Chrome's code and loads unpacked Chrome extensions (`--load-extension`), Chrome's APIs and all;
-  Firefox-only APIs do not exist there. Whether they act on windowless (offscreen) tabs, and how
-  an extension's popup is shown without Chrome's toolbar, is to be tried against CEF 126 before
-  building. CEF's older built-in subset (`CefRequestContext::LoadExtension`) covers a few APIs only
-  and is gone from later CEF.
+  Firefox-only APIs do not exist there. The engine as built runs CEF's other runtime, Alloy,
+  which windowless tabs need in CEF 126; the Chrome runtime takes windowless tabs only as
+  "Alloy-style" browsers, which Chrome's `tabs` API and the toolbar's popups may not see.
+  What would work -- content scripts and background workers most likely, `tabs` and popups
+  least -- is to be tried against CEF 126 before building, and whether Valve's build has the
+  Chrome runtime at all, on the Deck. CEF's older built-in subset for Alloy
+  (`CefRequestContext::LoadExtension`) covers a few APIs only and is gone from later CEF.
 * **Other Linux (WebKitGTK): no extension API.** Only a subset we write ourselves on WebKitGTK's
   primitives, as GNOME Web does: content scripts and styles (`WebKitUserScript` and
   `WebKitUserStyleSheet` in an isolated world), messaging (`register_script_message_handler`),
@@ -225,6 +229,19 @@ website data (cookies, storage: an engine's own format, and a login is a machine
 `~/.local/share/spatiand/spatimesh/<profile>`; cache, `~/.cache/spatiand/spatimesh/<profile>`;
 downloads in progress, in the cache until finished; history and extensions, in `local/`. The
 private profile writes nothing at all.
+
+## Built, checked, and not checked (2026-10-16)
+
+| | Built | Checked by CI or here | Not checked: to try by hand |
+|---|---|---|---|
+| The window, tabs, address bar, profiles, bookmarks, settings | yes | unit tests; the window in the room's own compositor with WebKitGTK, photographed and checked pixel by pixel (`tools/spatimesh-e2e.py`: an address typed, a field typed into, a link, Back, a `<select>`) | on glasses: placement, size, reading distance; dragging a tab out into its own window and back into another (built, not exercised end to end) |
+| Linux (WebKitGTK) | yes | six engine tests on Xvfb: drawing, typing, clicks, scrolling, history, new tabs, lists, dialogs, a page's process crashing alone, cookies kept or not per profile | a real desktop session |
+| Mac (WKWebView) | yes | compiles (CI's macOS 15) | everything at run time: on a Mac, SpatiMesh opens pages, takes input, shows lists and dialogs; profiles keep their own cookies (macOS 14+) |
+| Android (WebView) | yes | the Rust side's launch through a stand-in launcher; the Java compiles against Android 34; the wire's bytes the same from Java as from Rust; the APK builds (`spatiand-apk` artifact) | everything at run time on the Beam Pro: the launcher starts the engine's service, pages draw through the virtual display, input, a second profile in its own process, the private one leaving nothing |
+| SteamOS (Steam's CEF) | yes | compiles against CEF 126's headers; CI runs the six engine tests against CEF's own 126 build laid out as Steam's | on the Deck: that Steam's CEF is still 126 (the hash check says), that its libcef.so loads outside Steam's runtime, Chromium's sandbox, Game Mode's display |
+| Sync | through spatiand-sync, as Spatiand's other settings | two machines through spatiand-sync in a test (`tests/sync.rs`) | two real machines linked |
+| Sound placed per window | **no** | -- | each engine plays its pages' sound itself, not placed at the tab's window (at most where Spatiand places SpatiMesh as a whole) |
+| Extensions | **no**: waiting for the owner's choice, given the findings above | -- | -- |
 
 ## Build order
 

@@ -19,7 +19,10 @@
 
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <ftw.h>
+#include <libgen.h>
 #include <math.h>
 #include <poll.h>
 #include <stdatomic.h>
@@ -40,7 +43,10 @@
 #include "include/capi/cef_client_capi.h"
 #include "include/capi/cef_command_line_capi.h"
 #include "include/capi/cef_context_menu_handler_capi.h"
+#include "include/capi/cef_dialog_handler_capi.h"
 #include "include/capi/cef_display_handler_capi.h"
+#include "include/capi/cef_download_handler_capi.h"
+#include "include/capi/cef_download_item_capi.h"
 #include "include/capi/cef_frame_capi.h"
 #include "include/capi/cef_jsdialog_handler_capi.h"
 #include "include/capi/cef_life_span_handler_capi.h"
@@ -63,7 +69,8 @@
     X(cef_string_utf8_to_utf16)                                                                   \
     X(cef_string_utf16_to_utf8)                                                                   \
     X(cef_string_utf16_clear)                                                                     \
-    X(cef_string_utf8_clear)
+    X(cef_string_utf8_clear)                                                                      \
+    X(cef_string_userfree_utf16_free)
 
 #define DECLARE(name) static __typeof__(name) *p_##name;
 CEF_FUNCTIONS(DECLARE)
@@ -414,6 +421,8 @@ static cef_display_handler_t display_handler;
 static cef_jsdialog_handler_t jsdialog_handler;
 static cef_request_handler_t request_handler;
 static cef_context_menu_handler_t context_menu_handler;
+static cef_dialog_handler_t dialog_handler;
+static cef_download_handler_t download_handler;
 
 /* -- the program -- */
 
@@ -445,6 +454,9 @@ static void CEF_CALLBACK on_command_line(cef_app_t *self, const cef_string_t *pr
         const char *ozone = getenv("SPATIMESH_CEF_OZONE");
         if (ozone && *ozone)
             add_switch(line, "ozone-platform", ozone);
+        /* What goes wrong said where the host's own messages go (Spatiand's applications'
+         * log), not in a file of Chromium's beside the program. */
+        add_switch(line, "enable-logging", "stderr");
     }
     RELEASE(line);
 }
@@ -488,6 +500,12 @@ static cef_request_handler_t *CEF_CALLBACK get_request_handler(cef_client_t *sel
 }
 static cef_context_menu_handler_t *CEF_CALLBACK get_context_menu_handler(cef_client_t *self) {
     return &context_menu_handler;
+}
+static cef_dialog_handler_t *CEF_CALLBACK get_dialog_handler(cef_client_t *self) {
+    return &dialog_handler;
+}
+static cef_download_handler_t *CEF_CALLBACK get_download_handler(cef_client_t *self) {
+    return &download_handler;
 }
 
 /* -- drawing -- */
@@ -890,6 +908,133 @@ static void CEF_CALLBACK on_before_context_menu(cef_context_menu_handler_t *self
     RELEASE(model);
 }
 
+/* -- choosing files: not yet SpatiMesh's to show, and never a window of Chromium's own -- */
+
+static int CEF_CALLBACK on_file_dialog(cef_dialog_handler_t *self, cef_browser_t *browser, cef_file_dialog_mode_t mode,
+                                       const cef_string_t *title, const cef_string_t *default_file_path,
+                                       cef_string_list_t accept_filters, cef_string_list_t accept_extensions,
+                                       cef_string_list_t accept_descriptions, cef_file_dialog_callback_t *callback) {
+    if (callback)
+        callback->cancel(callback);
+    RELEASE(callback);
+    RELEASE(browser);
+    return 1;
+}
+
+/* -- downloads: in the cache while they come, in Downloads once they have -- */
+
+static void make_folders(char *path) {
+    for (char *p = path + 1; *p; p++) {
+        if (*p == '/') {
+            *p = 0;
+            mkdir(path, 0700);
+            *p = '/';
+        }
+    }
+    mkdir(path, 0700);
+}
+
+/* Where downloads are while they come: the profile's cache, thrown away freely. */
+static const char *downloads_coming(void) {
+    static char dir[4400];
+    if (!dir[0]) {
+        const char *xdg = getenv("XDG_CACHE_HOME"), *home = getenv("HOME");
+        if (cache_folder)
+            snprintf(dir, sizeof dir, "%s/downloads", cache_folder);
+        else if (xdg && xdg[0] == '/')
+            snprintf(dir, sizeof dir, "%s/spatiand/spatimesh/downloads", xdg);
+        else
+            snprintf(dir, sizeof dir, "%s/.cache/spatiand/spatimesh/downloads", home ? home : "/tmp");
+        make_folders(dir);
+    }
+    return dir;
+}
+
+static int copy_file(const char *from, const char *to) {
+    int in = open(from, O_RDONLY | O_CLOEXEC);
+    if (in < 0)
+        return -1;
+    int out = open(to, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+    if (out < 0) {
+        close(in);
+        return -1;
+    }
+    char buffer[65536];
+    ssize_t n;
+    int ok = 1;
+    while ((n = read(in, buffer, sizeof buffer)) > 0)
+        if (write(out, buffer, (size_t)n) != n) {
+            ok = 0;
+            break;
+        }
+    close(in);
+    close(out);
+    if (!ok || n < 0) {
+        unlink(to);
+        return -1;
+    }
+    unlink(from);
+    return 0;
+}
+
+/* A finished download into ~/Downloads, under its own name or the first free one like it. */
+static void move_to_downloads(const char *from) {
+    const char *home = getenv("HOME");
+    char dir[4300], to[4600], copy[4300];
+    snprintf(dir, sizeof dir, "%s/Downloads", home ? home : "/tmp");
+    make_folders(dir);
+    snprintf(copy, sizeof copy, "%s", from);
+    const char *name = basename(copy);
+    /* Its name here begins with the download's number, to keep two of one name apart. */
+    const char *dash = strchr(name, '-');
+    if (dash && dash[1])
+        name = dash + 1;
+    const char *dot = strrchr(name, '.');
+    int stem = dot && dot != name ? (int)(dot - name) : (int)strlen(name);
+    snprintf(to, sizeof to, "%s/%s", dir, name);
+    for (int n = 2; access(to, F_OK) == 0 && n < 1000; n++)
+        snprintf(to, sizeof to, "%s/%.*s (%d)%s", dir, stem, name, n, dot && dot != name ? dot : "");
+    if (rename(from, to) != 0 && errno == EXDEV)
+        copy_file(from, to);
+}
+
+static int CEF_CALLBACK on_before_download(cef_download_handler_t *self, cef_browser_t *browser, cef_download_item_t *item,
+                                           const cef_string_t *suggested_name, cef_before_download_callback_t *callback) {
+    char *name = utf8_of(suggested_name);
+    for (char *c = name; *c; c++)
+        if (*c == '/')
+            *c = '_';
+    char path[4700];
+    snprintf(path, sizeof path, "%s/%u-%s", downloads_coming(), item ? item->get_id(item) : 0u,
+             name[0] && strcmp(name, ".") && strcmp(name, "..") ? name : "download");
+    free(name);
+    cef_string_t target;
+    memset(&target, 0, sizeof target);
+    set_text(&target, path);
+    callback->cont(callback, &target, 0);
+    clear_text(&target);
+    RELEASE(callback);
+    RELEASE(item);
+    RELEASE(browser);
+    return 1;
+}
+
+static void CEF_CALLBACK on_download_updated(cef_download_handler_t *self, cef_browser_t *browser, cef_download_item_t *item,
+                                             cef_download_item_callback_t *callback) {
+    if (item && item->is_complete(item)) {
+        cef_string_userfree_t full = item->get_full_path(item);
+        char *from = utf8_of(full);
+        if (full)
+            p_cef_string_userfree_utf16_free(full);
+        if (from[0] && access(from, F_OK) == 0)
+            move_to_downloads(from);
+        free(from);
+    }
+    RELEASE(callback);
+    RELEASE(item);
+    RELEASE(browser);
+}
+
 static void make_handlers(void) {
     static int made;
     if (made)
@@ -910,6 +1055,8 @@ static void make_handlers(void) {
     client.get_jsdialog_handler = get_jsdialog_handler;
     client.get_request_handler = get_request_handler;
     client.get_context_menu_handler = get_context_menu_handler;
+    client.get_dialog_handler = get_dialog_handler;
+    client.get_download_handler = get_download_handler;
 
     kept(&render_handler.base, sizeof render_handler);
     render_handler.get_view_rect = get_view_rect;
@@ -948,6 +1095,13 @@ static void make_handlers(void) {
 
     kept(&context_menu_handler.base, sizeof context_menu_handler);
     context_menu_handler.on_before_context_menu = on_before_context_menu;
+
+    kept(&dialog_handler.base, sizeof dialog_handler);
+    dialog_handler.on_file_dialog = on_file_dialog;
+
+    kept(&download_handler.base, sizeof download_handler);
+    download_handler.on_before_download = on_before_download;
+    download_handler.on_download_updated = on_download_updated;
 }
 
 /* ---- the interface ------------------------------------------------------------------------- */
@@ -1005,7 +1159,7 @@ Engine *spatimesh_new(const char *data, const char *cache) {
     settings.external_message_pump = 1;
     settings.windowless_rendering_enabled = 1;
     settings.background_color = 0xFFFFFFFFu;
-    settings.log_severity = getenv("SPATIMESH_CEF_LOG") ? LOGSEVERITY_INFO : LOGSEVERITY_DISABLE;
+    settings.log_severity = getenv("SPATIMESH_CEF_LOG") ? LOGSEVERITY_INFO : LOGSEVERITY_ERROR;
     char locales[4300];
     snprintf(locales, sizeof locales, "%s/locales", cef_folder);
     set_text(&settings.resources_dir_path, cef_folder);
@@ -1034,7 +1188,7 @@ Engine *spatimesh_new(const char *data, const char *cache) {
     clear_text(&settings.root_cache_path);
     clear_text(&settings.cache_path);
     if (!ok) {
-        snprintf(error_text, sizeof error_text, "Chromium would not start (SPATIMESH_CEF_LOG=1 makes it say why)");
+        snprintf(error_text, sizeof error_text, "Chromium would not start (what it said is in Spatiand's applications' log)");
         return NULL;
     }
     started = 1;
