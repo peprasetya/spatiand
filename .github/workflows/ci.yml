@@ -9,8 +9,10 @@
 # it works. What a Deck, a Beam Pro and a pair of glasses do is still looked at by hand.
 #
 # `spatiand-host` is not built here: it links FFmpeg 8, which Ubuntu does not have; it is built on
-# deepmagpie (docs/remote.md). The Mac's ANGLE comes from an installed Electron app and is not in
-# the repository, so the Mac job builds the app but does not package or run it.
+# deepmagpie (docs/remote.md). The media crates bind FFmpeg 7.1, which Ubuntu has not got either:
+# the linux job builds it once (tools/ci-deps.sh ffmpeg) and keeps it. The Mac's ANGLE comes from
+# an installed Electron app and is not in the repository, so the Mac job builds the app but does
+# not package or run it. SpatiMesh (docs/spatimesh.md) is built by all three.
 name: ci
 
 on:
@@ -33,10 +35,21 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - run: tools/ci-deps.sh linux
+      - name: FFmpeg 7.1, if an earlier run built it
+        id: ffmpeg
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/ffmpeg-7.1
+          key: ffmpeg-7.1.1-ubuntu-24.04
+      - run: tools/ci-deps.sh linux ffmpeg
+      - if: steps.ffmpeg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/ffmpeg-7.1
+          key: ffmpeg-7.1.1-ubuntu-24.04
       - uses: Swatinem/rust-cache@v2
-      - run: . "$HOME/.cargo/env" 2>/dev/null; cargo check --workspace --exclude spatiand-host --exclude spatiand-android --locked
-      - run: . "$HOME/.cargo/env" 2>/dev/null; cargo test --workspace --exclude spatiand-host --exclude spatiand-android --locked
+      - run: . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null; cargo check --workspace --exclude spatiand-host --exclude spatiand-android --locked
+      - run: . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null; cargo test --workspace --exclude spatiand-host --exclude spatiand-android --locked
 
   android:
     runs-on: ubuntu-24.04
@@ -54,6 +67,12 @@ jobs:
           cd ../crates/spatiand-android
           RUSTFLAGS="-L native=$GITHUB_WORKSPACE/android/xkbcommon/out" \
             cargo ndk -t arm64-v8a -P 34 build --release
+      - name: SpatiMesh, for the Beam Pro
+        run: |
+          . ~/.spatiand-ci-env
+          . "$HOME/.cargo/env" 2>/dev/null || true
+          RUSTFLAGS="-L native=$GITHUB_WORKSPACE/android/xkbcommon/out" \
+            cargo ndk -t arm64-v8a -P 34 build --release -p spatimesh --locked
       - name: The APK
         # android/build.sh was written on a Mac; this is its first run anywhere else, so it
         # reports and does not fail the build until it has been seen to work.
@@ -70,7 +89,9 @@ jobs:
           if-no-files-found: ignore
 
   mac:
-    runs-on: macos-14
+    # 15: the room recorder writes its file with ScreenCaptureKit's SCRecordingOutput, which is
+    # in the macOS 15 SDK and not 14's (the app still runs on 14; the recorder asks for 15).
+    runs-on: macos-15
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -85,5 +106,7 @@ jobs:
         run: cd crates/spatiand-mac && MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --locked
       - name: The app
         run: cd mac && swift build
+      - name: SpatiMesh
+        run: MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p spatimesh --locked
       - name: The shared crates' tests
         run: cargo test -p spatiand-shell -p spatiand-track -p spatiand-stream -p spatiand-mac-core --locked

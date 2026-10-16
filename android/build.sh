@@ -12,6 +12,8 @@ SDK=${ANDROID_HOME:-$HOME/Library/Android/sdk}
 BT=$SDK/build-tools/36.0.0
 JAR=$SDK/platforms/android-34/android.jar
 NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
+# The NDK's tools are in a folder named for the machine building: a Mac's or Linux's.
+HOST_TAG=$(case "$(uname -s)" in Darwin) echo darwin-x86_64 ;; *) echo linux-x86_64 ;; esac)
 OUT=build
 
 # --- Rust ---
@@ -28,10 +30,10 @@ PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
 # remotes through the storage service, which is Go and built for Android from this Mac.
 ffmpeg/build.sh
 FF=$(pwd)/ffmpeg/out
+[ "$(uname -s)" = Darwin ] && export LIBCLANG_PATH=${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib}
 PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
-    LIBCLANG_PATH=${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib} \
     FFMPEG_INCLUDE_DIR=$FF/include FFMPEG_LIBS_DIR=$FF/lib FFMPEG_LINK_MODE=dynamic \
-    BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$NDK/toolchains/llvm/prebuilt/darwin-x86_64/sysroot" \
+    BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/sysroot" \
     RUSTFLAGS="-L native=$(pwd)/xkbcommon/out -L native=$FF/lib -C link-arg=-lc++abi" \
     cargo ndk -t arm64-v8a -P 34 build --release -p spatireel -p spatiloupe -p spatiquill -p spatishelf -p spatimesh
 ../tools/fetch-pdfium.sh android-arm64
