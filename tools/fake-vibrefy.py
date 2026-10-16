@@ -23,6 +23,8 @@ SESSION_ID = "FAKESESSION0001"
 COOKIE = "JSESSIONID=fake-session-cookie"
 # Approved the moment it is asked for, so pairing can be walked through without a browser.
 PAIR_CODE = "48219037"
+# Who the pairing signs in as: two runs with two names are two accounts on one server.
+ACCOUNT = os.environ.get("FAKE_VIBREFY_ACCOUNT", "someone@example.com")
 progress = {}
 
 
@@ -119,10 +121,10 @@ class Handler(BaseHTTPRequestHandler):
                                        "seconds": 180, "account": None})
             if order == "Poll":
                 # Approved straight away: there is nobody here to press Approve.
-                return self.send_json({"state": "done", "account": "someone@example.com"})
+                return self.send_json({"state": "done", "account": ACCOUNT})
             if order == "Claim":
                 if form.get("code") == PAIR_CODE:
-                    return self.send_json({"state": "done", "account": "someone@example.com"})
+                    return self.send_json({"state": "done", "account": ACCOUNT})
                 return self.send_json({"state": "invalid",
                                        "message": "That code is not valid, or it has expired.",
                                        "account": None})

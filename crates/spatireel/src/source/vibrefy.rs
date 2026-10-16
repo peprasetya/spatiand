@@ -124,7 +124,12 @@ impl Source for Server {
     fn label(&self) -> String {
         let address = self.account.address.trim_end_matches('/');
         let host = address.split_once("://").map_or(address, |(_, rest)| rest);
-        format!("Vibrefy \u{b7} {}", host.split([':', '/']).next().unwrap_or(host))
+        let host = host.split([':', '/']).next().unwrap_or(host);
+        // Two accounts on one server are two sources, and say whose each is.
+        match self.account.account.as_deref().map(|who| who.split('@').next().unwrap_or(who)) {
+            Some(who) if !who.is_empty() => format!("Vibrefy \u{b7} {host} \u{b7} {who}"),
+            _ => format!("Vibrefy \u{b7} {host}"),
+        }
     }
 
     fn list(&self, folder: Option<&Item>) -> Result<Vec<Item>, String> {

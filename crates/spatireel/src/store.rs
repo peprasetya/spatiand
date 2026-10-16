@@ -1,25 +1,16 @@
 //! What SpatiReel keeps between one session and the next: the servers it has been signed in
-//! to, and where this machine's own films were left.
+//! to, and nothing else. Where a server's films were left is the server's to keep; where this
+//! machine's were left is not kept at all (the owner's word: continue watching is a server's).
 //!
 //! One small file. A server is kept as a token or a session's cookies, never as a password.
 //! Nothing of a server's library is kept at all -- lists and pictures are fetched when they
 //! are looked at and forgotten when the application closes.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
 use crate::source::{jellyfin, vibrefy};
-
-/// Where one of this machine's films was left.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct Place {
-    pub seconds: f64,
-    pub duration: f64,
-    /// When, in seconds since 1970: the most lately watched is shown first.
-    pub when: u64,
-}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -30,8 +21,6 @@ pub struct Store {
     pub device: String,
     pub jellyfin: Vec<jellyfin::Account>,
     pub vibrefy: Vec<vibrefy::Account>,
-    /// By the film's path.
-    pub places: BTreeMap<String, Place>,
 }
 
 pub fn path() -> PathBuf {
@@ -88,41 +77,11 @@ impl Store {
             log::warn!("could not keep {}: {e}", path.display());
         }
     }
-
-    /// Keep where a film of this machine's was left; or forget it, once it is nearly over or
-    /// barely begun.
-    pub fn leave(&mut self, film: &str, seconds: f64, duration: f64) {
-        let worth_keeping = seconds > 30.0 && (duration <= 0.0 || seconds < duration * 0.95);
-        if worth_keeping {
-            let when = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            self.places.insert(film.to_string(), Place { seconds, duration, when });
-        } else {
-            self.places.remove(film);
-        }
-        // Films that have since been moved or deleted are not kept for ever.
-        if self.places.len() > 200 {
-            let oldest = self.places.iter().min_by_key(|(_, place)| place.when).map(|(film, _)| film.clone());
-            if let Some(oldest) = oldest {
-                self.places.remove(&oldest);
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_film_barely_begun_or_nearly_over_has_no_place_kept() {
-        let mut store = Store::default();
-        store.leave("/a.mkv", 12.0, 3600.0);
-        assert!(store.places.is_empty());
-        store.leave("/a.mkv", 900.0, 3600.0);
-        assert_eq!(store.places["/a.mkv"].seconds, 900.0);
-        store.leave("/a.mkv", 3500.0, 3600.0);
-        assert!(store.places.is_empty());
-    }
 
     #[test]
     fn what_is_kept_comes_back_and_holds_no_password() {

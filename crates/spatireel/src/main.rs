@@ -140,7 +140,7 @@ impl Reel {
 
     fn browse(&mut self, source: usize, folder: Option<Item>) {
         let Some(entry) = self.sources.get(source) else { return };
-        let mut browse = Browse::new(source, entry.source.label(), entry.kind == Kind::Local);
+        let mut browse = Browse::new(source, entry.source.label(), entry.kind == Kind::Local, matches!(entry.kind, Kind::Server(_)));
         if let Some(folder) = folder {
             browse.enter(folder, 0);
         }
@@ -315,7 +315,9 @@ impl Reel {
                                     store.jellyfin.push(account.clone());
                                 }
                                 Account::Vibrefy(account) => {
-                                    store.vibrefy.retain(|kept| kept.address != account.address);
+                                    // The same account paired again is the one kept anew; another
+                                    // account on the same server is a source of its own.
+                                    store.vibrefy.retain(|kept| !(kept.address == account.address && kept.account == account.account));
                                     store.vibrefy.push(account.clone());
                                 }
                             }
@@ -449,7 +451,7 @@ fn main() {
         let store = Arc::new(Mutex::new(Store::load()));
         let mut app = App::connect("id.prasetya.spatiand.spatireel")?;
         let window = app.open("SpatiReel", WINDOW);
-        let local: Arc<dyn Source> = Arc::new(Local::new(library::home(), store.clone()));
+        let local: Arc<dyn Source> = Arc::new(Local::new(library::home()));
         let mut reel = Reel {
             app,
             window,
@@ -489,7 +491,6 @@ fn main() {
                     reel.browse(0, Some(Local::item(folder)));
                 }
                 let mut item = Local::item(&path);
-                item.resume = local.unfinished().iter().find(|kept| kept.key == item.key).map_or(0.0, |kept| kept.resume);
                 if !Path::new(&item.key).exists() {
                     // Not a file: an address, played as it is.
                     item.key = path.to_string_lossy().into_owned();

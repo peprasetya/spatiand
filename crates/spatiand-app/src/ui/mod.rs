@@ -76,6 +76,12 @@ impl Rect {
         self.w -= width;
         left
     }
+
+    pub fn take_right(&mut self, width: f32) -> Rect {
+        let width = width.min(self.w);
+        self.w -= width;
+        Rect { x: self.x + self.w, w: width, ..*self }
+    }
 }
 
 /// A colour: red, green, blue and alpha, each 0 to 1, not multiplied by alpha.

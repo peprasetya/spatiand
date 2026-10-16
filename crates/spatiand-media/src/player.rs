@@ -31,9 +31,20 @@ use crate::subs::{self, Cue, Words};
 /// How many decoded pictures wait to be shown. Each is a frame of GPU or main memory, and a
 /// 4K one is not small: enough to ride out an uneven decode, no more.
 const PICTURES_AHEAD: usize = 4;
-/// How much of the file the reader keeps ahead of the decoders.
+/// How much of the film the reader keeps ahead of the decoders, in the film's seconds: enough
+/// to ride out a network's stumble, no more. Every second of it is a second of the film held in
+/// memory and, from a server, fetched at whatever pace the network allows; it was "512 packets
+/// or 24 MB", which from a server was the line flat out for many seconds after every pause and
+/// seek, and a second film in the room as much again.
+const SECONDS_AHEAD: f64 = 4.0;
+/// Paused, nothing more is fetched: what is in hand is plenty to start again from.
+const SECONDS_AHEAD_PAUSED: f64 = 0.5;
+/// Bounds whatever the seconds say, for a file whose packets carry no times.
 const PACKETS_AHEAD_BYTES: usize = 24 * 1024 * 1024;
 const PACKETS_AHEAD: usize = 512;
+/// The most a network stream's connection holds that the reader has not asked for. The
+/// system's own grows to many megabytes, all of it fetched whether wanted or not.
+const NETWORK_BUFFER: &str = "1048576";
 
 fn error_text(code: c_int) -> String {
     let mut buffer = [0 as std::ffi::c_char; 128];
@@ -223,26 +234,48 @@ impl Drop for Packet {
 #[derive(Default)]
 struct Queue {
     packets: Mutex<(VecDeque<(Option<Packet>, u64)>, usize)>,
+    /// The film's time of each packet in `packets`, in the same order: NaN where it has none.
+    times: Mutex<VecDeque<f64>>,
     arrived: Condvar,
 }
 
 impl Queue {
     fn push(&self, packet: Option<Packet>, serial: u64) {
+        self.push_at(packet, serial, f64::NAN);
+    }
+
+    fn push_at(&self, packet: Option<Packet>, serial: u64, time: f64) {
         let mut held = self.packets.lock().unwrap();
         held.1 += packet.as_ref().map_or(0, |p| unsafe { (*p.0).size.max(0) as usize });
         held.0.push_back((packet, serial));
+        self.times.lock().unwrap().push_back(time);
         self.arrived.notify_one();
+    }
+
+    /// How many seconds of the film are waiting: from the first packet with a time to the last.
+    fn seconds(&self) -> f64 {
+        let times = self.times.lock().unwrap();
+        let first = times.iter().copied().find(|t| t.is_finite());
+        let last = times.iter().rev().copied().find(|t| t.is_finite());
+        match (first, last) {
+            (Some(first), Some(last)) => (last - first).max(0.0),
+            _ => 0.0,
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        self.packets.lock().unwrap().1
     }
 
     fn clear(&self) {
         let mut held = self.packets.lock().unwrap();
         held.0.clear();
         held.1 = 0;
+        self.times.lock().unwrap().clear();
     }
 
-    fn full(&self) -> bool {
-        let held = self.packets.lock().unwrap();
-        held.0.len() >= PACKETS_AHEAD || held.1 >= PACKETS_AHEAD_BYTES
+    fn crowded(&self) -> bool {
+        self.packets.lock().unwrap().0.len() >= PACKETS_AHEAD
     }
 
     fn len(&self) -> usize {
@@ -257,6 +290,7 @@ impl Queue {
         }
         let (packet, serial) = held.0.pop_front().ok_or(())?;
         held.1 = held.1.saturating_sub(packet.as_ref().map_or(0, |p| unsafe { (*p.0).size.max(0) as usize }));
+        self.times.lock().unwrap().pop_front();
         Ok((packet, serial))
     }
 }
@@ -454,7 +488,9 @@ impl Player {
         unsafe {
             let mut format = ptr::null_mut();
             let mut told: *mut ffi::AVDictionary = ptr::null_mut();
-            for (key, value) in options {
+            let network = url.starts_with("http://") || url.starts_with("https://");
+            let own: &[(&str, &str)] = if network { &[("recv_buffer_size", NETWORK_BUFFER)] } else { &[] };
+            for (key, value) in own.iter().map(|(k, v)| (k.to_string(), v.to_string())).chain(options.iter().cloned()) {
                 if let (Ok(key), Ok(value)) = (CString::new(key.as_str()), CString::new(value.as_str())) {
                     ffi::av_dict_set(&mut told, key.as_ptr(), value.as_ptr(), 0);
                 }
@@ -768,6 +804,22 @@ fn spawn(name: &str, run: impl FnOnce() + Send + 'static) -> JoinHandle<()> {
     std::thread::Builder::new().name(format!("film-{name}")).spawn(run).expect("a thread")
 }
 
+/// Whether the reader has enough in hand to stop for now: as ffplay has it, when every
+/// stream being decoded has its seconds ahead (so neither starves the other), or when what is
+/// held is too much whatever it is.
+fn enough(shared: &Shared, video: bool) -> bool {
+    let (video_q, audio_q) = (&shared.video, &shared.audio);
+    if video_q.bytes() + audio_q.bytes() >= PACKETS_AHEAD_BYTES || video_q.crowded() || audio_q.crowded() {
+        return true;
+    }
+    let ahead = if shared.paused.load(Ordering::Relaxed) { SECONDS_AHEAD_PAUSED } else { SECONDS_AHEAD };
+    let has_sound = shared.sound.is_some() && shared.audio_stream.load(Ordering::Relaxed) != NO_STREAM;
+    // A stream that has finished needs nothing more.
+    let video_done = !video || shared.video_out.load(Ordering::Relaxed) || video_q.seconds() >= ahead;
+    let audio_done = !has_sound || shared.audio_out.load(Ordering::Relaxed) || audio_q.seconds() >= ahead;
+    video_done && audio_done
+}
+
 /// The reader: the file's packets, sorted into the two queues, and seeks.
 fn read(source: Source, shared: Arc<Shared>) {
     let Source { mut format, video_stream, start } = source;
@@ -795,7 +847,7 @@ fn read(source: Source, shared: Arc<Shared>) {
                 shared.video_out.store(video_stream.is_none(), Ordering::Relaxed);
                 shared.audio_out.store(shared.audio_stream.load(Ordering::Relaxed) == NO_STREAM, Ordering::Relaxed);
             }
-            if shared.read_out.load(Ordering::Relaxed) || shared.video.full() || shared.audio.full() {
+            if shared.read_out.load(Ordering::Relaxed) || enough(&shared, video_stream.is_some()) {
                 std::thread::sleep(Duration::from_millis(8));
                 continue;
             }
@@ -823,7 +875,14 @@ fn read(source: Source, shared: Arc<Shared>) {
             };
             match queue {
                 Some(queue) => {
-                    queue.push(Some(Packet(packet)), serial);
+                    let stamp = if (*packet).pts != ffi::AV_NOPTS_VALUE { (*packet).pts } else { (*packet).dts };
+                    let time = if stamp == ffi::AV_NOPTS_VALUE {
+                        f64::NAN
+                    } else {
+                        let base = (**(*format).streams.add(stream)).time_base;
+                        stamp as f64 * base.num as f64 / base.den.max(1) as f64
+                    };
+                    queue.push_at(Some(Packet(packet)), serial, time);
                     packet = ffi::av_packet_alloc();
                 }
                 None => ffi::av_packet_unref(packet),

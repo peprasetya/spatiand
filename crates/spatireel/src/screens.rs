@@ -6,7 +6,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use spatiand_app::ui::{theme, Button, Icon, Field, Grid, Input, Painter, Rect, Shape, Strip, Texture, Tile, Typed};
 use spatiand_app::{Gl, Key};
@@ -308,11 +308,15 @@ pub struct Browse {
     left: Vec<Texture>,
     home: Button,
     up: Button,
+    /// A server's own page has a way to remove it: pressed once it asks, twice it is done.
+    server: bool,
+    remove: Button,
+    removing: Option<Instant>,
     pub trouble: Option<String>,
 }
 
 impl Browse {
-    pub fn new(source: usize, label: String, local: bool) -> Browse {
+    pub fn new(source: usize, label: String, local: bool, server: bool) -> Browse {
         let mut grid = Grid::default();
         grid.focused = true;
         Browse {
@@ -332,8 +336,16 @@ impl Browse {
             left: Vec::new(),
             home: Button::default(),
             up: Button::default(),
+            server,
+            remove: Button::default(),
+            removing: None,
             trouble: None,
         }
+    }
+
+    /// Whether the remove button is waiting for its second press: for a few seconds only.
+    fn asking_to_remove(&self) -> bool {
+        self.removing.is_some_and(|since| since.elapsed() < Duration::from_secs(4))
     }
 
     pub fn folder(&self) -> Option<&Item> {
@@ -414,6 +426,12 @@ impl Browse {
             self.up.draw_icon(p, gl, top.take_left(Button::HEIGHT), Icon::Up, "");
             top.take_left(22.0);
         }
+        if self.server {
+            let label = if self.asking_to_remove() { "Press again to remove" } else { "Remove" };
+            let width = Button::icon_width(p, gl, label);
+            self.remove.draw_icon(p, gl, top.take_right(width), Icon::Trash, label);
+            top.take_right(16.0);
+        }
         let title = if self.local {
             let path = self.path();
             path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())
@@ -421,8 +439,10 @@ impl Browse {
             self.folder().map_or(self.label.clone(), |item| item.title.clone())
         };
         let taken = p.label(gl, &title, top, theme::TITLE_EM * 0.9, theme::INK, 0.0);
-        let beside = Rect { x: top.x + taken + 20.0, w: (top.w - taken - 20.0).max(0.0), y: top.y + 5.0, ..top };
-        p.label(gl, &self.label, beside, theme::DETAIL_EM, theme::INK_HINT, 0.0);
+        if title != self.label {
+            let beside = Rect { x: top.x + taken + 20.0, w: (top.w - taken - 20.0).max(0.0), y: top.y + 5.0, ..top };
+            p.label(gl, &self.label, beside, theme::DETAIL_EM, theme::INK_HINT, 0.0);
+        }
         all.take_top(12.0);
         look::rule(p, gl, all.take_top(2.0));
         all.take_top(16.0);
@@ -456,6 +476,17 @@ impl Browse {
     }
 
     fn input(&mut self, input: &Input) -> Act {
+        if self.server && self.remove.input(input) {
+            if self.asking_to_remove() {
+                return Act::Forget(self.source);
+            }
+            self.removing = Some(Instant::now());
+            return Act::Nothing;
+        }
+        if matches!(input, Input::Key { .. }) {
+            // A key is not the second press; a press elsewhere leaves the screen or lapses.
+            self.removing = None;
+        }
         if self.home.input(input) || matches!(input, Input::Key { key: Key::Escape, .. }) {
             return Act::Home;
         }

@@ -149,6 +149,9 @@ pub struct Playing {
     /// Whether the room has ever said the wearer's hands stirred (`Event::Hands`).
     hands_heard: bool,
     toggle: Button,
+    /// Ten seconds back and on, either side of the toggle.
+    rewind: Button,
+    skip: Button,
     back: Button,
     options: Button,
     menu: Option<(List, Vec<(Row, Option<Choice>)>)>,
@@ -226,6 +229,8 @@ impl Playing {
             controls_until: Instant::now() + CONTROLS_SHOWN,
             hands_heard: false,
             toggle: Button::default(),
+            rewind: Button::default(),
+            skip: Button::default(),
             back: Button::default(),
             options: Button::default(),
             menu: None,
@@ -542,9 +547,13 @@ impl Playing {
         panel.take_top(10.0);
         let mut row = panel.take_top(Button::HEIGHT.min(panel.h));
         // Round, and lit: the one control a film is mostly about.
+        self.rewind.draw_icon(p, gl, row.take_left(Button::HEIGHT), Icon::Back10, "");
+        row.take_left(10.0);
         let toggle = row.take_left(Button::HEIGHT);
         self.toggle.draw_icon(p, gl, toggle, if paused { Icon::Play } else { Icon::Pause }, "");
-        row.take_left(12.0);
+        row.take_left(10.0);
+        self.skip.draw_icon(p, gl, row.take_left(Button::HEIGHT), Icon::Forward10, "");
+        row.take_left(22.0);
         let width = Button::icon_width(p, gl, "Picture and sound");
         self.options.draw_icon(p, gl, row.take_left(width), Icon::Options, "Picture and sound");
         let width = Button::icon_width(p, gl, "Library");
@@ -703,6 +712,12 @@ impl Playing {
             if self.toggle.input(input) {
                 let paused = self.player.paused();
                 self.player.set_paused(!paused);
+            }
+            if self.rewind.input(input) {
+                self.player.seek((self.player.position() - 10.0).max(0.0));
+            }
+            if self.skip.input(input) {
+                self.player.seek(self.player.position() + 10.0);
             }
             if self.options.input(input) {
                 self.open_menu();
