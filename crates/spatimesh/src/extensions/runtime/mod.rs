@@ -28,7 +28,7 @@ use serde_json::{json, Map, Value};
 use super::install::{self, Flavor, Installed};
 use super::locale::Messages;
 use super::manifest::{Background, Manifest, RunAt, World};
-use super::set::{self, ExtensionSet, Script, Spec};
+use super::set::{self, Addresses, ExtensionSet, Script, Spec};
 use super::storage::{self, Area, Session};
 use crate::engine::TabId;
 use crate::profiles::PRIVATE;
@@ -212,6 +212,8 @@ struct Ext {
     /// The profile it is installed in (another than the one it runs in, in the private one).
     home: String,
     installed: Installed,
+    /// Where its pages are, as the engine serves them ([`Addresses::origin`]).
+    origin: String,
     manifest: Manifest,
     messages: Messages,
     content_token: String,
@@ -252,10 +254,7 @@ impl Ext {
     }
 
     fn origin(&self) -> String {
-        match self.installed.flavor {
-            Flavor::Chrome => format!("chrome-extension://{}", self.installed.id),
-            Flavor::Firefox => format!("moz-extension://{}", self.installed.id),
-        }
+        self.origin.clone()
     }
 
     /// One of its pages' address, from a path in it.
@@ -312,6 +311,8 @@ struct Loaded {
 pub struct Runtime {
     store: Store,
     ui_language: String,
+    /// How the engines give extensions their addresses.
+    addresses: Addresses,
     profiles: HashMap<String, Loaded>,
     /// `storage.session`, and everything the private profile's extensions keep.
     session: Session,
@@ -382,7 +383,7 @@ fn resolve(base: &str, path: &str) -> String {
 /// The origin part of an address.
 fn origin_of(url: &str) -> String {
     match url::Url::parse(url) {
-        Ok(u) if u.scheme() == "chrome-extension" || u.scheme() == "moz-extension" => {
+        Ok(u) if matches!(u.scheme(), "chrome-extension" | "moz-extension" | set::OWN_SCHEME) => {
             format!("{}://{}", u.scheme(), u.host_str().unwrap_or(""))
         }
         Ok(u) => u.origin().ascii_serialization(),
@@ -473,6 +474,7 @@ impl Runtime {
         Runtime {
             store,
             ui_language: ui_language(),
+            addresses: Addresses::default(),
             profiles: HashMap::new(),
             session: Session::default(),
             contexts: HashMap::new(),
@@ -483,6 +485,15 @@ impl Runtime {
             next_question: 1,
             next_hidden: HIDDEN_TABS,
             started: HashSet::new(),
+        }
+    }
+
+    /// How the engines give extensions their addresses: told before any profile's extensions
+    /// are loaded (the engine program is chosen at start), and kept for those already loaded.
+    pub fn set_addresses(&mut self, addresses: Addresses) {
+        self.addresses = addresses;
+        for ext in self.profiles.values_mut().flat_map(|loaded| loaded.exts.iter_mut()) {
+            ext.origin = addresses.origin(ext.installed.flavor, &ext.installed.id);
         }
     }
 
@@ -535,6 +546,7 @@ impl Runtime {
         let state = self.store.read_local::<State>(&state_file(home, &id)).unwrap_or_default();
         Ok(Ext {
             home: home.to_string(),
+            origin: self.addresses.origin(installed.flavor, &id),
             installed,
             manifest,
             messages,
@@ -745,6 +757,7 @@ impl Runtime {
             id: ext.id().to_string(),
             root: root.clone(),
             flavor: ext.installed.flavor,
+            origin: ext.origin(),
             scripts,
             web_accessible: ext.manifest.web_accessible.iter().map(|w| (w.resources.clone(), w.matches.clone())).collect(),
             background,

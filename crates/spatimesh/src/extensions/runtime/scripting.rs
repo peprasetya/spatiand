@@ -111,7 +111,7 @@ fn target(rt: &Runtime, side: &dyn BrowserSide, caller: &Caller, tab: Option<Tab
     let tab = tab.ok_or("No tab given.")?;
     let t = side.tabs().tab(tab).filter(|t| t.profile == caller.profile).ok_or_else(|| format!("No tab with id: {tab}."))?;
     let url = t.url.clone();
-    let foreign_extension = (url.starts_with("chrome-extension://") || url.starts_with("moz-extension://")) && !url.starts_with(&ext.origin());
+    let foreign_extension = set::parse_url(&url).is_some() && !url.starts_with(&ext.origin());
     if foreign_extension || !ext.may_access(&url, Some(tab)) {
         return Err(format!("Cannot access contents of url \"{url}\". Extension manifest must request permission to access this host."));
     }

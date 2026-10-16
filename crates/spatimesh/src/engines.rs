@@ -68,6 +68,19 @@ pub fn program() -> Program {
     }
 }
 
+/// How the engine `program` gives extensions their addresses: Chromium (Steam's) keeps
+/// chrome-extension:// for its own extension system, Android's WebView gives only the web's
+/// schemes an origin (docs/spatimesh.md, "Extensions").
+pub fn extension_addresses(program: &Program) -> spatimesh::extensions::set::Addresses {
+    use spatimesh::extensions::set::Addresses;
+    match program {
+        Program::Path(path) if path.file_name().is_some_and(|n| n.to_string_lossy().contains("spatimesh-cef")) => Addresses::Chromium,
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        Program::Launched(_) => Addresses::Https,
+        _ => Addresses::Browsers,
+    }
+}
+
 /// One engine host.
 pub struct Host {
     child: Option<Child>,

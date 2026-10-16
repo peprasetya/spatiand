@@ -4,7 +4,8 @@
 //! changes. The engine puts each content script into the frames it is for, in the extension's
 //! own world where the engine has worlds, each preceded by [`boot`] (the API, set up for that
 //! extension and that kind of context); it puts [`boot`] into the extension's own pages; and it
-//! answers `chrome-extension://<id>/...` and `moz-extension://<id>/...` with [`serve`].
+//! answers the extension's own addresses (`chrome-extension://<id>/...`, `moz-extension://<id>/...`,
+//! or the engine's own: [`Addresses`]) with [`serve`].
 
 use std::path::{Component, Path, PathBuf};
 
@@ -26,12 +27,49 @@ pub struct ExtensionSet {
     pub extensions: Vec<Spec>,
 }
 
+/// How an engine gives extensions' pages and files their addresses: each extension's origin,
+/// which its pages run at and `runtime.getURL` names (docs/spatimesh.md, "Extensions").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Addresses {
+    /// chrome-extension:// for Chrome's, moz-extension:// for Firefox's (WebKit's engines).
+    #[default]
+    Browsers,
+    /// Chromium's own extension system holds chrome-extension://, and lets no page reach an
+    /// extension there that it does not know itself: Chrome's are at spatimesh-extension://
+    /// instead, Firefox's at moz-extension:// (Steam's Chromium).
+    Chromium,
+    /// Only the web's own schemes give a page an origin: every extension is at
+    /// https://<id>.spatimesh-extension.invalid, answered by the engine and never by the network
+    /// (Android's WebView).
+    Https,
+}
+
+/// The scheme of [`Addresses::Chromium`]'s Chrome extensions.
+pub const OWN_SCHEME: &str = "spatimesh-extension";
+
+/// The domain [`Addresses::Https`] puts each extension under.
+pub const HTTPS_DOMAIN: &str = "spatimesh-extension.invalid";
+
+impl Addresses {
+    /// An extension's origin.
+    pub fn origin(self, flavor: Flavor, id: &str) -> String {
+        match (self, flavor) {
+            (Addresses::Https, _) => format!("https://{id}.{HTTPS_DOMAIN}"),
+            (Addresses::Chromium, Flavor::Chrome) => format!("{OWN_SCHEME}://{id}"),
+            (_, Flavor::Chrome) => format!("chrome-extension://{id}"),
+            (_, Flavor::Firefox) => format!("moz-extension://{id}"),
+        }
+    }
+}
+
 /// One extension, as an engine runs it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Spec {
     pub id: String,
     pub root: PathBuf,
     pub flavor: Flavor,
+    /// Its pages' origin, as the engine is to serve them ([`Addresses::origin`]).
+    pub origin: String,
     pub scripts: Vec<Script>,
     /// `web_accessible_resources`: (resources, for pages matching).
     pub web_accessible: Vec<(Vec<String>, Vec<String>)>,
@@ -106,10 +144,12 @@ impl Spec {
 
     /// Its pages' origin, as the engine is to serve them.
     pub fn origin(&self) -> String {
-        match self.flavor {
-            Flavor::Chrome => format!("chrome-extension://{}", self.id),
-            Flavor::Firefox => format!("moz-extension://{}", self.id),
-        }
+        self.origin.clone()
+    }
+
+    /// Its origin's scheme: what the engine answers for it.
+    pub fn scheme(&self) -> &str {
+        self.origin.split("://").next().unwrap_or("")
     }
 
     /// The background page's address, if it has one.
@@ -237,10 +277,19 @@ fn mime_of(path: &str) -> &'static str {
     }
 }
 
-/// An extension URL's id and path (percent-escapes undone; the query and fragment left out).
+/// An extension URL's id and path (percent-escapes undone; the query and fragment left out),
+/// whichever of the [`Addresses`] it is at.
 pub fn parse_url(url: &str) -> Option<(String, String)> {
-    let rest = url.strip_prefix("chrome-extension://").or_else(|| url.strip_prefix("moz-extension://"))?;
-    let (id, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let rest = match ["chrome-extension://", "moz-extension://", "spatimesh-extension://"].iter().find_map(|p| url.strip_prefix(p)) {
+        Some(rest) => rest.to_string(),
+        None => {
+            let rest = url.strip_prefix("https://")?;
+            let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+            let id = host.to_ascii_lowercase().strip_suffix(&format!(".{HTTPS_DOMAIN}"))?.to_string();
+            format!("{id}/{path}")
+        }
+    };
+    let (id, path) = rest.split_once('/').unwrap_or((&rest, ""));
     let path = path.split(['?', '#']).next().unwrap_or("");
     let path = percent_encoding::percent_decode_str(path).decode_utf8().ok()?.into_owned();
     Some((id.to_ascii_lowercase(), path))
@@ -307,6 +356,7 @@ mod tests {
             id: "abcdefghijklmnopabcdefghijklmnop".into(),
             root: root.to_path_buf(),
             flavor: Flavor::Chrome,
+            origin: "chrome-extension://abcdefghijklmnopabcdefghijklmnop".into(),
             scripts: Vec::new(),
             web_accessible: vec![(vec!["img/*".into()], vec!["https://*.example.com/*".into()])],
             background: Some(BACKGROUND_PAGE.into()),
@@ -315,6 +365,24 @@ mod tests {
             page_config: "{}".into(),
             messages: [("color".to_string(), "red".to_string())].into_iter().collect(),
         }
+    }
+
+    #[test]
+    fn each_engines_addresses_are_read_back() {
+        let id = "abcdefghijklmnopabcdefghijklmnop";
+        for addresses in [Addresses::Browsers, Addresses::Chromium, Addresses::Https] {
+            for flavor in [Flavor::Chrome, Flavor::Firefox] {
+                let origin = addresses.origin(flavor, id);
+                assert_eq!(parse_url(&format!("{origin}/a%20b/c.js?x#y")), Some((id.to_string(), "a b/c.js".to_string())), "{origin}");
+                assert_eq!(parse_url(&origin), Some((id.to_string(), String::new())), "{origin}");
+            }
+        }
+        assert_eq!(Addresses::Chromium.origin(Flavor::Chrome, id), format!("spatimesh-extension://{id}"));
+        assert_eq!(Addresses::Chromium.origin(Flavor::Firefox, id), format!("moz-extension://{id}"));
+        assert_eq!(Addresses::Https.origin(Flavor::Firefox, id), format!("https://{id}.spatimesh-extension.invalid"));
+        // The web's own addresses are no extension's.
+        assert_eq!(parse_url("https://example.com/x"), None);
+        assert_eq!(parse_url("https://spatimesh-extension.invalid.example.com/x"), None);
     }
 
     #[test]

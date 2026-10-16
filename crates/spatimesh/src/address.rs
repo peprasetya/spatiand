@@ -72,7 +72,7 @@ impl Typed {
 }
 
 /// Schemes taken as they are typed.
-const SCHEMES: &[&str] = &["http", "https", "file", "about", "data", "view-source", "blob", "ftp", "mailto", "chrome", "chrome-extension", "webkit-extension", "safari-web-extension", "moz-extension"];
+const SCHEMES: &[&str] = &["http", "https", "file", "about", "data", "view-source", "blob", "ftp", "mailto", "chrome", "chrome-extension", "webkit-extension", "safari-web-extension", "moz-extension", "spatimesh-extension"];
 
 /// Top-level domains that are not two letters long (two letters are countries, and are all
 /// taken as domains). Not the whole list: the ones a name is likely to end in.

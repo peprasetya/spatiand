@@ -222,9 +222,22 @@ and stop requests (webRequest, declarativeNetRequest):
 | | worlds for content scripts | to the window | resources | requests |
 |---|---|---|---|---|
 | WebKitGTK | `webkit_user_script_new_for_world` | script message handlers in that world | `webkit_web_context_register_uri_scheme` | content filters (DNR); a web-process extension's `send-request` (blocking webRequest) |
-| Mac (WKWebView) | `WKContentWorld` | `WKScriptMessageHandlerWithReply` | `WKURLSchemeHandler` | `WKContentRuleList` (DNR) |
-| SteamOS (CEF) | none in CEF 126: the page's world, in a closure | a V8 function in the renderer and process messages | a scheme handler factory | the resource request handler (both) |
+| Mac (WKWebView) | `WKContentWorld` (`WKUserScript`s; WebKit's own patterns where its SPI has them) | script message handlers in that world | `WKURLSchemeHandler` | `WKContentRuleList` (DNR) |
+| SteamOS (CEF) | none in CEF 126: the page's world, in a closure | a V8 function in the renderer and process messages | the resource request handler, on the IO thread | the resource request handler (both) |
 | Android | none: the page's world | a JavaScript interface | `shouldInterceptRequest` on a reserved host | `shouldInterceptRequest` (block, not redirect, for subresources) |
+
+**Addresses.** An extension's pages and files are at an origin of its own, which
+`runtime.getURL` names (`extensions::set::Addresses`). WebKit's engines give Chrome's and
+Firefox's own: `chrome-extension://<id>`, `moz-extension://<id>`. Steam's Chromium holds
+`chrome-extension://` for its own extension system, which lets no page reach an extension there
+that it does not know itself (a content script fetching a web-accessible file, an image an
+extension puts into a page), and gives `fetch` only to the schemes a program registers itself:
+there Chrome's extensions are at `spatimesh-extension://<id>`, which SpatiMesh registers (as
+standard, secure, CORS- and fetch-enabled, past pages' CSP), and Firefox's at
+`moz-extension://<id>`. Android's WebView gives no scheme but the web's an origin: there each
+extension is at `https://<id>.spatimesh-extension.invalid`, answered by the engine, never by the
+network. An extension that writes `chrome-extension://` out by hand does not find its own pages
+on SteamOS or Android.
 
 Manifest V3's service worker runs as a background page (as Firefox runs its V3 background
 scripts), with `importScripts` and `self` as a worker has them. Blocking `webRequest` is no part

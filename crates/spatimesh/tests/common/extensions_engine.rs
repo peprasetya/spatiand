@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use spatimesh::engine::{Happened, ProfileSetup, TabId, View};
 use spatimesh::extensions::runtime::{BrowserSide, Runtime};
-use spatimesh::extensions::set::ExtensionSet;
+use spatimesh::extensions::set::{Addresses, ExtensionSet};
 use spatimesh::extensions::storage::{self, Area, Session};
 use spatimesh::extensions::install;
 use spatimesh::store::Store;
@@ -276,10 +276,11 @@ fn skip(required: bool, why: &str) {
     eprintln!("{why}; not tested here");
 }
 
-/// Both extensions on the engine program at `program`. Where there is no display, or the engine
-/// cannot start, this says so and passes -- unless the engine is `required` (as CI requires
-/// CEF's and the Mac's). A Mac's session has its window server, and no DISPLAY.
-pub fn run(program: &str, required: bool) {
+/// Both extensions on the engine program at `program`, which gives them their `addresses`.
+/// Where there is no display, or the engine cannot start, this says so and passes -- unless the
+/// engine is `required` (as CI requires CEF's and the Mac's). A Mac's session has its window
+/// server, and no DISPLAY.
+pub fn run(program: &str, addresses: Addresses, required: bool) {
     if cfg!(not(target_os = "macos")) && std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
         skip(required, "no display: extensions are not tested here (run under xvfb-run)");
         return;
@@ -325,6 +326,7 @@ pub fn run(program: &str, required: bool) {
     }
     w.tabs.new_window("default");
     let mut rt = Runtime::new(store.clone());
+    rt.set_addresses(addresses);
     rt.engine_started(&mut w, "default");
     rt.startup_done("default");
 

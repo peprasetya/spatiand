@@ -233,7 +233,9 @@ impl Browser {
             icons: HashMap::new(),
             latest_buffer: HashMap::new(),
         };
-        browser.extensions = Some(Runtime::new(browser.store.clone()));
+        let mut extensions = Runtime::new(browser.store.clone());
+        extensions.set_addresses(crate::engines::extension_addresses(&browser.program));
+        browser.extensions = Some(extensions);
         if let Some(l) = browser.listener.as_ref() {
             use std::os::fd::AsRawFd;
             let fd = l.as_raw_fd();

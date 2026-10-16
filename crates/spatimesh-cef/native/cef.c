@@ -1077,7 +1077,8 @@ static void CEF_CALLBACK on_download_updated(cef_download_handler_t *self, cef_b
  * keeps -- the page never sees either. The extension's own pages get their API as globals. The
  * set reaches each page's process with its browser (`extra_info`) and as a message when it
  * changes; calls come back as process messages; code is run in a frame when the window asks.
- * chrome-extension:// and moz-extension:// are served from the extension's folder by the shim. */
+ * The extensions' addresses -- spatimesh-extension:// for Chrome's, moz-extension:// for
+ * Firefox's -- are served from the extension's folder by the shim. */
 
 typedef int (*ServeFn)(const char *url, const char *initiator, const char **mime, unsigned char **bytes, size_t *len);
 typedef void (*ServeFreeFn)(unsigned char *bytes, size_t len);
@@ -1333,10 +1334,10 @@ static int CEF_CALLBACK on_process_message(cef_client_t *self, cef_browser_t *br
     return handled;
 }
 
-/* -- the extensions' files: chrome-extension:// and moz-extension://, on Chromium's IO thread -- */
+/* -- the extensions' files: spatimesh-extension:// and moz-extension://, on Chromium's IO thread -- */
 
 static int is_extension_url(const char *url) {
-    return strncmp(url, "chrome-extension://", 19) == 0 || strncmp(url, "moz-extension://", 16) == 0;
+    return strncmp(url, "spatimesh-extension://", 22) == 0 || strncmp(url, "moz-extension://", 16) == 0;
 }
 
 /* One file being given to Chromium. */
@@ -1501,6 +1502,13 @@ static cef_resource_request_handler_t *CEF_CALLBACK get_resource_request_handler
         COUNTED(a, Asked, sizeof(cef_resource_request_handler_t));
         a->handler.get_resource_handler = asked_get_resource_handler;
         a->initiator = request_initiator && request_initiator->length ? utf8_of(request_initiator) : NULL;
+        /* A navigation no page started (the window opened it: a background, a popup, a typed
+         * address) comes from an opaque origin, "null": the browser's own, which may have any
+         * of an extension's pages. */
+        if (a->initiator && is_navigation && strcmp(a->initiator, "null") == 0) {
+            free(a->initiator);
+            a->initiator = NULL;
+        }
         out = &a->handler;
     }
     free(url);
@@ -1510,16 +1518,22 @@ static cef_resource_request_handler_t *CEF_CALLBACK get_resource_request_handler
     return out;
 }
 
-/* Firefox's extensions' scheme, known to every process as a standard one (Chromium knows
- * chrome-extension:// itself). */
+/* The extensions' schemes, known to every process as standard, secure ones that pages may
+ * fetch from and whose files no page's CSP keeps out, as Chrome's chrome-extension:// is.
+ * Chrome's extensions are at spatimesh-extension://: Chromium's own extension system holds
+ * chrome-extension:// and lets no page reach an extension it does not know there
+ * (spatimesh::extensions::set::Addresses). */
 static void CEF_CALLBACK on_register_schemes(cef_app_t *self, cef_scheme_registrar_t *registrar) {
-    cef_string_t name;
-    memset(&name, 0, sizeof name);
-    set_text(&name, "moz-extension");
-    registrar->add_custom_scheme(registrar, &name,
-                                 CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE | CEF_SCHEME_OPTION_CORS_ENABLED |
-                                     CEF_SCHEME_OPTION_FETCH_ENABLED);
-    clear_text(&name);
+    const char *schemes[] = {"spatimesh-extension", "moz-extension"};
+    for (size_t i = 0; i < sizeof schemes / sizeof *schemes; i++) {
+        cef_string_t name;
+        memset(&name, 0, sizeof name);
+        set_text(&name, schemes[i]);
+        registrar->add_custom_scheme(registrar, &name,
+                                     CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE | CEF_SCHEME_OPTION_CORS_ENABLED |
+                                         CEF_SCHEME_OPTION_FETCH_ENABLED | CEF_SCHEME_OPTION_CSP_BYPASSING);
+        clear_text(&name);
+    }
 }
 
 /* -- the pages' processes -- */
@@ -1551,6 +1565,7 @@ static Later *later;
 
 static cef_v8handler_t v8_handler;
 static cef_render_process_handler_t render_process_handler;
+static cef_load_handler_t renderer_load_handler;
 
 static cef_v8value_t *v8_text(const char *utf8) {
     cef_string_t s;
@@ -2037,6 +2052,24 @@ static int CEF_CALLBACK on_renderer_message(cef_render_process_handler_t *self, 
     return handled;
 }
 
+/* A frame's new page, committed and not yet loaded: its page world made now, so that the content
+ * scripts that want it are put in from the start. Blink makes a page's world only when script
+ * first runs there, which on a page with no scripts of its own is never. */
+static void CEF_CALLBACK renderer_load_start(cef_load_handler_t *self, cef_browser_t *browser, cef_frame_t *frame,
+                                             cef_transition_type_t transition) {
+    if (renderer_set && renderer_set->get_size(renderer_set) && frame) {
+        cef_v8context_t *context = frame->get_v8context(frame);
+        trace("a new page's world %s", context ? "made" : "not made");
+        RELEASE(context);
+    }
+    RELEASE(frame);
+    RELEASE(browser);
+}
+
+static cef_load_handler_t *CEF_CALLBACK get_renderer_load_handler(cef_render_process_handler_t *self) {
+    return &renderer_load_handler;
+}
+
 static cef_render_process_handler_t *CEF_CALLBACK get_render_process_handler(cef_app_t *self) {
     return &render_process_handler;
 }
@@ -2057,6 +2090,10 @@ static void make_handlers(void) {
     render_process_handler.on_context_created = on_context_created;
     render_process_handler.on_context_released = on_context_released;
     render_process_handler.on_process_message_received = on_renderer_message;
+    render_process_handler.get_load_handler = get_renderer_load_handler;
+
+    kept(&renderer_load_handler.base, sizeof renderer_load_handler);
+    renderer_load_handler.on_load_start = renderer_load_start;
 
     kept(&v8_handler.base, sizeof v8_handler);
     v8_handler.execute = v8_execute;

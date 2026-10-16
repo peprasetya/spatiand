@@ -9,5 +9,5 @@ mod common;
 
 #[test]
 fn chromes_and_firefoxs_extensions_run() {
-    common::run(env!("CARGO_BIN_EXE_spatimesh-webkitgtk"), false);
+    common::run(env!("CARGO_BIN_EXE_spatimesh-webkitgtk"), spatimesh::extensions::set::Addresses::Browsers, false);
 }

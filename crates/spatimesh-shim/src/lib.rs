@@ -12,7 +12,6 @@ use std::os::raw::{c_char, c_int};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use spatimesh::extensions::install::Flavor;
 use spatimesh::extensions::set::{self, ExtensionSet, Script};
 
 use spatimesh::engine::{
@@ -124,7 +123,8 @@ fn c_mime(mime: &str) -> &'static CStr {
     }
 }
 
-/// What an engine's handler for `chrome-extension://` and `moz-extension://` asks: a file of an
+/// What an engine's handler for extensions' addresses (`chrome-extension://`, `moz-extension://`,
+/// `spatimesh-extension://`) asks: a file of an
 /// extension's, for the page `initiator` (`set::serve`). The bytes are the caller's to give back
 /// to [`serve_free`].
 unsafe extern "C" fn serve(url: *const c_char, initiator: *const c_char, mime: *mut *const c_char, bytes: *mut *mut u8, len: *mut usize) -> c_int {
@@ -441,11 +441,7 @@ impl Engine for Shim {
         let bridge = text(unsafe { spatimesh_ext_bridge() });
         unsafe { spatimesh_ext_clear(self.raw) };
         for spec in &extensions.extensions {
-            let scheme = match spec.flavor {
-                Flavor::Chrome => "chrome-extension",
-                Flavor::Firefox => "moz-extension",
-            };
-            let (id, scheme, world) = (c(&spec.id), c(scheme), c(&spec.world()));
+            let (id, scheme, world) = (c(&spec.id), c(spec.scheme()), c(&spec.world()));
             // An engine with worlds of the extensions' own gives a bridge to put the API on
             // their globals with; one without gives none, and is handed the API as functions.
             let (content, page) = if bridge.is_empty() {
