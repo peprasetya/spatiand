@@ -206,13 +206,21 @@ One place, the folder every machine shares (`~/.config/spatiand/apps`, synchroni
 linked Spatiand and spatiand-host by `spatiand-sync`, newest file winning, deletions remembered):
 
 ```text
-apps/spatimesh/settings.json                       search engine, home page, developer mode, zoom
+apps/spatimesh/settings/<name>.json                one file per setting: search, custom_search,
+                                                   home, zoom, developer
 apps/spatimesh/profiles/<id>/profile.json          name, colour
 apps/spatimesh/profiles/<id>/bookmarks/<id>.json   one file per bookmark or folder
 ```
 
-A file per bookmark, so that two machines adding bookmarks while apart both keep theirs; a moved
-or renamed one is its own file, newest wins. Never in it, never synced, thrown away freely:
+A file per bookmark and per setting, so that two machines changing different ones while apart
+both keep theirs; the same one changed on both: the newest wins. A setting is written only when
+it changes, and the first profile, which every machine makes for itself, is written as if long
+ago, so that a version of it from another machine (renamed, say) always wins over it.
+`crates/spatimesh/tests/sync.rs` runs two machines through `spatiand-sync` itself: profiles,
+bookmarks and settings changed apart end up the same on both, deletions included, and website
+data and cache never cross. A running SpatiMesh notices within three seconds what the
+synchroniser brought (the folder's newest change) and reloads it. Never in it, never synced,
+thrown away freely:
 website data (cookies, storage: an engine's own format, and a login is a machine's own),
 `~/.local/share/spatiand/spatimesh/<profile>`; cache, `~/.cache/spatiand/spatimesh/<profile>`;
 downloads in progress, in the cache until finished; history and extensions, in `local/`. The

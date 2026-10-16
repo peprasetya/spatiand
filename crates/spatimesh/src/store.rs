@@ -84,6 +84,19 @@ impl Store {
         write_json(&self.path(true, name), value)
     }
 
+    /// A shared file made because there was none, such as the first profile: written as if
+    /// long ago, so that the synchroniser takes any version of it from another machine over
+    /// this one. Left alone if it is there.
+    pub fn write_default<T: Serialize>(&self, name: &str, value: &T) -> Result<(), String> {
+        let path = self.path(true, name);
+        if path.exists() {
+            return Ok(());
+        }
+        write_json(&path, value)?;
+        let long_ago = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1);
+        std::fs::File::options().write(true).open(&path).and_then(|f| f.set_modified(long_ago)).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
     /// A shared file gone; synchronised as a deletion.
     pub fn remove(&self, name: &str) {
         let path = self.path(true, name);

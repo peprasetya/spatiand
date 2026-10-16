@@ -51,7 +51,8 @@ pub fn list(store: &Store) -> Vec<Profile> {
         .collect();
     if found.is_empty() {
         let first = Profile { id: FIRST.to_string(), name: "Personal".to_string(), colour: COLOURS[0], created: 0 };
-        if let Err(e) = store.write(&file(FIRST), &first) {
+        // Every machine makes this one on its own: another's, renamed perhaps, wins over it.
+        if let Err(e) = store.write_default(&file(FIRST), &first) {
             log::warn!("the first profile could not be written: {e}");
         }
         found.push(first);

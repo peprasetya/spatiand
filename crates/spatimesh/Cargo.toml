@@ -18,3 +18,8 @@ env_logger.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 libc = "0.2"
+
+[dev-dependencies]
+# What keeps Spatiand's applications' settings the same on every machine, for the test that
+# SpatiMesh's survive it (tests/sync.rs).
+spatiand-sync = { path = "../spatiand-sync" }
