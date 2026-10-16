@@ -354,7 +354,7 @@ function __spatimeshExtBoot(config, post) {
     onMessageExternal: makeEvent('runtime.onMessageExternal'),
     onConnectExternal: makeEvent('runtime.onConnectExternal')
   };
-  Object.defineProperty(runtime, 'lastError', { enumerable: true, get: function () { lastErrorChecked = true; return lastError || undefined; } });
+  Object.defineProperty(runtime, 'lastError', { enumerable: true, configurable: true, get: function () { lastErrorChecked = true; return lastError || undefined; } });
 
   var i18n = {
     getMessage: getMessage,
@@ -549,7 +549,7 @@ function __spatimeshExtBoot(config, post) {
   globalThis.chrome = chromeApi;
   if (config.flavor === 'firefox') {
     var b = promised(chromeApi);
-    Object.defineProperty(b.runtime, 'lastError', { get: function () { lastErrorChecked = true; return lastError || undefined; } });
+    Object.defineProperty(b.runtime, 'lastError', { enumerable: true, configurable: true, get: function () { lastErrorChecked = true; return lastError || undefined; } });
     if (chromeApi.contextMenus && !b.menus) b.menus = b.contextMenus;
     globalThis.browser = b;
   }

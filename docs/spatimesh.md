@@ -317,7 +317,10 @@ private profile writes nothing at all.
 | Sync | through spatiand-sync, as Spatiand's other settings | two machines through spatiand-sync in a test (`tests/sync.rs`) | two real machines linked |
 | Media through Spatiand's FFmpeg | being built (above) | -- | -- |
 | Sound placed per window | **no** | -- | each engine plays its pages' sound itself, not placed at the tab's window (at most where Spatiand places SpatiMesh as a whole) |
-| Extensions | being built: SpatiMesh's own runtime (above) | -- | -- |
+| Extensions: the runtime (`extensions/`) | yes: manifest V2/V3, install (folder, .zip, .crx, .xpi), messages and ports, storage, tabs, windows, scripting, action, alarms, notifications, permissions, management, menus, commands, offscreen, bookmarks, webNavigation events; declarativeNetRequest's rules kept, not applied | unit tests against a stand-in browser; api.js run in Node for both flavours and both kinds of context (`tests/api_js.rs`) | -- |
+| Extensions on WebKitGTK | yes: content scripts in each extension's own world (WebKit's patterns, a guard where they cannot say exactly), its pages' API, `chrome-extension://` and `moz-extension://` served, code run in a tab | a Chrome MV3 extension (service worker, storage, tabs.query, a web-accessible file, scripting.executeScript) and a Firefox MV2 one (background scripts, promises, its add-on id) run end to end (`spatimesh-webkitgtk/tests/extensions.rs`) | **top frame only**: content scripts in other frames run and can call, but answers and events reach only the top frame's (WebKitGTK runs outside code in no other frame; a web-process extension would); no blocking webRequest; declarativeNetRequest not applied |
+| Extensions in the window | yes: the toolbar's buttons and badges, popups over the window, the menu's extensions (on/off, load, reload, remove), `--load-extension` | builds; not exercised in the compositor end to end | by hand: load an extension from the menu, press its button, its popup, its badge |
+| Extensions on SteamOS (CEF), Android, the Mac | **no**: their bridges are still to be built (the engines take the set and run nothing) | -- | -- |
 
 ## Build order
 

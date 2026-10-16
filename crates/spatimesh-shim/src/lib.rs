@@ -9,7 +9,11 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
+use std::sync::Mutex;
 use std::time::Duration;
+
+use spatimesh::extensions::install::Flavor;
+use spatimesh::extensions::set::{self, ExtensionSet, Script};
 
 use spatimesh::engine::{
     Button, Canvas, Choice, Cursor, DialogKind, Engine, Format, Happened, KeyPress, Modifiers, ProfileSetup, Rect, TabId, View,
@@ -62,6 +66,162 @@ extern "C" {
     fn spatimesh_next_event(e: *mut Raw, out: *mut Event) -> c_int;
     fn spatimesh_damage(e: *mut Raw, id: u64, x: *mut c_int, y: *mut c_int, w: *mut c_int, h: *mut c_int) -> c_int;
     fn spatimesh_copy(e: *mut Raw, id: u64, pixels: *mut u8, width: c_int, height: c_int) -> c_int;
+    // Extensions (docs/spatimesh.md, "Extensions").
+    fn spatimesh_ext_server(serve: ServeFn, free_bytes: ServeFreeFn);
+    fn spatimesh_ext_bridge() -> *const c_char;
+    fn spatimesh_ext_clear(e: *mut Raw);
+    fn spatimesh_ext_add(e: *mut Raw, id: *const c_char, scheme: *const c_char, world: *const c_char, content_boot: *const c_char, page_boot: *const c_char);
+    fn spatimesh_ext_entry(
+        e: *mut Raw,
+        id: *const c_char,
+        run_at: c_int,
+        all_frames: c_int,
+        main_world: c_int,
+        allow: *const c_char,
+        block: *const c_char,
+        guard: *const c_char,
+        exact: c_int,
+    );
+    fn spatimesh_ext_js(e: *mut Raw, code: *const c_char);
+    fn spatimesh_ext_css(e: *mut Raw, code: *const c_char);
+    fn spatimesh_ext_done(e: *mut Raw);
+    fn spatimesh_run_script(e: *mut Raw, id: u64, world: *const c_char, all_frames: c_int, code: *const c_char, request: u64, boot: c_int);
+}
+
+type ServeFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut *const c_char, *mut *mut u8, *mut usize) -> c_int;
+type ServeFreeFn = unsafe extern "C" fn(*mut u8, usize);
+
+/// The profile's extensions as the window last gave them: what their addresses serve (one
+/// engine to a process).
+static EXTENSIONS: Mutex<Option<ExtensionSet>> = Mutex::new(None);
+
+/// A type for C, with the charset text is in: extensions' files are UTF-8.
+fn c_mime(mime: &str) -> &'static CStr {
+    match mime {
+        "text/html" => c"text/html; charset=utf-8",
+        "text/javascript" => c"text/javascript; charset=utf-8",
+        "text/css" => c"text/css; charset=utf-8",
+        "application/json" => c"application/json; charset=utf-8",
+        "text/plain" => c"text/plain; charset=utf-8",
+        "application/xml" => c"application/xml; charset=utf-8",
+        "image/svg+xml" => c"image/svg+xml",
+        "image/png" => c"image/png",
+        "image/jpeg" => c"image/jpeg",
+        "image/gif" => c"image/gif",
+        "image/webp" => c"image/webp",
+        "image/x-icon" => c"image/x-icon",
+        "font/woff" => c"font/woff",
+        "font/woff2" => c"font/woff2",
+        "font/ttf" => c"font/ttf",
+        "font/otf" => c"font/otf",
+        "application/wasm" => c"application/wasm",
+        "audio/mpeg" => c"audio/mpeg",
+        "audio/ogg" => c"audio/ogg",
+        "audio/wav" => c"audio/wav",
+        "video/mp4" => c"video/mp4",
+        "video/webm" => c"video/webm",
+        _ => c"application/octet-stream",
+    }
+}
+
+/// What an engine's handler for `chrome-extension://` and `moz-extension://` asks: a file of an
+/// extension's, for the page `initiator` (`set::serve`). The bytes are the caller's to give back
+/// to [`serve_free`].
+unsafe extern "C" fn serve(url: *const c_char, initiator: *const c_char, mime: *mut *const c_char, bytes: *mut *mut u8, len: *mut usize) -> c_int {
+    let (url, initiator) = (text(url), text(initiator));
+    let result = match EXTENSIONS.lock() {
+        Ok(guard) => match guard.as_ref() {
+            Some(extensions) => set::serve(extensions, &url, Some(initiator.as_str()).filter(|i| !i.is_empty())),
+            None => Err(404),
+        },
+        Err(_) => Err(500),
+    };
+    let (status, kind, body) = match result {
+        Ok(resource) => (200, resource.mime, resource.bytes),
+        Err(status) => (status as c_int, "text/plain", Vec::new()),
+    };
+    let body = body.into_boxed_slice();
+    *mime = c_mime(kind).as_ptr();
+    *len = body.len();
+    *bytes = Box::into_raw(body) as *mut u8;
+    status
+}
+
+unsafe extern "C" fn serve_free(bytes: *mut u8, len: usize) {
+    if !bytes.is_null() {
+        drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(bytes, len)));
+    }
+}
+
+/// One of Chrome's match patterns as WebKit's (`webkit_user_script_new`'s lists), and whether it
+/// says exactly the same: WebKit matches no port, and a path without its query.
+fn webkit_pattern(pattern: &str) -> Option<(Vec<String>, bool)> {
+    if pattern == "<all_urls>" {
+        return Some((["http://*/*", "https://*/*", "file:///*", "ftp://*/*"].map(String::from).to_vec(), true));
+    }
+    let (scheme, rest) = pattern.split_once("://")?;
+    let slash = rest.find('/')?;
+    let (authority, path) = (&rest[..slash], &rest[slash..]);
+    let mut exact = true;
+    let host = if authority.starts_with('[') {
+        exact = false;
+        "*"
+    } else {
+        match authority.rsplit_once(':') {
+            Some((host, port)) => {
+                exact &= port == "*";
+                host
+            }
+            None => authority,
+        }
+    };
+    let path = match path.split_once('?') {
+        Some((before, _)) => {
+            exact = false;
+            format!("{before}*")
+        }
+        None => {
+            // Chrome's "/" is that page without a query; WebKit's takes any query too.
+            exact &= path.ends_with('*');
+            path.to_string()
+        }
+    };
+    let schemes: Vec<&str> = if scheme == "*" { vec!["http", "https"] } else { vec![scheme] };
+    Some((schemes.into_iter().map(|s| if s == "file" { format!("file://{path}") } else { format!("{s}://{host}{path}") }).collect(), exact))
+}
+
+/// A content script's pages as WebKit's allow and block lists -- the allow list never takes
+/// fewer pages than Chrome would, the block list never more -- and whether they are exact.
+fn webkit_lists(script: &Script) -> (Vec<String>, Vec<String>, bool) {
+    let mut exact = script.include_globs.is_empty() && script.exclude_globs.is_empty();
+    let mut allow = Vec::new();
+    for m in &script.matches {
+        match webkit_pattern(m) {
+            Some((patterns, same)) => {
+                allow.extend(patterns);
+                exact &= same;
+            }
+            None => {
+                allow.extend(["http://*/*", "https://*/*"].map(String::from));
+                exact = false;
+            }
+        }
+    }
+    let mut block = Vec::new();
+    for x in &script.exclude_matches {
+        match webkit_pattern(x) {
+            Some((patterns, true)) => block.extend(patterns),
+            _ => exact = false,
+        }
+    }
+    (allow, block, exact)
+}
+
+/// JavaScript that is true in a frame a content script wants, from its regular expressions.
+fn guard(script: &Script) -> String {
+    let quoted = |s: &str| serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into());
+    let (include, globs, exclude) = (quoted(&script.include), quoted(&script.globs), quoted(&script.exclude));
+    format!("(function(u){{return new RegExp({include}).test(u)&&({globs}===''||new RegExp({globs}).test(u))&&!({exclude}!==''&&new RegExp({exclude}).test(u));}})(location.href)")
 }
 
 pub struct Shim {
@@ -105,6 +265,7 @@ impl Shim {
         if raw.is_null() {
             return Err("the engine could not start (for WebKitGTK: no display to connect to)".into());
         }
+        unsafe { spatimesh_ext_server(serve, serve_free) };
         Ok(Shim { raw, views: HashMap::new() })
     }
 
@@ -161,6 +322,8 @@ impl Shim {
                 message: text(e.text),
                 text: text(e.text2),
             },
+            13 => Happened::Extension { tab, json: text(e.text) },
+            14 => Happened::ScriptResult { tab, request: e.number as u64, result: if e.a != 0 { Ok(text(e.text)) } else { Err(text(e.text)) } },
             _ => return None,
         })
     }
@@ -269,6 +432,62 @@ impl Engine for Shim {
 
     fn wake_on(&mut self, fd: std::os::fd::RawFd) {
         unsafe { spatimesh_watch(self.raw, fd) };
+    }
+
+    fn set_extensions(&mut self, extensions: &ExtensionSet) {
+        if let Ok(mut kept) = EXTENSIONS.lock() {
+            *kept = Some(extensions.clone());
+        }
+        let bridge = text(unsafe { spatimesh_ext_bridge() });
+        unsafe { spatimesh_ext_clear(self.raw) };
+        for spec in &extensions.extensions {
+            let scheme = match spec.flavor {
+                Flavor::Chrome => "chrome-extension",
+                Flavor::Firefox => "moz-extension",
+            };
+            let (id, scheme, world) = (c(&spec.id), c(scheme), c(&spec.world()));
+            let content = c(&set::boot(&bridge, &spec.content_config));
+            let page = c(&set::boot(&bridge, &spec.page_config));
+            unsafe { spatimesh_ext_add(self.raw, id.as_ptr(), scheme.as_ptr(), world.as_ptr(), content.as_ptr(), page.as_ptr()) };
+            for script in &spec.scripts {
+                let (allow, block, exact) = webkit_lists(script);
+                let (allow, block, check) = (c(&allow.join("\n")), c(&block.join("\n")), c(&guard(script)));
+                let run_at = match script.run_at.as_str() {
+                    "document_start" => 0,
+                    "document_end" => 1,
+                    _ => 2,
+                };
+                unsafe {
+                    spatimesh_ext_entry(
+                        self.raw,
+                        id.as_ptr(),
+                        run_at,
+                        script.all_frames as c_int,
+                        script.main_world as c_int,
+                        allow.as_ptr(),
+                        block.as_ptr(),
+                        check.as_ptr(),
+                        exact as c_int,
+                    )
+                };
+                for (name, code) in &script.js {
+                    let code = c(&format!("{code}\n//# sourceURL={}/{}", spec.origin(), name.trim_start_matches('/')));
+                    unsafe { spatimesh_ext_js(self.raw, code.as_ptr()) };
+                }
+                for (_, css) in &script.css {
+                    // Written with __MSG_name__, as in Chrome.
+                    let css = spatimesh::extensions::locale::substitute(css, &|name| spec.messages.get(&name.to_lowercase()).cloned());
+                    let css = c(&css);
+                    unsafe { spatimesh_ext_css(self.raw, css.as_ptr()) };
+                }
+            }
+        }
+        unsafe { spatimesh_ext_done(self.raw) };
+    }
+
+    fn run_script(&mut self, tab: TabId, world: &str, all_frames: bool, code: &str, request: u64, boot: bool) {
+        let (world, code) = (c(world), c(code));
+        unsafe { spatimesh_run_script(self.raw, tab, world.as_ptr(), all_frames as c_int, code.as_ptr(), request, boot as c_int) };
     }
 
     fn pump(&mut self, wait: Duration, canvas: &mut dyn Canvas) -> Vec<Happened> {

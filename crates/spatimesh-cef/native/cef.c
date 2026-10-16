@@ -211,6 +211,8 @@ enum {
     EV_FAILED,
     EV_CHOOSE,
     EV_DIALOG,
+    EV_EXTENSION,
+    EV_SCRIPT_RESULT,
 };
 
 typedef struct {
@@ -1424,6 +1426,28 @@ void spatimesh_scroll(Engine *e, uint64_t id, double x, double y, double dx, dou
     /* SpatiMesh's down is Chromium's negative. */
     host->send_mouse_wheel_event(host, &ev, (int)lround(-dx), (int)lround(-dy));
     RELEASE(host);
+}
+
+/* Extensions (docs/spatimesh.md, "Extensions"): CEF's bridge is still to be built; until it is,
+ * a profile's extensions are taken and not run here, and code asked to run is answered so. */
+typedef int (*ServeFn)(const char *url, const char *initiator, const char **mime, unsigned char **bytes, size_t *len);
+typedef void (*ServeFreeFn)(unsigned char *bytes, size_t len);
+void spatimesh_ext_server(ServeFn serve, ServeFreeFn free_bytes) {
+    (void)serve;
+    (void)free_bytes;
+}
+const char *spatimesh_ext_bridge(void) {
+    return "(function(){return function(s){};})()";
+}
+void spatimesh_ext_clear(Engine *e) {}
+void spatimesh_ext_add(Engine *e, const char *id, const char *scheme, const char *world, const char *content_boot, const char *page_boot) {}
+void spatimesh_ext_entry(Engine *e, const char *id, int run_at, int all_frames, int main_world, const char *allow, const char *block, const char *guard, int exact) {}
+void spatimesh_ext_js(Engine *e, const char *code) {}
+void spatimesh_ext_css(Engine *e, const char *code) {}
+void spatimesh_ext_done(Engine *e) {}
+void spatimesh_run_script(Engine *e, uint64_t id, const char *world, int all_frames, const char *code, uint64_t request, int boot) {
+    if (request)
+        push(EV_SCRIPT_RESULT, id, (double)request, 0, 0, "Extensions do not run in this engine yet", NULL);
 }
 
 /* Windows' number for a key, which CEF's key events are told in, from Linux's. */

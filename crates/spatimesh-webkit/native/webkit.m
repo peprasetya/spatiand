@@ -34,6 +34,8 @@ enum {
     EV_FAILED,
     EV_CHOOSE,
     EV_DIALOG,
+    EV_EXTENSION,
+    EV_SCRIPT_RESULT,
 };
 
 typedef struct {
@@ -956,4 +958,24 @@ void spatimesh_run(Engine *e, uint64_t id, const char *script) {
         if (tab && script)
             [tab.view evaluateJavaScript:[NSString stringWithUTF8String:script] completionHandler:nil];
     }
+}
+
+/* Extensions (docs/spatimesh.md, "Extensions"): the Mac's bridge (WKContentWorld, script
+ * message handlers, a scheme handler) is still to be built; until it is, a profile's extensions
+ * are taken and not run here, and code asked to run is answered so. */
+typedef int (*ServeFn)(const char *url, const char *initiator, const char **mime, unsigned char **bytes, size_t *len);
+typedef void (*ServeFreeFn)(unsigned char *bytes, size_t len);
+void spatimesh_ext_server(ServeFn serve, ServeFreeFn free_bytes) {}
+const char *spatimesh_ext_bridge(void) {
+    return "(function(){return function(s){};})()";
+}
+void spatimesh_ext_clear(Engine *e) {}
+void spatimesh_ext_add(Engine *e, const char *id, const char *scheme, const char *world, const char *content_boot, const char *page_boot) {}
+void spatimesh_ext_entry(Engine *e, const char *id, int run_at, int all_frames, int main_world, const char *allow, const char *block, const char *guard, int exact) {}
+void spatimesh_ext_js(Engine *e, const char *code) {}
+void spatimesh_ext_css(Engine *e, const char *code) {}
+void spatimesh_ext_done(Engine *e) {}
+void spatimesh_run_script(Engine *e, uint64_t id, const char *world, int all_frames, const char *code, uint64_t request, int boot) {
+    if (request)
+        push(e, EV_SCRIPT_RESULT, id, (double)request, 0, 0, @"Extensions do not run in this engine yet", nil);
 }

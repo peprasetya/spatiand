@@ -12,3 +12,4 @@ description = "SpatiMesh's engine interface over the C half every engine program
 [dependencies]
 spatimesh = { path = "../spatimesh" }
 spatiand-app = { path = "../spatiand-app" }
+serde_json.workspace = true

@@ -16,6 +16,7 @@
 #include <gdk/gdkx.h>
 #endif
 #include <webkit2/webkit2.h>
+#include <libsoup/soup.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -32,6 +33,8 @@ enum {
     EV_FAILED,
     EV_CHOOSE,
     EV_DIALOG,
+    EV_EXTENSION,
+    EV_SCRIPT_RESULT,
 };
 
 typedef struct {
@@ -62,7 +65,37 @@ typedef struct {
     guint buttons;
     int cursor;
     int loading;
+    /* The extensions' worlds a message handler is registered in, for this tab's view. */
+    GPtrArray *worlds;
+    int main_handler;
 } Tab;
+
+/* One extension, as the window gave it (crates/spatimesh-shim): its scheme, its content
+ * scripts' world, and the code that sets its API up in a content script's world and in its
+ * own pages. */
+typedef struct {
+    char *id;
+    char *scheme;
+    char *world;
+    char *content_boot;
+    char *page_boot;
+} Ext;
+
+/* One content-script entry of an extension's: when, where, for which pages (WebKit's own
+ * patterns: allow NULL for every page), and its files' code. `guard` is JavaScript that is
+ * true where the entry is wanted, for what the patterns cannot say exactly (`exact` 0). */
+typedef struct {
+    Ext *ext;
+    int run_at;
+    int all_frames;
+    int main_world;
+    char **allow;
+    char **block;
+    char *guard;
+    int exact;
+    GPtrArray *js;
+    GPtrArray *css;
+} Entry;
 
 typedef struct Engine {
     WebKitWebContext *context;
@@ -72,6 +105,9 @@ typedef struct Engine {
     MeshEvent current;
     int woken, timed_out;
     guint watch;
+    /* The profile's extensions, and their content scripts. */
+    GPtrArray *exts;
+    GPtrArray *entries;
 } Engine;
 
 static guint32 now_ms(void) {
@@ -284,6 +320,8 @@ static void free_tab(Tab *t) {
         webkit_script_dialog_unref(t->dialog);
     }
     gtk_widget_destroy(t->window);
+    if (t->worlds)
+        g_ptr_array_unref(t->worlds);
     g_free(t);
 }
 
@@ -291,6 +329,297 @@ const char *spatimesh_version(void) {
     static char version[64];
     g_snprintf(version, sizeof version, "WebKitGTK %u.%u.%u", webkit_get_major_version(), webkit_get_minor_version(), webkit_get_micro_version());
     return version;
+}
+
+/* ---- extensions (docs/spatimesh.md, "Extensions") ---------------------------------------- */
+
+/* The window's runtime answers everything; here are only the bridge (a script message handler
+ * named spatimeshExt, in each extension's own world and in the pages' world), the content
+ * scripts and style sheets as WebKit's user scripts and style sheets, the extensions' files
+ * (served by the Rust side, crates/spatimesh-shim), and code run in a tab when asked. */
+
+/* What answers chrome-extension:// and moz-extension://: the shim's, handed over at start. */
+typedef int (*ServeFn)(const char *url, const char *initiator, const char **mime, unsigned char **bytes, size_t *len);
+typedef void (*ServeFreeFn)(unsigned char *bytes, size_t len);
+static ServeFn serve_fn;
+static ServeFreeFn serve_free_fn;
+
+void spatimesh_ext_server(ServeFn serve, ServeFreeFn free_bytes) {
+    serve_fn = serve;
+    serve_free_fn = free_bytes;
+}
+
+/* What a context's api.js hands its calls to: the handler in its own world. */
+const char *spatimesh_ext_bridge(void) {
+    return "(function(){var h=window.webkit.messageHandlers.spatimeshExt;return function(s){h.postMessage(s);};})()";
+}
+
+static void on_scheme(WebKitURISchemeRequest *request, gpointer data) {
+    const char *uri = webkit_uri_scheme_request_get_uri(request);
+    /* Who asks: the page whose request it is, as its headers say, or the tab's page. */
+    const char *initiator = NULL;
+    SoupMessageHeaders *headers = webkit_uri_scheme_request_get_http_headers(request);
+    if (headers) {
+        initiator = soup_message_headers_get_one(headers, "Referer");
+        if (!initiator)
+            initiator = soup_message_headers_get_one(headers, "Origin");
+    }
+    WebKitWebView *view = webkit_uri_scheme_request_get_web_view(request);
+    if (!initiator && view)
+        initiator = webkit_web_view_get_uri(view);
+    const char *mime = "text/plain";
+    unsigned char *bytes = NULL;
+    size_t len = 0;
+    int status = serve_fn ? serve_fn(uri, initiator ? initiator : "", &mime, &bytes, &len) : 404;
+    GBytes *body = g_bytes_new(bytes, len);
+    if (serve_free_fn)
+        serve_free_fn(bytes, len);
+    GInputStream *stream = g_memory_input_stream_new_from_bytes(body);
+    WebKitURISchemeResponse *response = webkit_uri_scheme_response_new(stream, (gint64)len);
+    webkit_uri_scheme_response_set_status(response, status, NULL);
+    webkit_uri_scheme_response_set_content_type(response, mime);
+    SoupMessageHeaders *out = soup_message_headers_new(SOUP_MESSAGE_HEADERS_RESPONSE);
+    soup_message_headers_append(out, "Access-Control-Allow-Origin", "*");
+    soup_message_headers_append(out, "Cache-Control", "no-cache");
+    webkit_uri_scheme_response_set_http_headers(response, out);
+    webkit_uri_scheme_request_finish_with_response(request, response);
+    g_object_unref(response);
+    g_object_unref(stream);
+    g_bytes_unref(body);
+}
+
+static void free_ext(Ext *x) {
+    g_free(x->id);
+    g_free(x->scheme);
+    g_free(x->world);
+    g_free(x->content_boot);
+    g_free(x->page_boot);
+    g_free(x);
+}
+
+static void free_entry(Entry *n) {
+    g_strfreev(n->allow);
+    g_strfreev(n->block);
+    g_free(n->guard);
+    g_ptr_array_unref(n->js);
+    g_ptr_array_unref(n->css);
+    g_free(n);
+}
+
+/* "a\nb" as a NULL-ended list; NULL for "". */
+static char **lines(const char *text) {
+    if (!text || !*text)
+        return NULL;
+    return g_strsplit(text, "\n", -1);
+}
+
+static Ext *ext_of_world(Engine *e, const char *world) {
+    for (guint i = 0; e->exts && i < e->exts->len; i++) {
+        Ext *x = g_ptr_array_index(e->exts, i);
+        if (g_strcmp0(x->world, world) == 0)
+            return x;
+    }
+    return NULL;
+}
+
+static void on_ext_message(WebKitUserContentManager *manager, WebKitJavascriptResult *result, Tab *t) {
+    JSCValue *value = webkit_javascript_result_get_js_value(result);
+    char *text = jsc_value_to_string(value);
+    push(t->engine, EV_EXTENSION, t->id, 0, 0, 0, text, NULL);
+    g_free(text);
+}
+
+/* The profile's extensions into a tab's view: their scripts, their style sheets, and the
+ * handlers their contexts speak to, in place of what was there. Pages loaded from now on
+ * have them. */
+static void apply_extensions(Tab *t) {
+    Engine *e = t->engine;
+    WebKitUserContentManager *m = webkit_web_view_get_user_content_manager(t->view);
+    webkit_user_content_manager_remove_all_scripts(m);
+    webkit_user_content_manager_remove_all_style_sheets(m);
+    if (!t->worlds) {
+        t->worlds = g_ptr_array_new_with_free_func(g_free);
+        g_signal_connect(m, "script-message-received::spatimeshExt", G_CALLBACK(on_ext_message), t);
+    }
+    for (guint i = 0; i < t->worlds->len; i++)
+        webkit_user_content_manager_unregister_script_message_handler_in_world(m, "spatimeshExt", g_ptr_array_index(t->worlds, i));
+    g_ptr_array_set_size(t->worlds, 0);
+    if (t->main_handler) {
+        webkit_user_content_manager_unregister_script_message_handler(m, "spatimeshExt");
+        t->main_handler = 0;
+    }
+    if (!e->exts || e->exts->len == 0)
+        return;
+    t->main_handler = webkit_user_content_manager_register_script_message_handler(m, "spatimeshExt");
+    for (guint i = 0; i < e->exts->len; i++) {
+        Ext *x = g_ptr_array_index(e->exts, i);
+        if (webkit_user_content_manager_register_script_message_handler_in_world(m, "spatimeshExt", x->world))
+            g_ptr_array_add(t->worlds, g_strdup(x->world));
+        /* Its own pages, in every frame they are in: their API in the pages' own world. */
+        char *own = g_strdup_printf("%s://%s/*", x->scheme, x->id);
+        const char *allow[] = {own, NULL};
+        char *prefix = g_strdup_printf("%s://%s/", x->scheme, x->id);
+        char *quoted = g_strescape(prefix, NULL);
+        char *code = g_strdup_printf("if(location.href.indexOf(\"%s\")===0){%s}", quoted, x->page_boot);
+        WebKitUserScript *script = webkit_user_script_new(code, WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, allow, NULL);
+        webkit_user_content_manager_add_script(m, script);
+        webkit_user_script_unref(script);
+        g_free(code);
+        g_free(quoted);
+        g_free(prefix);
+        g_free(own);
+    }
+    for (guint i = 0; e->entries && i < e->entries->len; i++) {
+        Entry *n = g_ptr_array_index(e->entries, i);
+        WebKitUserContentInjectedFrames frames = n->all_frames ? WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES : WEBKIT_USER_CONTENT_INJECT_TOP_FRAME;
+        WebKitUserScriptInjectionTime when = n->run_at == 0 ? WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START : WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_END;
+        const char *world = n->main_world ? NULL : n->ext->world;
+        const char *const *allow = (const char *const *)n->allow;
+        const char *const *block = (const char *const *)n->block;
+        for (guint c = 0; c < n->css->len; c++) {
+            WebKitUserStyleSheet *sheet = world
+                ? webkit_user_style_sheet_new_for_world(g_ptr_array_index(n->css, c), frames, WEBKIT_USER_STYLE_LEVEL_AUTHOR, world, allow, block)
+                : webkit_user_style_sheet_new(g_ptr_array_index(n->css, c), frames, WEBKIT_USER_STYLE_LEVEL_AUTHOR, allow, block);
+            webkit_user_content_manager_add_style_sheet(m, sheet);
+            webkit_user_style_sheet_unref(sheet);
+        }
+        /* Its API first, in its world (a script in the page's own world has none). */
+        if (world) {
+            char *code = n->exact ? g_strdup(n->ext->content_boot) : g_strdup_printf("if(%s){%s}", n->guard, n->ext->content_boot);
+            WebKitUserScript *boot = webkit_user_script_new_for_world(code, frames, when, world, allow, block);
+            webkit_user_content_manager_add_script(m, boot);
+            webkit_user_script_unref(boot);
+            g_free(code);
+        }
+        for (guint j = 0; j < n->js->len; j++) {
+            /* Each file a script of its own, as in Chrome: its top-level names shared with the
+             * others in the world. Where the patterns could not say exactly which pages, the
+             * file stops at once where it is not wanted. */
+            const char *file = g_ptr_array_index(n->js, j);
+            char *code = n->exact ? g_strdup(file) : g_strdup_printf("if(!(%s))throw new Error('not for this page');\n%s", n->guard, file);
+            WebKitUserScript *script = world ? webkit_user_script_new_for_world(code, frames, when, world, allow, block) : webkit_user_script_new(code, frames, when, allow, block);
+            webkit_user_content_manager_add_script(m, script);
+            webkit_user_script_unref(script);
+            g_free(code);
+        }
+    }
+}
+
+void spatimesh_ext_clear(Engine *e) {
+    if (e->entries)
+        g_ptr_array_unref(e->entries);
+    if (e->exts)
+        g_ptr_array_unref(e->exts);
+    e->exts = g_ptr_array_new_with_free_func((GDestroyNotify)free_ext);
+    e->entries = g_ptr_array_new_with_free_func((GDestroyNotify)free_entry);
+}
+
+void spatimesh_ext_add(Engine *e, const char *id, const char *scheme, const char *world, const char *content_boot, const char *page_boot) {
+    if (!e->exts)
+        spatimesh_ext_clear(e);
+    Ext *x = g_new0(Ext, 1);
+    x->id = g_strdup(id);
+    x->scheme = g_strdup(scheme);
+    x->world = g_strdup(world);
+    x->content_boot = g_strdup(content_boot);
+    x->page_boot = g_strdup(page_boot);
+    g_ptr_array_add(e->exts, x);
+}
+
+void spatimesh_ext_entry(Engine *e, const char *id, int run_at, int all_frames, int main_world, const char *allow, const char *block, const char *guard, int exact) {
+    if (!e->exts || e->exts->len == 0)
+        return;
+    Ext *x = NULL;
+    for (guint i = 0; i < e->exts->len; i++) {
+        Ext *each = g_ptr_array_index(e->exts, i);
+        if (strcmp(each->id, id) == 0)
+            x = each;
+    }
+    if (!x)
+        return;
+    Entry *n = g_new0(Entry, 1);
+    n->ext = x;
+    n->run_at = run_at;
+    n->all_frames = all_frames;
+    n->main_world = main_world;
+    n->allow = lines(allow);
+    n->block = lines(block);
+    n->guard = g_strdup(guard && *guard ? guard : "true");
+    n->exact = exact;
+    n->js = g_ptr_array_new_with_free_func(g_free);
+    n->css = g_ptr_array_new_with_free_func(g_free);
+    g_ptr_array_add(e->entries, n);
+}
+
+/* A file of the entry added last. */
+void spatimesh_ext_js(Engine *e, const char *code) {
+    if (e->entries && e->entries->len)
+        g_ptr_array_add(((Entry *)g_ptr_array_index(e->entries, e->entries->len - 1))->js, g_strdup(code));
+}
+
+void spatimesh_ext_css(Engine *e, const char *code) {
+    if (e->entries && e->entries->len)
+        g_ptr_array_add(((Entry *)g_ptr_array_index(e->entries, e->entries->len - 1))->css, g_strdup(code));
+}
+
+/* The set is whole: every tab has it for the pages it loads from now on. */
+void spatimesh_ext_done(Engine *e) {
+    GHashTableIter it;
+    gpointer key, value;
+    g_hash_table_iter_init(&it, e->tabs);
+    while (g_hash_table_iter_next(&it, &key, &value))
+        apply_extensions(value);
+}
+
+typedef struct {
+    Engine *engine;
+    uint64_t tab;
+    uint64_t request;
+} Asked;
+
+static void on_script_done(GObject *source, GAsyncResult *result, gpointer data) {
+    Asked *asked = data;
+    GError *error = NULL;
+    JSCValue *value = webkit_web_view_evaluate_javascript_finish(WEBKIT_WEB_VIEW(source), result, &error);
+    if (asked->request) {
+        if (value) {
+            char *json = jsc_value_is_undefined(value) ? NULL : jsc_value_to_json(value, 0);
+            push(asked->engine, EV_SCRIPT_RESULT, asked->tab, (double)asked->request, 1, 0, json ? json : "null", NULL);
+            g_free(json);
+        } else {
+            push(asked->engine, EV_SCRIPT_RESULT, asked->tab, (double)asked->request, 0, 0, error ? error->message : "the script failed", NULL);
+        }
+    }
+    if (value)
+        g_object_unref(value);
+    g_clear_error(&error);
+    g_free(asked);
+}
+
+/* Code run in a tab's top frame, in `world` ("" the page's own), the extension's API set up
+ * there first if `boot`. Only the top frame here: WebKitGTK runs scripts from outside the
+ * page in no other (`all_frames` is for engines that can). */
+void spatimesh_run_script(Engine *e, uint64_t id, const char *world, int all_frames, const char *code, uint64_t request, int boot) {
+    Tab *t = find(e, id);
+    if (!t) {
+        if (request)
+            push(e, EV_SCRIPT_RESULT, id, (double)request, 0, 0, "No such tab", NULL);
+        return;
+    }
+    (void)all_frames;
+    const char *in = world && *world ? world : NULL;
+    char *full = NULL;
+    if (boot && in) {
+        Ext *x = ext_of_world(e, in);
+        if (x)
+            full = g_strdup_printf("%s\n%s", x->content_boot, code);
+    }
+    Asked *asked = g_new0(Asked, 1);
+    asked->engine = e;
+    asked->tab = id;
+    asked->request = request;
+    webkit_web_view_evaluate_javascript(t->view, full ? full : code, -1, in, NULL, NULL, on_script_done, asked);
+    g_free(full);
 }
 
 /* A profile's engine: `data` and `cache` are its folders, or NULL for the private profile,
@@ -321,6 +650,17 @@ Engine *spatimesh_new(const char *data, const char *cache) {
     webkit_settings_set_javascript_can_open_windows_automatically(e->settings, FALSE);
     e->tabs = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, (GDestroyNotify)free_tab);
     e->events = g_queue_new();
+    /* Extensions' own addresses: their files, secure, and reachable from other origins where
+     * they let them be (what the shim's serve says). */
+    WebKitSecurityManager *security = webkit_web_context_get_security_manager(e->context);
+    const char *schemes[] = {"chrome-extension", "moz-extension"};
+    for (int i = 0; i < 2; i++) {
+        webkit_web_context_register_uri_scheme(e->context, schemes[i], on_scheme, e, NULL);
+        webkit_security_manager_register_uri_scheme_as_secure(security, schemes[i]);
+        webkit_security_manager_register_uri_scheme_as_cors_enabled(security, schemes[i]);
+    }
+    if (g_getenv("SPATIMESH_CONSOLE"))
+        webkit_settings_set_enable_write_console_messages_to_stdout(e->settings, TRUE);
     return e;
 }
 
@@ -376,6 +716,7 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
     uint64_t *key = g_new(uint64_t, 1);
     *key = id;
     g_hash_table_insert(e->tabs, key, t);
+    apply_extensions(t);
     webkit_web_view_load_uri(t->view, uri && *uri ? uri : "about:blank");
     return 1;
 }
