@@ -15,7 +15,7 @@ name: ci
 
 on:
   push:
-    branches: [master, mac-compositor, spatiand-apps]
+    branches: [master, mac-compositor, spatiand-apps, spatiand-mesh]
   pull_request:
   workflow_dispatch:
 

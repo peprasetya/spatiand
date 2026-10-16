@@ -20,7 +20,7 @@ cp .build/release/Spatiand "$app/Contents/MacOS/Spatiand"
 # looks for them (crates/spatiand/src/own.rs). SpatiReel, SpatiLoupe and SpatiShelf link the
 # FFmpeg this Mac has (Homebrew's): the app is for this Mac. bindgen wants to be told where
 # libclang is. Each is built on its own, so that one that does not build leaves the others.
-OWN="spatireel spatiloupe spatiquill spatishelf"
+OWN="spatireel spatiloupe spatiquill spatishelf spatimesh"
 for own in $OWN; do
   if (cd .. && LIBCLANG_PATH="${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib}" \
       MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release -p "$own"); then

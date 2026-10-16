@@ -1,0 +1,17 @@
+[package]
+name = "spatimesh"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SpatiMesh: Spatiand's web browser"
+
+# See docs/spatimesh.md. One process holds the windows and draws the browser around the page;
+# every tab is a process of its own holding the platform's web engine (WebKit on the Mac,
+# WebKitGTK on Linux, the system WebView on Android) behind one interface, so that one tab
+# crashing takes nothing else with it.
+[dependencies]
+spatiand-app = { path = "../spatiand-app" }
+log.workspace = true
+env_logger.workspace = true
