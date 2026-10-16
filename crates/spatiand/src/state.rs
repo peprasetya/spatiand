@@ -297,7 +297,19 @@ impl Spatiand {
         // One seat. The Deck's controller, its touchscreen and any USB keyboard all feed
         // this; the spatial input router decides what reaches a client.
         let mut seat = seat_state.new_wl_seat(&dh, "spatiand");
-        seat.add_keyboard(Default::default(), 200, 25)
+        // How long a key is held before it repeats, and how fast: the machine's own setting
+        // where it has one (the Mac app passes the Mac's as `SPATIAND_KEY_REPEAT=delay_ms,rate`),
+        // an ordinary 400 ms and 30 a second otherwise. It was 200 ms, and a key held a little
+        // long while typing came out twice.
+        let (delay, rate) = std::env::var("SPATIAND_KEY_REPEAT")
+            .ok()
+            .and_then(|v| {
+                let (d, r) = v.split_once(',')?;
+                Some((d.trim().parse::<i32>().ok()?, r.trim().parse::<i32>().ok()?))
+            })
+            .map(|(d, r)| (d.clamp(150, 2000), r.clamp(1, 60)))
+            .unwrap_or((400, 30));
+        seat.add_keyboard(Default::default(), delay, rate)
             .expect("failed to create keyboard");
         seat.add_pointer();
 

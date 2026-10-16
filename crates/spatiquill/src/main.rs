@@ -787,6 +787,12 @@ impl Quill {
             return;
         }
         self.wins[w].selecting = None;
+        // With Control held the room says nothing was typed (Control-B types no letter), so
+        // the letter is the key's own: tmux's Control-B, Control-C, every terminal chord.
+        let text = match key {
+            Key::Char(c) if text.is_empty() && (m.control || m.alt) => c.to_string(),
+            _ => text,
+        };
         t.tell(&ToTab::Key { key: keys::number(key), code, text, shift: m.shift, control: m.control, alt: m.alt });
     }
 

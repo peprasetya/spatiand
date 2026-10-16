@@ -285,32 +285,7 @@ impl WindowLayout {
     /// deal with than one you cannot find. `view_yaw` comes from the tracker via
     /// [`crate::state::Spatiand::spawn_yaw`].
     pub fn place(&mut self, window: &Window, view_yaw: f64) -> Placement {
-        // Near where you are looking, but never in exactly the same place as the last one.
-        // Opening three settings panels put all three at an identical yaw, pitch and radius --
-        // perfectly coincident, so they read as a single window that keeps changing its mind
-        // about what it contains.
-        //
-        // The step is half a window's own angular width, so neighbours overlap by half and
-        // there is no arrangement in which one hides another.
-        //
-        // It was a flat 7 degrees, chosen so that everything stayed comfortably in front of
-        // you. That optimised for the wrong thing and gave up the property it was there to
-        // deliver: a window is 1.1 m wide at 2.2 m, which is 28 degrees, so a 7 degree step
-        // left the newer one covering three quarters of the older -- and, being nearer, it
-        // drew in front. Opening Bluetooth and then Wi-Fi looked exactly like one window that
-        // had changed its contents, which is what it was reported as. Half a width is wide
-        // enough to see two things; a spatial desktop is allowed to ask you to turn your head.
-        // Counted among what is on show. Windows that are put away are not in the way, and on a
-        // Mac -- where every window open on it is in the list, put away -- counting them sent a
-        // new one a long way round the room to be looked for.
-        let n = self.placements.keys().filter(|id| !self.hidden.contains(id)).count();
-        let placement = Placement {
-            pitch: clamp_pitch(self.view_pitch),
-            yaw: view_yaw + Self::fan_offset(n),
-            // A little depth too, so even a head-on view separates them.
-            radius: Placement::default().radius + Self::fan_rank(n) * 0.06,
-            ..Default::default()
-        };
+        let placement = self.room_for_new(view_yaw);
         if let Some(id) = self.id_for(window) {
             self.placements.insert(id, placement);
             if self.focused.is_none() {
@@ -320,29 +295,53 @@ impl WindowLayout {
         placement
     }
 
-    /// How far apart consecutive windows are placed, in radians.
-    ///
-    /// Derived from the default placement rather than written down, so that moving a window
-    /// nearer or making it wider cannot silently turn the fan back into a stack.
-    pub fn fan_step() -> f64 {
+    /// Where a new window goes, looking along `view_yaw`, moving back what it would cover
+    /// when there is no room in front of it.
+    fn room_for_new(&mut self, view_yaw: f64) -> Placement {
+        // **In the middle of the view, in front of everything it would cover.** It was fanned
+        // out -- straight ahead, then left, then right, further each time, by how many windows
+        // were already open -- which looked random from where the wearer sat: the window just
+        // asked for was somewhere to be looked for. Now it is where they are looking, nearer
+        // than any window there, and if there is no room nearer those are moved back instead.
         let d = Placement::default();
-        // The full angle a window subtends, halved.
-        (2.0 * (d.width * 0.5 / d.radius).atan()) * 0.5
+        let pitch = clamp_pitch(self.view_pitch);
+        let half = |p: &Placement| (p.width * 0.5 / p.radius.max(0.1)).atan();
+        let new_half = half(&d);
+        // Windows on show whose extent the new one would overlap, looking where it goes.
+        let covered: Vec<usize> = self
+            .placements
+            .iter()
+            .filter(|(id, p)| !self.hidden.contains(id) && !p.pip)
+            .filter(|(_, p)| {
+                let dyaw = (p.yaw - view_yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+                let dpitch = p.pitch - pitch;
+                dyaw.abs() < half(p) + new_half && dpitch.abs() < (half(p) + new_half) * 0.8
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        let nearest = covered.iter().filter_map(|id| self.placements.get(id)).map(|p| p.radius).fold(f64::INFINITY, f64::min);
+        let mut radius = d.radius;
+        if nearest.is_finite() {
+            let in_front = nearest - Self::STEP_FORWARD;
+            if in_front >= Self::NEAREST {
+                radius = in_front.min(d.radius);
+            } else {
+                // No room in front: the ones it covers go back, the new one at the usual place.
+                radius = d.radius.max(Self::NEAREST);
+                for id in &covered {
+                    if let Some(p) = self.placements.get_mut(id) {
+                        p.radius = p.radius.max(radius) + Self::STEP_FORWARD;
+                    }
+                }
+            }
+        }
+        Placement { pitch, yaw: view_yaw, radius, ..Default::default() }
     }
 
-    /// How far out from centre the `n`th window sits, counting from zero.
-    fn fan_rank(n: usize) -> f64 {
-        ((n + 1) / 2) as f64
-    }
-
-    /// Where the `n`th window goes relative to where you are looking, in radians.
-    ///
-    /// Alternating sides: straight ahead, then left, then right, then further left. A fan that
-    /// only ever went one way would march everything off to one side of the room.
-    pub fn fan_offset(n: usize) -> f64 {
-        let side = if n % 2 == 0 { 1.0 } else { -1.0 };
-        side * Self::fan_rank(n) * Self::fan_step()
-    }
+    /// How much nearer a new window is than the nearest it covers, in metres.
+    const STEP_FORWARD: f64 = 0.3;
+    /// Nearer than this a window is uncomfortable to look at (see `Placement::default`).
+    const NEAREST: f64 = 1.3;
 
     pub fn get(&self, window: &Window) -> Option<Placement> {
         let key = Self::key(window)?;
@@ -697,6 +696,52 @@ mod tests {
     }
 
     #[test]
+    fn a_new_window_opens_where_you_are_looking() {
+        let mut layout = WindowLayout::default();
+        let p = layout.room_for_new(0.7);
+        assert_eq!(p.yaw, 0.7);
+        assert_eq!(p.radius, Placement::default().radius);
+    }
+
+    #[test]
+    fn a_new_window_comes_in_front_of_the_one_it_covers() {
+        // What made a new window look lost: it was put beside, or behind, what was there.
+        let mut layout = WindowLayout::default();
+        window_at(&mut layout, 0, 0.1);
+        let p = layout.room_for_new(0.0);
+        assert_eq!(p.yaw, 0.0);
+        assert!(p.radius < layout.placements[&0].radius, "{} is not in front of {}", p.radius, layout.placements[&0].radius);
+        // And the one behind is where it was.
+        assert_eq!(layout.placements[&0].radius, Placement::default().radius);
+    }
+
+    #[test]
+    fn with_no_room_in_front_the_covered_windows_go_back() {
+        let mut layout = WindowLayout::default();
+        layout.placements.insert(0, Placement { yaw: 0.0, radius: WindowLayout::NEAREST, ..Default::default() });
+        let p = layout.room_for_new(0.0);
+        assert!(p.radius >= WindowLayout::NEAREST);
+        assert!(layout.placements[&0].radius > p.radius, "the old window {} is not behind the new {}", layout.placements[&0].radius, p.radius);
+    }
+
+    #[test]
+    fn windows_off_to_the_side_are_left_alone() {
+        let mut layout = WindowLayout::default();
+        window_at(&mut layout, 0, 1.5);
+        let p = layout.room_for_new(0.0);
+        assert_eq!(p.radius, Placement::default().radius);
+        assert_eq!(layout.placements[&0].radius, Placement::default().radius);
+    }
+
+    #[test]
+    fn hidden_windows_do_not_count() {
+        let mut layout = WindowLayout::default();
+        window_at(&mut layout, 0, 0.0);
+        layout.hidden.insert(0);
+        assert_eq!(layout.room_for_new(0.0).radius, Placement::default().radius);
+    }
+
+    #[test]
     fn recentring_brings_the_anchor_to_dead_ahead() {
         // The whole bug: the wearer had turned round, their window was in front of them, and
         // recentring put it behind them because the window kept an absolute yaw while their
@@ -859,35 +904,6 @@ mod tests {
             ..Default::default()
         };
         assert!(p.position().z > 0.0);
-    }
-
-    #[test]
-    fn a_new_window_can_never_be_hidden_by_the_one_before_it() {
-        // The bug this replaces: a 7 degree step against a 28 degree window left the newer one
-        // covering three quarters of the older and drawing in front, so opening a second app
-        // looked like the first one had changed its contents.
-        let d = Placement::default();
-        let width_deg = (2.0 * (d.width * 0.5 / d.radius).atan()).to_degrees();
-        let step_deg = WindowLayout::fan_step().to_degrees();
-        assert!(
-            step_deg >= width_deg * 0.5 - 1e-9,
-            "a step of {step_deg:.1} deg against a {width_deg:.1} deg window hides one behind the other"
-        );
-    }
-
-    #[test]
-    fn consecutive_windows_land_on_opposite_sides_and_walk_outwards() {
-        let step = WindowLayout::fan_step();
-        let steps: Vec<i64> = (0..5)
-            .map(|n| (WindowLayout::fan_offset(n) / step).round() as i64)
-            .collect();
-        assert_eq!(steps, vec![0, -1, 1, -2, 2]);
-    }
-
-    #[test]
-    fn the_first_window_opens_where_you_are_looking() {
-        // Anything else means the thing you just asked for is not the thing in front of you.
-        assert!(approx(WindowLayout::fan_offset(0), 0.0));
     }
 
     #[test]

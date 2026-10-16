@@ -48,6 +48,10 @@ final class Room {
         if let uid = Settings.audioOutputUID, let device = AudioDevices.outputs().first(where: { $0.uid == uid }) {
             sp_audio_output(Int32(bitPattern: device.id))
         }
+        // The Mac's own key repeat (System Settings, Keyboard), for the room's applications.
+        let delayMs = Int(NSEvent.keyRepeatDelay * 1000)
+        let rate = Int((1.0 / max(NSEvent.keyRepeatInterval, 0.01)).rounded())
+        setenv("SPATIAND_KEY_REPEAT", "\(delayMs),\(rate)", 1)
         sp_begin({ _, what, id, a, b, c, text in
             Room.shared.asked(what, id: id, a: a, b: b, c: c, text: text.map { String(cString: $0) } ?? "")
         }, nil)
