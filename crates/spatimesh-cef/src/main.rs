@@ -24,7 +24,54 @@ mod cef {
         (!text.is_empty()).then_some(text)
     }
 
+    /// Where libcef.so is: SPATIMESH_CEF_DIR, or the Steam client's own (native/cef.c looks in
+    /// the same places, SPATIMESH_CEF_DIR first).
+    fn cef_dir() -> Option<std::path::PathBuf> {
+        if let Some(dir) = std::env::var_os("SPATIMESH_CEF_DIR").filter(|d| !d.is_empty()) {
+            return Some(dir.into());
+        }
+        let home = std::path::PathBuf::from(std::env::var_os("HOME")?);
+        [".local/share/Steam/ubuntu12_64", ".steam/steam/ubuntu12_64", ".steam/root/ubuntu12_64"]
+            .into_iter()
+            .map(|place| home.join(place))
+            .find(|dir| dir.join("libcef.so").is_file())
+    }
+
+    /// libcef.so loaded with the program, before it starts: Chromium keeps thread-local data
+    /// where a library loaded later (dlopen) cannot have it ("cannot allocate memory in static
+    /// TLS block"). So the program starts itself again, once, with the library preloaded;
+    /// Chromium's own processes, started from this one, inherit it.
+    fn preload_cef() {
+        use std::os::unix::process::CommandExt;
+        if std::env::var_os("SPATIMESH_CEF_PRELOADED").is_some() {
+            return;
+        }
+        let Some(dir) = cef_dir() else { return };
+        let library = dir.join("libcef.so");
+        if !library.is_file() {
+            return;
+        }
+        let Ok(program) = std::env::current_exe() else { return };
+        let mut preload = library.into_os_string();
+        if let Some(more) = std::env::var_os("LD_PRELOAD").filter(|p| !p.is_empty()) {
+            preload.push(":");
+            preload.push(more);
+        }
+        let mut args = std::env::args_os();
+        let name = args.next().unwrap_or_else(|| program.clone().into_os_string());
+        let error = std::process::Command::new(&program)
+            .arg0(name)
+            .args(args)
+            .env("LD_PRELOAD", preload)
+            .env("SPATIMESH_CEF_DIR", &dir)
+            .env("SPATIMESH_CEF_PRELOADED", "1")
+            .exec();
+        // Not started again: the library is loaded the usual way, and says what is wrong.
+        eprintln!("spatimesh-cef: could not start itself with libcef.so preloaded: {error}");
+    }
+
     pub fn main() {
+        preload_cef();
         // Chromium reads the program's arguments, and keeps them: given for good.
         let args: Vec<CString> =
             std::env::args_os().map(|a| CString::new(a.into_vec()).unwrap_or_default()).collect();
