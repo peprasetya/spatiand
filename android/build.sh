@@ -76,6 +76,13 @@ cp ../third_party/pdfium/android-arm64/lib/libpdfium.so $OUT/apk/lib/arm64-v8a/
 cp $OUT/dex/classes.dex $OUT/apk/
 (cd $OUT/apk && zip -qr ../base.apk classes.dex lib)
 $BT/zipalign -f -p 4 $OUT/base.apk $OUT/aligned.apk
+# Signed with the debug key Android Studio makes; made here the same way where there is none
+# (a machine that never had Android Studio, such as CI).
+if [ ! -f "$HOME/.android/debug.keystore" ]; then
+    mkdir -p "$HOME/.android"
+    keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android \
+        -alias androiddebugkey -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000 >/dev/null
+fi
 $BT/apksigner sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android \
     --out spatiand.apk $OUT/aligned.apk 2>/dev/null
 echo "built $(pwd)/spatiand.apk"

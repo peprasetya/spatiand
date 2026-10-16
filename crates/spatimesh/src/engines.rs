@@ -44,11 +44,13 @@ pub fn is_steamos() -> bool {
 /// `webkit`, or a path).
 pub fn program() -> Program {
     let wanted = std::env::var("SPATIMESH_ENGINE").unwrap_or_default();
+    #[cfg(target_os = "android")]
+    if wanted.is_empty() {
+        return Program::Launched(launcher::name());
+    }
     let name = match wanted.as_str() {
         "fake" => return Program::Fake("asked for with SPATIMESH_ENGINE".into()),
         "" if cfg!(target_os = "macos") => "spatimesh-webkit",
-        #[cfg(target_os = "android")]
-        "" => return Program::Launched(launcher::name()),
         "" if is_steamos() => "spatimesh-cef",
         "" => "spatimesh-webkitgtk",
         "webkitgtk" => "spatimesh-webkitgtk",
@@ -332,11 +334,12 @@ mod launcher {
         }
         let fd = link.raw_fd();
         // SAFETY: `fd` stays open throughout, now on the engine's socket; Link sets every socket
-        // it reads to not block, which the new one is made too.
+        // it reads to not block, which the new one is made too, and like it not inherited.
         unsafe {
-            if libc::dup3(engine.as_raw_fd(), fd, libc::O_CLOEXEC) < 0 {
+            if libc::dup2(engine.as_raw_fd(), fd) < 0 {
                 return Err(std::io::Error::last_os_error());
             }
+            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
             libc::fcntl(fd, libc::F_SETFL, libc::fcntl(fd, libc::F_GETFL) | libc::O_NONBLOCK);
         }
         Ok(())
