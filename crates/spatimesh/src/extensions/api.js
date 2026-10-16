@@ -14,7 +14,10 @@ function __spatimeshExtBoot(config, post) {
   var PromiseC = Promise;
   var slice = Array.prototype.slice;
   var isContent = config.kind === 'content';
-  var frameId = window.top === window ? 0 : Math.floor(Math.random() * 2147483646) + 1;
+  // The engine's number for this frame where it gives one; else 0 for the top frame, and one
+  // of its own for the others (what the window learns from this context's calls).
+  var frameId = typeof globalThis.__spatimeshFrame === 'number' ? globalThis.__spatimeshFrame
+    : (window.top === window ? 0 : Math.floor(Math.random() * 2147483646) + 1);
   var contextId = Math.random().toString(36).slice(2) + Date.now().toString(36);
   var nextCall = 1;
   var nextPort = 1;
@@ -23,6 +26,8 @@ function __spatimeshExtBoot(config, post) {
   var ports = {};
   var lastError = null;
   var lastErrorChecked = false;
+  // What a message's promise gets when its receivers listened and none answered.
+  var CLOSED = {};
 
   function say(call, args, id) {
     post(JSONstringify({ t: config.token, e: config.id, k: config.kind, f: frameId, x: contextId,
@@ -79,25 +84,62 @@ function __spatimeshExtBoot(config, post) {
     };
   }
 
+  // Whether a webNavigation listener's filter ({url: [UrlFilter]}) takes an address.
+  function takes(filter, url) {
+    if (!filter || !filter.url) return true;
+    var u;
+    try { u = new URL(url); } catch (e) { return false; }
+    var host = u.hostname, path = u.pathname, query = u.search.replace(/^\?/, '');
+    return filter.url.some(function (f) {
+      function test(key, value, how) { return typeof f[key] !== 'string' || how(value, f[key]); }
+      function contains(a, b) { return a.indexOf(b) >= 0; }
+      function equals(a, b) { return a === b; }
+      function prefix(a, b) { return a.slice(0, b.length) === b; }
+      function suffix(a, b) { return b.length <= a.length && a.slice(a.length - b.length) === b; }
+      var ok = test('hostContains', '.' + host, contains) && test('hostEquals', host, equals) && test('hostPrefix', host, prefix) &&
+        test('hostSuffix', host, suffix) && test('pathContains', path, contains) && test('pathEquals', path, equals) &&
+        test('pathPrefix', path, prefix) && test('pathSuffix', path, suffix) && test('queryContains', query, contains) &&
+        test('queryEquals', query, equals) && test('queryPrefix', query, prefix) && test('querySuffix', query, suffix) &&
+        test('urlContains', url, contains) && test('urlEquals', url, equals) && test('urlPrefix', url, prefix) && test('urlSuffix', url, suffix);
+      if (ok && f.schemes) ok = f.schemes.indexOf(u.protocol.replace(':', '')) >= 0;
+      if (ok && f.ports) {
+        var port = +(u.port || (u.protocol === 'https:' ? 443 : u.protocol === 'http:' ? 80 : 0));
+        ok = f.ports.some(function (p) { return Array.isArray(p) ? port >= p[0] && port <= p[1] : port === p; });
+      }
+      try {
+        if (ok && typeof f.urlMatches === 'string') ok = new RegExp(f.urlMatches).test(url);
+        if (ok && typeof f.originAndPathMatches === 'string') ok = new RegExp(f.originAndPathMatches).test(u.origin + u.pathname);
+      } catch (e) { ok = false; }
+      return ok;
+    });
+  }
+
   function makeEvent(name, quiet) {
     var list = [];
+    var filters = [];
+    var filtered = name.indexOf('webNavigation.') === 0;
     var e = {
-      addListener: function (fn) {
+      addListener: function (fn, filter) {
         if (typeof fn !== 'function' || list.indexOf(fn) >= 0) return;
         list.push(fn);
+        filters.push(filter);
         if (!quiet) say('listen', [name, true].concat(slice.call(arguments, 1)));
       },
       removeListener: function (fn) {
         var i = list.indexOf(fn);
         if (i < 0) return;
         list.splice(i, 1);
+        filters.splice(i, 1);
         if (!quiet && !list.length) say('listen', [name, false]);
       },
       hasListener: function (fn) { return list.indexOf(fn) >= 0; },
       hasListeners: function () { return list.length > 0; },
       _fire: function (args) {
         var results = [];
-        list.slice().forEach(function (fn) {
+        var fns = list.slice();
+        var fs = filters.slice();
+        fns.forEach(function (fn, i) {
+          if (filtered && !takes(fs[i], args[0] && args[0].url)) return;
           try { results.push(fn.apply(null, args)); } catch (err) { console.error(err); }
         });
         return results;
@@ -221,17 +263,46 @@ function __spatimeshExtBoot(config, post) {
     }
   }
 
+  // What the window sends: to one context (`to`), or to a frame (`f`), or to any here.
   function deliver(json) {
     var m = typeof json === 'string' ? JSONparse(json) : json;
+    if (m.to !== undefined && m.to !== null && m.to !== contextId) return;
     if (m.f !== undefined && m.f !== null && m.f !== frameId) return;
     if (m.r !== undefined) {
       var p = pending[m.r];
       if (!p) return;
       delete pending[m.r];
-      if (m.x !== undefined && m.x !== null) p.reject(new Error(m.x)); else p.resolve(m.v);
+      if (m.x !== undefined && m.x !== null) p.reject(new Error(m.x)); else p.resolve(m.closed ? CLOSED : m.v);
       return;
     }
     if (m.ev) dispatch(m.ev, m.a || [], m.q);
+  }
+
+  // A message's answer: with a callback, Chrome's lastError when its receivers listened and
+  // none answered; as a promise, nothing.
+  function answered(p, callback) {
+    if (callback) {
+      p.then(function (v) {
+        if (v !== CLOSED) callback(v);
+        else if (config.flavor === 'firefox') callback();
+        else withLastError('The message port closed before a response was received.', function () { callback(); });
+      }, function (e) { withLastError(e, function () { callback(); }); });
+      return undefined;
+    }
+    return p.then(function (v) { return v === CLOSED ? undefined : v; });
+  }
+
+  // Code the extension asked to run here (scripting.executeScript): its result, or what it
+  // threw, to the window.
+  function run(q, fn) {
+    function done(value, error) {
+      var plain = null;
+      if (value !== undefined) { try { plain = JSONparse(JSONstringify(value)); } catch (e) { plain = null; } }
+      say('scripting.done', [q, frameId, plain === undefined ? null : plain, error === undefined ? null : error]);
+    }
+    var result;
+    try { result = fn(); } catch (e) { done(undefined, String(e && e.message || e)); return; }
+    PromiseC.resolve(result).then(function (v) { done(v); }, function (e) { done(undefined, String(e && e.message || e)); });
   }
 
   // ---- the namespaces ----------------------------------------------------------------------
@@ -272,12 +343,7 @@ function __spatimeshExtBoot(config, post) {
       var target = null;
       if (args.length >= 2 && (typeof args[0] === 'string' || args[0] === null) && !(args.length === 2 && typeof args[1] === 'object' && args[1] !== null && !Array.isArray(args[1]) && 'includeTlsChannelId' in args[1])) target = args.shift();
       var message = args[0];
-      var p = call('runtime.sendMessage', [target, message === undefined ? null : message]);
-      if (callback) {
-        p.then(function (v) { callback(v); }, function (e) { withLastError(e, function () { callback(); }); });
-        return undefined;
-      }
-      return p;
+      return answered(call('runtime.sendMessage', [target, message === undefined ? null : message]), callback);
     },
     connect: function (a, b) {
       if (typeof a === 'string') return connect('runtime.connect', a, b);
@@ -346,12 +412,7 @@ function __spatimeshExtBoot(config, post) {
     chromeApi.tabs.sendMessage = function () {
       var args = slice.call(arguments);
       var callback = typeof args[args.length - 1] === 'function' ? args.pop() : null;
-      var p = call('tabs.sendMessage', [args[0], args[1] === undefined ? null : args[1], args[2] || {}]);
-      if (callback) {
-        p.then(function (v) { callback(v); }, function (e) { withLastError(e, function () { callback(); }); });
-        return undefined;
-      }
-      return p;
+      return answered(call('tabs.sendMessage', [args[0], args[1] === undefined ? null : args[1], args[2] || {}]), callback);
     };
     chromeApi.tabs.connect = function (tabId, info) { return connect('tabs.connect', tabId, info); };
     chromeApi.windows = namespace('windows', ['get', 'getAll', 'getCurrent', 'getLastFocused', 'create', 'update', 'remove'],
@@ -475,6 +536,7 @@ function __spatimeshExtBoot(config, post) {
 
   var self_ = {
     deliver: deliver,
+    run: run,
     frameId: frameId,
     kind: config.kind,
     id: config.id
@@ -492,5 +554,16 @@ function __spatimeshExtBoot(config, post) {
     globalThis.browser = b;
   }
   window.addEventListener('pagehide', function () { say('gone', []); });
+  // Back from the back-forward cache: here again, with the same listeners.
+  window.addEventListener('pageshow', function (e) {
+    if (!e.persisted) return;
+    say('ready', [config.kind]);
+    Object.keys(events).forEach(function (n) { if (events[n]._listeners.length) say('listen', [n, true]); });
+  });
   say('ready', [config.kind]);
+  // An extension's page has loaded (its listeners are added): what waited for it may come.
+  if (!isContent) {
+    if (document.readyState === 'complete') say('loaded', []);
+    else window.addEventListener('load', function () { say('loaded', []); });
+  }
 }

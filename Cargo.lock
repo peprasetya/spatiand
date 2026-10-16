@@ -4870,6 +4870,7 @@ dependencies = [
  "libc",
  "log",
  "percent-encoding",
+ "regex",
  "serde",
  "serde_json",
  "sha2",

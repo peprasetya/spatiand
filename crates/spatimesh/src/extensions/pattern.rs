@@ -96,6 +96,35 @@ impl Pattern {
         wildcard(&self.path, &path, false)
     }
 
+    /// The same as a regular expression's source, as `new RegExp` in JavaScript reads it: for an
+    /// engine that decides in the page which content scripts a frame takes. The fragment is
+    /// left out of what is matched, as in [`Pattern::matches`].
+    pub fn regex(&self) -> String {
+        if self.all_urls {
+            return r"^(?:(?:https?|wss?|ftp|file)://[^/?#]*(?:[/?#].*)?|(?:data|urn):.*)$".to_string();
+        }
+        let scheme = match &self.scheme {
+            None => "(?:https?|wss?)".to_string(),
+            Some(s) => escape(s),
+        };
+        let userinfo = "(?:[^/?#@]*@)?";
+        let host = match &self.host {
+            // A name, or an IPv6 address in its brackets.
+            Host::Any => r"(?:\[[0-9a-fA-F:.]*\]|[^/?#:@\[]*)".to_string(),
+            Host::Domain(d) => format!("(?:[^/?#:@]*\\.)?{}", escape(d)),
+            Host::Exact(h) => escape(h),
+        };
+        let port = match self.port {
+            None => "(?::[0-9]+)?".to_string(),
+            // A default port is not written in the URL.
+            Some(p @ (80 | 443)) => format!("(?::{p})?"),
+            Some(p) => format!(":{p}"),
+        };
+        let path: String = self.path.split('*').map(escape).collect::<Vec<_>>().join(".*");
+        let host_part = if self.scheme.as_deref() == Some("file") { host } else { format!("{userinfo}{host}{port}") };
+        format!("^{scheme}://{host_part}{path}(?:#.*)?$")
+    }
+
     /// Whether every URL this matches the other matches too: for whether a host permission
     /// covers what an extension asks to reach.
     pub fn within(&self, wider: &Pattern) -> bool {
@@ -118,6 +147,41 @@ impl Pattern {
             _ => false,
         };
         scheme_ok && host_ok && (wider.port.is_none() || wider.port == self.port) && wildcard(&wider.path, &self.path, false)
+    }
+}
+
+/// `text` with what a regular expression would read as anything but itself escaped.
+fn escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if "\\^$.|?*+()[]{}".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// A glob (`include_globs`, `exclude_globs`) as a regular expression's source.
+pub fn glob_regex(glob: &str) -> String {
+    let mut out = String::from("^");
+    for c in glob.chars() {
+        match c {
+            '*' => out.push_str(".*"),
+            '?' => out.push('.'),
+            c => out.push_str(&escape(&c.to_string())),
+        }
+    }
+    out.push('$');
+    out
+}
+
+/// Several regular expressions' sources as one that matches what any of them does; "" for none.
+pub fn any_regex(sources: &[String]) -> String {
+    match sources {
+        [] => String::new(),
+        [one] => one.clone(),
+        many => format!("(?:{})", many.iter().map(|s| format!("(?:{s})")).collect::<Vec<_>>().join("|")),
     }
 }
 
@@ -183,6 +247,11 @@ impl Patterns {
     pub fn cover(&self, asked: &Pattern) -> bool {
         self.0.iter().any(|p| asked.within(p))
     }
+
+    /// One regular expression's source matching what any of them does ("" for none).
+    pub fn regex(&self) -> String {
+        any_regex(&self.0.iter().map(Pattern::regex).collect::<Vec<_>>())
+    }
 }
 
 /// Whether a content script's patterns and globs take this URL (Chrome's rule: one of
@@ -238,6 +307,58 @@ mod tests {
         assert!(!script_wants(&matches, &excludes, &["*news*".into()], &[], "https://example.com/a"));
         assert!(script_wants(&matches, &excludes, &["*news*".into()], &[], "https://news.example.com/a"));
         assert!(!script_wants(&matches, &excludes, &[], &["*.example.com/a*".into()], "https://news.example.com/a"));
+    }
+
+    #[test]
+    fn as_regular_expressions_they_match_the_same() {
+        let patterns = [
+            "<all_urls>",
+            "*://*/*",
+            "https://*.example.com/*",
+            "https://example.com/foo*",
+            "https://www.google.com/search?*",
+            "http://localhost:8080/*",
+            "http://127.0.0.1/*",
+            "file:///*",
+            "http://[::1]/*",
+            "https://a.b/c.d(e)+",
+            "http://example.com:80/*",
+        ];
+        let urls = [
+            "https://a.b/c",
+            "file:///home/x.html",
+            "chrome-extension://abc/x.html",
+            "http://example.com/",
+            "https://example.com/x",
+            "https://a.b.example.com/x?y=1#z",
+            "https://notexample.com/",
+            "http://example.com/x",
+            "https://example.com/foobar",
+            "https://example.com/bar",
+            "https://www.google.com/search?q=1",
+            "http://localhost:8080/a",
+            "http://localhost:9090/a",
+            "http://127.0.0.1:5000/",
+            "http://[::1]:8000/x",
+            "https://a.b/c.d(e)+",
+            "https://a.b/cxd(e)+",
+            "http://user@example.com/x",
+            "data:text/html,hi",
+            "ws://example.com/socket",
+        ];
+        for p in patterns {
+            let pattern = Pattern::parse(p).unwrap();
+            let re = regex::Regex::new(&pattern.regex()).unwrap();
+            for u in urls {
+                assert_eq!(re.is_match(u), pattern.matches(u), "{p} against {u}: {}", pattern.regex());
+            }
+        }
+        let glob = regex::Regex::new(&glob_regex("https://???.example.com/*")).unwrap();
+        assert!(glob.is_match("https://www.example.com/a") && !glob.is_match("https://w.example.com/a"));
+        let two = Patterns::new(&["https://a.com/*".into(), "https://b.com/*".into()]);
+        let either = regex::Regex::new(&two.regex()).unwrap();
+        assert!(either.is_match("https://a.com/x") && either.is_match("https://b.com/") && !either.is_match("https://c.com/"));
+        assert_eq!(Patterns::new(&[]).regex(), "");
     }
 
     #[test]

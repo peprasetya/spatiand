@@ -47,13 +47,23 @@ pub struct Spec {
     pub messages: std::collections::BTreeMap<String, String>,
 }
 
-/// One `content_scripts` entry, its files read.
+/// One `content_scripts` entry (or one registered by `scripting.registerContentScripts`), its
+/// files read.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Script {
     pub matches: Vec<String>,
     pub exclude_matches: Vec<String>,
     pub include_globs: Vec<String>,
     pub exclude_globs: Vec<String>,
+    /// The same as regular expressions' sources (JavaScript's `new RegExp`), for an engine that
+    /// decides in the frame: a frame at `url` takes the script if `include` matches it, `globs`
+    /// is "" or matches it, and `exclude` is "" or does not.
+    #[serde(default)]
+    pub include: String,
+    #[serde(default)]
+    pub globs: String,
+    #[serde(default)]
+    pub exclude: String,
     /// Each file: its name and its code, in order.
     pub js: Vec<(String, String)>,
     pub css: Vec<(String, String)>,
@@ -63,6 +73,29 @@ pub struct Script {
     pub match_about_blank: bool,
     /// The page's own world (`"world": "MAIN"`) rather than the extension's.
     pub main_world: bool,
+}
+
+impl Script {
+    /// Its regular expressions, from its patterns and globs.
+    pub fn with_regexes(mut self) -> Script {
+        use super::pattern::{any_regex, glob_regex, Patterns};
+        self.include = Patterns::new(&self.matches).regex();
+        self.globs = any_regex(&self.include_globs.iter().map(|g| glob_regex(g)).collect::<Vec<_>>());
+        let mut excluded: Vec<String> = Vec::new();
+        let exclude = Patterns::new(&self.exclude_matches).regex();
+        if !exclude.is_empty() {
+            excluded.push(exclude);
+        }
+        excluded.extend(self.exclude_globs.iter().map(|g| glob_regex(g)));
+        self.exclude = any_regex(&excluded);
+        self
+    }
+
+    /// Whether a frame at `url` takes it (what the regular expressions say, in Rust).
+    pub fn wants(&self, url: &str) -> bool {
+        use super::pattern::{script_wants, Patterns};
+        script_wants(&Patterns::new(&self.matches), &Patterns::new(&self.exclude_matches), &self.include_globs, &self.exclude_globs, url)
+    }
 }
 
 impl Spec {
@@ -204,7 +237,7 @@ pub fn parse_url(url: &str) -> Option<(String, String)> {
 }
 
 /// A path inside `root`, or nothing if it would leave it.
-fn inside(root: &Path, path: &str) -> Option<PathBuf> {
+pub fn inside(root: &Path, path: &str) -> Option<PathBuf> {
     let relative = Path::new(path);
     if !relative.components().all(|c| matches!(c, Component::Normal(_))) {
         return None;

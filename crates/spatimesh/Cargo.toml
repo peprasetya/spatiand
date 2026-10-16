@@ -30,3 +30,5 @@ percent-encoding = "2"
 # What keeps Spatiand's applications' settings the same on every machine, for the test that
 # SpatiMesh's survive it (tests/sync.rs).
 spatiand-sync = { path = "../spatiand-sync" }
+# To check the regular expressions engines are given against the patterns they come from.
+regex = "1"
