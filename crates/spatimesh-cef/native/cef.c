@@ -25,6 +25,7 @@
 #include <libgen.h>
 #include <math.h>
 #include <poll.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -793,8 +794,14 @@ static int CEF_CALLBACK on_console_message(cef_display_handler_t *self, cef_brow
         return 0;
     char *text = utf8_of(message);
     int ours = strncmp(text, SELECT_MARK, strlen(SELECT_MARK)) == 0;
-    if (ours)
+    if (ours) {
         select_list(t, text + strlen(SELECT_MARK));
+    } else if (getenv("SPATIMESH_CONSOLE")) {
+        /* What pages say on their consoles, where asked for (tests). */
+        char *where = source ? utf8_of(source) : strdup("");
+        fprintf(stderr, "spatimesh-cef: console of tab %llu: %s (%s:%d)\n", (unsigned long long)t->id, text, where, line);
+        free(where);
+    }
     free(text);
     return ours;
 }
@@ -1080,6 +1087,18 @@ static ServeFreeFn serve_free_fn;
 void spatimesh_ext_server(ServeFn serve, ServeFreeFn free_bytes) {
     serve_fn = serve;
     serve_free_fn = free_bytes;
+}
+
+/* The bridge's steps, with the process they are in, said where pages' consoles are asked for (tests). */
+static void trace(const char *format, ...) {
+    if (!getenv("SPATIMESH_CONSOLE"))
+        return;
+    va_list args;
+    va_start(args, format);
+    fprintf(stderr, "spatimesh-cef: process %d: ", (int)getpid());
+    vfprintf(stderr, format, args);
+    fputc('\n', stderr);
+    va_end(args);
 }
 
 /* No worlds of the extensions' own: the API comes as functions (spatimesh-shim). */
@@ -1452,6 +1471,7 @@ static cef_resource_handler_t *CEF_CALLBACK asked_get_resource_handler(cef_resou
     }
     if (serve_free_fn)
         serve_free_fn(bytes, len);
+    trace("served %s to %s: %d, %zu bytes", url, a->initiator ? a->initiator : "the browser", s->status, len);
     /* "text/html; charset=utf-8": the type, and its charset apart. */
     snprintf(s->mime, sizeof s->mime, "%s", mime);
     char *semi = strchr(s->mime, ';');
@@ -1578,6 +1598,25 @@ static cef_v8value_t *v8_eval(cef_v8context_t *context, const char *code, const 
     return value;
 }
 
+/* fn(args) in the entered context: its value, or NULL with what it threw said. */
+static cef_v8value_t *v8_call(cef_v8value_t *fn, size_t argc, cef_v8value_t *const *args, const char *what) {
+    cef_v8value_t *value = fn->execute_function(fn, NULL, argc, args);
+    if (!value && fn->has_exception(fn)) {
+        cef_v8exception_t *exception = fn->get_exception(fn);
+        if (exception) {
+            cef_string_userfree_t m = exception->get_message(exception);
+            char *text = utf8_of(m);
+            if (m)
+                p_cef_string_userfree_utf16_free(m);
+            fprintf(stderr, "spatimesh-cef: %s: %s (line %d)\n", what, text, exception->get_line_number(exception));
+            free(text);
+            RELEASE(exception);
+        }
+        fn->clear_exception(fn);
+    }
+    return value;
+}
+
 static int same_context(cef_v8context_t *a, cef_v8context_t *b) {
     return a && b && a->is_same(a, SHARE(b));
 }
@@ -1631,8 +1670,9 @@ static Made *boot_api(cef_v8context_t *context, const char *ext, const char *boo
     set_text(&n, name);
     cef_v8value_t *args[1] = {p_cef_v8value_create_function(&n, &v8_handler)};
     clear_text(&n);
-    cef_v8value_t *api = fn->execute_function(fn, NULL, 1, args);
+    cef_v8value_t *api = v8_call(fn, 1, args, "the extension's API");
     RELEASE(fn);
+    trace("%s's API %s", ext, api ? "set up" : "not set up");
     if (!api)
         return NULL;
     if (!keep) {
@@ -1664,7 +1704,7 @@ static void inject(cef_v8context_t *context, const char *ext, const char *js, co
                                      "spatimesh-content-style", NULL);
         if (add) {
             cef_v8value_t *args[1] = {v8_text(css)};
-            cef_v8value_t *r = add->execute_function(add, NULL, 1, args);
+            cef_v8value_t *r = v8_call(add, 1, args, "a content script's style sheet");
             RELEASE(r);
             RELEASE(add);
         }
@@ -1695,7 +1735,8 @@ static void inject(cef_v8context_t *context, const char *ext, const char *js, co
     if (!fn)
         return;
     cef_v8value_t *args[3] = {defined(v8_key(m->api, "chrome")), defined(v8_key(m->api, "browser")), defined(v8_key(m->api, "global"))};
-    cef_v8value_t *r = fn->execute_function(fn, NULL, 3, args);
+    trace("%s's content scripts run", ext);
+    cef_v8value_t *r = v8_call(fn, 3, args, "a content script");
     RELEASE(r);
     RELEASE(fn);
 }
@@ -1762,6 +1803,7 @@ static void CEF_CALLBACK on_browser_created(cef_render_process_handler_t *self, 
         }
         clear_text(&key);
     }
+    trace("browser %d made, with %d extensions", browser->get_identifier(browser), renderer_set ? (int)renderer_set->get_size(renderer_set) : -1);
     RELEASE(extra);
     RELEASE(browser);
 }
@@ -1776,6 +1818,7 @@ static void CEF_CALLBACK on_context_created(cef_render_process_handler_t *self, 
         if (u)
             p_cef_string_userfree_utf16_free(u);
         int top = frame->is_main(frame);
+        trace("a page world made for %s (%s frame)", url, top ? "the top" : "another");
         context->enter(context);
         int waiting = 0;
         size_t n = renderer_set->get_size(renderer_set);
@@ -1797,7 +1840,9 @@ static void CEF_CALLBACK on_context_created(cef_render_process_handler_t *self, 
                     int main_world = entry->get_bool(entry, 2);
                     char *guard = list_text(entry, 3);
                     cef_v8value_t *wanted = (top || all_frames) ? v8_eval(context, guard, "spatimesh-content-guard", NULL) : NULL;
-                    if (wanted && wanted->is_bool(wanted) && wanted->get_bool_value(wanted)) {
+                    int yes = wanted && wanted->is_bool(wanted) && wanted->get_bool_value(wanted);
+                    trace("%s's content scripts (%zu, at %d) %s here", id, j, run_at, yes ? "are wanted" : "are not wanted");
+                    if (yes) {
                         char *js = list_text(entry, 4);
                         char *css = list_text(entry, 5);
                         /* Style sheets before anything is shown, as Chrome puts them in whenever
@@ -1841,7 +1886,7 @@ static void CEF_CALLBACK on_context_created(cef_render_process_handler_t *self, 
                 set_text(&name, "spatimeshLater");
                 cef_v8value_t *args[1] = {p_cef_v8value_create_function(&name, &v8_handler)};
                 clear_text(&name);
-                cef_v8value_t *r = when->execute_function(when, NULL, 1, args);
+                cef_v8value_t *r = v8_call(when, 1, args, "waiting for the page to be parsed");
                 RELEASE(r);
                 RELEASE(when);
             }
@@ -1924,7 +1969,7 @@ static void run_in_frame(cef_frame_t *frame, const char *world, const char *code
                 free(wrapped);
                 if (fn) {
                     cef_v8value_t *args[1] = {SHARE(m->holder)};
-                    result = fn->execute_function(fn, NULL, 1, args);
+                    result = v8_call(fn, 1, args, "code run for an extension");
                     RELEASE(fn);
                 }
             }
@@ -1936,7 +1981,7 @@ static void run_in_frame(cef_frame_t *frame, const char *world, const char *code
                 /* The result goes with the call. */
                 cef_v8value_t *args[1] = {result ? result : p_cef_v8value_create_undefined()};
                 result = NULL;
-                cef_v8value_t *text = json->execute_function(json, NULL, 1, args);
+                cef_v8value_t *text = v8_call(json, 1, args, "a result as JSON");
                 if (text && text->is_string(text)) {
                     cef_string_userfree_t s = text->get_string_value(text);
                     answer = utf8_of(s);
@@ -1976,6 +2021,7 @@ static int CEF_CALLBACK on_renderer_message(cef_render_process_handler_t *self, 
             RELEASE(l);
         }
         handled = 1;
+        trace("the set changed: %d extensions", renderer_set ? (int)renderer_set->get_size(renderer_set) : -1);
     } else if (message_is(message, "spatimesh-run") && frame) {
         char *world = list_text(args, 0);
         char *code = list_text(args, 1);
