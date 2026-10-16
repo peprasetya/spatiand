@@ -89,6 +89,7 @@ fn spec() -> Spec {
         content_config: config("content", "content-token"),
         page_config: config("page", "page-token"),
         messages: [("color".to_string(), "red".to_string())].into_iter().collect(),
+        rules: Vec::new(),
     }
 }
 

@@ -277,7 +277,14 @@ pub(super) fn call(rt: &mut Runtime, side: &mut dyn BrowserSide, caller: &Caller
             }
             _ => err("cookies are not reachable yet in SpatiMesh"),
         },
-        "declarativeNetRequest" => dnr(rt, caller, method, &arg(0)),
+        "declarativeNetRequest" => {
+            let answer = dnr(rt, caller, method, &arg(0));
+            // Rules changed: the engine applies them from now on.
+            if method.starts_with("update") && matches!(answer, Answer::Now(Ok(_))) {
+                rt.send_set(side, &caller.profile);
+            }
+            answer
+        }
         "webNavigation" => {
             let Some(tab) = arg(0).get("tabId").and_then(Value::as_u64) else { return err("No tab given.") };
             let Some(t) = side.tabs().tab(tab).filter(|t| t.profile == profile) else { return err(format!("No tab with id: {tab}.")) };

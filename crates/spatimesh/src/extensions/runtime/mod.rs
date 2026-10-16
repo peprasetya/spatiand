@@ -759,6 +759,7 @@ impl Runtime {
             }
         };
         let messages = ext.messages.table(ext.id()).keys().map(|name| (name.clone(), ext.messages.get(name, &[], ext.id()))).collect();
+        let rules = self.rules_of(ext);
         Spec {
             id: ext.id().to_string(),
             root: root.clone(),
@@ -771,7 +772,33 @@ impl Runtime {
             content_config: self.config(ext, true, private).to_string(),
             page_config: self.config(ext, false, private).to_string(),
             messages,
+            rules,
         }
+    }
+
+    /// An extension's declarativeNetRequest rules in force: its enabled static rule sets' (read
+    /// from its folder, those it disabled left out), then its dynamic and session rules.
+    fn rules_of(&self, ext: &Ext) -> Vec<Value> {
+        if !(ext.has("declarativeNetRequest") || ext.has("declarativeNetRequestWithHostAccess")) {
+            return Vec::new();
+        }
+        let enabled = ext.state.enabled_rulesets.clone().unwrap_or_else(|| ext.manifest.rulesets.iter().filter(|r| r.enabled).map(|r| r.id.clone()).collect());
+        let mut rules = Vec::new();
+        for set in ext.manifest.rulesets.iter().filter(|r| enabled.contains(&r.id)) {
+            let Some(file) = set::inside(&ext.installed.root, set.path.trim_start_matches('/')) else { continue };
+            let written: Vec<Value> = match std::fs::read_to_string(&file).map(|t| serde_json::from_str(&t)) {
+                Ok(Ok(rules)) => rules,
+                _ => {
+                    log::warn!("{}: the rule set {} could not be read", ext.id(), set.path);
+                    continue;
+                }
+            };
+            let disabled = ext.state.disabled_rules.get(&set.id);
+            rules.extend(written.into_iter().filter(|r| !disabled.is_some_and(|d| r.get("id").and_then(Value::as_i64).is_some_and(|i| d.contains(&i)))));
+        }
+        rules.extend(ext.state.dynamic_rules.iter().cloned());
+        rules.extend(ext.session_rules.iter().cloned());
+        rules
     }
 
     /// What a profile's engine runs now.
@@ -784,7 +811,7 @@ impl Runtime {
         set
     }
 
-    fn send_set(&mut self, side: &mut dyn BrowserSide, profile: &str) {
+    pub(super) fn send_set(&mut self, side: &mut dyn BrowserSide, profile: &str) {
         let set = self.set_of(profile);
         side.set_extensions(profile, &set);
     }

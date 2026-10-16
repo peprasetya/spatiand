@@ -12,6 +12,7 @@ use std::os::raw::{c_char, c_int};
 use std::sync::Mutex;
 use std::time::Duration;
 
+use spatimesh::extensions::dnr;
 use spatimesh::extensions::set::{self, ExtensionSet, Script};
 
 use spatimesh::engine::{
@@ -85,10 +86,47 @@ extern "C" {
     fn spatimesh_ext_css(e: *mut Raw, code: *const c_char);
     fn spatimesh_ext_done(e: *mut Raw);
     fn spatimesh_run_script(e: *mut Raw, id: u64, world: *const c_char, all_frames: c_int, code: *const c_char, request: u64, boot: c_int);
+    fn spatimesh_ext_decider(decide: DecideFn);
+    fn spatimesh_ext_rules(e: *mut Raw, id: *const c_char, webkit: *const c_char);
 }
 
 type ServeFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut *const c_char, *mut *mut u8, *mut usize) -> c_int;
 type ServeFreeFn = unsafe extern "C" fn(*mut u8, usize);
+type DecideFn = unsafe extern "C" fn(*const c_char, *const c_char, c_int, *const c_char, *mut c_char, usize) -> c_int;
+
+/// The profile's extensions' declarativeNetRequest rules, read: what [`decide`] asks.
+static RULES: Mutex<Vec<dnr::Rules>> = Mutex::new(Vec::new());
+
+/// What the profile's extensions' declarativeNetRequest rules make of a request, for an engine
+/// that asks about each (Steam's Chromium): 0 nothing, 1 blocked, 2 to the address written into
+/// `redirect` (`cap` bytes, ended by a NUL) instead. `kind` is the request's type, numbered as
+/// [`dnr::ResourceType::ALL`] has them; `initiator` the page's origin, "" or "null" for the
+/// browser's own.
+unsafe extern "C" fn decide(url: *const c_char, initiator: *const c_char, kind: c_int, method: *const c_char, redirect: *mut c_char, cap: usize) -> c_int {
+    let Some(resource_type) = usize::try_from(kind).ok().and_then(|k| dnr::ResourceType::ALL.get(k)).copied() else { return 0 };
+    let Ok(rules) = RULES.lock() else { return 0 };
+    if rules.is_empty() {
+        return 0;
+    }
+    let (url, initiator, method) = (text(url), text(initiator), text(method));
+    let request = dnr::Request {
+        url: &url,
+        initiator: Some(initiator.as_str()).filter(|i| !i.is_empty() && *i != "null"),
+        resource_type,
+        method: if method.is_empty() { "get" } else { &method },
+        tab: None,
+    };
+    match dnr::decide(&rules, &request) {
+        None => 0,
+        Some(dnr::Decision::Block) => 1,
+        Some(dnr::Decision::Redirect(to)) if !redirect.is_null() && to.len() < cap && !to.contains('\0') => {
+            std::ptr::copy_nonoverlapping(to.as_ptr(), redirect as *mut u8, to.len());
+            *redirect.add(to.len()) = 0;
+            2
+        }
+        Some(dnr::Decision::Redirect(_)) => 0,
+    }
+}
 
 /// The profile's extensions as the window last gave them: what their addresses serve (one
 /// engine to a process).
@@ -265,7 +303,10 @@ impl Shim {
         if raw.is_null() {
             return Err("the engine could not start (for WebKitGTK: no display to connect to)".into());
         }
-        unsafe { spatimesh_ext_server(serve, serve_free) };
+        unsafe {
+            spatimesh_ext_server(serve, serve_free);
+            spatimesh_ext_decider(decide);
+        }
         Ok(Shim { raw, views: HashMap::new() })
     }
 
@@ -483,6 +524,16 @@ impl Engine for Shim {
                     unsafe { spatimesh_ext_css(self.raw, css.as_ptr()) };
                 }
             }
+        }
+        // declarativeNetRequest: for an engine that asks about each request, and as WebKit's
+        // content blockers for one that applies them itself (another engine ignores those).
+        let rules: Vec<dnr::Rules> = extensions.extensions.iter().filter(|s| !s.rules.is_empty()).map(|s| dnr::Rules::new(&s.id, &s.origin, &s.rules)).collect();
+        for each in rules.iter().filter(|r| !r.is_empty()) {
+            let (id, webkit) = (c(each.id()), c(&dnr::webkit_rules(each)));
+            unsafe { spatimesh_ext_rules(self.raw, id.as_ptr(), webkit.as_ptr()) };
+        }
+        if let Ok(mut kept) = RULES.lock() {
+            *kept = rules;
         }
         unsafe { spatimesh_ext_done(self.raw) };
     }

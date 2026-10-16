@@ -25,6 +25,9 @@ sha2 = "0.10"
 base64 = "0.22"
 url = "2"
 percent-encoding = "2"
+# declarativeNetRequest's rules (their urlFilter and regexFilter), and the patterns engines are
+# given as regular expressions.
+regex = "1"
 # Extensions' toolbar pictures.
 png = "0.17"
 
@@ -32,5 +35,3 @@ png = "0.17"
 # What keeps Spatiand's applications' settings the same on every machine, for the test that
 # SpatiMesh's survive it (tests/sync.rs).
 spatiand-sync = { path = "../spatiand-sync" }
-# To check the regular expressions engines are given against the patterns they come from.
-regex = "1"

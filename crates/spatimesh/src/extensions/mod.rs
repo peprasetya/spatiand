@@ -5,6 +5,7 @@
 //! scripts go ([`pattern`]) and what it keeps ([`storage`]) need no engine; the APIs are
 //! answered in the window process, and each engine only carries scripts and messages.
 
+pub mod dnr;
 pub mod install;
 pub mod locale;
 pub mod manifest;

@@ -1489,6 +1489,88 @@ static cef_resource_handler_t *CEF_CALLBACK asked_get_resource_handler(cef_resou
     return &s->handler;
 }
 
+/* -- declarativeNetRequest: the profile's extensions' rules, asked of the shim about each
+ *    request as it is about to be made (on Chromium's IO thread) -- */
+
+typedef int (*DecideFn)(const char *url, const char *initiator, int kind, const char *method, char *redirect, size_t cap);
+static DecideFn decide_fn;
+
+void spatimesh_ext_decider(DecideFn decide) {
+    decide_fn = decide;
+}
+
+/* Rules are asked about each request here: WebKit's content blockers are not for this engine. */
+void spatimesh_ext_rules(Engine *e, const char *id, const char *webkit) {}
+
+/* A request the rules decided about: blocked, or sent to another address. */
+typedef struct {
+    cef_resource_request_handler_t handler;
+    atomic_int refs;
+    char *redirect;
+} Ruled;
+
+REFCOUNTED(Ruled, r, (free(r->redirect), free(r)))
+
+static cef_return_value_t CEF_CALLBACK ruled_before_load(cef_resource_request_handler_t *self, cef_browser_t *browser, cef_frame_t *frame,
+                                                         cef_request_t *request, cef_callback_t *callback) {
+    Ruled *r = (Ruled *)self;
+    cef_return_value_t out = RV_CANCEL;
+    if (r->redirect) {
+        /* A changed address is a redirect to it. */
+        cef_string_t to;
+        memset(&to, 0, sizeof to);
+        set_text(&to, r->redirect);
+        request->set_url(request, &to);
+        clear_text(&to);
+        out = RV_CONTINUE;
+    }
+    RELEASE(callback);
+    RELEASE(request);
+    RELEASE(frame);
+    RELEASE(browser);
+    return out;
+}
+
+/* What a request is for, numbered as declarativeNetRequest's types are in the shim
+ * (spatimesh::extensions::dnr::ResourceType::ALL). */
+static int dnr_kind(cef_resource_type_t t) {
+    switch (t) {
+    case RT_MAIN_FRAME: case RT_NAVIGATION_PRELOAD_MAIN_FRAME: return 0;
+    case RT_SUB_FRAME: case RT_NAVIGATION_PRELOAD_SUB_FRAME: return 1;
+    case RT_STYLESHEET: return 2;
+    case RT_SCRIPT: case RT_WORKER: case RT_SHARED_WORKER: case RT_SERVICE_WORKER: return 3;
+    case RT_IMAGE: case RT_FAVICON: return 4;
+    case RT_FONT_RESOURCE: return 5;
+    case RT_OBJECT: case RT_PLUGIN_RESOURCE: return 6;
+    case RT_XHR: return 7;
+    case RT_PING: return 8;
+    case RT_CSP_REPORT: return 9;
+    case RT_MEDIA: return 10;
+    default: return 14;
+    }
+}
+
+/* What the rules make of a request: a handler that blocks or redirects it, or NULL. */
+static cef_resource_request_handler_t *ruled(cef_request_t *request, const char *url, const cef_string_t *request_initiator) {
+    char *initiator = request_initiator && request_initiator->length ? utf8_of(request_initiator) : strdup("");
+    cef_string_userfree_t m = request->get_method(request);
+    char *method = utf8_of(m);
+    if (m)
+        p_cef_string_userfree_utf16_free(m);
+    char redirect[8192];
+    int decided = decide_fn(url, initiator, dnr_kind(request->get_resource_type(request)), method, redirect, sizeof redirect);
+    free(method);
+    free(initiator);
+    if (!decided)
+        return NULL;
+    trace("%s %s", decided == 1 ? "blocked" : "redirected", url);
+    Ruled *r = calloc(1, sizeof *r);
+    COUNTED(r, Ruled, sizeof(cef_resource_request_handler_t));
+    r->handler.on_before_resource_load = ruled_before_load;
+    r->redirect = decided == 2 ? strdup(redirect) : NULL;
+    return &r->handler;
+}
+
 static cef_resource_request_handler_t *CEF_CALLBACK get_resource_request_handler(
     cef_request_handler_t *self, cef_browser_t *browser, cef_frame_t *frame, cef_request_t *request, int is_navigation, int is_download,
     const cef_string_t *request_initiator, int *disable_default_handling) {
@@ -1510,6 +1592,8 @@ static cef_resource_request_handler_t *CEF_CALLBACK get_resource_request_handler
             a->initiator = NULL;
         }
         out = &a->handler;
+    } else if (decide_fn) {
+        out = ruled(request, url, request_initiator);
     }
     free(url);
     RELEASE(request);

@@ -3,7 +3,8 @@
 //! it (the test plays the window), and a Chrome Manifest V3 extension and a Firefox Manifest V2
 //! one installed from folders -- their content scripts talking to their backgrounds (a service
 //! worker run as a page; background scripts), storage kept, tabs queried, a file fetched that is
-//! made web accessible, and code run in a tab when an extension asks.
+//! made web accessible, code run in a tab when an extension asks, and a fetch blocked by a
+//! declarativeNetRequest rule.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -204,10 +205,14 @@ const CHROME_MANIFEST: &str = r#"{
   "manifest_version": 3,
   "name": "Chrome's kind",
   "version": "1.0",
-  "permissions": ["storage", "tabs", "scripting"],
+  "permissions": ["storage", "tabs", "scripting", "declarativeNetRequest"],
   "host_permissions": ["http://127.0.0.1/*"],
   "background": { "service_worker": "sw.js" },
-  "content_scripts": [{ "matches": ["http://127.0.0.1/chrome*"], "js": ["shared.js", "content.js"], "run_at": "document_end" }],
+  "content_scripts": [
+    { "matches": ["http://127.0.0.1/chrome*"], "js": ["shared.js", "content.js"], "run_at": "document_end" },
+    { "matches": ["http://127.0.0.1/dnr*"], "js": ["dnr.js"], "run_at": "document_end" }
+  ],
+  "declarative_net_request": { "rule_resources": [{ "id": "rules", "enabled": true, "path": "rules.json" }] },
   "web_accessible_resources": [{ "resources": ["data.txt"], "matches": ["http://127.0.0.1/*"] }]
 }"#;
 
@@ -243,6 +248,18 @@ chrome.runtime.sendMessage({ greeting: GREETING }, function (reply) {
     chrome.runtime.sendMessage({ script: true });
   }, function (e) { document.title = 'chrome-fetch-failed:' + e; });
 });
+"#;
+
+/// declarativeNetRequest: what pages fetch from /blocked is blocked; the rest is not.
+const CHROME_RULES: &str = r#"[
+  { "id": 1, "priority": 1, "action": { "type": "block" }, "condition": { "urlFilter": "/blocked", "resourceTypes": ["xmlhttprequest"] } }
+]"#;
+
+const CHROME_DNR: &str = r#"
+function tried(path) {
+  return fetch(path).then(function (r) { return r.ok ? 'got' : 'status' + r.status; }, function () { return 'blocked'; });
+}
+Promise.all([tried('/blocked.txt'), tried('/fine.txt')]).then(function (r) { document.title = 'dnr:' + r.join(':'); });
 "#;
 
 const FIREFOX_MANIFEST: &str = r#"{
@@ -291,7 +308,7 @@ pub fn run(program: &str, addresses: Addresses, required: bool) {
     let chrome = folder(
         &root,
         "chrome",
-        &[("manifest.json", CHROME_MANIFEST), ("sw.js", CHROME_WORKER), ("shared.js", CHROME_SHARED), ("content.js", CHROME_CONTENT), ("data.txt", "payload\n")],
+        &[("manifest.json", CHROME_MANIFEST), ("sw.js", CHROME_WORKER), ("shared.js", CHROME_SHARED), ("content.js", CHROME_CONTENT), ("data.txt", "payload\n"), ("rules.json", CHROME_RULES), ("dnr.js", CHROME_DNR)],
     );
     let firefox = folder(&root, "firefox", &[("manifest.json", FIREFOX_MANIFEST), ("bg.js", FIREFOX_BACKGROUND), ("content.js", FIREFOX_CONTENT)]);
     let store = Store::at(&root.join("store"));
@@ -357,6 +374,11 @@ pub fn run(program: &str, addresses: Addresses, required: bool) {
     }
     let kept = storage::all(&store, &session, "default", &firefox_ext.id, Area::Local);
     assert_eq!(kept.get("n"), Some(&serde_json::json!(21)));
+    // declarativeNetRequest: the page's fetch the rules are for is blocked; another is not. The
+    // tab is opened last, the rules having had time to be compiled into the engine.
+    let dnr_tab = w.open_tab("default", None, &format!("{site}/dnr"), None, false, None).unwrap();
+    pump(&mut rt, &mut w, "the declarativeNetRequest page to fetch", 40, |w| w.title_of(dnr_tab).is_some_and(|t| t.starts_with("dnr")));
+    assert_eq!(w.title_of(dnr_tab), Some("dnr:blocked:got"));
     drop(w);
     let _ = std::fs::remove_dir_all(&root);
 }

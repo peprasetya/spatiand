@@ -108,6 +108,11 @@ typedef struct Engine {
     /* The profile's extensions, and their content scripts. */
     GPtrArray *exts;
     GPtrArray *entries;
+    /* Their declarativeNetRequest rules as WebKit's content blockers: compiled into the store,
+     * by extension id (the JSON given, until compiled; the filter, once). */
+    WebKitUserContentFilterStore *filter_store;
+    GHashTable *rule_sources;
+    GHashTable *filters;
 } Engine;
 
 static guint32 now_ms(void) {
@@ -422,6 +427,77 @@ static Ext *ext_of_world(Engine *e, const char *world) {
     return NULL;
 }
 
+/* The compiled content blockers on a tab's view, in place of what was there. */
+static void apply_filters(Tab *t) {
+    WebKitUserContentManager *m = webkit_web_view_get_user_content_manager(t->view);
+    webkit_user_content_manager_remove_all_filters(m);
+    if (!t->engine->filters)
+        return;
+    GHashTableIter it;
+    gpointer key, value;
+    g_hash_table_iter_init(&it, t->engine->filters);
+    while (g_hash_table_iter_next(&it, &key, &value))
+        webkit_user_content_manager_add_filter(m, value);
+}
+
+static void on_filter_saved(GObject *source, GAsyncResult *result, gpointer data) {
+    Engine *e = data;
+    GError *error = NULL;
+    WebKitUserContentFilter *filter = webkit_user_content_filter_store_save_finish(WEBKIT_USER_CONTENT_FILTER_STORE(source), result, &error);
+    if (!filter) {
+        g_warning("an extension's declarativeNetRequest rules could not be made WebKit's: %s", error ? error->message : "?");
+        g_clear_error(&error);
+        return;
+    }
+    const char *id = webkit_user_content_filter_get_identifier(filter);
+    /* An extension gone since it was asked for keeps no rules. */
+    if (!e->rule_sources || !g_hash_table_contains(e->rule_sources, id)) {
+        webkit_user_content_filter_unref(filter);
+        return;
+    }
+    g_hash_table_replace(e->filters, g_strdup(id), filter);
+    GHashTableIter it;
+    gpointer key, value;
+    g_hash_table_iter_init(&it, e->tabs);
+    while (g_hash_table_iter_next(&it, &key, &value))
+        apply_filters(value);
+}
+
+/* declarativeNetRequest: each extension's rules as WebKit's content blockers, compiled (in the
+ * background) and put on every tab's view; an extension's that are not in the new set taken
+ * off. Pages loaded from then on have them. */
+static void compile_filters(Engine *e) {
+    if (!e->filters)
+        e->filters = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)webkit_user_content_filter_unref);
+    GHashTableIter it;
+    gpointer key, value;
+    g_hash_table_iter_init(&it, e->filters);
+    while (g_hash_table_iter_next(&it, &key, &value))
+        if (!e->rule_sources || !g_hash_table_contains(e->rule_sources, key))
+            g_hash_table_iter_remove(&it);
+    if (!e->rule_sources || !e->filter_store)
+        return;
+    g_hash_table_iter_init(&it, e->rule_sources);
+    while (g_hash_table_iter_next(&it, &key, &value)) {
+        GBytes *json = g_bytes_new(value, strlen(value));
+        webkit_user_content_filter_store_save(e->filter_store, key, json, NULL, on_filter_saved, e);
+        g_bytes_unref(json);
+    }
+}
+
+/* What a profile's extensions' rules make of a request is WebKit's to decide here: no asking. */
+typedef int (*DecideFn)(const char *url, const char *initiator, int kind, const char *method, char *redirect, size_t cap);
+void spatimesh_ext_decider(DecideFn decide) {
+    (void)decide;
+}
+
+/* An extension's rules, as WebKit's content blockers (JSON): compiled when the set is whole. */
+void spatimesh_ext_rules(Engine *e, const char *id, const char *webkit) {
+    if (!e->rule_sources)
+        e->rule_sources = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    g_hash_table_replace(e->rule_sources, g_strdup(id), g_strdup(webkit));
+}
+
 static void on_ext_message(WebKitUserContentManager *manager, WebKitJavascriptResult *result, Tab *t) {
     JSCValue *value = webkit_javascript_result_get_js_value(result);
     char *text = jsc_value_to_string(value);
@@ -512,6 +588,8 @@ void spatimesh_ext_clear(Engine *e) {
         g_ptr_array_unref(e->exts);
     e->exts = g_ptr_array_new_with_free_func((GDestroyNotify)free_ext);
     e->entries = g_ptr_array_new_with_free_func((GDestroyNotify)free_entry);
+    if (e->rule_sources)
+        g_hash_table_remove_all(e->rule_sources);
 }
 
 void spatimesh_ext_add(Engine *e, const char *id, const char *scheme, const char *world, const char *content_boot, const char *page_boot) {
@@ -564,11 +642,14 @@ void spatimesh_ext_css(Engine *e, const char *code) {
 
 /* The set is whole: every tab has it for the pages it loads from now on. */
 void spatimesh_ext_done(Engine *e) {
+    compile_filters(e);
     GHashTableIter it;
     gpointer key, value;
     g_hash_table_iter_init(&it, e->tabs);
-    while (g_hash_table_iter_next(&it, &key, &value))
+    while (g_hash_table_iter_next(&it, &key, &value)) {
         apply_extensions(value);
+        apply_filters(value);
+    }
 }
 
 typedef struct {
@@ -661,6 +742,13 @@ Engine *spatimesh_new(const char *data, const char *cache) {
     }
     if (g_getenv("SPATIMESH_CONSOLE"))
         webkit_settings_set_enable_write_console_messages_to_stdout(e->settings, TRUE);
+    /* Extensions' content blockers, compiled: in the profile's cache, or a folder of the
+     * process's own for the private profile (compiled rules are no one's data). */
+    char *filters = cache ? g_build_filename(cache, "content-filters", NULL) : g_dir_make_tmp("spatimesh-filters-XXXXXX", NULL);
+    if (filters) {
+        e->filter_store = webkit_user_content_filter_store_new(filters);
+        g_free(filters);
+    }
     return e;
 }
 
@@ -717,6 +805,7 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
     *key = id;
     g_hash_table_insert(e->tabs, key, t);
     apply_extensions(t);
+    apply_filters(t);
     webkit_web_view_load_uri(t->view, uri && *uri ? uri : "about:blank");
     return 1;
 }

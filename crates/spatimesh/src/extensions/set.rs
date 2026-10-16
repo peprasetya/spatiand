@@ -113,6 +113,10 @@ pub struct Spec {
     pub page_config: String,
     /// `__MSG_name__` in its style sheets: the messages by name, in lower case.
     pub messages: std::collections::BTreeMap<String, String>,
+    /// Its declarativeNetRequest rules as written, in force now: its enabled static rule sets'
+    /// (but those it disabled), then its dynamic and session rules (dnr.rs reads them).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<serde_json::Value>,
 }
 
 /// One `content_scripts` entry (or one registered by `scripting.registerContentScripts`), its
@@ -469,6 +473,7 @@ mod tests {
             content_config: "{}".into(),
             page_config: "{}".into(),
             messages: [("color".to_string(), "red".to_string())].into_iter().collect(),
+            rules: Vec::new(),
         }
     }
 

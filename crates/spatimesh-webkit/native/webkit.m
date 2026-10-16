@@ -177,9 +177,14 @@ struct Engine {
     NSMutableArray<MeshExtension *> *extensions;
     NSMutableArray<MeshEntry *> *entries;
     MeshSchemes *schemes;
+    /* declarativeNetRequest: each extension's rules as WebKit's content blockers (JSON), and
+     * those compiled, by extension. */
+    NSMutableDictionary<NSString *, NSString *> *ruleSources;
+    NSMutableDictionary<NSString *, WKContentRuleList *> *ruleLists;
 };
 
 static Engine *the_engine;
+static void apply_rule_lists(MeshTab *tab);
 
 static char *copy_string(NSString *s) {
     const char *utf8 = s ? s.UTF8String : "";
@@ -714,6 +719,8 @@ Engine *spatimesh_new(const char *data, const char *cache) {
         e->extensions = [NSMutableArray array];
         e->entries = [NSMutableArray array];
         e->schemes = [[MeshSchemes alloc] init];
+        e->ruleSources = [NSMutableDictionary dictionary];
+        e->ruleLists = [NSMutableDictionary dictionary];
         if (!data) {
             e->store = [WKWebsiteDataStore nonPersistentDataStore];
         } else if (@available(macOS 14.0, *)) {
@@ -797,6 +804,7 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
         tab.view = view;
         /* The <select> script, and the profile's extensions from the first page on. */
         apply_extensions(tab);
+        apply_rule_lists(tab);
         for (NSString *key in @[ @"title", @"URL", @"estimatedProgress", @"loading", @"canGoBack", @"canGoForward" ])
             [view addObserver:tab forKeyPath:key options:NSKeyValueObservingOptionNew context:NULL];
         e->tabs[@(id)] = tab;
@@ -1245,6 +1253,57 @@ void spatimesh_ext_server(ServeFn serve, ServeFreeFn free_bytes) {
     serve_free_fn = free_bytes;
 }
 
+/* The profile's extensions' declarativeNetRequest rules on a tab's view, in place of what was
+ * there. */
+static void apply_rule_lists(MeshTab *tab) {
+    WKUserContentController *c = tab.view.configuration.userContentController;
+    [c removeAllContentRuleLists];
+    for (WKContentRuleList *list in tab.engine->ruleLists.allValues)
+        [c addContentRuleList:list];
+}
+
+/* A name for a list that is the same for the same rules (FNV-1a of them): two engines, of two
+ * profiles, sharing the store never take each other's. */
+static NSString *rule_list_name(NSString *ident, NSString *source) {
+    uint64_t h = 1469598103934665603ULL;
+    for (const unsigned char *p = (const unsigned char *)source.UTF8String; p && *p; p++)
+        h = (h ^ *p) * 1099511628211ULL;
+    return [NSString stringWithFormat:@"spatimesh.%@.%016llx", ident, (unsigned long long)h];
+}
+
+/* declarativeNetRequest: each extension's rules as WebKit's content blockers, compiled (in the
+ * background) and put on every tab's view; an extension's that are not in the new set taken
+ * off. Pages loaded from then on have them. */
+static void compile_rule_lists(Engine *e) {
+    BOOL dropped = NO;
+    for (NSString *ident in e->ruleLists.allKeys)
+        if (!e->ruleSources[ident]) {
+            [e->ruleLists removeObjectForKey:ident];
+            dropped = YES;
+        }
+    if (dropped)
+        for (MeshTab *tab in e->tabs.allValues)
+            apply_rule_lists(tab);
+    WKContentRuleListStore *store = [WKContentRuleListStore defaultStore];
+    for (NSString *ident in e->ruleSources.allKeys) {
+        NSString *source = e->ruleSources[ident];
+        [store compileContentRuleListForIdentifier:rule_list_name(ident, source) encodedContentRuleList:source
+                                 completionHandler:^(WKContentRuleList *list, NSError *error) {
+                                     if (!list) {
+                                         fprintf(stderr, "spatimesh: an extension's declarativeNetRequest rules could not be made WebKit's: %s\n",
+                                                 error.localizedDescription.UTF8String ?: "?");
+                                         return;
+                                     }
+                                     /* Rules changed or gone since they were asked for are not put on. */
+                                     if (![e->ruleSources[ident] isEqualToString:source])
+                                         return;
+                                     e->ruleLists[ident] = list;
+                                     for (MeshTab *tab in e->tabs.allValues)
+                                         apply_rule_lists(tab);
+                                 }];
+    }
+}
+
 /* What a context's api.js hands its calls to: the handler in its own world. */
 const char *spatimesh_ext_bridge(void) {
     return "(function(){var h=window.webkit.messageHandlers.spatimeshExt;return function(s){h.postMessage(s);};})()";
@@ -1253,6 +1312,20 @@ const char *spatimesh_ext_bridge(void) {
 void spatimesh_ext_clear(Engine *e) {
     e->extensions = [NSMutableArray array];
     e->entries = [NSMutableArray array];
+    e->ruleSources = [NSMutableDictionary dictionary];
+}
+
+/* What a profile's extensions' rules make of a request is WebKit's to decide here: no asking. */
+typedef int (*DecideFn)(const char *url, const char *initiator, int kind, const char *method, char *redirect, size_t cap);
+void spatimesh_ext_decider(DecideFn decide) {
+    (void)decide;
+}
+
+/* An extension's rules, as WebKit's content blockers (JSON): compiled when the set is whole. */
+void spatimesh_ext_rules(Engine *e, const char *ident, const char *webkit) {
+    @autoreleasepool {
+        e->ruleSources[text_of(ident)] = text_of(webkit);
+    }
 }
 
 void spatimesh_ext_add(Engine *e, const char *ident, const char *scheme, const char *world, const char *content_boot, const char *page_boot) {
@@ -1315,6 +1388,7 @@ void spatimesh_ext_done(Engine *e) {
     @autoreleasepool {
         for (MeshTab *tab in e->tabs.allValues)
             apply_extensions(tab);
+        compile_rule_lists(e);
     }
 }
 
