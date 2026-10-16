@@ -41,6 +41,12 @@ enum {
     SP_MENU_OPEN = 24,        // say the menus of window id's application, from the top (sp_menu_begin...)
     SP_MENU_CHOOSE = 25,      // row a of the menu last said was chosen
     SP_MENU_BACK = 26,        // up a level, or out from the top
+    // 2D mode (sp_desk): the session's windows shown on the Mac's desktop.
+    SP_DESK_OPEN = 30,        // show window id, a by b pixels; text is its title, "\n", its app id
+    SP_DESK_PICTURE = 31,     // window id's newest picture is the global IOSurface numbered a
+    SP_DESK_TITLE = 32,       // window id's title is text
+    SP_DESK_SIZE = 33,        // window id is a by b pixels now
+    SP_DESK_CLOSE = 34,       // window id has closed, or the glasses have it now
 };
 
 typedef void (*sp_asked_fn)(void *user, int32_t what, uint32_t id, double a, double b, double c,
@@ -139,6 +145,25 @@ void sp_app_sound(const char *bundle, const int16_t *pcm, uint32_t frames, uint3
 
 // A line saying how the session is. Returns its length.
 size_t sp_status(char *into, size_t size);
+
+// 2D mode: Spatiand's own applications as windows on the Mac's desktop. With sp_desk on and no
+// glasses' screen given, the session shows nothing itself and says each of its windows with
+// SP_DESK_*; what is done to the Mac window comes back here, in the window's own pixels from its
+// top left. Off, the glasses have the same windows.
+void sp_desk(bool on);
+// Open one of Spatiand's own applications by name ("SpatiMesh").
+void sp_desk_launch(const char *name);
+// The names of Spatiand's own applications that are here, one a line.
+void sp_desk_apps(char *buffer, size_t capacity);
+void sp_desk_motion(uint32_t id, double x, double y);
+void sp_desk_leave(uint32_t id);
+void sp_desk_button(uint32_t id, uint32_t button, bool pressed); // 0x110 left, 0x111 right, 0x112 middle
+void sp_desk_scroll(uint32_t id, double dx, double dy, bool wheel); // pixels across and down; a notch is 15
+void sp_desk_key(uint32_t id, uint16_t mac_code, bool pressed);
+void sp_desk_focus(uint32_t id, bool focused);
+void sp_desk_pinch(uint32_t id, float scale);
+void sp_desk_resize(uint32_t id, int32_t width, int32_t height);
+void sp_desk_close(uint32_t id);
 
 #ifdef __cplusplus
 }

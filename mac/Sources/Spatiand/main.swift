@@ -103,13 +103,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // With the glasses on and the mouse and keyboard theirs, these are the room's own launcher
         // and settings: the Mac's menu is out of sight. Otherwise they are the Mac's.
         hotkeys.onMenu = { [weak self] in
-            if Room.shared.running, RoomTap.shared.holding { Self.press(1) } else { self?.item.button?.performClick(nil) }
+            if Room.shared.inGlasses, RoomTap.shared.holding { Self.press(1) } else { self?.item.button?.performClick(nil) }
         }
         hotkeys.onSettings = { [weak self] in
-            if Room.shared.running, RoomTap.shared.holding { Self.press(0) } else { self?.settings.show() }
+            if Room.shared.inGlasses, RoomTap.shared.holding { Self.press(0) } else { self?.settings.show() }
         }
         if Settings.hotkeys { hotkeys.enable() }
-        hotkeys.onWorlds = { if Room.shared.running, RoomTap.allowed(ask: false) { RoomTap.shared.toggle() } }
+        hotkeys.onWorlds = { if Room.shared.inGlasses, RoomTap.allowed(ask: false) { RoomTap.shared.toggle() } }
         hotkeys.enableWorlds()
         Model.shared.onProblem = { PairingUI.alert("Spatiand", $0) }
         Room.shared.onChange = { [weak self] in self?.refreshIcon() }
@@ -131,10 +131,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func chooseWorld() {
         Model.shared.glassesOn = false
         if glassesWanted() {
-            guard !Room.shared.running else { return }
+            guard !Room.shared.inGlasses else { return }
             Model.shared.disconnect()
             Room.shared.start()
-        } else if Room.shared.running {
+        } else if Room.shared.inGlasses {
             // One session a process; see `Room`.
             relaunchForNextPlugIn()
         } else if Model.shared.host == nil, let last = Hosts.all.first {
@@ -151,8 +151,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         wasPlugged = glasses.isPluggedIn
         // A display that has gone leaves a ghost of the glasses' window in the window server for
         // as long as this process lives, so the next plug-in starts from a fresh one.
-        if unplugged, Room.shared.running { relaunchForNextPlugIn(); return }
-        if glassesWanted() != Room.shared.running { chooseWorld() }
+        if unplugged, Room.shared.inGlasses { relaunchForNextPlugIn(); return }
+        if glassesWanted() != Room.shared.inGlasses { chooseWorld() }
     }
 
     private var wasPlugged = false
@@ -197,10 +197,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let room = Room.shared
         let status = glasses.isPluggedIn
-            ? (room.running ? "Glasses: " + room.status : "Glasses connected \u{2014} windows are on this Mac")
+            ? (room.inGlasses ? "Glasses: " + room.status : "Glasses connected \u{2014} windows are on this Mac")
             : "No glasses \u{2014} windows are on this Mac"
         add(menu, status, enabled: false)
-        if room.running {
+        if room.inGlasses {
             if !RoomTap.allowed(ask: false) {
                 let ask = NSMenuItem(title: "Allow Accessibility, for the mouse and keyboard in the glasses\u{2026}", action: #selector(allowControl), keyEquivalent: "")
                 ask.target = self
@@ -216,7 +216,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        if room.running {
+        if room.inGlasses {
             let macs = NSMenuItem(title: "Bring a window of this Mac into the glasses", action: nil, keyEquivalent: "")
             let sub = NSMenu()
             if !MacWindows.allowed(ask: false) {
@@ -244,6 +244,21 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             buildComputers(menu)
         }
         menu.addItem(.separator())
+
+        // Spatiand's own applications: in the room with the glasses, as this Mac's windows without.
+        let own = Room.ownApps
+        if !own.isEmpty {
+            let apps = NSMenuItem(title: "Spatiand App", action: nil, keyEquivalent: "")
+            let appsMenu = NSMenu()
+            for name in own {
+                let entry = NSMenuItem(title: name, action: #selector(openOwnApp(_:)), keyEquivalent: "")
+                entry.target = self
+                entry.representedObject = name
+                appsMenu.addItem(entry)
+            }
+            apps.submenu = appsMenu
+            menu.addItem(apps)
+        }
 
         let present = NSMenuItem(title: "Show windows", action: nil, keyEquivalent: "")
         let presentMenu = NSMenu()
@@ -395,6 +410,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openSettings() { settings.show() }
     @objc private func addComputer() { pairing.ask() }
     @objc private func disconnect() { Model.shared.disconnect() }
+    @objc private func openOwnApp(_ sender: NSMenuItem) {
+        if let name = sender.representedObject as? String { Room.shared.openOwn(name) }
+    }
     @objc private func openApp(_ sender: NSMenuItem) {
         if let id = sender.representedObject as? String, let app = Model.shared.apps.first(where: { $0.id == id }) {
             Model.shared.launch(app)
@@ -960,6 +978,94 @@ if CommandLine.arguments.contains("--selftest-record") {
     application.run()
 }
 
+
+if let at = CommandLine.arguments.firstIndex(of: "--selftest-desk") {
+    // --selftest-desk <application> [folder]: one of Spatiand's own applications in 2D mode, as
+    // a window on this Mac; an address typed (Command-L), the window resized, scrolled, then
+    // closed by its close button, each step through the calls the window's own events make.
+    // The window as the window server shows it is saved after each step (folder, else
+    // ~/screenshots). Does not touch the running Spatiand.
+    let args = Array(CommandLine.arguments[(at + 1)...])
+    let name = args.first ?? "SpatiMesh"
+    let folder = args.count > 1 ? args[1] : NSHomeDirectory() + "/screenshots"
+    try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    // Mac key codes of the keys that type these, on a US layout.
+    let keys: [Character: UInt16] = Dictionary(uniqueKeysWithValues: zip(
+        "asdfhgzxcv bqweryt123465=97-80]ou[ip lj'k;\\,/nm.", 
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47].map { UInt16($0) }
+    ).filter { $0.0 != " " })
+    func shoot(_ step: String) {
+        guard let window = DeskWindows.shared.all.first else { print("desk: \(step): no window"); return }
+        let size = window.contentRect(forFrameRect: window.frame).size
+        print("desk: \(step): \"\(window.title)\" \(Int(size.width))x\(Int(size.height))")
+        guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming]) else { print("desk: \(step): no picture (Screen Recording?)"); return }
+        let rep = NSBitmapImageRep(cgImage: image)
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(folder)/desk-\(step).png"))
+    }
+    func id() -> UInt32? { (DeskWindows.shared.all.first?.contentView as? DeskView)?.id }
+    func press(_ code: UInt16) { if let id = id() { sp_desk_key(id, code, true); sp_desk_key(id, code, false) } }
+    func type(_ text: String) { for c in text { if let code = keys[c] { press(code) } } }
+    var t = 0.0
+    func then(_ wait: Double, _ step: @escaping () -> Void) { t += wait; DispatchQueue.main.asyncAfter(deadline: .now() + t, execute: step) }
+    then(0.5) { Room.shared.openOwn(name) }
+    then(8) { shoot("opened") }
+    if name != "SpatiMesh" {
+        // The others: shown, resized, closed.
+        then(0.5) { DeskWindows.shared.all.first?.setContentSize(NSSize(width: 1000, height: 700)) }
+        then(3) { shoot("resized") }
+        then(0.5) { DeskWindows.shared.all.first?.performClose(nil) }
+        then(4) {
+            print("desk: after the close button: \(DeskWindows.shared.all.count) window(s) left")
+            Room.shared.stop()
+            exit(0)
+        }
+        application.run()
+    }
+    then(0.5) {
+        guard let id = id() else { return }
+        sp_desk_focus(id, true)
+        sp_desk_key(id, 0x37, true); press(0x25); sp_desk_key(id, 0x37, false)
+        type("en.wikipedia.org"); press(0x24)
+    }
+    then(10) { shoot("typed") }
+    then(0.5) { DeskWindows.shared.all.first?.setContentSize(NSSize(width: 1100, height: 760)) }
+    then(4) { shoot("resized") }
+    then(0.5) { if let id = id() { sp_desk_motion(id, 500, 400); sp_desk_scroll(id, 0, 600, false) } }
+    then(3) { shoot("scrolled") }
+    // Through AppKit itself now, as the window's own events: back to the top, a click on the
+    // page's search button, and a search typed and sent.
+    then(0.5) { if let id = id() { sp_desk_scroll(id, 0, -2000, false) } }
+    func post(_ event: NSEvent?) { if let event { NSApp.postEvent(event, atStart: false) } }
+    func click(_ x: CGFloat, _ yFromTop: CGFloat) {
+        guard let window = DeskWindows.shared.all.first else { return }
+        let height = window.contentRect(forFrameRect: window.frame).height
+        let at = NSPoint(x: x, y: height - yFromTop)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            post(NSEvent.mouseEvent(with: type, location: at, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                    windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+        }
+    }
+    func key(_ code: UInt16, _ text: String) {
+        guard let window = DeskWindows.shared.all.first else { return }
+        for type in [NSEvent.EventType.keyDown, .keyUp] {
+            post(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                  windowNumber: window.windowNumber, context: nil, characters: text, charactersIgnoringModifiers: text, isARepeat: false, keyCode: code))
+        }
+    }
+    then(2) { DeskWindows.shared.all.first?.makeKeyAndOrderFront(nil); click(714, 167) }
+    then(2) { shoot("clicked") }
+    then(0.5) { for c in "hrtf" { if let code = keys[c] { key(code, String(c)) } }; key(0x24, "\r") }
+    then(8) { shoot("searched") }
+    then(0.5) { DeskWindows.shared.all.first?.performClose(nil) }
+    then(4) {
+        print("desk: after the close button: \(DeskWindows.shared.all.count) window(s) left")
+        Room.shared.stop()
+        exit(0)
+    }
+    application.run()
+}
 
 if CommandLine.arguments.contains("--selftest-local") {
     exit(LocalTests.run())

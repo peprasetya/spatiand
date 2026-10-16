@@ -288,13 +288,16 @@ pub fn run(
         glasses = output_for(&shared.glasses, &egl_display, renderer.egl_context(), glasses.take());
         phone = output_for(&shared.phone, &egl_display, renderer.egl_context(), phone.take());
         let Some(output) = glasses.as_ref() else {
-            // Nowhere to draw the world. Keep the clients answered and the panel drawn.
+            // Nowhere to draw the world. Keep the clients answered and the panel drawn -- and on
+            // a Mac in 2D mode, the windows shown on its desktop (`super::desk_tick`).
             if let Some(p) = phone.as_mut() {
                 draw_phone(&mut renderer, p);
             }
+            let desk = super::desk_tick(&mut runtime.state);
+            runtime.state.space.refresh();
             display.dispatch_clients(&mut runtime.state)?;
             display.flush_clients()?;
-            event_loop.dispatch(Some(Duration::from_millis(50)), runtime)?;
+            event_loop.dispatch(Some(Duration::from_millis(if desk { 4 } else { 50 })), runtime)?;
             continue;
         };
         let generation = output.generation;

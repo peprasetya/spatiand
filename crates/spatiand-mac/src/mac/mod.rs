@@ -15,10 +15,12 @@
 //! | [`remote_video`] | `IOSurface`s: a host's decoded picture, or a Mac window's captured one |
 //! | [`local_apps`], [`launch_local`] | this Mac's applications, whose windows come into the room |
 //! | [`record`] | the glasses' view to a file |
+//! | [`desk_tick`] | 2D mode: the session's windows as the Mac's own ([`desk`]) |
 
 #[path = "../../../spatiand-android/src/android/backend.rs"]
 pub mod backend;
 pub mod controller;
+pub mod desk;
 pub mod egl;
 pub mod ffi;
 pub mod keycodes;
@@ -147,6 +149,12 @@ pub fn shared() -> &'static Arc<Shared> {
 }
 
 // --- what `backend` asks of the platform it runs on ---
+
+/// With nothing to draw into: the session's windows shown on the Mac's desktop, if the app has
+/// asked for 2D mode. True while it has, so the loop goes round at a window's pace.
+pub fn desk_tick(state: &mut crate::Spatiand) -> bool {
+    desk::tick(state)
+}
 
 /// macOS is offered the glasses' two-eye picture at 60 Hz only: asked for the Deck's 72, the
 /// glasses agree and the Mac goes on showing one eye.

@@ -159,9 +159,9 @@ snapshot backend, pictures going over as dmabufs.
   (`SPATIAND_MEDIA_HARDWARE=all` overrides).
 
 **Not done yet**
-* The Mac without glasses: its 2D mode is the Swift app with no compositor, so there is nothing
-  for an application to connect to, and nothing says "flat" when the glasses are unplugged.
-  This meets the other session's work on `mac-compositor` and wants deciding with it.
+* ~~The Mac without glasses~~: done 2026-10-17. In 2D mode the app starts the compositor for
+  them and shows each window as a Mac window (docs/mac.md, "2D mode"); the mode is flat there.
+  Unplugging the glasses still restarts the app, which ends the applications.
 * The Beam Pro: the programs in the APK (`android/build.sh`), FFmpeg built for Android,
   MediaCodec, an `AHardwareBuffer` handed over the socket, `SPATIAND_APPS_DIR` set from the
   native library directory, and the phantom-process monitor switched off.

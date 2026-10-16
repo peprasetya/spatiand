@@ -23,6 +23,10 @@ final class Room {
 
     let screen = GlassesScreen()
     private(set) var running = false
+    /// The session is running for 2D mode: no glasses, its windows on the Mac (`DeskWindows`).
+    private(set) var desk = false
+    /// The session is running and the glasses have it.
+    var inGlasses: Bool { running && !desk }
     private let sound = MacSound()
     private var soundTimer: Timer?
     var onChange: (() -> Void)?
@@ -34,14 +38,32 @@ final class Room {
         return said.isEmpty ? screen.status : said
     }
 
-    /// Start the room: the session, then somewhere for it to draw.
-    func start(preview: Bool = false) {
-        guard !running else { return }
+    /// Open one of Spatiand's own applications. Without the glasses, the session is started for
+    /// it in 2D mode, and its windows are the Mac's own.
+    func openOwn(_ name: String) {
+        if !running { startDesk() }
+        sp_desk_launch(name)
+    }
+
+    /// The names of Spatiand's own applications that are here to run.
+    static var ownApps: [String] {
+        var buffer = [CChar](repeating: 0, count: 1024)
+        sp_desk_apps(&buffer, buffer.count)
+        return String(cString: buffer).split(separator: "\n").map(String.init)
+    }
+
+    /// 2D mode: the session with nothing to draw into and the glasses left alone; each of its
+    /// windows comes to `DeskWindows` as one of the Mac's.
+    private func startDesk() {
         running = true
-        shareIdentity()
-        // Not when it is only being looked at: a host shows its windows to one viewer, and
-        // connecting would take them from wherever they are being used.
-        if !preview { for host in Hosts.all { sp_paired_host(host.address, host.fingerprint) } }
+        desk = true
+        sp_hold_glasses(false)
+        sp_desk(true)
+        begin()
+    }
+
+    /// The session itself, once, whichever way it is going to be shown.
+    private func begin() {
         sp_display_scale(Double(NSScreen.main?.backingScaleFactor ?? 2))
         sp_microphone_allowed(AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
         listApplications()
@@ -55,6 +77,24 @@ final class Room {
         sp_begin({ _, what, id, a, b, c, text in
             Room.shared.asked(what, id: id, a: a, b: b, c: c, text: text.map { String(cString: $0) } ?? "")
         }, nil)
+    }
+
+    /// Start the room: the session, then somewhere for it to draw. From 2D mode, the session
+    /// already running takes the glasses, and its windows leave the Mac for the room.
+    func start(preview: Bool = false) {
+        guard !running || desk else { return }
+        let fromDesk = desk
+        running = true
+        if fromDesk {
+            desk = false
+            sp_desk(false)
+            sp_hold_glasses(true)
+        }
+        shareIdentity()
+        // Not when it is only being looked at: a host shows its windows to one viewer, and
+        // connecting would take them from wherever they are being used.
+        if !preview { for host in Hosts.all { sp_paired_host(host.address, host.fingerprint) } }
+        if !fromDesk { begin() }
         RoomTap.shared.onChange = { [weak self] in self?.onChange?() }
         RoomTap.shared.onRepeat = { RoomWindows.shared.repeated($0) }
         RoomTap.shared.overMacWindow = { RoomWindows.shared.pointerInside }
@@ -94,6 +134,8 @@ final class Room {
         sound.stopAll()
         RoomTap.shared.remove()
         RoomWindows.shared.clear()
+        DeskWindows.shared.closeAll()
+        desk = false
         screen.stop()
         sp_end()
         // A moment for the session to put the glasses back in 2D before the process goes.
@@ -137,6 +179,8 @@ final class Room {
             DispatchQueue.main.async { if #available(macOS 15.0, *) { RoomRecorder.shared.stop() } else { print("recording: needs macOS 15") } }
         case SP_SAVED:
             print("saved \(text)")
+        case SP_DESK_OPEN, SP_DESK_PICTURE, SP_DESK_TITLE, SP_DESK_SIZE, SP_DESK_CLOSE:
+            DispatchQueue.main.async { DeskWindows.shared.asked(what, id: id, a: a, b: b, text: text) }
         default:
             break
         }
