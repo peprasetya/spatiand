@@ -121,6 +121,8 @@ jobs:
             -d "$out/app" $(find android/src -name '*.java')
           javac --release 17 -d "$out/test" android/src/id/prasetya/spatiand/mesh/Wire.java android/test/WireTest.java
           java -cp "$out/test" WireTest
+          javac --release 17 -d "$out/dnr" android/src/id/prasetya/spatiand/mesh/Dnr.java android/test/DnrTest.java
+          java -cp "$out/dnr" id.prasetya.spatiand.mesh.DnrTest
       - name: The APK
         # android/build.sh was written on a Mac; this is its first run anywhere else, so it
         # reports and does not fail the build until it has been seen to work.

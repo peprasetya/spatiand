@@ -55,6 +55,10 @@ pub struct PageStart {
     /// Each extension's web-accessible resources as regular expressions' sources, by its id:
     /// [(its paths, the pages they are for: "" for any)].
     pub web_accessible: Vec<(String, Vec<(String, String)>)>,
+    /// Each extension's declarativeNetRequest rules, as an engine matching them itself is given
+    /// them ([`super::dnr::digest`]); none for an extension with no rules.
+    #[serde(default)]
+    pub rules: Vec<serde_json::Value>,
 }
 
 /// How an engine gives extensions' pages and files their addresses: each extension's origin,
@@ -258,6 +262,12 @@ pub fn page_starts(set: &ExtensionSet, secret: &str, entry: &str) -> PageStart {
                 });
                 (spec.id.clone(), each.collect())
             })
+            .collect(),
+        rules: set
+            .extensions
+            .iter()
+            .filter(|spec| !spec.rules.is_empty())
+            .map(|spec| super::dnr::digest(&super::dnr::Rules::new(&spec.id, &spec.origin, &spec.rules)))
             .collect(),
     }
 }

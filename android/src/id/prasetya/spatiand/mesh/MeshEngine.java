@@ -48,6 +48,8 @@ import java.io.File;
 import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.lang.reflect.InvocationHandler;
@@ -118,6 +120,8 @@ public class MeshEngine extends Service {
      *  set.rs, with its `page_start` for this engine): read by WebView's own threads too, when a
      *  page asks for one of their files. */
     private volatile JSONObject extensions;
+    /** Their declarativeNetRequest rules, read from it: null for none. */
+    private volatile Dnr rules;
     /** The WebView's support-library interfaces, once looked for: null, extensions do not run. */
     private Boundary boundary;
     private boolean boundaryLooked;
@@ -132,6 +136,9 @@ public class MeshEngine extends Service {
         Presentation presentation;
         WebView view;
         boolean dead;
+        /** The top frame's address, for the WebView's own threads: the page a request with no
+         *  Referer or Origin is taken to come from. */
+        volatile String url;
         final FileDescriptor[] buffers = new FileDescriptor[2];
         final boolean[] held = new boolean[2];
         int bufferWidth, bufferHeight, newest = -1;
@@ -699,7 +706,9 @@ public class MeshEngine extends Service {
     /** The profile's extensions, as the window gives them: on every tab's view from its next page on. */
     private void extensions(String json) {
         try {
-            extensions = new JSONObject(json);
+            JSONObject set = new JSONObject(json);
+            extensions = set;
+            rules = rulesOf(set.optJSONObject("page_start"));
         } catch (JSONException e) {
             Log.w(TAG, "the window's extensions could not be read", e);
             return;
@@ -832,7 +841,10 @@ public class MeshEngine extends Service {
      *  Origin): only what it made web accessible, to a page not its own. Called on WebView's own
      *  threads; null for every address but the extensions'. */
     WebResourceResponse serveExtension(WebResourceRequest request) {
-        android.net.Uri url = request.getUrl();
+        return serveExtension(request.getUrl(), request.getRequestHeaders());
+    }
+
+    WebResourceResponse serveExtension(android.net.Uri url, Map<String, String> headers) {
         String host = url.getHost();
         if (!"https".equals(url.getScheme()) || host == null || !host.toLowerCase(Locale.ROOT).endsWith(DOMAIN))
             return null;
@@ -853,7 +865,6 @@ public class MeshEngine extends Service {
             path = path.substring(1);
         if (path.isEmpty())
             path = "index.html";
-        Map<String, String> headers = request.getRequestHeaders();
         String initiator = headers == null ? null : headers.get("Referer");
         if ((initiator == null || initiator.isEmpty()) && headers != null)
             initiator = headers.get("Origin");
@@ -961,6 +972,168 @@ public class MeshEngine extends Service {
         }
     }
 
+    // ---- declarativeNetRequest ----
+    //
+    // The WebView has no rules of its own to be given: each request it lets shouldInterceptRequest
+    // see is matched here (Dnr.java) against the rules the window gives with the set. Blocking is
+    // answering with a failure; a redirect of a subresource is answering with what the address
+    // it goes to answers (the extension's own file, or a GET made here), as the WebView takes no
+    // redirect from shouldInterceptRequest; a redirect of the top frame is a new load.
+
+    private static Dnr rulesOf(JSONObject start) {
+        JSONArray all = start == null ? null : start.optJSONArray("rules");
+        if (all == null || all.length() == 0)
+            return null;
+        Dnr dnr = new Dnr();
+        for (int i = 0; i < all.length(); i++) {
+            JSONObject ext = all.optJSONObject(i);
+            JSONArray list = ext == null ? null : ext.optJSONArray("rules");
+            if (list == null)
+                continue;
+            List<Dnr.Fields> fields = new ArrayList<>();
+            for (int j = 0; j < list.length(); j++) {
+                JSONObject rule = list.optJSONObject(j);
+                if (rule != null)
+                    fields.add(fieldsOf(rule));
+            }
+            dnr.add(ext.optString("id"), fields);
+        }
+        return dnr.isEmpty() ? null : dnr;
+    }
+
+    private static Dnr.Fields fieldsOf(JSONObject o) {
+        return new Dnr.Fields() {
+            @Override
+            public String text(String key) {
+                return o.has(key) && !o.isNull(key) ? String.valueOf(o.opt(key)) : null;
+            }
+
+            @Override
+            public long number(String key, long otherwise) {
+                return o.optLong(key, otherwise);
+            }
+
+            @Override
+            public boolean flag(String key) {
+                return o.optBoolean(key, false);
+            }
+
+            @Override
+            public List<String> list(String key) {
+                JSONArray a = o.optJSONArray(key);
+                if (a == null)
+                    return null;
+                List<String> out = new ArrayList<>();
+                for (int i = 0; i < a.length(); i++)
+                    out.add(a.optString(i));
+                return out;
+            }
+        };
+    }
+
+    private static String header(Map<String, String> headers, String name) {
+        if (headers == null)
+            return null;
+        for (Map.Entry<String, String> h : headers.entrySet())
+            if (name.equalsIgnoreCase(h.getKey()) && h.getValue() != null && !h.getValue().isEmpty())
+                return h.getValue();
+        return null;
+    }
+
+    /** What the extensions' rules make of a request a page of `page`'s makes: null to let it
+     *  go to the network as it is. Called on WebView's own threads. */
+    WebResourceResponse ruled(Page page, WebResourceRequest request) {
+        Dnr dnr = rules;
+        String url = request.getUrl().toString();
+        if (dnr == null || !(url.startsWith("http:") || url.startsWith("https:")))
+            return null;
+        Map<String, String> headers = request.getRequestHeaders();
+        boolean top = request.isForMainFrame();
+        String initiator = null;
+        if (!top) {
+            initiator = header(headers, "Referer");
+            if (initiator == null)
+                initiator = header(headers, "Origin");
+            if (initiator == null || initiator.equals("null"))
+                initiator = page.url;
+        }
+        String method = request.getMethod() == null ? "get" : request.getMethod().toLowerCase(Locale.ROOT);
+        Dnr.Decision d = dnr.decide(url, initiator, Dnr.typeOf(top, url, headers), method);
+        if (d == null)
+            return null;
+        if (d.block)
+            return blocked();
+        String to = d.to;
+        if (top) {
+            main.post(() -> {
+                if (live(page))
+                    page.view.loadUrl(to);
+            });
+            return refused(204, "No Content");
+        }
+        android.net.Uri target = android.net.Uri.parse(to);
+        WebResourceResponse own = serveExtension(target, headers);
+        if (own != null)
+            return own;
+        return method.equals("get") ? fetched(to, headers) : null;
+    }
+
+    /** A failure for a blocked request: nothing can be read from it, so the WebView fails the
+     *  request as a network error does (a page's fetch rejects). */
+    private static WebResourceResponse blocked() {
+        InputStream failing = new InputStream() {
+            @Override
+            public int read() throws IOException {
+                throw new IOException("blocked by an extension's rules");
+            }
+
+            @Override
+            public int available() throws IOException {
+                throw new IOException("blocked by an extension's rules");
+            }
+        };
+        return new WebResourceResponse("text/plain", "utf-8", 200, "OK", new HashMap<>(), failing);
+    }
+
+    /** What `to` answers a GET with the page's headers and cookies: a subresource's redirect. */
+    private static WebResourceResponse fetched(String to, Map<String, String> headers) {
+        try {
+            HttpURLConnection c = (HttpURLConnection) new URL(to).openConnection();
+            c.setInstanceFollowRedirects(true);
+            if (headers != null)
+                for (Map.Entry<String, String> h : headers.entrySet())
+                    if (h.getKey() != null && !h.getKey().equalsIgnoreCase("Host") && !h.getKey().equalsIgnoreCase("Accept-Encoding"))
+                        c.setRequestProperty(h.getKey(), h.getValue());
+            String cookies = CookieManager.getInstance().getCookie(to);
+            if (cookies != null)
+                c.setRequestProperty("Cookie", cookies);
+            int status = c.getResponseCode();
+            InputStream body = status >= 400 ? c.getErrorStream() : c.getInputStream();
+            String type = c.getContentType() == null ? "application/octet-stream" : c.getContentType();
+            String mime = type, charset = null;
+            int semi = type.indexOf(';');
+            if (semi >= 0) {
+                mime = type.substring(0, semi).trim();
+                Matcher m = Pattern.compile("charset=\"?([^\";]+)").matcher(type);
+                if (m.find())
+                    charset = m.group(1);
+            }
+            Map<String, String> out = new HashMap<>();
+            for (Map.Entry<String, List<String>> h : c.getHeaderFields().entrySet())
+                if (h.getKey() != null && !h.getValue().isEmpty())
+                    out.put(h.getKey(), String.join(", ", h.getValue()));
+            String reason = c.getResponseMessage() == null || c.getResponseMessage().isEmpty() ? "OK" : c.getResponseMessage();
+            if (status < 200 || (status >= 300 && status < 400)) {
+                status = 502;
+                reason = "Bad Gateway";
+            }
+            return new WebResourceResponse(mime, charset, status, reason, out, body == null ? new ByteArrayInputStream(new byte[0]) : body);
+        } catch (IOException | RuntimeException e) {
+            Log.w(TAG, "a redirect by an extension's rules could not be followed: " + to, e);
+            return blocked();
+        }
+    }
+
     // ---- what pages do ----
 
     final class Client extends WebViewClient {
@@ -974,13 +1147,15 @@ public class MeshEngine extends Service {
         public void onPageStarted(WebView view, String url, Bitmap favicon) {
             // A new page in the top frame: the frames of the one before are gone.
             page.frames.clear();
+            page.url = url;
             send(Wire.url(page.tab, url));
             send(Wire.progress(page.tab, 0.1f, true));
         }
 
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-            return serveExtension(request);
+            WebResourceResponse own = serveExtension(request);
+            return own != null ? own : ruled(page, request);
         }
 
         @Override

@@ -69,6 +69,27 @@ impl ResourceType {
         })
     }
 
+    /// Its name, as declarativeNetRequest writes it.
+    pub fn name(self) -> &'static str {
+        match self {
+            ResourceType::MainFrame => "main_frame",
+            ResourceType::SubFrame => "sub_frame",
+            ResourceType::Stylesheet => "stylesheet",
+            ResourceType::Script => "script",
+            ResourceType::Image => "image",
+            ResourceType::Font => "font",
+            ResourceType::Object => "object",
+            ResourceType::XmlHttpRequest => "xmlhttprequest",
+            ResourceType::Ping => "ping",
+            ResourceType::CspReport => "csp_report",
+            ResourceType::Media => "media",
+            ResourceType::Websocket => "websocket",
+            ResourceType::Webtransport => "webtransport",
+            ResourceType::Webbundle => "webbundle",
+            ResourceType::Other => "other",
+        }
+    }
+
     pub fn is_frame(self) -> bool {
         matches!(self, ResourceType::MainFrame | ResourceType::SubFrame)
     }
@@ -543,6 +564,77 @@ pub fn decide(all: &[Rules], r: &Request) -> Option<Decision> {
     decisions.into_iter().next()
 }
 
+// ---- for an engine that matches them itself ---------------------------------------------------
+
+/// An extension's rules as an engine matching them itself is given them (Android's WebView,
+/// MeshEngine.java's Dnr): each rule's conditions already read, its urlFilter as a regular
+/// expression, its resource types as the list it is for, a redirect to a fixed address as that
+/// address. Left out, as that engine cannot apply them: header changes, rules about tabs, and
+/// redirects by `transform`.
+/// `{"id", "rules": [{"p" priority, "a" action (block, allow, allowAllRequests, upgradeScheme,
+/// redirect), "r" expression, "cs" case-sensitive, "d" the domain an `||` filter is anchored at,
+/// "t" types, "m"/"xm" methods, "i"/"xi" initiator domains, "q"/"xq" request domains, "tp"
+/// third party, "to" a redirect's address, "sub" a redirect's regexSubstitution}]}`.
+pub fn digest(rules: &Rules) -> Value {
+    let mut out = Vec::new();
+    for rule in &rules.rules {
+        if rule.tab_ids.is_some() || !rule.excluded_tab_ids.is_empty() {
+            continue;
+        }
+        let mut d = Map::new();
+        let action = match &rule.action {
+            Action::Block => "block",
+            Action::Allow => "allow",
+            Action::AllowAllRequests => "allowAllRequests",
+            Action::UpgradeScheme => "upgradeScheme",
+            Action::Redirect(to) => {
+                if let Some(u) = to.get("url").and_then(Value::as_str) {
+                    d.insert("to".into(), json!(u));
+                } else if let Some(p) = to.get("extensionPath").and_then(Value::as_str) {
+                    d.insert("to".into(), json!(format!("{}/{}", rules.origin, p.trim_start_matches('/'))));
+                } else if let Some(sub) = to.get("regexSubstitution").and_then(Value::as_str) {
+                    d.insert("sub".into(), json!(sub));
+                } else {
+                    continue;
+                }
+                "redirect"
+            }
+            Action::ModifyHeaders(..) => continue,
+        };
+        d.insert("p".into(), json!(rule.priority));
+        d.insert("a".into(), json!(action));
+        if let Some(re) = &rule.url {
+            d.insert("r".into(), json!(re.as_str()));
+        }
+        if rule.case_sensitive {
+            d.insert("cs".into(), json!(true));
+        }
+        if let Some(domain) = rule.url_filter.as_deref().and_then(anchored_domain) {
+            d.insert("d".into(), json!(domain));
+        }
+        let types: Vec<&str> = ResourceType::ALL.iter().filter(|t| rule.wants_type(**t)).map(|t| t.name()).collect();
+        d.insert("t".into(), json!(types));
+        let mut list = |key: &str, v: &Option<Vec<String>>| {
+            if let Some(v) = v {
+                d.insert(key.into(), json!(v));
+            }
+        };
+        list("m", &rule.request_methods);
+        list("i", &rule.initiator_domains);
+        list("q", &rule.request_domains);
+        for (key, v) in [("xm", &rule.excluded_request_methods), ("xi", &rule.excluded_initiator_domains), ("xq", &rule.excluded_request_domains)] {
+            if !v.is_empty() {
+                d.insert(key.into(), json!(v));
+            }
+        }
+        if let Some(third) = rule.third_party {
+            d.insert("tp".into(), json!(third));
+        }
+        out.push(Value::Object(d));
+    }
+    json!({ "id": rules.id, "rules": out })
+}
+
 // ---- WebKit's content blockers ----------------------------------------------------------------
 
 /// WebKit's names for what a rule of these types is for, and whether it is a frame's document
@@ -697,6 +789,36 @@ pub fn webkit_rules(rules: &Rules) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn digested_for_an_engine_that_matches_itself() {
+        let r = rules(json!([
+            { "id": 1, "action": { "type": "block" }, "condition": { "urlFilter": "||ads.example^", "resourceTypes": ["script"], "domainType": "thirdParty" } },
+            { "id": 2, "priority": 3, "action": { "type": "redirect", "redirect": { "extensionPath": "/stub.js" } }, "condition": { "urlFilter": "track.js" } },
+            { "id": 3, "action": { "type": "redirect", "redirect": { "transform": { "scheme": "https" } } }, "condition": {} },
+            { "id": 4, "action": { "type": "block" }, "condition": { "tabIds": [1] } },
+            { "id": 5, "action": { "type": "allow" }, "condition": { "requestMethods": ["post"], "excludedInitiatorDomains": ["a.com"] } }
+        ]));
+        let d = digest(&r);
+        let all = d["rules"].as_array().unwrap();
+        assert_eq!(d["id"], "ext");
+        assert_eq!(all.len(), 3, "{all:?}");
+        assert_eq!(all[0]["a"], "block");
+        assert_eq!(all[0]["d"], "ads.example");
+        assert_eq!(all[0]["t"], json!(["script"]));
+        assert_eq!(all[0]["tp"], true);
+        assert!(Regex::new(&format!("(?i){}", all[0]["r"].as_str().unwrap())).unwrap().is_match("https://cdn.ADS.example/x.js"));
+        assert_eq!(all[1]["to"], "chrome-extension://ext/stub.js");
+        assert_eq!(all[1]["p"], 3);
+        assert!(!all[1]["t"].as_array().unwrap().contains(&json!("main_frame")));
+        assert_eq!(all[2]["m"], json!(["post"]));
+        assert_eq!(all[2]["xi"], json!(["a.com"]));
+
+        // What android/test/DnrTest.java takes the window to give for its urlFilters.
+        assert_eq!(url_filter_regex("||ads.example^"), r"^[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^/?#@]*@)?(?:[^/?#:@]*\.)?ads\.example(?:[^a-zA-Z0-9_.%-]|$)");
+        assert_eq!(url_filter_regex("/blocked"), "/blocked");
+        assert_eq!(url_filter_regex("track.js"), r"track\.js");
+    }
 
     fn rules(written: Value) -> Rules {
         Rules::new("ext", "chrome-extension://ext", written.as_array().unwrap())
