@@ -198,7 +198,10 @@ pub trait Engine {
     fn set_window(&mut self, tab: TabId, window: u32);
     fn set_muted(&mut self, tab: TabId, muted: bool);
     /// Let the engine work for at most `wait`, drawing into `canvas`, and say what happened.
+    /// It returns sooner when the descriptor given to [`Engine::wake_on`] has something to read.
     fn pump(&mut self, wait: Duration, canvas: &mut dyn Canvas) -> Vec<Happened>;
+    /// The window's socket: a reason for [`Engine::pump`] to stop waiting.
+    fn wake_on(&mut self, _fd: std::os::fd::RawFd) {}
 }
 
 /// What a profile is to the engine that holds it.
