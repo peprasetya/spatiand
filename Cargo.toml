@@ -31,6 +31,7 @@ members = [
     "crates/spatiand-sync",
     "crates/spatimesh",
     "crates/spatimesh-webkitgtk",
+    "crates/spatimesh-shim",
 ]
 
 [workspace.package]

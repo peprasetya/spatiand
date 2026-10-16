@@ -1,4 +1,5 @@
-/* WebKitGTK behind the few calls SpatiMesh's engine host makes (src/main.rs).
+/* WebKitGTK behind the few calls SpatiMesh's engine host makes: the C interface every engine's
+ * native half provides (crates/spatimesh-shim).
  *
  * Every tab is a WebKitWebView in a GtkOffscreenWindow: drawn by WebKit as on a screen, shown on
  * none. Its picture is read from the offscreen window's surface after each draw, only where it
@@ -286,7 +287,7 @@ static void free_tab(Tab *t) {
     g_free(t);
 }
 
-const char *mesh_wk_version(void) {
+const char *spatimesh_version(void) {
     static char version[64];
     g_snprintf(version, sizeof version, "WebKitGTK %u.%u.%u", webkit_get_major_version(), webkit_get_minor_version(), webkit_get_micro_version());
     return version;
@@ -294,7 +295,7 @@ const char *mesh_wk_version(void) {
 
 /* A profile's engine: `data` and `cache` are its folders, or NULL for the private profile,
  * which keeps everything in memory. NULL if GTK cannot start (no display at all). */
-Engine *mesh_wk_new(const char *data, const char *cache) {
+Engine *spatimesh_new(const char *data, const char *cache) {
     if (!gtk_init_check(NULL, NULL))
         return NULL;
     Engine *e = g_new0(Engine, 1);
@@ -329,13 +330,13 @@ static gboolean on_wake(gint fd, GIOCondition condition, gpointer data) {
 }
 
 /* Stop waiting when `fd` has something to read: the window's socket. */
-void mesh_wk_watch(Engine *e, int fd) {
+void spatimesh_watch(Engine *e, int fd) {
     if (e->watch)
         g_source_remove(e->watch);
     e->watch = g_unix_fd_add(fd, G_IO_IN | G_IO_HUP | G_IO_ERR, on_wake, e);
 }
 
-int mesh_wk_open(Engine *e, uint64_t id, const char *uri, int width, int height, double zoom) {
+int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int height, double zoom) {
     if (find(e, id))
         return 0;
     Tab *t = g_new0(Tab, 1);
@@ -379,41 +380,41 @@ int mesh_wk_open(Engine *e, uint64_t id, const char *uri, int width, int height,
     return 1;
 }
 
-void mesh_wk_close(Engine *e, uint64_t id) {
+void spatimesh_close(Engine *e, uint64_t id) {
     g_hash_table_remove(e->tabs, &id);
 }
 
-void mesh_wk_load(Engine *e, uint64_t id, const char *uri) {
+void spatimesh_load(Engine *e, uint64_t id, const char *uri) {
     Tab *t = find(e, id);
     if (t)
         webkit_web_view_load_uri(t->view, uri);
 }
 
-void mesh_wk_back(Engine *e, uint64_t id) {
+void spatimesh_back(Engine *e, uint64_t id) {
     Tab *t = find(e, id);
     if (t)
         webkit_web_view_go_back(t->view);
 }
 
-void mesh_wk_forward(Engine *e, uint64_t id) {
+void spatimesh_forward(Engine *e, uint64_t id) {
     Tab *t = find(e, id);
     if (t)
         webkit_web_view_go_forward(t->view);
 }
 
-void mesh_wk_reload(Engine *e, uint64_t id) {
+void spatimesh_reload(Engine *e, uint64_t id) {
     Tab *t = find(e, id);
     if (t)
         webkit_web_view_reload(t->view);
 }
 
-void mesh_wk_stop(Engine *e, uint64_t id) {
+void spatimesh_stop(Engine *e, uint64_t id) {
     Tab *t = find(e, id);
     if (t)
         webkit_web_view_stop_loading(t->view);
 }
 
-void mesh_wk_resize(Engine *e, uint64_t id, int width, int height, double zoom) {
+void spatimesh_resize(Engine *e, uint64_t id, int width, int height, double zoom) {
     Tab *t = find(e, id);
     if (!t)
         return;
@@ -425,7 +426,7 @@ void mesh_wk_resize(Engine *e, uint64_t id, int width, int height, double zoom) 
         webkit_web_view_set_zoom_level(t->view, zoom);
 }
 
-void mesh_wk_mute(Engine *e, uint64_t id, int muted) {
+void spatimesh_mute(Engine *e, uint64_t id, int muted) {
     Tab *t = find(e, id);
     if (t)
         webkit_web_view_set_is_muted(t->view, muted);
@@ -505,7 +506,7 @@ static guint button_mask(int button) {
 }
 
 /* `button`: 0 none (a move), 1 left, 2 middle, 3 right, 4 back, 5 forward. */
-void mesh_wk_pointer(Engine *e, uint64_t id, double x, double y, int button, int pressed, int modifiers) {
+void spatimesh_pointer(Engine *e, uint64_t id, double x, double y, int button, int pressed, int modifiers) {
     Tab *t = find(e, id);
     if (!t)
         return;
@@ -549,7 +550,7 @@ void mesh_wk_pointer(Engine *e, uint64_t id, double x, double y, int button, int
     deliver(ev, FALSE);
 }
 
-void mesh_wk_leave(Engine *e, uint64_t id) {
+void spatimesh_leave(Engine *e, uint64_t id) {
     Tab *t = find(e, id);
     if (t && t->entered) {
         cross(t, -1, -1, FALSE);
@@ -558,7 +559,7 @@ void mesh_wk_leave(Engine *e, uint64_t id) {
     }
 }
 
-void mesh_wk_scroll(Engine *e, uint64_t id, double x, double y, double dx, double dy, int modifiers) {
+void spatimesh_scroll(Engine *e, uint64_t id, double x, double y, double dx, double dy, int modifiers) {
     Tab *t = find(e, id);
     if (!t)
         return;
@@ -625,7 +626,7 @@ static guint keyval_of(int key, guint32 ch, int code) {
     }
 }
 
-void mesh_wk_key(Engine *e, uint64_t id, int key, guint32 ch, int code, int pressed, int modifiers, const char *text) {
+void spatimesh_key(Engine *e, uint64_t id, int key, guint32 ch, int code, int pressed, int modifiers, const char *text) {
     Tab *t = find(e, id);
     if (!t)
         return;
@@ -646,7 +647,7 @@ void mesh_wk_key(Engine *e, uint64_t id, int key, guint32 ch, int code, int pres
     deliver(ev, TRUE);
 }
 
-void mesh_wk_focus(Engine *e, uint64_t id, int focused) {
+void spatimesh_focus(Engine *e, uint64_t id, int focused) {
     Tab *t = find(e, id);
     if (!t)
         return;
@@ -666,7 +667,7 @@ void mesh_wk_focus(Engine *e, uint64_t id, int focused) {
 
 /* The `index`th line of the tab's open list: its label (owned by WebKit) and flags (1 enabled,
  * 2 selected, 4 a group's heading). NULL past the end. */
-const char *mesh_wk_choice(Engine *e, uint64_t id, int index, int *flags) {
+const char *spatimesh_choice(Engine *e, uint64_t id, int index, int *flags) {
     Tab *t = find(e, id);
     if (!t || !t->menu || index < 0 || (guint)index >= webkit_option_menu_get_n_items(t->menu))
         return NULL;
@@ -676,7 +677,7 @@ const char *mesh_wk_choice(Engine *e, uint64_t id, int index, int *flags) {
     return webkit_option_menu_item_get_label(item);
 }
 
-void mesh_wk_choose(Engine *e, uint64_t id, int index) {
+void spatimesh_choose(Engine *e, uint64_t id, int index) {
     Tab *t = find(e, id);
     if (!t || !t->menu)
         return;
@@ -687,7 +688,7 @@ void mesh_wk_choose(Engine *e, uint64_t id, int index) {
     t->menu = NULL;
 }
 
-void mesh_wk_answer(Engine *e, uint64_t id, int accepted, const char *text) {
+void spatimesh_answer(Engine *e, uint64_t id, int accepted, const char *text) {
     Tab *t = find(e, id);
     if (!t || !t->dialog)
         return;
@@ -727,7 +728,7 @@ static gboolean any_fresh(Engine *e) {
 
 /* Let GTK and WebKit work for at most `timeout_ms`, returning as soon as there is something
  * to tell, to draw, or to read from the window. */
-void mesh_wk_pump(Engine *e, int timeout_ms) {
+void spatimesh_pump(Engine *e, int timeout_ms) {
     GHashTableIter it;
     gpointer key, value;
     g_hash_table_iter_init(&it, e->tabs);
@@ -747,7 +748,7 @@ void mesh_wk_pump(Engine *e, int timeout_ms) {
 }
 
 /* The next thing that happened, into `out`; its strings live until the next call. */
-int mesh_wk_next_event(Engine *e, MeshEvent *out) {
+int spatimesh_next_event(Engine *e, MeshEvent *out) {
     g_free(e->current.text);
     g_free(e->current.text2);
     memset(&e->current, 0, sizeof e->current);
@@ -761,7 +762,7 @@ int mesh_wk_next_event(Engine *e, MeshEvent *out) {
 }
 
 /* Whether a tab's picture changed and has not been read, and what changed. */
-int mesh_wk_damage(Engine *e, uint64_t id, int *x, int *y, int *w, int *h) {
+int spatimesh_damage(Engine *e, uint64_t id, int *x, int *y, int *w, int *h) {
     Tab *t = find(e, id);
     if (!t || !t->damaged)
         return 0;
@@ -778,7 +779,7 @@ int mesh_wk_damage(Engine *e, uint64_t id, int *x, int *y, int *w, int *h) {
 
 /* The tab's picture, where it changed, into `pixels` (`width` by `height`, four bytes a pixel,
  * cairo's order), and the change forgotten. */
-int mesh_wk_copy(Engine *e, uint64_t id, unsigned char *pixels, int width, int height) {
+int spatimesh_copy(Engine *e, uint64_t id, unsigned char *pixels, int width, int height) {
     Tab *t = find(e, id);
     if (!t || !t->damaged)
         return 0;
@@ -800,8 +801,17 @@ int mesh_wk_copy(Engine *e, uint64_t id, unsigned char *pixels, int width, int h
 }
 
 /* For tests: a script run in the tab's page. */
-void mesh_wk_run(Engine *e, uint64_t id, const char *script) {
+void spatimesh_run(Engine *e, uint64_t id, const char *script) {
     Tab *t = find(e, id);
     if (t)
         webkit_web_view_evaluate_javascript(t->view, script, -1, NULL, NULL, NULL, NULL, NULL);
+}
+
+/* The window a tab is in: where its sound is to come from. Its page's sound plays from its
+ * own web process, through PipeWire; placing it at the window needs the compositor's sink
+ * per window (docs/spatimesh.md, "Sound"). Until then a tab sounds where SpatiMesh does. */
+void spatimesh_set_window(Engine *e, uint64_t id, guint32 window) {
+    (void)e;
+    (void)id;
+    (void)window;
 }

@@ -13,8 +13,11 @@ description = "SpatiMesh's engine host on a Linux that is not SteamOS: WebKitGTK
 # workspace builds anywhere.
 [dependencies]
 spatimesh = { path = "../spatimesh" }
-spatiand-app = { path = "../spatiand-app" }
+spatimesh-shim = { path = "../spatimesh-shim" }
 log.workspace = true
+
+[dev-dependencies]
+spatiand-app = { path = "../spatiand-app" }
 libc = "0.2"
 
 [build-dependencies]
