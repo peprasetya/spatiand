@@ -209,12 +209,16 @@ static char *utf8_of(const cef_string_t *s) {
     return copy;
 }
 
-/* Structures CEF hands over come with a reference for whoever receives them. */
+/* Structures CEF hands over -- returned, or given to a handler -- come with a reference for
+ * whoever receives them. One handed to CEF as an argument takes a reference along with it (CEF
+ * releases it: libcef_dll's CppToC::Unwrap), so it is not released after the call; one still to
+ * be used afterwards is given a reference of its own first (SHARE). */
 #define RELEASE(p)                                                                                \
     do {                                                                                          \
         if (p)                                                                                    \
             (p)->base.release(&(p)->base);                                                        \
     } while (0)
+#define SHARE(p) ((p)->base.add_ref(&(p)->base), (p))
 
 /* ---- tabs and what happened to them -------------------------------------------------------- */
 
@@ -1138,11 +1142,8 @@ void spatimesh_ext_add(Engine *e, const char *id, const char *scheme, const char
     list_set_text(x, 1, prefix);
     list_set_text(x, 2, content_boot);
     list_set_text(x, 3, page_boot);
-    cef_list_value_t *entries = p_cef_list_value_create();
-    x->set_list(x, 4, entries);
-    RELEASE(entries);
+    x->set_list(x, 4, p_cef_list_value_create());
     ext_set->set_list(ext_set, ext_set->get_size(ext_set), x);
-    RELEASE(x);
 }
 
 void spatimesh_ext_entry(Engine *e, const char *id, int run_at, int all_frames, int main_world, const char *allow, const char *block, const char *guard, int exact) {
@@ -1163,7 +1164,6 @@ void spatimesh_ext_entry(Engine *e, const char *id, int run_at, int all_frames, 
             list_set_text(entry, 4, "");
             list_set_text(entry, 5, "");
             entries->set_list(entries, entries->get_size(entries), entry);
-            RELEASE(entry);
             RELEASE(entries);
             last_ext = i;
         }
@@ -1211,12 +1211,9 @@ static void send_set(cef_browser_t *browser) {
         return;
     cef_process_message_t *m = message_named("spatimesh-ext");
     cef_list_value_t *args = m->get_argument_list(m);
-    cef_list_value_t *copy = ext_set->copy(ext_set);
-    args->set_list(args, 0, copy);
-    RELEASE(copy);
+    args->set_list(args, 0, ext_set->copy(ext_set));
     RELEASE(args);
     frame->send_process_message(frame, PID_RENDERER, m);
-    RELEASE(m);
     RELEASE(frame);
 }
 
@@ -1234,9 +1231,7 @@ static cef_dictionary_value_t *extra_for_browser(void) {
     cef_string_t key;
     memset(&key, 0, sizeof key);
     set_text(&key, "ext");
-    cef_list_value_t *copy = ext_set->copy(ext_set);
-    extra->set_list(extra, &key, copy);
-    RELEASE(copy);
+    extra->set_list(extra, &key, ext_set->copy(ext_set));
     clear_text(&key);
     return extra;
 }
@@ -1251,7 +1246,6 @@ static void send_run(cef_frame_t *frame, const char *world, const char *code, ui
     args->set_bool(args, 4, reply);
     RELEASE(args);
     frame->send_process_message(frame, PID_RENDERER, m);
-    RELEASE(m);
 }
 
 /* Code run in a tab's top frame (and its other frames), in `world` ("" the page's own; an
@@ -1585,7 +1579,15 @@ static cef_v8value_t *v8_eval(cef_v8context_t *context, const char *code, const 
 }
 
 static int same_context(cef_v8context_t *a, cef_v8context_t *b) {
-    return a && b && a->is_same(a, b);
+    return a && b && a->is_same(a, SHARE(b));
+}
+
+/* `v`, or undefined where there is none (CEF takes no NULL among a function's arguments). */
+static cef_v8value_t *defined(cef_v8value_t *v) {
+    if (v && !v->is_null(v))
+        return v;
+    RELEASE(v);
+    return p_cef_v8value_create_undefined();
 }
 
 static Made *made_for(cef_v8context_t *context, const char *ext) {
@@ -1627,11 +1629,9 @@ static Made *boot_api(cef_v8context_t *context, const char *ext, const char *boo
     cef_string_t n;
     memset(&n, 0, sizeof n);
     set_text(&n, name);
-    cef_v8value_t *post = p_cef_v8value_create_function(&n, &v8_handler);
+    cef_v8value_t *args[1] = {p_cef_v8value_create_function(&n, &v8_handler)};
     clear_text(&n);
-    cef_v8value_t *args[1] = {post};
     cef_v8value_t *api = fn->execute_function(fn, NULL, 1, args);
-    RELEASE(post);
     RELEASE(fn);
     if (!api)
         return NULL;
@@ -1648,7 +1648,7 @@ static Made *boot_api(cef_v8context_t *context, const char *ext, const char *boo
     cef_string_t k;
     memset(&k, 0, sizeof k);
     set_text(&k, "__spatimeshExt");
-    m->holder->set_value_bykey(m->holder, &k, api, V8_PROPERTY_ATTRIBUTE_NONE);
+    m->holder->set_value_bykey(m->holder, &k, SHARE(api), V8_PROPERTY_ATTRIBUTE_NONE);
     clear_text(&k);
     m->next = made;
     made = m;
@@ -1663,11 +1663,9 @@ static void inject(cef_v8context_t *context, const char *ext, const char *js, co
                                      "document.adoptedStyleSheets=document.adoptedStyleSheets.concat([s]);}catch(e){}})",
                                      "spatimesh-content-style", NULL);
         if (add) {
-            cef_v8value_t *text = v8_text(css);
-            cef_v8value_t *args[1] = {text};
+            cef_v8value_t *args[1] = {v8_text(css)};
             cef_v8value_t *r = add->execute_function(add, NULL, 1, args);
             RELEASE(r);
-            RELEASE(text);
             RELEASE(add);
         }
     }
@@ -1696,19 +1694,9 @@ static void inject(cef_v8context_t *context, const char *ext, const char *js, co
     free(code);
     if (!fn)
         return;
-    cef_v8value_t *chrome = v8_key(m->api, "chrome");
-    cef_v8value_t *browser = v8_key(m->api, "browser");
-    cef_v8value_t *global = v8_key(m->api, "global");
-    if (browser && browser->is_null(browser)) {
-        RELEASE(browser);
-        browser = p_cef_v8value_create_undefined();
-    }
-    cef_v8value_t *args[3] = {chrome, browser, global};
+    cef_v8value_t *args[3] = {defined(v8_key(m->api, "chrome")), defined(v8_key(m->api, "browser")), defined(v8_key(m->api, "global"))};
     cef_v8value_t *r = fn->execute_function(fn, NULL, 3, args);
     RELEASE(r);
-    RELEASE(chrome);
-    RELEASE(browser);
-    RELEASE(global);
     RELEASE(fn);
 }
 
@@ -1744,7 +1732,6 @@ static int CEF_CALLBACK v8_execute(cef_v8handler_t *self, const cef_string_t *na
             args->set_string(args, 0, json);
             RELEASE(args);
             frame->send_process_message(frame, PID_BROWSER, m);
-            RELEASE(m);
             RELEASE(frame);
         }
         if (json)
@@ -1852,12 +1839,10 @@ static void CEF_CALLBACK on_context_created(cef_render_process_handler_t *self, 
                 cef_string_t name;
                 memset(&name, 0, sizeof name);
                 set_text(&name, "spatimeshLater");
-                cef_v8value_t *cb = p_cef_v8value_create_function(&name, &v8_handler);
+                cef_v8value_t *args[1] = {p_cef_v8value_create_function(&name, &v8_handler)};
                 clear_text(&name);
-                cef_v8value_t *args[1] = {cb};
                 cef_v8value_t *r = when->execute_function(when, NULL, 1, args);
                 RELEASE(r);
-                RELEASE(cb);
                 RELEASE(when);
             }
         }
@@ -1938,7 +1923,7 @@ static void run_in_frame(cef_frame_t *frame, const char *world, const char *code
                 cef_v8value_t *fn = v8_eval(context, wrapped, "spatimesh-script", &error);
                 free(wrapped);
                 if (fn) {
-                    cef_v8value_t *args[1] = {m->holder};
+                    cef_v8value_t *args[1] = {SHARE(m->holder)};
                     result = fn->execute_function(fn, NULL, 1, args);
                     RELEASE(fn);
                 }
@@ -1948,8 +1933,9 @@ static void run_in_frame(cef_frame_t *frame, const char *world, const char *code
             cef_v8value_t *json = v8_eval(context, "(function(v){try{var s=JSON.stringify(v);return s===undefined?'null':s;}catch(e){return 'null';}})",
                                           "spatimesh-result", NULL);
             if (json) {
-                cef_v8value_t *undef = result ? NULL : p_cef_v8value_create_undefined();
-                cef_v8value_t *args[1] = {result ? result : undef};
+                /* The result goes with the call. */
+                cef_v8value_t *args[1] = {result ? result : p_cef_v8value_create_undefined()};
+                result = NULL;
                 cef_v8value_t *text = json->execute_function(json, NULL, 1, args);
                 if (text && text->is_string(text)) {
                     cef_string_userfree_t s = text->get_string_value(text);
@@ -1958,7 +1944,6 @@ static void run_in_frame(cef_frame_t *frame, const char *world, const char *code
                         p_cef_string_userfree_utf16_free(s);
                 }
                 RELEASE(text);
-                RELEASE(undef);
                 RELEASE(json);
             }
         }
@@ -1974,7 +1959,6 @@ static void run_in_frame(cef_frame_t *frame, const char *world, const char *code
         list_set_text(args, 2, error ? error : answer ? answer : "null");
         RELEASE(args);
         frame->send_process_message(frame, PID_BROWSER, m);
-        RELEASE(m);
     }
     free(error);
     free(answer);
@@ -2213,10 +2197,9 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
     memset(&url, 0, sizeof url);
     set_text(&url, uri && *uri ? uri : "about:blank");
     creating = t;
-    /* The profile's extensions, for the browser's pages' process from its first page on. */
-    cef_dictionary_value_t *extra = extra_for_browser();
-    t->browser = p_cef_browser_host_create_browser_sync(&info, &client, &url, &browser_settings, extra, NULL);
-    RELEASE(extra);
+    /* The profile's extensions, for the browser's pages' process from its first page on (the
+     * set goes with the call). */
+    t->browser = p_cef_browser_host_create_browser_sync(&info, &client, &url, &browser_settings, extra_for_browser(), NULL);
     creating = NULL;
     clear_text(&url);
     if (!t->browser) {

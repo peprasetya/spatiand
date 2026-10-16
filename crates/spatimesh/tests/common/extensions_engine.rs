@@ -127,9 +127,26 @@ impl BrowserSide for Window {
     }
 }
 
+/// How the engine's program ended, if it has.
+fn ended(w: &mut Window) -> String {
+    use std::os::unix::process::ExitStatusExt;
+    std::thread::sleep(Duration::from_millis(200));
+    match w.child.try_wait() {
+        Ok(Some(status)) => match (status.code(), status.signal()) {
+            (Some(code), _) => format!("it ended with {code}"),
+            (None, Some(signal)) => format!("it was stopped by signal {signal}"),
+            _ => format!("it ended: {status}"),
+        },
+        _ => "it is still running".into(),
+    }
+}
+
 /// Read what the engine says once, answering extensions' calls with the runtime.
 fn step(rt: &mut Runtime, w: &mut Window) {
-    assert!(!w.link.is_closed(), "the engine went; the pages' titles were {:?}", w.titles);
+    if w.link.is_closed() {
+        let how = ended(w);
+        panic!("the engine went ({how}); the pages' titles were {:?}; trouble: {:?}", w.titles, w.trouble);
+    }
     w.link.wait_readable(50);
     for (message, _) in w.link.receive_from_host() {
         match message {
