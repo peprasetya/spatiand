@@ -34,12 +34,12 @@ rust() {
 linux() {
     apt_update_once
     # Smithay's backends (libseat, udev, libinput, GBM/DRM, EGL), the keyboard, Wayland,
-    # PipeWire for sound capture, and clang for bindgen.
+    # PipeWire for sound capture, VA-API (spatiand-video links it), and clang for bindgen.
     $SUDO apt-get install -y -qq --no-install-recommends \
         build-essential pkg-config clang libclang-dev curl ca-certificates git \
         libseat-dev libudev-dev libinput-dev libgbm-dev libdrm-dev \
         libegl1-mesa-dev libgles2-mesa-dev libxkbcommon-dev libwayland-dev \
-        libpipewire-0.3-dev libspa-0.2-dev libasound2-dev libusb-1.0-0-dev libdisplay-info-dev \
+        libpipewire-0.3-dev libspa-0.2-dev libasound2-dev libusb-1.0-0-dev libdisplay-info-dev libva-dev \
         libx11-dev libxcb1-dev libxcb-composite0-dev libxcb-xfixes0-dev libxcb-render0-dev \
         libxcb-shape0-dev libxcb-xkb-dev xwayland
     rust
