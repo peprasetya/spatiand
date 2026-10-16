@@ -4906,6 +4906,7 @@ name = "spatimesh-webkit"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "serde_json",
  "spatimesh",
  "spatimesh-shim",
 ]

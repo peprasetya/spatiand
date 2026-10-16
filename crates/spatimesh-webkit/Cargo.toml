@@ -14,5 +14,8 @@ description = "SpatiMesh's engine host on the Mac: WebKit (WKWebView)"
 spatimesh = { path = "../spatimesh" }
 spatimesh-shim = { path = "../spatimesh-shim" }
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [build-dependencies]
 cc = "1"

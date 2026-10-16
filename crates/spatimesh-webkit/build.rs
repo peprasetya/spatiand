@@ -3,6 +3,7 @@
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=native/webkit.m");
+    println!("cargo:rerun-if-changed=Info.plist");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return;
     }
@@ -16,5 +17,14 @@ fn main() {
         .compile("spatimesh_webkit");
     for framework in ["WebKit", "AppKit", "Foundation", "CoreGraphics", "QuartzCore"] {
         println!("cargo:rustc-link-lib=framework={framework}");
+    }
+    // A browser loads plain http:// pages too, which App Transport Security allows only where
+    // the program's Info.plist says so; a program outside an app bundle carries its Info.plist
+    // in its binary (each argument passed to the linker on its own, whatever the path holds).
+    let plist = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("Info.plist");
+    let plist = plist.to_string_lossy().into_owned();
+    for arg in ["-sectcreate", "__TEXT", "__info_plist", plist.as_str()] {
+        println!("cargo:rustc-link-arg-bins=-Xlinker");
+        println!("cargo:rustc-link-arg-bins={arg}");
     }
 }

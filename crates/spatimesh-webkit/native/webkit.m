@@ -82,11 +82,72 @@ static NSString *const SelectScript =
 }
 @end
 
+/* Extensions (docs/spatimesh.md, "Extensions"): one, as the window gave it (crates/spatimesh-shim):
+ * its scheme, its content scripts' world, and the code that sets its API up in a content
+ * script's world and in its own pages. */
+@interface MeshExtension : NSObject
+@property(nonatomic, copy) NSString *ident;
+@property(nonatomic, copy) NSString *scheme;
+@property(nonatomic, copy) NSString *world;
+@property(nonatomic, copy) NSString *contentBoot;
+@property(nonatomic, copy) NSString *pageBoot;
+@end
+
+@implementation MeshExtension
+@end
+
+/* One content-script entry of an extension's: when, where, for which pages (WebKit's own
+ * patterns: none for every page), and its files' code. `guard` is JavaScript that is true where
+ * the entry is wanted, for what the patterns cannot say exactly (`exact` NO). */
+@interface MeshEntry : NSObject
+@property(nonatomic, strong) MeshExtension *extension;
+@property(nonatomic) int runAt;
+@property(nonatomic) BOOL allFrames;
+@property(nonatomic) BOOL mainWorld;
+@property(nonatomic, copy) NSArray<NSString *> *allow;
+@property(nonatomic, copy) NSArray<NSString *> *block;
+@property(nonatomic, copy) NSString *guard;
+@property(nonatomic) BOOL exact;
+@property(nonatomic, strong) NSMutableArray<NSString *> *js;
+@property(nonatomic, strong) NSMutableArray<NSString *> *css;
+@end
+
+@implementation MeshEntry
+@end
+
+/* What answers chrome-extension:// and moz-extension:// in every tab. */
+@interface MeshSchemes : NSObject <WKURLSchemeHandler>
+@end
+
+/* WebKit's own match patterns for a user script (SPI, what Safari's extensions use), where the
+ * system has them; where it has not, each script guards itself. */
+@interface WKUserScript (SpatiMeshPatterns)
+- (instancetype)_initWithSource:(NSString *)source
+                  injectionTime:(WKUserScriptInjectionTime)injectionTime
+               forMainFrameOnly:(BOOL)forMainFrameOnly
+     includeMatchPatternStrings:(NSArray<NSString *> *)includeMatchPatternStrings
+     excludeMatchPatternStrings:(NSArray<NSString *> *)excludeMatchPatternStrings
+                  associatedURL:(NSURL *)associatedURL
+                   contentWorld:(WKContentWorld *)contentWorld
+  deferRunningUntilNotification:(BOOL)deferRunningUntilNotification;
+@end
+
+/* Extensions' addresses as secure ones, as Chrome's are (SPI, asked for only where it is there). */
+@interface WKProcessPool (SpatiMeshSchemes)
+- (void)_registerURLSchemeAsSecure:(NSString *)scheme;
+- (void)_registerURLSchemeAsBypassingContentSecurityPolicy:(NSString *)scheme;
+@end
+
 @interface MeshTab : NSObject <WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate>
 @property(nonatomic) uint64_t ident;
 @property(nonatomic) Engine *engine;
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) MeshWebView *view;
+/* Frames other than the top one that an extension's context speaks from, by world ("" the
+ * page's own) and the frame's number in api.js: where code for every frame goes. */
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSMutableDictionary<NSNumber *, WKFrameInfo *> *> *frames;
+/* The worlds this tab's view has the extensions' message handler in. */
+@property(nonatomic, strong) NSMutableArray<WKContentWorld *> *handlerWorlds;
 @property(nonatomic) int width;
 @property(nonatomic) int height;
 @property(nonatomic) unsigned char *pixels;
@@ -112,6 +173,10 @@ struct Engine {
     BOOL woken;
     CFFileDescriptorRef watch;
     NSTimer *timer;
+    /* The profile's extensions, their content scripts, and what serves their files. */
+    NSMutableArray<MeshExtension *> *extensions;
+    NSMutableArray<MeshEntry *> *entries;
+    MeshSchemes *schemes;
 };
 
 static Engine *the_engine;
@@ -301,7 +366,42 @@ static CFTimeInterval now(void) {
     }
 }
 
+/* An extension's context speaking (api.js's JSON). A frame other than the top one is kept, by
+ * its world and api.js's number for it, for code that is to reach every frame. */
+- (void)extensionSaid:(NSString *)text frame:(WKFrameInfo *)frame world:(WKContentWorld *)world {
+    if (frame && !frame.isMainFrame) {
+        NSData *data = [text dataUsingEncoding:NSUTF8StringEncoding];
+        id call = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        NSNumber *number = [call isKindOfClass:[NSDictionary class]] ? call[@"f"] : nil;
+        if ([number isKindOfClass:[NSNumber class]]) {
+            NSString *name = world.name ?: @"";
+            if (!self.frames)
+                self.frames = [NSMutableDictionary dictionary];
+            NSMutableDictionary<NSNumber *, WKFrameInfo *> *of = self.frames[name];
+            if (!of) {
+                of = [NSMutableDictionary dictionary];
+                self.frames[name] = of;
+            }
+            if ([call[@"c"] isEqual:@"gone"])
+                [of removeObjectForKey:number];
+            else
+                of[number] = frame;
+        }
+    }
+    push(self.engine, EV_EXTENSION, self.ident, 0, 0, 0, text, nil);
+}
+
+/* A new page in the top frame: the frames of the one before are gone. */
+- (void)webView:(WKWebView *)webView didCommitNavigation:(WKNavigation *)navigation {
+    [self.frames removeAllObjects];
+}
+
 - (void)userContentController:(WKUserContentController *)controller didReceiveScriptMessage:(WKScriptMessage *)message {
+    if ([message.name isEqualToString:@"spatimeshExt"]) {
+        if ([message.body isKindOfClass:[NSString class]])
+            [self extensionSaid:message.body frame:message.frameInfo world:message.world];
+        return;
+    }
     if (![message.name isEqualToString:@"spatimeshSelect"] || ![message.body isKindOfClass:[NSDictionary class]])
         return;
     NSDictionary *body = message.body;
@@ -400,6 +500,178 @@ static CFTimeInterval now(void) {
 
 @end
 
+/* ---- extensions (docs/spatimesh.md, "Extensions") ---------------------------------------- *
+ *
+ * The window's runtime answers everything; here are only the bridge (a script message handler
+ * named spatimeshExt, in each extension's own content world and in the pages' world), the
+ * content scripts and style sheets as WebKit's user scripts, the extensions' files (served by
+ * the Rust side, crates/spatimesh-shim), and code run in a tab's frames when asked. */
+
+typedef int (*ServeFn)(const char *url, const char *initiator, const char **mime, unsigned char **bytes, size_t *len);
+typedef void (*ServeFreeFn)(unsigned char *bytes, size_t len);
+static ServeFn serve_fn;
+static ServeFreeFn serve_free_fn;
+
+static NSString *text_of(const char *s) {
+    return (s ? [NSString stringWithUTF8String:s] : nil) ?: @"";
+}
+
+/* `value` as JSON ("null" for what JSON cannot say). */
+static NSString *json_of(id value) {
+    if (!value || ![NSJSONSerialization isValidJSONObject:@[ value ]])
+        return @"null";
+    NSData *data = [NSJSONSerialization dataWithJSONObject:@[ value ] options:0 error:nil];
+    NSString *array = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+    return array.length > 2 ? [array substringWithRange:NSMakeRange(1, array.length - 2)] : @"null";
+}
+
+@implementation MeshSchemes
+
+/* A file of an extension's, for the page that asked: the request's Referer or Origin, else the
+ * tab's page (unless the request is for the tab's own new page, which the window asked for). */
+- (void)webView:(WKWebView *)webView startURLSchemeTask:(id<WKURLSchemeTask>)task {
+    NSURLRequest *request = task.request;
+    NSString *initiator = [request valueForHTTPHeaderField:@"Referer"] ?: [request valueForHTTPHeaderField:@"Origin"];
+    if (!initiator && ![request.URL isEqual:request.mainDocumentURL])
+        initiator = webView.URL.absoluteString;
+    const char *mime = "text/plain";
+    unsigned char *bytes = NULL;
+    size_t len = 0;
+    const char *url = request.URL.absoluteString.UTF8String;
+    const char *from = (initiator ?: @"").UTF8String;
+    int status = serve_fn ? serve_fn(url ? url : "", from ? from : "", &mime, &bytes, &len) : 404;
+    NSData *body = len ? [NSData dataWithBytes:bytes length:len] : [NSData data];
+    if (serve_free_fn)
+        serve_free_fn(bytes, len);
+    NSDictionary<NSString *, NSString *> *headers = @{
+        @"Content-Type" : text_of(mime),
+        @"Content-Length" : [NSString stringWithFormat:@"%lu", (unsigned long)body.length],
+        /* Who may read it was decided as it was served (only what is web accessible, to pages
+         * not the extension's own). */
+        @"Access-Control-Allow-Origin" : @"*",
+        @"Cache-Control" : @"no-cache",
+    };
+    NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:status HTTPVersion:@"HTTP/1.1" headerFields:headers];
+    [task didReceiveResponse:response];
+    [task didReceiveData:body];
+    [task didFinish];
+}
+
+- (void)webView:(WKWebView *)webView stopURLSchemeTask:(id<WKURLSchemeTask>)task {
+}
+
+@end
+
+/* Whether this WebKit has match patterns for user scripts (said once, in the log). */
+static BOOL patterns_work(void) {
+    static int known = -1;
+    if (known < 0) {
+        SEL patterned = @selector(_initWithSource:injectionTime:forMainFrameOnly:includeMatchPatternStrings:excludeMatchPatternStrings:associatedURL:contentWorld:deferRunningUntilNotification:);
+        known = [WKUserScript instancesRespondToSelector:patterned] ? 1 : 0;
+        fprintf(stderr, "spatimesh-webkit: extensions' content scripts are matched %s\n",
+                known ? "by WebKit's own patterns" : "by a check in each script");
+    }
+    return known == 1;
+}
+
+/* A user script for the pages `allow` lets in and `block` keeps out (WebKit's patterns) where
+ * WebKit can say, for every page where it cannot. */
+static WKUserScript *user_script(NSString *code, WKUserScriptInjectionTime when, BOOL main_only, NSArray<NSString *> *allow,
+                                 NSArray<NSString *> *block, WKContentWorld *world) {
+    if ((allow.count || block.count) && patterns_work())
+        return [[WKUserScript alloc] _initWithSource:code
+                                       injectionTime:when
+                                    forMainFrameOnly:main_only
+                          includeMatchPatternStrings:allow
+                          excludeMatchPatternStrings:block
+                                       associatedURL:nil
+                                        contentWorld:world
+                       deferRunningUntilNotification:NO];
+    return [[WKUserScript alloc] initWithSource:code injectionTime:when forMainFrameOnly:main_only inContentWorld:world];
+}
+
+/* Extensions' addresses in a new tab's configuration: served by the shim, and (once) secure
+ * ones, as Chrome's are, where WebKit lets that be said. */
+static void register_schemes(WKWebViewConfiguration *config, Engine *e) {
+    static BOOL secured;
+    for (NSString *scheme in @[ @"chrome-extension", @"moz-extension" ]) {
+        if ([WKWebView handlesURLScheme:scheme])
+            continue;
+        [config setURLSchemeHandler:e->schemes forURLScheme:scheme];
+        if (secured)
+            continue;
+        WKProcessPool *pool = config.processPool;
+        if ([pool respondsToSelector:@selector(_registerURLSchemeAsSecure:)])
+            [pool _registerURLSchemeAsSecure:scheme];
+        if ([pool respondsToSelector:@selector(_registerURLSchemeAsBypassingContentSecurityPolicy:)])
+            [pool _registerURLSchemeAsBypassingContentSecurityPolicy:scheme];
+    }
+    secured = YES;
+}
+
+/* The <select> script, the profile's extensions' scripts and style sheets, and the handlers
+ * their contexts speak to, into a tab's view in place of what was there: pages loaded from now
+ * on have them. */
+static void apply_extensions(MeshTab *tab) {
+    Engine *e = tab.engine;
+    WKUserContentController *c = tab.view.configuration.userContentController;
+    for (WKContentWorld *world in tab.handlerWorlds)
+        [c removeScriptMessageHandlerForName:@"spatimeshExt" contentWorld:world];
+    tab.handlerWorlds = [NSMutableArray array];
+    [c removeAllUserScripts];
+    [c addUserScript:[[WKUserScript alloc] initWithSource:SelectScript injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+    if (!e->extensions.count)
+        return;
+    WKContentWorld *page = [WKContentWorld pageWorld];
+    [c addScriptMessageHandler:tab contentWorld:page name:@"spatimeshExt"];
+    [tab.handlerWorlds addObject:page];
+    for (MeshExtension *x in e->extensions) {
+        WKContentWorld *world = [WKContentWorld worldWithName:x.world];
+        [c addScriptMessageHandler:tab contentWorld:world name:@"spatimeshExt"];
+        [tab.handlerWorlds addObject:world];
+        /* Its own pages, in every frame they are in: their API in the pages' own world. */
+        NSString *prefix = [NSString stringWithFormat:@"%@://%@/", x.scheme, x.ident];
+        NSString *code = [NSString stringWithFormat:@"if(location.href.indexOf(%@)===0){%@}", json_of(prefix), x.pageBoot];
+        [c addUserScript:user_script(code, WKUserScriptInjectionTimeAtDocumentStart, NO, @[ [prefix stringByAppendingString:@"*"] ], nil, page)];
+    }
+    for (MeshEntry *n in e->entries) {
+        BOOL main_only = !n.allFrames;
+        WKUserScriptInjectionTime when = n.runAt == 0 ? WKUserScriptInjectionTimeAtDocumentStart : WKUserScriptInjectionTimeAtDocumentEnd;
+        WKContentWorld *world = n.mainWorld ? page : [WKContentWorld worldWithName:n.extension.world];
+        /* Where WebKit's patterns cannot say exactly which pages, or it has none, the code checks. */
+        BOOL checked = !(n.exact && patterns_work());
+        for (NSString *css in n.css) {
+            /* Style sheets before anything is shown, whenever the scripts go, as in Chrome. */
+            NSString *code = [NSString stringWithFormat:@"%@(function(css){try{var s=new CSSStyleSheet();s.replaceSync(css);"
+                                                         "document.adoptedStyleSheets=document.adoptedStyleSheets.concat([s]);}catch(e){}})(%@);",
+                                                        checked ? [NSString stringWithFormat:@"if(%@)", n.guard] : @"", json_of(css)];
+            [c addUserScript:user_script(code, WKUserScriptInjectionTimeAtDocumentStart, main_only, n.allow, n.block, world)];
+        }
+        /* Its API first, in its world (a script in the page's own world has none). */
+        if (!n.mainWorld) {
+            NSString *boot = checked ? [NSString stringWithFormat:@"if(%@){%@}", n.guard, n.extension.contentBoot] : n.extension.contentBoot;
+            [c addUserScript:user_script(boot, when, main_only, n.allow, n.block, world)];
+        }
+        for (NSString *file in n.js) {
+            /* Each file a script of its own, as in Chrome: its top-level names shared with the
+             * others in the world. Where it is not wanted, it stops at once. */
+            NSString *code = checked ? [NSString stringWithFormat:@"if(!(%@))throw new Error('not for this page');\n%@", n.guard, file] : file;
+            [c addUserScript:user_script(code, when, main_only, n.allow, n.block, world)];
+        }
+    }
+}
+
+/* A script's end, for the window: its value, or what went wrong. */
+static void answered(Engine *e, uint64_t tab, uint64_t request, id result, NSError *error) {
+    BOOL unsupported = error && [error.domain isEqualToString:WKErrorDomain] && error.code == WKErrorJavaScriptResultTypeIsUnsupported;
+    if (error && !unsupported) {
+        NSString *why = error.userInfo[@"WKJavaScriptExceptionMessage"] ?: error.localizedDescription;
+        push(e, EV_SCRIPT_RESULT, tab, (double)request, 0, 0, why ?: @"the script failed", nil);
+        return;
+    }
+    push(e, EV_SCRIPT_RESULT, tab, (double)request, 1, 0, json_of(unsupported ? nil : result), nil);
+}
+
 /* ---- the engine ---- */
 
 const char *spatimesh_version(void) {
@@ -439,6 +711,9 @@ Engine *spatimesh_new(const char *data, const char *cache) {
         [NSApp finishLaunching];
         Engine *e = calloc(1, sizeof(Engine));
         e->tabs = [NSMutableDictionary dictionary];
+        e->extensions = [NSMutableArray array];
+        e->entries = [NSMutableArray array];
+        e->schemes = [[MeshSchemes alloc] init];
         if (!data) {
             e->store = [WKWebsiteDataStore nonPersistentDataStore];
         } else if (@available(macOS 14.0, *)) {
@@ -504,8 +779,7 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
         [window setFrameOrigin:NSZeroPoint];
         WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
         config.websiteDataStore = e->store;
-        WKUserScript *select = [[WKUserScript alloc] initWithSource:SelectScript injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES];
-        [config.userContentController addUserScript:select];
+        register_schemes(config, e);
         [config.userContentController addScriptMessageHandler:tab name:@"spatimeshSelect"];
         MeshWebView *view = [[MeshWebView alloc] initWithFrame:NSMakeRect(0, 0, window.contentView.bounds.size.width, window.contentView.bounds.size.height) configuration:config];
         view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -521,6 +795,8 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
         [window makeFirstResponder:view];
         tab.window = window;
         tab.view = view;
+        /* The <select> script, and the profile's extensions from the first page on. */
+        apply_extensions(tab);
         for (NSString *key in @[ @"title", @"URL", @"estimatedProgress", @"loading", @"canGoBack", @"canGoForward" ])
             [view addObserver:tab forKeyPath:key options:NSKeyValueObservingOptionNew context:NULL];
         e->tabs[@(id)] = tab;
@@ -537,7 +813,8 @@ static void forget(MeshTab *tab) {
     [tab answerAll];
     for (NSString *key in @[ @"title", @"URL", @"estimatedProgress", @"loading", @"canGoBack", @"canGoForward" ])
         [tab.view removeObserver:tab forKeyPath:key];
-    [tab.view.configuration.userContentController removeScriptMessageHandlerForName:@"spatimeshSelect"];
+    /* The controller holds its handlers, the tab among them: let go of them all. */
+    [tab.view.configuration.userContentController removeAllScriptMessageHandlers];
     tab.view.navigationDelegate = nil;
     tab.view.UIDelegate = nil;
     [tab.window orderOut:nil];
@@ -960,22 +1237,140 @@ void spatimesh_run(Engine *e, uint64_t id, const char *script) {
     }
 }
 
-/* Extensions (docs/spatimesh.md, "Extensions"): the Mac's bridge (WKContentWorld, script
- * message handlers, a scheme handler) is still to be built; until it is, a profile's extensions
- * are taken and not run here, and code asked to run is answered so. */
-typedef int (*ServeFn)(const char *url, const char *initiator, const char **mime, unsigned char **bytes, size_t *len);
-typedef void (*ServeFreeFn)(unsigned char *bytes, size_t len);
-void spatimesh_ext_server(ServeFn serve, ServeFreeFn free_bytes) {}
-const char *spatimesh_ext_bridge(void) {
-    return "(function(){return function(s){};})()";
+/* ---- extensions: what the shim gives and asks ---- */
+
+/* What answers chrome-extension:// and moz-extension://: the shim's, handed over at start. */
+void spatimesh_ext_server(ServeFn serve, ServeFreeFn free_bytes) {
+    serve_fn = serve;
+    serve_free_fn = free_bytes;
 }
-void spatimesh_ext_clear(Engine *e) {}
-void spatimesh_ext_add(Engine *e, const char *id, const char *scheme, const char *world, const char *content_boot, const char *page_boot) {}
-void spatimesh_ext_entry(Engine *e, const char *id, int run_at, int all_frames, int main_world, const char *allow, const char *block, const char *guard, int exact) {}
-void spatimesh_ext_js(Engine *e, const char *code) {}
-void spatimesh_ext_css(Engine *e, const char *code) {}
-void spatimesh_ext_done(Engine *e) {}
-void spatimesh_run_script(Engine *e, uint64_t id, const char *world, int all_frames, const char *code, uint64_t request, int boot) {
-    if (request)
-        push(e, EV_SCRIPT_RESULT, id, (double)request, 0, 0, @"Extensions do not run in this engine yet", nil);
+
+/* What a context's api.js hands its calls to: the handler in its own world. */
+const char *spatimesh_ext_bridge(void) {
+    return "(function(){var h=window.webkit.messageHandlers.spatimeshExt;return function(s){h.postMessage(s);};})()";
+}
+
+void spatimesh_ext_clear(Engine *e) {
+    e->extensions = [NSMutableArray array];
+    e->entries = [NSMutableArray array];
+}
+
+void spatimesh_ext_add(Engine *e, const char *ident, const char *scheme, const char *world, const char *content_boot, const char *page_boot) {
+    @autoreleasepool {
+        MeshExtension *x = [[MeshExtension alloc] init];
+        x.ident = text_of(ident);
+        x.scheme = text_of(scheme);
+        x.world = text_of(world);
+        x.contentBoot = text_of(content_boot);
+        x.pageBoot = text_of(page_boot);
+        [e->extensions addObject:x];
+    }
+}
+
+/* "a\nb" as a list; nil for "". */
+static NSArray<NSString *> *lines_of(const char *text) {
+    return text && *text ? [text_of(text) componentsSeparatedByString:@"\n"] : nil;
+}
+
+void spatimesh_ext_entry(Engine *e, const char *ident, int run_at, int all_frames, int main_world, const char *allow, const char *block, const char *guard,
+                         int exact) {
+    @autoreleasepool {
+        NSString *wanted = text_of(ident);
+        MeshExtension *x = nil;
+        for (MeshExtension *each in e->extensions)
+            if ([each.ident isEqualToString:wanted])
+                x = each;
+        if (!x)
+            return;
+        MeshEntry *n = [[MeshEntry alloc] init];
+        n.extension = x;
+        n.runAt = run_at;
+        n.allFrames = all_frames != 0;
+        n.mainWorld = main_world != 0;
+        n.allow = lines_of(allow);
+        n.block = lines_of(block);
+        n.guard = guard && *guard ? text_of(guard) : @"true";
+        n.exact = exact != 0;
+        n.js = [NSMutableArray array];
+        n.css = [NSMutableArray array];
+        [e->entries addObject:n];
+    }
+}
+
+/* A file of the entry added last. */
+void spatimesh_ext_js(Engine *e, const char *code) {
+    @autoreleasepool {
+        [e->entries.lastObject.js addObject:text_of(code)];
+    }
+}
+
+void spatimesh_ext_css(Engine *e, const char *code) {
+    @autoreleasepool {
+        [e->entries.lastObject.css addObject:text_of(code)];
+    }
+}
+
+/* The set is whole: every tab has it for the pages it loads from now on. */
+void spatimesh_ext_done(Engine *e) {
+    @autoreleasepool {
+        for (MeshTab *tab in e->tabs.allValues)
+            apply_extensions(tab);
+    }
+}
+
+/* Code run in a tab's top frame, in `world` ("" the page's own), the extension's API set up
+ * there first if `boot`; with `all_frames`, in the other frames its contexts have spoken from
+ * too. The top frame's result is told if there is a `request`: in the page's own world, its
+ * value once it settles (the code is then one expression), as Chrome's executeScript has it. */
+void spatimesh_run_script(Engine *e, uint64_t ident, const char *world, int all_frames, const char *code, uint64_t request, int boot) {
+    @autoreleasepool {
+        MeshTab *tab = find(e, ident);
+        if (!tab) {
+            if (request)
+                push(e, EV_SCRIPT_RESULT, ident, (double)request, 0, 0, @"No such tab", nil);
+            return;
+        }
+        NSString *name = text_of(world);
+        WKContentWorld *in = name.length ? [WKContentWorld worldWithName:name] : [WKContentWorld pageWorld];
+        NSString *source = text_of(code);
+        if (boot && name.length) {
+            for (MeshExtension *x in e->extensions) {
+                if ([x.world isEqualToString:name]) {
+                    source = [NSString stringWithFormat:@"%@\n%@", x.contentBoot, source];
+                    break;
+                }
+            }
+        }
+        if (request && !name.length) {
+            [tab.view callAsyncJavaScript:[NSString stringWithFormat:@"return (%@\n);", source]
+                                arguments:nil
+                                  inFrame:nil
+                           inContentWorld:in
+                        completionHandler:^(id result, NSError *error) {
+                          answered(e, ident, request, result, error);
+                        }];
+        } else {
+            [tab.view evaluateJavaScript:source
+                                 inFrame:nil
+                          inContentWorld:in
+                       completionHandler:^(id result, NSError *error) {
+                         if (request)
+                             answered(e, ident, request, result, error);
+                       }];
+        }
+        if (!all_frames)
+            return;
+        NSMutableDictionary<NSNumber *, WKFrameInfo *> *of = tab.frames[name];
+        __weak NSMutableDictionary<NSNumber *, WKFrameInfo *> *kept = of;
+        for (NSNumber *key in of.allKeys) {
+            [tab.view evaluateJavaScript:source
+                                 inFrame:of[key]
+                          inContentWorld:in
+                       completionHandler:^(id result, NSError *error) {
+                         /* A frame that is gone is forgotten. */
+                         if (error && [error.domain isEqualToString:WKErrorDomain] && error.code == WKErrorJavaScriptInvalidFrameTarget)
+                             [kept removeObjectForKey:key];
+                       }];
+        }
+    }
 }

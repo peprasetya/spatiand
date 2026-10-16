@@ -278,9 +278,9 @@ fn skip(required: bool, why: &str) {
 
 /// Both extensions on the engine program at `program`. Where there is no display, or the engine
 /// cannot start, this says so and passes -- unless the engine is `required` (as CI requires
-/// CEF's).
+/// CEF's and the Mac's). A Mac's session has its window server, and no DISPLAY.
 pub fn run(program: &str, required: bool) {
-    if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
+    if cfg!(not(target_os = "macos")) && std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
         skip(required, "no display: extensions are not tested here (run under xvfb-run)");
         return;
     }
