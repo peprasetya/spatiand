@@ -19,7 +19,7 @@ public final class Wire {
     // From the window.
     public static final int OPEN = 1, CLOSE = 2, LOAD = 3, BACK = 4, FORWARD = 5, RELOAD = 6, STOP = 7,
             RESIZE = 8, POINTER = 9, POINTER_LEFT = 10, SCROLL = 11, KEY = 12, FOCUS = 13, WINDOW = 14,
-            MUTE = 15, RELEASE = 16, QUIT = 17, CHOOSE = 18, ANSWER = 19;
+            MUTE = 15, RELEASE = 16, QUIT = 17, CHOOSE = 18, ANSWER = 19, EXTENSIONS = 20, RUN_SCRIPT = 21;
 
     // Dialogs, as Happened::Dialog numbers them.
     public static final int ALERT = 0, CONFIRM = 1, PROMPT = 2, LEAVE = 3;
@@ -43,6 +43,13 @@ public final class Wire {
         public int window, buffer;
         /** What was chosen from a list: -1 for nothing. */
         public int index = -1;
+        /** The profile's extensions (JSON: crates/spatimesh/src/extensions/set.rs). */
+        public String set = "";
+        /** Code to run in a tab: in `world` ("" the page's own), every frame or the top one,
+         *  the extension's API set up first if `boot`; its value told back if `request` is not 0. */
+        public String world = "", script = "";
+        public boolean allFrames, boot;
+        public long request;
     }
 
     private static final class In {
@@ -116,6 +123,12 @@ public final class Wire {
                 }
                 case ANSWER:
                     m.tab = i.u64(); m.accepted = i.bool(); m.hasText = i.bool(); m.text = i.str();
+                    break;
+                case EXTENSIONS:
+                    m.set = i.str();
+                    break;
+                case RUN_SCRIPT:
+                    m.tab = i.u64(); m.world = i.str(); m.allFrames = i.bool(); m.script = i.str(); m.request = i.u64(); m.boot = i.bool();
                     break;
                 default:
                     return null;
@@ -210,5 +223,13 @@ public final class Wire {
 
     public static byte[] dialog(long tab, int kind, String message, String text) {
         return new Out(22).u64(tab).u8(kind).str(message).str(text).bytes();
+    }
+
+    /** An extension's context in the tab speaking (api.js's JSON). */
+    public static byte[] extension(long tab, String json) { return new Out(23).u64(tab).str(json).bytes(); }
+
+    /** Code run for `request`: its value as JSON, or what went wrong. */
+    public static byte[] scriptResult(long tab, long request, boolean ok, String text) {
+        return new Out(24).u64(tab).u64(request).bool(ok).str(text).bytes();
     }
 }

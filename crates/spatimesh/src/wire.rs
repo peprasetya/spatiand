@@ -1134,6 +1134,11 @@ mod golden {
             (ToHost::Answer { tab: 7, accepted: true, text: Some("yes".into()) }, "13110000000700000000000000010103000000796573"),
             (ToHost::Release { tab: 7, buffer: 1 }, "1009000000070000000000000001"),
             (ToHost::Quit, "1100000000"),
+            (ToHost::Extensions { set: "{\"extensions\":[]}".into() }, "1415000000110000007b22657874656e73696f6e73223a5b5d7d"),
+            (
+                ToHost::RunScript { tab: 7, world: "spatimesh-abc".into(), all_frames: true, code: "1+1".into(), request: 42, boot: true },
+                "152a00000007000000000000000d00000073706174696d6573682d6162630103000000312b312a0000000000000001",
+            ),
         ]
     }
 
@@ -1161,6 +1166,9 @@ mod golden {
                 FromHost::Happened(Happened::Dialog { tab: 7, kind: DialogKind::Confirm, message: "Sure?".into(), text: String::new() }),
                 "161600000007000000000000000105000000537572653f00000000",
             ),
+            (FromHost::Happened(Happened::Extension { tab: 7, json: "{\"c\":\"ready\"}".into() }), "171900000007000000000000000d0000007b2263223a227265616479227d"),
+            (FromHost::Happened(Happened::ScriptResult { tab: 7, request: 42, result: Ok("2".into()) }), "181600000007000000000000002a00000000000000010100000032"),
+            (FromHost::Happened(Happened::ScriptResult { tab: 7, request: 43, result: Err("no".into()) }), "181700000007000000000000002b0000000000000000020000006e6f"),
         ]
     }
 

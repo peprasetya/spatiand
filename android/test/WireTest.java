@@ -59,6 +59,11 @@ public class WireTest {
         check("release", release != null && release.tag == Wire.RELEASE && release.buffer == 1);
         Wire.ToHost quit = read("1100000000");
         check("quit", quit != null && quit.tag == Wire.QUIT);
+        Wire.ToHost extensions = read("1415000000110000007b22657874656e73696f6e73223a5b5d7d");
+        check("extensions", extensions != null && extensions.tag == Wire.EXTENSIONS && extensions.set.equals("{\"extensions\":[]}"));
+        Wire.ToHost run = read("152a00000007000000000000000d00000073706174696d6573682d6162630103000000312b312a0000000000000001");
+        check("run script", run != null && run.tag == Wire.RUN_SCRIPT && run.tab == 7 && run.world.equals("spatimesh-abc") && run.allFrames
+                && run.script.equals("1+1") && run.request == 42 && run.boot);
 
         same("hello", Wire.hello("Android System WebView 140"), "011e0000001a000000416e64726f69642053797374656d205765625669657720313430");
         same("buffers", Wire.buffers(7, 1580, 868, true, 2), "021200000007000000000000002c060000640300000102");
@@ -67,6 +72,9 @@ public class WireTest {
         same("progress", Wire.progress(7, 0.5f, true), "0c0d00000007000000000000000000003f01");
         same("open tab", Wire.openTab(7, "https://a/", false), "111700000007000000000000000a00000068747470733a2f2f612f00");
         same("dialog", Wire.dialog(7, Wire.CONFIRM, "Sure?", ""), "161600000007000000000000000105000000537572653f00000000");
+        same("extension", Wire.extension(7, "{\"c\":\"ready\"}"), "171900000007000000000000000d0000007b2263223a227265616479227d");
+        same("script result", Wire.scriptResult(7, 42, true, "2"), "181600000007000000000000002a00000000000000010100000032");
+        same("script failed", Wire.scriptResult(7, 43, false, "no"), "181700000007000000000000002b0000000000000000020000006e6f");
 
         if (failures > 0) {
             System.out.println(failures + " check(s) failed");
