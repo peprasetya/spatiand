@@ -15,6 +15,34 @@ use crate::wire::{FromHost, Link, SharedCanvas, ToHost};
 /// How the window tells a host where its end of the socket is.
 pub const FD_VARIABLE: &str = "SPATIMESH_FD";
 
+/// Start the engine program `program` for a profile, with a socket to it: what the window
+/// does for each profile in use, and what tests do.
+pub fn start(program: &std::path::Path, setup: &ProfileSetup) -> std::io::Result<(std::process::Child, Link)> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
+    let (link, theirs) = Link::pair()?;
+    let raw = theirs.as_raw_fd();
+    let mut command = std::process::Command::new(program);
+    command.args(arguments(setup)).env(FD_VARIABLE, "3");
+    // SAFETY: between fork and exec, only async-signal-safe calls: dup2 and fcntl.
+    unsafe {
+        command.pre_exec(move || {
+            if raw == 3 {
+                // Already where it goes; dup2 would leave it closed on exec.
+                if libc::fcntl(3, libc::F_SETFD, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            } else if libc::dup2(raw, 3) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = command.spawn()?;
+    drop(theirs);
+    Ok((child, link))
+}
+
 /// The arguments a window starts a host with, for `profile`.
 pub fn arguments(setup: &ProfileSetup) -> Vec<String> {
     let mut args = vec!["--profile".to_string(), setup.id.clone()];
@@ -121,6 +149,8 @@ pub fn serve(mut engine: Box<dyn Engine>, mut link: Link) {
                 ToHost::Window { tab, window } => engine.set_window(tab, window),
                 ToHost::Mute { tab, muted } => engine.set_muted(tab, muted),
                 ToHost::Release { tab, buffer } => canvas.release(tab, buffer),
+                ToHost::Choose { tab, index } => engine.choose(tab, index),
+                ToHost::Answer { tab, accepted, text } => engine.answer(tab, accepted, text),
             }
         }
         if link.is_closed() {

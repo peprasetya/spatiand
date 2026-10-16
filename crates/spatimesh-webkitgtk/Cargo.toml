@@ -1,0 +1,22 @@
+[package]
+name = "spatimesh-webkitgtk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SpatiMesh's engine host on a Linux that is not SteamOS: WebKitGTK"
+
+# A program of its own, started by SpatiMesh's window process, one per profile in use
+# (docs/spatimesh.md). It links the distribution's WebKitGTK (webkit2gtk-4.1); built where that
+# is missing, it is built without it and says so when started, so that the rest of the
+# workspace builds anywhere.
+[dependencies]
+spatimesh = { path = "../spatimesh" }
+spatiand-app = { path = "../spatiand-app" }
+log.workspace = true
+libc = "0.2"
+
+[build-dependencies]
+cc = "1"
+pkg-config = "0.3"

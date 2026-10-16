@@ -12,7 +12,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
-use crate::engine::{Button, Canvas, Cursor, Format, Happened, KeyPress, Modifiers, Rect, TabId, View};
+use crate::engine::{Button, Canvas, Choice, Cursor, DialogKind, Format, Happened, KeyPress, Modifiers, Rect, TabId, View};
 
 /// From a window to its engine host.
 #[derive(Debug, Clone, PartialEq)]
@@ -34,6 +34,8 @@ pub enum ToHost {
     Mute { tab: TabId, muted: bool },
     /// The window has read this buffer of the tab's and is done with it.
     Release { tab: TabId, buffer: u8 },
+    Choose { tab: TabId, index: Option<usize> },
+    Answer { tab: TabId, accepted: bool, text: Option<String> },
     Quit,
 }
 
@@ -318,6 +320,14 @@ impl ToHost {
                 16
             }
             ToHost::Quit => 17,
+            ToHost::Choose { tab, index } => {
+                b.u64(*tab).u32(index.map_or(u32::MAX, |i| i as u32));
+                18
+            }
+            ToHost::Answer { tab, accepted, text } => {
+                b.u64(*tab).bool(*accepted).bool(text.is_some()).str(text.as_deref().unwrap_or(""));
+                19
+            }
         };
         frame(tag, b)
     }
@@ -349,6 +359,14 @@ impl ToHost {
             15 => ToHost::Mute { tab: i.u64()?, muted: i.bool()? },
             16 => ToHost::Release { tab: i.u64()?, buffer: i.u8()? },
             17 => ToHost::Quit,
+            18 => {
+                let (tab, index) = (i.u64()?, i.u32()?);
+                ToHost::Choose { tab, index: (index != u32::MAX).then_some(index as usize) }
+            }
+            19 => {
+                let (tab, accepted, has_text, text) = (i.u64()?, i.bool()?, i.bool()?, i.str()?);
+                ToHost::Answer { tab, accepted, text: has_text.then_some(text) }
+            }
             _ => return None,
         })
     }
@@ -418,6 +436,23 @@ impl FromHost {
                     b.u64(*tab).str(url).str(why);
                     20
                 }
+                Happened::Choose { tab, choices, at } => {
+                    b.u64(*tab).rect(*at).u32(choices.len() as u32);
+                    for c in choices {
+                        b.str(&c.label).bool(c.enabled).bool(c.selected).bool(c.heading);
+                    }
+                    21
+                }
+                Happened::Dialog { tab, kind, message, text } => {
+                    let k = match kind {
+                        DialogKind::Alert => 0,
+                        DialogKind::Confirm => 1,
+                        DialogKind::Prompt => 2,
+                        DialogKind::Leave => 3,
+                    };
+                    b.u64(*tab).u8(k).str(message).str(text);
+                    22
+                }
             },
         };
         frame(tag, b)
@@ -450,6 +485,24 @@ impl FromHost {
             18 => FromHost::Happened(Happened::CloseTab { tab: i.u64()? }),
             19 => FromHost::Happened(Happened::Crashed { tab: i.u64()?, why: i.str()? }),
             20 => FromHost::Happened(Happened::Failed { tab: i.u64()?, url: i.str()?, why: i.str()? }),
+            21 => {
+                let (tab, at, n) = (i.u64()?, i.rect()?, i.u32()?);
+                let mut choices = Vec::with_capacity(n.min(4096) as usize);
+                for _ in 0..n {
+                    choices.push(Choice { label: i.str()?, enabled: i.bool()?, selected: i.bool()?, heading: i.bool()? });
+                }
+                FromHost::Happened(Happened::Choose { tab, choices, at })
+            }
+            22 => {
+                let (tab, k, message, text) = (i.u64()?, i.u8()?, i.str()?, i.str()?);
+                let kind = match k {
+                    1 => DialogKind::Confirm,
+                    2 => DialogKind::Prompt,
+                    3 => DialogKind::Leave,
+                    _ => DialogKind::Alert,
+                };
+                FromHost::Happened(Happened::Dialog { tab, kind, message, text })
+            }
             _ => return None,
         })
     }
@@ -918,6 +971,10 @@ mod tests {
             ToHost::Key { tab: 3, key: KeyPress { code: 1, key: spatiand_app::Key::Escape, text: None, pressed: false, repeat: true, modifiers: Modifiers::default() } },
             ToHost::Scroll { tab: 4, x: 3.0, y: 4.0, dx: -1.0, dy: 120.0, modifiers: Modifiers::default() },
             ToHost::Release { tab: 5, buffer: 1 },
+            ToHost::Choose { tab: 6, index: Some(3) },
+            ToHost::Choose { tab: 6, index: None },
+            ToHost::Answer { tab: 7, accepted: true, text: Some("typed".into()) },
+            ToHost::Answer { tab: 7, accepted: false, text: None },
             ToHost::Quit,
         ];
         for message in to_host {
@@ -930,6 +987,12 @@ mod tests {
             FromHost::Happened(Happened::OpenTab { opener: 1, url: "https://a/".into(), background: true }),
             FromHost::Happened(Happened::Failed { tab: 1, url: "https://nowhere/".into(), why: "no such host".into() }),
             FromHost::Happened(Happened::Cursor { tab: 1, cursor: Cursor::Hand }),
+            FromHost::Happened(Happened::Choose {
+                tab: 2,
+                choices: vec![Choice { label: "Fruit".into(), enabled: false, selected: false, heading: true }, Choice { label: "Apple".into(), enabled: true, selected: true, heading: false }],
+                at: Rect { x: 10, y: 20, width: 100, height: 24 },
+            }),
+            FromHost::Happened(Happened::Dialog { tab: 3, kind: DialogKind::Prompt, message: "Name?".into(), text: "default".into() }),
         ];
         for message in from_host {
             let bytes = message.encode();

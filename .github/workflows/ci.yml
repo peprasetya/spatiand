@@ -50,6 +50,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null; cargo check --workspace --exclude spatiand-host --exclude spatiand-android --locked
       - run: . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null; cargo test --workspace --exclude spatiand-host --exclude spatiand-android --locked
+      # Real pages in WebKitGTK's own processes, drawn offscreen, typed into, crashed: they need
+      # a display, which the step above has not got (and so skips them).
+      - name: SpatiMesh's WebKitGTK engine, on a virtual display
+        run: . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null; xvfb-run -a cargo test -p spatimesh-webkitgtk --locked
 
   android:
     runs-on: ubuntu-24.04

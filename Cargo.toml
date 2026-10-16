@@ -30,6 +30,7 @@ members = [
     "crates/spatishelf",
     "crates/spatiand-sync",
     "crates/spatimesh",
+    "crates/spatimesh-webkitgtk",
 ]
 
 [workspace.package]

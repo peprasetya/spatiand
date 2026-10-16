@@ -165,6 +165,10 @@ impl Engine for Fake {
         }
     }
 
+    fn choose(&mut self, _tab: TabId, _index: Option<usize>) {}
+
+    fn answer(&mut self, _tab: TabId, _accepted: bool, _text: Option<String>) {}
+
     fn pump(&mut self, wait: Duration, canvas: &mut dyn Canvas) -> Vec<Happened> {
         let mut drawn = Vec::new();
         for (tab, page) in self.pages.iter_mut().filter(|(_, p)| p.dirty) {

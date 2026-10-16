@@ -124,6 +124,29 @@ pub trait Canvas {
     fn finish(&mut self, tab: TabId, changed: &[Rect]);
 }
 
+/// One line of a `<select>`'s list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Choice {
+    pub label: String,
+    pub enabled: bool,
+    pub selected: bool,
+    /// The heading of a group (`<optgroup>`), not to be chosen.
+    pub heading: bool,
+}
+
+/// What a page's script asked the wearer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialogKind {
+    /// `alert()`: a message and OK.
+    Alert,
+    /// `confirm()`: OK or Cancel.
+    Confirm,
+    /// `prompt()`: a line of text, OK or Cancel.
+    Prompt,
+    /// Leaving a page that asked to be asked first.
+    Leave,
+}
+
 /// Something a page did that the window should know.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Happened {
@@ -148,6 +171,11 @@ pub enum Happened {
     Crashed { tab: TabId, why: String },
     /// The page could not be loaded at all: no such host, refused, a certificate.
     Failed { tab: TabId, url: String, why: String },
+    /// A `<select>` was opened: the window shows the list at `at` and says what was chosen
+    /// with [`Engine::choose`].
+    Choose { tab: TabId, choices: Vec<Choice>, at: Rect },
+    /// A script asks something; the page waits for [`Engine::answer`].
+    Dialog { tab: TabId, kind: DialogKind, message: String, text: String },
 }
 
 impl Happened {
@@ -162,7 +190,9 @@ impl Happened {
             | Happened::Sound { tab, .. }
             | Happened::CloseTab { tab }
             | Happened::Crashed { tab, .. }
-            | Happened::Failed { tab, .. } => *tab,
+            | Happened::Failed { tab, .. }
+            | Happened::Choose { tab, .. }
+            | Happened::Dialog { tab, .. } => *tab,
             Happened::OpenTab { opener, .. } => *opener,
         }
     }
@@ -197,6 +227,10 @@ pub trait Engine {
     /// The window the tab is in now: where its sound is to come from.
     fn set_window(&mut self, tab: TabId, window: u32);
     fn set_muted(&mut self, tab: TabId, muted: bool);
+    /// What was chosen from the list of a [`Happened::Choose`]: none if it was closed.
+    fn choose(&mut self, tab: TabId, index: Option<usize>);
+    /// The answer to a [`Happened::Dialog`]: OK or not, and a prompt's text.
+    fn answer(&mut self, tab: TabId, accepted: bool, text: Option<String>);
     /// Let the engine work for at most `wait`, drawing into `canvas`, and say what happened.
     /// It returns sooner when the descriptor given to [`Engine::wake_on`] has something to read.
     fn pump(&mut self, wait: Duration, canvas: &mut dyn Canvas) -> Vec<Happened>;

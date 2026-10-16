@@ -4873,6 +4873,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatimesh-webkitgtk"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "libc",
+ "log",
+ "pkg-config",
+ "spatiand-app",
+ "spatimesh",
+]
+
+[[package]]
 name = "spatiquill"
 version = "0.1.0"
 dependencies = [
