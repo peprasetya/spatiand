@@ -446,8 +446,14 @@ impl Engine for Shim {
                 Flavor::Firefox => "moz-extension",
             };
             let (id, scheme, world) = (c(&spec.id), c(scheme), c(&spec.world()));
-            let content = c(&set::boot(&bridge, &spec.content_config));
-            let page = c(&set::boot(&bridge, &spec.page_config));
+            // An engine with worlds of the extensions' own gives a bridge to put the API on
+            // their globals with; one without gives none, and is handed the API as functions.
+            let (content, page) = if bridge.is_empty() {
+                (set::boot_function(&spec.content_config, true), set::boot_function(&spec.page_config, false))
+            } else {
+                (set::boot(&bridge, &spec.content_config), set::boot(&bridge, &spec.page_config))
+            };
+            let (content, page) = (c(&content), c(&page));
             unsafe { spatimesh_ext_add(self.raw, id.as_ptr(), scheme.as_ptr(), world.as_ptr(), content.as_ptr(), page.as_ptr()) };
             for script in &spec.scripts {
                 let (allow, block, exact) = webkit_lists(script);

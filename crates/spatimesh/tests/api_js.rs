@@ -185,3 +185,65 @@ vm.runInContext({checks}, sandbox);
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Where an engine has no world of the extension's own (CEF, Android's WebView): the API kept
+/// out of the page's globals, handed to the content scripts' closure, and the token not taken by
+/// a page that sets traps on what every object has.
+const CLOSED_CHECKS: &str = r#"
+const assert = (ok, what) => { if (!ok) throw new Error('failed: ' + what); };
+(async () => {
+  // The page, before any of it runs, is the extension's: then the page's own scripts set traps.
+  let stolen = [];
+  Object.prototype.toJSON = function () { stolen.push(this); return this; };
+  assert(typeof chrome === 'undefined' && typeof browser === 'undefined' && typeof __spatimeshExt === 'undefined', 'nothing on the page globals');
+  assert(api && typeof api.deliver === 'function' && typeof api.run === 'function', 'what the engine keeps');
+  assert(api.global.chrome === api.chrome, 'globalThis.chrome, for webextension-polyfill and the like');
+  assert(api.global.location === location, 'the rest of globalThis is the page\'s');
+  // A content script, as the engine runs it.
+  const content = new Function('chrome', 'browser', 'globalThis', 'return chrome.runtime.sendMessage({ hi: 1 });');
+  const p = content(api.chrome, api.browser || undefined, api.global);
+  const sent = posted[posted.length - 1];
+  assert(sent.c === 'runtime.sendMessage' && sent.t === 'secret', 'a call, with its token: ' + JSON.stringify(sent));
+  assert(stolen.every(o => JSON.stringify(Object.keys(o)).indexOf('"t"') < 0), 'the token never passed a toJSON of the page\'s');
+  api.deliver(JSON.stringify({ to: sent.x, r: sent.i, v: 'ok' }));
+  assert(await p === 'ok', 'the answer, through the kept deliver');
+  console.log('OK');
+})().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
+"#;
+
+#[test]
+fn the_api_kept_from_the_page_where_there_is_no_world_of_its_own() {
+    let Some(node) = node() else {
+        eprintln!("no node: api.js is not run here");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("spatimesh-api-js-closed-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for flavor in ["chrome", "firefox"] {
+        let boot = set::boot_function(&config(flavor, "content"), true);
+        let script = format!(
+            r#"
+const vm = require('vm');
+const sandbox = {{ console, setTimeout, URL, Promise, JSON, process, Proxy, Reflect, Function }};
+sandbox.window = sandbox;
+sandbox.top = sandbox;
+sandbox.addEventListener = function () {{}};
+sandbox.location = {{ href: 'https://example.com/' }};
+sandbox.document = {{ readyState: 'loading' }};
+vm.createContext(sandbox);
+sandbox.posted = [];
+const post = s => sandbox.posted.push(JSON.parse(s));
+sandbox.api = vm.runInContext({boot}, sandbox)(post);
+vm.runInContext({checks}, sandbox);
+"#,
+            boot = serde_json::to_string(&boot).unwrap(),
+            checks = serde_json::to_string(CLOSED_CHECKS).unwrap(),
+        );
+        let file = dir.join(format!("closed-{flavor}.js"));
+        std::fs::write(&file, script).unwrap();
+        let out = Command::new(&node).arg(&file).output().unwrap();
+        let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success() && stdout.contains("OK"), "{flavor}:\n{stdout}\n{stderr}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

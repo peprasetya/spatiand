@@ -54,6 +54,14 @@
 #include "include/capi/cef_render_handler_capi.h"
 #include "include/capi/cef_request_handler_capi.h"
 #include "include/capi/cef_values_capi.h"
+#include "include/capi/cef_process_message_capi.h"
+#include "include/capi/cef_render_process_handler_capi.h"
+#include "include/capi/cef_request_capi.h"
+#include "include/capi/cef_resource_handler_capi.h"
+#include "include/capi/cef_resource_request_handler_capi.h"
+#include "include/capi/cef_response_capi.h"
+#include "include/capi/cef_scheme_capi.h"
+#include "include/capi/cef_v8_capi.h"
 
 /* ---- the library, loaded at run time ------------------------------------------------------ */
 
@@ -70,7 +78,19 @@
     X(cef_string_utf16_to_utf8)                                                                   \
     X(cef_string_utf16_clear)                                                                     \
     X(cef_string_utf8_clear)                                                                      \
-    X(cef_string_userfree_utf16_free)
+    X(cef_string_userfree_utf16_free)                                                             \
+    X(cef_process_message_create)                                                                 \
+    X(cef_list_value_create)                                                                      \
+    X(cef_dictionary_value_create)                                                                \
+    X(cef_v8value_create_function)                                                                \
+    X(cef_v8value_create_string)                                                                  \
+    X(cef_v8value_create_object)                                                                  \
+    X(cef_v8value_create_undefined)                                                               \
+    X(cef_v8context_get_current_context)                                                          \
+    X(cef_string_list_alloc)                                                                      \
+    X(cef_string_list_size)                                                                       \
+    X(cef_string_list_value)                                                                      \
+    X(cef_string_list_free)
 
 #define DECLARE(name) static __typeof__(name) *p_##name;
 CEF_FUNCTIONS(DECLARE)
@@ -1037,6 +1057,960 @@ static void CEF_CALLBACK on_download_updated(cef_download_handler_t *self, cef_b
     RELEASE(browser);
 }
 
+/* ---- extensions (docs/spatimesh.md, "Extensions") ---------------------------------------- *
+ *
+ * The window's runtime answers every extension API; here is only the bridge. Chromium as CEF
+ * has it gives no world of an extension's own, so content scripts run in the page's world, in a
+ * closure: each extension's API is made by a function (crates/spatimesh-shim) that is given a
+ * native function of this file's to speak to the window with, and returns the API, which this
+ * keeps -- the page never sees either. The extension's own pages get their API as globals. The
+ * set reaches each page's process with its browser (`extra_info`) and as a message when it
+ * changes; calls come back as process messages; code is run in a frame when the window asks.
+ * chrome-extension:// and moz-extension:// are served from the extension's folder by the shim. */
+
+typedef int (*ServeFn)(const char *url, const char *initiator, const char **mime, unsigned char **bytes, size_t *len);
+typedef void (*ServeFreeFn)(unsigned char *bytes, size_t len);
+static ServeFn serve_fn;
+static ServeFreeFn serve_free_fn;
+
+void spatimesh_ext_server(ServeFn serve, ServeFreeFn free_bytes) {
+    serve_fn = serve;
+    serve_free_fn = free_bytes;
+}
+
+/* No worlds of the extensions' own: the API comes as functions (spatimesh-shim). */
+const char *spatimesh_ext_bridge(void) {
+    return "";
+}
+
+/* The set, as the pages' processes are given it:
+ *   [[id, its pages' prefix, content boot, page boot, [[run_at, all_frames, main_world, guard, js, css], ...]], ...] */
+static cef_list_value_t *ext_set;
+static size_t last_ext;
+
+static void list_set_text(cef_list_value_t *list, size_t index, const char *utf8) {
+    cef_string_t s;
+    memset(&s, 0, sizeof s);
+    set_text(&s, utf8);
+    list->set_string(list, index, &s);
+    clear_text(&s);
+}
+
+static char *list_text(cef_list_value_t *list, size_t index) {
+    cef_string_userfree_t s = list->get_string(list, index);
+    char *out = utf8_of(s);
+    if (s)
+        p_cef_string_userfree_utf16_free(s);
+    return out;
+}
+
+static cef_process_message_t *message_named(const char *name) {
+    cef_string_t n;
+    memset(&n, 0, sizeof n);
+    set_text(&n, name);
+    cef_process_message_t *m = p_cef_process_message_create(&n);
+    clear_text(&n);
+    return m;
+}
+
+static int message_is(cef_process_message_t *m, const char *name) {
+    cef_string_userfree_t n = m->get_name(m);
+    char *text = utf8_of(n);
+    if (n)
+        p_cef_string_userfree_utf16_free(n);
+    int same = strcmp(text, name) == 0;
+    free(text);
+    return same;
+}
+
+void spatimesh_ext_clear(Engine *e) {
+    RELEASE(ext_set);
+    ext_set = p_cef_list_value_create();
+}
+
+void spatimesh_ext_add(Engine *e, const char *id, const char *scheme, const char *world, const char *content_boot, const char *page_boot) {
+    if (!ext_set)
+        spatimesh_ext_clear(e);
+    cef_list_value_t *x = p_cef_list_value_create();
+    char prefix[600];
+    snprintf(prefix, sizeof prefix, "%s://%s/", scheme, id);
+    list_set_text(x, 0, id);
+    list_set_text(x, 1, prefix);
+    list_set_text(x, 2, content_boot);
+    list_set_text(x, 3, page_boot);
+    cef_list_value_t *entries = p_cef_list_value_create();
+    x->set_list(x, 4, entries);
+    RELEASE(entries);
+    ext_set->set_list(ext_set, ext_set->get_size(ext_set), x);
+    RELEASE(x);
+}
+
+void spatimesh_ext_entry(Engine *e, const char *id, int run_at, int all_frames, int main_world, const char *allow, const char *block, const char *guard, int exact) {
+    if (!ext_set)
+        return;
+    size_t n = ext_set->get_size(ext_set);
+    for (size_t i = 0; i < n; i++) {
+        cef_list_value_t *x = ext_set->get_list(ext_set, i);
+        char *xid = list_text(x, 0);
+        if (strcmp(xid, id) == 0) {
+            cef_list_value_t *entries = x->get_list(x, 4);
+            cef_list_value_t *entry = p_cef_list_value_create();
+            entry->set_int(entry, 0, run_at);
+            entry->set_bool(entry, 1, all_frames);
+            entry->set_bool(entry, 2, main_world);
+            /* Which pages: the guard, always (Chromium's own patterns are not reachable here). */
+            list_set_text(entry, 3, guard && *guard ? guard : "true");
+            list_set_text(entry, 4, "");
+            list_set_text(entry, 5, "");
+            entries->set_list(entries, entries->get_size(entries), entry);
+            RELEASE(entry);
+            RELEASE(entries);
+            last_ext = i;
+        }
+        free(xid);
+        RELEASE(x);
+    }
+}
+
+/* Code added to the last entry's JavaScript (index 4) or style sheet (index 5). */
+static void ext_append(size_t index, const char *code) {
+    if (!ext_set || last_ext >= ext_set->get_size(ext_set))
+        return;
+    cef_list_value_t *x = ext_set->get_list(ext_set, last_ext);
+    cef_list_value_t *entries = x->get_list(x, 4);
+    size_t count = entries->get_size(entries);
+    if (count) {
+        cef_list_value_t *entry = entries->get_list(entries, count - 1);
+        char *was = list_text(entry, index);
+        size_t len = strlen(was) + strlen(code) + 4;
+        char *both = malloc(len);
+        snprintf(both, len, "%s%s%s", was, *was ? "\n;\n" : "", code);
+        list_set_text(entry, index, both);
+        free(both);
+        free(was);
+        RELEASE(entry);
+    }
+    RELEASE(entries);
+    RELEASE(x);
+}
+
+void spatimesh_ext_js(Engine *e, const char *code) {
+    ext_append(4, code);
+}
+
+void spatimesh_ext_css(Engine *e, const char *code) {
+    ext_append(5, code);
+}
+
+/* The set to a browser's pages' process. */
+static void send_set(cef_browser_t *browser) {
+    if (!ext_set || !browser)
+        return;
+    cef_frame_t *frame = browser->get_main_frame(browser);
+    if (!frame)
+        return;
+    cef_process_message_t *m = message_named("spatimesh-ext");
+    cef_list_value_t *args = m->get_argument_list(m);
+    cef_list_value_t *copy = ext_set->copy(ext_set);
+    args->set_list(args, 0, copy);
+    RELEASE(copy);
+    RELEASE(args);
+    frame->send_process_message(frame, PID_RENDERER, m);
+    RELEASE(m);
+    RELEASE(frame);
+}
+
+/* The set is whole: every tab's pages have it from their next load (new tabs with their browser). */
+void spatimesh_ext_done(Engine *e) {
+    for (Tab *t = tabs; t; t = t->next)
+        send_set(t->browser);
+}
+
+/* What a new browser's process is given: the set. */
+static cef_dictionary_value_t *extra_for_browser(void) {
+    if (!ext_set)
+        return NULL;
+    cef_dictionary_value_t *extra = p_cef_dictionary_value_create();
+    cef_string_t key;
+    memset(&key, 0, sizeof key);
+    set_text(&key, "ext");
+    cef_list_value_t *copy = ext_set->copy(ext_set);
+    extra->set_list(extra, &key, copy);
+    RELEASE(copy);
+    clear_text(&key);
+    return extra;
+}
+
+static void send_run(cef_frame_t *frame, const char *world, const char *code, uint64_t request, int boot, int reply) {
+    cef_process_message_t *m = message_named("spatimesh-run");
+    cef_list_value_t *args = m->get_argument_list(m);
+    list_set_text(args, 0, world ? world : "");
+    list_set_text(args, 1, code ? code : "");
+    args->set_double(args, 2, (double)request);
+    args->set_bool(args, 3, boot);
+    args->set_bool(args, 4, reply);
+    RELEASE(args);
+    frame->send_process_message(frame, PID_RENDERER, m);
+    RELEASE(m);
+}
+
+/* Code run in a tab's top frame (and its other frames), in `world` ("" the page's own; an
+ * extension's: in its closure, its API set up first if `boot`); the top frame's result told. */
+void spatimesh_run_script(Engine *e, uint64_t id, const char *world, int all_frames, const char *code, uint64_t request, int boot) {
+    Tab *t = find(id);
+    cef_frame_t *main = t && t->browser ? t->browser->get_main_frame(t->browser) : NULL;
+    if (!main) {
+        if (request)
+            push(EV_SCRIPT_RESULT, id, (double)request, 0, 0, "No such tab", NULL);
+        return;
+    }
+    send_run(main, world, code, request, boot, request != 0);
+    if (all_frames) {
+        cef_string_list_t ids = p_cef_string_list_alloc();
+        t->browser->get_frame_identifiers(t->browser, ids);
+        size_t n = p_cef_string_list_size(ids);
+        cef_string_userfree_t main_id = main->get_identifier(main);
+        char *main_text = utf8_of(main_id);
+        if (main_id)
+            p_cef_string_userfree_utf16_free(main_id);
+        for (size_t i = 0; i < n; i++) {
+            cef_string_t one;
+            memset(&one, 0, sizeof one);
+            if (!p_cef_string_list_value(ids, i, &one))
+                continue;
+            char *text = utf8_of(&one);
+            if (strcmp(text, main_text) != 0) {
+                cef_frame_t *frame = t->browser->get_frame_by_identifier(t->browser, &one);
+                if (frame) {
+                    send_run(frame, world, code, 0, boot, 0);
+                    RELEASE(frame);
+                }
+            }
+            free(text);
+            clear_text(&one);
+        }
+        free(main_text);
+        p_cef_string_list_free(ids);
+    }
+    RELEASE(main);
+}
+
+/* -- the browser's side: what pages' processes say -- */
+
+static int CEF_CALLBACK on_process_message(cef_client_t *self, cef_browser_t *browser, cef_frame_t *frame, cef_process_id_t source,
+                                           cef_process_message_t *message) {
+    Tab *t = tab_of(browser);
+    int handled = 0;
+    cef_list_value_t *args = message->get_argument_list(message);
+    if (t && message_is(message, "spatimesh-call")) {
+        char *json = list_text(args, 0);
+        push(EV_EXTENSION, t->id, 0, 0, 0, json, NULL);
+        free(json);
+        handled = 1;
+    } else if (t && message_is(message, "spatimesh-result")) {
+        char *text = list_text(args, 2);
+        push(EV_SCRIPT_RESULT, t->id, args->get_double(args, 0), args->get_bool(args, 1), 0, text, NULL);
+        free(text);
+        handled = 1;
+    }
+    RELEASE(args);
+    RELEASE(message);
+    RELEASE(frame);
+    RELEASE(browser);
+    return handled;
+}
+
+/* -- the extensions' files: chrome-extension:// and moz-extension://, on Chromium's IO thread -- */
+
+static int is_extension_url(const char *url) {
+    return strncmp(url, "chrome-extension://", 19) == 0 || strncmp(url, "moz-extension://", 16) == 0;
+}
+
+/* One file being given to Chromium. */
+typedef struct {
+    cef_resource_handler_t handler;
+    atomic_int refs;
+    unsigned char *bytes;
+    size_t len, offset;
+    int status;
+    char mime[96];
+    char charset[32];
+} Served;
+
+/* One request for one: who asked. */
+typedef struct {
+    cef_resource_request_handler_t handler;
+    atomic_int refs;
+    char *initiator;
+} Asked;
+
+#define REFCOUNTED(Type, field, freeing)                                                          \
+    static void CEF_CALLBACK Type##_add_ref(cef_base_ref_counted_t *b) {                          \
+        atomic_fetch_add(&((Type *)b)->refs, 1);                                                  \
+    }                                                                                             \
+    static int CEF_CALLBACK Type##_release(cef_base_ref_counted_t *b) {                           \
+        Type *field = (Type *)b;                                                                  \
+        if (atomic_fetch_sub(&field->refs, 1) == 1) {                                             \
+            freeing;                                                                              \
+            return 1;                                                                             \
+        }                                                                                         \
+        return 0;                                                                                 \
+    }                                                                                             \
+    static int CEF_CALLBACK Type##_has_one_ref(cef_base_ref_counted_t *b) {                       \
+        return atomic_load(&((Type *)b)->refs) == 1;                                              \
+    }                                                                                             \
+    static int CEF_CALLBACK Type##_has_at_least_one_ref(cef_base_ref_counted_t *b) {              \
+        return atomic_load(&((Type *)b)->refs) >= 1;                                              \
+    }
+
+REFCOUNTED(Served, s, (free(s->bytes), free(s)))
+REFCOUNTED(Asked, a, (free(a->initiator), free(a)))
+
+#define COUNTED(object, Type, struct_size)                                                        \
+    do {                                                                                          \
+        (object)->handler.base.size = (struct_size);                                              \
+        (object)->handler.base.add_ref = Type##_add_ref;                                          \
+        (object)->handler.base.release = Type##_release;                                          \
+        (object)->handler.base.has_one_ref = Type##_has_one_ref;                                  \
+        (object)->handler.base.has_at_least_one_ref = Type##_has_at_least_one_ref;                \
+        atomic_init(&(object)->refs, 1);                                                          \
+    } while (0)
+
+static int CEF_CALLBACK served_open(cef_resource_handler_t *self, cef_request_t *request, int *handle_request, cef_callback_t *callback) {
+    *handle_request = 1;
+    RELEASE(request);
+    RELEASE(callback);
+    return 1;
+}
+
+static void CEF_CALLBACK served_headers(cef_resource_handler_t *self, cef_response_t *response, int64_t *length, cef_string_t *redirect) {
+    Served *s = (Served *)self;
+    response->set_status(response, s->status);
+    cef_string_t text, name, value;
+    memset(&text, 0, sizeof text);
+    memset(&name, 0, sizeof name);
+    memset(&value, 0, sizeof value);
+    set_text(&text, s->mime);
+    response->set_mime_type(response, &text);
+    clear_text(&text);
+    if (s->charset[0]) {
+        set_text(&text, s->charset);
+        response->set_charset(response, &text);
+        clear_text(&text);
+    }
+    /* Who may read it was decided when it was served (only what is web accessible, to pages
+     * not the extension's own). */
+    set_text(&name, "Access-Control-Allow-Origin");
+    set_text(&value, "*");
+    response->set_header_by_name(response, &name, &value, 1);
+    clear_text(&name);
+    clear_text(&value);
+    *length = (int64_t)s->len;
+    RELEASE(response);
+}
+
+static int CEF_CALLBACK served_read(cef_resource_handler_t *self, void *out, int want, int *got, cef_resource_read_callback_t *callback) {
+    Served *s = (Served *)self;
+    size_t left = s->len - s->offset;
+    size_t n = left < (size_t)(want > 0 ? want : 0) ? left : (size_t)(want > 0 ? want : 0);
+    if (n)
+        memcpy(out, s->bytes + s->offset, n);
+    s->offset += n;
+    *got = (int)n;
+    RELEASE(callback);
+    return n > 0;
+}
+
+static int CEF_CALLBACK served_skip(cef_resource_handler_t *self, int64_t want, int64_t *skipped, cef_resource_skip_callback_t *callback) {
+    Served *s = (Served *)self;
+    size_t left = s->len - s->offset;
+    size_t n = want > 0 && (size_t)want < left ? (size_t)want : left;
+    s->offset += n;
+    *skipped = (int64_t)n;
+    RELEASE(callback);
+    return 1;
+}
+
+static void CEF_CALLBACK served_cancel(cef_resource_handler_t *self) {}
+
+static cef_resource_handler_t *CEF_CALLBACK asked_get_resource_handler(cef_resource_request_handler_t *self, cef_browser_t *browser,
+                                                                       cef_frame_t *frame, cef_request_t *request) {
+    Asked *a = (Asked *)self;
+    cef_string_userfree_t u = request->get_url(request);
+    char *url = utf8_of(u);
+    if (u)
+        p_cef_string_userfree_utf16_free(u);
+    Served *s = calloc(1, sizeof *s);
+    COUNTED(s, Served, sizeof(cef_resource_handler_t));
+    s->handler.open = served_open;
+    s->handler.get_response_headers = served_headers;
+    s->handler.read = served_read;
+    s->handler.skip = served_skip;
+    s->handler.cancel = served_cancel;
+    const char *mime = "text/plain";
+    unsigned char *bytes = NULL;
+    size_t len = 0;
+    s->status = serve_fn ? serve_fn(url, a->initiator ? a->initiator : "", &mime, &bytes, &len) : 404;
+    if (len) {
+        s->bytes = malloc(len);
+        memcpy(s->bytes, bytes, len);
+        s->len = len;
+    }
+    if (serve_free_fn)
+        serve_free_fn(bytes, len);
+    /* "text/html; charset=utf-8": the type, and its charset apart. */
+    snprintf(s->mime, sizeof s->mime, "%s", mime);
+    char *semi = strchr(s->mime, ';');
+    if (semi) {
+        const char *cs = strstr(semi, "charset=");
+        if (cs)
+            snprintf(s->charset, sizeof s->charset, "%s", cs + 8);
+        *semi = 0;
+    }
+    free(url);
+    RELEASE(request);
+    RELEASE(frame);
+    RELEASE(browser);
+    return &s->handler;
+}
+
+static cef_resource_request_handler_t *CEF_CALLBACK get_resource_request_handler(
+    cef_request_handler_t *self, cef_browser_t *browser, cef_frame_t *frame, cef_request_t *request, int is_navigation, int is_download,
+    const cef_string_t *request_initiator, int *disable_default_handling) {
+    cef_resource_request_handler_t *out = NULL;
+    cef_string_userfree_t u = request->get_url(request);
+    char *url = utf8_of(u);
+    if (u)
+        p_cef_string_userfree_utf16_free(u);
+    if (is_extension_url(url)) {
+        Asked *a = calloc(1, sizeof *a);
+        COUNTED(a, Asked, sizeof(cef_resource_request_handler_t));
+        a->handler.get_resource_handler = asked_get_resource_handler;
+        a->initiator = request_initiator && request_initiator->length ? utf8_of(request_initiator) : NULL;
+        out = &a->handler;
+    }
+    free(url);
+    RELEASE(request);
+    RELEASE(frame);
+    RELEASE(browser);
+    return out;
+}
+
+/* Firefox's extensions' scheme, known to every process as a standard one (Chromium knows
+ * chrome-extension:// itself). */
+static void CEF_CALLBACK on_register_schemes(cef_app_t *self, cef_scheme_registrar_t *registrar) {
+    cef_string_t name;
+    memset(&name, 0, sizeof name);
+    set_text(&name, "moz-extension");
+    registrar->add_custom_scheme(registrar, &name,
+                                 CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE | CEF_SCHEME_OPTION_CORS_ENABLED |
+                                     CEF_SCHEME_OPTION_FETCH_ENABLED);
+    clear_text(&name);
+}
+
+/* -- the pages' processes -- */
+
+/* The set this process was given. */
+static cef_list_value_t *renderer_set;
+
+/* An extension's API as made for a frame's page world, kept for code to be run in its name. */
+typedef struct Made {
+    char *ext;
+    cef_v8context_t *context;
+    cef_v8value_t *api;
+    /* {__spatimeshExt: api}: what such code is given as `globalThis`. */
+    cef_v8value_t *holder;
+    struct Made *next;
+} Made;
+static Made *made;
+
+/* Content scripts waiting for their page to be parsed. */
+typedef struct Later {
+    cef_v8context_t *context;
+    char *ext;
+    char *js;
+    char *css;
+    int main_world;
+    struct Later *next;
+} Later;
+static Later *later;
+
+static cef_v8handler_t v8_handler;
+static cef_render_process_handler_t render_process_handler;
+
+static cef_v8value_t *v8_text(const char *utf8) {
+    cef_string_t s;
+    memset(&s, 0, sizeof s);
+    set_text(&s, utf8);
+    cef_v8value_t *v = p_cef_v8value_create_string(&s);
+    clear_text(&s);
+    return v;
+}
+
+static cef_v8value_t *v8_key(cef_v8value_t *object, const char *key) {
+    cef_string_t k;
+    memset(&k, 0, sizeof k);
+    set_text(&k, key);
+    cef_v8value_t *v = object->get_value_bykey(object, &k);
+    clear_text(&k);
+    return v;
+}
+
+/* JavaScript evaluated in a context (entered): its value, or NULL (what went wrong logged). */
+static cef_v8value_t *v8_eval(cef_v8context_t *context, const char *code, const char *where, char **error) {
+    cef_string_t c, u;
+    memset(&c, 0, sizeof c);
+    memset(&u, 0, sizeof u);
+    set_text(&c, code);
+    set_text(&u, where ? where : "");
+    cef_v8value_t *value = NULL;
+    cef_v8exception_t *exception = NULL;
+    context->eval(context, &c, &u, 1, &value, &exception);
+    if (exception) {
+        cef_string_userfree_t m = exception->get_message(exception);
+        char *text = utf8_of(m);
+        if (m)
+            p_cef_string_userfree_utf16_free(m);
+        if (error)
+            *error = text;
+        else {
+            fprintf(stderr, "spatimesh-cef: %s: %s\n", where ? where : "a script", text);
+            free(text);
+        }
+        RELEASE(exception);
+    }
+    clear_text(&c);
+    clear_text(&u);
+    return value;
+}
+
+static int same_context(cef_v8context_t *a, cef_v8context_t *b) {
+    return a && b && a->is_same(a, b);
+}
+
+static Made *made_for(cef_v8context_t *context, const char *ext) {
+    for (Made *m = made; m; m = m->next)
+        if (strcmp(m->ext, ext) == 0 && same_context(m->context, context))
+            return m;
+    return NULL;
+}
+
+/* The extension's entry in the set, by its id (a reference, or NULL). */
+static cef_list_value_t *ext_entry(const char *id) {
+    if (!renderer_set)
+        return NULL;
+    size_t n = renderer_set->get_size(renderer_set);
+    for (size_t i = 0; i < n; i++) {
+        cef_list_value_t *x = renderer_set->get_list(renderer_set, i);
+        char *xid = list_text(x, 0);
+        int same = strcmp(xid, id) == 0;
+        free(xid);
+        if (same)
+            return x;
+        RELEASE(x);
+    }
+    return NULL;
+}
+
+/* An extension's API in a frame's page world (entered): made by its boot function, handed the
+ * native function its calls go through; kept for content scripts (`closed`), or set up as the
+ * page's globals for its own pages. */
+static Made *boot_api(cef_v8context_t *context, const char *ext, const char *boot, int keep) {
+    Made *m = keep ? made_for(context, ext) : NULL;
+    if (m)
+        return m;
+    cef_v8value_t *fn = v8_eval(context, boot, "spatimesh-extension-api", NULL);
+    if (!fn)
+        return NULL;
+    char name[600];
+    snprintf(name, sizeof name, "spatimeshPost:%s", ext);
+    cef_string_t n;
+    memset(&n, 0, sizeof n);
+    set_text(&n, name);
+    cef_v8value_t *post = p_cef_v8value_create_function(&n, &v8_handler);
+    clear_text(&n);
+    cef_v8value_t *args[1] = {post};
+    cef_v8value_t *api = fn->execute_function(fn, NULL, 1, args);
+    RELEASE(post);
+    RELEASE(fn);
+    if (!api)
+        return NULL;
+    if (!keep) {
+        RELEASE(api);
+        return NULL;
+    }
+    m = calloc(1, sizeof *m);
+    m->ext = strdup(ext);
+    context->base.add_ref(&context->base);
+    m->context = context;
+    m->api = api;
+    m->holder = p_cef_v8value_create_object(NULL, NULL);
+    cef_string_t k;
+    memset(&k, 0, sizeof k);
+    set_text(&k, "__spatimeshExt");
+    m->holder->set_value_bykey(m->holder, &k, api, V8_PROPERTY_ATTRIBUTE_NONE);
+    clear_text(&k);
+    m->next = made;
+    made = m;
+    return m;
+}
+
+/* One entry's content scripts and style sheet, now, in a frame's page world (entered). */
+static void inject(cef_v8context_t *context, const char *ext, const char *js, const char *css, int main_world) {
+    if (css && *css) {
+        cef_v8value_t *add = v8_eval(context,
+                                     "(function(css){try{var s=new CSSStyleSheet();s.replaceSync(css);"
+                                     "document.adoptedStyleSheets=document.adoptedStyleSheets.concat([s]);}catch(e){}})",
+                                     "spatimesh-content-style", NULL);
+        if (add) {
+            cef_v8value_t *text = v8_text(css);
+            cef_v8value_t *args[1] = {text};
+            cef_v8value_t *r = add->execute_function(add, NULL, 1, args);
+            RELEASE(r);
+            RELEASE(text);
+            RELEASE(add);
+        }
+    }
+    if (!js || !*js)
+        return;
+    if (main_world) {
+        cef_v8value_t *r = v8_eval(context, js, "spatimesh-content-script", NULL);
+        RELEASE(r);
+        return;
+    }
+    cef_list_value_t *x = ext_entry(ext);
+    if (!x)
+        return;
+    char *boot = list_text(x, 2);
+    RELEASE(x);
+    Made *m = boot_api(context, ext, boot, 1);
+    free(boot);
+    if (!m)
+        return;
+    /* The extension's files in one closure: chrome and browser its own, globalThis the page's
+     * with them. */
+    size_t len = strlen(js) + 96;
+    char *code = malloc(len);
+    snprintf(code, len, "(function(chrome,browser,globalThis){\n%s\n})", js);
+    cef_v8value_t *fn = v8_eval(context, code, "spatimesh-content-script", NULL);
+    free(code);
+    if (!fn)
+        return;
+    cef_v8value_t *chrome = v8_key(m->api, "chrome");
+    cef_v8value_t *browser = v8_key(m->api, "browser");
+    cef_v8value_t *global = v8_key(m->api, "global");
+    if (browser && browser->is_null(browser)) {
+        RELEASE(browser);
+        browser = p_cef_v8value_create_undefined();
+    }
+    cef_v8value_t *args[3] = {chrome, browser, global};
+    cef_v8value_t *r = fn->execute_function(fn, NULL, 3, args);
+    RELEASE(r);
+    RELEASE(chrome);
+    RELEASE(browser);
+    RELEASE(global);
+    RELEASE(fn);
+}
+
+/* The page's DOM is parsed: what waited for it, in this context. */
+static void run_later(cef_v8context_t *context) {
+    Later **at = &later;
+    while (*at) {
+        Later *l = *at;
+        if (same_context(l->context, context)) {
+            *at = l->next;
+            inject(context, l->ext, l->js, l->css, l->main_world);
+            RELEASE(l->context);
+            free(l->ext);
+            free(l->js);
+            free(l->css);
+            free(l);
+        } else {
+            at = &l->next;
+        }
+    }
+}
+
+static int CEF_CALLBACK v8_execute(cef_v8handler_t *self, const cef_string_t *name, cef_v8value_t *object, size_t argc,
+                                   cef_v8value_t *const *argv, cef_v8value_t **retval, cef_string_t *exception) {
+    char *fn = utf8_of(name);
+    cef_v8context_t *context = p_cef_v8context_get_current_context();
+    if (strncmp(fn, "spatimeshPost:", 14) == 0 && argc >= 1 && argv[0] && argv[0]->is_string(argv[0])) {
+        cef_string_userfree_t json = argv[0]->get_string_value(argv[0]);
+        cef_frame_t *frame = context ? context->get_frame(context) : NULL;
+        if (frame) {
+            cef_process_message_t *m = message_named("spatimesh-call");
+            cef_list_value_t *args = m->get_argument_list(m);
+            args->set_string(args, 0, json);
+            RELEASE(args);
+            frame->send_process_message(frame, PID_BROWSER, m);
+            RELEASE(m);
+            RELEASE(frame);
+        }
+        if (json)
+            p_cef_string_userfree_utf16_free(json);
+    } else if (strcmp(fn, "spatimeshLater") == 0 && context) {
+        run_later(context);
+    }
+    RELEASE(context);
+    for (size_t i = 0; i < argc; i++)
+        RELEASE(argv[i]);
+    RELEASE(object);
+    free(fn);
+    return 1;
+}
+
+static void CEF_CALLBACK on_browser_created(cef_render_process_handler_t *self, cef_browser_t *browser, cef_dictionary_value_t *extra) {
+    if (extra) {
+        cef_string_t key;
+        memset(&key, 0, sizeof key);
+        set_text(&key, "ext");
+        if (extra->has_key(extra, &key)) {
+            cef_list_value_t *l = extra->get_list(extra, &key);
+            if (l) {
+                RELEASE(renderer_set);
+                renderer_set = l->copy(l);
+                RELEASE(l);
+            }
+        }
+        clear_text(&key);
+    }
+    RELEASE(extra);
+    RELEASE(browser);
+}
+
+/* A frame's page world is made: the extensions' API for their own pages, and the content
+ * scripts that want this page, now or once it is parsed. */
+static void CEF_CALLBACK on_context_created(cef_render_process_handler_t *self, cef_browser_t *browser, cef_frame_t *frame,
+                                            cef_v8context_t *context) {
+    if (renderer_set && renderer_set->get_size(renderer_set)) {
+        cef_string_userfree_t u = frame->get_url(frame);
+        char *url = utf8_of(u);
+        if (u)
+            p_cef_string_userfree_utf16_free(u);
+        int top = frame->is_main(frame);
+        context->enter(context);
+        int waiting = 0;
+        size_t n = renderer_set->get_size(renderer_set);
+        for (size_t i = 0; i < n; i++) {
+            cef_list_value_t *x = renderer_set->get_list(renderer_set, i);
+            char *id = list_text(x, 0);
+            char *prefix = list_text(x, 1);
+            if (strncmp(url, prefix, strlen(prefix)) == 0) {
+                char *page = list_text(x, 3);
+                boot_api(context, id, page, 0);
+                free(page);
+            } else if (strncmp(url, "http", 4) == 0 || strncmp(url, "file:", 5) == 0 || strncmp(url, "ftp:", 4) == 0) {
+                cef_list_value_t *entries = x->get_list(x, 4);
+                size_t count = entries->get_size(entries);
+                for (size_t j = 0; j < count; j++) {
+                    cef_list_value_t *entry = entries->get_list(entries, j);
+                    int run_at = entry->get_int(entry, 0);
+                    int all_frames = entry->get_bool(entry, 1);
+                    int main_world = entry->get_bool(entry, 2);
+                    char *guard = list_text(entry, 3);
+                    cef_v8value_t *wanted = (top || all_frames) ? v8_eval(context, guard, "spatimesh-content-guard", NULL) : NULL;
+                    if (wanted && wanted->is_bool(wanted) && wanted->get_bool_value(wanted)) {
+                        char *js = list_text(entry, 4);
+                        char *css = list_text(entry, 5);
+                        /* Style sheets before anything is shown, as Chrome puts them in whenever
+                         * the scripts go. */
+                        inject(context, id, NULL, css, main_world);
+                        if (run_at == 0) {
+                            inject(context, id, js, NULL, main_world);
+                            free(js);
+                        } else {
+                            Later *l = calloc(1, sizeof *l);
+                            context->base.add_ref(&context->base);
+                            l->context = context;
+                            l->ext = strdup(id);
+                            l->js = js;
+                            l->css = NULL;
+                            l->main_world = main_world;
+                            l->next = later;
+                            later = l;
+                            waiting = 1;
+                        }
+                        free(css);
+                    }
+                    RELEASE(wanted);
+                    free(guard);
+                    RELEASE(entry);
+                }
+                RELEASE(entries);
+            }
+            free(id);
+            free(prefix);
+            RELEASE(x);
+        }
+        if (waiting) {
+            cef_v8value_t *when = v8_eval(context,
+                                          "(function(cb){if(document.readyState==='loading')"
+                                          "document.addEventListener('DOMContentLoaded',function(){cb();},{once:true});else cb();})",
+                                          "spatimesh-content-later", NULL);
+            if (when) {
+                cef_string_t name;
+                memset(&name, 0, sizeof name);
+                set_text(&name, "spatimeshLater");
+                cef_v8value_t *cb = p_cef_v8value_create_function(&name, &v8_handler);
+                clear_text(&name);
+                cef_v8value_t *args[1] = {cb};
+                cef_v8value_t *r = when->execute_function(when, NULL, 1, args);
+                RELEASE(r);
+                RELEASE(cb);
+                RELEASE(when);
+            }
+        }
+        context->exit(context);
+        free(url);
+    }
+    RELEASE(context);
+    RELEASE(frame);
+    RELEASE(browser);
+}
+
+static void CEF_CALLBACK on_context_released(cef_render_process_handler_t *self, cef_browser_t *browser, cef_frame_t *frame,
+                                             cef_v8context_t *context) {
+    Made **at = &made;
+    while (*at) {
+        Made *m = *at;
+        if (same_context(m->context, context)) {
+            *at = m->next;
+            RELEASE(m->holder);
+            RELEASE(m->api);
+            RELEASE(m->context);
+            free(m->ext);
+            free(m);
+        } else {
+            at = &m->next;
+        }
+    }
+    Later **wait = &later;
+    while (*wait) {
+        Later *l = *wait;
+        if (same_context(l->context, context)) {
+            *wait = l->next;
+            RELEASE(l->context);
+            free(l->ext);
+            free(l->js);
+            free(l->css);
+            free(l);
+        } else {
+            wait = &l->next;
+        }
+    }
+    RELEASE(context);
+    RELEASE(frame);
+    RELEASE(browser);
+}
+
+/* Code the window asked to be run in this frame; the result told back if asked. */
+static void run_in_frame(cef_frame_t *frame, const char *world, const char *code, double request, int boot, int reply) {
+    cef_v8context_t *context = frame->get_v8context(frame);
+    char *error = NULL;
+    char *answer = NULL;
+    if (!context) {
+        error = strdup("The frame has no page");
+    } else {
+        context->enter(context);
+        cef_v8value_t *result = NULL;
+        if (!*world) {
+            result = v8_eval(context, code, "spatimesh-script", &error);
+        } else {
+            const char *ext = strncmp(world, "spatimesh-", 10) == 0 ? world + 10 : world;
+            Made *m = made_for(context, ext);
+            if (!m && boot) {
+                cef_list_value_t *x = ext_entry(ext);
+                if (x) {
+                    char *b = list_text(x, 2);
+                    m = boot_api(context, ext, b, 1);
+                    free(b);
+                    RELEASE(x);
+                }
+            }
+            if (!m) {
+                if (reply)
+                    error = strdup("The extension has no API in that frame");
+            } else {
+                size_t len = strlen(code) + 64;
+                char *wrapped = malloc(len);
+                snprintf(wrapped, len, "(function(globalThis){%s\n})", code);
+                cef_v8value_t *fn = v8_eval(context, wrapped, "spatimesh-script", &error);
+                free(wrapped);
+                if (fn) {
+                    cef_v8value_t *args[1] = {m->holder};
+                    result = fn->execute_function(fn, NULL, 1, args);
+                    RELEASE(fn);
+                }
+            }
+        }
+        if (reply && !error) {
+            cef_v8value_t *json = v8_eval(context, "(function(v){try{var s=JSON.stringify(v);return s===undefined?'null':s;}catch(e){return 'null';}})",
+                                          "spatimesh-result", NULL);
+            if (json) {
+                cef_v8value_t *undef = result ? NULL : p_cef_v8value_create_undefined();
+                cef_v8value_t *args[1] = {result ? result : undef};
+                cef_v8value_t *text = json->execute_function(json, NULL, 1, args);
+                if (text && text->is_string(text)) {
+                    cef_string_userfree_t s = text->get_string_value(text);
+                    answer = utf8_of(s);
+                    if (s)
+                        p_cef_string_userfree_utf16_free(s);
+                }
+                RELEASE(text);
+                RELEASE(undef);
+                RELEASE(json);
+            }
+        }
+        RELEASE(result);
+        context->exit(context);
+        RELEASE(context);
+    }
+    if (reply) {
+        cef_process_message_t *m = message_named("spatimesh-result");
+        cef_list_value_t *args = m->get_argument_list(m);
+        args->set_double(args, 0, request);
+        args->set_bool(args, 1, error == NULL);
+        list_set_text(args, 2, error ? error : answer ? answer : "null");
+        RELEASE(args);
+        frame->send_process_message(frame, PID_BROWSER, m);
+        RELEASE(m);
+    }
+    free(error);
+    free(answer);
+}
+
+static int CEF_CALLBACK on_renderer_message(cef_render_process_handler_t *self, cef_browser_t *browser, cef_frame_t *frame,
+                                            cef_process_id_t source, cef_process_message_t *message) {
+    int handled = 0;
+    cef_list_value_t *args = message->get_argument_list(message);
+    if (message_is(message, "spatimesh-ext")) {
+        cef_list_value_t *l = args->get_list(args, 0);
+        if (l) {
+            RELEASE(renderer_set);
+            renderer_set = l->copy(l);
+            RELEASE(l);
+        }
+        handled = 1;
+    } else if (message_is(message, "spatimesh-run") && frame) {
+        char *world = list_text(args, 0);
+        char *code = list_text(args, 1);
+        run_in_frame(frame, world, code, args->get_double(args, 2), args->get_bool(args, 3), args->get_bool(args, 4));
+        free(world);
+        free(code);
+        handled = 1;
+    }
+    RELEASE(args);
+    RELEASE(message);
+    RELEASE(frame);
+    RELEASE(browser);
+    return handled;
+}
+
+static cef_render_process_handler_t *CEF_CALLBACK get_render_process_handler(cef_app_t *self) {
+    return &render_process_handler;
+}
+
 static void make_handlers(void) {
     static int made;
     if (made)
@@ -1045,6 +2019,17 @@ static void make_handlers(void) {
     kept(&app.base, sizeof app);
     app.on_before_command_line_processing = on_command_line;
     app.get_browser_process_handler = get_process_handler;
+    app.on_register_custom_schemes = on_register_schemes;
+    app.get_render_process_handler = get_render_process_handler;
+
+    kept(&render_process_handler.base, sizeof render_process_handler);
+    render_process_handler.on_browser_created = on_browser_created;
+    render_process_handler.on_context_created = on_context_created;
+    render_process_handler.on_context_released = on_context_released;
+    render_process_handler.on_process_message_received = on_renderer_message;
+
+    kept(&v8_handler.base, sizeof v8_handler);
+    v8_handler.execute = v8_execute;
 
     kept(&process_handler.base, sizeof process_handler);
     process_handler.on_schedule_message_pump_work = on_schedule_work;
@@ -1058,6 +2043,7 @@ static void make_handlers(void) {
     client.get_request_handler = get_request_handler;
     client.get_context_menu_handler = get_context_menu_handler;
     client.get_dialog_handler = get_dialog_handler;
+    client.on_process_message_received = on_process_message;
     client.get_download_handler = get_download_handler;
 
     kept(&render_handler.base, sizeof render_handler);
@@ -1094,6 +2080,7 @@ static void make_handlers(void) {
     kept(&request_handler.base, sizeof request_handler);
     request_handler.on_open_urlfrom_tab = on_open_url_from_tab;
     request_handler.on_render_process_terminated = on_renderer_gone;
+    request_handler.get_resource_request_handler = get_resource_request_handler;
 
     kept(&context_menu_handler.base, sizeof context_menu_handler);
     context_menu_handler.on_before_context_menu = on_before_context_menu;
@@ -1226,7 +2213,10 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
     memset(&url, 0, sizeof url);
     set_text(&url, uri && *uri ? uri : "about:blank");
     creating = t;
-    t->browser = p_cef_browser_host_create_browser_sync(&info, &client, &url, &browser_settings, NULL, NULL);
+    /* The profile's extensions, for the browser's pages' process from its first page on. */
+    cef_dictionary_value_t *extra = extra_for_browser();
+    t->browser = p_cef_browser_host_create_browser_sync(&info, &client, &url, &browser_settings, extra, NULL);
+    RELEASE(extra);
     creating = NULL;
     clear_text(&url);
     if (!t->browser) {
@@ -1426,28 +2416,6 @@ void spatimesh_scroll(Engine *e, uint64_t id, double x, double y, double dx, dou
     /* SpatiMesh's down is Chromium's negative. */
     host->send_mouse_wheel_event(host, &ev, (int)lround(-dx), (int)lround(-dy));
     RELEASE(host);
-}
-
-/* Extensions (docs/spatimesh.md, "Extensions"): CEF's bridge is still to be built; until it is,
- * a profile's extensions are taken and not run here, and code asked to run is answered so. */
-typedef int (*ServeFn)(const char *url, const char *initiator, const char **mime, unsigned char **bytes, size_t *len);
-typedef void (*ServeFreeFn)(unsigned char *bytes, size_t len);
-void spatimesh_ext_server(ServeFn serve, ServeFreeFn free_bytes) {
-    (void)serve;
-    (void)free_bytes;
-}
-const char *spatimesh_ext_bridge(void) {
-    return "(function(){return function(s){};})()";
-}
-void spatimesh_ext_clear(Engine *e) {}
-void spatimesh_ext_add(Engine *e, const char *id, const char *scheme, const char *world, const char *content_boot, const char *page_boot) {}
-void spatimesh_ext_entry(Engine *e, const char *id, int run_at, int all_frames, int main_world, const char *allow, const char *block, const char *guard, int exact) {}
-void spatimesh_ext_js(Engine *e, const char *code) {}
-void spatimesh_ext_css(Engine *e, const char *code) {}
-void spatimesh_ext_done(Engine *e) {}
-void spatimesh_run_script(Engine *e, uint64_t id, const char *world, int all_frames, const char *code, uint64_t request, int boot) {
-    if (request)
-        push(EV_SCRIPT_RESULT, id, (double)request, 0, 0, "Extensions do not run in this engine yet", NULL);
 }
 
 /* Windows' number for a key, which CEF's key events are told in, from Linux's. */

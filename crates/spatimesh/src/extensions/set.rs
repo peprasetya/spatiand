@@ -127,6 +127,16 @@ pub fn boot(bridge: &str, config: &str) -> String {
     )
 }
 
+/// The API as a function of the bridge, for an engine with no world of the extension's own
+/// (CEF, Android's WebView): `(function(post){...})`, which the engine calls with a function of
+/// its own that the page cannot reach. `closed` (a content script's): nothing is put on the
+/// page's globals, and the function returns the API -- `{chrome, browser, deliver, run, global}`
+/// -- for the engine to keep and hand to the content scripts' closure. Otherwise (the
+/// extension's own pages) it sets `chrome` and `browser` up as globals, as [`boot`] does.
+pub fn boot_function(config: &str, closed: bool) -> String {
+    format!("(function(__spatimeshPost){{\n{API_JS}\nreturn __spatimeshExtBoot({config},__spatimeshPost,{closed});}})")
+}
+
 /// The code that hands `json` to the extension context it is run in.
 pub fn deliver(json: &str) -> String {
     format!("globalThis.__spatimeshExt&&globalThis.__spatimeshExt.deliver({})", serde_json::to_string(json).unwrap_or_default())

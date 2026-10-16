@@ -18,6 +18,7 @@ spatimesh-shim = { path = "../spatimesh-shim" }
 [dev-dependencies]
 spatiand-app = { path = "../spatiand-app" }
 libc = "0.2"
+serde_json.workspace = true
 
 [build-dependencies]
 cc = "1"

@@ -7,7 +7,12 @@
 // `config`: {id, runtimeId, token, kind ("content" | "background" | "popup" | "options" |
 // "page"), flavor ("chrome" | "firefox"), manifest, messages, uiLanguage, origin, api: {name:
 // true}, version, incognito}.
-function __spatimeshExtBoot(config, post) {
+//
+// `closed`: an engine with no world of the extension's own (CEF, Android's WebView) runs
+// content scripts in the page's world, in a closure: then nothing is put on the page's globals,
+// and what is returned -- {chrome, browser, deliver, run, global} -- is kept by the engine and
+// handed to the content scripts' closure.
+function __spatimeshExtBoot(config, post, closed) {
   'use strict';
   var JSONstringify = JSON.stringify;
   var JSONparse = JSON.parse;
@@ -29,9 +34,16 @@ function __spatimeshExtBoot(config, post) {
   // What a message's promise gets when its receivers listened and none answered.
   var CLOSED = {};
 
+  // What crosses to the window. Written out by hand around the arguments, so that the token
+  // never passes through JSON.stringify as part of an object: a page sharing the world could
+  // otherwise have it handed to an Object.prototype.toJSON of its own.
+  var quote = function (v) { return JSONstringify(String(v)); };
+  var head = '{"t":' + quote(config.token) + ',"e":' + quote(config.id) + ',"k":' + quote(config.kind) + ',"x":' + quote(contextId);
   function say(call, args, id) {
-    post(JSONstringify({ t: config.token, e: config.id, k: config.kind, f: frameId, x: contextId,
-      u: String(location.href), c: call, a: args || [], i: id }));
+    var a;
+    try { a = JSONstringify(args || []); } catch (e) { a = '[]'; }
+    post(head + ',"f":' + frameId + ',"u":' + quote(location.href) + ',"c":' + quote(call) + ',"a":' + (a === undefined ? '[]' : a) +
+      (id === undefined ? '' : ',"i":' + id) + '}');
   }
 
   function call(name, args) {
@@ -534,24 +546,46 @@ function __spatimeshExtBoot(config, post) {
     return out;
   }
 
+  var b = null;
+  if (config.flavor === 'firefox') {
+    b = promised(chromeApi);
+    Object.defineProperty(b.runtime, 'lastError', { enumerable: true, configurable: true, get: function () { lastErrorChecked = true; return lastError || undefined; } });
+    if (chromeApi.contextMenus && !b.menus) b.menus = b.contextMenus;
+  }
   var self_ = {
     deliver: deliver,
     run: run,
     frameId: frameId,
     kind: config.kind,
-    id: config.id
+    id: config.id,
+    chrome: chromeApi,
+    browser: b
   };
-  Object.defineProperty(globalThis, '__spatimeshExt', { value: self_, configurable: false, enumerable: false, writable: false });
-  if (globalThis.chrome && typeof globalThis.chrome === 'object' && !isContent) {
-    // A page of the extension's that the engine gave a `chrome` of its own: ours replaces it.
-    try { delete globalThis.chrome; } catch (e) {}
-  }
-  globalThis.chrome = chromeApi;
-  if (config.flavor === 'firefox') {
-    var b = promised(chromeApi);
-    Object.defineProperty(b.runtime, 'lastError', { enumerable: true, configurable: true, get: function () { lastErrorChecked = true; return lastError || undefined; } });
-    if (chromeApi.contextMenus && !b.menus) b.menus = b.contextMenus;
-    globalThis.browser = b;
+  if (closed) {
+    // What content scripts in the page's world see as `globalThis`: the page's, with this
+    // extension's chrome and browser (webextension-polyfill and the like look there).
+    var mine = { chrome: chromeApi, browser: b || undefined };
+    var own = Object.prototype.hasOwnProperty;
+    self_.global = new Proxy({}, {
+      get: function (target, key) {
+        if (own.call(mine, key) && mine[key] !== undefined) return mine[key];
+        var v = Reflect.get(window, key, window);
+        // The window's own methods want the window as `this`; constructors keep their statics.
+        return typeof v === 'function' && !('prototype' in v) ? v.bind(window) : v;
+      },
+      set: function (target, key, value) { return Reflect.set(window, key, value, window); },
+      has: function (target, key) { return own.call(mine, key) || key in window; },
+      deleteProperty: function (target, key) { return Reflect.deleteProperty(window, key); },
+      ownKeys: function () { return Reflect.ownKeys(window); }
+    });
+  } else {
+    Object.defineProperty(globalThis, '__spatimeshExt', { value: self_, configurable: false, enumerable: false, writable: false });
+    if (globalThis.chrome && typeof globalThis.chrome === 'object' && !isContent) {
+      // A page of the extension's that the engine gave a `chrome` of its own: ours replaces it.
+      try { delete globalThis.chrome; } catch (e) {}
+    }
+    globalThis.chrome = chromeApi;
+    if (b) globalThis.browser = b;
   }
   window.addEventListener('pagehide', function () { say('gone', []); });
   // Back from the back-forward cache: here again, with the same listeners.
@@ -566,4 +600,5 @@ function __spatimeshExtBoot(config, post) {
     if (document.readyState === 'complete') say('loaded', []);
     else window.addEventListener('load', function () { say('loaded', []); });
   }
+  return self_;
 }
