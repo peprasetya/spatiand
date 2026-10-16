@@ -19,7 +19,7 @@ SDK=${ANDROID_HOME:-$HOME/Library/Android/sdk}
 NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
 API=34
 # The NDK's tools are in a folder named for the machine building: a Mac's or Linux's.
-HOST_TAG=$(case "$(uname -s)" in Darwin) echo darwin-x86_64 ;; *) echo linux-x86_64 ;; esac)
+HOST_TAG=$(case "$(uname -s)" in (Darwin) echo darwin-x86_64 ;; (*) echo linux-x86_64 ;; esac)
 BISON=${BISON:-/usr/local/opt/bison/bin/bison}
 
 [ -f out/libxkbcommon.a ] && [ -f out/xkb/rules/evdev ] && exit 0

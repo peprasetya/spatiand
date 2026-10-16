@@ -13,7 +13,7 @@ BT=$SDK/build-tools/36.0.0
 JAR=$SDK/platforms/android-34/android.jar
 NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
 # The NDK's tools are in a folder named for the machine building: a Mac's or Linux's.
-HOST_TAG=$(case "$(uname -s)" in Darwin) echo darwin-x86_64 ;; *) echo linux-x86_64 ;; esac)
+HOST_TAG=$(case "$(uname -s)" in (Darwin) echo darwin-x86_64 ;; (*) echo linux-x86_64 ;; esac)
 OUT=build
 
 # --- Rust ---
