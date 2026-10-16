@@ -40,13 +40,13 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/ffmpeg-7.1
-          key: ffmpeg-7.1.1-ubuntu-24.04
+          key: ffmpeg-7.1.1-opus-ubuntu-24.04
       - run: tools/ci-deps.sh linux ffmpeg
       - if: steps.ffmpeg.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ~/ffmpeg-7.1
-          key: ffmpeg-7.1.1-ubuntu-24.04
+          key: ffmpeg-7.1.1-opus-ubuntu-24.04
       - uses: Swatinem/rust-cache@v2
       - run: . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null; cargo check --workspace --exclude spatiand-host --exclude spatiand-android --locked
       - run: . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null; cargo test --workspace --exclude spatiand-host --exclude spatiand-android --locked

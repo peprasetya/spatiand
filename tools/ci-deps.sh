@@ -83,14 +83,17 @@ export PATH=\"\$HOME/.cargo/bin:\$PATH\"
 FFMPEG=7.1.1
 ffmpeg() {
     prefix="$HOME/ffmpeg-7.1"
+    # What the built libraries link, whether they are built now or were kept from before.
+    apt_update_once
+    $SUDO apt-get install -y -qq --no-install-recommends libopus0
     if [ ! -f "$prefix/lib/pkgconfig/libavcodec.pc" ]; then
-        apt_update_once
-        $SUDO apt-get install -y -qq --no-install-recommends build-essential pkg-config nasm curl xz-utils
+        $SUDO apt-get install -y -qq --no-install-recommends build-essential pkg-config nasm curl xz-utils libopus-dev
         work=$(mktemp -d)
         curl -fsSL "https://ffmpeg.org/releases/ffmpeg-$FFMPEG.tar.xz" | tar -xJ -C "$work"
+        # libopus: the voice sent to a host is Opus, and FFmpeg's own encoder is experimental.
         (cd "$work/ffmpeg-$FFMPEG" \
             && ./configure --prefix="$prefix" --enable-shared --disable-static \
-                --disable-programs --disable-doc --disable-debug \
+                --disable-programs --disable-doc --disable-debug --enable-libopus \
             && make -j"$(nproc)" >/dev/null && make install >/dev/null)
         rm -rf "$work"
     fi
