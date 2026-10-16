@@ -130,10 +130,7 @@ impl Host {
         self.send(ToHost::Pointer { tab, x, y, button: Some((Button::Left, false)), modifiers: m });
     }
 
-    /// Type, as a person would: not in the same millisecond as the click that chose the field,
-    /// which WebKit is still moving the focus into.
     fn type_text(&mut self, tab: TabId, text: &str) {
-        std::thread::sleep(Duration::from_millis(300));
         for ch in text.chars() {
             for pressed in [true, false] {
                 let key = KeyPress { code: 0, key: spatiand_app::Key::Char(ch), text: Some(ch.to_string()), pressed, repeat: false, modifiers: Modifiers::default() };
@@ -199,7 +196,7 @@ fn typing_clicking_and_scrolling() {
     let url = page(concat!(
         "<body style='margin:0;height:5000px'>",
         "<input id=i style='position:absolute;left:10px;top:10px;width:200px;height:30px' ",
-        "oninput=\"document.title='typed:'+this.value\">",
+        "onfocus=\"document.title='focused'\" oninput=\"document.title='typed:'+this.value\">",
         "<button style='position:absolute;left:10px;top:60px;width:100px;height:40px' ",
         "onclick=\"document.title='clicked'\">B</button>",
         "<script>addEventListener('scroll',()=>document.title='scrolled:'+scrollY)</script></body>"
@@ -208,6 +205,10 @@ fn typing_clicking_and_scrolling() {
     host.loaded(1);
     host.send(ToHost::Focus { tab: 1, focused: true });
     host.click(1, 50.0, 25.0);
+    // As a person waits for the caret: WebKit sends mouse and key events to the page in
+    // separate queues, and on a busy machine a key can reach it before the click that
+    // chose the field.
+    host.title(1, "focused");
     host.type_text(1, "hi");
     host.title(1, "typed:hi");
     host.click(1, 50.0, 80.0);
