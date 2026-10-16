@@ -124,6 +124,31 @@ that is not SteamOS (told apart by `/etc/os-release`, `ID=steamos`; `SPATIMESH_E
 * **Tested in the cloud** against the official CEF build of the same version (CEF's own
   distribution, used only by CI): pages drawn windowless, input, each tab's sound.
 
+**As built** (`crates/spatimesh-cef`): C against CEF 126's C interface (`native/cef.c`),
+compiled against the headers of CEF's own 126 build (`CEF_ROOT`, from `tools/fetch-cef.sh`);
+`libcef.so` is not linked but loaded when the host starts, from `SPATIMESH_CEF_DIR` or Steam's
+`ubuntu12_64` (also through `~/.steam/steam` and `~/.steam/root`). Before anything else it
+compares the library's interface hash with the headers' and refuses, saying which CEF Steam
+has, if they differ. Chromium's own processes are `spatimesh-cef` started again with `--type=`.
+Settings: windowless, Chromium's message loop pumped from the host's own loop, drawing in
+software (`disable-gpu`: frames are read from memory anyway), the profile's data in its data
+folder and its HTTP cache in its cache folder (`disk-cache-dir`), cookies' key kept by
+Chromium (`password-store=basic`, no desktop keyring needed in Game Mode), the private profile
+in memory with a scratch folder in `$XDG_RUNTIME_DIR` removed at the end. The sandbox for
+pages' processes is on unless `SPATIMESH_CEF_NO_SANDBOX=1` (CI sets it: the runner does not
+allow Chromium's sandbox). New windows and middle-clicked links become SpatiMesh tabs;
+script dialogs are SpatiMesh's; a `<select>` asks SpatiMesh for its list by a script put into
+each page when it has loaded (before that, and inside frames, Chromium's own list is drawn
+over the page); context menus are refused. Not done yet: each tab's sound (CEF plays it
+itself for now: not placed in the room), file choosers (Chromium's own GTK one may appear),
+downloads (refused). CI runs the same six tests as WebKitGTK's against CEF's 126.
+
+More to check on the Deck: the layout of `cef_settings_t` depends on how a CEF was built
+(whether it keeps the "Alloy bootstrap", as CEF's own 126 builds do); a Steam build without it
+would pass the hash check and still be read wrongly. Turning on `SPATIMESH_CEF_LOG=1` makes
+Chromium say what goes wrong; `SPATIMESH_CEF_OZONE=x11|wayland` picks how it talks to the
+display.
+
 ## Extensions: what each engine allows (findings, before building)
 
 Chrome and Firefox extensions are both WebExtensions; a `.crx` (Chrome) and an `.xpi` (Firefox)

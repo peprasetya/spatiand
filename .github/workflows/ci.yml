@@ -67,6 +67,27 @@ jobs:
           name: spatimesh-e2e
           path: target/spatimesh-e2e
           if-no-files-found: ignore
+      # SpatiMesh on SteamOS uses Steam's own Chromium (CEF); here, CEF's own build of the same
+      # version stands in for it, laid out as Steam lays out its own.
+      - name: CEF of the version Steam's Chromium is, if an earlier run fetched it
+        id: cef
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/cef
+          key: cef-chromium-126.0.6478.183-linux64-minimal-1
+      - if: steps.cef.outputs.cache-hit != 'true'
+        run: tools/fetch-cef.sh ~/cef
+      - if: steps.cef.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/cef
+          key: cef-chromium-126.0.6478.183-linux64-minimal-1
+      - name: SpatiMesh's SteamOS engine, against that CEF, on a virtual display
+        run: |
+          . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null
+          # No sandbox for the pages' processes here: the runner does not allow Chromium's.
+          CEF_ROOT=$HOME/cef SPATIMESH_CEF_DIR=$HOME/cef/steam SPATIMESH_CEF_NO_SANDBOX=1 SPATIMESH_CEF_REQUIRED=1 \
+            xvfb-run -a cargo test -p spatimesh-cef --locked
 
   android:
     runs-on: ubuntu-24.04

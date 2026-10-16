@@ -4873,6 +4873,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatimesh-cef"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "libc",
+ "spatiand-app",
+ "spatimesh",
+ "spatimesh-shim",
+]
+
+[[package]]
 name = "spatimesh-shim"
 version = "0.1.0"
 dependencies = [
