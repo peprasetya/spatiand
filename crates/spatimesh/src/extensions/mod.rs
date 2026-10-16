@@ -9,6 +9,7 @@ pub mod install;
 pub mod locale;
 pub mod manifest;
 pub mod pattern;
+pub mod set;
 pub mod storage;
 pub mod zip;
 
