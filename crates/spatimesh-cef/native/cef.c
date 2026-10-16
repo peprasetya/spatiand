@@ -80,6 +80,8 @@
     X(cef_string_utf16_clear)                                                                     \
     X(cef_string_utf8_clear)                                                                      \
     X(cef_string_userfree_utf16_free)                                                             \
+    X(cef_string_userfree_utf8_free)                                                              \
+    X(cef_string_utf8_set)                                                                        \
     X(cef_process_message_create)                                                                 \
     X(cef_list_value_create)                                                                      \
     X(cef_dictionary_value_create)                                                                \
@@ -128,6 +130,50 @@ static const char *find_cef(void) {
     return NULL;
 }
 
+/* Valve builds its own CEF, whose interface hash is not that of any of CEF's own builds: its
+ * headers are not published, so it is accepted only where it has been compared with the headers
+ * this is built against and every test run against it. SPATIMESH_CEF_ANY_BUILD=1 accepts any,
+ * for trying a new Steam before adding it here. */
+/* Whether the loaded CEF's cef_string_t holds UTF-8 (Steam's) rather than UTF-16 (CEF's own
+ * builds, and these headers'): the structure is the same either way, only what str points at
+ * differs, so the helpers below read and write it as the library does. */
+static int utf8_strings;
+/* The size the loaded CEF wants its cef_browser_settings_t to say it is, if not these headers'. */
+static size_t browser_settings_size;
+
+static int steam_build_known(const char *hash) {
+    static const struct {
+        const char *ours, *steams;
+        int utf8; /* its strings: UTF-8 rather than CEF's own builds' UTF-16 */
+        size_t browser_settings; /* its cef_browser_settings_t's size, where Valve added to it */
+    } known[] = {
+        /* Steam's CEF "126.0.0" (Chromium 126.0.6478.183, Valve's commit bbb75964), compared on
+         * the Deck 2026-10-17 with CEF 126.2.18's: the same 205 functions and ten more of Valve's
+         * own (scale factor, GPU, font size, contrast, reduced motion), none removed; its
+         * cef_settings_t read at the same offsets and checked to be the same size. Built with
+         * UTF-8 strings (its settings are copied with cef_string_utf8_set). Its
+         * cef_browser_settings_t is 0x110 bytes, not 0x108: two floats of Valve's after the last
+         * field (left 0 here), every other field where CEF 126's is. The engine and extension
+         * tests and the compositor's end-to-end test pass against it. */
+        {"09d3e280ed38f7a082b794c56ff71c52f86f0ea8", "5bb14b1dcc8e1bbadae0c36535a69b1220034351", 1, 0x110},
+    };
+    const char *any = getenv("SPATIMESH_CEF_ANY_BUILD");
+    if (any && strcmp(any, "1") == 0) {
+        const char *strings = getenv("SPATIMESH_CEF_STRINGS");
+        utf8_strings = strings && strcmp(strings, "utf8") == 0;
+        fprintf(stderr, "spatimesh-cef: SPATIMESH_CEF_ANY_BUILD: using a CEF whose interface hash is %s, not %s, with %s strings\n",
+                hash, CEF_API_HASH_PLATFORM, utf8_strings ? "UTF-8" : "UTF-16");
+        return 1;
+    }
+    for (size_t i = 0; i < sizeof known / sizeof known[0]; i++)
+        if (strcmp(known[i].ours, CEF_API_HASH_PLATFORM) == 0 && strcmp(known[i].steams, hash) == 0) {
+            utf8_strings = known[i].utf8;
+            browser_settings_size = known[i].browser_settings;
+            return 1;
+        }
+    return 0;
+}
+
 static int load_cef(void) {
     if (library)
         return 1;
@@ -155,7 +201,7 @@ static int load_cef(void) {
     /* The interface this was compiled against, or nothing is called: a struct laid out
      * differently would be read wrongly, not refused. */
     const char *hash = p_cef_api_hash(0);
-    if (!hash || strcmp(hash, CEF_API_HASH_PLATFORM) != 0) {
+    if (!hash || (strcmp(hash, CEF_API_HASH_PLATFORM) != 0 && !steam_build_known(hash))) {
         snprintf(error_text, sizeof error_text,
                  "Steam's Chromium is CEF %d.%d.%d (Chromium %d.%d.%d.%d), and SpatiMesh was built for CEF %s: it has to be "
                  "rebuilt against the headers of the one Steam has now",
@@ -190,18 +236,35 @@ void spatimesh_cef_args(int argc, char **argv) {
 
 /* ---- strings ------------------------------------------------------------------------------- */
 
+/* CEF's strings are UTF-16 or UTF-8 as the library was built (utf8_strings); these are the only
+ * places that look inside one. */
 static void set_text(cef_string_t *s, const char *utf8) {
-    p_cef_string_utf8_to_utf16(utf8 ? utf8 : "", utf8 ? strlen(utf8) : 0, s);
+    if (utf8_strings)
+        p_cef_string_utf8_set(utf8 ? utf8 : "", utf8 ? strlen(utf8) : 0, (cef_string_utf8_t *)s, 1);
+    else
+        p_cef_string_utf8_to_utf16(utf8 ? utf8 : "", utf8 ? strlen(utf8) : 0, s);
 }
 
 static void clear_text(cef_string_t *s) {
-    p_cef_string_utf16_clear(s);
+    if (utf8_strings)
+        p_cef_string_utf8_clear((cef_string_utf8_t *)s);
+    else
+        p_cef_string_utf16_clear(s);
+}
+
+static void free_text(cef_string_userfree_t s) {
+    if (utf8_strings)
+        p_cef_string_userfree_utf8_free((cef_string_userfree_utf8_t)s);
+    else
+        p_cef_string_userfree_utf16_free(s);
 }
 
 /* A CEF string as UTF-8, to be freed. */
 static char *utf8_of(const cef_string_t *s) {
     if (!s || !s->str || !s->length)
         return strdup("");
+    if (utf8_strings)
+        return strndup((const char *)s->str, s->length);
     cef_string_utf8_t out;
     memset(&out, 0, sizeof out);
     p_cef_string_utf16_to_utf8(s->str, s->length, &out);
@@ -1058,7 +1121,7 @@ static void CEF_CALLBACK on_download_updated(cef_download_handler_t *self, cef_b
         cef_string_userfree_t full = item->get_full_path(item);
         char *from = utf8_of(full);
         if (full)
-            p_cef_string_userfree_utf16_free(full);
+            free_text(full);
         if (from[0] && access(from, F_OK) == 0)
             move_to_downloads(from);
         free(from);
@@ -1124,7 +1187,7 @@ static char *list_text(cef_list_value_t *list, size_t index) {
     cef_string_userfree_t s = list->get_string(list, index);
     char *out = utf8_of(s);
     if (s)
-        p_cef_string_userfree_utf16_free(s);
+        free_text(s);
     return out;
 }
 
@@ -1141,7 +1204,7 @@ static int message_is(cef_process_message_t *m, const char *name) {
     cef_string_userfree_t n = m->get_name(m);
     char *text = utf8_of(n);
     if (n)
-        p_cef_string_userfree_utf16_free(n);
+        free_text(n);
     int same = strcmp(text, name) == 0;
     free(text);
     return same;
@@ -1286,7 +1349,7 @@ void spatimesh_run_script(Engine *e, uint64_t id, const char *world, int all_fra
         cef_string_userfree_t main_id = main->get_identifier(main);
         char *main_text = utf8_of(main_id);
         if (main_id)
-            p_cef_string_userfree_utf16_free(main_id);
+            free_text(main_id);
         for (size_t i = 0; i < n; i++) {
             cef_string_t one;
             memset(&one, 0, sizeof one);
@@ -1453,7 +1516,7 @@ static cef_resource_handler_t *CEF_CALLBACK asked_get_resource_handler(cef_resou
     cef_string_userfree_t u = request->get_url(request);
     char *url = utf8_of(u);
     if (u)
-        p_cef_string_userfree_utf16_free(u);
+        free_text(u);
     Served *s = calloc(1, sizeof *s);
     COUNTED(s, Served, sizeof(cef_resource_handler_t));
     s->handler.open = served_open;
@@ -1556,7 +1619,7 @@ static cef_resource_request_handler_t *ruled(cef_request_t *request, const char 
     cef_string_userfree_t m = request->get_method(request);
     char *method = utf8_of(m);
     if (m)
-        p_cef_string_userfree_utf16_free(m);
+        free_text(m);
     char redirect[8192];
     int decided = decide_fn(url, initiator, dnr_kind(request->get_resource_type(request)), method, redirect, sizeof redirect);
     free(method);
@@ -1578,7 +1641,7 @@ static cef_resource_request_handler_t *CEF_CALLBACK get_resource_request_handler
     cef_string_userfree_t u = request->get_url(request);
     char *url = utf8_of(u);
     if (u)
-        p_cef_string_userfree_utf16_free(u);
+        free_text(u);
     if (is_extension_url(url)) {
         Asked *a = calloc(1, sizeof *a);
         COUNTED(a, Asked, sizeof(cef_resource_request_handler_t));
@@ -1683,7 +1746,7 @@ static cef_v8value_t *v8_eval(cef_v8context_t *context, const char *code, const 
         cef_string_userfree_t m = exception->get_message(exception);
         char *text = utf8_of(m);
         if (m)
-            p_cef_string_userfree_utf16_free(m);
+            free_text(m);
         if (error)
             *error = text;
         else {
@@ -1706,7 +1769,7 @@ static cef_v8value_t *v8_call(cef_v8value_t *fn, size_t argc, cef_v8value_t *con
             cef_string_userfree_t m = exception->get_message(exception);
             char *text = utf8_of(m);
             if (m)
-                p_cef_string_userfree_utf16_free(m);
+                free_text(m);
             fprintf(stderr, "spatimesh-cef: %s: %s (line %d)\n", what, text, exception->get_line_number(exception));
             free(text);
             RELEASE(exception);
@@ -1875,7 +1938,7 @@ static int CEF_CALLBACK v8_execute(cef_v8handler_t *self, const cef_string_t *na
             RELEASE(frame);
         }
         if (json)
-            p_cef_string_userfree_utf16_free(json);
+            free_text(json);
     } else if (strcmp(fn, "spatimeshLater") == 0 && context) {
         run_later(context);
     }
@@ -1915,7 +1978,7 @@ static void CEF_CALLBACK on_context_created(cef_render_process_handler_t *self, 
         cef_string_userfree_t u = frame->get_url(frame);
         char *url = utf8_of(u);
         if (u)
-            p_cef_string_userfree_utf16_free(u);
+            free_text(u);
         int top = frame->is_main(frame);
         trace("a page world made for %s (%s frame)", url, top ? "the top" : "another");
         context->enter(context);
@@ -2085,7 +2148,7 @@ static void run_in_frame(cef_frame_t *frame, const char *world, const char *code
                     cef_string_userfree_t s = text->get_string_value(text);
                     answer = utf8_of(s);
                     if (s)
-                        p_cef_string_userfree_utf16_free(s);
+                        free_text(s);
                 }
                 RELEASE(text);
                 RELEASE(json);
@@ -2355,18 +2418,25 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
     info.windowless_rendering_enabled = 1;
     info.bounds.width = (int)lround(t->width / t->zoom);
     info.bounds.height = (int)lround(t->height / t->zoom);
-    cef_browser_settings_t browser_settings;
-    memset(&browser_settings, 0, sizeof browser_settings);
-    browser_settings.size = sizeof browser_settings;
-    browser_settings.windowless_frame_rate = 60;
-    browser_settings.background_color = 0xFFFFFFFFu;
+    /* Room after it for fields a CEF of Valve's has added at the end (left 0), and the size that
+     * CEF expects (it refuses any other). */
+    struct {
+        cef_browser_settings_t settings;
+        unsigned char added[64];
+    } padded;
+    memset(&padded, 0, sizeof padded);
+    cef_browser_settings_t *browser_settings = &padded.settings;
+    browser_settings->size = browser_settings_size && browser_settings_size <= sizeof padded ? browser_settings_size
+                                                                                               : sizeof padded.settings;
+    browser_settings->windowless_frame_rate = 60;
+    browser_settings->background_color = 0xFFFFFFFFu;
     cef_string_t url;
     memset(&url, 0, sizeof url);
     set_text(&url, uri && *uri ? uri : "about:blank");
     creating = t;
     /* The profile's extensions, for the browser's pages' process from its first page on (the
      * set goes with the call). */
-    t->browser = p_cef_browser_host_create_browser_sync(&info, &client, &url, &browser_settings, extra_for_browser(), NULL);
+    t->browser = p_cef_browser_host_create_browser_sync(&info, &client, &url, browser_settings, extra_for_browser(), NULL);
     creating = NULL;
     clear_text(&url);
     if (!t->browser) {
@@ -2618,16 +2688,17 @@ void spatimesh_key(Engine *e, uint64_t id, int key, uint32_t ch, int code, int p
     host->send_key_event(host, &ev);
     /* What the key typed, as characters Chromium puts in the page as they are. */
     if (pressed && text && *text) {
-        cef_string_t typed;
+        /* Characters are UTF-16 code units whatever the library's strings are. */
+        cef_string_utf16_t typed;
         memset(&typed, 0, sizeof typed);
-        set_text(&typed, text);
+        p_cef_string_utf8_to_utf16(text, strlen(text), &typed);
         for (size_t i = 0; i < typed.length; i++) {
             ev.type = KEYEVENT_CHAR;
             ev.character = typed.str[i];
             ev.unmodified_character = typed.str[i];
             host->send_key_event(host, &ev);
         }
-        clear_text(&typed);
+        p_cef_string_utf16_clear(&typed);
     }
     RELEASE(host);
 }

@@ -150,6 +150,22 @@ would pass the hash check and still be read wrongly. Chromium's errors go where 
 messages go (Spatiand's applications' log); `SPATIMESH_CEF_LOG=1` makes it say more, and
 `SPATIMESH_CEF_OZONE=x11|wayland` picks how it talks to the display.
 
+**What Steam's CEF turned out to be (on the Deck, 2026-10-17).** Steam's `libcef.so` is
+Chromium 126.0.6478.183 but **Valve's own build** ("CEF 126.0.0", commit `bbb75964`, not in
+CEF's repository), and its interface hash is none of CEF's. Compared with CEF 126.2.18 by its
+exports and by disassembling what it does with what it is given: the same 205 functions plus ten
+of Valve's (`cef_set_force_device_scale_factor`, `cef_set_minimum_font_size`, ... none
+removed); `cef_settings_t` the same size (0x1c0) with every field at the same offset; but
+**strings are UTF-8** (built with `CEF_STRING_TYPE_UTF8`; CEF's own builds are UTF-16), and
+`cef_browser_settings_t` is 0x110 bytes, two floats of Valve's added after the last field (CEF
+refuses any other size). `native/cef.c` keeps a table of Steam builds checked like this (its
+hash, its string type, its browser settings' size); a build not in it is refused as before
+(`SPATIMESH_CEF_ANY_BUILD=1`, with `SPATIMESH_CEF_STRINGS=utf8`, tries one anyway). With that,
+on the Deck against Steam's own library, outside Steam's runtime (it loads on SteamOS itself) and
+with Chromium's sandbox on: the six engine tests, the extensions test and the compositor's
+end-to-end test (`tools/spatimesh-e2e.py`, all 12 checks) pass. A Steam update that changes the
+hash stops SpatiMesh with a message saying so, until the new build is compared and added.
+
 ## Extensions: what each engine allows (findings, before building)
 
 Chrome and Firefox extensions are both WebExtensions; a `.crx` (Chrome) and an `.xpi` (Firefox)
@@ -324,9 +340,9 @@ private profile writes nothing at all.
 |---|---|---|---|
 | The window, tabs, address bar, profiles, bookmarks, settings | yes | unit tests; the window in the room's own compositor with WebKitGTK, photographed and checked pixel by pixel (`tools/spatimesh-e2e.py`: an address typed, a field typed into, a link, Back, a `<select>`) | on glasses: placement, size, reading distance; dragging a tab out into its own window and back into another (built, not exercised end to end) |
 | Linux (WebKitGTK) | yes | six engine tests on Xvfb: drawing, typing, clicks, scrolling, history, new tabs, lists, dialogs, a page's process crashing alone, cookies kept or not per profile | a real desktop session |
-| Mac (WKWebView) | yes | compiles (CI's macOS 15) | everything at run time: on a Mac, SpatiMesh opens pages, takes input, shows lists and dialogs; profiles keep their own cookies (macOS 14+) |
+| Mac (WKWebView) | yes | compiles (CI's macOS 15); the extensions test (CI and here); **the compositor end to end on this Mac** (`tools/spatimesh-e2e.py` with the Mac's snapshot compositor and `SPATIMESH_ENGINE=webkit`: all 12 checks, 2026-10-17) | on glasses; profiles keeping their own cookies (macOS 14+) |
 | Android (WebView) | yes | the Rust side's launch through a stand-in launcher; the Java compiles against Android 34; the wire's bytes the same from Java as from Rust; the APK builds (`spatiand-apk` artifact) | everything at run time on the Beam Pro: the launcher starts the engine's service, pages draw through the virtual display, input, a second profile in its own process, the private one leaving nothing |
-| SteamOS (Steam's CEF) | yes | compiles against CEF 126's headers; CI runs the six engine tests against CEF's own 126 build laid out as Steam's | on the Deck: that Steam's CEF is still 126 (the hash check says), that its libcef.so loads outside Steam's runtime, Chromium's sandbox, Game Mode's display |
+| SteamOS (Steam's CEF) | yes | compiles against CEF 126's headers; CI runs the six engine tests against CEF's own 126 build laid out as Steam's; **on the Deck against Steam's own CEF** (Valve's build, above): the six engine tests, the extensions test and the compositor end to end, sandbox on, outside Steam's runtime (2026-10-17) | Game Mode's display; on glasses |
 | Sync | through spatiand-sync, as Spatiand's other settings | two machines through spatiand-sync in a test (`tests/sync.rs`) | two real machines linked |
 | Media through Spatiand's FFmpeg | being built (above) | -- | -- |
 | Sound placed per window | **no** | -- | each engine plays its pages' sound itself, not placed at the tab's window (at most where Spatiand places SpatiMesh as a whole) |
