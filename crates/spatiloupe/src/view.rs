@@ -210,6 +210,8 @@ pub struct Paper {
     ticket: u64,
     contents: Option<List>,
     find: Option<Field>,
+    /// The page number being typed, after `p`.
+    page_field: Option<Field>,
     found: Vec<pdf::Found>,
     found_at: usize,
     finding: bool,
@@ -362,6 +364,7 @@ impl View {
             ticket: 0,
             contents: None,
             find: None,
+            page_field: None,
             found: Vec::new(),
             found_at: 0,
             finding: false,
@@ -407,6 +410,17 @@ impl View {
     }
 
     /// Whether this wants a picture for each eye, given the chance.
+    /// The window's size, which everything here is laid out in.
+    pub fn set_size(&mut self, size: (u32, u32)) {
+        self.bounds = Rect::new(0.0, 0.0, size.0 as f32, size.1 as f32);
+        self.stir();
+    }
+
+    /// Whether the window's ground is to be clear: a picture's, shown whole on nothing.
+    pub fn see_through(&self) -> bool {
+        matches!(self.doc, Doc::Picture(_))
+    }
+
     pub fn has_depth(&self) -> bool {
         match &self.doc {
             Doc::Picture(shown) => shown.eyes().is_stereo(),
@@ -559,6 +573,8 @@ impl View {
         match drawn_object {
             // Drawn by GL, foot first: turned the right way up here.
             Some(texture) => p.image(gl, texture, all, [0.0, 1.0, 1.0, 0.0], 0.0, theme::INK, true),
+            // A picture is on nothing: where it does not fill the window, the room shows through.
+            None if self.see_through() => {}
             None => look::backdrop(p, gl),
         }
         let chrome = self.chrome();
@@ -583,10 +599,6 @@ impl View {
                     let use_right = shown.eyes() == Eyes::Pair && (eye == Eye::Right) != shown.swapped;
                     let which = if use_right { shown.right.unwrap_or(texture) } else { texture };
                     let at = shown.placed(all);
-                    // A soft shadow under it, as a print on a table has.
-                    if shown.zoom.is_none() {
-                        p.glow(gl, at, 6.0, [0.0, 0.0, 0.0, 0.55], 40.0);
-                    }
                     let uv = turned(shown.uv(eye), shown.turns);
                     p.clip(gl, all);
                     // A picture with see-through parts is shown on a checkerboard-free dark
@@ -682,7 +694,7 @@ impl View {
             self.strip.draw(p, gl, foot, &tiles, width);
         } else if let Doc::Model(_) = self.doc {
             let foot = Rect::new(all.x + 28.0, all.bottom() - 70.0, all.w - 56.0, 40.0);
-            p.label(gl, "Drag to turn it    Scroll to come nearer    Space stops or starts it turning    0 starts again", foot, theme::FOOTER_EM, ink(theme::INK_HINT), 0.5);
+            look::keys(p, gl, foot, "[Drag] Turn  [Scroll] Nearer  [Space] Spin  [0] Reset", 0.5, alpha);
         }
 
         // About it, on the right.
@@ -780,6 +792,27 @@ impl View {
         }
         // The search field, while there is one, has the keys.
         if let Doc::Pdf(paper) = &mut self.doc {
+            if let Some(field) = paper.page_field.as_mut() {
+                if let Input::Key { key: Key::Escape, .. } = input {
+                    paper.page_field = None;
+                    return Want::Nothing;
+                }
+                if let Some(typed) = field.input(input) {
+                    if typed == Typed::Entered {
+                        if let Ok(page) = field.text.trim().parse::<usize>() {
+                            paper.go_to = Some(page.clamp(1, paper.pages.len().max(1)) - 1);
+                        }
+                        paper.page_field = None;
+                    } else {
+                        // Numbers only.
+                        field.text.retain(|c| c.is_ascii_digit());
+                    }
+                    return Want::Nothing;
+                }
+                if matches!(input, Input::Key { .. }) {
+                    return Want::Nothing;
+                }
+            }
             if let Some(field) = paper.find.as_mut() {
                 if let Input::Key { key: Key::Escape, .. } = input {
                     paper.find = None;
@@ -870,6 +903,7 @@ impl View {
                 }
             }
             Input::Scroll { dx, dy } => self.scrolled(*dx, *dy, all),
+            Input::Pinch { scale } => self.pinched(*scale, all),
             Input::Key { key, text, modifiers } => return self.key(*key, text.as_deref(), modifiers.control || modifiers.logo, modifiers.shift),
             _ => {}
         }
@@ -915,6 +949,21 @@ impl View {
             }
             Doc::Model(object) => object.orbit.zoom = (object.orbit.zoom * (-dy * 0.003).exp()).clamp(0.3, 6.0),
             Doc::Pdf(paper) => paper.scroll_by(dy, all),
+            _ => {}
+        }
+    }
+
+    /// Two fingers spreading or drawing together: what is shown zooms, about the pointer.
+    fn pinched(&mut self, scale: f32, all: Rect) {
+        let (x, y) = self.pointer;
+        match &mut self.doc {
+            Doc::Picture(shown) => shown.zoom_by(scale, all, x, y),
+            Doc::Pdf(paper) => {
+                let page = paper.current(all);
+                paper.zoom = (paper.zoom * scale).clamp(0.4, 4.0);
+                paper.go_to = Some(page);
+            }
+            Doc::Model(object) => object.orbit.zoom = (object.orbit.zoom * scale).clamp(0.3, 6.0),
             _ => {}
         }
     }
@@ -1068,7 +1117,8 @@ impl View {
                         paper.found_at = (paper.found_at + paper.found.len() - 1) % paper.found.len();
                         paper.go_to = Some(paper.found[paper.found_at].page);
                     }
-                    (_, "o") if !paper.outline.is_empty() => {
+                    (_, "p" | "P") => paper.open_page_field(),
+                    (_, "o" | "O") if !paper.outline.is_empty() => {
                         let mut list = List::default();
                         list.focused = true;
                         list.cursor = paper.outline.iter().rposition(|h| h.page.is_some_and(|p| p <= page)).unwrap_or(0);
@@ -1084,6 +1134,13 @@ impl View {
 }
 
 impl Paper {
+    fn open_page_field(&mut self) {
+        let mut field = Field::default();
+        field.focused = true;
+        field.hint = format!("A page, 1 to {}", self.pages.len());
+        self.page_field = Some(field);
+    }
+
     fn open_find(&mut self) {
         let mut field = Field::default();
         field.focused = true;
@@ -1213,6 +1270,15 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect) {
         field.draw(p, gl, Rect { w: inner.w - count_w - 20.0, ..inner });
         p.label(gl, &count_text, Rect { x: inner.right() - count_w, w: count_w, ..inner }, theme::DETAIL_EM, theme::INK_HINT, 1.0);
     }
+    if let Some(field) = paper.page_field.as_mut() {
+        let rect = Rect::new(all.x + (all.w - 420.0) * 0.5, all.y + 24.0 + theme::ROW_HEIGHT + 40.0, 420.0, Field::HEIGHT + 24.0);
+        look::glass(p, gl, rect, 20.0, 1.0);
+        let inner = rect.inset(12.0);
+        let of = format!("of {}", paper.pages.len());
+        let of_w = p.measure(gl, &of, theme::DETAIL_EM, 8192.0).0;
+        field.draw(p, gl, Rect { w: inner.w - of_w - 20.0, ..inner });
+        p.label(gl, &of, Rect { x: inner.right() - of_w, w: of_w, ..inner }, theme::DETAIL_EM, theme::INK_HINT, 1.0);
+    }
     if let Some(list) = paper.contents.as_mut() {
         let rect = Rect::new(all.x + 28.0, all.y + 24.0 + theme::ROW_HEIGHT + 42.0, 560.0, all.h - theme::ROW_HEIGHT - 110.0);
         look::glass(p, gl, rect, 22.0, 1.0);
@@ -1230,11 +1296,16 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect) {
         list.draw(p, gl, rect.inset(16.0), &rows);
     }
     // Which keys do what, on a pane of its own: over a page it would be unreadable.
-    let hint = if paper.outline.is_empty() { "/ finds    + and \u{2212} zoom    PageUp and PageDown turn pages" } else { "/ finds    O shows the contents    + and \u{2212} zoom    PageUp and PageDown turn pages" };
-    let width = p.measure(gl, hint, theme::FOOTER_EM * 0.9, 8192.0).0 + 48.0;
-    let foot = Rect::new(all.x + (all.w - width) * 0.5, all.bottom() - 62.0, width, 42.0);
-    look::glass(p, gl, foot, 21.0, 1.0);
-    p.label(gl, hint, foot, theme::FOOTER_EM * 0.9, theme::INK_HINT, 0.5);
+    let hint = if paper.outline.is_empty() {
+        "[/] Find  [+] [\u{2212}] Zoom  [P] Page  [PgUp] [PgDn] Turn"
+    } else {
+        "[/] Find  [+] [\u{2212}] Zoom  [O] Contents  [P] Page  [PgUp] [PgDn] Turn"
+    };
+    // Measured where it cannot be seen, then drawn on its pane.
+    let width = look::keys(p, gl, Rect::new(-10000.0, -10000.0, 4000.0, 40.0), hint, 0.0, 0.0) + 44.0;
+    let foot = Rect::new(all.x + (all.w - width).max(0.0) * 0.5, all.bottom() - 62.0, width.min(all.w), 44.0);
+    look::glass(p, gl, foot, 22.0, 1.0);
+    look::keys(p, gl, foot.inset(4.0), hint, 0.5, 1.0);
 }
 
 /// Turn a picture a quarter `turns` times on the CPU: what [`turned`] cannot.

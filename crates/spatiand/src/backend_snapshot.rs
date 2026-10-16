@@ -1493,7 +1493,7 @@ fn click_on_the_window(
 /// separated by `;`, each `what:arguments`, and each is given half a second to be answered.
 ///
 /// ```text
-/// click:u,v  rclick:u,v  move:u,v  down:u,v  up:u,v  drag:u,v,u,v  scroll:dx,dy
+/// click:u,v  rclick:u,v  move:u,v  down:u,v  up:u,v  drag:u,v,u,v  scroll:dx,dy  pinch:1.5
 /// key:28  key:ctrl+shift+20  keydown:42  keyup:42  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
 /// ```
 ///
@@ -1510,6 +1510,9 @@ enum Scripted {
     Up(f64, f64),
     Drag(f64, f64, f64, f64),
     Scroll(f64, f64),
+    /// Two fingers spreading by this factor over the chosen window, as the room hands a pinch
+    /// to a window that takes them (and does nothing to one that does not).
+    Pinch(f64),
     Key(Vec<u32>, u32),
     /// A key held down, or let go: `keydown:42` holds Shift for the clicks after it.
     Hold(u32, bool),
@@ -1534,6 +1537,7 @@ fn scripted_steps() -> Vec<Scripted> {
                 ("up", [u, v]) => Scripted::Up(*u, *v),
                 ("drag", [a, b, c, d]) => Scripted::Drag(*a, *b, *c, *d),
                 ("scroll", [dx, dy]) => Scripted::Scroll(*dx, *dy),
+                ("pinch", [scale]) => Scripted::Pinch(*scale),
                 ("wait", [seconds]) => Scripted::Wait(*seconds as f32),
                 ("key", _) => {
                     let mut held = Vec::new();
@@ -1686,6 +1690,12 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
             }
             pointer.axis(state, frame);
             pointer.frame(state);
+        }
+        Scripted::Pinch(scale) => {
+            pointer_event(state, windows, *at, None);
+            let surface = chosen_window(state, windows).and_then(|w| w.window.toplevel().map(|t| t.wl_surface().clone()));
+            let taken = surface.is_some_and(|s| crate::xr::tell_pinch(&s, *scale as f32));
+            log::info!("pinch {scale}: {}", if taken { "the window zooms its content" } else { "the window does not take pinches" });
         }
         Scripted::Key(held, code) => {
             if let Some(window) = chosen_window(state, windows).map(|w| w.window.clone()) {

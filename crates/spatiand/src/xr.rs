@@ -101,6 +101,12 @@ pub struct XrState {
     /// The head's orientation the picture was drawn for, in the protocol's (OpenXR's) frame, if the
     /// client said. See `set_frame_pose`.
     pub frame_orientation: Option<[f32; 4]>,
+    /// The surface zooms its own content when pinched, and is told of pinches rather than
+    /// being resized by them. See `set_pinch_taken`.
+    pub pinch_taken: bool,
+    /// The surface's own alpha is kept: where it draws nothing, the room shows. See
+    /// `set_see_through`.
+    pub see_through: bool,
 }
 
 impl XrState {
@@ -191,6 +197,11 @@ struct Pending {
 #[derive(Debug, Default)]
 struct Applied(Mutex<XrState>);
 
+/// The extension object a surface was last committed through: what events about the surface
+/// are sent on.
+#[derive(Debug, Default)]
+struct Object(Mutex<Option<spatiand_xr_surface_v1::SpatiandXrSurfaceV1>>);
+
 /// Read a surface's committed stereo state.
 ///
 /// `XrState::default()` for a surface nobody has configured, which is a mono window — so the
@@ -224,7 +235,29 @@ pub fn commit(surface: &WlSurface, object: &spatiand_xr_surface_v1::SpatiandXrSu
                 *applied = pending.next;
             }
         }
+        states.data_map.insert_if_missing_threadsafe(Object::default);
+        if let Some(held) = states.data_map.get::<Object>() {
+            if let Ok(mut held) = held.0.lock() {
+                *held = Some(object.clone());
+            }
+        }
     });
+}
+
+/// Hand a pinch to the surface if it takes them: `false` when it does not, and the window is
+/// to be zoomed as any other is.
+pub fn tell_pinch(surface: &WlSurface, scale: f32) -> bool {
+    if !state_of(surface).pinch_taken {
+        return false;
+    }
+    let object = with_states(surface, |states| states.data_map.get::<Object>().and_then(|o| o.0.lock().ok()?.clone()));
+    match object.filter(|o| o.is_alive() && o.version() >= 6) {
+        Some(object) => {
+            object.pinch((scale as f64 * 1e6).round() as i32);
+            true
+        }
+        None => false,
+    }
 }
 
 /// How visible this surface should be drawn, 0..1.
@@ -510,6 +543,12 @@ impl Dispatch<spatiand_xr_surface_v1::SpatiandXrSurfaceV1, Mutex<Pending>> for S
             }
             spatiand_xr_surface_v1::Request::SetCursorDrawn { enable } => {
                 pending.next.cursor_drawn = enable != 0;
+            }
+            spatiand_xr_surface_v1::Request::SetPinchTaken { enable } => {
+                pending.next.pinch_taken = enable != 0;
+            }
+            spatiand_xr_surface_v1::Request::SetSeeThrough { enable } => {
+                pending.next.see_through = enable != 0;
             }
             spatiand_xr_surface_v1::Request::SetFramePose { token: _, x, y, z, w } => {
                 let q = [x, y, z, w].map(|c| c as f32 / 1e6);

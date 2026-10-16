@@ -275,6 +275,22 @@ impl Wire {
         }
     }
 
+    pub(crate) fn set_pinch_taken(&mut self, id: WindowId, taken: bool) {
+        if let Some(xr) = self.xr_of(id) {
+            if xr.version() >= 6 {
+                xr.set_pinch_taken(taken as u32);
+            }
+        }
+    }
+
+    pub(crate) fn set_see_through(&mut self, id: WindowId, clear: bool) {
+        if let Some(xr) = self.xr_of(id) {
+            if xr.version() >= 6 {
+                xr.set_see_through(clear as u32);
+            }
+        }
+    }
+
     pub(crate) fn set_cursor_drawn(&mut self, id: WindowId, drawn: bool) {
         if let Some(xr) = self.xr_of(id) {
             if xr.version() >= 4 {
@@ -611,6 +627,9 @@ impl Dispatch<spatiand_xr_surface_v1::SpatiandXrSurfaceV1, WindowId> for Wire {
             }
             spatiand_xr_surface_v1::Event::LayerLost { layer } => {
                 state.events.push(Event::LayerLost { window: *id, layer: layer_from_wire(layer) });
+            }
+            spatiand_xr_surface_v1::Event::Pinch { scale } => {
+                state.events.push(Event::Pinch { window: *id, scale: (scale as f32 / 1e6).clamp(0.2, 5.0) });
             }
             _ => {}
         }

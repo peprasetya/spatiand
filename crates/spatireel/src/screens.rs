@@ -127,6 +127,8 @@ pub struct Home {
     on_films: bool,
     arrived: Vec<(usize, Still)>,
     pub trouble: Option<String>,
+    /// Delete pressed once on this source, and when: pressed again soon, it is removed.
+    removing: Option<(usize, Instant)>,
 }
 
 impl Home {
@@ -162,6 +164,7 @@ impl Home {
             on_films: false,
             arrived: Vec::new(),
             trouble: None,
+            removing: None,
         };
         home.shelf.shape = Shape::Wide;
         home.sources.shape = Shape::Wide;
@@ -232,7 +235,7 @@ impl Home {
         }
         let mut all = p.bounds().inset(theme::PAD);
         look::header(p, gl, &mut all, "SpatiReel", "");
-        let hint = if self.on_films { "Enter plays from where it was left" } else { "Enter opens    Delete forgets a server" };
+        let hint = if self.on_films { "[Enter] Play from where it was left" } else { "[Enter] Open  [Delete] Remove a server" };
         look::foot(p, gl, &mut all, hint, self.trouble.as_deref());
         if !self.films.is_empty() {
             look::shelf(p, gl, &mut all, "Continue watching", self.on_films);
@@ -253,11 +256,24 @@ impl Home {
                 Key::Up => self.focus(true),
                 Key::Down => self.focus(false),
                 Key::Delete | Key::Backspace if !self.on_films => {
-                    if matches!(self.kinds.get(self.sources.cursor), Some(Kind::Server(_))) {
-                        return Act::Forget(self.sources.cursor);
+                    let at = self.sources.cursor;
+                    if matches!(self.kinds.get(at), Some(Kind::Server(_))) {
+                        // Twice, as the server's own Remove button is: once is easily a slip.
+                        if self.removing.is_some_and(|(was, since)| was == at && since.elapsed() < Duration::from_secs(4)) {
+                            self.removing = None;
+                            return Act::Forget(at);
+                        }
+                        self.removing = Some((at, Instant::now()));
+                        let name = self.places.get(at).map_or(String::new(), |t| t.title.clone());
+                        self.trouble = Some(format!("Press Delete again to remove {name}"));
+                        return Act::Nothing;
                     }
                 }
-                _ => {}
+                _ => {
+                    if self.removing.take().is_some() {
+                        self.trouble = None;
+                    }
+                }
             }
         }
         // A press on a shelf gives it the keys as well.
@@ -446,7 +462,7 @@ impl Browse {
         all.take_top(12.0);
         look::rule(p, gl, all.take_top(2.0));
         all.take_top(16.0);
-        let hint = if self.local { self.path().display().to_string() } else { "Enter opens    Backspace goes up    Escape goes home".to_string() };
+        let hint = if self.local { self.path().display().to_string() } else { "[Enter] Open  [Backspace] Up  [Esc] Home".to_string() };
         look::foot(p, gl, &mut all, &hint, self.trouble.as_deref());
         match &self.state {
             State::Loading(since) => look::waiting(p, gl, all, *since),
@@ -590,7 +606,7 @@ impl Add {
         all.take_top(12.0);
         look::rule(p, gl, all.take_top(2.0));
         all.take_top(22.0);
-        look::foot(p, gl, &mut all, "Tab moves between fields    Enter goes on    Escape goes back", self.trouble.as_deref());
+        look::foot(p, gl, &mut all, "[Tab] Next field  [Enter] Go on  [Esc] Back", self.trouble.as_deref());
         match self.stage {
             Stage::Pick => {
                 look::shelf(p, gl, &mut all, "What kind", true);

@@ -130,6 +130,8 @@ pub enum Input {
     Press { pressed: bool },
     Scroll { dx: f32, dy: f32 },
     Key { key: Key, text: Option<String>, modifiers: Modifiers },
+    /// Two fingers pinching, as a factor since the last: see [`crate::App::set_pinch_taken`].
+    Pinch { scale: f32 },
 }
 
 impl Input {
@@ -141,6 +143,9 @@ impl Input {
             Event::PointerLeft { .. } => Some(Input::PointerLeft),
             Event::Button { button: crate::Button::Left, pressed, .. } => Some(Input::Press { pressed: *pressed }),
             Event::Scroll { dx, dy, .. } => Some(Input::Scroll { dx: dx / scale, dy: dy / scale }),
+            Event::Pinch { scale, .. } => Some(Input::Pinch { scale: *scale }),
+            // Escape held is one Escape: repeated, it closed what was under what it closed.
+            Event::Key { key: Key::Escape, repeat: true, .. } => None,
             Event::Key { key, pressed: true, text, modifiers, .. } => {
                 Some(Input::Key { key: *key, text: text.clone(), modifiers: *modifiers })
             }

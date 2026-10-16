@@ -196,6 +196,16 @@ impl Folder {
         }
     }
 
+    /// One more entry, not in the listing -- a file asked for by name -- with its tile; returns
+    /// where it is. Its tile and its having been asked for are kept beside it, as the listing's
+    /// are, or every list indexed by entry runs one short.
+    pub fn add(&mut self, entry: Entry) -> usize {
+        self.tiles.push(Tile { title: entry.name.clone(), detail: Some(size_words(entry.size)), icon: Some(Icon::Picture), ..Tile::default() });
+        self.asked.push(false);
+        self.entries.push(entry);
+        self.entries.len() - 1
+    }
+
     /// A tile's picture has come, and perhaps a word to put under it ("3D").
     pub fn pictured(&mut self, ticket: u64, index: usize, width: u32, height: u32, rgba: Vec<u8>, word: Option<String>) {
         if ticket == self.ticket {

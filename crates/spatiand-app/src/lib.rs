@@ -167,6 +167,9 @@ pub enum Event {
     LayerRefused { window: WindowId, layer: Layer },
     /// A layer only one window can have was taken back. The window is a window again.
     LayerLost { window: WindowId, layer: Layer },
+    /// Two fingers pinched over a window that takes pinches ([`App::set_pinch_taken`]): how
+    /// much they spread since the last, as a factor -- above one is zooming in.
+    Pinch { window: WindowId, scale: f32 },
 }
 
 impl Event {
@@ -185,7 +188,8 @@ impl Event {
             | Event::Key { window, .. }
             | Event::Focus { window, .. }
             | Event::LayerRefused { window, .. }
-            | Event::LayerLost { window, .. } => Some(*window),
+            | Event::LayerLost { window, .. }
+            | Event::Pinch { window, .. } => Some(*window),
         }
     }
 }
@@ -311,6 +315,18 @@ impl App {
     /// only the application knows how far away what is pointed at is.
     pub fn set_cursor_drawn(&mut self, window: WindowId, drawn: bool) {
         self.wire.set_cursor_drawn(window, drawn);
+    }
+
+    /// Pinching over the window zooms what it shows, told as [`Event::Pinch`], rather than
+    /// the window: for a picture or a page. From the next picture on.
+    pub fn set_pinch_taken(&mut self, window: WindowId, taken: bool) {
+        self.wire.set_pinch_taken(window, taken);
+    }
+
+    /// Where the window's pictures are clear (alpha zero), the room shows through: for a
+    /// picture shown whole on nothing. Windows are otherwise opaque. From the next picture on.
+    pub fn set_see_through(&mut self, window: WindowId, clear: bool) {
+        self.wire.set_see_through(window, clear);
     }
 
     /// Ask for an [`Event::Frame`] when the compositor next wants this window drawn. Asked

@@ -1384,7 +1384,14 @@ pub fn run(
                 // On the title bar the window is what is taken hold of, and spreading the fingers
                 // brings it closer; anywhere else on it, it is what it shows that is made bigger.
                 let on_title = right_aim.as_ref().is_some_and(|a| a.on_title);
-                if let Some(window) = target {
+                // A window with something of its own to zoom -- a picture, a page -- is told,
+                // and stays the size it is.
+                let taken = !on_title
+                    && target
+                        .as_ref()
+                        .and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()))
+                        .is_some_and(|surface| crate::xr::tell_pinch(&surface, pinch));
+                if let Some(window) = target.filter(|_| !taken) {
                     if let Some(mut placement) = runtime.state.layout.get(&window) {
                         if on_title {
                             placement.radius = (placement.radius / pinch as f64).clamp(0.8, 8.0);

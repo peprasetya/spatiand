@@ -129,7 +129,7 @@
     </enum>
   </interface>
 
-  <interface name="spatiand_xr_surface_v1" version="5">
+  <interface name="spatiand_xr_surface_v1" version="6">
     <description summary="how a surface is drawn for two eyes">
       All state here is double-buffered: it takes effect on the next
       wl_surface.commit, like everything else about a surface. Changing layout
@@ -409,6 +409,42 @@
       <arg name="z" type="int" summary="millionths"/>
       <arg name="w" type="int" summary="millionths"/>
     </request>
+
+    <request name="set_pinch_taken" since="6">
+      <description summary="this surface zooms its own content when pinched">
+        Two fingers pinching or spreading over a window ordinarily make the
+        window itself bigger or smaller. A surface that has something of its
+        own to zoom -- a picture, a page -- says so with this, and is sent
+        `pinch` instead while the pointer is over it; the window stays the size
+        it is. Pinching on the window's title bar is the compositor's still.
+
+        Off by default. Double-buffered like everything else here.
+      </description>
+      <arg name="enable" type="uint" summary="0 or 1"/>
+    </request>
+
+    <request name="set_see_through" since="6">
+      <description summary="what this surface leaves clear is clear">
+        A window is drawn opaque whatever its buffer's alpha says: a client's
+        own transparency would let the room through a terminal and make it
+        unreadable. A surface whose content is a thing on nothing -- a picture
+        shown whole, its shape not the window's -- asks with this for its alpha
+        to be kept, so that where it draws nothing the room is seen.
+
+        Off by default. Double-buffered like everything else here.
+      </description>
+      <arg name="enable" type="uint" summary="0 or 1"/>
+    </request>
+
+    <event name="pinch" since="6">
+      <description summary="the wearer pinched over this surface">
+        How much the fingers spread since the last `pinch`: a factor, in
+        millionths, above a million for spreading (zoom in) and below for
+        drawing together. Sent only to a surface that asked with
+        `set_pinch_taken`, as the fingers move.
+      </description>
+      <arg name="scale" type="int" summary="factor, in millionths"/>
+    </event>
   </interface>
 
   <interface name="spatiand_xr_pose_channel_v1" version="2">

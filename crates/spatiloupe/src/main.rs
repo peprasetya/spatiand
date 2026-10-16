@@ -103,8 +103,13 @@ struct Loupe {
     ticket: u64,
     ready: bool,
     dirty: bool,
-    /// Whether the window is drawn as two eyes now.
+    /// Whether the window is drawn as two eyes now, and at what size it was staged.
     two: bool,
+    staged: Option<(bool, (u32, u32))>,
+    /// Whether the window has been told its ground is clear.
+    clear: bool,
+    /// The window's size as the wearer last made it: free, not held to a picture's shape.
+    size: (u32, u32),
     /// What a file opened at the start is, to open once its folder is listed.
     opening: Option<PathBuf>,
     left: Vec<View>,
@@ -135,6 +140,7 @@ impl Loupe {
             self.left.push(old);
         }
         let mut view = View::new(entry.clone(), index, ticket, files);
+        view.set_size(self.size);
         let path = entry.path.clone();
         self.current.store(ticket, std::sync::atomic::Ordering::Relaxed);
         let current = self.current.clone();
@@ -181,8 +187,7 @@ impl Loupe {
                                 // Not in the list -- a kind it does not know by name: shown anyway.
                                 let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                                self.folder.entries.push(folder::Entry { name, path, kind: Kind::Picture, size });
-                                let index = self.folder.entries.len() - 1;
+                                let index = self.folder.add(folder::Entry { name, path, kind: Kind::Picture, size });
                                 self.open(index);
                             }
                         }
@@ -215,7 +220,19 @@ impl Loupe {
     fn handle(&mut self, event: Event) -> bool {
         match &event {
             Event::CloseRequested { .. } => return false,
-            Event::Ready { .. } => self.ready = true,
+            Event::Ready { .. } => {
+                self.ready = true;
+                // A picture, a page or an object zooms when pinched; the window stays as it is.
+                self.app.set_pinch_taken(self.window, true);
+            }
+            Event::Resized { width, height, .. } => {
+                self.size = ((*width).max(480), (*height).max(320));
+                if let Some(view) = self.view.as_mut() {
+                    view.set_size(self.size);
+                }
+                self.dirty = true;
+                return true;
+            }
             Event::Mode(mode) => log::info!("the wearer now sees {mode:?}"),
             Event::Hands => {
                 if let Some(view) = self.view.as_mut() {
@@ -251,16 +268,18 @@ impl Loupe {
     /// Whether the window is to be two eyes' pictures, and if that has changed, make it so.
     fn stage(&mut self) {
         let two = self.app.mode() == Mode::Stereo && self.app.in_the_room() && self.view.as_ref().is_some_and(|v| v.has_depth());
-        if two == self.two {
+        if self.staged == Some((two, self.size)) {
             return;
         }
         self.two = two;
+        self.staged = Some((two, self.size));
+        let size = self.size;
         if two {
-            self.app.resize(self.window, (WINDOW.0 * 2, WINDOW.1));
-            self.app.set_shape(self.window, Some(WINDOW));
+            self.app.resize(self.window, (size.0 * 2, size.1));
+            self.app.set_shape(self.window, Some(size));
             self.app.set_eyes(self.window, EyeLayout::SideBySide, false);
         } else {
-            self.app.resize(self.window, WINDOW);
+            self.app.resize(self.window, size);
             self.app.set_shape(self.window, None);
             self.app.set_eyes(self.window, EyeLayout::Mono, false);
         }
@@ -292,6 +311,11 @@ impl Loupe {
             return Ok(());
         }
         self.stage();
+        let clear = self.view.as_ref().is_some_and(|v| v.see_through());
+        if self.clear != clear {
+            self.clear = clear;
+            self.app.set_see_through(self.window, clear);
+        }
         let two = self.two;
         let (view, folder, painter, left) = (&mut self.view, &mut self.folder, &mut self.painter, &mut self.left);
         self.app.draw(self.window, |gl, size| {
@@ -305,7 +329,9 @@ impl Loupe {
                     folder.take_arrived(p, gl);
                     view::TILES.with(|t| *t.borrow_mut() = folder.file_tiles());
                     view.settle_turns(gl);
-                    p.begin(gl, size, size.1 as f32 / WINDOW.1 as f32, theme::GROUND);
+                    // A picture is shown on nothing; the room is its ground.
+                    let ground = if view.see_through() { [0.0, 0.0, 0.0, 0.0] } else { theme::GROUND };
+                    p.begin(gl, size, 1.0, ground);
                     if two {
                         let half = size.0 as f32 * 0.5;
                         view.paint(p, gl, size, Rect::new(0.0, 0.0, half, size.1 as f32), Eye::Left);
@@ -377,6 +403,9 @@ fn main() {
             ready: false,
             dirty: true,
             two: false,
+            staged: None,
+            clear: false,
+            size: WINDOW,
             opening: None,
             left: Vec::new(),
         };

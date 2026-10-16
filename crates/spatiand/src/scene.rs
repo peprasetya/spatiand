@@ -2520,10 +2520,12 @@ impl Scene {
                 .eye_rect_within(window.crop, matches!(eye.side, EyeSide::Left));
             // But one of the Mac's windows with a menu hung beside it is a picture of both, and
             // the corners that are neither are nothing: seen through, not painted black.
+            // And a window that asked for its own alpha (`set_see_through`): a picture shown
+            // whole on nothing.
             #[cfg(target_os = "macos")]
-            let seen_through = crate::mac::remote_video::clear_of(&window.surface);
+            let seen_through = window.xr.see_through || crate::mac::remote_video::clear_of(&window.surface);
             #[cfg(not(target_os = "macos"))]
-            let seen_through = false;
+            let seen_through = window.xr.see_through;
             for strip in across(0.0, 0.0, width, height, 0.0) {
                 self.quads.seams(gl, strip.seams.0, strip.seams.1);
                 let draw = if seen_through { QuadPipeline::draw_rect } else { QuadPipeline::draw_opaque_rect };
