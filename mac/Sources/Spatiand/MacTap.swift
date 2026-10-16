@@ -7,7 +7,8 @@
 //  the application its speakers back.
 //
 //  An application's sound is made by more than its main process: a browser plays from a helper. So the tap takes
-//  every process that is the application or one of its children.
+//  every process that is the application or one of its children -- or that the application answers for: Safari's
+//  pages are played by a WebKit process that launchd started, not Safari, and which macOS holds Safari responsible for.
 
 import AudioToolbox
 import CoreAudio
@@ -49,8 +50,9 @@ final class MacTap {
         return out
     }
 
-    /// Whether `pid` is `ancestor` or one of its descendants.
+    /// Whether `pid` is `ancestor`, one of its descendants, or a process it answers for.
     static func descends(_ pid: pid_t, from ancestor: pid_t) -> Bool {
+        if pid == ancestor || responsible(for: pid) == ancestor { return true }
         var current = pid
         for _ in 0..<12 {
             if current == ancestor { return true }
@@ -63,6 +65,14 @@ final class MacTap {
             current = parent
         }
         return false
+    }
+
+    /// The application macOS holds responsible for a process: for a service started on an
+    /// application's behalf (WebKit's, which play a page's sound), that application.
+    private static func responsible(for pid: pid_t) -> pid_t {
+        typealias Responsible = @convention(c) (pid_t) -> pid_t
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_get_pid_responsible_for_pid") else { return pid }
+        return unsafeBitCast(symbol, to: Responsible.self)(pid)
     }
 
     /// Every audio process object that belongs to the application: itself and what it started.

@@ -54,6 +54,10 @@ const MIN_HALF_WIDTH: f64 = 14.0 * std::f64::consts::PI / 180.0;
 const ANCESTRY_DEPTH: usize = 8;
 /// How long after a launch a window nobody can trace is taken to be that application's.
 const UNCLAIMED_FOR: std::time::Duration = std::time::Duration::from_secs(45);
+/// How loud a sink must be to count as making a sound, and how long after its last one it is
+/// still taken to be: the gap between two songs is not the sound ending.
+const SOUNDING_FLOOR: f32 = 0.002;
+const HELD_FOR: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// The rate everything runs at.
 ///
@@ -74,8 +78,11 @@ pub struct Audio {
     /// Sinks kept by name rather than by process: a remote application's, whose process is on
     /// another computer. Every window of one application shares its sink.
     keyed: HashMap<String, Slot>,
-    /// Which window each sink was last aimed from, only so a change can be said once.
+    /// Which window each sink was last aimed from: so a change can be said once, and so a
+    /// sink that is sounding stays with it (see [`Source::rank`]).
     aimed: HashMap<Slot, usize>,
+    /// When each sink was last heard making a sound.
+    sounded: HashMap<Slot, std::time::Instant>,
     next: Slot,
 }
 
@@ -98,6 +105,7 @@ impl Audio {
             widths: HashMap::new(),
             keyed: HashMap::new(),
             aimed: HashMap::new(),
+            sounded: HashMap::new(),
             next: 1,
         }
     }
@@ -282,10 +290,31 @@ impl Audio {
     pub fn aim_all(&mut self, sources: &[Source], head: DQuat) {
         // Best source per sink, in one pass. Small maps: an app with more than a handful of
         // windows is unusual and one with more than a handful of *sinks* is impossible.
-        let mut best: HashMap<Slot, &Source> = HashMap::new();
+        // **A sink that is sounding stays with the window it is coming from**, between
+        // windows that are otherwise alike. A browser with three windows is one sink and three
+        // windows of one size, and the focused one used to win: play a video in one, click on
+        // another to read something, and the video's sound walked across the room to it.
+        // Focus decides where a sound *starts* -- the window the wearer pressed play in -- and
+        // from then on it stays there, through the gap between two songs, until it has been
+        // quiet for a while.
+        let now = std::time::Instant::now();
+        if let Some(engine) = &self.engine {
+            for (slot, _) in engine.sounding(SOUNDING_FLOOR) {
+                self.sounded.insert(slot, now);
+            }
+        }
+        let mut best: HashMap<Slot, Source> = HashMap::new();
         for source in sources {
             let Some(slot) = self.bound.get(&source.window) else {
                 continue;
+            };
+            let sounding = self
+                .sounded
+                .get(slot)
+                .is_some_and(|at| now.duration_since(*at) < HELD_FOR);
+            let source = Source {
+                held: sounding && self.aimed.get(slot) == Some(&source.window),
+                ..*source
             };
             best.entry(*slot)
                 .and_modify(|held| {
@@ -390,6 +419,21 @@ pub struct Source {
     /// Whether this is a game store's own window -- Steam's -- rather than anything an app of
     /// its own is showing. See [`is_launcher`].
     pub launcher: bool,
+    /// Whether the window says of itself that it is the one playing: see [`says_it_plays`].
+    pub marked: bool,
+    /// Whether this is the window its sink's sound is coming from already, while it sounds.
+    /// Filled in by [`Audio::aim_all`]; whoever lists the room's windows leaves it false.
+    pub held: bool,
+}
+
+/// Whether a window's title says it is the one making sound.
+///
+/// A browser is one process playing for all its windows, and nothing says which page a sound
+/// belongs to -- except, sometimes, the browser: Chrome puts a speaker in the title of the
+/// window whose tab is playing. Where that is said it is believed over everything: over the
+/// window in front, and over another of the browser's windows pinned to the view.
+pub fn says_it_plays(title: Option<&str>) -> bool {
+    title.is_some_and(|t| t.contains('\u{1F50A}') || t.ends_with("Audio playing"))
 }
 
 /// Whether an app id is a game store's client: the window that shares an app's sink without
@@ -472,12 +516,17 @@ impl Source {
     ///   disturb the case above, because a preferences panel is smaller than the window it
     ///   belongs to and a transport bar smaller than its film.
     ///
+    /// * **But a sink that is sounding stays where it is**, between windows of the same size:
+    ///   focus chooses where a sound starts, and reading another window of the same browser
+    ///   does not carry the music over to it. And **a window that says it is the one playing**
+    ///   (see [`says_it_plays`]) has it whatever its size.
+    ///
     /// Sizes count as the same when they are within [`SAME_SIZE`] of each other, so this is a
     /// rule about windows that look alike rather than about floating-point equality.
     ///
     /// Ties that survive all of that go to the lower window id, purely so that two identical
     /// windows do not make the aim depend on the order a hash map happened to yield.
-    fn rank(&self) -> (i8, i32, bool, OrderedSize, std::cmp::Reverse<usize>) {
+    fn rank(&self) -> (bool, i8, i32, bool, bool, OrderedSize, std::cmp::Reverse<usize>) {
         let side = ((self.pixels.0 as f64) * (self.pixels.1 as f64)).sqrt();
         let (tier, size) = match self.kind {
             // Below every other window of its sink: a store's client is not what makes the
@@ -490,8 +539,10 @@ impl Source {
             Kind::Window(_) => (0, side),
         };
         (
+            self.marked,
             tier,
             size_class(size),
+            self.held,
             self.focused,
             OrderedSize(size),
             std::cmp::Reverse(self.window),
@@ -631,6 +682,8 @@ mod tests {
             }),
             focused: false,
             launcher: false,
+            marked: false,
+            held: false,
         }
     }
 
@@ -648,6 +701,8 @@ mod tests {
             kind: Kind::Environment { yaw },
             focused: false,
             launcher: false,
+            marked: false,
+            held: false,
         }
     }
 
@@ -666,6 +721,8 @@ mod tests {
             kind: Kind::glass(head),
             focused: false,
             launcher: false,
+            marked: false,
+            held: false,
         }
         .stage();
         assert_eq!((stage.yaw, stage.pitch), (yaw, pitch));
@@ -678,9 +735,35 @@ mod tests {
             kind: Kind::glass(head),
             focused: false,
             launcher: false,
+            marked: false,
+            held: false,
         };
         assert!(pinned.rank() > win(2, 0.0, 3.0).rank());
         assert!(pinned.rank() > sky(3, 0.0).rank());
+    }
+
+    #[test]
+    fn a_sounding_sink_stays_with_its_window_and_a_window_that_says_it_plays_has_it() {
+        // Three windows of one browser, alike. Focus alone chooses between them...
+        let playing = win(1, 0.0, 1.1);
+        let reading = focused_win(2, 1.2, 1.1);
+        assert!(reading.rank() > playing.rank());
+        // ...until one of them is where the sound already is.
+        let held = Source { held: true, ..playing };
+        assert!(held.rank() > reading.rank());
+        // Not over a window that is plainly the bigger: a film over its bar of controls.
+        assert!(win(3, 0.0, 3.0).rank() > Source { held: true, ..win(4, 0.0, 0.5) }.rank());
+        // A window that says it is the one playing has it, held or focused or bigger or not.
+        let marked = Source { marked: true, ..win(5, -1.0, 1.1) };
+        assert!(marked.rank() > held.rank());
+        assert!(marked.rank() > focused_win(6, 0.0, 3.0).rank());
+        // Over another of its application's windows pinned to the view, too: the wearer
+        // pinned what they are reading, and the film is in the other.
+        let pinned = Source { kind: Kind::glass(DQuat::IDENTITY), ..win(7, 0.0, 1.1) };
+        assert!(marked.rank() > pinned.rank());
+        assert!(says_it_plays(Some("Songs - YouTube \u{1F50A}")));
+        assert!(!says_it_plays(Some("Songs - YouTube")));
+        assert!(!says_it_plays(None));
     }
 
     #[test]
@@ -702,7 +785,7 @@ mod tests {
         };
         assert!(game.rank() > big_steam.rank());
         // Alone, it is still the only claim there is.
-        assert!(steam.rank() > (i8::MIN, i32::MIN, false, OrderedSize(0.0), std::cmp::Reverse(usize::MAX)));
+        assert!(steam.rank() > (false, i8::MIN, i32::MIN, false, false, OrderedSize(0.0), std::cmp::Reverse(usize::MAX)));
         assert!(is_launcher(Some("steam")));
         assert!(is_launcher(Some("com.valvesoftware.Steam")));
         // The game itself, which Proton names by its app id, is not the store.
