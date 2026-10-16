@@ -1414,6 +1414,13 @@ void spatimesh_scroll(Engine *e, uint64_t id, double x, double y, double dx, dou
     ev.x = (int)lround(x / t->zoom);
     ev.y = (int)lround(y / t->zoom);
     ev.modifiers = flags_of(modifiers) | t->buttons;
+    /* A wheel turns where the pointer is: one told elsewhere moves there first, as a real
+     * pointer would have before its wheel turned. */
+    if (ev.x != t->mouse_x || ev.y != t->mouse_y) {
+        host->send_mouse_move_event(host, &ev, 0);
+        t->mouse_x = ev.x;
+        t->mouse_y = ev.y;
+    }
     /* SpatiMesh's down is Chromium's negative. */
     host->send_mouse_wheel_event(host, &ev, (int)lround(-dx), (int)lround(-dy));
     RELEASE(host);
