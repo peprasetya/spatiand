@@ -110,7 +110,7 @@ jobs:
         run: cd crates/spatiand-mac && MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --locked
       - name: The app
         run: cd mac && swift build
-      - name: SpatiMesh
-        run: MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p spatimesh --locked
+      - name: SpatiMesh, and its WebKit engine
+        run: MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p spatimesh -p spatimesh-webkit --locked
       - name: The shared crates' tests
         run: cargo test -p spatiand-shell -p spatiand-track -p spatiand-stream -p spatiand-mac-core --locked

@@ -4881,6 +4881,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatimesh-webkit"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "spatimesh",
+ "spatimesh-shim",
+]
+
+[[package]]
 name = "spatimesh-webkitgtk"
 version = "0.1.0"
 dependencies = [
