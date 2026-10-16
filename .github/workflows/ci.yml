@@ -54,6 +54,19 @@ jobs:
       # a display, which the step above has not got (and so skips them).
       - name: SpatiMesh's WebKitGTK engine, on a virtual display
         run: . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null; xvfb-run -a cargo test -p spatimesh-webkitgtk --locked
+      # The compositor itself, drawing in software, runs SpatiMesh and WebKitGTK as it would in
+      # the room; the window is photographed after each step and the photographs checked.
+      - name: SpatiMesh in the compositor, end to end
+        run: |
+          . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null
+          cargo build -p spatiand -p spatimesh -p spatimesh-webkitgtk --locked
+          python3 -I tools/spatimesh-e2e.py target/debug target/spatimesh-e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spatimesh-e2e
+          path: target/spatimesh-e2e
+          if-no-files-found: ignore
 
   android:
     runs-on: ubuntu-24.04
