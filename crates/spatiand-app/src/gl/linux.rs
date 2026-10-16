@@ -71,6 +71,14 @@ impl Shared {
             if export(gl.display.as_ptr(), image.as_ptr(), fds.as_mut_ptr(), strides.as_mut_ptr(), offsets.as_mut_ptr()) == 0 {
                 return fail("the texture's memory could not be exported");
             }
+            // A GL with no GPU (Mesa's software one) says yes and hands over no descriptor:
+            // its memory is not a dmabuf. The picture goes as shared memory instead.
+            if fds[..count as usize].iter().any(|&fd| fd < 0) {
+                for &fd in fds[..count as usize].iter().filter(|&&fd| fd >= 0) {
+                    libc::close(fd);
+                }
+                return fail("the texture's memory has no descriptor to hand over");
+            }
             let planes = (0..count as usize)
                 .map(|i| (OwnedFd::from_raw_fd(fds[i]), offsets[i] as u32, strides[i] as u32))
                 .collect();

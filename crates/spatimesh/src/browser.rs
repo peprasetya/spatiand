@@ -1708,7 +1708,7 @@ fn draw_start(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, profile: &P
     }
     let Some(start) = win.start.as_mut() else { return };
     if start.rows.is_empty() {
-        let hint = if profile.is_private() { "Type an address or a search above." } else { "Type an address or a search above. Pages you bookmark (Ctrl-D) are kept here, on every machine." };
+        let hint = if profile.is_private() { "Type an address or a search above." } else { "Type an address or a search above. Bookmarks (Ctrl-D) are kept here." };
         look::message(p, gl, all, hint, theme::INK_HINT);
         return;
     }

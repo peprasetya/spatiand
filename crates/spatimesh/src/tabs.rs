@@ -39,14 +39,15 @@ impl Tab {
         if self.crashed.is_some() {
             return "Stopped".to_string();
         }
+        if self.url.is_empty() || self.url == "about:blank" {
+            return "New tab".to_string();
+        }
         let title = self.title.trim();
         if !title.is_empty() {
             return title.to_string();
         }
-        match self.url.as_str() {
-            "" | "about:blank" => "New tab".to_string(),
-            url => url.split_once("://").map_or(url, |(_, rest)| rest).trim_end_matches('/').to_string(),
-        }
+        let url = self.url.as_str();
+        url.split_once("://").map_or(url, |(_, rest)| rest).trim_end_matches('/').to_string()
     }
 }
 
