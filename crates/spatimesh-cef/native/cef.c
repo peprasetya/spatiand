@@ -143,10 +143,21 @@ const char *spatimesh_cef_error(void) {
     return error_text;
 }
 
-/* The program's own arguments, which Chromium reads (and gives its own processes). */
-void spatimesh_cef_args(int argc, char **argv) {
+/* The program's arguments as the system laid them out, handed to constructors by glibc:
+ * Chromium reads them, and titles each of its processes by writing over them (what `ps` shows,
+ * --type=renderer and the like). */
+static void __attribute__((constructor)) keep_arguments(int argc, char **argv, char **envp) {
     argc_ = argc;
     argv_ = argv;
+}
+
+/* The arguments, where the system did not hand them over (not glibc): copies, which Chromium
+ * reads all the same. */
+void spatimesh_cef_args(int argc, char **argv) {
+    if (!argv_) {
+        argc_ = argc;
+        argv_ = argv;
+    }
 }
 
 /* ---- strings ------------------------------------------------------------------------------- */

@@ -282,8 +282,10 @@ fn lists_and_dialogs_are_ours_to_show() {
     host.quit();
 }
 
-/// Chromium's processes for pages under `pid`: this program again, with --type=renderer.
+/// Chromium's processes for pages under `pid`: this program again, with --type=renderer, forked
+/// from Chromium's zygote (whose title, without the program's own arguments, they may keep).
 fn renderers(pid: u32) -> Vec<u32> {
+    let command = |p: u32| String::from_utf8_lossy(&std::fs::read(format!("/proc/{p}/cmdline")).unwrap_or_default()).into_owned();
     let mut found = Vec::new();
     let mut parents = vec![pid];
     while let Some(parent) = parents.pop() {
@@ -296,8 +298,7 @@ fn renderers(pid: u32) -> Vec<u32> {
                 continue;
             }
             parents.push(p);
-            let command = std::fs::read(format!("/proc/{p}/cmdline")).unwrap_or_default();
-            if String::from_utf8_lossy(&command).contains("--type=renderer") {
+            if command(p).contains("--type=renderer") || command(parent).contains("--type=zygote") {
                 found.push(p);
             }
         }
