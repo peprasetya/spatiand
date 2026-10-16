@@ -176,6 +176,12 @@ pub fn glob_regex(glob: &str) -> String {
     out
 }
 
+/// A path with `*` for any run of characters (`web_accessible_resources`) as a regular
+/// expression's source.
+pub fn path_regex(path: &str) -> String {
+    format!("^{}$", path.split('*').map(escape).collect::<Vec<_>>().join(".*"))
+}
+
 /// Several regular expressions' sources as one that matches what any of them does; "" for none.
 pub fn any_regex(sources: &[String]) -> String {
     match sources {

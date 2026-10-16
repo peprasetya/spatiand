@@ -313,6 +313,10 @@ pub struct Runtime {
     ui_language: String,
     /// How the engines give extensions their addresses.
     addresses: Addresses,
+    /// For an engine that is given scripts for the start of every page (Android's WebView):
+    /// what its top frames' way in is called, and what calls through it say.
+    page_entry: String,
+    page_secret: String,
     profiles: HashMap<String, Loaded>,
     /// `storage.session`, and everything the private profile's extensions keep.
     session: Session,
@@ -475,6 +479,8 @@ impl Runtime {
             store,
             ui_language: ui_language(),
             addresses: Addresses::default(),
+            page_entry: format!("_{}", crate::store::new_id()),
+            page_secret: token(),
             profiles: HashMap::new(),
             session: Session::default(),
             contexts: HashMap::new(),
@@ -771,7 +777,11 @@ impl Runtime {
     /// What a profile's engine runs now.
     pub fn set_of(&self, profile: &str) -> ExtensionSet {
         let Some(loaded) = self.profiles.get(profile) else { return ExtensionSet::default() };
-        ExtensionSet { extensions: loaded.exts.iter().map(|e| self.spec(e, loaded.private)).collect() }
+        let mut set = ExtensionSet { extensions: loaded.exts.iter().map(|e| self.spec(e, loaded.private)).collect(), page_start: None };
+        if self.addresses == Addresses::Https {
+            set.page_start = Some(set::page_starts(&set, &self.page_secret, &self.page_entry));
+        }
+        set
     }
 
     fn send_set(&mut self, side: &mut dyn BrowserSide, profile: &str) {

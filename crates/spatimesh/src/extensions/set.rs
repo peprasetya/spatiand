@@ -25,6 +25,36 @@ const WORKER_SHIM: &str = "_spatimesh_worker.js";
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ExtensionSet {
     pub extensions: Vec<Spec>,
+    /// For an engine with no hooks of its own for extensions (Android's WebView,
+    /// [`Addresses::Https`]): what it puts at the start of every page, and serves by.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_start: Option<PageStart>,
+}
+
+/// What an engine with no hooks of its own for extensions is given besides the set: Android's
+/// WebView, which runs scripts it is given at the start of every frame's every page and serves
+/// what it intercepts, and nothing more (docs/spatimesh.md, "Extensions").
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PageStart {
+    /// For each extension, its id and the script for the start of every frame's every page
+    /// ([`page_start`]): one each, so that one that cannot run takes no other with it.
+    pub scripts: Vec<(String, String)>,
+    /// What the top frame's way in for an extension is called: this, then its id.
+    pub entry: String,
+    /// What a call through it says.
+    pub secret: String,
+    /// The page made for a background of scripts (or a service worker), at this path of the
+    /// extension's: its HTML is the spec's `background_html`.
+    pub background_page: String,
+    /// The worker shim that page loads first, at this path, and its code.
+    pub worker_path: String,
+    pub worker: String,
+    /// How the code that hands api.js something ([`deliver`]) begins, before the JSON it hands:
+    /// what such code is, for an engine that can reach a frame only with that JSON.
+    pub deliver_prefix: String,
+    /// Each extension's web-accessible resources as regular expressions' sources, by its id:
+    /// [(its paths, the pages they are for: "" for any)].
+    pub web_accessible: Vec<(String, Vec<(String, String)>)>,
 }
 
 /// How an engine gives extensions' pages and files their addresses: each extension's origin,
@@ -158,6 +188,76 @@ impl Spec {
     }
 }
 
+/// android.js: one extension in Android's WebView.
+const ANDROID_JS: &str = include_str!("android.js");
+
+/// The script Android's WebView runs at the start of every frame's every page for one
+/// extension: the API, the extension's configurations and its content scripts (each entry's
+/// files compiled in, as a function), and what puts them where they go (android.js). The top
+/// frame is called in by `window[entry]`, saying `secret`.
+pub fn page_start(spec: &Spec, secret: &str, entry: &str) -> String {
+    let quoted = |s: &str| serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into());
+    let mut scripts = Vec::new();
+    for script in &spec.scripts {
+        let run_at = match script.run_at.as_str() {
+            "document_start" => 0,
+            "document_end" => 1,
+            _ => 2,
+        };
+        // The files in one function, after an empty statement: a file's "use strict" is no
+        // directive for the others.
+        let files: Vec<&str> = script.js.iter().map(|(_, code)| code.as_str()).collect();
+        let params = if script.main_world { "" } else { "chrome,browser,globalThis" };
+        let js = if files.is_empty() { "null".to_string() } else { format!("function({params}){{;\n{}\n}}", files.join("\n;\n")) };
+        // Written with __MSG_name__, as in Chrome.
+        let css: Vec<String> =
+            script.css.iter().map(|(_, css)| super::locale::substitute(css, &|name| spec.messages.get(&name.to_lowercase()).cloned())).collect();
+        scripts.push(format!(
+            "{{runAt:{run_at},allFrames:{},mainWorld:{},include:{},globs:{},exclude:{},css:{},js:{js}}}",
+            script.all_frames,
+            script.main_world,
+            quoted(&script.include),
+            quoted(&script.globs),
+            quoted(&script.exclude),
+            quoted(&css.join("\n")),
+        ));
+    }
+    let ext = format!(
+        "{{id:{},origin:{},content:{},page:{},scripts:[{}]}}",
+        quoted(&spec.id),
+        quoted(&spec.origin),
+        spec.content_config,
+        spec.page_config,
+        scripts.join(",")
+    );
+    format!("({ANDROID_JS})((function(){{\n{API_JS}\nreturn __spatimeshExtBoot;}})(),{ext},{},{});", quoted(secret), quoted(entry))
+}
+
+/// What Android's WebView is given besides the set ([`PageStart`]).
+pub fn page_starts(set: &ExtensionSet, secret: &str, entry: &str) -> PageStart {
+    use super::pattern::{path_regex, Patterns};
+    PageStart {
+        scripts: set.extensions.iter().map(|spec| (spec.id.clone(), page_start(spec, secret, &format!("{entry}{}", spec.id)))).collect(),
+        entry: entry.to_string(),
+        secret: secret.to_string(),
+        background_page: BACKGROUND_PAGE.to_string(),
+        worker_path: WORKER_SHIM.to_string(),
+        worker: WORKER_JS.to_string(),
+        deliver_prefix: DELIVER_PREFIX.to_string(),
+        web_accessible: set
+            .extensions
+            .iter()
+            .map(|spec| {
+                let each = spec.web_accessible.iter().map(|(paths, pages)| {
+                    let paths: Vec<String> = paths.iter().map(|p| path_regex(p.trim_start_matches('/'))).collect();
+                    (super::pattern::any_regex(&paths), Patterns::new(pages).regex())
+                });
+                (spec.id.clone(), each.collect())
+            })
+            .collect(),
+    }
+}
+
 /// `bridge` is the engine's own: an expression that is a function taking a string and handing
 /// it to the window (see each engine). `config` is a [`Spec`]'s `content_config` or
 /// `page_config`.
@@ -177,9 +277,12 @@ pub fn boot_function(config: &str, closed: bool) -> String {
     format!("(function(__spatimeshPost){{\n{API_JS}\nreturn __spatimeshExtBoot({config},__spatimeshPost,{closed});}})")
 }
 
+/// How [`deliver`]'s code begins.
+const DELIVER_PREFIX: &str = "globalThis.__spatimeshExt&&globalThis.__spatimeshExt.deliver(";
+
 /// The code that hands `json` to the extension context it is run in.
 pub fn deliver(json: &str) -> String {
-    format!("globalThis.__spatimeshExt&&globalThis.__spatimeshExt.deliver({})", serde_json::to_string(json).unwrap_or_default())
+    format!("{DELIVER_PREFIX}{})", serde_json::to_string(json).unwrap_or_default())
 }
 
 /// The page made for a background of scripts, or of a service worker (run as a page, as
@@ -323,7 +426,9 @@ pub fn serve(set: &ExtensionSet, url: &str, initiator: Option<&str>) -> Result<R
     let spec = set.extensions.iter().find(|s| s.id == id).ok_or(404u16)?;
     let path = if path.is_empty() { "index.html".to_string() } else { path };
     if let Some(page) = initiator.filter(|p| !p.is_empty() && !p.starts_with(&spec.origin()) && !p.starts_with("about:")) {
-        if !web_accessible(spec, &path, page) {
+        // An Origin header is the page's origin alone: its patterns are for a path.
+        let page = if page.matches('/').count() == 2 { format!("{page}/") } else { page.to_string() };
+        if !web_accessible(spec, &path, &page) {
             return Err(403);
         }
     }
@@ -393,7 +498,7 @@ mod tests {
         std::fs::write(root.join("img/a.png"), [1, 2, 3]).unwrap();
         std::fs::write(root.join("s.css"), "a{color:__MSG_color__}").unwrap();
         std::fs::write(root.parent().unwrap().join("secret.txt"), "no").unwrap();
-        let set = ExtensionSet { extensions: vec![spec(&root)] };
+        let set = ExtensionSet { extensions: vec![spec(&root)], page_start: None };
         let base = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
         let r = serve(&set, &format!("{base}/popup.html?x=1#y"), None).unwrap();
         assert_eq!((r.mime, r.bytes.as_slice()), ("text/html", b"<p>hi</p>".as_slice()));
@@ -407,6 +512,8 @@ mod tests {
         assert!(serve(&set, &format!("{base}/img/a.png"), Some("https://www.example.com/")).is_ok());
         assert_eq!(serve(&set, &format!("{base}/img/a.png"), Some("https://other.org/")), Err(403));
         assert_eq!(serve(&set, &format!("{base}/popup.html"), Some("https://www.example.com/")), Err(403));
+        // An Origin header, the page's origin alone.
+        assert!(serve(&set, &format!("{base}/img/a.png"), Some("https://www.example.com")).is_ok());
         assert!(serve(&set, &format!("{base}/popup.html"), Some(&format!("{base}/options.html"))).is_ok(), "its own pages have everything");
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -37,24 +37,35 @@ import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebStorage;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
+import java.lang.reflect.InvocationHandler;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
+import org.json.JSONTokener;
 
 /**
  * SpatiMesh's engine on the Beam Pro: one profile's pages, in an Android process of its own
@@ -103,6 +114,13 @@ public class MeshEngine extends Service {
     private final Map<Long, Page> pages = new HashMap<>();
     private boolean started;
     private boolean isPrivate;
+    /** The profile's extensions, as the window last gave them (crates/spatimesh/src/extensions/
+     *  set.rs, with its `page_start` for this engine): read by WebView's own threads too, when a
+     *  page asks for one of their files. */
+    private volatile JSONObject extensions;
+    /** The WebView's support-library interfaces, once looked for: null, extensions do not run. */
+    private Boundary boundary;
+    private boolean boundaryLooked;
 
     /** One tab. */
     final class Page {
@@ -123,6 +141,15 @@ public class MeshEngine extends Service {
         int buttons;
         JsResult result;
         JsPromptResult prompt;
+        /** What the WebView's support library calls this view, the extensions' scripts on it, and
+         *  whether their listener is. */
+        InvocationHandler provider;
+        final List<Object> starts = new ArrayList<>();
+        boolean listening;
+        /** Frames other than the top one that the extensions' contexts speak from: by world ("" an
+         *  extension's own page), then api.js's number for the frame: the extension's id and the
+         *  frame's reply proxy. */
+        final Map<String, Map<Long, Object[]>> frames = new HashMap<>();
 
         Page(long tab) {
             this.tab = tab;
@@ -273,6 +300,14 @@ public class MeshEngine extends Service {
             open(m.tab, m.url, m.width, m.height, m.zoom);
             return;
         }
+        if (m.tag == Wire.EXTENSIONS) {
+            extensions(m.set);
+            return;
+        }
+        if (m.tag == Wire.RUN_SCRIPT) {
+            runScript(pages.get(m.tab), m);
+            return;
+        }
         Page page = pages.get(m.tab);
         if (page == null)
             return;
@@ -344,6 +379,12 @@ public class MeshEngine extends Service {
         page.presentation.show();
         page.view = view;
         page.dead = false;
+        // A new view: the extensions' scripts and listener on it, from its first page on.
+        page.provider = null;
+        page.starts.clear();
+        page.listening = false;
+        page.frames.clear();
+        applyExtensions(page);
     }
 
     private void close(Page page) {
@@ -645,6 +686,281 @@ public class MeshEngine extends Service {
         }
     }
 
+    // ---- extensions (docs/spatimesh.md, "Extensions") ----
+    //
+    // The window's runtime answers every extension API; here is only the bridge. Android's
+    // WebView gives a page no world but its own, and no hooks but what its support library has:
+    // each extension's script (made by the window: crates/spatimesh/src/extensions/android.js)
+    // at the start of every frame's every page, a listener (`spatimeshExt`) in every frame that
+    // its contexts speak to, the top frame reached by evaluateJavascript through the extension's
+    // way in, other frames by their listener's reply. Each extension is at
+    // https://<id>.spatimesh-extension.invalid, answered here and never by the network.
+
+    /** The profile's extensions, as the window gives them: on every tab's view from its next page on. */
+    private void extensions(String json) {
+        try {
+            extensions = new JSONObject(json);
+        } catch (JSONException e) {
+            Log.w(TAG, "the window's extensions could not be read", e);
+            return;
+        }
+        for (Page page : pages.values())
+            applyExtensions(page);
+    }
+
+    private JSONObject pageStart() {
+        JSONObject set = extensions;
+        return set == null ? null : set.optJSONObject("page_start");
+    }
+
+    /** The extensions' scripts on a tab's view in place of what was there, and the listener
+     *  their contexts speak to. */
+    private void applyExtensions(Page page) {
+        if (!live(page))
+            return;
+        if (!boundaryLooked) {
+            boundaryLooked = true;
+            boundary = Boundary.find();
+        }
+        if (boundary == null)
+            return;
+        try {
+            if (page.provider == null)
+                page.provider = boundary.provider(page.view);
+            for (Object script : page.starts)
+                boundary.remove(script);
+            page.starts.clear();
+            JSONObject start = pageStart();
+            JSONArray scripts = start == null ? null : start.optJSONArray("scripts");
+            if (scripts == null || scripts.length() == 0)
+                return;
+            // The listener first: each script takes it as it starts.
+            if (!page.listening) {
+                boundary.addListener(page.provider, "spatimeshExt", boundary.listener((text, top, reply) -> said(page, text, top, reply)));
+                page.listening = true;
+            }
+            for (int i = 0; i < scripts.length(); i++) {
+                JSONArray one = scripts.optJSONArray(i);
+                if (one != null)
+                    page.starts.add(boundary.addDocumentStart(page.provider, one.optString(1)));
+            }
+        } catch (Throwable e) {
+            Log.w(TAG, "the extensions could not be put on a tab", e);
+        }
+    }
+
+    /** An extension's context speaking (api.js's JSON): to the window; a frame other than the
+     *  top one kept, to be answered. */
+    private void said(Page page, String text, boolean top, Object reply) {
+        if (text == null)
+            return;
+        if (!top && reply != null) {
+            try {
+                JSONObject call = new JSONObject(text);
+                String ext = call.optString("e");
+                String world = "content".equals(call.optString("k")) ? "spatimesh-" + ext : "";
+                Map<Long, Object[]> of = page.frames.get(world);
+                if (of == null) {
+                    of = new HashMap<>();
+                    page.frames.put(world, of);
+                }
+                long frame = call.optLong("f");
+                if ("gone".equals(call.optString("c")))
+                    of.remove(frame);
+                else
+                    of.put(frame, new Object[] {ext, reply});
+            } catch (JSONException e) {
+                return;
+            }
+        }
+        send(Wire.extension(page.tab, text));
+    }
+
+    /** Code from the window: in the top frame, in the page's own world or through the
+     *  extension's way in (its API made first if asked); and, where it is a delivery, to the
+     *  other frames the extension's contexts speak from, as their message. Code itself reaches
+     *  no frame but the top one here. */
+    private void runScript(Page page, Wire.ToHost m) {
+        if (page == null || !live(page)) {
+            if (m.request != 0)
+                send(Wire.scriptResult(m.tab, m.request, false, "No such tab"));
+            return;
+        }
+        JSONObject start = pageStart();
+        String run = m.script;
+        if (!m.world.isEmpty()) {
+            if (start == null) {
+                if (m.request != 0)
+                    send(Wire.scriptResult(m.tab, m.request, false, "No extensions here"));
+                return;
+            }
+            String ext = m.world.startsWith("spatimesh-") ? m.world.substring("spatimesh-".length()) : m.world;
+            run = "(function(w){return typeof w==='function'?w(" + JSONObject.quote(start.optString("secret")) + ",function(globalThis){" + m.script
+                    + "\n}," + m.boot + "):null;})(window[" + JSONObject.quote(start.optString("entry") + ext) + "])";
+        }
+        long tab = page.tab, request = m.request;
+        page.view.evaluateJavascript(run, request == 0 ? null : value -> send(Wire.scriptResult(tab, request, true, value == null ? "null" : value)));
+        if (m.allFrames && start != null)
+            deliverToFrames(page, m.world, m.script, start.optString("deliver_prefix"));
+    }
+
+    private void deliverToFrames(Page page, String world, String code, String prefix) {
+        Map<Long, Object[]> of = page.frames.get(world);
+        if (boundary == null || of == null || of.isEmpty() || prefix.isEmpty() || !code.startsWith(prefix) || !code.endsWith(")"))
+            return;
+        Object payload;
+        try {
+            payload = new JSONTokener(code.substring(prefix.length(), code.length() - 1)).nextValue();
+        } catch (JSONException e) {
+            return;
+        }
+        if (!(payload instanceof String))
+            return;
+        for (Object[] frame : of.values()) {
+            try {
+                boundary.reply(frame[1], new JSONObject().put("e", frame[0]).put("d", payload).toString());
+            } catch (JSONException e) {
+                // A string and a string: never.
+            }
+        }
+    }
+
+    private static final String DOMAIN = ".spatimesh-extension.invalid";
+    private static final Pattern MESSAGE = Pattern.compile("__MSG_([A-Za-z0-9_@]+)__");
+
+    /** A file of an extension's, from its folder, for the page that asked (its Referer or
+     *  Origin): only what it made web accessible, to a page not its own. Called on WebView's own
+     *  threads; null for every address but the extensions'. */
+    WebResourceResponse serveExtension(WebResourceRequest request) {
+        android.net.Uri url = request.getUrl();
+        String host = url.getHost();
+        if (!"https".equals(url.getScheme()) || host == null || !host.toLowerCase(Locale.ROOT).endsWith(DOMAIN))
+            return null;
+        JSONObject set = extensions;
+        JSONObject start = set == null ? null : set.optJSONObject("page_start");
+        String id = host.substring(0, host.length() - DOMAIN.length()).toLowerCase(Locale.ROOT);
+        JSONArray all = set == null ? null : set.optJSONArray("extensions");
+        JSONObject spec = null;
+        for (int i = 0; all != null && i < all.length(); i++) {
+            JSONObject one = all.optJSONObject(i);
+            if (one != null && id.equals(one.optString("id")))
+                spec = one;
+        }
+        if (spec == null || start == null)
+            return refused(404, "Not Found");
+        String path = url.getPath() == null ? "" : url.getPath();
+        while (path.startsWith("/"))
+            path = path.substring(1);
+        if (path.isEmpty())
+            path = "index.html";
+        Map<String, String> headers = request.getRequestHeaders();
+        String initiator = headers == null ? null : headers.get("Referer");
+        if ((initiator == null || initiator.isEmpty()) && headers != null)
+            initiator = headers.get("Origin");
+        if (initiator != null && !initiator.isEmpty() && !initiator.startsWith(spec.optString("origin")) && !initiator.startsWith("about:")
+                && !initiator.equals("null")) {
+            // An Origin header is the page's origin alone: its patterns are for a path.
+            int scheme = initiator.indexOf("//");
+            if (scheme >= 0 && initiator.indexOf('/', scheme + 2) < 0)
+                initiator += "/";
+            if (!webAccessible(start, id, path, initiator))
+                return refused(403, "Forbidden");
+        }
+        String mime = mimeOf(path);
+        byte[] bytes;
+        if (path.equals(start.optString("background_page")) && !spec.isNull("background_html")) {
+            bytes = spec.optString("background_html").getBytes(StandardCharsets.UTF_8);
+        } else if (path.equals(start.optString("worker_path"))) {
+            bytes = start.optString("worker").getBytes(StandardCharsets.UTF_8);
+        } else {
+            try {
+                File root = new File(spec.optString("root")).getCanonicalFile();
+                File file = new File(root, path).getCanonicalFile();
+                if (!file.getPath().startsWith(root.getPath() + File.separator) || !file.isFile())
+                    return refused(404, "Not Found");
+                bytes = java.nio.file.Files.readAllBytes(file.toPath());
+            } catch (IOException e) {
+                return refused(404, "Not Found");
+            }
+            // Style sheets are written with __MSG_name__, as in Chrome.
+            if (mime.equals("text/css"))
+                bytes = localized(spec, new String(bytes, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
+        }
+        Map<String, String> out = new HashMap<>();
+        out.put("Access-Control-Allow-Origin", "*");
+        out.put("Cache-Control", "no-cache");
+        boolean text = mime.startsWith("text/") || mime.equals("application/json") || mime.equals("application/xml") || mime.equals("image/svg+xml");
+        return new WebResourceResponse(mime, text ? "utf-8" : null, 200, "OK", out, new ByteArrayInputStream(bytes));
+    }
+
+    private static WebResourceResponse refused(int status, String why) {
+        return new WebResourceResponse("text/plain", "utf-8", status, why, new HashMap<>(), new ByteArrayInputStream(new byte[0]));
+    }
+
+    /** Whether `page` may have `path` of extension `id`: its web-accessible resources, as the
+     *  window gives them (regular expressions of its paths, and of the pages they are for). */
+    private static boolean webAccessible(JSONObject start, String id, String path, String page) {
+        JSONArray all = start.optJSONArray("web_accessible");
+        for (int i = 0; all != null && i < all.length(); i++) {
+            JSONArray one = all.optJSONArray(i);
+            if (one == null || !id.equals(one.optString(0)))
+                continue;
+            JSONArray entries = one.optJSONArray(1);
+            for (int j = 0; entries != null && j < entries.length(); j++) {
+                JSONArray entry = entries.optJSONArray(j);
+                if (entry == null)
+                    continue;
+                String paths = entry.optString(0), pages = entry.optString(1);
+                if (!paths.isEmpty() && Pattern.compile(paths).matcher(path).find() && (pages.isEmpty() || Pattern.compile(pages).matcher(page).find()))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    /** `__MSG_name__` in a style sheet as the extension's message. */
+    private static String localized(JSONObject spec, String css) {
+        JSONObject messages = spec.optJSONObject("messages");
+        if (messages == null || messages.length() == 0)
+            return css;
+        Matcher m = MESSAGE.matcher(css);
+        StringBuffer out = new StringBuffer();
+        while (m.find())
+            m.appendReplacement(out, Matcher.quoteReplacement(messages.optString(m.group(1).toLowerCase(Locale.ROOT), "")));
+        m.appendTail(out);
+        return out.toString();
+    }
+
+    /** As crates/spatimesh/src/extensions/set.rs's mime_of. */
+    private static String mimeOf(String path) {
+        int dot = path.lastIndexOf('.');
+        switch (dot < 0 ? "" : path.substring(dot + 1).toLowerCase(Locale.ROOT)) {
+            case "html": case "htm": return "text/html";
+            case "js": case "mjs": return "text/javascript";
+            case "css": return "text/css";
+            case "json": return "application/json";
+            case "png": return "image/png";
+            case "jpg": case "jpeg": return "image/jpeg";
+            case "gif": return "image/gif";
+            case "svg": return "image/svg+xml";
+            case "webp": return "image/webp";
+            case "ico": return "image/x-icon";
+            case "woff": return "font/woff";
+            case "woff2": return "font/woff2";
+            case "ttf": return "font/ttf";
+            case "otf": return "font/otf";
+            case "wasm": return "application/wasm";
+            case "txt": return "text/plain";
+            case "xml": return "application/xml";
+            case "mp3": return "audio/mpeg";
+            case "ogg": case "oga": return "audio/ogg";
+            case "wav": return "audio/wav";
+            case "mp4": return "video/mp4";
+            case "webm": return "video/webm";
+            default: return "application/octet-stream";
+        }
+    }
+
     // ---- what pages do ----
 
     final class Client extends WebViewClient {
@@ -656,8 +972,15 @@ public class MeshEngine extends Service {
 
         @Override
         public void onPageStarted(WebView view, String url, Bitmap favicon) {
+            // A new page in the top frame: the frames of the one before are gone.
+            page.frames.clear();
             send(Wire.url(page.tab, url));
             send(Wire.progress(page.tab, 0.1f, true));
+        }
+
+        @Override
+        public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+            return serveExtension(request);
         }
 
         @Override
