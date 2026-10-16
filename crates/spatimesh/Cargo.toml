@@ -25,6 +25,8 @@ sha2 = "0.10"
 base64 = "0.22"
 url = "2"
 percent-encoding = "2"
+# Extensions' toolbar pictures.
+png = "0.17"
 
 [dev-dependencies]
 # What keeps Spatiand's applications' settings the same on every machine, for the test that

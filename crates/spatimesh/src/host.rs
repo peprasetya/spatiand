@@ -151,6 +151,11 @@ pub fn serve(mut engine: Box<dyn Engine>, mut link: Link) {
                 ToHost::Release { tab, buffer } => canvas.release(tab, buffer),
                 ToHost::Choose { tab, index } => engine.choose(tab, index),
                 ToHost::Answer { tab, accepted, text } => engine.answer(tab, accepted, text),
+                ToHost::Extensions { set } => match serde_json::from_str(&set) {
+                    Ok(set) => engine.set_extensions(&set),
+                    Err(e) => log::warn!("the profile's extensions could not be read: {e}"),
+                },
+                ToHost::RunScript { tab, world, all_frames, code, request, boot } => engine.run_script(tab, &world, all_frames, &code, request, boot),
             }
         }
         if link.is_closed() {

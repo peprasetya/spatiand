@@ -74,11 +74,12 @@ pub trait BrowserSide {
     fn page_size(&self, window: WindowKey) -> (u32, u32);
     /// What `profile`'s engine is to run.
     fn set_extensions(&mut self, profile: &str, set: &ExtensionSet);
-    /// Code run in a tab of `profile`'s engine: in `world` ("" for the page's own; an
-    /// extension's world has that extension's API set up first), in the tab's top frame or in
-    /// all its frames. If `request` is not 0, the top frame's result comes back to
-    /// [`Runtime::script_result`].
-    fn run_script(&mut self, profile: &str, tab: TabId, world: &str, all_frames: bool, code: &str, request: u64);
+    /// Code run in a tab of `profile`'s engine: in `world` ("" for the page's own;
+    /// `spatimesh-<id>` for an extension's, its API set up there first if `boot`), in the tab's
+    /// top frame or in all its frames. If `request` is not 0, the top frame's result comes back
+    /// to [`Runtime::script_result`].
+    #[allow(clippy::too_many_arguments)]
+    fn run_script(&mut self, profile: &str, tab: TabId, world: &str, all_frames: bool, code: &str, request: u64, boot: bool);
     /// A page of an extension's in `profile`'s engine that no window shows: a background page,
     /// an offscreen document.
     fn open_hidden(&mut self, profile: &str, tab: TabId, url: &str);
@@ -167,7 +168,7 @@ enum Request {
     /// Code run in the extension's world: each frame's result.
     Script(scripting::Pending),
     /// Code run in the page's world: the engine's result for the top frame.
-    MainWorld { caller: String, call: u64, legacy: bool },
+    MainWorld { caller: String, call: u64, legacy: bool, since: Instant },
 }
 
 /// A port between contexts: what its opener posts goes to every other end, and theirs to the
@@ -579,7 +580,7 @@ impl Runtime {
     pub fn engine_started(&mut self, side: &mut dyn BrowserSide, profile: &str) {
         self.engine_gone(profile);
         self.profiles.insert(profile.to_string(), Loaded { private: profile == PRIVATE, exts: Vec::new() });
-        self.refresh(side, profile, None);
+        self.refresh(side, profile, &[]);
     }
 
     /// A profile's engine has gone, and every context in it.
@@ -593,10 +594,10 @@ impl Runtime {
         self.profiles.remove(profile);
     }
 
-    /// What was installed, removed, turned on or off since, taken in (and `reload`, an
-    /// extension loaded again from its files): new ones start, gone ones stop, and the engine is
-    /// given the set again.
-    pub fn refresh(&mut self, side: &mut dyn BrowserSide, profile: &str, reload: Option<&str>) {
+    /// What was installed, removed, turned on or off since, taken in (and `reload`, extensions
+    /// loaded again from their files): new ones start, gone ones stop, and the engine is given
+    /// the set again.
+    pub fn refresh(&mut self, side: &mut dyn BrowserSide, profile: &str, reload: &[&str]) {
         if !self.profiles.contains_key(profile) {
             return;
         }
@@ -607,7 +608,7 @@ impl Runtime {
         for id in running {
             let keep = wanted.iter().find(|(_, i)| i.id == id);
             let same = keep.is_some_and(|(_, i)| self.ext(profile, &id).is_some_and(|e| e.installed == *i));
-            if !same || reload == Some(id.as_str()) {
+            if !same || reload.contains(&id.as_str()) {
                 self.stop(side, profile, &id);
             }
         }
@@ -624,7 +625,7 @@ impl Runtime {
                         // Installed or changed since last time: runtime.onInstalled says so.
                         match versions.get(&id) {
                             None => ext.reason = Some(("install".into(), None)),
-                            Some(v) if *v != ext.manifest.version || reload == Some(id.as_str()) => ext.reason = Some(("update".into(), Some(v.clone()))),
+                            Some(v) if *v != ext.manifest.version || reload.contains(&id.as_str()) => ext.reason = Some(("update".into(), Some(v.clone()))),
                             _ => {}
                         }
                         versions.insert(id.clone(), ext.manifest.version.clone());
@@ -648,6 +649,14 @@ impl Runtime {
             self.start_background(side, profile, &id);
         }
         side.actions_changed(profile);
+    }
+
+    /// Every extension of the profile loaded again from its files, as Chrome's developer mode
+    /// reloads one.
+    pub fn reload_all(&mut self, side: &mut dyn BrowserSide, profile: &str) {
+        let ids: Vec<String> = self.profiles.get(profile).map(|l| l.exts.iter().map(|e| e.installed.id.clone()).collect()).unwrap_or_default();
+        let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+        self.refresh(side, profile, &ids);
     }
 
     /// An extension stopped: its background and pages closed, its contexts forgotten.
@@ -903,7 +912,7 @@ impl Runtime {
             "runtime.openOptionsPage" => self.open_options(side, caller),
             "runtime.reload" => {
                 let (profile, id) = (caller.profile.clone(), caller.extension.clone());
-                self.refresh(side, &profile, Some(&id));
+                self.refresh(side, &profile, &[&id]);
                 Answer::Later
             }
             "runtime.getContexts" => ok(self.get_contexts(side, caller, &arg(0))),
@@ -929,7 +938,7 @@ impl Runtime {
     /// other than the top one; api.js takes only what is for it).
     fn send(&self, side: &mut dyn BrowserSide, context: &str, message: &Value) {
         let Some(c) = self.contexts.get(context) else { return };
-        side.run_script(&c.profile, c.tab, &c.world, c.frame != 0, &set::deliver(&message.to_string()), 0);
+        side.run_script(&c.profile, c.tab, &c.world, c.frame != 0, &set::deliver(&message.to_string()), 0, false);
     }
 
     fn event(&self, side: &mut dyn BrowserSide, context: &str, name: &str, args: Vec<Value>, question: Option<u64>) {
@@ -1572,7 +1581,7 @@ impl Runtime {
 
     /// The top frame's result of code run in the page's own world.
     pub fn script_result(&mut self, side: &mut dyn BrowserSide, request: u64, result: Result<String, String>) {
-        let Some(Request::MainWorld { caller, call, legacy }) = self.requests.remove(&request) else { return };
+        let Some(Request::MainWorld { caller, call, legacy, .. }) = self.requests.remove(&request) else { return };
         let value = match result {
             Ok(json) => serde_json::from_str::<Value>(&json).unwrap_or(Value::Null),
             Err(e) => return self.reply(side, &caller, call, Err(e)),
@@ -1597,12 +1606,25 @@ impl Runtime {
     /// Time passing: alarms going off, answers waited for too long given up.
     pub fn tick(&mut self, side: &mut dyn BrowserSide) {
         let now = Instant::now();
-        // Scripts whose frames have all had their chance.
-        let due: Vec<u64> = self.requests.iter().filter(|(_, r)| matches!(r, Request::Script(p) if p.due(now))).map(|(q, _)| *q).collect();
+        // Scripts whose frames have all had their chance, or whose engine never answered.
+        let due: Vec<u64> = self
+            .requests
+            .iter()
+            .filter(|(_, r)| match r {
+                Request::Script(p) => p.due(now),
+                Request::MainWorld { since, .. } => now.duration_since(*since) > scripting::SCRIPT_WAIT,
+                Request::Message { .. } => false,
+            })
+            .map(|(q, _)| *q)
+            .collect();
         for q in due {
-            if let Some(Request::Script(p)) = self.requests.remove(&q) {
-                let (context, call, answer) = p.answer();
-                self.reply(side, &context, call, answer);
+            match self.requests.remove(&q) {
+                Some(Request::Script(p)) => {
+                    let (context, call, answer) = p.answer();
+                    self.reply(side, &context, call, answer);
+                }
+                Some(Request::MainWorld { caller, call, .. }) => self.reply(side, &caller, call, Err("The script did not finish.".into())),
+                _ => {}
             }
         }
         // Calls that waited for a background that never loaded.
@@ -1630,8 +1652,10 @@ impl Runtime {
         let mut next: Option<Instant> = apis::next_alarm(self);
         let mut sooner = |t: Instant| next = Some(next.map_or(t, |n| n.min(t)));
         for r in self.requests.values() {
-            if let Request::Script(p) = r {
-                sooner(p.deadline());
+            match r {
+                Request::Script(p) => sooner(p.deadline()),
+                Request::MainWorld { since, .. } => sooner(*since + scripting::SCRIPT_WAIT),
+                Request::Message { .. } => {}
             }
         }
         for loaded in self.profiles.values() {

@@ -176,6 +176,12 @@ pub enum Happened {
     Choose { tab: TabId, choices: Vec<Choice>, at: Rect },
     /// A script asks something; the page waits for [`Engine::answer`].
     Dialog { tab: TabId, kind: DialogKind, message: String, text: String },
+    /// A call from an extension context in the tab, as its API said it (JSON): for the
+    /// window's extension runtime (docs/spatimesh.md, "Extensions").
+    Extension { tab: TabId, json: String },
+    /// What code run with [`Engine::run_script`] gave in the tab's top frame: its value as
+    /// JSON, or why it failed.
+    ScriptResult { tab: TabId, request: u64, result: Result<String, String> },
 }
 
 impl Happened {
@@ -192,7 +198,9 @@ impl Happened {
             | Happened::Crashed { tab, .. }
             | Happened::Failed { tab, .. }
             | Happened::Choose { tab, .. }
-            | Happened::Dialog { tab, .. } => *tab,
+            | Happened::Dialog { tab, .. }
+            | Happened::Extension { tab, .. }
+            | Happened::ScriptResult { tab, .. } => *tab,
             Happened::OpenTab { opener, .. } => *opener,
         }
     }
@@ -236,6 +244,14 @@ pub trait Engine {
     fn pump(&mut self, wait: Duration, canvas: &mut dyn Canvas) -> Vec<Happened>;
     /// The window's socket: a reason for [`Engine::pump`] to stop waiting.
     fn wake_on(&mut self, _fd: std::os::fd::RawFd) {}
+    /// The profile's extensions: which content scripts go into which frames, and what
+    /// `chrome-extension://` and `moz-extension://` serve ([`crate::extensions::set::serve`]).
+    /// An engine without extensions yet ignores it.
+    fn set_extensions(&mut self, _set: &crate::extensions::set::ExtensionSet) {}
+    /// Code run in a tab: in `world` ("" for the page's own; `spatimesh-<id>` for an
+    /// extension's, its API set up there first if `boot`), in the top frame or in every frame.
+    /// If `request` is not 0, the top frame's result is told as [`Happened::ScriptResult`].
+    fn run_script(&mut self, _tab: TabId, _world: &str, _all_frames: bool, _code: &str, _request: u64, _boot: bool) {}
 }
 
 /// What a profile is to the engine that holds it.

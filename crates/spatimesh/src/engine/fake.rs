@@ -169,6 +169,12 @@ impl Engine for Fake {
 
     fn answer(&mut self, _tab: TabId, _accepted: bool, _text: Option<String>) {}
 
+    fn run_script(&mut self, tab: TabId, _world: &str, _all_frames: bool, _code: &str, request: u64, _boot: bool) {
+        if request != 0 && self.pages.contains_key(&tab) {
+            self.happened.push(Happened::ScriptResult { tab, request, result: Err("pages here run no scripts".into()) });
+        }
+    }
+
     fn pump(&mut self, wait: Duration, canvas: &mut dyn Canvas) -> Vec<Happened> {
         let mut drawn = Vec::new();
         for (tab, page) in self.pages.iter_mut().filter(|(_, p)| p.dirty) {

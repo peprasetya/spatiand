@@ -37,6 +37,10 @@ pub enum ToHost {
     Choose { tab: TabId, index: Option<usize> },
     Answer { tab: TabId, accepted: bool, text: Option<String> },
     Quit,
+    /// The profile's extensions, as [`crate::extensions::set::ExtensionSet`]'s JSON.
+    Extensions { set: String },
+    /// Code to run in a tab ([`crate::engine::Engine::run_script`]).
+    RunScript { tab: TabId, world: String, all_frames: bool, code: String, request: u64, boot: bool },
 }
 
 /// From an engine host to its window.
@@ -328,6 +332,14 @@ impl ToHost {
                 b.u64(*tab).bool(*accepted).bool(text.is_some()).str(text.as_deref().unwrap_or(""));
                 19
             }
+            ToHost::Extensions { set } => {
+                b.str(set);
+                20
+            }
+            ToHost::RunScript { tab, world, all_frames, code, request, boot } => {
+                b.u64(*tab).str(world).bool(*all_frames).str(code).u64(*request).bool(*boot);
+                21
+            }
         };
         frame(tag, b)
     }
@@ -367,6 +379,8 @@ impl ToHost {
                 let (tab, accepted, has_text, text) = (i.u64()?, i.bool()?, i.bool()?, i.str()?);
                 ToHost::Answer { tab, accepted, text: has_text.then_some(text) }
             }
+            20 => ToHost::Extensions { set: i.str()? },
+            21 => ToHost::RunScript { tab: i.u64()?, world: i.str()?, all_frames: i.bool()?, code: i.str()?, request: i.u64()?, boot: i.bool()? },
             _ => return None,
         })
     }
@@ -453,6 +467,18 @@ impl FromHost {
                     b.u64(*tab).u8(k).str(message).str(text);
                     22
                 }
+                Happened::Extension { tab, json } => {
+                    b.u64(*tab).str(json);
+                    23
+                }
+                Happened::ScriptResult { tab, request, result } => {
+                    b.u64(*tab).u64(*request);
+                    match result {
+                        Ok(v) => b.bool(true).str(v),
+                        Err(e) => b.bool(false).str(e),
+                    };
+                    24
+                }
             },
         };
         frame(tag, b)
@@ -502,6 +528,11 @@ impl FromHost {
                     _ => DialogKind::Alert,
                 };
                 FromHost::Happened(Happened::Dialog { tab, kind, message, text })
+            }
+            23 => FromHost::Happened(Happened::Extension { tab: i.u64()?, json: i.str()? }),
+            24 => {
+                let (tab, request, ok, text) = (i.u64()?, i.u64()?, i.bool()?, i.str()?);
+                FromHost::Happened(Happened::ScriptResult { tab, request, result: if ok { Ok(text) } else { Err(text) } })
             }
             _ => return None,
         })
@@ -976,6 +1007,8 @@ mod tests {
             ToHost::Answer { tab: 7, accepted: true, text: Some("typed".into()) },
             ToHost::Answer { tab: 7, accepted: false, text: None },
             ToHost::Quit,
+            ToHost::Extensions { set: "{\"extensions\":[]}".into() },
+            ToHost::RunScript { tab: 8, world: "spatimesh-abc".into(), all_frames: true, code: "1+1".into(), request: 42, boot: true },
         ];
         for message in to_host {
             let bytes = message.encode();
@@ -993,6 +1026,9 @@ mod tests {
                 at: Rect { x: 10, y: 20, width: 100, height: 24 },
             }),
             FromHost::Happened(Happened::Dialog { tab: 3, kind: DialogKind::Prompt, message: "Name?".into(), text: "default".into() }),
+            FromHost::Happened(Happened::Extension { tab: 4, json: "{\"c\":\"ready\"}".into() }),
+            FromHost::Happened(Happened::ScriptResult { tab: 4, request: 42, result: Ok("2".into()) }),
+            FromHost::Happened(Happened::ScriptResult { tab: 4, request: 43, result: Err("no".into()) }),
         ];
         for message in from_host {
             let bytes = message.encode();

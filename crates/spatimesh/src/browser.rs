@@ -6,7 +6,7 @@ use std::io::Read;
 use std::os::unix::net::UnixListener;
 use std::time::{Duration, Instant};
 
-use spatiand_app::ui::{draw_icon, look, theme, Field, Icon, Input, List, Painter, Rect, Row};
+use spatiand_app::ui::{draw_icon, look, theme, Field, Icon, Input, List, Painter, Rect, Row, Texture};
 use spatiand_app::{App, Button as PointerButton, Event, Key, Modifiers, WindowId};
 use spatimesh::address::{self, shown};
 use spatimesh::bookmarks::{self, At, Bookmark};
@@ -20,6 +20,11 @@ use spatimesh::wire::{FromHost, Pictures, ToHost};
 use crate::engines::{Host, Program};
 use crate::page::PageTexture;
 
+mod ext;
+
+use ext::{ExtPopup, Told};
+use spatimesh::extensions::runtime::Runtime;
+
 pub const WINDOW: (u32, u32) = (1600, 1000);
 const TAB_TOP: f32 = 10.0;
 const TAB_H: f32 = 46.0;
@@ -27,6 +32,8 @@ const TOOL_TOP: f32 = 62.0;
 const TOOL_H: f32 = 52.0;
 const PAGE_TOP: f32 = 122.0;
 const MARGIN: f32 = 10.0;
+/// How long something said in a toast stays.
+const TOAST: Duration = Duration::from_secs(6);
 
 /// What is under the pointer.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -42,6 +49,10 @@ enum Hover {
     Star,
     Menu,
     Page,
+    /// An extension's button in the toolbar, by its place there.
+    Action(usize),
+    /// An extension's popup.
+    ExtPopup,
 }
 
 /// A tab being dragged by its place on the bar.
@@ -68,7 +79,21 @@ enum Action {
     OpenProfile(String),
     NewProfile,
     Open(String),
+    /// An extension turned on or off.
+    ToggleExtension(String),
+    LoadExtension,
+    ReloadExtensions,
+    RemoveExtension,
     Nothing,
+}
+
+/// A question of SpatiMesh's own, in the question pane: what its answer is for.
+#[derive(Debug, Clone, PartialEq)]
+enum Own {
+    /// Where an extension to install is, for this profile.
+    LoadExtension(String),
+    /// Which extension of this profile's to remove.
+    RemoveExtension(String),
 }
 
 /// A list over the page: the menu, a `<select>`'s choices, the bookmarks of the start page.
@@ -88,6 +113,8 @@ struct Question {
     field: Field,
     ok: Rect,
     cancel: Rect,
+    /// SpatiMesh's own question, not the page's.
+    own: Option<Own>,
 }
 
 /// The window process's view of a tab: its picture, and what it waits on.
@@ -125,6 +152,10 @@ struct Win {
     in_page: bool,
     popup: Option<Popup>,
     start: Option<Popup>,
+    /// The extensions' buttons in the toolbar, as last drawn.
+    action_buttons: Vec<(String, Rect)>,
+    /// The tab the extensions were last told is in front.
+    told_active: Option<TabId>,
 }
 
 pub struct Browser {
@@ -145,6 +176,23 @@ pub struct Browser {
     listener: Option<UnixListener>,
     checked: Instant,
     seen_changes: Option<std::time::SystemTime>,
+    /// Extensions (docs/spatimesh.md, "Extensions"): out of its place while it works.
+    extensions: Option<Runtime>,
+    /// What the extensions are yet to be told.
+    told: Vec<Told>,
+    /// Extensions' pages no window shows as a tab (backgrounds, offscreen documents, popups):
+    /// their profile.
+    hidden: HashMap<TabId, String>,
+    /// The extension popup over each window.
+    ext_popups: HashMap<WindowKey, ExtPopup>,
+    /// The window the wearer used last.
+    last_focused: Option<WindowKey>,
+    /// Something said for a few seconds: a notification, an extension installed.
+    toast: Option<(String, Instant)>,
+    /// The extensions' buttons' pictures.
+    icons: HashMap<(String, String), Option<PageTexture>>,
+    /// Which buffer holds each tab's newest picture.
+    latest_buffer: HashMap<TabId, u8>,
 }
 
 fn command(m: Modifiers) -> bool {
@@ -176,7 +224,16 @@ impl Browser {
             listener,
             checked: Instant::now(),
             seen_changes: None,
+            extensions: None,
+            told: Vec::new(),
+            hidden: HashMap::new(),
+            ext_popups: HashMap::new(),
+            last_focused: None,
+            toast: None,
+            icons: HashMap::new(),
+            latest_buffer: HashMap::new(),
         };
+        browser.extensions = Some(Runtime::new(browser.store.clone()));
         if let Some(l) = browser.listener.as_ref() {
             use std::os::fd::AsRawFd;
             let fd = l.as_raw_fd();
@@ -217,6 +274,7 @@ impl Browser {
                 Ok(host) => {
                     self.app.watch(host.link.raw_fd());
                     self.hosts.insert(profile.to_string(), host);
+                    self.extensions_to_new_engine(profile);
                 }
                 Err(e) => {
                     log::error!("no engine for {profile}: {e}");
@@ -228,7 +286,8 @@ impl Browser {
     }
 
     fn tell(&mut self, tab: TabId, message: ToHost) {
-        let Some(profile) = self.tabs.tab(tab).map(|t| t.profile.clone()) else { return };
+        let profile = self.tabs.tab(tab).map(|t| t.profile.clone()).or_else(|| self.hidden.get(&tab).cloned());
+        let Some(profile) = profile else { return };
         if let Some(host) = self.hosts.get_mut(&profile) {
             host.send(&message);
         }
@@ -272,10 +331,15 @@ impl Browser {
         let mut wanted: Vec<(TabId, bool)> = Vec::new();
         for win in &self.wins {
             let Some(window) = self.tabs.window(win.key) else { continue };
+            let ext_popup = self.ext_popups.get(&win.key).map(|p| p.tab);
             for &tab in &window.tabs {
                 let active = window.active_tab() == Some(tab);
-                let overlay = win.popup.is_some() || self.views.get(&tab).is_some_and(|v| v.question.is_some());
+                let overlay = win.popup.is_some() || ext_popup.is_some() || self.views.get(&tab).is_some_and(|v| v.question.is_some());
                 wanted.push((tab, active && win.focused && !win.editing && !overlay));
+            }
+            // An extension's popup has the keyboard while it is open.
+            if let Some(tab) = ext_popup {
+                wanted.push((tab, win.focused && win.popup.is_none()));
             }
         }
         for (tab, focused) in wanted {
@@ -308,6 +372,7 @@ impl Browser {
     fn engine_gone(&mut self, profile: &str) {
         let Some(host) = self.hosts.remove(profile) else { return };
         self.app.unwatch(host.link.raw_fd());
+        self.extensions_engine_gone(profile);
         let why = match (&host.failed, &host.engine) {
             (Some(why), _) => format!("The engine for this profile's pages could not be started: {why}"),
             (None, Some(e)) if e.starts_with("failed") => e.clone(),
@@ -348,11 +413,24 @@ impl Browser {
             },
             FromHost::Picture { tab, buffer, changed } => {
                 self.picture(profile, tab, buffer, &changed);
+                self.latest_buffer.insert(tab, buffer);
                 if let Some(host) = self.hosts.get_mut(profile) {
                     host.send(&ToHost::Release { tab, buffer });
                 }
-                self.dirty_tab(tab);
+                if self.hidden.contains_key(&tab) {
+                    self.dirty_popup(tab);
+                } else {
+                    self.dirty_tab(tab);
+                }
             }
+            FromHost::Happened(Happened::Extension { tab, json }) => {
+                let profile = profile.to_string();
+                self.with_extensions(|rt, b| rt.call(b, &profile, tab, &json));
+            }
+            FromHost::Happened(Happened::ScriptResult { request, result, .. }) => {
+                self.with_extensions(|rt, b| rt.script_result(b, request, result));
+            }
+            FromHost::Happened(happened) if self.hidden.contains_key(&happened.tab()) => self.hidden_happened(profile, happened),
             FromHost::Happened(happened) => self.happened(happened),
         }
     }
@@ -397,6 +475,10 @@ impl Browser {
     fn happened(&mut self, happened: Happened) {
         let tab = happened.tab();
         let engine = self.settings.search_engine();
+        if let Some(t) = self.tabs.tab(tab) {
+            let told = ext::told_of(&happened, t.loading, &t.url);
+            self.told.extend(told);
+        }
         match happened {
             Happened::Title { tab, title } => {
                 if let Some(t) = self.tabs.tab_mut(tab) {
@@ -444,6 +526,7 @@ impl Browser {
                 if let Some(window) = self.tabs.window_of(opener) {
                     if let Some(new) = self.tabs.new_tab(window, &url, Place::AfterActive, !background, Some(opener)) {
                         self.open_in_engine(new);
+                        self.told.push(Told::TabCreated(new));
                         self.after_tab_change(window);
                     }
                 }
@@ -469,10 +552,12 @@ impl Browser {
                 let mut field = Field::default();
                 field.set(text);
                 field.focused = kind == DialogKind::Prompt;
-                self.views.entry(tab).or_default().question = Some(Question { kind, message, field, ok: Rect::default(), cancel: Rect::default() });
+                self.views.entry(tab).or_default().question = Some(Question { kind, message, field, ok: Rect::default(), cancel: Rect::default(), own: None });
                 self.dirty_tab(tab);
                 self.focus_pages();
             }
+            // Taken by `heard` before they come here.
+            Happened::Extension { .. } | Happened::ScriptResult { .. } => {}
         }
         let _ = tab;
     }
@@ -485,7 +570,7 @@ impl Browser {
 
     // ---- windows and tabs -------------------------------------------------------------------
 
-    pub fn new_window(&mut self, profile: &str, url: Option<&str>) {
+    pub fn new_window(&mut self, profile: &str, url: Option<&str>) -> WindowKey {
         let key = self.tabs.new_window(profile);
         let title = if profile == PRIVATE { "SpatiMesh (Private)" } else { "SpatiMesh" };
         let id = self.app.open(title, WINDOW);
@@ -510,22 +595,28 @@ impl Browser {
             in_page: false,
             popup: None,
             start: None,
+            action_buttons: Vec::new(),
+            told_active: None,
         };
         win.address.hint = "Search or type an address".into();
         win.page = page_rect(WINDOW);
         self.wins.push(win);
+        self.told.push(Told::WindowCreated(key));
         let home = self.settings.home.clone();
         let url = url.unwrap_or(&home).to_string();
         if let Some(tab) = self.tabs.new_tab(key, &url, Place::End, true, None) {
             self.open_in_engine(tab);
+            self.told.push(Told::TabCreated(tab));
         }
         self.after_tab_change(key);
+        key
     }
 
     fn new_tab(&mut self, w: usize, url: &str) {
         let key = self.wins[w].key;
         if let Some(tab) = self.tabs.new_tab(key, url, Place::AfterActive, true, None) {
             self.open_in_engine(tab);
+            self.told.push(Told::TabCreated(tab));
         }
         self.after_tab_change(key);
     }
@@ -557,6 +648,14 @@ impl Browser {
             if self.views.get(&tab).is_some_and(|v| v.choices.is_some()) {
                 self.show_choices(tab);
             }
+            if self.wins[w].told_active != Some(tab) {
+                self.wins[w].told_active = Some(tab);
+                self.told.push(Told::TabActivated(tab));
+            }
+        }
+        // Another tab in front: the extension popup over the window was for the one before.
+        if self.ext_popups.contains_key(&key) && self.wins[w].told_active != self.tabs.active(key) {
+            self.close_ext_popup(key);
         }
         self.focus_pages();
     }
@@ -564,6 +663,7 @@ impl Browser {
     fn close_tab(&mut self, tab: TabId) {
         self.tell(tab, ToHost::Close { tab });
         let profile = self.tabs.tab(tab).map(|t| t.profile.clone());
+        let window = self.tabs.window_of(tab);
         if let Some(view) = self.views.remove(&tab) {
             if let (Some(texture), Ok(gl)) = (view.texture, self.app.gl()) {
                 texture.destroy(gl);
@@ -575,6 +675,13 @@ impl Browser {
             }
         }
         if let Some(closed) = self.tabs.close_tab(tab) {
+            if let (Some(profile), Some(window)) = (profile.clone(), window) {
+                self.told.push(Told::TabRemoved { profile: profile.clone(), tab, window, closing: closed.window_closed });
+                if closed.window_closed {
+                    self.ext_popups.remove(&window);
+                    self.told.push(Told::WindowRemoved { profile, window });
+                }
+            }
             if closed.window_closed {
                 if let Some(w) = self.win_of_key(closed.window) {
                     let win = self.wins.remove(w);
@@ -595,6 +702,7 @@ impl Browser {
         if !self.tabs.tabs().any(|t| t.profile == profile) {
             if let Some(host) = self.hosts.remove(profile) {
                 self.app.unwatch(host.link.raw_fd());
+                self.extensions_engine_gone(profile);
             }
         }
     }
@@ -602,6 +710,19 @@ impl Browser {
     fn close_window(&mut self, w: usize) {
         let win = self.wins.remove(w);
         let profile = self.tabs.window(win.key).map(|x| x.profile.clone());
+        if let Some(popup) = self.ext_popups.remove(&win.key) {
+            self.with_extensions(|rt, b| rt.popup_closed(b, popup.tab));
+            self.hidden.remove(&popup.tab);
+            self.tell_profile(Some(&popup.profile), ToHost::Close { tab: popup.tab });
+            self.forget_view(popup.tab);
+        }
+        let closing = self.tabs.window(win.key).map(|x| x.tabs.clone()).unwrap_or_default();
+        if let Some(profile) = profile.clone() {
+            for &tab in &closing {
+                self.told.push(Told::TabRemoved { profile: profile.clone(), tab, window: win.key, closing: true });
+            }
+            self.told.push(Told::WindowRemoved { profile, window: win.key });
+        }
         for tab in self.tabs.close_window(win.key) {
             self.tell_profile(profile.as_deref(), ToHost::Close { tab });
             if let Some(view) = self.views.remove(&tab) {
@@ -624,8 +745,13 @@ impl Browser {
 
     fn move_tab(&mut self, tab: TabId, to: WindowKey, place: Option<usize>) {
         let from = self.tabs.window_of(tab);
+        let from_index = from.and_then(|k| self.tabs.window(k)).and_then(|x| x.tabs.iter().position(|&t| t == tab)).unwrap_or(0);
         match self.tabs.move_tab(tab, to, place) {
             Ok(emptied) => {
+                let to_index = self.tabs.window(to).and_then(|x| x.tabs.iter().position(|&t| t == tab)).unwrap_or(0);
+                if let Some(from) = from {
+                    self.told.push(Told::TabMoved { tab, from: (from, from_index), to: (to, to_index) });
+                }
                 if emptied {
                     if let Some(w) = from.and_then(|k| self.win_of_key(k)) {
                         let win = self.wins.remove(w);
@@ -671,9 +797,12 @@ impl Browser {
             in_page: false,
             popup: None,
             start: None,
+            action_buttons: Vec::new(),
+            told_active: None,
         };
         win.address.hint = "Search or type an address".into();
         self.wins.push(win);
+        self.told.push(Told::WindowCreated(key));
         self.move_tab(tab, key, None);
     }
 
@@ -768,8 +897,12 @@ impl Browser {
         self.wins[w].dirty = true;
         match action {
             Action::NewTab => self.new_tab(w, "about:blank"),
-            Action::NewWindow => self.new_window(&profile, None),
-            Action::NewPrivateWindow => self.new_window(PRIVATE, None),
+            Action::NewWindow => {
+                self.new_window(&profile, None);
+            }
+            Action::NewPrivateWindow => {
+                self.new_window(PRIVATE, None);
+            }
             Action::Bookmark => self.toggle_bookmark(w),
             Action::ZoomIn => self.zoom(Some(1.1)),
             Action::ZoomOut => self.zoom(Some(1.0 / 1.1)),
@@ -778,7 +911,9 @@ impl Browser {
                 self.settings.search = name;
                 let _ = self.settings.save(&self.store);
             }
-            Action::OpenProfile(id) => self.new_window(&id, None),
+            Action::OpenProfile(id) => {
+                self.new_window(&id, None);
+            }
             Action::NewProfile => {
                 let name = format!("Profile {}", self.profiles.len() + 1);
                 if let Ok(new) = profiles::add(&self.store, &name) {
@@ -787,9 +922,65 @@ impl Browser {
                 }
             }
             Action::Open(url) => self.go(w, &url),
+            Action::ToggleExtension(id) => {
+                let now = spatimesh::extensions::install::list(&self.store, &profile).into_iter().find(|i| i.id == id).map(|i| !i.enabled);
+                if let Some(on) = now {
+                    if let Err(e) = spatimesh::extensions::install::set(&self.store, &profile, &id, Some(on), None) {
+                        self.say(format!("Not changed: {e}"));
+                    }
+                    self.with_extensions(|rt, b| rt.refresh(b, &profile, &[]));
+                }
+            }
+            Action::LoadExtension => self.ask_own(
+                w,
+                Own::LoadExtension(profile),
+                "Where is the extension? A folder (loaded where it is, as in developer mode), or a .zip, .crx or .xpi file:",
+            ),
+            Action::ReloadExtensions => {
+                self.with_extensions(|rt, b| rt.reload_all(b, &profile));
+                self.say("The extensions are loaded again from their files".into());
+            }
+            Action::RemoveExtension => self.ask_own(w, Own::RemoveExtension(profile), "Which extension is to go? Its name:"),
             Action::Nothing => {}
         }
         self.focus_pages();
+    }
+
+    /// A question of SpatiMesh's own, in the question pane over the tab in front.
+    fn ask_own(&mut self, w: usize, own: Own, message: &str) {
+        let Some(tab) = self.tabs.active(self.wins[w].key) else { return };
+        let mut field = Field::default();
+        field.focused = true;
+        let question = Question { kind: DialogKind::Prompt, message: message.to_string(), field, ok: Rect::default(), cancel: Rect::default(), own: Some(own) };
+        self.views.entry(tab).or_default().question = Some(question);
+        self.wins[w].dirty = true;
+        self.focus_pages();
+    }
+
+    fn answered_own(&mut self, own: Own, text: String) {
+        match own {
+            Own::LoadExtension(profile) => match self.install_extension(&profile, &text) {
+                Ok(name) => self.say(format!("{name} is installed")),
+                Err(e) => self.say(format!("Not installed: {e}")),
+            },
+            Own::RemoveExtension(profile) => {
+                let wanted = text.to_lowercase();
+                let found = spatimesh::extensions::install::list(&self.store, &profile).into_iter().find(|i| i.id == text || ext::extension_name(i).to_lowercase() == wanted);
+                match found {
+                    Some(installed) => {
+                        let name = ext::extension_name(&installed);
+                        match spatimesh::extensions::install::uninstall(&self.store, &profile, &installed.id) {
+                            Ok(()) => {
+                                self.with_extensions(|rt, b| rt.refresh(b, &profile, &[]));
+                                self.say(format!("{name} is removed"));
+                            }
+                            Err(e) => self.say(format!("Not removed: {e}")),
+                        }
+                    }
+                    None => self.say(format!("No extension is called {text}")),
+                }
+            }
+        }
     }
 
     fn menu(&mut self, w: usize) {
@@ -830,6 +1021,15 @@ impl Browser {
         }
         rows.push(Row::new("New profile").icon(Icon::Plus));
         actions.push(Action::NewProfile);
+        let extension_rows = ext::menu_rows(&self.store, &profile);
+        if !extension_rows.is_empty() {
+            rows.push(Row::heading("Extensions"));
+            actions.push(Action::Nothing);
+            for (label, detail, action) in extension_rows {
+                rows.push(Row::with(label, detail));
+                actions.push(action);
+            }
+        }
         let engine = self.hosts.get(&profile).and_then(|h| h.engine.clone()).unwrap_or_else(|| "starting".into());
         rows.push(Row::with("Pages by", engine));
         actions.push(Action::Nothing);
@@ -908,6 +1108,14 @@ impl Browser {
     fn answer(&mut self, w: usize, accepted: bool) {
         let Some(tab) = self.tabs.active(self.wins[w].key) else { return };
         let Some(question) = self.views.get_mut(&tab).and_then(|v| v.question.take()) else { return };
+        if let Some(own) = question.own {
+            if accepted {
+                self.answered_own(own, question.field.text.trim().to_string());
+            }
+            self.wins[w].dirty = true;
+            self.focus_pages();
+            return;
+        }
         let text = (question.kind == DialogKind::Prompt && accepted).then(|| question.field.text.clone());
         self.tell(tab, ToHost::Answer { tab, accepted, text });
         self.wins[w].dirty = true;
@@ -941,6 +1149,11 @@ impl Browser {
             Event::Focus { focused, .. } => {
                 self.wins[w].focused = focused;
                 self.wins[w].dirty = true;
+                let key = self.wins[w].key;
+                if focused && self.last_focused != Some(key) {
+                    self.last_focused = Some(key);
+                    self.told.push(Told::WindowFocused(Some(key)));
+                }
                 self.focus_pages();
             }
             Event::PointerMoved { x, y, .. } => self.pointer(w, x, y),
@@ -1008,6 +1221,18 @@ impl Browser {
                 return;
             }
         }
+        // An extension's popup: the pointer is its while over it.
+        if let Some((tab, rect)) = self.ext_popups.get(&key).map(|p| (p.tab, p.rect)) {
+            if rect.contains(x, y) {
+                self.wins[w].hover = Hover::ExtPopup;
+                let m = modifiers(self.app.modifiers());
+                self.tell(tab, ToHost::Pointer { tab, x: x - rect.x, y: y - rect.y, button: None, modifiers: m });
+                return;
+            }
+            if self.wins[w].hover == Hover::ExtPopup {
+                self.tell(tab, ToHost::PointerLeft { tab });
+            }
+        }
         if let Some(start) = self.wins[w].start.as_mut() {
             start.list.input(&Input::Pointer { x, y });
         }
@@ -1018,6 +1243,8 @@ impl Browser {
             Hover::Plus
         } else if let Some((which, _)) = win.buttons.iter().find(|(_, r)| r.contains(x, y)) {
             *which
+        } else if let Some(i) = win.action_buttons.iter().position(|(_, r)| r.contains(x, y)) {
+            Hover::Action(i)
         } else if win.address.contains(x, y) {
             Hover::Address
         } else if win.page.contains(x, y) {
@@ -1067,6 +1294,18 @@ impl Browser {
                     let m = modifiers(self.app.modifiers());
                     self.tell(tab, ToHost::Pointer { tab, x: x - page.x, y: y - page.y, button: Some((held, false)), modifiers: m });
                 }
+                return;
+            }
+        }
+        if let Some((tab, rect)) = self.ext_popups.get(&key).map(|p| (p.tab, p.rect)) {
+            if rect.contains(x, y) {
+                let m = modifiers(self.app.modifiers());
+                self.tell(tab, ToHost::Pointer { tab, x: x - rect.x, y: y - rect.y, button: Some((engine_button, pressed)), modifiers: m });
+                return;
+            }
+            // A press anywhere else closes it, as a menu is closed (its own button does below).
+            if pressed && !matches!(self.wins[w].hover, Hover::Action(_)) {
+                self.close_ext_popup(key);
                 return;
             }
         }
@@ -1160,6 +1399,21 @@ impl Browser {
                         self.focus_pages();
                     }
                 }
+                Hover::Action(i) => {
+                    // An extension's button: its popup, or its onClicked; pressed again, its
+                    // popup closes.
+                    if let Some((extension, _)) = self.wins[w].action_buttons.get(i).cloned() {
+                        let open = self.ext_popups.get(&key).map(|p| p.tab);
+                        let same = open.is_some_and(|t| self.extensions.as_ref().and_then(|rt| rt.popup_of(t)).is_some_and(|(_, e, _)| e == extension));
+                        if open.is_some() {
+                            self.close_ext_popup(key);
+                        }
+                        if !same {
+                            let profile = self.tabs.window(key).map(|x| x.profile.clone()).unwrap_or_default();
+                            self.with_extensions(|rt, b| rt.action_clicked(b, &profile, key, &extension));
+                        }
+                    }
+                }
                 _ => {}
             }
             return;
@@ -1202,6 +1456,13 @@ impl Browser {
     fn scroll(&mut self, w: usize, dx: f32, dy: f32) {
         self.wins[w].dirty = true;
         let (x, y) = self.wins[w].pointer;
+        if let Some((tab, rect)) = self.ext_popups.get(&self.wins[w].key).map(|p| (p.tab, p.rect)) {
+            if rect.contains(x, y) {
+                let m = modifiers(self.app.modifiers());
+                self.tell(tab, ToHost::Scroll { tab, x: x - rect.x, y: y - rect.y, dx, dy, modifiers: m });
+                return;
+            }
+        }
         if let Some(popup) = self.wins[w].popup.as_mut() {
             if popup.rect.contains(x, y) {
                 popup.list.input(&Input::Scroll { dx, dy });
@@ -1228,6 +1489,16 @@ impl Browser {
         let window = self.wins[w].key;
         self.wins[w].dirty = true;
         let Some(tab) = self.tabs.active(window) else { return };
+        // An extension's popup has the keyboard while it is open; Escape closes it.
+        if let Some(popup_tab) = self.ext_popups.get(&window).map(|p| p.tab) {
+            if pressed && key == Key::Escape {
+                self.close_ext_popup(window);
+            } else {
+                let key = KeyPress { code, key, text, pressed, repeat, modifiers: modifiers(m) };
+                self.tell(popup_tab, ToHost::Key { tab: popup_tab, key });
+            }
+            return;
+        }
         let input = Input::Key { key, text: text.clone(), modifiers: m };
         // A question first: the page waits on it.
         if self.views.get(&tab).is_some_and(|v| v.question.is_some()) {
@@ -1430,6 +1701,10 @@ impl Browser {
                 _ => None,
             };
             let starting = engine_note.is_none();
+            let actions = self.actions_for(key);
+            let icons: Vec<Option<spatiand_app::ui::Texture>> = actions.iter().map(|a| self.icon(a)).collect();
+            let ext_popup = self.ext_popups.get(&key).map(|p| (p.rect, p.tab));
+            let toast = self.toast.as_ref().filter(|(_, at)| at.elapsed() < TOAST).map(|(t, _)| t.clone());
             let (painter, wins, views, tabs) = (&mut self.painter, &mut self.wins, &self.views, &self.tabs);
             let win = &mut wins[w];
             let size = win.size;
@@ -1440,7 +1715,7 @@ impl Browser {
                 look::backdrop(p, gl);
                 let all = p.bounds();
                 draw_tabs(p, gl, win, &window, tabs, &profile, all);
-                draw_toolbar(p, gl, win, active.as_ref(), marked, &profile, all);
+                draw_toolbar(p, gl, win, active.as_ref(), marked, &profile, all, &actions, &icons);
                 // The page.
                 let page = win.page;
                 p.fill(gl, page, 12.0, [1.0, 1.0, 1.0, 1.0]);
@@ -1466,9 +1741,26 @@ impl Browser {
                         draw_question(p, gl, page, question);
                     }
                 }
+                if let Some((rect, tab)) = ext_popup {
+                    look::glass(p, gl, rect.inset(-6.0), 18.0, 1.0);
+                    match views.get(&tab).and_then(|v| v.texture.as_ref()) {
+                        Some(texture) => {
+                            let shown = Rect::new(rect.x, rect.y, (texture.width as f32).min(rect.w), (texture.height as f32).min(rect.h));
+                            let uv = [0.0, 0.0, shown.w / texture.width as f32, shown.h / texture.height as f32];
+                            p.image(gl, texture.texture(), shown, uv, 12.0, [1.0, 1.0, 1.0, 1.0], true);
+                        }
+                        None => p.fill(gl, rect, 12.0, [1.0, 1.0, 1.0, 1.0]),
+                    }
+                }
                 if let Some(popup) = win.popup.as_mut() {
                     look::glass(p, gl, popup.rect, 18.0, 1.0);
                     popup.list.draw(p, gl, popup.rect.inset(12.0), &popup.rows);
+                }
+                if let Some(text) = toast.as_deref() {
+                    let page = win.page;
+                    let pane = Rect::new(page.x + page.w * 0.5 - 420.0, page.bottom() - 96.0, 840.0, 64.0);
+                    look::glass(p, gl, pane, 24.0, 1.0);
+                    p.label(gl, text, pane.inset(18.0), theme::ROW_EM * 0.8, theme::INK, 0.5);
                 }
                 if let Some(drag) = win.drag.as_ref().filter(|d| d.torn) {
                     let label = tabs.tab(drag.tab).map(|t| t.label()).unwrap_or_default();
@@ -1535,13 +1827,27 @@ impl Browser {
     pub fn run(&mut self) -> Result<(), String> {
         loop {
             let busy = self.tabs.tabs().any(|t| t.loading) || self.in_flight.is_some();
-            let wait = if busy { 30 } else { 500 };
+            let mut wait = if busy { 30 } else { 500 };
+            let next_tick = self.extensions.as_ref().and_then(Runtime::next_tick);
+            if let Some(at) = next_tick {
+                wait = wait.min(at.saturating_duration_since(Instant::now()).as_millis() as u64);
+            }
             for event in self.app.wait(Some(Duration::from_millis(wait)))? {
                 if !self.handle(event) {
                     return Ok(());
                 }
             }
             self.hear();
+            self.tell_extensions();
+            if next_tick.is_some_and(|at| at <= Instant::now()) {
+                self.with_extensions(|rt, b| rt.tick(b));
+            }
+            if self.toast.as_ref().is_some_and(|(_, at)| at.elapsed() >= TOAST) {
+                self.toast = None;
+                for win in &mut self.wins {
+                    win.dirty = true;
+                }
+            }
             // A tab let go of that no window claimed becomes a window of its own.
             if let Some((tab, _, at)) = self.in_flight {
                 if at.elapsed() >= Duration::from_millis(600) {
@@ -1651,7 +1957,18 @@ fn draw_tabs(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, window: &spa
     draw_icon(p, gl, Icon::Plus, win.plus.inset(10.0), theme::INK_DETAIL);
 }
 
-fn draw_toolbar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, tab: Option<&spatimesh::tabs::Tab>, marked: bool, profile: &Profile, all: Rect) {
+#[allow(clippy::too_many_arguments)]
+fn draw_toolbar(
+    p: &mut Painter,
+    gl: &spatiand_app::Gl,
+    win: &mut Win,
+    tab: Option<&spatimesh::tabs::Tab>,
+    marked: bool,
+    profile: &Profile,
+    all: Rect,
+    actions: &[spatimesh::extensions::runtime::ActionView],
+    icons: &[Option<spatiand_app::ui::Texture>],
+) {
     let mut bar = Rect::new(all.x + 12.0, TOOL_TOP, all.w - 24.0, TOOL_H);
     let side = TOOL_H;
     let button = |p: &mut Painter, rect: Rect, which: Hover, icon: Icon, enabled: bool, lit: bool| {
@@ -1680,6 +1997,36 @@ fn draw_toolbar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, tab: Opti
     let private = profile.is_private();
     let star = button(p, bar.take_right(side), Hover::Star, Icon::Link, !private && tab.is_some_and(|t| !is_start(&t.url)), marked);
     bar.take_right(12.0);
+    // The extensions' buttons, in the order they were installed, with their badges.
+    win.action_buttons.clear();
+    for (i, view) in actions.iter().enumerate().rev() {
+        let rect = bar.take_right(side);
+        bar.take_right(2.0);
+        if win.hover == Hover::Action(win.action_buttons.len()) && view.enabled {
+            p.fill(gl, rect, side * 0.5, [1.0, 1.0, 1.0, 0.11]);
+        }
+        let tint = if view.enabled { [1.0, 1.0, 1.0, 1.0] } else { [1.0, 1.0, 1.0, 0.35] };
+        match icons.get(i).and_then(|t| t.as_ref()) {
+            Some(texture) => p.image(gl, Texture::from_raw(texture.raw(), texture.width, texture.height), rect.inset(13.0), [0.0, 0.0, 1.0, 1.0], 0.0, tint, false),
+            None => {
+                let initial: String = view.name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
+                p.fill(gl, rect.inset(12.0), (side - 24.0) * 0.5, [0.30, 0.62, 1.0, 0.35 * tint[3]]);
+                p.label(gl, &initial, rect.inset(12.0), theme::ROW_EM * 0.7, theme::INK, 0.5);
+            }
+        }
+        if !view.badge.is_empty() {
+            let text: String = view.badge.chars().take(4).collect();
+            let w = (16.0 + 9.0 * text.chars().count() as f32).min(side);
+            let badge = Rect::new(rect.right() - w, rect.bottom() - 22.0, w, 20.0);
+            let c = |v: [u8; 4]| [v[0] as f32 / 255.0, v[1] as f32 / 255.0, v[2] as f32 / 255.0, v[3] as f32 / 255.0];
+            p.fill(gl, badge, 10.0, c(view.badge_background));
+            p.label(gl, &text, badge, theme::ROW_EM * 0.45, c(view.badge_color), 0.5);
+        }
+        win.action_buttons.push((view.extension.clone(), rect));
+    }
+    if !actions.is_empty() {
+        bar.take_right(8.0);
+    }
     if private {
         let note = bar.take_right(130.0);
         look::chip(p, gl, note.x, note.y + (note.h - 34.0) * 0.5, "Private", look::VIOLET);
@@ -1741,9 +2088,10 @@ fn draw_question(p: &mut Painter, gl: &spatiand_app::Gl, page: Rect, question: &
     let pane = question_pane(page);
     look::glass(p, gl, pane, 24.0, 1.0);
     let mut inner = pane.inset(28.0);
-    let heading = match question.kind {
-        DialogKind::Leave => "Leave this page?",
-        _ => "The page asks",
+    let heading = match (&question.own, question.kind) {
+        (Some(_), _) => "Extensions",
+        (None, DialogKind::Leave) => "Leave this page?",
+        (None, _) => "The page asks",
     };
     p.label(gl, heading, inner.take_top(48.0), theme::TITLE_EM * 0.7, theme::INK, 0.0);
     p.text(gl, &question.message, inner.x, inner.y, theme::DETAIL_EM, inner.w, theme::INK_DETAIL);

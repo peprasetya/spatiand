@@ -214,7 +214,7 @@ pub(super) fn call(rt: &mut Runtime, side: &mut dyn BrowserSide, caller: &Caller
                 if let Err(e) = done {
                     return err(e);
                 }
-                rt.refresh(side, &profile, None);
+                rt.refresh(side, &profile, &[]);
                 if method == "uninstallSelf" {
                     Answer::Later
                 } else {

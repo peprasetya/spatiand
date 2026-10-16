@@ -16,6 +16,8 @@ struct Side {
     sets: Vec<(String, ExtensionSet)>,
     /// (profile, tab, world, all frames, code, request)
     scripts: Vec<(String, TabId, String, bool, String, u64)>,
+    /// Which of them were to set the extension's API up first.
+    booted: Vec<bool>,
     hidden: Vec<(String, TabId, String)>,
     closed_hidden: Vec<TabId>,
     popups: Vec<(WindowKey, TabId, String)>,
@@ -37,6 +39,7 @@ impl Side {
             zoom: 1.0,
             sets: Vec::new(),
             scripts: Vec::new(),
+            booted: Vec::new(),
             hidden: Vec::new(),
             closed_hidden: Vec::new(),
             popups: Vec::new(),
@@ -128,8 +131,9 @@ impl BrowserSide for Side {
     fn set_extensions(&mut self, profile: &str, set: &ExtensionSet) {
         self.sets.push((profile.to_string(), set.clone()));
     }
-    fn run_script(&mut self, profile: &str, tab: TabId, world: &str, all_frames: bool, code: &str, request: u64) {
+    fn run_script(&mut self, profile: &str, tab: TabId, world: &str, all_frames: bool, code: &str, request: u64, boot: bool) {
         self.scripts.push((profile.to_string(), tab, world.to_string(), all_frames, code.to_string(), request));
+        self.booted.push(boot);
     }
     fn open_hidden(&mut self, profile: &str, tab: TabId, url: &str) {
         self.hidden.push((profile.to_string(), tab, url.to_string()));
@@ -519,6 +523,7 @@ fn scripts_run_where_an_extension_asks_and_answer() {
     let call = w.bg.say(&mut w.rt, &mut w.side, "scripting.executeScript", json!([{ "target": { "tabId": w.content.tab }, "func": "function (a) { return a + 1; }", "args": [1] }]));
     let (_, tab, world, all, code, _) = w.side.scripts.last().unwrap().clone();
     assert_eq!((tab, world, all), (w.content.tab, format!("spatimesh-{}", w.id), false));
+    assert_eq!(w.side.booted.last(), Some(&true), "its API set up where no content script of its may be");
     assert!(code.contains("return (function (a) { return a + 1; }).apply(null,[1]);"), "{code}");
     let q: u64 = code.split("run(").nth(1).unwrap().split(',').next().unwrap().parse().unwrap();
     w.content.tell(&mut w.rt, &mut w.side, "scripting.done", json!([q, 0, 2, null]));
@@ -711,7 +716,7 @@ fn private_windows_run_only_what_was_let_in_and_keep_nothing() {
     rt.engine_started(&mut side, PRIVATE);
     assert!(side.sets.last().unwrap().1.extensions.is_empty(), "not let into private windows");
     install::set(&store, "default", &installed.id, None, Some(true)).unwrap();
-    rt.refresh(&mut side, PRIVATE, None);
+    rt.refresh(&mut side, PRIVATE, &[]);
     let spec = side.sets.last().unwrap().1.extensions[0].clone();
     assert_eq!(config(&spec, false)["incognito"], true);
     let mut bg = Ctx { tab: side.hidden.last().unwrap().1, token: config(&spec, false)["token"].as_str().unwrap().into(), extension: installed.id.clone(), id: "bg".into(), frame: 0, url: format!("{}/x", spec.origin()), next: 0 };

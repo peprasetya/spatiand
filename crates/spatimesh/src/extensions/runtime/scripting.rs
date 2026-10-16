@@ -14,7 +14,7 @@ use crate::extensions::set::{self, Script};
 /// How long the frames below the top one have to answer once the top one has.
 const OTHER_FRAMES: Duration = Duration::from_millis(300);
 /// How long code may run before its caller is told it did not finish.
-const SCRIPT_WAIT: Duration = Duration::from_secs(10);
+pub(super) const SCRIPT_WAIT: Duration = Duration::from_secs(10);
 
 /// Which frames a script is for.
 #[derive(Debug, Clone, PartialEq)]
@@ -140,7 +140,7 @@ fn run_isolated(rt: &mut Runtime, side: &mut dyn BrowserSide, caller: &Caller, t
             legacy,
         }),
     );
-    side.run_script(&caller.profile, tab, &world_of(&caller.extension), all, &code, 0);
+    side.run_script(&caller.profile, tab, &world_of(&caller.extension), all, &code, 0, true);
     Answer::Later
 }
 
@@ -207,9 +207,9 @@ pub(super) fn call(rt: &mut Runtime, side: &mut dyn BrowserSide, caller: &Caller
                 // The page's own world: the engine runs it, and the top frame's result comes back
                 // (other frames run it too, unanswered).
                 let q = rt.question();
-                rt.requests.insert(q, Request::MainWorld { caller: caller.context.clone(), call: id, legacy: false });
+                rt.requests.insert(q, Request::MainWorld { caller: caller.context.clone(), call: id, legacy: false, since: Instant::now() });
                 let code = format!("(function(){{{body}}})()");
-                side.run_script(&caller.profile, tab, "", wanted != Wanted::Top, &code, q);
+                side.run_script(&caller.profile, tab, "", wanted != Wanted::Top, &code, q, false);
                 return Answer::Later;
             }
             run_isolated(rt, side, caller, tab, wanted, &body, id, false)
@@ -235,7 +235,7 @@ pub(super) fn call(rt: &mut Runtime, side: &mut dyn BrowserSide, caller: &Caller
                 _ => return err("Exactly one of 'css' and 'files' must be specified."),
             };
             let all = t.get("allFrames").and_then(Value::as_bool) == Some(true);
-            side.run_script(&caller.profile, tab, &world_of(&caller.extension), all, &style_code(&css, method == "insertCSS"), 0);
+            side.run_script(&caller.profile, tab, &world_of(&caller.extension), all, &style_code(&css, method == "insertCSS"), 0, false);
             ok(Value::Null)
         }
         "registerContentScripts" => {
@@ -336,7 +336,7 @@ pub(super) fn legacy(rt: &mut Runtime, side: &mut dyn BrowserSide, caller: &Call
         };
         return run_isolated(rt, side, caller, tab, wanted, &eval_files(&[text]), id, true);
     }
-    side.run_script(&caller.profile, tab, &world_of(&caller.extension), all || frame.is_some(), &style_code(&text.1, method == "insertCSS"), 0);
+    side.run_script(&caller.profile, tab, &world_of(&caller.extension), all || frame.is_some(), &style_code(&text.1, method == "insertCSS"), 0, false);
     ok(Value::Null)
 }
 

@@ -7,7 +7,7 @@
 //! one already running, so that a tab can be dragged between any two of its windows.
 //!
 //! ```text
-//! spatimesh [--private] [address]
+//! spatimesh [--private] [--load-extension <folder or package>]... [address]
 //! ```
 
 mod browser;
@@ -31,8 +31,21 @@ fn socket_path() -> PathBuf {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let private = args.iter().any(|a| a == "--private");
-    let url = args.iter().find(|a| !a.starts_with("--")).cloned();
+    let mut private = false;
+    let mut url = None;
+    // Extensions to install in the first profile before anything opens, as Chrome's
+    // --load-extension loads them (they stay installed).
+    let mut extensions = Vec::new();
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "--private" => private = true,
+            "--load-extension" => extensions.extend(words.next().cloned()),
+            w if w.starts_with("--load-extension=") => extensions.push(w["--load-extension=".len()..].to_string()),
+            w if !w.starts_with("--") => url = Some(w.to_string()),
+            _ => {}
+        }
+    }
     // Already running in this room: that SpatiMesh opens the window.
     let path = socket_path();
     if let Ok(mut stream) = UnixStream::connect(&path) {
@@ -49,7 +62,9 @@ fn main() {
     let run = || -> Result<(), String> {
         let app = App::connect("id.prasetya.spatiand.spatimesh")?;
         let mut browser = browser::Browser::new(app, listener);
-        let profile = if private { spatimesh::profiles::PRIVATE.to_string() } else { spatimesh::profiles::list(&spatimesh::store::Store::open())[0].id.clone() };
+        let first = spatimesh::profiles::list(&spatimesh::store::Store::open())[0].id.clone();
+        browser.load_extensions(&first, &extensions);
+        let profile = if private { spatimesh::profiles::PRIVATE.to_string() } else { first };
         browser.new_window(&profile, url.as_deref());
         browser.run()
     };
