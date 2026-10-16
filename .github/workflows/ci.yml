@@ -1,0 +1,89 @@
+# Does it still build, on each of the three machines?
+#
+#   linux    the Deck's compositor and the crates around it, built and tested on Ubuntu (SteamOS is
+#            x86-64 Linux; this is the same code, not the same machine).
+#   android  the Beam Pro's library cross-compiled with the NDK, and then the APK itself.
+#   mac      the Rust half and the Swift app, on a Mac runner.
+#
+# None of this runs on glasses or a device: it says the code compiles and its tests pass, not that
+# it works. What a Deck, a Beam Pro and a pair of glasses do is still looked at by hand.
+#
+# `spatiand-host` is not built here: it links FFmpeg 8, which Ubuntu does not have; it is built on
+# deepmagpie (docs/remote.md). The Mac's ANGLE comes from an installed Electron app and is not in
+# the repository, so the Mac job builds the app but does not package or run it.
+name: ci
+
+on:
+  push:
+    branches: [master, mac-compositor, spatiand-apps]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: tools/ci-deps.sh linux
+      - uses: Swatinem/rust-cache@v2
+      - run: . "$HOME/.cargo/env" 2>/dev/null; cargo check --workspace --exclude spatiand-host --exclude spatiand-android --locked
+      - run: . "$HOME/.cargo/env" 2>/dev/null; cargo test --workspace --exclude spatiand-host --exclude spatiand-android --locked
+
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - run: tools/ci-deps.sh android
+      - uses: Swatinem/rust-cache@v2
+      - name: The library, for the Beam Pro
+        run: |
+          . ~/.spatiand-ci-env
+          . "$HOME/.cargo/env" 2>/dev/null || true
+          cd android
+          xkbcommon/build.sh
+          cd ../crates/spatiand-android
+          RUSTFLAGS="-L native=$GITHUB_WORKSPACE/android/xkbcommon/out" \
+            cargo ndk -t arm64-v8a -P 34 build --release
+      - name: The APK
+        # android/build.sh was written on a Mac; this is its first run anywhere else, so it
+        # reports and does not fail the build until it has been seen to work.
+        continue-on-error: true
+        run: |
+          . ~/.spatiand-ci-env
+          . "$HOME/.cargo/env" 2>/dev/null || true
+          android/build.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spatiand-apk
+          path: android/spatiand.apk
+          if-no-files-found: ignore
+
+  mac:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/spatiand-mac
+      - name: libxkbcommon
+        run: |
+          brew install bison
+          BISON="$(brew --prefix bison)/bin/bison" mac/xkbcommon/build.sh
+      - name: The Rust half
+        run: cd crates/spatiand-mac && MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --locked
+      - name: The app
+        run: cd mac && swift build
+      - name: The shared crates' tests
+        run: cargo test -p spatiand-shell -p spatiand-track -p spatiand-stream -p spatiand-mac-core --locked
