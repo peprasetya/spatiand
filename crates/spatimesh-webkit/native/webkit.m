@@ -513,7 +513,7 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
             view.pageZoom = zoom > 0.1 ? zoom : 1.0;
         SEL occlusion = NSSelectorFromString(@"_setWindowOcclusionDetectionEnabled:");
         if ([view respondsToSelector:occlusion])
-            ((void (*)(id, SEL, BOOL))objc_msgSend)(view, occlusion, NO);
+            ((void (*)(WKWebView *, SEL, BOOL))objc_msgSend)(view, occlusion, NO);
         window.contentView = view;
         [window orderBack:nil];
         [window makeFirstResponder:view];
@@ -612,7 +612,7 @@ void spatimesh_mute(Engine *e, uint64_t id, int muted) {
         /* WebKit's own mute (`_setPageMuted:`, SPI); where it has not got it, the tab plays on. */
         SEL mute = NSSelectorFromString(@"_setPageMuted:");
         if (tab && [tab.view respondsToSelector:mute])
-            ((void (*)(id, SEL, NSUInteger))objc_msgSend)(tab.view, mute, muted ? 1 : 0);
+            ((void (*)(WKWebView *, SEL, NSUInteger))objc_msgSend)(tab.view, mute, muted ? 1 : 0);
     }
 }
 
