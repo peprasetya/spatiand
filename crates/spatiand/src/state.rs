@@ -499,7 +499,22 @@ impl Spatiand {
         self.app_id_of(&window)
     }
 
+    /// The application's id, as icons, menus and desktop files know it: one of Spatiand's own
+    /// applications names its instance after an `@` (see [`State::instance_of`]), which is not
+    /// part of it.
     pub fn app_id_of(&self, window: &smithay::desktop::Window) -> Option<String> {
+        self.instance_of(window).map(|id| plain_app_id(&id).to_string())
+    }
+
+    pub fn instance_of_id(&self, id: usize) -> Option<String> {
+        let window = self.space.elements().find(|w| self.layout.id_of(w) == Some(id))?.clone();
+        self.instance_of(&window)
+    }
+
+    /// The id as the window gave it. On the Mac and the Beam Pro, where the compositor cannot
+    /// tell one process from another, Spatiand's own applications give theirs as
+    /// `<app id>@<process>`, so that two films playing at once have a sound each.
+    pub fn instance_of(&self, window: &smithay::desktop::Window) -> Option<String> {
         if let Some(x11) = window.x11_surface() {
             // X11's nearest equivalent, and the one desktop files are matched against.
             return Some(x11.class()).filter(|c| !c.trim().is_empty());
@@ -1279,7 +1294,7 @@ impl XdgShellHandler for Spatiand {
             .and_then(|c| c.get_credentials(&self.display_handle).ok())
             .map(|c| c.pid as u32);
         if let Some(id) = self.layout.id_of(&window) {
-            let app_id = self.app_id_of(&window);
+            let app_id = self.instance_of(&window);
             self.arrived_windows.push((id, pid, app_id));
         }
         log::info!(
@@ -1489,7 +1504,7 @@ impl Spatiand {
                 .x11_surface()
                 .and_then(|x| self.x11_pids.get(&x.window_id()).copied())
                 .flatten();
-            let app_id = self.app_id_of(window);
+            let app_id = self.instance_of(window);
             self.arrived_windows.push((id, pid, app_id));
             log::info!(
                 "X11 window placed at yaw {:.0} deg ({} windows)",
@@ -1990,5 +2005,26 @@ mod screen_tests {
     fn the_widest_and_the_tallest_window_are_both_held() {
         let (w, h) = screen_size_for([(2000, 600), (900, 1500)].into_iter());
         assert!(w >= 2000 && h >= 1500, "{w}x{h} loses one of them");
+    }
+}
+
+/// An application id without the instance one of Spatiand's own may give after an `@`.
+pub fn plain_app_id(id: &str) -> &str {
+    match id.split_once('@') {
+        Some((app, _)) if app.starts_with("id.prasetya.spatiand.") => app,
+        _ => id,
+    }
+}
+
+#[cfg(test)]
+mod instance_tests {
+    use super::plain_app_id;
+
+    #[test]
+    fn an_instance_is_its_application_to_everything_but_sound() {
+        assert_eq!(plain_app_id("id.prasetya.spatiand.spatireel@4242"), "id.prasetya.spatiand.spatireel");
+        assert_eq!(plain_app_id("id.prasetya.spatiand.spatireel"), "id.prasetya.spatiand.spatireel");
+        // Anyone else's id is theirs, `@` and all.
+        assert_eq!(plain_app_id("org.example.app@2"), "org.example.app@2");
     }
 }

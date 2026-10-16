@@ -207,7 +207,17 @@ impl App {
     /// the room -- its icon, its controller layout, where its sound is placed.
     pub fn connect(app_id: &str) -> Result<App, String> {
         let (wire, queue) = wire::Wire::connect()?;
-        let mut app = App { app_id: app_id.to_string(), wire, queue, gl: None, windows: HashMap::new(), watched: Vec::new() };
+        // Where the room cannot tell one process from another (the Mac, the Beam Pro), the
+        // instance is named after the id, so that two of the same application each have their
+        // own sound in the room; anything of this process's that hands sound to the room says
+        // the same (`SPATIAND_APP_ID`).
+        let app_id = if cfg!(any(target_os = "macos", target_os = "android")) {
+            format!("{app_id}@{}", std::process::id())
+        } else {
+            app_id.to_string()
+        };
+        std::env::set_var("SPATIAND_APP_ID", &app_id);
+        let mut app = App { app_id, wire, queue, gl: None, windows: HashMap::new(), watched: Vec::new() };
         // Once round, so the mode is the compositor's word and not this crate's guess by the
         // time anything is decided on it.
         app.queue.roundtrip(&mut app.wire).map_err(|e| format!("lost Spatiand: {e}"))?;

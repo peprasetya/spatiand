@@ -1144,7 +1144,7 @@ pub fn run(
                     None => awaiting_app_id.push((id, Instant::now(), pid)),
                 }
             }
-            awaiting_app_id.retain(|(id, since, pid)| match runtime.state.app_id_of_id(*id) {
+            awaiting_app_id.retain(|(id, since, pid)| match runtime.state.instance_of_id(*id) {
                 Some(app_id) => {
                     if app_id.starts_with("remote.") {
                         spatial_audio.adopt_keyed(*id, &app_id, crate::remote::sound_width(&app_id));

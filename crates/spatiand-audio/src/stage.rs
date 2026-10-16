@@ -160,7 +160,7 @@ impl Channel {
     /// The front stage follows the window's width; everything else keeps the angle a listening
     /// room would have given it. The height fronts count as front — they are above the screen,
     /// not above the sofa — so that a stretched stage stays coherent from top to bottom.
-    fn is_front_stage(self) -> bool {
+    pub(crate) fn is_front_stage(self) -> bool {
         matches!(
             self,
             Channel::Mono

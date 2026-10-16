@@ -171,6 +171,10 @@ struct Voice {
     bed: [f32; 12],
     bed_was: [f32; 12],
     lfe: bool,
+    /// The picture's channels, which the plain fold is for. The room's -- sides, rears,
+    /// heights behind -- are heard through the head alone: folded, a side and a rear are the
+    /// same left ear, and a 7.1 film's sides and rears could not be told apart.
+    front: bool,
 }
 
 impl Voice {
@@ -186,6 +190,7 @@ impl Voice {
             bed: [0.0; 12],
             bed_was: [0.0; 12],
             lfe: channel == Channel::Lfe,
+            front: channel.is_front_stage() || channel == Channel::Lfe,
         }
     }
 
@@ -478,13 +483,20 @@ impl Binaural {
                     continue;
                 }
                 let x = if x.is_finite() { x } else { 0.0 };
-                dry_l += x * voice.fold.0;
-                dry_r += x * voice.fold.1;
                 if voice.aimed.is_some() {
                     let (l, r) = voice.step(x, t);
                     wet_l += l;
                     wet_r += r;
+                    if voice.front {
+                        dry_l += x * voice.fold.0;
+                        dry_r += x * voice.fold.1;
+                    } else {
+                        dry_l += l;
+                        dry_r += r;
+                    }
                 } else {
+                    dry_l += x * voice.fold.0;
+                    dry_r += x * voice.fold.1;
                     // Undirected, so it arrives the same way in both paths and the blend
                     // below cannot change it. This is what keeps the bass steady while the
                     // head turns.
