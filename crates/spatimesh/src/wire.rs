@@ -585,7 +585,7 @@ impl Link {
         msg.msg_iov = &mut iov;
         msg.msg_iovlen = 1;
         if !fds.is_empty() {
-            let size = (fds.len() * std::mem::size_of::<RawFd>()) as u32;
+            let size = std::mem::size_of_val(fds) as u32;
             msg.msg_control = space.as_mut_ptr() as *mut _;
             msg.msg_controllen = unsafe { libc::CMSG_SPACE(size) } as _;
             unsafe {

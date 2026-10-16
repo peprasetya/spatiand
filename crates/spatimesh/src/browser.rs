@@ -956,12 +956,8 @@ impl Browser {
             Event::Button { button, pressed, .. } => self.button(w, button, pressed),
             Event::Scroll { dx, dy, .. } => self.scroll(w, dx, dy),
             Event::Key { key, code, pressed, repeat, text, modifiers, .. } => self.key(w, key, code, pressed, repeat, text, modifiers),
-            Event::Pinch { scale, .. } => {
-                // Pinching zooms the page, as on a touchpad.
-                if (scale - 1.0).abs() > 0.02 {
-                    self.zoom(Some(scale));
-                }
-            }
+            // Pinching zooms the page, as on a touchpad.
+            Event::Pinch { scale, .. } if (scale - 1.0).abs() > 0.02 => self.zoom(Some(scale)),
             _ => {}
         }
         true
@@ -992,7 +988,7 @@ impl Browser {
             if (x - drag.from.0).abs() > 10.0 || (y - drag.from.1).abs() > 10.0 {
                 drag.moved = true;
             }
-            drag.torn = y > TOOL_TOP + TOOL_H + 60.0 || y < -40.0 || x < -40.0 || x > size.0 as f32 + 40.0;
+            drag.torn = !(-40.0..=TOOL_TOP + TOOL_H + 60.0).contains(&y) || !(-40.0..=size.0 as f32 + 40.0).contains(&x);
             if drag.moved && !drag.torn {
                 let tab = drag.tab;
                 let count = self.tabs.window(key).map_or(0, |x| x.tabs.len());

@@ -196,7 +196,7 @@ fn midpoint(a: &[u8], b: Option<&[u8]>) -> String {
         return (DIGITS[db - 1] as char).to_string();
     }
     if db - da > 1 {
-        let mid = (da + db + 1) / 2;
+        let mid = (da + db).div_ceil(2);
         return (DIGITS[mid] as char).to_string();
     }
     match b {
