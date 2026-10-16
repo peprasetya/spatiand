@@ -183,6 +183,81 @@ folder, `.zip`, `.crx` or `.xpi`, read the manifest, list it in the profile. Wha
   `addDocumentStartJavaScript`, `addWebMessageListener` and `shouldInterceptRequest`, with the
   same limits and less.
 
+## Extensions: SpatiMesh's own WebExtensions runtime (decided 2026-10-16)
+
+The owner's decision, given the findings above: Chrome and Firefox extensions are to run on
+every engine, and where an engine has no extension system, SpatiMesh is to have one of its own,
+modelled on Chromium's and Firefox's (both open: `chrome/browser/extensions`,
+`extensions/` and `toolkit/components/extensions` are the references).
+
+**One runtime for every engine.** What an extension is and what its APIs do is written once, in
+Rust, in the window process, which owns the tabs, windows and profiles the APIs are about:
+
+```text
+crates/spatimesh/src/extensions/
+  manifest.rs   manifest.json, Manifest V2 and V3, Chrome's and Firefox's keys (background
+                page/scripts/service_worker, action/browser_action/page_action,
+                browser_specific_settings, web_accessible_resources, declarative_net_request,
+                content_scripts, options_ui, commands), __MSG_x__ and _locales
+  install.rs    developer mode: a folder (loaded where it is), a .zip, a .crx (CRX3 header) or
+                an .xpi, unpacked into the profile's local folder; ids as Chrome makes them (from
+                `key`, or from the folder) and Firefox's gecko id kept as runtime.id's alias
+  pattern.rs    match patterns, globs, `<all_urls>`, about:blank and frames
+  runtime.rs    the API calls and events: runtime (messages, ports, getURL, onInstalled ...),
+                storage (local; sync in the shared folder, so it syncs; session), tabs, windows,
+                scripting, action/browserAction/pageAction, i18n, alarms, notifications,
+                permissions, contextMenus/menus, webNavigation, cookies, bookmarks (SpatiMesh's),
+                downloads, commands
+  dnr.rs        declarativeNetRequest's rules, matched here or compiled for an engine
+  api.js        `chrome` and `browser` (promises, and callbacks with lastError) in every
+                extension context; JSON over the engine's bridge to the window and back
+```
+
+**Each engine only bridges**: put a script into a frame at document_start/end/idle in a world of
+the extension's own where the engine has worlds, carry JSON from a context to the window and
+back into a given tab, frame and world, serve `chrome-extension://<id>/` (and `moz-extension://`)
+from the extension's folder, run a background page in a tab nobody sees, and, where it can, see
+and stop requests (webRequest, declarativeNetRequest):
+
+| | worlds for content scripts | to the window | resources | requests |
+|---|---|---|---|---|
+| WebKitGTK | `webkit_user_script_new_for_world` | script message handlers in that world | `webkit_web_context_register_uri_scheme` | content filters (DNR); a web-process extension's `send-request` (blocking webRequest) |
+| Mac (WKWebView) | `WKContentWorld` | `WKScriptMessageHandlerWithReply` | `WKURLSchemeHandler` | `WKContentRuleList` (DNR) |
+| SteamOS (CEF) | none in CEF 126: the page's world, in a closure | a V8 function in the renderer and process messages | a scheme handler factory | the resource request handler (both) |
+| Android | none: the page's world | a JavaScript interface | `shouldInterceptRequest` on a reserved host | `shouldInterceptRequest` (block, not redirect, for subresources) |
+
+Manifest V3's service worker runs as a background page (as Firefox runs its V3 background
+scripts), with `importScripts` and `self` as a worker has them. Blocking `webRequest` is no part
+of Chrome's Manifest V3 (only for extensions an enterprise policy installs); Firefox keeps it in
+V2 and V3, and SpatiMesh offers it where the engine can stop a request. On macOS 15.4 and later
+WebKit's own `WKWebExtension` could replace the bridge; the runtime above is used there too until
+there is a reason not to (one behaviour everywhere).
+
+Order: the engine-free core with tests; api.js; WebKitGTK's bridge with an extension of each
+kind (a Chrome V3 one, a Firefox V2 one) running in CI; SpatiMesh's window (install, the
+toolbar's buttons and badges, popups, options); CEF's bridge, in CI against CEF 126; Android's;
+the Mac's.
+
+## Media: Spatiand's own FFmpeg (decided 2026-10-16)
+
+The owner's decision: SpatiMesh plays modern media -- H.264, H.265, AV1 (where the hardware has
+it), any audio codec, MP4, WebM, MKV, and AVI, DivX and Xvid if it can -- with the FFmpeg the rest
+of Spatiand uses (streaming from spatiand-host, SpatiReel), widened where it is too narrow.
+
+* **A media file opened in SpatiMesh** (a link to one, or a page that is one) is played by
+  Spatiand's media engine (`spatiand-media`: FFmpeg with VA-API, VideoToolbox or MediaCodec under
+  it, software for the rest), the same engine as SpatiReel's, in the tab itself, with its
+  controls: every format that engine plays, on every platform, whatever the web engine can do.
+* **Video inside a page** (`<video>`, and Media Source Extensions: YouTube and the like) is the
+  web engine's own pipeline, which cannot take another FFmpeg: Steam's Chromium has the codecs
+  Valve built it with, WebKitGTK the distribution's GStreamer plugins (gst-libav is FFmpeg),
+  WebKit on the Mac Apple's, Android's WebView the device's. A `<video>` whose file the engine
+  cannot play is handed to Spatiand's engine as above.
+* **Spatiand's FFmpeg**: on the Deck SteamOS's own 7.1.1 (headers vendored, libraries the
+  system's: docs/remote.md), on the Mac Homebrew's, on the Beam Pro android/ffmpeg/build.sh's,
+  in CI tools/ci-deps.sh's 7.1.1. The Beam Pro's is widened: dav1d for AV1 where MediaCodec has
+  none, and MediaCodec wired for H.264/H.265/AV1 in the player (it decodes in software there now).
+
 ## Sound
 
 A page's sound is made by the engine, not by us, so it is caught where it leaves the engine and
@@ -240,8 +315,9 @@ private profile writes nothing at all.
 | Android (WebView) | yes | the Rust side's launch through a stand-in launcher; the Java compiles against Android 34; the wire's bytes the same from Java as from Rust; the APK builds (`spatiand-apk` artifact) | everything at run time on the Beam Pro: the launcher starts the engine's service, pages draw through the virtual display, input, a second profile in its own process, the private one leaving nothing |
 | SteamOS (Steam's CEF) | yes | compiles against CEF 126's headers; CI runs the six engine tests against CEF's own 126 build laid out as Steam's | on the Deck: that Steam's CEF is still 126 (the hash check says), that its libcef.so loads outside Steam's runtime, Chromium's sandbox, Game Mode's display |
 | Sync | through spatiand-sync, as Spatiand's other settings | two machines through spatiand-sync in a test (`tests/sync.rs`) | two real machines linked |
+| Media through Spatiand's FFmpeg | being built (above) | -- | -- |
 | Sound placed per window | **no** | -- | each engine plays its pages' sound itself, not placed at the tab's window (at most where Spatiand places SpatiMesh as a whole) |
-| Extensions | **no**: waiting for the owner's choice, given the findings above | -- | -- |
+| Extensions | being built: SpatiMesh's own runtime (above) | -- | -- |
 
 ## Build order
 
