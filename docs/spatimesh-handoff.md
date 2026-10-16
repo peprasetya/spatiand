@@ -5,7 +5,8 @@ docs/spatimesh.md; this is what a new session needs on top of it.
 
 ## State
 
-* All work was on branch `spatiand-mesh`, merged into `master` at the end of the cloud session.
+* All work is on branch `spatiand-mesh` (41 commits ahead of `master`, 0 behind: merges cleanly).
+  Not yet merged into `master`; the cloud session was not allowed to merge.
 * CI (3 jobs: linux, mac, android) green on the last commit (run 31): WebKitGTK and CEF run the
   shared extension end-to-end test (Chrome MV3 + Firefox MV2 extensions, plus a
   declarativeNetRequest rule blocking a fetch); the Mac job runs the same test on WKWebView;
