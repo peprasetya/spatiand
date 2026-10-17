@@ -556,7 +556,10 @@
     if (!/^(video|audio|application)\//.test(t)) return '';
     var known = /^(video|audio)\/(mp4|webm|ogg|x-matroska|matroska|mkv|quicktime|x-msvideo|avi|msvideo|mpeg|mp2t|mp3|mpeg3|aac|aacp|flac|x-flac|wav|wave|x-wav|opus|3gpp|3gpp2|x-ms-wmv|x-ms-asf|x-flv|mp4a-latm|x-m4a|m4a|ac3|eac3|x-aiff|aiff|amr|vnd\.dlna\.mpeg-tts)$/.test(t)
       || t === 'application/ogg' || t === 'application/vnd.apple.mpegurl' || t === 'application/x-mpegurl';
-    return known ? (/codecs=/.test(type) ? 'probably' : 'maybe') : '';
+    if (!known) return '';
+    var codecs = codecsOf(type);
+    if (codecs && codecs.some(soft)) return '';
+    return codecs ? 'probably' : 'maybe';
   }
 
   // Attributes the page reads back as it wrote them, though the engine no longer has them.
@@ -871,13 +874,29 @@
   var byMs = {};
   var nextMs = 1;
   var CODECS = /^(avc1|avc3|hev1|hvc1|dvh1|dvhe|vp8|vp9|vp09|vp08|av01|mp4a|opus|vorbis|flac|ac-3|ec-3|mp3|alac|theora)(\.|$)/i;
+  // What this machine decodes only in software, said by the window when it hands over this
+  // script: offered nothing it would have to, a page picks a format the hardware plays.
+  var SOFT = /*SOFT*/[];
+  function soft(codec) { var name = codec.trim().split('.')[0].toLowerCase(); return SOFT.indexOf(name) >= 0; }
+  function codecsOf(type) { var c = /codecs\s*=\s*"?([^";]*)"?/i.exec(String(type || '')); return c ? c[1].split(',') : null; }
   function supported(type) {
     type = String(type || '');
     var base = type.split(';')[0].trim().toLowerCase();
     if (!/^(video|audio)\/(mp4|webm|x-matroska)$/.test(base)) return false;
-    var codecs = /codecs\s*=\s*"?([^";]*)"?/i.exec(type);
+    var codecs = codecsOf(type);
     if (!codecs) return true;
-    return codecs[1].split(',').every(function (c) { return CODECS.test(c.trim()); });
+    return codecs.every(function (c) { return CODECS.test(c.trim()) && !soft(c); });
+  }
+  // How a page asks before it picks (YouTube does): what is played in hardware is smooth and
+  // spares the battery; what would be software is not offered at all.
+  if (navigator.mediaCapabilities && navigator.mediaCapabilities.decodingInfo) {
+    var nativeDecodingInfo = navigator.mediaCapabilities.decodingInfo.bind(navigator.mediaCapabilities);
+    navigator.mediaCapabilities.decodingInfo = function (config) {
+      var parts = [config && config.video, config && config.audio].filter(Boolean);
+      if (drm || (config && config.keySystemConfiguration) || !parts.length) return nativeDecodingInfo(config);
+      var ok = parts.every(function (p) { return supported(p.contentType); });
+      return Promise_.resolve({ supported: ok, smooth: ok, powerEfficient: ok, configuration: config });
+    };
   }
   function onHandlers(proto, names) {
     names.forEach(function (n) {
@@ -1072,7 +1091,7 @@
   var NativeWorker = window.Worker;
   var workerSources = {};   // this page's MediaSource ids for workers' MediaSources, by "worker:id"
   var nextWorker = 1;
-  function workerMedia(BASE, CODECS_SOURCE) {
+  function workerMedia(BASE, CODECS_SOURCE, SOFT) {
     'use strict';
     var O = Object, defineProperty = O.defineProperty;
     var post = self.postMessage.bind(self);
@@ -1091,7 +1110,7 @@
       var base = type.split(';')[0].trim().toLowerCase();
       if (!/^(video|audio)\/(mp4|webm|x-matroska)$/.test(base)) return false;
       var codecs = /codecs\s*=\s*"?([^";]*)"?/i.exec(type);
-      return !codecs || codecs[1].split(',').every(function (c) { return CODECS.test(c.trim()); });
+      return !codecs || codecs[1].split(',').every(function (c) { return CODECS.test(c.trim()) && SOFT.indexOf(c.trim().split('.')[0].toLowerCase()) < 0; });
     }
     function emit(target, name) { nativeDispatch.call(target, new Event(name)); }
     function soon(f) { Promise.resolve().then(f); }
@@ -1335,7 +1354,7 @@
       if (!new.target) throw new TypeError("Failed to construct 'Worker': Please use the 'new' operator.");
       var abs = absolute(String(url));
       var module = options && options.type === 'module';
-      var start = '(' + workerStarter + ')(' + JSONstringify(abs) + ',' + JSONstringify(CODECS.source) + ');\n' +
+      var start = '(' + workerStarter + ')(' + JSONstringify(abs) + ',' + JSONstringify(CODECS.source) + ',' + JSONstringify(SOFT) + ');\n' +
         (module ? 'import(' + JSONstringify(abs) + ');' : 'importScripts(' + JSONstringify(abs) + ');');
       var worker;
       try {

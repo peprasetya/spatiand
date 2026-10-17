@@ -9,6 +9,7 @@
 //! had libmpv; [`screen`] draws what it decodes.
 
 pub mod audio;
+pub mod hardware;
 pub mod hints;
 pub mod layout;
 pub mod mesh;
