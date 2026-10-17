@@ -16,6 +16,8 @@ pub mod stretch;
 pub mod subs;
 
 #[cfg(feature = "engine")]
+pub mod mse;
+#[cfg(feature = "engine")]
 pub mod player;
 #[cfg(feature = "engine")]
 pub mod screen;

@@ -832,7 +832,244 @@
   }
 
   // ---- step 4: MediaSource ----
-  function msReceive(m) {}
+  // A page that streams (YouTube, most players) appends pieces of a film to SourceBuffers of a
+  // MediaSource. Both are SpatiMesh's: what is appended goes to the window, which reads it with
+  // FFmpeg and plays it with the rest (spatiand_media::mse); appends finish, buffered ranges and
+  // errors come back as the engine's would. A page that asks for a key system (DRM) keeps the
+  // engine's own MediaSource from then on, and an element given keys goes back to the engine.
+  var NativeMS = window.MediaSource || window.WebKitMediaSource;
+  var nativeCreateURL = URL_.createObjectURL ? URL_.createObjectURL.bind(URL_) : null;
+  var nativeRevokeURL = URL_.revokeObjectURL ? URL_.revokeObjectURL.bind(URL_) : null;
+  var drm = false;
+  if (navigator.requestMediaKeySystemAccess) {
+    var nativeKeys = navigator.requestMediaKeySystemAccess.bind(navigator);
+    navigator.requestMediaKeySystemAccess = function () { drm = true; return nativeKeys.apply(null, arguments); };
+  }
+  if (MediaProto.setMediaKeys) {
+    var nativeSetKeys = MediaProto.setMediaKeys;
+    defineProperty(MediaProto, 'setMediaKeys', { configurable: true, writable: true, value: function (keys) {
+      if (keys && managed.has(this)) release(this, stateOf(this));
+      return nativeSetKeys.call(this, keys);
+    } });
+  }
+  var byMs = {};
+  var nextMs = 1;
+  var CODECS = /^(avc1|avc3|hev1|hvc1|dvh1|dvhe|vp8|vp9|vp09|vp08|av01|mp4a|opus|vorbis|flac|ac-3|ec-3|mp3|alac|theora)(\.|$)/i;
+  function supported(type) {
+    type = String(type || '');
+    var base = type.split(';')[0].trim().toLowerCase();
+    if (!/^(video|audio)\/(mp4|webm|x-matroska)$/.test(base)) return false;
+    var codecs = /codecs\s*=\s*"?([^";]*)"?/i.exec(type);
+    if (!codecs) return true;
+    return codecs[1].split(',').every(function (c) { return CODECS.test(c.trim()); });
+  }
+  function onHandlers(proto, names) {
+    names.forEach(function (n) {
+      var key = '__on' + n;
+      defineProperty(proto, 'on' + n, { configurable: true, enumerable: true,
+        get: function () { return this[key] || null; },
+        set: function (f) {
+          if (this[key]) this.removeEventListener(n, this[key]);
+          this[key] = typeof f === 'function' ? f : null;
+          if (this[key]) this.addEventListener(n, this[key]);
+        } });
+    });
+  }
+  function emit(target, name) { var ev = new Event_(name); ours.add(ev); nativeDispatch.call(target, ev); }
+
+  function List() { var self = new EventTarget(); O.setPrototypeOf(self, List.prototype); self.__items = []; return self; }
+  List.prototype = O.create(EventTarget.prototype);
+  defineProperty(List.prototype, 'length', { get: function () { return this.__items.length; } });
+  onHandlers(List.prototype, ['addsourcebuffer', 'removesourcebuffer']);
+  function listSet(list, items) {
+    for (var i = 0; i < Math.max(items.length, list.__items.length) + 1; i++) delete list[i];
+    list.__items = items.slice();
+    items.forEach(function (sb, i) { defineProperty(list, i, { configurable: true, enumerable: true, get: function () { return list.__items[i]; } }); });
+  }
+  if (typeof SourceBufferList !== 'undefined') O.setPrototypeOf(List.prototype, SourceBufferList.prototype);
+
+  function SB() { throw new TypeError('Illegal constructor'); }
+  SB.prototype = O.create(EventTarget.prototype);
+  onHandlers(SB.prototype, ['updatestart', 'update', 'updateend', 'error', 'abort']);
+  var sbProps = {
+    updating: function () { return this.__s.updating; },
+    buffered: function () { return ranges(this.__s.buffered); },
+    audioTracks: function () { return []; }, videoTracks: function () { return []; }, textTracks: function () { return []; }
+  };
+  O.keys(sbProps).forEach(function (k) { defineProperty(SB.prototype, k, { configurable: true, enumerable: true, get: sbProps[k] }); });
+  defineProperty(SB.prototype, 'mode', { configurable: true, enumerable: true, get: function () { return this.__s.mode; }, set: function (v) {
+    if (this.__s.updating) throw new DOMException('The SourceBuffer is updating.', 'InvalidStateError');
+    this.__s.mode = v === 'sequence' ? 'sequence' : 'segments';
+  } });
+  defineProperty(SB.prototype, 'timestampOffset', { configurable: true, enumerable: true, get: function () { return this.__s.offset; }, set: function (v) {
+    if (this.__s.updating) throw new DOMException('The SourceBuffer is updating.', 'InvalidStateError');
+    this.__s.offset = Number(v) || 0;
+    send({ t: 'ms', a: 'offset', ms: this.__s.ms.id, sb: this.__s.id, value: this.__s.offset });
+  } });
+  ['appendWindowStart', 'appendWindowEnd'].forEach(function (k, i) {
+    defineProperty(SB.prototype, k, { configurable: true, enumerable: true, get: function () { return this.__s[k]; }, set: function (v) { this.__s[k] = Number(v); } });
+  });
+  function usable(sb) {
+    var s = sb.__s;
+    if (s.removed) throw new DOMException('This SourceBuffer has been removed from the parent media source.', 'InvalidStateError');
+    if (s.updating) throw new DOMException('This SourceBuffer is still processing an appendBuffer or remove operation.', 'InvalidStateError');
+    var ms = s.ms;
+    if (ms.readyState === 'ended') { ms.readyState = 'open'; send({ t: 'ms', a: 'unend', ms: ms.id }); soon(function () { emit(ms.target, 'sourceopen'); }); }
+  }
+  defineProperty(SB.prototype, 'appendBuffer', { configurable: true, writable: true, value: function (data) {
+    usable(this);
+    var bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    var s = this.__s;
+    s.updating = true;
+    var self = this;
+    soon(function () { emit(self, 'updatestart'); });
+    send({ t: 'ms', a: 'append', ms: s.ms.id, sb: s.id, d: base64(bytes) });
+  } });
+  defineProperty(SB.prototype, 'remove', { configurable: true, writable: true, value: function (start, end) {
+    usable(this);
+    var s = this.__s;
+    s.updating = true;
+    var self = this;
+    soon(function () { emit(self, 'updatestart'); });
+    send({ t: 'ms', a: 'remove', ms: s.ms.id, sb: s.id, start: Number(start), end: Number(end) });
+  } });
+  defineProperty(SB.prototype, 'abort', { configurable: true, writable: true, value: function () {
+    var s = this.__s;
+    if (s.removed) throw new DOMException('This SourceBuffer has been removed from the parent media source.', 'InvalidStateError');
+    send({ t: 'ms', a: 'abort', ms: s.ms.id, sb: s.id });
+    if (s.updating) { s.updating = false; s.aborted = true; emit(this, 'abort'); emit(this, 'updateend'); }
+    s.appendWindowStart = 0; s.appendWindowEnd = Infinity;
+  } });
+  defineProperty(SB.prototype, 'changeType', { configurable: true, writable: true, value: function (type) {
+    usable(this);
+    if (!supported(type)) throw new DOMException('The type provided (' + type + ') is unsupported.', 'NotSupportedError');
+    send({ t: 'ms', a: 'type', ms: this.__s.ms.id, sb: this.__s.id, type: String(type) });
+  } });
+  if (typeof SourceBuffer !== 'undefined') O.setPrototypeOf(SB.prototype, SourceBuffer.prototype);
+
+  function MS() {
+    if (drm && NativeMS) return new NativeMS();
+    var target = new EventTarget();
+    O.setPrototypeOf(target, new.target ? new.target.prototype : MS.prototype);
+    var self = { id: nextMs++, target: target, readyState: 'closed', duration: NaN, buffers: [], element: null, live: null };
+    self.list = List(); self.active = List();
+    target.__spatimesh = self;
+    byMs[self.id] = self;
+    self.attach = function (st) {
+      self.element = st;
+      self.readyState = 'open';
+      soon(function () { emit(target, 'sourceopen'); if (target instanceof MMS) { target.__streaming = true; emit(target, 'startstreaming'); } });
+    };
+    self.detach = function () {
+      self.element = null;
+      self.readyState = 'closed';
+      send({ t: 'ms', a: 'close', ms: self.id });
+      soon(function () { emit(target, 'sourceclose'); });
+    };
+    send({ t: 'ms', a: 'new', ms: self.id });
+    return target;
+  }
+  MS.prototype = O.create(EventTarget.prototype);
+  onHandlers(MS.prototype, ['sourceopen', 'sourceended', 'sourceclose']);
+  function inner(ms) { return ms.__spatimesh; }
+  defineProperty(MS.prototype, 'readyState', { configurable: true, enumerable: true, get: function () { return inner(this).readyState; } });
+  defineProperty(MS.prototype, 'sourceBuffers', { configurable: true, enumerable: true, get: function () { return inner(this).list; } });
+  defineProperty(MS.prototype, 'activeSourceBuffers', { configurable: true, enumerable: true, get: function () { return inner(this).active; } });
+  defineProperty(MS.prototype, 'duration', { configurable: true, enumerable: true, get: function () { return inner(this).duration; }, set: function (v) {
+    var self = inner(this);
+    v = Number(v);
+    if (!(v >= 0)) throw new TypeError("The provided double value is negative or not a number.");
+    if (self.readyState !== 'open') throw new DOMException("The MediaSource's readyState is not 'open'.", 'InvalidStateError');
+    if (self.buffers.some(function (b) { return b.__s.updating; })) throw new DOMException('A SourceBuffer is updating.', 'InvalidStateError');
+    self.duration = v;
+    send({ t: 'ms', a: 'duration', ms: self.id, value: v === Infinity ? -1 : v });
+  } });
+  defineProperty(MS.prototype, 'addSourceBuffer', { configurable: true, writable: true, value: function (type) {
+    var self = inner(this);
+    if (!supported(type)) throw new DOMException('The type provided (' + type + ') is unsupported.', 'NotSupportedError');
+    if (self.readyState !== 'open') throw new DOMException("The MediaSource's readyState is not 'open'.", 'InvalidStateError');
+    var sb = new EventTarget();
+    O.setPrototypeOf(sb, SB.prototype);
+    sb.__s = { id: self.buffers.length + 1, ms: self, updating: false, buffered: [], mode: 'segments', offset: 0, appendWindowStart: 0, appendWindowEnd: Infinity };
+    self.buffers.push(sb);
+    listSet(self.list, self.buffers); listSet(self.active, self.buffers);
+    send({ t: 'ms', a: 'add', ms: self.id, sb: sb.__s.id, type: String(type) });
+    soon(function () { emit(self.list, 'addsourcebuffer'); emit(self.active, 'addsourcebuffer'); });
+    return sb;
+  } });
+  defineProperty(MS.prototype, 'removeSourceBuffer', { configurable: true, writable: true, value: function (sb) {
+    var self = inner(this), i = self.buffers.indexOf(sb);
+    if (i < 0) throw new DOMException('The SourceBuffer provided is not contained in this MediaSource.', 'NotFoundError');
+    if (sb.__s.updating) { sb.__s.updating = false; emit(sb, 'abort'); emit(sb, 'updateend'); }
+    sb.__s.removed = true;
+    self.buffers.splice(i, 1);
+    listSet(self.list, self.buffers); listSet(self.active, self.buffers);
+    send({ t: 'ms', a: 'removesb', ms: self.id, sb: sb.__s.id });
+    soon(function () { emit(self.list, 'removesourcebuffer'); emit(self.active, 'removesourcebuffer'); });
+  } });
+  defineProperty(MS.prototype, 'endOfStream', { configurable: true, writable: true, value: function (error) {
+    var self = inner(this);
+    if (self.readyState !== 'open') throw new DOMException("The MediaSource's readyState is not 'open'.", 'InvalidStateError');
+    if (self.buffers.some(function (b) { return b.__s.updating; })) throw new DOMException('A SourceBuffer is updating.', 'InvalidStateError');
+    self.readyState = 'ended';
+    send({ t: 'ms', a: 'end', ms: self.id, error: error || '' });
+    soon(function () { emit(self.target, 'sourceended'); });
+    if (error && self.element) {
+      var st = self.element;
+      st.error = mediaError(error === 'network' ? 2 : 3, 'MediaSource ended with a ' + error + ' error');
+      fire(st.el, 'error');
+    }
+  } });
+  defineProperty(MS.prototype, 'setLiveSeekableRange', { configurable: true, writable: true, value: function (a, b) { inner(this).live = [Number(a), Number(b)]; } });
+  defineProperty(MS.prototype, 'clearLiveSeekableRange', { configurable: true, writable: true, value: function () { inner(this).live = null; } });
+  MS.isTypeSupported = function (type) { return drm && NativeMS ? NativeMS.isTypeSupported(type) : supported(type); };
+  MS.canConstructInDedicatedWorker = false;
+  if (NativeMS) O.setPrototypeOf(MS.prototype, NativeMS.prototype);
+  // Safari's: the same, which says it is streaming once it is attached.
+  function MMS() { return Reflect.construct(MS, [], MMS); }
+  MMS.prototype = O.create(MS.prototype);
+  onHandlers(MMS.prototype, ['startstreaming', 'endstreaming']);
+  defineProperty(MMS.prototype, 'streaming', { configurable: true, enumerable: true, get: function () { return !!this.__streaming; } });
+  MMS.isTypeSupported = MS.isTypeSupported;
+  window.MediaSource = MS;
+  if (window.WebKitMediaSource) window.WebKitMediaSource = MS;
+  if (window.ManagedMediaSource) window.ManagedMediaSource = MMS;
+  if (nativeCreateURL) {
+    URL_.createObjectURL = function (obj) {
+      if (obj && obj.__spatimesh) {
+        var url = nativeCreateURL(new Blob([]));
+        sources[url] = obj;
+        return url;
+      }
+      return nativeCreateURL(obj);
+    };
+    URL_.revokeObjectURL = function (url) { delete sources[url]; return nativeRevokeURL(url); };
+  }
+
+  function msReceive(m) {
+    var self = byMs[m.ms];
+    if (!self) return;
+    var sb = null;
+    for (var i = 0; i < self.buffers.length; i++) if (self.buffers[i].__s.id === m.sb) sb = self.buffers[i];
+    if (m.a === 'duration') { if (m.value > 0) self.duration = m.value; return; }
+    if (!sb) return;
+    var s = sb.__s;
+    if (m.buffered) s.buffered = m.buffered;
+    if (m.a === 'appended' || m.a === 'removed') {
+      if (s.aborted) { s.aborted = false; return; }
+      if (!s.updating) return;
+      s.updating = false;
+      if (m.error) {
+        emit(sb, 'error');
+        emit(sb, 'updateend');
+        if (m.error === 'QuotaExceededError') return;
+        if (self.readyState === 'open') try { self.target.endOfStream('decode'); } catch (e) {}
+        return;
+      }
+      emit(sb, 'update');
+      emit(sb, 'updateend');
+    }
+  }
 
   // ---- step 2: Web Audio, to the room ----
   // Every AudioContext is made as it always is, but what the page connects to its destination

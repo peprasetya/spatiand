@@ -38,8 +38,22 @@ struct Place {
     video: bool,
 }
 
+/// A page's MediaSource: the window's source, its SourceBuffers by the page's numbers, and the
+/// appends not yet answered.
+struct Source {
+    source: Arc<spatiand_media::mse::Source>,
+    buffers: HashMap<u64, usize>,
+    appending: Vec<u64>,
+}
+
 struct Item {
     url: String,
+    /// What it plays, if it is a page's MediaSource rather than an address.
+    mse: Option<Arc<spatiand_media::mse::Source>>,
+    /// The length last told the page.
+    told_duration: f64,
+    /// The picture's size last told the page: a stream changing quality changes it.
+    told_size: (u32, u32),
     player: Option<Player>,
     opening: Option<mpsc::Receiver<Result<Player, String>>>,
     playing: bool,
@@ -78,6 +92,9 @@ impl Item {
         let now = Instant::now();
         Item {
             url,
+            mse: None,
+            told_duration: f64::NAN,
+            told_size: (0, 0),
             player: None,
             opening: None,
             playing: false,
@@ -157,6 +174,8 @@ impl Item {
 #[derive(Default)]
 pub struct Media {
     items: HashMap<Key, Item>,
+    /// Pages' MediaSources, by tab, frame and the page's number.
+    sources: HashMap<Key, Source>,
     /// Pages' Web Audio, each AudioContext's mix as it comes, and when it last sounded.
     sounds: HashMap<Key, (spatiand_media::Stream, Instant)>,
     out: Vec<(TabId, String)>,
@@ -188,6 +207,21 @@ impl Media {
                 item.looped = m["loop"].as_bool().unwrap_or(false);
                 item.video = m["video"].as_bool().unwrap_or(true);
                 let start = m["at"].as_f64().unwrap_or(0.0);
+                if let Some(ms) = m["source"].as_u64() {
+                    // A MediaSource: played once its tracks are known (`tick`).
+                    match self.sources.get(&(tab, frame.clone(), ms)) {
+                        Some(source) => item.mse = Some(source.source.clone()),
+                        None => {
+                            self.tell(&key, json!({ "t": "error", "code": 4, "message": "no such MediaSource" }));
+                            return;
+                        }
+                    }
+                    if start > 0.0 {
+                        item.seek = Some((start, Instant::now()));
+                    }
+                    self.items.insert(key, item);
+                    return;
+                }
                 match target(&url) {
                     Some(name) => item.opening = Some(open(name, page, start)),
                     None => {
@@ -201,6 +235,7 @@ impl Media {
             "close" => {
                 self.items.remove(&key);
             }
+            "ms" => self.media_source(tab, &frame, &m),
             "audio" => match m["a"].as_str().unwrap_or("") {
                 "open" => match spatiand_media::Stream::open(2) {
                     Ok(stream) => {
@@ -320,8 +355,88 @@ impl Media {
         }
     }
 
+    /// What a page's MediaSource or one of its SourceBuffers is asked.
+    fn media_source(&mut self, tab: TabId, frame: &str, m: &Value) {
+        let ms = m["ms"].as_u64().unwrap_or(0);
+        let sb = m["sb"].as_u64().unwrap_or(0);
+        let key = (tab, frame.to_string(), ms);
+        let action = m["a"].as_str().unwrap_or("");
+        if action == "new" {
+            self.sources.insert(key, Source { source: spatiand_media::mse::Source::new(), buffers: HashMap::new(), appending: Vec::new() });
+            return;
+        }
+        let Some(entry) = self.sources.get_mut(&key) else { return };
+        let index = entry.buffers.get(&sb).copied();
+        let mut reply: Option<Value> = None;
+        match action {
+            "add" => match entry.source.add_buffer(m["type"].as_str().unwrap_or("")) {
+                Ok(i) => {
+                    entry.buffers.insert(sb, i);
+                }
+                Err(e) => log::warn!("media: a SourceBuffer: {e}"),
+            },
+            "append" => {
+                use base64::Engine as _;
+                let Some(i) = index else { return };
+                let bytes = base64::engine::general_purpose::STANDARD.decode(m["d"].as_str().unwrap_or("")).unwrap_or_default();
+                match entry.source.append(i, &bytes) {
+                    Ok(()) => entry.appending.push(sb),
+                    Err(e) => reply = Some(json!({ "t": "ms", "a": "appended", "ms": ms, "sb": sb, "error": e, "buffered": ranges(&entry.source.buffered(i)) })),
+                }
+            }
+            "remove" => {
+                let Some(i) = index else { return };
+                let end = m["end"].as_f64().unwrap_or(f64::INFINITY);
+                entry.source.remove(i, m["start"].as_f64().unwrap_or(0.0), if end.is_finite() { end } else { f64::INFINITY });
+                reply = Some(json!({ "t": "ms", "a": "removed", "ms": ms, "sb": sb, "buffered": ranges(&entry.source.buffered(i)) }));
+            }
+            "abort" => {
+                if let Some(i) = index {
+                    entry.source.abort(i);
+                    entry.appending.retain(|&s| s != sb);
+                }
+            }
+            "offset" => {
+                if let Some(i) = index {
+                    entry.source.set_offset(i, m["value"].as_f64().unwrap_or(0.0));
+                }
+            }
+            "type" => {
+                if let Some(i) = index {
+                    let _ = entry.source.change_type(i, m["type"].as_str().unwrap_or(""));
+                }
+            }
+            "duration" => {
+                let v = m["value"].as_f64().unwrap_or(f64::NAN);
+                entry.source.set_duration(if v < 0.0 { f64::INFINITY } else { v });
+            }
+            "end" => {
+                entry.source.set_ended(true);
+                reply = Some(json!({ "t": "ms", "a": "duration", "ms": ms, "value": entry.source.duration() }));
+            }
+            "unend" => entry.source.set_ended(false),
+            "removesb" => {
+                if let Some(i) = entry.buffers.remove(&sb) {
+                    entry.source.remove_buffer(i);
+                }
+            }
+            "close" => {
+                entry.source.close();
+                self.sources.remove(&key);
+            }
+            _ => {}
+        }
+        if let Some(r) = reply {
+            self.out.push((tab, with_frame(r, frame)));
+        }
+    }
+
     /// A tab closed, crashed or went to another engine: its media stops.
     pub fn forget(&mut self, tab: TabId) {
+        for (_, s) in self.sources.iter().filter(|(k, _)| k.0 == tab) {
+            s.source.close();
+        }
+        self.sources.retain(|(t, _, _), _| *t != tab);
         self.items.retain(|(t, _, _), _| *t != tab);
         self.sounds.retain(|(t, _, _), _| *t != tab);
     }
@@ -364,6 +479,23 @@ impl Media {
 
     /// Once a turn: players opened, their pictures and times, and what the pages are told.
     pub fn tick(&mut self) {
+        // Appends taken in, answered.
+        for ((tab, frame, ms), entry) in self.sources.iter_mut() {
+            let mut done = Vec::new();
+            for &sb in &entry.appending {
+                let Some(&i) = entry.buffers.get(&sb) else { continue };
+                if let Some(result) = entry.source.append_done(i) {
+                    let buffered = ranges(&entry.source.buffered(i));
+                    let mut r = json!({ "t": "ms", "a": "appended", "ms": ms, "sb": sb, "buffered": buffered });
+                    if let Err(e) = result {
+                        r["error"] = json!(e);
+                    }
+                    done.push(sb);
+                    self.out.push((*tab, with_frame(r, frame)));
+                }
+            }
+            entry.appending.retain(|sb| !done.contains(sb));
+        }
         let keys: Vec<Key> = self.items.keys().cloned().collect();
         for key in keys {
             let mut said: Vec<Value> = Vec::new();
@@ -371,6 +503,25 @@ impl Media {
             let mut fresh = false;
             {
                 let Some(item) = self.items.get_mut(&key) else { continue };
+                if let (Some(source), None) = (item.mse.clone(), item.player.as_ref()) {
+                    if source.ready() {
+                        match Player::open_source(source) {
+                            Ok(mut player) => {
+                                if item.rate > 0.0 && item.rate != 1.0 {
+                                    player.set_speed(item.rate);
+                                }
+                                player.seek(item.seek.map_or(0.0, |(at, _)| at));
+                                player.set_paused(!item.playing);
+                                item.player = Some(player);
+                                item.apply_volume();
+                            }
+                            Err(why) => {
+                                said.push(json!({ "t": "error", "code": 3, "message": why }));
+                                gone = true;
+                            }
+                        }
+                    }
+                }
                 if let Some(rx) = item.opening.as_ref() {
                     match rx.try_recv() {
                         Ok(Ok(mut player)) => {
@@ -395,16 +546,35 @@ impl Media {
                     }
                 }
                 if let Some(player) = item.player.as_mut() {
+                    // A MediaSource's length is the page's to say, and may change.
+                    if let Some(source) = item.mse.as_ref() {
+                        let d = source.duration();
+                        if d.is_finite() && d > 0.0 && d != item.told_duration && item.told_meta {
+                            player.set_duration(d);
+                            said.push(json!({ "t": "meta", "duration": d, "width": player.info().width, "height": player.info().height, "fps": player.info().frame_rate }));
+                        }
+                        if d != item.told_duration {
+                            item.told_duration = d;
+                            player.set_duration(d);
+                        }
+                        source.evict_before(player.position());
+                    }
                     let info = player.info().clone();
                     if !item.told_meta {
                         item.told_meta = true;
                         let duration = if info.duration > 0.0 { json!(info.duration) } else { json!(-1.0) };
                         said.push(json!({ "t": "meta", "duration": duration, "width": info.width, "height": info.height, "fps": info.frame_rate }));
-                        said.push(json!({ "t": "state", "ready": true, "at": player.position(), "buffered": buffered(&item.url, info.duration, player.position()) }));
+                        said.push(json!({ "t": "state", "ready": true, "at": player.position(), "buffered": held(&item.mse, &item.url, info.duration, player.position()) }));
                     }
                     let (picture, new) = player.picture();
                     if new {
                         if let Some(picture) = picture {
+                            let size = (picture.width, picture.height);
+                            if item.told_size != (0, 0) && size != item.told_size && item.told_meta {
+                                let d = if info.duration > 0.0 { json!(info.duration) } else { json!(-1.0) };
+                                said.push(json!({ "t": "meta", "duration": d, "width": size.0, "height": size.1, "fps": info.frame_rate, "resized": true }));
+                            }
+                            item.told_size = size;
                             item.picture = Some(picture);
                             fresh = true;
                             if !item.shown {
@@ -425,7 +595,7 @@ impl Media {
                                 item.seeked = Some(at);
                                 item.sent = None;
                             } else {
-                                said.push(json!({ "t": "state", "seeked": true, "at": at, "buffered": buffered(&item.url, info.duration, at) }));
+                                said.push(json!({ "t": "state", "seeked": true, "at": at, "buffered": held(&item.mse, &item.url, info.duration, at) }));
                             }
                         }
                     }
@@ -438,6 +608,9 @@ impl Media {
                                 said.push(json!({ "t": "state", "waiting": false, "at": at }));
                             }
                         } else if !item.waiting && item.moved_at.elapsed() > Duration::from_millis(700) && !player.ended() {
+                            if std::env::var_os("SPATIMESH_DEBUG_MEDIA").is_some() {
+                                log::info!("media: waiting at {at:.2}: {}", player.end_state());
+                            }
                             item.waiting = true;
                             said.push(json!({ "t": "state", "waiting": true, "at": at }));
                         }
@@ -454,7 +627,7 @@ impl Media {
                             }
                         } else if item.last_tick.elapsed() >= Duration::from_millis(250) {
                             item.last_tick = Instant::now();
-                            said.push(json!({ "t": "state", "tick": true, "at": at, "buffered": buffered(&item.url, info.duration, at) }));
+                            said.push(json!({ "t": "state", "tick": true, "at": at, "buffered": held(&item.mse, &item.url, info.duration, at) }));
                         }
                     }
                 }
@@ -493,7 +666,7 @@ impl Media {
                 match item.seeked.take() {
                     Some(at) => {
                         let duration = item.player.as_ref().map_or(0.0, |p| p.info().duration);
-                        json!({ "t": "state", "seeked": true, "at": at, "frame": frame, "buffered": buffered(&item.url, duration, at) })
+                        json!({ "t": "state", "seeked": true, "at": at, "frame": frame, "buffered": held(&item.mse, &item.url, duration, at) })
                     }
                     None => json!({ "t": "frame", "frame": frame }),
                 }
@@ -746,6 +919,23 @@ fn open(name: String, page: String, start: f64) -> mpsc::Receiver<Result<Player,
 const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
 
 /// What of a film is in hand: all of a file here; from a network, what the reader keeps ahead.
+/// What of a film is in hand: a MediaSource's, as its buffers say; a file's, guessed.
+fn held(mse: &Option<Arc<spatiand_media::mse::Source>>, url: &str, duration: f64, at: f64) -> Value {
+    match mse.as_ref() {
+        Some(source) => ranges(&source.buffered_all()),
+        None => buffered(url, duration, at),
+    }
+}
+
+fn ranges(list: &[(f64, f64)]) -> Value {
+    json!(list.iter().map(|(s, e)| [*s, *e]).collect::<Vec<_>>())
+}
+
+fn with_frame(mut m: Value, frame: &str) -> String {
+    m["f"] = json!(frame);
+    m.to_string()
+}
+
 fn buffered(url: &str, duration: f64, at: f64) -> Value {
     if duration <= 0.0 {
         return json!([]);
