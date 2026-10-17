@@ -29,6 +29,16 @@ for own in $OWN; do
     echo "warning: $own did not build; the app is made without it"
   fi
 done
+# SpatiMesh's web engine: WebKit, in a program of its own beside SpatiMesh, which starts one for
+# each profile in use (docs/spatimesh.md).
+if [ -f "$app/Contents/MacOS/spatimesh" ]; then
+  if (cd .. && MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release -p spatimesh-webkit); then
+    cp ../target/release/spatimesh-webkit "$app/Contents/MacOS/spatimesh-webkit"
+    OWN="$OWN spatimesh-webkit"
+  else
+    echo "warning: spatimesh-webkit did not build; SpatiMesh will show no pages"
+  fi
+fi
 # The storage service the applications reach remotes through: Go, with rclone linked in.
 if command -v go >/dev/null && ../storage/build.sh mac "$app/Contents/MacOS/spatiand-storage"; then
   OWN="$OWN spatiand-storage"

@@ -995,7 +995,7 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-desk") {
     let keys: [Character: UInt16] = Dictionary(uniqueKeysWithValues: zip(
         "asdfhgzxcv bqweryt123465=97-80]ou[ip lj'k;\\,/nm.", 
         [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47].map { UInt16($0) }
-    ).filter { $0.0 != " " })
+    ).filter { $0.0 != " " }).merging([" ": 49]) { a, _ in a }
     func shoot(_ step: String) {
         guard let window = DeskWindows.shared.all.first else { print("desk: \(step): no window"); return }
         let size = window.contentRect(forFrameRect: window.frame).size
@@ -1034,8 +1034,8 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-desk") {
     then(4) { shoot("resized") }
     then(0.5) { if let id = id() { sp_desk_motion(id, 500, 400); sp_desk_scroll(id, 0, 600, false) } }
     then(3) { shoot("scrolled") }
-    // Through AppKit itself now, as the window's own events: back to the top, a click on the
-    // page's search button, and a search typed and sent.
+    // Through AppKit itself now, as the window's own events: a click on SpatiMesh's own address
+    // bar (where it is does not depend on a web page), and a search typed and sent.
     then(0.5) { if let id = id() { sp_desk_scroll(id, 0, -2000, false) } }
     func post(_ event: NSEvent?) { if let event { NSApp.postEvent(event, atStart: false) } }
     func click(_ x: CGFloat, _ yFromTop: CGFloat) {
@@ -1054,9 +1054,9 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-desk") {
                                   windowNumber: window.windowNumber, context: nil, characters: text, charactersIgnoringModifiers: text, isARepeat: false, keyCode: code))
         }
     }
-    then(2) { DeskWindows.shared.all.first?.makeKeyAndOrderFront(nil); click(714, 167) }
+    then(2) { DeskWindows.shared.all.first?.makeKeyAndOrderFront(nil); click(500, 93) }
     then(2) { shoot("clicked") }
-    then(0.5) { for c in "hrtf" { if let code = keys[c] { key(code, String(c)) } }; key(0x24, "\r") }
+    then(0.5) { for c in "hrtf wikipedia" { if let code = keys[c] { key(code, String(c)) } }; key(0x24, "\r") }
     then(8) { shoot("searched") }
     then(0.5) { DeskWindows.shared.all.first?.performClose(nil) }
     then(4) {
