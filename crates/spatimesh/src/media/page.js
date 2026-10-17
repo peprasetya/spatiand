@@ -35,6 +35,7 @@
   var nativeLoad = MediaProto.load, nativePlay = MediaProto.play, nativePause = MediaProto.pause;
   var nativeDispatch = EventTarget.prototype.dispatchEvent;
   var nativeAddListener = EventTarget.prototype.addEventListener;
+  var nativeRemoveListener = EventTarget.prototype.removeEventListener;
   var nativeGetComputed = window.getComputedStyle.bind(window);
   var nativeRect = ElementProto.getBoundingClientRect;
   var postMessage_ = function (w, data) { try { w.postMessage(data, '*'); } catch (e) {} };
@@ -1203,6 +1204,37 @@
   });
   ['fullscreen', 'webkitIsFullScreen'].forEach(function (n) { fsGetter(Document.prototype, n, function () { return !!fsElement; }); });
   if (VideoProto) fsGetter(VideoProto, 'webkitDisplayingFullscreen', function () { return fsElement === this; });
+  // The handler properties too: players look for `onfullscreenchange in document` to know the
+  // API is there at all.
+  var fsHandlers = new WeakMap();
+  ['fullscreenchange', 'fullscreenerror', 'webkitfullscreenchange', 'webkitfullscreenerror'].forEach(function (type) {
+    [Document.prototype, ElementProto].forEach(function (proto) {
+      if (('on' + type) in proto) return;
+      try {
+        defineProperty(proto, 'on' + type, { configurable: true, enumerable: true,
+          get: function () { var h = fsHandlers.get(this); return (h && h[type] && h[type].f) || null; },
+          set: function (f) {
+            var h = fsHandlers.get(this);
+            if (!h) fsHandlers.set(this, h = {});
+            if (h[type]) nativeRemoveListener.call(this, type, h[type].call);
+            h[type] = null;
+            if (typeof f !== 'function') return;
+            var target = this;
+            h[type] = { f: f, call: function (ev) { return f.call(target, ev); } };
+            nativeAddListener.call(this, type, h[type].call);
+          } });
+      } catch (e) {}
+    });
+  });
+  // Fullscreen in a browser makes the viewport the screen, and players check for that.
+  if (window.Screen) ['width', 'height', 'availWidth', 'availHeight'].forEach(function (n) {
+    var d = O.getOwnPropertyDescriptor(Screen.prototype, n);
+    if (!d || !d.get) return;
+    fsGetter(Screen.prototype, n, function () {
+      if (!fsElement) return d.get.call(this);
+      return n === 'width' || n === 'availWidth' ? innerWidth : innerHeight;
+    });
+  });
 
   // ---- this document, to the window: here, and gone ----
   send({ t: 'hello', top: TOP });
