@@ -302,6 +302,9 @@ public class MeshEngine extends Service {
         android.os.Process.killProcess(android.os.Process.myPid());
     }
 
+    /** SpatiMesh's own script for every frame's every document (its media), or none. */
+    private String pageScript;
+
     private void handle(Wire.ToHost m) {
         if (m.tag == Wire.OPEN) {
             open(m.tab, m.url, m.width, m.height, m.zoom);
@@ -313,6 +316,13 @@ public class MeshEngine extends Service {
         }
         if (m.tag == Wire.RUN_SCRIPT) {
             runScript(pages.get(m.tab), m);
+            return;
+        }
+        if (m.tag == Wire.PAGE_SCRIPT) {
+            // SpatiMesh's media script, for every frame's every document from now on.
+            pageScript = m.script == null || m.script.isEmpty() ? null : m.script;
+            for (Page each : pages.values())
+                applyExtensions(each);
             return;
         }
         Page page = pages.get(m.tab);
@@ -382,6 +392,7 @@ public class MeshEngine extends Service {
         view.setWebViewClient(new Client(page));
         view.setWebChromeClient(new Chrome(page));
         view.addJavascriptInterface(new SelectBridge(page), "spatimeshSelect");
+        view.addJavascriptInterface(new MediaBridge(page), "spatimeshMedia");
         page.presentation.setContentView(view);
         page.presentation.show();
         page.view = view;
@@ -739,6 +750,12 @@ public class MeshEngine extends Service {
             for (Object script : page.starts)
                 boundary.remove(script);
             page.starts.clear();
+            // SpatiMesh's media script first, in every frame; the top one given its way out, kept
+            // before the page could replace the bridge's name.
+            if (pageScript != null)
+                page.starts.add(boundary.addDocumentStart(page.provider,
+                        "if(window.top===window){(function(){var b=window.spatimeshMedia;"
+                        + "if(b){window.__spatimeshMediaPost=function(s){b.post(s);};}})();}\n" + pageScript));
             JSONObject start = pageStart();
             JSONArray scripts = start == null ? null : start.optJSONArray("scripts");
             if (scripts == null || scripts.length() == 0)
@@ -1278,6 +1295,21 @@ public class MeshEngine extends Service {
     }
 
     /** The page's <select>, told by the script in it. */
+    /** The way out of SpatiMesh's media script in a tab's top frame (`media/page.js`). */
+    final class MediaBridge {
+        final Page page;
+
+        MediaBridge(Page page) {
+            this.page = page;
+        }
+
+        @JavascriptInterface
+        public void post(String json) {
+            if (json != null)
+                main.post(() -> send(Wire.media(page.tab, json)));
+        }
+    }
+
     final class SelectBridge {
         final Page page;
 

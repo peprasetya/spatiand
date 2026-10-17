@@ -54,6 +54,9 @@ struct Inner {
     speed: AtomicU32,
     rate: u32,
     channels: u16,
+    /// Where the sound was going has gone (the room's socket closed, `pw-cat` gone, the device
+    /// unplugged): nothing is heard any more, so the film keeps time by the wall instead.
+    dead: AtomicBool,
 }
 
 pub(crate) struct Sound {
@@ -111,6 +114,7 @@ impl Sound {
             speed: AtomicU32::new(1f32.to_bits()),
             rate,
             channels,
+            dead: AtomicBool::new(false),
         })
     }
 
@@ -184,6 +188,7 @@ impl Sound {
                     }
                     if let Err(e) = socket.write_all(&bytes) {
                         log::warn!("the room stopped taking sound: {e}");
+                        feed.dead.store(true, Ordering::Relaxed);
                         return;
                     }
                 }
@@ -202,6 +207,7 @@ impl Sound {
         let (rate, channels) = (config.sample_rate.0, config.channels);
         let inner = Sound::inner(rate, channels);
         let feed = inner.clone();
+        let failed = inner.clone();
         let stream = device
             .build_output_stream(
                 &config,
@@ -211,7 +217,13 @@ impl Sound {
                     let delay = stamp.playback.duration_since(&stamp.callback).unwrap_or(Duration::ZERO);
                     feed.fill(out, Instant::now() + delay);
                 },
-                |e| log::warn!("the sound device: {e}"),
+                move |e| {
+                    log::warn!("the sound device: {e}");
+                    // A device gone (unplugged): nothing will be heard from it again.
+                    if matches!(e, cpal::StreamError::DeviceNotAvailable) {
+                        failed.dead.store(true, Ordering::Relaxed);
+                    }
+                },
                 None,
             )
             .map_err(|e| format!("the sound device would not open: {e}"))?;
@@ -277,6 +289,8 @@ impl Sound {
                     // is the order `f32` on the command line means.
                     let bytes = unsafe { std::slice::from_raw_parts(block.as_ptr() as *const u8, block.len() * 4) };
                     if pipe.write_all(bytes).is_err() {
+                        log::warn!("sound: pw-cat has gone; the film keeps time without it");
+                        feed.dead.store(true, Ordering::Relaxed);
                         return;
                     }
                 }
@@ -294,8 +308,17 @@ impl Sound {
         self.inner.channels
     }
 
-    /// Take a block if there is room for it; `false` is "not yet".
+    /// Whether the sound is still going anywhere.
+    pub(crate) fn alive(&self) -> bool {
+        !self.inner.dead.load(Ordering::Relaxed)
+    }
+
+    /// Take a block if there is room for it; `false` is "not yet". Sound with nowhere to go is
+    /// taken and dropped, so that the decoders go on.
     pub(crate) fn offer(&self, block: &Block) -> bool {
+        if !self.alive() {
+            return true;
+        }
         let mut waiting = self.inner.waiting.lock().unwrap();
         let most = (AHEAD * self.inner.rate as f64) as usize * self.inner.channels as usize;
         if waiting.samples >= most {

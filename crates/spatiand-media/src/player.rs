@@ -781,9 +781,11 @@ impl Player {
         let (target, shown) = *shared.target.lock().unwrap();
         // Just after a seek the clocks still tell the old time: until something from after it
         // has been seen or heard, the film is where it was asked to go.
-        let position = match shared.sound.as_ref().and_then(|sound| sound.time(shared.serial.load(Ordering::Relaxed))) {
+        // Sound that has nowhere to go any more keeps no time: the wall does.
+        let sound = shared.sound.as_ref().filter(|s| s.alive());
+        let position = match sound.and_then(|sound| sound.time(shared.serial.load(Ordering::Relaxed))) {
             Some(heard) => heard,
-            None if shared.sound.is_some() && !shared.audio_out.load(Ordering::Relaxed) => target,
+            None if sound.is_some() && !shared.audio_out.load(Ordering::Relaxed) => target,
             None => {
                 let wall = shared.wall.lock().unwrap();
                 if shared.paused.load(Ordering::Relaxed) || !shown {
@@ -886,7 +888,7 @@ impl Player {
             && shared.video_out.load(Ordering::Relaxed)
             && shared.pictures.lock().unwrap().is_empty()
             && shared.seek.lock().unwrap().is_none()
-            && (shared.sound.is_none() || shared.audio_out.load(Ordering::Relaxed) && shared.sound.as_ref().is_some_and(|s| s.empty()))
+            && (shared.sound.as_ref().is_none_or(|s| !s.alive()) || shared.audio_out.load(Ordering::Relaxed) && shared.sound.as_ref().is_some_and(|s| s.empty()))
     }
 
     /// The picture that should be on show now, and whether it is a new one since last asked.

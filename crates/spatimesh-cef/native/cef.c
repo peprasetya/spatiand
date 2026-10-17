@@ -301,6 +301,7 @@ enum {
     EV_DIALOG,
     EV_EXTENSION,
     EV_SCRIPT_RESULT,
+    EV_MEDIA,
 };
 
 typedef struct {
@@ -1306,16 +1307,47 @@ void spatimesh_ext_done(Engine *e) {
         send_set(t->browser);
 }
 
-/* What a new browser's process is given: the set. */
+/* SpatiMesh's own script for every frame's every document (its media), in this process (the
+ * browser's) and, given with each browser, in its pages' process. */
+static char *page_script;
+static char *renderer_page;
+
+/* The page script to a browser's pages' process, for its documents from now on. */
+static void send_page(cef_browser_t *browser) {
+    if (!page_script || !browser)
+        return;
+    cef_frame_t *frame = browser->get_main_frame(browser);
+    if (!frame)
+        return;
+    cef_process_message_t *m = message_named("spatimesh-page");
+    cef_list_value_t *args = m->get_argument_list(m);
+    list_set_text(args, 0, page_script);
+    RELEASE(args);
+    frame->send_process_message(frame, PID_RENDERER, m);
+    RELEASE(frame);
+}
+
+/* What a new browser's process is given: the set, and the page script. */
 static cef_dictionary_value_t *extra_for_browser(void) {
-    if (!ext_set)
+    if (!ext_set && !page_script)
         return NULL;
     cef_dictionary_value_t *extra = p_cef_dictionary_value_create();
     cef_string_t key;
     memset(&key, 0, sizeof key);
-    set_text(&key, "ext");
-    extra->set_list(extra, &key, ext_set->copy(ext_set));
-    clear_text(&key);
+    if (ext_set) {
+        set_text(&key, "ext");
+        extra->set_list(extra, &key, ext_set->copy(ext_set));
+        clear_text(&key);
+    }
+    if (page_script) {
+        cef_string_t value;
+        memset(&value, 0, sizeof value);
+        set_text(&key, "page");
+        set_text(&value, page_script);
+        extra->set_string(extra, &key, &value);
+        clear_text(&value);
+        clear_text(&key);
+    }
     return extra;
 }
 
@@ -1331,11 +1363,14 @@ static void send_run(cef_frame_t *frame, const char *world, const char *code, ui
     frame->send_process_message(frame, PID_RENDERER, m);
 }
 
-/* SpatiMesh's own script for every frame's every document (its media). Not given to this
- * engine yet: its pages play their media with the engine's own player. */
+/* SpatiMesh's own script for every frame's every document (its media): to every tab's pages'
+ * process now, and with every browser made from now on. */
 void spatimesh_set_page_script(Engine *e, const char *code) {
     (void)e;
-    (void)code;
+    free(page_script);
+    page_script = code && *code ? strdup(code) : NULL;
+    for (Tab *t = tabs; t; t = t->next)
+        send_page(t->browser);
 }
 
 /* Code run in a tab's top frame (and its other frames), in `world` ("" the page's own; an
@@ -1389,6 +1424,11 @@ static int CEF_CALLBACK on_process_message(cef_client_t *self, cef_browser_t *br
     if (t && message_is(message, "spatimesh-call")) {
         char *json = list_text(args, 0);
         push(EV_EXTENSION, t->id, 0, 0, 0, json, NULL);
+        free(json);
+        handled = 1;
+    } else if (t && message_is(message, "spatimesh-media")) {
+        char *json = list_text(args, 0);
+        push(EV_MEDIA, t->id, 0, 0, 0, json, NULL);
         free(json);
         handled = 1;
     } else if (t && message_is(message, "spatimesh-result")) {
@@ -1946,6 +1986,20 @@ static int CEF_CALLBACK v8_execute(cef_v8handler_t *self, const cef_string_t *na
         }
         if (json)
             free_text(json);
+    } else if (strcmp(fn, "spatimeshMedia") == 0 && argc >= 1 && argv[0] && argv[0]->is_string(argv[0])) {
+        /* What the media script in the top frame says to the window. */
+        cef_string_userfree_t json = argv[0]->get_string_value(argv[0]);
+        cef_frame_t *frame = context ? context->get_frame(context) : NULL;
+        if (frame) {
+            cef_process_message_t *m = message_named("spatimesh-media");
+            cef_list_value_t *args = m->get_argument_list(m);
+            args->set_string(args, 0, json);
+            RELEASE(args);
+            frame->send_process_message(frame, PID_BROWSER, m);
+            RELEASE(frame);
+        }
+        if (json)
+            free_text(json);
     } else if (strcmp(fn, "spatimeshLater") == 0 && context) {
         run_later(context);
     }
@@ -1971,6 +2025,15 @@ static void CEF_CALLBACK on_browser_created(cef_render_process_handler_t *self, 
             }
         }
         clear_text(&key);
+        set_text(&key, "page");
+        if (extra->has_key(extra, &key)) {
+            cef_string_userfree_t page = extra->get_string(extra, &key);
+            free(renderer_page);
+            renderer_page = utf8_of(page);
+            if (page)
+                free_text(page);
+        }
+        clear_text(&key);
     }
     trace("browser %d made, with %d extensions", browser->get_identifier(browser), renderer_set ? (int)renderer_set->get_size(renderer_set) : -1);
     RELEASE(extra);
@@ -1981,6 +2044,27 @@ static void CEF_CALLBACK on_browser_created(cef_render_process_handler_t *self, 
  * scripts that want this page, now or once it is parsed. */
 static void CEF_CALLBACK on_context_created(cef_render_process_handler_t *self, cef_browser_t *browser, cef_frame_t *frame,
                                             cef_v8context_t *context) {
+    /* SpatiMesh's media script, before anything of the page's or the extensions'; the top frame
+     * first given its way out to the window. */
+    if (renderer_page && *renderer_page) {
+        context->enter(context);
+        if (frame->is_main(frame)) {
+            cef_v8value_t *fn = v8_eval(context, "(function(p){window.__spatimeshMediaPost=function(s){p(s);};})", "spatimesh-media-way", NULL);
+            if (fn) {
+                cef_string_t n;
+                memset(&n, 0, sizeof n);
+                set_text(&n, "spatimeshMedia");
+                cef_v8value_t *args[1] = {p_cef_v8value_create_function(&n, &v8_handler)};
+                clear_text(&n);
+                cef_v8value_t *r = v8_call(fn, 1, args, "the media script's way out");
+                RELEASE(r);
+                RELEASE(fn);
+            }
+        }
+        cef_v8value_t *r = v8_eval(context, renderer_page, "spatimesh-media", NULL);
+        RELEASE(r);
+        context->exit(context);
+    }
     if (renderer_set && renderer_set->get_size(renderer_set)) {
         cef_string_userfree_t u = frame->get_url(frame);
         char *url = utf8_of(u);
@@ -2182,7 +2266,11 @@ static int CEF_CALLBACK on_renderer_message(cef_render_process_handler_t *self, 
                                             cef_process_id_t source, cef_process_message_t *message) {
     int handled = 0;
     cef_list_value_t *args = message->get_argument_list(message);
-    if (message_is(message, "spatimesh-ext")) {
+    if (message_is(message, "spatimesh-page")) {
+        free(renderer_page);
+        renderer_page = list_text(args, 0);
+        handled = 1;
+    } else if (message_is(message, "spatimesh-ext")) {
         cef_list_value_t *l = args->get_list(args, 0);
         if (l) {
             RELEASE(renderer_set);

@@ -35,6 +35,7 @@ enum {
     EV_DIALOG,
     EV_EXTENSION,
     EV_SCRIPT_RESULT,
+    EV_MEDIA,
 };
 
 typedef struct {
@@ -68,6 +69,8 @@ typedef struct {
     /* The extensions' worlds a message handler is registered in, for this tab's view. */
     GPtrArray *worlds;
     int main_handler;
+    /* The media script's way out is registered once a tab has one. */
+    int media_handler;
 } Tab;
 
 /* One extension, as the window gave it (crates/spatimesh-shim): its scheme, its content
@@ -112,6 +115,8 @@ typedef struct Engine {
      * by extension id (the JSON given, until compiled; the filter, once). */
     WebKitUserContentFilterStore *filter_store;
     GHashTable *rule_sources;
+    /* SpatiMesh's own script for every frame's every document (its media). */
+    char *page_script;
     GHashTable *filters;
 } Engine;
 
@@ -498,6 +503,14 @@ void spatimesh_ext_rules(Engine *e, const char *id, const char *webkit) {
     g_hash_table_replace(e->rule_sources, g_strdup(id), g_strdup(webkit));
 }
 
+/* What the media script in a tab's top frame says to the window. */
+static void on_media_message(WebKitUserContentManager *manager, WebKitJavascriptResult *result, Tab *t) {
+    JSCValue *value = webkit_javascript_result_get_js_value(result);
+    char *text = jsc_value_to_string(value);
+    push(t->engine, EV_MEDIA, t->id, 0, 0, 0, text, NULL);
+    g_free(text);
+}
+
 static void on_ext_message(WebKitUserContentManager *manager, WebKitJavascriptResult *result, Tab *t) {
     JSCValue *value = webkit_javascript_result_get_js_value(result);
     char *text = jsc_value_to_string(value);
@@ -516,6 +529,21 @@ static void apply_extensions(Tab *t) {
     if (!t->worlds) {
         t->worlds = g_ptr_array_new_with_free_func(g_free);
         g_signal_connect(m, "script-message-received::spatimeshExt", G_CALLBACK(on_ext_message), t);
+    }
+    /* SpatiMesh's media script first of all, in every frame, the top one given its way out. */
+    if (e->page_script) {
+        if (!t->media_handler) {
+            g_signal_connect(m, "script-message-received::spatimeshMedia", G_CALLBACK(on_media_message), t);
+            t->media_handler = webkit_user_content_manager_register_script_message_handler(m, "spatimeshMedia");
+        }
+        char *code = g_strdup_printf(
+            "if(window.top===window){(function(){var h=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.spatimeshMedia;"
+            "if(h){var p=h.postMessage.bind(h);window.__spatimeshMediaPost=function(s){p(s);};}})();}\n%s",
+            e->page_script);
+        WebKitUserScript *script = webkit_user_script_new(code, WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, NULL, NULL);
+        webkit_user_content_manager_add_script(m, script);
+        webkit_user_script_unref(script);
+        g_free(code);
     }
     for (guint i = 0; i < t->worlds->len; i++)
         webkit_user_content_manager_unregister_script_message_handler_in_world(m, "spatimeshExt", g_ptr_array_index(t->worlds, i));
@@ -677,11 +705,16 @@ static void on_script_done(GObject *source, GAsyncResult *result, gpointer data)
     g_free(asked);
 }
 
-/* SpatiMesh's own script for every frame's every document (its media). Not given to this
- * engine yet: its pages play their media with the engine's own player. */
+/* SpatiMesh's own script for every frame's every document (its media), from the next document
+ * on in every tab. */
 void spatimesh_set_page_script(Engine *e, const char *code) {
-    (void)e;
-    (void)code;
+    g_free(e->page_script);
+    e->page_script = code && *code ? g_strdup(code) : NULL;
+    GHashTableIter it;
+    gpointer key, value;
+    g_hash_table_iter_init(&it, e->tabs);
+    while (g_hash_table_iter_next(&it, &key, &value))
+        apply_extensions(value);
 }
 
 /* Code run in a tab's top frame, in `world` ("" the page's own), the extension's API set up

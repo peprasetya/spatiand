@@ -19,7 +19,8 @@ public final class Wire {
     // From the window.
     public static final int OPEN = 1, CLOSE = 2, LOAD = 3, BACK = 4, FORWARD = 5, RELOAD = 6, STOP = 7,
             RESIZE = 8, POINTER = 9, POINTER_LEFT = 10, SCROLL = 11, KEY = 12, FOCUS = 13, WINDOW = 14,
-            MUTE = 15, RELEASE = 16, QUIT = 17, CHOOSE = 18, ANSWER = 19, EXTENSIONS = 20, RUN_SCRIPT = 21;
+            MUTE = 15, RELEASE = 16, QUIT = 17, CHOOSE = 18, ANSWER = 19, EXTENSIONS = 20, RUN_SCRIPT = 21,
+            PAGE_SCRIPT = 22;
 
     // Dialogs, as Happened::Dialog numbers them.
     public static final int ALERT = 0, CONFIRM = 1, PROMPT = 2, LEAVE = 3;
@@ -130,6 +131,9 @@ public final class Wire {
                 case RUN_SCRIPT:
                     m.tab = i.u64(); m.world = i.str(); m.allFrames = i.bool(); m.script = i.str(); m.request = i.u64(); m.boot = i.bool();
                     break;
+                case PAGE_SCRIPT:
+                    m.script = i.str();
+                    break;
                 default:
                     return null;
             }
@@ -227,6 +231,8 @@ public final class Wire {
 
     /** An extension's context in the tab speaking (api.js's JSON). */
     public static byte[] extension(long tab, String json) { return new Out(23).u64(tab).str(json).bytes(); }
+    /** What SpatiMesh's media script in a tab's top frame says to the window. */
+    public static byte[] media(long tab, String json) { return new Out(25).u64(tab).str(json).bytes(); }
 
     /** Code run for `request`: its value as JSON, or what went wrong. */
     public static byte[] scriptResult(long tab, long request, boolean ok, String text) {
