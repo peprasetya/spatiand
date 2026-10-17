@@ -110,7 +110,7 @@ jobs:
           . ~/.spatiand-ci-env
           . "$HOME/.cargo/env" 2>/dev/null || true
           RUSTFLAGS="-L native=$GITHUB_WORKSPACE/android/xkbcommon/out" \
-            cargo ndk -t arm64-v8a -P 34 build --release -p spatimesh --locked
+            cargo ndk -t arm64-v8a -P 34 build --release -p spatimesh --no-default-features --locked
       - name: The app's Java, and SpatiMesh's Android engine speaking SpatiMesh's wire
         run: |
           . ~/.spatiand-ci-env
@@ -156,8 +156,10 @@ jobs:
         run: cd crates/spatiand-mac && MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --locked
       - name: The app
         run: cd mac && swift build
+      # Without its own media, which needs an FFmpeg this runner has not got (Homebrew's is newer
+      # than the one the bindings are made for); the media is built and tested by the linux job.
       - name: SpatiMesh, and its WebKit engine
-        run: MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p spatimesh -p spatimesh-webkit --locked
+        run: MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p spatimesh --no-default-features -p spatimesh-webkit --locked
       # Real pages in WebKit's own processes (the runner's session has a window server): a Chrome
       # extension and a Firefox one, end to end (crates/spatimesh/tests/common).
       - name: SpatiMesh's WebKit engine, in the runner's own session
@@ -165,6 +167,6 @@ jobs:
       # What SpatiMesh's window does without an engine (the wire, its memory for pictures, the
       # extension runtime, the store) on the Mac's own system calls.
       - name: SpatiMesh's own tests, on the Mac
-        run: MACOSX_DEPLOYMENT_TARGET=14.0 cargo test -p spatimesh --lib --locked
+        run: MACOSX_DEPLOYMENT_TARGET=14.0 cargo test -p spatimesh --no-default-features --lib --locked
       - name: The shared crates' tests
         run: cargo test -p spatiand-shell -p spatiand-track -p spatiand-stream -p spatiand-mac-core --locked

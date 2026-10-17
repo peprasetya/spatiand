@@ -12,7 +12,7 @@ description = "SpatiMesh's engine host on SteamOS: Steam's own Chromium (CEF)"
 # CEF_ROOT names a CEF distribution of the version Steam ships; libcef.so itself is Steam's,
 # loaded when the program starts. Built without CEF_ROOT, it says so when started.
 [dependencies]
-spatimesh = { path = "../spatimesh" }
+spatimesh = { path = "../spatimesh", default-features = false }
 spatimesh-shim = { path = "../spatimesh-shim" }
 
 [dev-dependencies]

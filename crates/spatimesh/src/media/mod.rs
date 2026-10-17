@@ -14,5 +14,5 @@ pub const KEY: [u8; 3] = [1, 254, 3];
 /// Whether SpatiMesh plays pages' media itself: `SPATIMESH_MEDIA=engine` leaves it to the
 /// engine, as before.
 pub fn ours() -> bool {
-    std::env::var("SPATIMESH_MEDIA").as_deref() != Ok("engine")
+    cfg!(feature = "media") && std::env::var("SPATIMESH_MEDIA").as_deref() != Ok("engine")
 }

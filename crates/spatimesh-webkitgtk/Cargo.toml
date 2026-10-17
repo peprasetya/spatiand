@@ -12,7 +12,7 @@ description = "SpatiMesh's engine host on a Linux that is not SteamOS: WebKitGTK
 # is missing, it is built without it and says so when started, so that the rest of the
 # workspace builds anywhere.
 [dependencies]
-spatimesh = { path = "../spatimesh" }
+spatimesh = { path = "../spatimesh", default-features = false }
 spatimesh-shim = { path = "../spatimesh-shim" }
 log.workspace = true
 

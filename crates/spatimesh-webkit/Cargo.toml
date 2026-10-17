@@ -11,7 +11,7 @@ description = "SpatiMesh's engine host on the Mac: WebKit (WKWebView)"
 # (docs/spatimesh.md); its native half is Objective-C against WebKit (native/webkit.m). Built
 # anywhere, it does something only on a Mac.
 [dependencies]
-spatimesh = { path = "../spatimesh" }
+spatimesh = { path = "../spatimesh", default-features = false }
 spatimesh-shim = { path = "../spatimesh-shim" }
 
 [dev-dependencies]

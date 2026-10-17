@@ -21,6 +21,10 @@ use crate::engines::{Host, Program};
 use crate::page::PageTexture;
 
 mod ext;
+#[cfg(feature = "media")]
+mod media;
+#[cfg(not(feature = "media"))]
+#[path = "browser/media_none.rs"]
 mod media;
 
 use ext::{ExtPopup, Told};
