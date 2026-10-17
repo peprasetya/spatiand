@@ -89,7 +89,7 @@ IOSurface, AHardwareBuffer -- is a later step per platform.)
 
 | | Mac: WKWebView | SteamOS: Steam's CEF | Linux: WebKitGTK 4.1 | Android: system WebView |
 |---|---|---|---|---|
-| A page with no window on screen | offscreen `NSWindow`, occlusion detection off (SPI `_windowOcclusionDetectionEnabled`); frames by `takeSnapshot` | CEF's windowless rendering: `OnPaint` hands each frame with what changed | `GtkOffscreenWindow`, its surface read after each draw | a `VirtualDisplay` + `Presentation` drawing into an `ImageReader` |
+| A page with no window on screen | offscreen `NSWindow`, occlusion detection off (SPI `_windowOcclusionDetectionEnabled`); frames from WebKit's own layers (in this process since macOS 14) drawn by `CARenderer` on the GPU, `takeSnapshot` where they are not | CEF's windowless rendering: `OnPaint` hands each frame with what changed | `GtkOffscreenWindow`, its surface read after each draw | a `VirtualDisplay` + `Presentation` drawing into an `ImageReader` |
 | Input | synthesised `NSEvent`s sent to the view | `SendMouseClickEvent`, `SendKeyEvent`, ... | synthesised GDK events | `dispatchTouchEvent`/`dispatchKeyEvent` |
 | Tab per process | yes (WebKit's) | yes (Chromium's) | yes (`MULTIPLE_SECONDARY_PROCESSES`) | no (see above) |
 | Profiles | `WKWebsiteDataStore(forIdentifier:)` (macOS 14) | a `CefRequestContext` per profile, its own folder | a `WebKitWebsiteDataManager` per profile | a process and data directory per profile |
@@ -362,6 +362,17 @@ second sound track chosen by the page, a worker's MediaSource played (Mac).
 heard (tests run muted); `<track>` cue settings (position, line, alignment: cues are always at
 the bottom, centred); a disc's picture subtitles in a page (the path is there, untested); AV1 offered to pages where the machine can only decode it in software.
 
+**Load (2026-10-17).** Pages are offered only codecs this machine decodes in hardware
+(`spatiand_media::hardware`: VideoToolbox's answer on a Mac; everything elsewhere, for now) --
+an Intel Mac turns AV1 away and YouTube streams VP9 -- and `SPATIMESH_SOFTWARE_CODECS` overrides
+the list. A hardware decoder that has made nothing for 1.5 s with packets waiting is replaced
+by software from a key frame: on this Intel Mac VideoToolbox stops for good in
+`VTDecompressionSessionWaitForAsynchronousFrames` on YouTube's VP9 and H.264 through a
+MediaSource (not on files of the same codecs, nor a local MediaSource) -- **cause not found**,
+so YouTube is decoded in software here after the first two seconds. WebKit's pages are pictured
+from its own layers on the GPU: YouTube's blurred glow had cost 94 ms a picture by
+`takeSnapshot`. YouTube in the test room, release builds: about 55% of a core in all, from 250%.
+
 **Spatiand's FFmpeg**: on the Deck SteamOS's own 7.1.1 (headers vendored, libraries the system's:
 docs/remote.md), on the Mac Homebrew's, on the Beam Pro android/ffmpeg/build.sh's, in CI
 tools/ci-deps.sh's 7.1.1.
@@ -395,6 +406,11 @@ placed at the window its tab is in; a tab dragged to another window takes it alo
   <address>` run as the app, `SPATIAND_DEBUG_OWN_SOUND=1`); not yet heard in the glasses.
 * **Android.** WebView plays through the app's own output, with no way to take its sound, per
   tab or at all, short of screen-recording consent: **its sound is not placed in the room**.
+* **Each window its own place (Mac and Beam Pro, 2026-10-17).** Everything SpatiMesh plays itself
+  (its media, above) goes out per tab, under the name of the tab's window: `spatiand_xr_v1`
+  version 8's `set_sound_key` tells the room which window a name belongs to. The first window
+  is named as the process is, which the engine's own tap uses too; the room mixes every stream
+  under one name before the HRTF, so the two never take turns in one slot.
 
 ## Settings, and what is never synced
 
