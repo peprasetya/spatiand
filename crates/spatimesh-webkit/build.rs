@@ -19,7 +19,7 @@ fn main() {
         // macOS 14.2's process taps, used where they exist (sound.m asks first).
         .flag("-Wno-unguarded-availability-new")
         .compile("spatimesh_webkit");
-    for framework in ["WebKit", "AppKit", "Foundation", "CoreGraphics", "QuartzCore", "CoreAudio"] {
+    for framework in ["WebKit", "AppKit", "Foundation", "CoreGraphics", "QuartzCore", "CoreAudio", "Metal"] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
     // A browser loads plain http:// pages too, which App Transport Security allows only where

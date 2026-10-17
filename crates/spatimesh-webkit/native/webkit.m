@@ -15,6 +15,8 @@
  * Written on Linux and compiled by CI's Mac job; not run by its author on a Mac. */
 
 #import <AppKit/AppKit.h>
+#import <Metal/Metal.h>
+#import <QuartzCore/QuartzCore.h>
 #import <WebKit/WebKit.h>
 #import <objc/message.h>
 #include <stdint.h>
@@ -159,6 +161,12 @@ static NSString *const SelectScript =
 @property(nonatomic) BOOL snapshotting;
 @property(nonatomic) CFTimeInterval lastSnapshot;
 @property(nonatomic) CFTimeInterval busyUntil;
+/* Until when something is playing: pictures more often than a page at rest, but not as often
+ * as one being scrolled or typed in, since a film is drawn by the window and not in them. */
+@property(nonatomic) CFTimeInterval liveUntil;
+/* Where the page's layers are drawn on the GPU (`composeInto:`), and at what size. */
+@property(nonatomic, strong) CARenderer *renderer;
+@property(nonatomic, strong) id<MTLTexture> texture;
 @property(nonatomic) NSUInteger buttons;
 @property(nonatomic) BOOL playing;
 @property(nonatomic, copy) void (^alertDone)(void);
@@ -441,14 +449,169 @@ static CFTimeInterval now(void) {
 
 /* ---- pictures ---- */
 
+/* Where WebKit composites in this process (macOS 14 on: "UI-side compositing"), the page is a
+ * tree of its CALayers here, each tile's picture an IOSurface its GPU process painted. Drawn by
+ * Core Animation on the GPU -- a copy of the tree, as WebKit has it at this moment, rendered with
+ * CARenderer into a Metal texture -- a picture of the page costs a few milliseconds whatever is
+ * in it. `takeSnapshotWithConfiguration:` paints the whole page again on the CPU instead, every
+ * CSS filter with it: a page with a blurred glow behind its film (YouTube's) took 94 ms a
+ * picture that way, two such pages more than a Mac had. */
+static id<MTLDevice> gpu;
+static id<MTLCommandQueue> gpu_queue;
+
+static BOOL webkit_composites(CALayer *layer, int depth) {
+    if (depth > 12)
+        return NO;
+    if (strncmp(object_getClassName(layer), "WKCompositingLayer", 18) == 0)
+        return YES;
+    for (CALayer *sub in layer.sublayers)
+        if (webkit_composites(sub, depth + 1))
+            return YES;
+    return NO;
+}
+
+/* A layer and those under it, as they are shown now (an animation's present value, not where it
+ * is going), in a tree of its own that a CARenderer may draw: one shown in a window it may not. */
+static CALayer *copy_layer(CALayer *model) {
+    CALayer *l = model.presentationLayer ?: model;
+    CALayer *m = [CALayer layer];
+    m.bounds = l.bounds;
+    m.position = l.position;
+    m.anchorPoint = l.anchorPoint;
+    m.anchorPointZ = l.anchorPointZ;
+    m.zPosition = l.zPosition;
+    m.transform = l.transform;
+    m.sublayerTransform = l.sublayerTransform;
+    m.opacity = l.opacity;
+    m.hidden = l.hidden;
+    m.masksToBounds = l.masksToBounds;
+    m.geometryFlipped = l.geometryFlipped;
+    m.contents = model.contents;
+    m.contentsRect = l.contentsRect;
+    m.contentsScale = l.contentsScale;
+    m.contentsGravity = l.contentsGravity;
+    m.contentsCenter = l.contentsCenter;
+    m.backgroundColor = l.backgroundColor;
+    m.cornerRadius = l.cornerRadius;
+    m.borderWidth = l.borderWidth;
+    m.borderColor = l.borderColor;
+    m.filters = l.filters;
+    m.backgroundFilters = l.backgroundFilters;
+    m.compositingFilter = l.compositingFilter;
+    if (model.mask)
+        m.mask = copy_layer(model.mask);
+    NSArray *subs = model.sublayers;
+    if (subs.count) {
+        NSMutableArray *copies = [NSMutableArray arrayWithCapacity:subs.count];
+        for (CALayer *sub in subs)
+            [copies addObject:copy_layer(sub)];
+        m.sublayers = copies;
+    }
+    return m;
+}
+
+/* The page, `width` by `height` pixels, into `out` (BGRA, premultiplied, top row first). NO
+ * where WebKit does not composite here, or there is no GPU: then it is a snapshot. */
+- (BOOL)composeInto:(unsigned char *)out width:(int)width height:(int)height {
+    static int off = -1;
+    if (off < 0)
+        off = getenv("SPATIMESH_WEBKIT_SNAPSHOT") != NULL;
+    if (off || !webkit_composites(self.view.layer, 0))
+        return NO;
+    if (!gpu) {
+        gpu = MTLCreateSystemDefaultDevice();
+        gpu_queue = [gpu newCommandQueue];
+        if (!gpu || !gpu_queue)
+            return NO;
+    }
+    if (!self.texture || (int)self.texture.width != width || (int)self.texture.height != height) {
+        MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                                                     width:(NSUInteger)width
+                                                                                    height:(NSUInteger)height
+                                                                                 mipmapped:NO];
+        d.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        d.storageMode = MTLStorageModeManaged;
+        self.texture = [gpu newTextureWithDescriptor:d];
+        CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+        self.renderer = [CARenderer rendererWithMTLTexture:self.texture
+                                                   options:@{kCARendererColorSpace: (__bridge id)space, kCARendererMetalCommandQueue: gpu_queue}];
+        CGColorSpaceRelease(space);
+        if (!self.texture || !self.renderer)
+            return NO;
+    }
+    double scale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 1.0;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    CALayer *root = [CALayer layer];
+    root.anchorPoint = CGPointZero;
+    root.position = CGPointZero;
+    root.bounds = CGRectMake(0, 0, width, height);
+    CALayer *page = copy_layer(self.view.layer);
+    page.anchorPoint = CGPointZero;
+    page.position = CGPointZero;
+    page.transform = CATransform3DMakeScale(scale, scale, 1);
+    [root addSublayer:page];
+    [CATransaction commit];
+    /* A tree nobody has committed yet draws as nothing. */
+    [CATransaction flush];
+    CARenderer *r = self.renderer;
+    r.layer = root;
+    r.bounds = root.bounds;
+    [r beginFrameAtTime:CACurrentMediaTime() timeStamp:NULL];
+    [r addUpdateRect:r.bounds];
+    [r render];
+    [r endFrame];
+    id<MTLCommandBuffer> done = [gpu_queue commandBuffer];
+    id<MTLBlitCommandEncoder> blit = [done blitCommandEncoder];
+    [blit synchronizeResource:self.texture];
+    [blit endEncoding];
+    [done commit];
+    [done waitUntilCompleted];
+    /* The texture's first row is the page's last. */
+    size_t row = (size_t)width * 4;
+    unsigned char *flipped = malloc(row * (size_t)height);
+    if (!flipped)
+        return NO;
+    [self.texture getBytes:flipped bytesPerRow:row fromRegion:MTLRegionMake2D(0, 0, (NSUInteger)width, (NSUInteger)height) mipmapLevel:0];
+    for (int y = 0; y < height; y++)
+        memcpy(out + (size_t)y * row, flipped + (size_t)(height - 1 - y) * row, row);
+    free(flipped);
+    return YES;
+}
+
+/* A new picture, if there is one: kept and the window woken. */
+- (void)took:(unsigned char *)fresh width:(int)width height:(int)height {
+    size_t bytes = (size_t)width * (size_t)height * 4;
+    /* Passed on only if it changed: most pictures of a page at rest do not. */
+    if (self.pixels && self.pixelsWidth == width && self.pixelsHeight == height && memcmp(self.pixels, fresh, bytes) == 0) {
+        free(fresh);
+        return;
+    }
+    free(self.pixels);
+    self.pixels = fresh;
+    self.pixelsWidth = width;
+    self.pixelsHeight = height;
+    self.damaged = YES;
+    wake();
+}
+
 - (void)snapshotIfDue {
     if (self.snapshotting)
         return;
     CFTimeInterval t = now();
-    CFTimeInterval interval = t < self.busyUntil ? 1.0 / 30.0 : 0.5;
+    /* As often as the screen while the page is busy, if pictures are cheap. */
+    CFTimeInterval interval = t < self.busyUntil ? (self.renderer ? 1.0 / 60.0 : 1.0 / 30.0) : t < self.liveUntil ? 1.0 / 15.0 : 0.5;
     if (t - self.lastSnapshot < interval)
         return;
     self.lastSnapshot = t;
+    if (self.width > 0 && self.height > 0) {
+        unsigned char *fresh = malloc((size_t)self.width * (size_t)self.height * 4);
+        if (fresh && [self composeInto:fresh width:self.width height:self.height]) {
+            [self took:fresh width:self.width height:self.height];
+            return;
+        }
+        free(fresh);
+    }
     self.snapshotting = YES;
     WKSnapshotConfiguration *config = [[WKSnapshotConfiguration alloc] init];
     config.rect = self.view.bounds;
@@ -481,17 +644,7 @@ static CFTimeInterval now(void) {
         }
         CGContextDrawImage(context, CGRectMake(0, 0, width, height), cg);
         CGContextRelease(context);
-        /* Passed on only if it changed: most snapshots of a page at rest do not. */
-        if (tab.pixels && tab.pixelsWidth == width && tab.pixelsHeight == height && memcmp(tab.pixels, fresh, bytes) == 0) {
-            free(fresh);
-            return;
-        }
-        free(tab.pixels);
-        tab.pixels = fresh;
-        tab.pixelsWidth = width;
-        tab.pixelsHeight = height;
-        tab.damaged = YES;
-        wake();
+        [tab took:fresh width:width height:height];
     }];
 }
 
@@ -528,7 +681,7 @@ static CFTimeInterval now(void) {
                 push(tab.engine, EV_SOUND, tab.ident, 0, playing, 0, nil, nil);
             }
             if (playing)
-                [tab busy];
+                tab.liveUntil = now() + 2.0;
         }];
     }
 }
