@@ -73,6 +73,29 @@ static NSString *const SelectScript =
      "s.dispatchEvent(new Event('input',{bubbles:true}));s.dispatchEvent(new Event('change',{bubbles:true}));}};"
      "})();";
 
+/* The window a tab's view is in. Borderless, it could never be the key window, and WebKit draws
+ * no caret, and tells the page it has no focus, in a window that is not: so it is key while
+ * SpatiMesh says its tab has the keys (`spatimesh_focus`), whatever the system thinks of a window
+ * nobody can see. */
+@interface MeshWindow : NSWindow
+@property(nonatomic) BOOL focused;
+@end
+
+@implementation MeshWindow
+- (BOOL)canBecomeKeyWindow {
+    return YES;
+}
+- (BOOL)canBecomeMainWindow {
+    return YES;
+}
+- (BOOL)isKeyWindow {
+    return self.focused;
+}
+- (BOOL)isMainWindow {
+    return self.focused;
+}
+@end
+
 /* No context menu: WebKit's would be a real menu, modal, on a screen nobody looks at. */
 @interface MeshWebView : WKWebView
 @end
@@ -600,7 +623,9 @@ static CALayer *copy_layer(CALayer *model) {
         return;
     CFTimeInterval t = now();
     /* As often as the screen while the page is busy, if pictures are cheap. */
-    CFTimeInterval interval = t < self.busyUntil ? (self.renderer ? 1.0 / 60.0 : 1.0 / 30.0) : t < self.liveUntil ? 1.0 / 15.0 : 0.5;
+    BOOL keys = [self.window isKindOfClass:[MeshWindow class]] && ((MeshWindow *)self.window).focused;
+    /* A page with the keys has a caret blinking in it, maybe: seen at more than twice a second. */
+    CFTimeInterval interval = t < self.busyUntil ? (self.renderer ? 1.0 / 60.0 : 1.0 / 30.0) : (t < self.liveUntil || (keys && self.renderer)) ? 1.0 / 15.0 : 0.5;
     if (t - self.lastSnapshot < interval)
         return;
     self.lastSnapshot = t;
@@ -964,7 +989,7 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
         tab.engine = e;
         tab.width = MAX(width, 1);
         tab.height = MAX(height, 1);
-        NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 100, 100) styleMask:NSWindowStyleMaskBorderless
+        NSWindow *window = [[MeshWindow alloc] initWithContentRect:NSMakeRect(0, 0, 100, 100) styleMask:NSWindowStyleMaskBorderless
                                                          backing:NSBackingStoreBuffered defer:NO];
         window.releasedWhenClosed = NO;
         window.alphaValue = 0.0;
@@ -1312,12 +1337,21 @@ void spatimesh_focus(Engine *e, uint64_t id, int focused) {
         MeshTab *tab = find(e, id);
         if (!tab)
             return;
+        MeshWindow *window = (MeshWindow *)tab.window;
+        BOOL was = [window isKindOfClass:[MeshWindow class]] && window.focused;
+        if ([window isKindOfClass:[MeshWindow class]])
+            window.focused = focused != 0;
         if (focused) {
             [tab.window makeFirstResponder:tab.view];
             [tab.window makeKeyWindow];
         } else {
             [tab.window makeFirstResponder:nil];
         }
+        /* What WebKit listens for to know its window became key or stopped being. */
+        if (was != (focused != 0))
+            [[NSNotificationCenter defaultCenter] postNotificationName:focused ? NSWindowDidBecomeKeyNotification : NSWindowDidResignKeyNotification
+                                                                object:tab.window];
+        [tab busy];
     }
 }
 
