@@ -307,6 +307,18 @@ own scripts, in the page's world):
   to the window and finish, with buffered ranges, removes, `abort`, `timestampOffset`, `duration`,
   `endOfStream` and errors, as the engine's would. A page that calls
   `requestMediaKeySystemAccess` (DRM) keeps the engine's MediaSource from then on.
+* **Tracks**: `textTracks` are SpatiMesh's. A `<track>`'s WebVTT or SubRip file is read in the
+  page; a film's own subtitles (text, or a disc's PGS/VobSub pictures) come from the player a cue
+  at a time, a little ahead of being due; cues showing are drawn by the page over the film. The
+  page sees TextTrack, cues, activeCues, enter/exit/cuechange, `addTextTrack`, `<track>`'s
+  `readyState` and `load`. `audioTracks` and `videoTracks` are the film's; enabling a sound track
+  plays it (one at a time).
+* **A MediaSource in a worker**: every Worker starts with a MediaSource of SpatiMesh's in it (its
+  own script loaded after, `location`, `importScripts`, `fetch` and XHR still resolving against
+  its own address); it speaks to the page, which speaks to the window as for its own, and the
+  `handle` the worker hands over becomes a `MediaSourceHandle` a film's `srcObject` takes.
+  `MediaSource.canConstructInDedicatedWorker` is true. A page whose policy forbids blob: workers
+  keeps its worker as it was, without this.
 * Frames below the top one speak to the window through their parent (postMessage), which moves
   what they say about places onto its own page; only the top frame talks to the engine.
 * **Fullscreen** is SpatiMesh's on every engine (WebKit offers an embedded view none): the
@@ -316,7 +328,9 @@ own scripts, in the page's world):
   events and their `on…` handlers (players look for those before they trust the API), WebKit's
   prefixed names, and `screen` the size of the viewport while it lasts.
 
-**In the window** (`src/browser/media.rs`): a player per element, opened on a thread (paused until
+**In the window** (`src/browser/media.rs`): one sound output per tab (`spatiand_media::SoundGroup`)
+that every film, `<audio>` and AudioContext of it is mixed into, each keeping its own clock; a
+player per element, opened on a thread (paused until
 the page says play); its time, readiness, buffering, seeks and end told to the page; what the
 player cannot open (a server that wants the page's cookies) handed back to the engine. MediaSources
 are `spatiand_media::mse`: each SourceBuffer's bytes read by FFmpeg's own demuxer as they come (a
@@ -341,10 +355,12 @@ and `play()` as a browser's, a WebM with SpatiMesh's controls, a page's Web Audi
 every frame and made a WebGL texture, `requestVideoFrameCallback` at the film's rate (Mac),
 MediaSources of H.264 and AAC in fragments (buffered, seek, end), VP9 and Opus WebM appended in
 uneven slices and a change of quality halfway (Mac); YouTube streaming through it (Mac, AV1), its
-fullscreen ('f', Escape) with the film playing throughout.
+fullscreen ('f', Escape) with the film playing throughout; three `<audio>`, a film and Web Audio on
+one page through one output, each keeping time (Mac); a `<track>` shown, an MKV's SubRip track and
+second sound track chosen by the page, a worker's MediaSource played (Mac).
 **Not yet**: anything on the Beam Pro; WebKitGTK only by CI's engine tests; in the glasses; sound
-heard (tests run muted); subtitles from `<track>`; `audioTracks`/`videoTracks`; a
-MediaSource in a worker; AV1 offered to pages where the machine can only decode it in software.
+heard (tests run muted); `<track>` cue settings (position, line, alignment: cues are always at
+the bottom, centred); a disc's picture subtitles in a page (the path is there, untested); AV1 offered to pages where the machine can only decode it in software.
 
 **Spatiand's FFmpeg**: on the Deck SteamOS's own 7.1.1 (headers vendored, libraries the system's:
 docs/remote.md), on the Mac Homebrew's, on the Beam Pro android/ffmpeg/build.sh's, in CI
