@@ -85,6 +85,11 @@ struct Item {
     seeked: Option<f64>,
     /// Where pictures are drawn to be read back: a texture and its framebuffer, of this size.
     readback: Option<(glow::Texture, glow::Framebuffer, (u32, u32))>,
+    /// The film's own subtitle track the page has on (its place in the player's list), the
+    /// cues of it already told, and when they were last looked for.
+    subtitle: Option<usize>,
+    cues_told: std::collections::HashSet<(u64, u64)>,
+    cues_at: Instant,
 }
 
 impl Item {
@@ -120,6 +125,9 @@ impl Item {
             seek_picture: false,
             seeked: None,
             readback: None,
+            subtitle: None,
+            cues_told: Default::default(),
+            cues_at: now,
         }
     }
 
@@ -316,6 +324,22 @@ impl Media {
                         if item.rate > 0.0 {
                             player.set_speed(item.rate);
                         }
+                    }
+                }
+            }
+            "audioTrack" => {
+                if let Some(player) = self.items.get_mut(&key).and_then(|item| item.player.as_mut()) {
+                    if let Some(index) = m["index"].as_u64() {
+                        player.set_audio(index as usize);
+                    }
+                }
+            }
+            "subtitle" => {
+                if let Some(item) = self.items.get_mut(&key) {
+                    item.subtitle = m["index"].as_u64().map(|i| i as usize);
+                    item.cues_told.clear();
+                    if let Some(player) = item.player.as_mut() {
+                        player.set_subtitle(item.subtitle);
                     }
                 }
             }
@@ -570,7 +594,7 @@ impl Media {
                     if !item.told_meta {
                         item.told_meta = true;
                         let duration = if info.duration > 0.0 { json!(info.duration) } else { json!(-1.0) };
-                        said.push(json!({ "t": "meta", "duration": duration, "width": info.width, "height": info.height, "fps": info.frame_rate }));
+                        said.push(json!({ "t": "meta", "duration": duration, "width": info.width, "height": info.height, "fps": info.frame_rate, "tracks": tracks(&info) }));
                         said.push(json!({ "t": "state", "ready": true, "at": player.position(), "buffered": held(&item.mse, &item.url, info.duration, player.position()) }));
                     }
                     let (picture, new) = player.picture();
@@ -587,6 +611,16 @@ impl Media {
                             if !item.shown {
                                 item.shown = true;
                                 said.push(json!({ "t": "state", "shown": true }));
+                            }
+                        }
+                    }
+                    // The film's own subtitles the page has on: each cue told once, as it is read.
+                    if item.subtitle.is_some() && item.cues_at.elapsed() >= Duration::from_millis(200) {
+                        item.cues_at = Instant::now();
+                        let index = item.subtitle;
+                        for cue in player.subtitle_cues() {
+                            if item.cues_told.insert((cue.start.to_bits(), cue.end.to_bits())) {
+                                said.push(cue_json(index, &cue));
                             }
                         }
                     }
@@ -920,6 +954,44 @@ fn open(name: String, page: String, start: f64, group: spatiand_media::SoundGrou
         let _ = tx.send(result);
     });
     rx
+}
+
+/// A film's own tracks, as the page's audioTracks, videoTracks and textTracks are made of them.
+fn tracks(info: &spatiand_media::player::Info) -> Value {
+    let name = |t: &spatiand_media::player::Track| -> String {
+        t.title.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| match t.channels {
+            0 => t.codec.clone(),
+            c => format!("{} {}", t.codec, spatiand_media::audio::layout_name(c)),
+        })
+    };
+    let audio: Vec<Value> = info
+        .audio
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            json!({ "id": t.stream, "label": name(t), "language": t.language.clone().unwrap_or_default(),
+                    "enabled": info.audio_playing == Some(i), "main": i == 0 })
+        })
+        .collect();
+    let video: Vec<Value> = if info.width > 0 { vec![json!({ "id": "v", "label": info.video_codec })] } else { Vec::new() };
+    let text: Vec<Value> = info
+        .subtitles
+        .iter()
+        .map(|t| json!({ "id": t.stream, "label": t.title.clone().unwrap_or_default(), "language": t.language.clone().unwrap_or_default() }))
+        .collect();
+    json!({ "audio": audio, "video": video, "text": text })
+}
+
+/// A cue of a film's own subtitles for the page: text, or a disc's picture and where it goes.
+fn cue_json(track: Option<usize>, cue: &spatiand_media::subs::Cue) -> Value {
+    use base64::Engine as _;
+    match &cue.words {
+        spatiand_media::subs::Words::Text(text) => json!({ "t": "cue", "track": track, "start": cue.start, "end": cue.end, "text": text }),
+        spatiand_media::subs::Words::Picture { rgba, width, height, place } => json!({
+            "t": "cue", "track": track, "start": cue.start, "end": cue.end, "text": "",
+            "picture": { "width": width, "height": height, "place": place, "rgba": base64::engine::general_purpose::STANDARD.encode(rgba) }
+        }),
+    }
 }
 
 /// What the player says it is to a server: a browser, as the page's own requests do.

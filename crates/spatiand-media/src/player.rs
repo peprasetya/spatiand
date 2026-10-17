@@ -847,6 +847,12 @@ impl Player {
         cues[..before].iter().rev().take(4).find(|cue| cue.end > now).cloned()
     }
 
+    /// Every cue of the subtitle track on show that has been read so far, in order: what is
+    /// coming as well as what is on now.
+    pub fn subtitle_cues(&self) -> Vec<Arc<Cue>> {
+        self.shared.cues.lock().unwrap().clone()
+    }
+
     /// Play faster or slower than the film was made, its sound's pitch staying where it was.
     pub fn set_speed(&mut self, speed: f32) {
         let speed = speed.clamp(0.5, 3.0);

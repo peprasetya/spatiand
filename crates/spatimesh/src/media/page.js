@@ -204,6 +204,8 @@
     }
     var kids = el.querySelectorAll('source');
     for (var i = 0; i < kids.length; i++) takeSource(kids[i]);
+    var tracks = el.querySelectorAll('track');
+    for (var j = 0; j < tracks.length; j++) adoptTrack(tracks[j]);
     try { nativeLoad.call(el); } catch (e) {}
   }
 
@@ -242,6 +244,7 @@
     var had = st.opened;
     if (had) { send({ t: 'close', id: st.id }); st.opened = false; }
     st.playWaiters.splice(0).forEach(function (w) { w.reject(new DOMException('The play() request was interrupted by a new load request.', 'AbortError')); });
+    tracksGone(st);
     if (st.readyState > 0 || had) {
       st.readyState = 0; st.duration = NaN; st.buffered = []; st.seekable = []; st.at = 0; st.base = 0; st.ended = false;
       if (!st.paused) { st.paused = true; fire(el, 'pause'); }
@@ -264,7 +267,8 @@
   }
 
   function open(el, st) {
-    if (st.opened || !st.url) return;
+    // A MediaSource given as srcObject has no address, and is opened all the same.
+    if (st.opened || (!st.url && !st.source)) return;
     st.opened = true;
     var m = { t: 'open', id: st.id, url: st.url, page: location.href, muted: st.muted, volume: st.volume, rate: st.rate,
       loop: nativeHasAttribute.call(el, 'loop'), video: !!isVideo(el), at: st.at };
@@ -307,6 +311,7 @@
       st.seekable = st.duration > 0 && st.duration !== Infinity ? [[0, st.duration]] : [];
       if (first) {
         st.readyState = 1;
+        if (m.tracks) tracksIn(st, m.tracks);
         if (durationChanged) fire(el, 'durationchange');
         if (st.width) fire(el, 'resize');
         fire(el, 'loadedmetadata');
@@ -363,6 +368,8 @@
       fire(el, 'error');
     } else if (m.t === 'frame') {
       frameIn(st, m.frame, null);
+    } else if (m.t === 'cue') {
+      cueIn(st, m);
     }
   }
 
@@ -628,8 +635,9 @@
         if (!ps.url && !ps.src && !ps.attr) load(p, ps, 'source');
       }
     }
+    else if (window.HTMLTrackElement && node instanceof HTMLTrackElement) adoptTrack(node);
     if (node.querySelectorAll) {
-      var inner = node.querySelectorAll('video,audio,source');
+      var inner = node.querySelectorAll('video,audio,source,track');
       for (var i = 0; i < inner.length; i++) adopt(inner[i]);
     }
   }
@@ -1054,9 +1062,307 @@
     URL_.revokeObjectURL = function (url) { delete sources[url]; return nativeRevokeURL(url); };
   }
 
+  // ---- step 4, in a worker ----
+  // A player may make its MediaSource in a dedicated worker and hand the page its `handle` for
+  // a film's srcObject. Nothing of ours runs in a worker by itself, so every Worker is started
+  // with `workerMedia` first: a MediaSource there that says everything to this page, which says
+  // it to the window as its own MediaSource's (with an id of its own) and passes the answers
+  // back. The worker's script is then loaded as it would have been, its relative addresses
+  // still its own.
+  var NativeWorker = window.Worker;
+  var workerSources = {};   // this page's MediaSource ids for workers' MediaSources, by "worker:id"
+  var nextWorker = 1;
+  function workerMedia(BASE, CODECS_SOURCE) {
+    'use strict';
+    var O = Object, defineProperty = O.defineProperty;
+    var post = self.postMessage.bind(self);
+    var nativeAdd = EventTarget.prototype.addEventListener;
+    var nativeDispatch = EventTarget.prototype.dispatchEvent;
+    // Its own addresses are the script's, not this starter's.
+    function resolve(u) { try { return new URL(u, BASE).href; } catch (e) { return u; } }
+    try { defineProperty(self, 'location', { configurable: true, get: function () { return new URL(BASE); } }); } catch (e) {}
+    if (self.importScripts) { var nativeImport = self.importScripts.bind(self); self.importScripts = function () { return nativeImport.apply(null, Array.prototype.map.call(arguments, resolve)); }; }
+    if (self.fetch) { var nativeFetch = self.fetch.bind(self); self.fetch = function (input, init) { return nativeFetch(typeof input === 'string' ? resolve(input) : input, init); }; }
+    if (self.XMLHttpRequest) { var nativeOpen = XMLHttpRequest.prototype.open; XMLHttpRequest.prototype.open = function (method, url) { var a = Array.prototype.slice.call(arguments); a[1] = resolve(url); return nativeOpen.apply(this, a); }; }
+    if (!self.EventTarget) return;
+    var CODECS = new RegExp(CODECS_SOURCE, 'i');
+    function supported(type) {
+      type = String(type || '');
+      var base = type.split(';')[0].trim().toLowerCase();
+      if (!/^(video|audio)\/(mp4|webm|x-matroska)$/.test(base)) return false;
+      var codecs = /codecs\s*=\s*"?([^";]*)"?/i.exec(type);
+      return !codecs || codecs[1].split(',').every(function (c) { return CODECS.test(c.trim()); });
+    }
+    function emit(target, name) { nativeDispatch.call(target, new Event(name)); }
+    function soon(f) { Promise.resolve().then(f); }
+    function onHandlers(proto, names) {
+      names.forEach(function (n) {
+        var key = '__on' + n;
+        defineProperty(proto, 'on' + n, { configurable: true, get: function () { return this[key] || null; }, set: function (f) {
+          if (this[key]) this.removeEventListener(n, this[key]);
+          this[key] = typeof f === 'function' ? f : null;
+          if (this[key]) this.addEventListener(n, this[key]);
+        } });
+      });
+    }
+    function TR(list) {
+      return { length: list.length, start: function (i) { if (i >= list.length) throw new DOMException('index', 'IndexSizeError'); return list[i][0]; },
+        end: function (i) { if (i >= list.length) throw new DOMException('index', 'IndexSizeError'); return list[i][1]; } };
+    }
+    var all = {}, next = 1;
+    function say(m) { var transfer = m.d ? [m.d] : []; post({ __spatimeshWorkerMse: m }, transfer); }
+    function SB() { throw new TypeError('Illegal constructor'); }
+    SB.prototype = O.create(EventTarget.prototype);
+    onHandlers(SB.prototype, ['updatestart', 'update', 'updateend', 'error', 'abort']);
+    defineProperty(SB.prototype, 'updating', { configurable: true, get: function () { return this.__s.updating; } });
+    defineProperty(SB.prototype, 'buffered', { configurable: true, get: function () { return TR(this.__s.buffered); } });
+    defineProperty(SB.prototype, 'mode', { configurable: true, get: function () { return this.__s.mode; }, set: function (v) { this.__s.mode = v === 'sequence' ? 'sequence' : 'segments'; } });
+    defineProperty(SB.prototype, 'timestampOffset', { configurable: true, get: function () { return this.__s.offset; }, set: function (v) {
+      if (this.__s.updating) throw new DOMException('The SourceBuffer is updating.', 'InvalidStateError');
+      this.__s.offset = Number(v) || 0; say({ a: 'offset', ms: this.__s.ms.id, sb: this.__s.id, value: this.__s.offset });
+    } });
+    ['appendWindowStart', 'appendWindowEnd'].forEach(function (k) {
+      defineProperty(SB.prototype, k, { configurable: true, get: function () { return this.__s[k]; }, set: function (v) { this.__s[k] = Number(v); } });
+    });
+    function usable(sb) {
+      var s = sb.__s;
+      if (s.removed) throw new DOMException('This SourceBuffer has been removed from the parent media source.', 'InvalidStateError');
+      if (s.updating) throw new DOMException('This SourceBuffer is still processing an appendBuffer or remove operation.', 'InvalidStateError');
+      if (s.ms.readyState === 'ended') { s.ms.readyState = 'open'; say({ a: 'unend', ms: s.ms.id }); soon(function () { emit(s.ms.target, 'sourceopen'); }); }
+    }
+    SB.prototype.appendBuffer = function (data) {
+      usable(this);
+      var view = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+      var copy = new Uint8Array(view.length); copy.set(view);
+      var s = this.__s, self_ = this;
+      s.updating = true;
+      soon(function () { emit(self_, 'updatestart'); });
+      say({ a: 'append', ms: s.ms.id, sb: s.id, d: copy.buffer });
+    };
+    SB.prototype.remove = function (start, end) {
+      usable(this);
+      var s = this.__s, self_ = this;
+      s.updating = true;
+      soon(function () { emit(self_, 'updatestart'); });
+      say({ a: 'remove', ms: s.ms.id, sb: s.id, start: Number(start), end: Number(end) });
+    };
+    SB.prototype.abort = function () {
+      var s = this.__s;
+      say({ a: 'abort', ms: s.ms.id, sb: s.id });
+      if (s.updating) { s.updating = false; s.aborted = true; emit(this, 'abort'); emit(this, 'updateend'); }
+    };
+    SB.prototype.changeType = function (type) {
+      usable(this);
+      if (!supported(type)) throw new DOMException('The type provided (' + type + ') is unsupported.', 'NotSupportedError');
+      say({ a: 'type', ms: this.__s.ms.id, sb: this.__s.id, type: String(type) });
+    };
+    if (self.SourceBuffer) try { O.setPrototypeOf(SB.prototype, SourceBuffer.prototype); } catch (e) {}
+    function List() { var l = new EventTarget(); O.setPrototypeOf(l, List.prototype); l.__items = []; return l; }
+    List.prototype = O.create(EventTarget.prototype);
+    defineProperty(List.prototype, 'length', { configurable: true, get: function () { return this.__items.length; } });
+    onHandlers(List.prototype, ['addsourcebuffer', 'removesourcebuffer']);
+    function listSet(list, items) {
+      for (var i = 0; i < Math.max(items.length, list.__items.length) + 1; i++) delete list[i];
+      list.__items = items.slice();
+      items.forEach(function (sb, i) { defineProperty(list, i, { configurable: true, enumerable: true, get: function () { return list.__items[i]; } }); });
+    }
+    function MS() {
+      var target = new EventTarget();
+      O.setPrototypeOf(target, new.target ? new.target.prototype : MS.prototype);
+      var s = { id: next++, target: target, readyState: 'closed', duration: NaN, buffers: [], list: List(), active: List() };
+      target.__w = s;
+      all[s.id] = s;
+      say({ a: 'new', ms: s.id });
+      return target;
+    }
+    MS.prototype = O.create(EventTarget.prototype);
+    onHandlers(MS.prototype, ['sourceopen', 'sourceended', 'sourceclose']);
+    defineProperty(MS.prototype, 'readyState', { configurable: true, get: function () { return this.__w.readyState; } });
+    defineProperty(MS.prototype, 'sourceBuffers', { configurable: true, get: function () { return this.__w.list; } });
+    defineProperty(MS.prototype, 'activeSourceBuffers', { configurable: true, get: function () { return this.__w.active; } });
+    // What is handed to the page: a mark it gives a film's srcObject, made a handle there.
+    defineProperty(MS.prototype, 'handle', { configurable: true, get: function () {
+      var s = this.__w;
+      if (!s.handle) s.handle = { __spatimeshWorkerHandle: s.id };
+      return s.handle;
+    } });
+    defineProperty(MS.prototype, 'duration', { configurable: true, get: function () { return this.__w.duration; }, set: function (v) {
+      var s = this.__w;
+      v = Number(v);
+      if (!(v >= 0)) throw new TypeError('The provided double value is negative or not a number.');
+      if (s.readyState !== 'open') throw new DOMException("The MediaSource's readyState is not 'open'.", 'InvalidStateError');
+      s.duration = v;
+      say({ a: 'duration', ms: s.id, value: v === Infinity ? -1 : v });
+    } });
+    MS.prototype.addSourceBuffer = function (type) {
+      var s = this.__w;
+      if (!supported(type)) throw new DOMException('The type provided (' + type + ') is unsupported.', 'NotSupportedError');
+      if (s.readyState !== 'open') throw new DOMException("The MediaSource's readyState is not 'open'.", 'InvalidStateError');
+      var sb = new EventTarget();
+      O.setPrototypeOf(sb, SB.prototype);
+      sb.__s = { id: s.buffers.length + 1, ms: s, updating: false, buffered: [], mode: 'segments', offset: 0, appendWindowStart: 0, appendWindowEnd: Infinity };
+      s.buffers.push(sb);
+      listSet(s.list, s.buffers); listSet(s.active, s.buffers);
+      say({ a: 'add', ms: s.id, sb: sb.__s.id, type: String(type) });
+      soon(function () { emit(s.list, 'addsourcebuffer'); emit(s.active, 'addsourcebuffer'); });
+      return sb;
+    };
+    MS.prototype.removeSourceBuffer = function (sb) {
+      var s = this.__w, i = s.buffers.indexOf(sb);
+      if (i < 0) throw new DOMException('The SourceBuffer provided is not contained in this MediaSource.', 'NotFoundError');
+      if (sb.__s.updating) { sb.__s.updating = false; emit(sb, 'abort'); emit(sb, 'updateend'); }
+      sb.__s.removed = true;
+      s.buffers.splice(i, 1);
+      listSet(s.list, s.buffers); listSet(s.active, s.buffers);
+      say({ a: 'removesb', ms: s.id, sb: sb.__s.id });
+      soon(function () { emit(s.list, 'removesourcebuffer'); emit(s.active, 'removesourcebuffer'); });
+    };
+    MS.prototype.endOfStream = function (error) {
+      var s = this.__w;
+      if (s.readyState !== 'open') throw new DOMException("The MediaSource's readyState is not 'open'.", 'InvalidStateError');
+      if (s.buffers.some(function (b) { return b.__s.updating; })) throw new DOMException('A SourceBuffer is updating.', 'InvalidStateError');
+      s.readyState = 'ended';
+      say({ a: 'end', ms: s.id, error: error || '' });
+      soon(function () { emit(s.target, 'sourceended'); });
+    };
+    MS.prototype.setLiveSeekableRange = function () {};
+    MS.prototype.clearLiveSeekableRange = function () {};
+    MS.isTypeSupported = supported;
+    MS.canConstructInDedicatedWorker = true;
+    if (self.MediaSource) try { O.setPrototypeOf(MS.prototype, self.MediaSource.prototype); } catch (e) {}
+    function MMS() { return Reflect.construct(MS, [], MMS); }
+    MMS.prototype = O.create(MS.prototype);
+    onHandlers(MMS.prototype, ['startstreaming', 'endstreaming']);
+    defineProperty(MMS.prototype, 'streaming', { configurable: true, get: function () { return !!this.__streaming; } });
+    MMS.isTypeSupported = supported;
+    MMS.canConstructInDedicatedWorker = true;
+    self.MediaSource = MS;
+    self.ManagedMediaSource = MMS;
+    // A handle cannot be transferred: it is a mark, and goes by copy.
+    self.postMessage = function (message, transfer) {
+      var list = Array.isArray(transfer) ? transfer : transfer && transfer.transfer;
+      if (Array.isArray(list)) {
+        list = list.filter(function (x) { return !(x && x.__spatimeshWorkerHandle); });
+        return Array.isArray(transfer) ? post(message, list) : post(message, O.assign({}, transfer, { transfer: list }));
+      }
+      return post(message, transfer);
+    };
+    // What the page says back about them, kept from the worker's own listeners.
+    nativeAdd.call(self, 'message', function (ev) {
+      var m = ev.data && ev.data.__spatimeshWorkerMse;
+      if (!m) return;
+      ev.stopImmediatePropagation();
+      var s = all[m.ms];
+      if (!s) return;
+      if (m.a === 'open') { s.readyState = 'open'; soon(function () { emit(s.target, 'sourceopen'); if (s.target instanceof MMS) { s.target.__streaming = true; emit(s.target, 'startstreaming'); } }); return; }
+      if (m.a === 'close') { s.readyState = 'closed'; soon(function () { emit(s.target, 'sourceclose'); }); return; }
+      if (m.a === 'duration') { if (m.value > 0) s.duration = m.value; return; }
+      var sb = null;
+      s.buffers.forEach(function (b) { if (b.__s.id === m.sb) sb = b; });
+      if (!sb) return;
+      var b = sb.__s;
+      if (m.buffered) b.buffered = m.buffered;
+      if (m.a === 'appended' || m.a === 'removed') {
+        if (b.aborted) { b.aborted = false; return; }
+        if (!b.updating) return;
+        b.updating = false;
+        if (m.error) {
+          emit(sb, 'error'); emit(sb, 'updateend');
+          if (m.error !== 'QuotaExceededError' && s.readyState === 'open') try { s.target.endOfStream('decode'); } catch (e) {}
+          return;
+        }
+        emit(sb, 'update'); emit(sb, 'updateend');
+      }
+    }, true);
+  }
+
+  // This page's side: a worker's MediaSource as one of its own to the window, and the handle the
+  // worker gives the page made something a film's srcObject takes.
+  function workerSource(worker, n, wid) {
+    var key = n + ':' + wid;
+    var self = workerSources[key];
+    if (self) return self;
+    self = { id: nextMs++, worker: worker, wid: wid, element: null, buffers: [], target: null };
+    workerSources[key] = self;
+    byMs[self.id] = self;
+    self.attach = function (st) { self.element = st; worker.postMessage({ __spatimeshWorkerMse: { a: 'open', ms: wid } }); };
+    self.detach = function () {
+      self.element = null;
+      send({ t: 'ms', a: 'close', ms: self.id });
+      worker.postMessage({ __spatimeshWorkerMse: { a: 'close', ms: wid } });
+    };
+    send({ t: 'ms', a: 'new', ms: self.id });
+    return self;
+  }
+  function workerSaid(worker, n, m) {
+    var self = workerSource(worker, n, m.ms);
+    if (m.a === 'new') return;
+    var out = { t: 'ms', a: m.a, ms: self.id };
+    ['sb', 'type', 'start', 'end', 'value', 'error'].forEach(function (k) { if (m[k] !== undefined) out[k] = m[k]; });
+    if (m.a === 'append') out.d = base64(new Uint8Array(m.d));
+    send(out);
+    if (m.a === 'end' && m.error && self.element) {
+      var st = self.element;
+      st.error = mediaError(m.error === 'network' ? 2 : 3, 'MediaSource ended with a ' + m.error + ' error');
+      fire(st.el, 'error');
+    }
+  }
+  // The window's answers about a worker's MediaSource, back to its worker.
+  function workerHeard(self, m) {
+    var back = {};
+    for (var k in m) back[k] = m[k];
+    back.ms = self.wid;
+    delete back.t; delete back.f;
+    self.worker.postMessage({ __spatimeshWorkerMse: back });
+  }
+  function handleFor(source) {
+    var h = O.create(window.MediaSourceHandle ? MediaSourceHandle.prototype : O.prototype);
+    defineProperty(h, '__spatimesh', { value: source });
+    return h;
+  }
+  function swapHandles(data, worker, n, depth) {
+    if (!data || typeof data !== 'object' || depth > 3) return data;
+    if (data.__spatimeshWorkerHandle) return handleFor(workerSource(worker, n, data.__spatimeshWorkerHandle));
+    if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) return data;
+    for (var k in data) {
+      try { var v = data[k]; if (v && typeof v === 'object') { var w = swapHandles(v, worker, n, depth + 1); if (w !== v) data[k] = w; } } catch (e) {}
+    }
+    return data;
+  }
+  if (NativeWorker && nativeCreateURL) {
+    var workerStarter = String(workerMedia);
+    var Worker_ = function Worker(url, options) {
+      if (!new.target) throw new TypeError("Failed to construct 'Worker': Please use the 'new' operator.");
+      var abs = absolute(String(url));
+      var module = options && options.type === 'module';
+      var start = '(' + workerStarter + ')(' + JSONstringify(abs) + ',' + JSONstringify(CODECS.source) + ');\n' +
+        (module ? 'import(' + JSONstringify(abs) + ');' : 'importScripts(' + JSONstringify(abs) + ');');
+      var worker;
+      try {
+        var blob = nativeCreateURL(new Blob([start], { type: 'text/javascript' }));
+        worker = new NativeWorker(blob, options);
+      } catch (e) {
+        // A page whose policy allows no blob: workers keeps the worker, without ours in it.
+        worker = new NativeWorker(url, options);
+      }
+      var n = nextWorker++;
+      nativeAddListener.call(worker, 'message', function (ev) {
+        var d = ev.data;
+        if (d && d.__spatimeshWorkerMse) { ev.stopImmediatePropagation(); workerSaid(worker, n, d.__spatimeshWorkerMse); return; }
+        var swapped = swapHandles(d, worker, n, 0);
+        if (swapped !== d) try { defineProperty(ev, 'data', { value: swapped }); } catch (e) {}
+      });
+      return worker;
+    };
+    Worker_.prototype = NativeWorker.prototype;
+    window.Worker = Worker_;
+    MS.canConstructInDedicatedWorker = true;
+  }
+
   function msReceive(m) {
     var self = byMs[m.ms];
     if (!self) return;
+    if (self.worker) { workerHeard(self, m); return; }
     var sb = null;
     for (var i = 0; i < self.buffers.length; i++) if (self.buffers[i].__s.id === m.sb) sb = self.buffers[i];
     if (m.a === 'duration') { if (m.value > 0) self.duration = m.value; return; }
@@ -1235,6 +1541,417 @@
       return n === 'width' || n === 'availWidth' ? innerWidth : innerHeight;
     });
   });
+
+  // ---- tracks: subtitles and captions, sound tracks, picture tracks ----
+  // The engine has no media, so its textTracks never move: they are SpatiMesh's. A <track>'s file
+  // (WebVTT, or SubRip) is read here; a film's own subtitles come from the window, a cue at a
+  // time, as the player reaches them (`cue`): text ones as text, a disc's drawn ones as pictures.
+  // Cues showing are drawn by the page over the film, so they are part of it like the page's own.
+  // A film's sound and picture tracks are audioTracks and videoTracks; enabling a sound track
+  // plays it.
+  var NativeVTTCue = window.VTTCue;
+  var trackOf = new WeakMap();      // <track> element -> its TextTrack
+  var withTracks = new Set();       // states whose cues are to be kept up with
+  function trackEvent(name, track) {
+    var ev = new Event_(name);
+    defineProperty(ev, 'track', { value: track });
+    ours.add(ev);
+    return ev;
+  }
+  function listProto(Native, names) {
+    var proto = O.create(EventTarget.prototype);
+    defineProperty(proto, 'length', { configurable: true, enumerable: true, get: function () { return this.__items.length; } });
+    defineProperty(proto, 'getTrackById', { configurable: true, writable: true, value: function (id) {
+      for (var i = 0; i < this.__items.length; i++) if (this.__items[i].id === String(id)) return this.__items[i];
+      return null;
+    } });
+    defineProperty(proto, 'item', { configurable: true, writable: true, value: function (i) { return this.__items[i] || null; } });
+    proto[Symbol.iterator] = function () { return this.__items.slice()[Symbol.iterator](); };
+    onHandlers(proto, names);
+    if (Native) try { O.setPrototypeOf(proto, Native.prototype); } catch (e) {}
+    return proto;
+  }
+  var TextListProto = listProto(window.TextTrackList, ['change', 'addtrack', 'removetrack']);
+  var AudioListProto = listProto(window.AudioTrackList, ['change', 'addtrack', 'removetrack']);
+  var VideoListProto = listProto(window.VideoTrackList, ['change', 'addtrack', 'removetrack']);
+  defineProperty(VideoListProto, 'selectedIndex', { configurable: true, enumerable: true, get: function () {
+    for (var i = 0; i < this.__items.length; i++) if (this.__items[i].__t.selected) return i;
+    return -1;
+  } });
+  function newList(proto) { var l = new EventTarget(); O.setPrototypeOf(l, proto); l.__items = []; return l; }
+  function listPut(list, items) {
+    for (var i = 0; i < Math.max(items.length, list.__items.length) + 1; i++) delete list[i];
+    list.__items = items.slice();
+    items.forEach(function (t, i) { defineProperty(list, i, { configurable: true, enumerable: true, get: function () { return list.__items[i]; } }); });
+  }
+  function listAdd(list, track) {
+    listPut(list, list.__items.concat([track]));
+    var ev = trackEvent('addtrack', track);
+    soon(function () { nativeDispatch.call(list, ev); });
+  }
+  function listRemove(list, track) {
+    var i = list.__items.indexOf(track);
+    if (i < 0) return;
+    var items = list.__items.slice(); items.splice(i, 1);
+    listPut(list, items);
+    var ev = trackEvent('removetrack', track);
+    soon(function () { nativeDispatch.call(list, ev); });
+  }
+  function tracksOf(st) {
+    if (!st.tracks) st.tracks = { text: newList(TextListProto), audio: newList(AudioListProto), video: newList(VideoListProto) };
+    return st.tracks;
+  }
+
+  // The cues of a track, as the page reads them: a list kept up to date.
+  var CueListProto = O.create(O.prototype);
+  defineProperty(CueListProto, 'length', { configurable: true, enumerable: true, get: function () { return this.__items.length; } });
+  defineProperty(CueListProto, 'getCueById', { configurable: true, writable: true, value: function (id) {
+    for (var i = 0; i < this.__items.length; i++) if (this.__items[i].id === String(id)) return this.__items[i];
+    return null;
+  } });
+  CueListProto[Symbol.iterator] = function () { return this.__items.slice()[Symbol.iterator](); };
+  if (window.TextTrackCueList) try { O.setPrototypeOf(CueListProto, TextTrackCueList.prototype); } catch (e) {}
+  function cueList() { var l = O.create(CueListProto); l.__items = []; return l; }
+  function cuesPut(list, items) {
+    for (var i = 0; i < Math.max(items.length, list.__items.length) + 1; i++) delete list[i];
+    list.__items = items.slice();
+    items.forEach(function (c, i) { defineProperty(list, i, { configurable: true, enumerable: true, value: c }); });
+  }
+
+  function makeCue(start, end, text) {
+    var cue;
+    try { cue = NativeVTTCue ? new NativeVTTCue(start, end, text) : null; } catch (e) { cue = null; }
+    if (!cue) {
+      cue = new EventTarget();
+      cue.startTime = start; cue.endTime = end; cue.text = text; cue.id = ''; cue.pauseOnExit = false;
+    }
+    return cue;
+  }
+  function cueTrack(cue, track) {
+    try { defineProperty(cue, 'track', { configurable: true, get: function () { return track; } }); } catch (e) {}
+    cue.__track = track;
+  }
+
+  var TTProto = O.create(EventTarget.prototype);
+  ['kind', 'label', 'language', 'id', 'inBandMetadataTrackDispatchType'].forEach(function (k) {
+    defineProperty(TTProto, k, { configurable: true, enumerable: true, get: function () { return this.__t[k]; } });
+  });
+  defineProperty(TTProto, 'mode', { configurable: true, enumerable: true, get: function () { return this.__t.mode; }, set: function (v) {
+    v = String(v);
+    if (v !== 'disabled' && v !== 'hidden' && v !== 'showing') return;
+    var t = this.__t;
+    if (t.mode === v) return;
+    t.mode = v;
+    if (v === 'disabled') { t.active = []; cuesPut(t.activeList, []); }
+    modeChanged(this);
+  } });
+  defineProperty(TTProto, 'cues', { configurable: true, enumerable: true, get: function () { return this.__t.mode === 'disabled' ? null : this.__t.cueList; } });
+  defineProperty(TTProto, 'activeCues', { configurable: true, enumerable: true, get: function () { return this.__t.mode === 'disabled' ? null : this.__t.activeList; } });
+  defineProperty(TTProto, 'addCue', { configurable: true, writable: true, value: function (cue) {
+    var t = this.__t;
+    if (cue.__track && cue.__track !== this) cue.__track.removeCue(cue);
+    if (t.cues.indexOf(cue) >= 0) return;
+    cueTrack(cue, this);
+    t.cues.push(cue);
+    t.cues.sort(function (a, b) { return a.startTime - b.startTime || b.endTime - a.endTime; });
+    cuesPut(t.cueList, t.cues);
+    if (t.st) cuesNow(t.st);
+  } });
+  defineProperty(TTProto, 'removeCue', { configurable: true, writable: true, value: function (cue) {
+    var t = this.__t, i = t.cues.indexOf(cue);
+    if (i < 0) throw new DOMException('The specified cue is not listed in the TextTrack\'s list of cues.', 'NotFoundError');
+    t.cues.splice(i, 1);
+    cuesPut(t.cueList, t.cues);
+    cueTrack(cue, null);
+    if (t.st) cuesNow(t.st);
+  } });
+  onHandlers(TTProto, ['cuechange']);
+  if (window.TextTrack) try { O.setPrototypeOf(TTProto, TextTrack.prototype); } catch (e) {}
+
+  function newTextTrack(st, o) {
+    var tt = new EventTarget();
+    O.setPrototypeOf(tt, TTProto);
+    var kind = /^(subtitles|captions|descriptions|chapters|metadata)$/.test(o.kind || '') ? o.kind : (o.kind ? 'metadata' : 'subtitles');
+    tt.__t = { kind: kind, label: o.label || '', language: o.language || '', id: o.id || '', inBandMetadataTrackDispatchType: '',
+      mode: o.mode || 'disabled', cues: [], cueList: cueList(), active: [], activeList: cueList(), st: st, inband: o.inband, element: o.element || null };
+    if (st) { listAdd(tracksOf(st).text, tt); withTracks.add(st); }
+    return tt;
+  }
+
+  function modeChanged(tt) {
+    var t = tt.__t, st = t.st;
+    if (!st) return;
+    // A film's own subtitles: the player is to read the one chosen, and draws nothing itself.
+    if (t.inband !== undefined) {
+      var on = t.mode !== 'disabled';
+      if (on) tracksOf(st).text.__items.forEach(function (o) { if (o !== tt && o.__t.inband !== undefined && o.__t.mode !== 'disabled') o.__t.mode = 'disabled'; });
+      var any = tracksOf(st).text.__items.filter(function (o) { return o.__t.inband !== undefined && o.__t.mode !== 'disabled'; })[0];
+      send({ t: 'subtitle', id: st.id, index: any ? any.__t.inband : null });
+    }
+    if (t.element && t.mode !== 'disabled') loadTrack(t.element, tt);
+    var ev = new Event_('change'); ours.add(ev);
+    soon(function () { nativeDispatch.call(tracksOf(st).text, ev); });
+    cuesNow(st);
+  }
+
+  // Which cues are on now, each track's; enter, exit and cuechange told; what shows drawn.
+  function cuesNow(st) {
+    if (!st.tracks) return;
+    var at = time(st);
+    var showing = [];
+    st.tracks.text.__items.forEach(function (tt) {
+      var t = tt.__t;
+      if (t.mode === 'disabled') return;
+      var active = t.cues.filter(function (c) { return c.startTime <= at && at < c.endTime; });
+      var changed = active.length !== t.active.length || active.some(function (c, i) { return c !== t.active[i]; });
+      if (changed) {
+        var was = t.active;
+        t.active = active;
+        cuesPut(t.activeList, active);
+        was.forEach(function (c) { if (active.indexOf(c) < 0) emit(c, 'exit'); });
+        active.forEach(function (c) { if (was.indexOf(c) < 0) emit(c, 'enter'); });
+        emit(tt, 'cuechange');
+        if (t.element) emit(t.element, 'cuechange');
+      }
+      if (t.mode === 'showing' && (t.kind === 'subtitles' || t.kind === 'captions')) showing = showing.concat(active);
+    });
+    drawCues(st, showing);
+  }
+
+  // ---- reading a track's file ----
+  function seconds(s) {
+    var p = s.replace(',', '.').split(':').map(Number);
+    return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1];
+  }
+  function parseCues(text) {
+    text = String(text).replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+    var out = [];
+    text.split(/\n[ \t]*\n+/).forEach(function (block) {
+      var lines = block.replace(/^\n+/, '').split('\n');
+      if (/^(WEBVTT|NOTE|STYLE|REGION)(\s|$)/.test(lines[0])) return;
+      var i = lines[0] && lines[0].indexOf('-->') < 0 ? 1 : 0;
+      var m = /^\s*((?:\d+:)?\d{1,2}:\d{2}[.,]\d{1,3})\s*-->\s*((?:\d+:)?\d{1,2}:\d{2}[.,]\d{1,3})(.*)$/.exec(lines[i] || '');
+      if (!m) return;
+      out.push({ id: i ? lines[0].trim() : '', start: seconds(m[1]), end: seconds(m[2]), text: lines.slice(i + 1).join('\n') });
+    });
+    return out;
+  }
+  function loadTrack(el, tt) {
+    var t = tt.__t;
+    if (t.loading) return;
+    var src = nativeGetAttribute.call(el, 'src');
+    if (!src) return;
+    t.loading = true;
+    t.ready = 1;
+    var media = el.parentNode;
+    var cors = media && nativeGetAttribute.call(media, 'crossorigin');
+    fetch(absolute(src), { credentials: cors === 'use-credentials' || cors === null ? 'include' : 'same-origin' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+      .then(function (text) {
+        parseCues(text).forEach(function (c) { var cue = makeCue(c.start, c.end, c.text); if (c.id) cue.id = c.id; tt.addCue(cue); });
+        t.ready = 2;
+        emit(el, 'load');
+      })
+      .catch(function () { t.ready = 3; emit(el, 'error'); });
+  }
+  // A <track> in one of our films: its TextTrack is ours, and so is its file.
+  function adoptTrack(el) {
+    var media = el.parentNode;
+    if (!(media instanceof HTMLMediaElement) || !isOurs(media) || trackOf.has(el)) return;
+    var st = stateOf(media);
+    // Making the film ours adopts its <track>s, this one among them.
+    if (trackOf.has(el)) return;
+    var kind = (nativeGetAttribute.call(el, 'kind') || 'subtitles').toLowerCase();
+    var defaulted = nativeHasAttribute.call(el, 'default') && !tracksOf(st).text.__items.some(function (o) { return o.__t.element && o.__t.mode === 'showing'; });
+    var tt = newTextTrack(st, { kind: kind, label: nativeGetAttribute.call(el, 'label'), language: nativeGetAttribute.call(el, 'srclang'),
+      id: el.id, element: el, mode: defaulted ? (kind === 'metadata' || kind === 'chapters' ? 'hidden' : 'showing') : 'disabled' });
+    trackOf.set(el, tt);
+    if (defaulted) loadTrack(el, tt);
+  }
+  if (window.HTMLTrackElement) {
+    var nativeTrackTrack = native(HTMLTrackElement.prototype, 'track');
+    var nativeTrackReady = native(HTMLTrackElement.prototype, 'readyState');
+    defineProperty(HTMLTrackElement.prototype, 'track', { configurable: true, enumerable: true, get: function () {
+      if (!trackOf.has(this)) adoptTrack(this);
+      var tt = trackOf.get(this);
+      return tt || (nativeTrackTrack && nativeTrackTrack.get ? nativeTrackTrack.get.call(this) : null);
+    } });
+    defineProperty(HTMLTrackElement.prototype, 'readyState', { configurable: true, enumerable: true, get: function () {
+      var tt = trackOf.get(this);
+      return tt ? (tt.__t.ready || 0) : (nativeTrackReady && nativeTrackReady.get ? nativeTrackReady.get.call(this) : 0);
+    } });
+  }
+
+  // ---- the film's own tracks, as the window says ----
+  function trackObject(proto, fields) {
+    var o = new EventTarget();
+    O.setPrototypeOf(o, proto);
+    o.__t = fields;
+    return o;
+  }
+  var AudioTrackProto = O.create(EventTarget.prototype), VideoTrackProto = O.create(EventTarget.prototype);
+  [AudioTrackProto, VideoTrackProto].forEach(function (proto) {
+    ['id', 'kind', 'label', 'language'].forEach(function (k) {
+      defineProperty(proto, k, { configurable: true, enumerable: true, get: function () { return this.__t[k]; } });
+    });
+  });
+  defineProperty(AudioTrackProto, 'enabled', { configurable: true, enumerable: true, get: function () { return this.__t.enabled; }, set: function (v) {
+    v = !!v;
+    var t = this.__t, st = t.st;
+    if (t.enabled === v) return;
+    // One sound track plays at a time: the one enabled last.
+    tracksOf(st).audio.__items.forEach(function (o) { o.__t.enabled = false; });
+    t.enabled = v;
+    if (v) send({ t: 'audioTrack', id: st.id, index: t.index });
+    var ev = new Event_('change'); ours.add(ev);
+    soon(function () { nativeDispatch.call(tracksOf(st).audio, ev); });
+  } });
+  defineProperty(VideoTrackProto, 'selected', { configurable: true, enumerable: true, get: function () { return this.__t.selected; }, set: function (v) {
+    var t = this.__t;
+    v = !!v;
+    if (v === t.selected) return;
+    tracksOf(t.st).video.__items.forEach(function (o) { o.__t.selected = false; });
+    t.selected = v;
+    var ev = new Event_('change'); ours.add(ev);
+    soon(function () { nativeDispatch.call(tracksOf(t.st).video, ev); });
+  } });
+  if (window.AudioTrack) try { O.setPrototypeOf(AudioTrackProto, AudioTrack.prototype); } catch (e) {}
+  if (window.VideoTrack) try { O.setPrototypeOf(VideoTrackProto, VideoTrack.prototype); } catch (e) {}
+
+  function tracksIn(st, m) {
+    var lists = tracksOf(st);
+    tracksGone(st);
+    (m.audio || []).forEach(function (a, i) {
+      listAdd(lists.audio, trackObject(AudioTrackProto, { st: st, index: i, id: String(a.id), kind: a.main ? 'main' : 'alternative', label: a.label || '', language: a.language || '', enabled: !!a.enabled }));
+    });
+    (m.video || []).forEach(function (v, i) {
+      listAdd(lists.video, trackObject(VideoTrackProto, { st: st, index: i, id: String(v.id), kind: 'main', label: v.label || '', language: v.language || '', selected: i === 0 }));
+    });
+    (m.text || []).forEach(function (s, i) {
+      newTextTrack(st, { kind: 'subtitles', label: s.label, language: s.language, id: String(s.id), inband: i, mode: 'disabled' });
+    });
+  }
+  // A new load: the film's own tracks go; a <track>'s stay, as they are the element's.
+  function tracksGone(st) {
+    if (!st.tracks) return;
+    var lists = st.tracks;
+    lists.audio.__items.slice().forEach(function (t) { listRemove(lists.audio, t); });
+    lists.video.__items.slice().forEach(function (t) { listRemove(lists.video, t); });
+    lists.text.__items.slice().forEach(function (t) { if (t.__t.inband !== undefined) { t.__t.st = null; listRemove(lists.text, t); } });
+    lists.text.__items.forEach(function (t) { t.__t.active = []; cuesPut(t.__t.activeList, []); });
+    drawCues(st, []);
+  }
+  function cueIn(st, m) {
+    if (!st.tracks) return;
+    var tt = st.tracks.text.__items.filter(function (t) { return t.__t.inband === m.track; })[0];
+    if (!tt) return;
+    var t = tt.__t;
+    for (var i = 0; i < t.cues.length; i++) if (Math.abs(t.cues[i].startTime - m.start) < 1e-3 && t.cues[i].text === (m.text || '')) return;
+    var cue = makeCue(m.start, m.end > m.start ? m.end : m.start + 5, m.text || '');
+    if (m.picture) cue.__picture = m.picture;
+    tt.addCue(cue);
+  }
+
+  // ---- what shows, drawn over the film ----
+  function cueBox(st) {
+    if (st.cueBox) return st.cueBox;
+    var host = document.createElement('spatimesh-cues');
+    var root = host.attachShadow ? host.attachShadow({ mode: 'closed' }) : host;
+    host.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;margin:0;padding:0;border:0;pointer-events:none;z-index:2147483647;display:none;contain:layout';
+    var style = document.createElement('style');
+    style.textContent = ':host{all:initial}.c{position:absolute;left:0;right:0;bottom:6%;display:flex;flex-direction:column;align-items:center;gap:.15em;text-align:center}' +
+      '.l{display:inline-block;max-width:90%;padding:.08em .35em;background:rgba(0,0,0,.72);color:#fff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.25;white-space:pre-line;border-radius:.15em}' +
+      'canvas{position:absolute}';
+    var lines = document.createElement('div');
+    lines.className = 'c';
+    root.appendChild(style); root.appendChild(lines);
+    st.cueBox = { host: host, root: root, lines: lines, shown: '' };
+    return st.cueBox;
+  }
+  // A cue's text as WebVTT has it: <b>, <i> and <u> kept, its other tags (voices, classes,
+  // times) and anything else dropped, nothing of it ever HTML.
+  function cueNodes(text, into) {
+    var stack = [into];
+    var re = /<(\/?)([a-zA-Z]*)[^>]*>|([^<]+)/g, m;
+    while ((m = re.exec(text))) {
+      if (m[3] !== undefined) { stack[stack.length - 1].appendChild(document.createTextNode(m[3].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' '))); continue; }
+      var tag = m[2].toLowerCase();
+      if (tag !== 'b' && tag !== 'i' && tag !== 'u') continue;
+      if (m[1]) { if (stack.length > 1 && stack[stack.length - 1].localName === tag) stack.pop(); continue; }
+      var e = document.createElement(tag);
+      stack[stack.length - 1].appendChild(e);
+      stack.push(e);
+    }
+  }
+  function drawCues(st, cues) {
+    if (!cues.length && !st.cueBox) return;
+    var box = cueBox(st);
+    var el = st.el;
+    var shown = cues.length > 0 && el.isConnected;
+    var r = shown ? nativeRect.call(el) : null;
+    if (r && (r.width <= 0 || r.height <= 0)) shown = false;
+    if (!shown) {
+      if (box.host.style.display !== 'none') box.host.style.display = 'none';
+      return;
+    }
+    if (!box.host.isConnected) document.documentElement.appendChild(box.host);
+    // The film's own part of its box: as object-fit would have it, contained by default.
+    var cs = nativeGetComputed(el), fit = cs.objectFit || 'contain';
+    var x = r.left, y = r.top, w = r.width, h = r.height;
+    if (st.width && st.height && (fit === 'contain' || fit === 'scale-down')) {
+      var s = Math.min(w / st.width, h / st.height);
+      var fw = st.width * s, fh = st.height * s;
+      x += (w - fw) / 2; y += (h - fh) / 2; w = fw; h = fh;
+    }
+    var hs = box.host.style;
+    hs.display = 'block'; hs.left = x + 'px'; hs.top = y + 'px'; hs.width = w + 'px'; hs.height = h + 'px';
+    var key = cues.map(function (c) { return c.startTime + ':' + c.text; }).join('|') + '@' + Math.round(w) + 'x' + Math.round(h);
+    if (key === box.shown) return;
+    box.shown = key;
+    while (box.lines.firstChild) box.lines.removeChild(box.lines.firstChild);
+    var old = box.root.querySelectorAll('canvas');
+    for (var i = 0; i < old.length; i++) old[i].remove();
+    box.lines.style.fontSize = Math.max(12, h * 0.052) + 'px';
+    cues.forEach(function (c) {
+      if (c.__picture) { pictureCue(box, c.__picture, w, h); return; }
+      if (!c.text) return;
+      var line = document.createElement('span');
+      line.className = 'l';
+      cueNodes(c.text, line);
+      box.lines.appendChild(line);
+    });
+  }
+  // A disc's subtitle: a picture, and where on the film it goes (fractions of the frame).
+  function pictureCue(box, p, w, h) {
+    var canvas = document.createElement('canvas');
+    canvas.width = p.width; canvas.height = p.height;
+    var bytes = atob(p.rgba), data = new Uint8ClampedArray(bytes.length);
+    for (var i = 0; i < bytes.length; i++) data[i] = bytes.charCodeAt(i);
+    try { canvas.getContext('2d').putImageData(new ImageData(data, p.width, p.height), 0, 0); } catch (e) { return; }
+    canvas.style.left = p.place[0] * w + 'px'; canvas.style.top = p.place[1] * h + 'px';
+    canvas.style.width = p.place[2] * w + 'px'; canvas.style.height = p.place[3] * h + 'px';
+    box.root.appendChild(canvas);
+  }
+
+  accessor(MediaProto, 'textTracks', function (st) { return tracksOf(st).text; });
+  accessor(MediaProto, 'audioTracks', function (st) { return tracksOf(st).audio; });
+  accessor(MediaProto, 'videoTracks', function (st) { return tracksOf(st).video; });
+  var nativeAddTextTrack = MediaProto.addTextTrack;
+  defineProperty(MediaProto, 'addTextTrack', { configurable: true, writable: true, value: function (kind, label, language) {
+    if (!isOurs(this)) return nativeAddTextTrack.apply(this, arguments);
+    if (!/^(subtitles|captions|descriptions|chapters|metadata)$/.test(String(kind))) throw new TypeError("The provided value '" + kind + "' is not a valid enum value of type TextTrackKind.");
+    return newTextTrack(stateOf(this), { kind: String(kind), label: label === undefined ? '' : String(label), language: language === undefined ? '' : String(language), mode: 'hidden' });
+  } });
+  // Kept up with every frame while any film has a track that is not off.
+  function cueLoop() {
+    raf(cueLoop);
+    withTracks.forEach(function (st) {
+      if (!st.tracks || !st.el.isConnected && !st.cueBox) { return; }
+      var on = st.tracks.text.__items.some(function (t) { return t.__t.mode !== 'disabled'; });
+      if (on || (st.cueBox && st.cueBox.host.style.display !== 'none')) cuesNow(st);
+    });
+  }
+  raf(cueLoop);
 
   // ---- this document, to the window: here, and gone ----
   send({ t: 'hello', top: TOP });
