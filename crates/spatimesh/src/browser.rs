@@ -518,6 +518,21 @@ impl Browser {
                 }
                 Err(e) => log::warn!("tab {tab}'s pictures could not be mapped: {e}"),
             },
+            FromHost::Surface { tab, id, width, height } => {
+                // The engine's own picture on the GPU: used where it is; the one before it given
+                // back, and this one too if it cannot be.
+                let given_back = self.borrow_picture(tab, id, width, height);
+                if let Some(host) = self.hosts.get_mut(profile) {
+                    for old in given_back {
+                        host.send(&ToHost::ReleaseSurface { tab, id: old });
+                    }
+                }
+                if self.hidden.contains_key(&tab) {
+                    self.dirty_popup(tab);
+                } else {
+                    self.dirty_tab(tab);
+                }
+            }
             FromHost::Picture { tab, buffer, changed } => {
                 self.picture(profile, tab, buffer, &changed);
                 self.latest_buffer.insert(tab, buffer);
@@ -571,11 +586,14 @@ impl Browser {
         let (width, height, format) = (pictures.width, pictures.height, pictures.format);
         let Ok(gl) = self.app.gl() else { return };
         let view = self.views.entry(tab).or_default();
-        let fits = view.texture.as_ref().is_some_and(|t| t.width == width && t.height == height);
+        // Not into the engine's own picture on the GPU, if that is what the tab had.
+        let fits = view.texture.as_ref().is_some_and(|t| t.width == width && t.height == height && t.borrowed_id().is_none());
+        let mut given_back = None;
         let changed: Vec<engine::Rect> = if fits {
             changed.to_vec()
         } else {
             if let Some(old) = view.texture.take() {
+                given_back = old.borrowed_id();
                 old.destroy(gl);
             }
             match PageTexture::new(gl, width, height, format) {
@@ -590,6 +608,41 @@ impl Browser {
         };
         if let Some(texture) = view.texture.as_ref() {
             texture.upload(gl, bytes, &changed);
+        }
+        if let (Some(id), Some(host)) = (given_back, self.hosts.get_mut(profile)) {
+            host.send(&ToHost::ReleaseSurface { tab, id });
+        }
+    }
+
+    /// A tab's picture is now the engine host's `IOSurface` numbered `id`. What is to be given
+    /// back: the picture it replaces, or this one where it cannot be used.
+    fn borrow_picture(&mut self, tab: TabId, id: u32, width: u32, height: u32) -> Vec<u32> {
+        let Ok(gl) = self.app.gl() else { return vec![id] };
+        if !self.tabs.tab(tab).is_some() && !self.hidden.contains_key(&tab) {
+            return vec![id];
+        }
+        #[cfg(target_os = "macos")]
+        {
+            match PageTexture::borrow(gl, id, width, height) {
+                Ok(texture) => {
+                    let view = self.views.entry(tab).or_default();
+                    let mut back = Vec::new();
+                    if let Some(old) = view.texture.replace(texture) {
+                        back.extend(old.borrowed_id());
+                        old.destroy(gl);
+                    }
+                    back
+                }
+                Err(e) => {
+                    log::warn!("tab {tab}'s picture on the GPU could not be used: {e}");
+                    vec![id]
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (gl, width, height);
+            vec![id]
         }
     }
 

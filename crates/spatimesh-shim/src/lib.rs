@@ -66,6 +66,9 @@ extern "C" {
     fn spatimesh_next_event(e: *mut Raw, out: *mut Event) -> c_int;
     fn spatimesh_damage(e: *mut Raw, id: u64, x: *mut c_int, y: *mut c_int, w: *mut c_int, h: *mut c_int) -> c_int;
     fn spatimesh_copy(e: *mut Raw, id: u64, pixels: *mut u8, width: c_int, height: c_int) -> c_int;
+    // The newest picture already on the GPU, by its IOSurface's number, where the engine has one.
+    fn spatimesh_surface(e: *mut Raw, id: u64, surface: *mut u32, width: *mut c_int, height: *mut c_int) -> c_int;
+    fn spatimesh_release_surface(e: *mut Raw, id: u64, surface: u32);
     // Extensions (docs/spatimesh.md, "Extensions").
     fn spatimesh_ext_server(serve: ServeFn, free_bytes: ServeFreeFn);
     fn spatimesh_ext_bridge() -> *const c_char;
@@ -550,6 +553,10 @@ impl Engine for Shim {
         unsafe { spatimesh_run_script(self.raw, tab, world.as_ptr(), all_frames as c_int, code.as_ptr(), request, boot as c_int) };
     }
 
+    fn release_surface(&mut self, tab: TabId, id: u32) {
+        unsafe { spatimesh_release_surface(self.raw, tab, id) };
+    }
+
     fn pump(&mut self, wait: Duration, canvas: &mut dyn Canvas) -> Vec<Happened> {
         unsafe { spatimesh_pump(self.raw, wait.as_millis().min(1000) as c_int) };
         let mut out = Vec::new();
@@ -560,6 +567,13 @@ impl Engine for Shim {
             }
         }
         for (&tab, view) in &self.views {
+            // On the GPU already: handed over by its number, nothing copied.
+            let (mut id, mut sw, mut sh) = (0u32, 0, 0);
+            if unsafe { spatimesh_surface(self.raw, tab, &mut id, &mut sw, &mut sh) } != 0 {
+                canvas.surface(tab, id, sw as u32, sh as u32);
+                out.push(Happened::Picture { tab });
+                continue;
+            }
             let (mut x, mut y, mut w, mut h) = (0, 0, 0, 0);
             if unsafe { spatimesh_damage(self.raw, tab, &mut x, &mut y, &mut w, &mut h) } == 0 {
                 continue;

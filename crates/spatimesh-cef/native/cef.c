@@ -2897,6 +2897,16 @@ int spatimesh_damage(Engine *e, uint64_t id, int *x, int *y, int *w, int *h) {
 /* The tab's picture, where it changed, into `pixels` (`width` by `height`, four bytes a pixel,
  * blue green red alpha), with Chromium's own list over it where one is open; white where
  * Chromium has not drawn yet. The change is then forgotten. */
+/* Pictures on the GPU, by number: not from this engine, whose pictures are copied. */
+int spatimesh_surface(Engine *e, uint64_t id, uint32_t *surface, int *width, int *height) {
+    (void)e; (void)id; (void)surface; (void)width; (void)height;
+    return 0;
+}
+
+void spatimesh_release_surface(Engine *e, uint64_t id, uint32_t surface) {
+    (void)e; (void)id; (void)surface;
+}
+
 int spatimesh_copy(Engine *e, uint64_t id, unsigned char *pixels, int width, int height) {
     Tab *t = find(id);
     if (!t || !t->damaged)

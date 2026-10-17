@@ -122,6 +122,10 @@ pub enum Format {
 pub trait Canvas {
     fn begin(&mut self, tab: TabId, width: u32, height: u32, format: Format) -> Option<&mut [u8]>;
     fn finish(&mut self, tab: TabId, changed: &[Rect]);
+    /// A whole picture already on the GPU, by the system's number for it, instead of bytes.
+    fn surface(&mut self, tab: TabId, id: u32, width: u32, height: u32) {
+        let _ = (tab, id, width, height);
+    }
 }
 
 /// One line of a `<select>`'s list.
@@ -246,6 +250,11 @@ pub trait Engine {
     /// Let the engine work for at most `wait`, drawing into `canvas`, and say what happened.
     /// It returns sooner when the descriptor given to [`Engine::wake_on`] has something to read.
     fn pump(&mut self, wait: Duration, canvas: &mut dyn Canvas) -> Vec<Happened>;
+
+    /// The window is done with a picture handed over as [`Canvas::surface`].
+    fn release_surface(&mut self, tab: TabId, id: u32) {
+        let _ = (tab, id);
+    }
     /// The window's socket: a reason for [`Engine::pump`] to stop waiting.
     fn wake_on(&mut self, _fd: std::os::fd::RawFd) {}
     /// The profile's extensions: which content scripts go into which frames, and what

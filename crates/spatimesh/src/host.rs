@@ -157,6 +157,7 @@ pub fn serve(mut engine: Box<dyn Engine>, mut link: Link) {
                 },
                 ToHost::RunScript { tab, world, all_frames, code, request, boot } => engine.run_script(tab, &world, all_frames, &code, request, boot),
                 ToHost::PageScript { code } => engine.set_page_script(&code),
+                ToHost::ReleaseSurface { tab, id } => engine.release_surface(tab, id),
             }
         }
         if link.is_closed() {

@@ -1,4 +1,5 @@
-//! A tab's picture on the GPU: the engine host's shared buffer, copied where it changed.
+//! A tab's picture on the GPU: the engine host's shared buffer, copied where it changed -- or,
+//! where the engine draws on the GPU itself (a Mac's WebKit), its own picture, borrowed whole.
 
 use spatiand_app::glow::{self, HasContext};
 use spatiand_app::ui::Texture;
@@ -9,6 +10,20 @@ pub struct PageTexture {
     raw: glow::Texture,
     pub width: u32,
     pub height: u32,
+    /// The engine's `IOSurface` this texture is, and its number, to be given back.
+    #[cfg(target_os = "macos")]
+    borrowed: Option<(spatiand_app::gl::SurfaceTexture, *const std::ffi::c_void, u32)>,
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "IOSurface", kind = "framework")]
+extern "C" {
+    fn IOSurfaceLookup(id: u32) -> *const std::ffi::c_void;
+}
+#[cfg(target_os = "macos")]
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFRelease(object: *const std::ffi::c_void);
 }
 
 impl PageTexture {
@@ -32,8 +47,40 @@ impl PageTexture {
                 g.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_SWIZZLE_B, glow::RED as i32);
             }
             g.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA8 as i32, width as i32, height as i32, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
-            Ok(PageTexture { raw, width, height })
+            Ok(PageTexture {
+                raw,
+                width,
+                height,
+                #[cfg(target_os = "macos")]
+                borrowed: None,
+            })
         }
+    }
+
+    /// The engine host's picture on the GPU, found by its number, sampled where it is.
+    #[cfg(target_os = "macos")]
+    pub fn borrow(gl: &Gl, id: u32, width: u32, height: u32) -> Result<PageTexture, String> {
+        unsafe {
+            let surface = IOSurfaceLookup(id);
+            if surface.is_null() {
+                return Err(format!("no picture numbered {id}"));
+            }
+            match gl.surface_texture(surface, 0, (width, height), 4) {
+                Ok(held) => Ok(PageTexture { raw: held.texture, width, height, borrowed: Some((held, surface, id)) }),
+                Err(e) => {
+                    CFRelease(surface);
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    /// The number of the engine's picture this is, if it is one.
+    pub fn borrowed_id(&self) -> Option<u32> {
+        #[cfg(target_os = "macos")]
+        return self.borrowed.as_ref().map(|(_, _, id)| *id);
+        #[cfg(not(target_os = "macos"))]
+        None
     }
 
     /// Copy what changed from a whole picture of this texture's size.
@@ -74,6 +121,12 @@ impl PageTexture {
     }
 
     pub fn destroy(self, gl: &Gl) {
+        #[cfg(target_os = "macos")]
+        if let Some((held, surface, _)) = self.borrowed {
+            gl.release_surface_texture(held);
+            unsafe { CFRelease(surface) };
+            return;
+        }
         unsafe { gl.api().delete_texture(self.raw) };
     }
 }

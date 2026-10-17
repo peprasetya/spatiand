@@ -44,6 +44,8 @@ pub enum ToHost {
     /// SpatiMesh's own code for the start of every frame's every document, in the page's world
     /// ([`crate::engine::Engine::set_page_script`]): its media (`crate::media`).
     PageScript { code: String },
+    /// The window is done with this picture of the tab's on the GPU ([`FromHost::Surface`]).
+    ReleaseSurface { tab: TabId, id: u32 },
 }
 
 /// From an engine host to its window.
@@ -54,6 +56,10 @@ pub enum FromHost {
     Buffers { tab: TabId, width: u32, height: u32, format: Format, count: u8 },
     /// The tab's newest picture is in `buffer`; `changed` is what is new since the last.
     Picture { tab: TabId, buffer: u8, changed: Vec<Rect> },
+    /// The tab's newest picture, whole, on the GPU: an `IOSurface` found by its number (a Mac's
+    /// WebKit), BGRA, top row first. The window gives it back ([`ToHost::ReleaseSurface`]) when
+    /// it has a newer one; until then the host draws into another.
+    Surface { tab: TabId, id: u32, width: u32, height: u32 },
     /// Anything else a page did (never [`Happened::Picture`], which is the message above).
     Happened(Happened),
 }
@@ -347,6 +353,10 @@ impl ToHost {
                 b.str(code);
                 22
             }
+            ToHost::ReleaseSurface { tab, id } => {
+                b.u64(*tab).u32(*id);
+                23
+            }
         };
         frame(tag, b)
     }
@@ -389,6 +399,7 @@ impl ToHost {
             20 => ToHost::Extensions { set: i.str()? },
             21 => ToHost::RunScript { tab: i.u64()?, world: i.str()?, all_frames: i.bool()?, code: i.str()?, request: i.u64()?, boot: i.bool()? },
             22 => ToHost::PageScript { code: i.str()? },
+            23 => ToHost::ReleaseSurface { tab: i.u64()?, id: i.u32()? },
             _ => return None,
         })
     }
@@ -412,6 +423,10 @@ impl FromHost {
                     b.rect(*r);
                 }
                 3
+            }
+            FromHost::Surface { tab, id, width, height } => {
+                b.u64(*tab).u32(*id).u32(*width).u32(*height);
+                4
             }
             FromHost::Happened(h) => match h {
                 Happened::Title { tab, title } => {
@@ -512,6 +527,7 @@ impl FromHost {
                 }
                 FromHost::Picture { tab, buffer, changed }
             }
+            4 => FromHost::Surface { tab: i.u64()?, id: i.u32()?, width: i.u32()?, height: i.u32()? },
             10 => FromHost::Happened(Happened::Title { tab: i.u64()?, title: i.str()? }),
             11 => FromHost::Happened(Happened::Url { tab: i.u64()?, url: i.str()? }),
             12 => FromHost::Happened(Happened::Progress { tab: i.u64()?, progress: i.f32()?, loading: i.bool()? }),
@@ -920,6 +936,10 @@ impl SharedCanvas {
 }
 
 impl Canvas for SharedCanvas {
+    fn surface(&mut self, tab: TabId, id: u32, width: u32, height: u32) {
+        self.outbox.push((FromHost::Surface { tab, id, width, height }, Vec::new()));
+    }
+
     fn begin(&mut self, tab: TabId, width: u32, height: u32, format: Format) -> Option<&mut [u8]> {
         let (width, height) = (width.max(1), height.max(1));
         let fits = self.pairs.get(&tab).is_some_and(|p| p.width == width && p.height == height && p.format == format);

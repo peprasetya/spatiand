@@ -15,6 +15,7 @@
  * Written on Linux and compiled by CI's Mac job; not run by its author on a Mac. */
 
 #import <AppKit/AppKit.h>
+#import <IOSurface/IOSurfaceRef.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
 #import <WebKit/WebKit.h>
@@ -190,6 +191,16 @@ static NSString *const SelectScript =
 /* Where the page's layers are drawn on the GPU (`composeInto:`), and at what size. */
 @property(nonatomic, strong) CARenderer *renderer;
 @property(nonatomic, strong) id<MTLTexture> texture;
+/* The pictures handed to the window on the GPU (`renderSurface`): two IOSurfaces, drawn into in
+ * turn, never the one the window holds; each with its texture and renderer. */
+@property(nonatomic) IOSurfaceRef surface0;
+@property(nonatomic) IOSurfaceRef surface1;
+@property(nonatomic, strong) NSArray *surfaceRenderers;
+@property(nonatomic) BOOL held0;
+@property(nonatomic) BOOL held1;
+/* The surface drawn last and not yet told of (-1 for none), and the last one told of. */
+@property(nonatomic) int freshSurface;
+@property(nonatomic) int lastSurface;
 @property(nonatomic) NSUInteger buttons;
 @property(nonatomic) BOOL playing;
 @property(nonatomic, copy) void (^alertDone)(void);
@@ -269,6 +280,10 @@ static CFTimeInterval now(void) {
 
 - (void)dealloc {
     free(_pixels);
+    if (_surface0)
+        CFRelease(_surface0);
+    if (_surface1)
+        CFRelease(_surface1);
 }
 
 - (void)busy {
@@ -533,20 +548,138 @@ static CALayer *copy_layer(CALayer *model) {
     return m;
 }
 
-/* The page, `width` by `height` pixels, into `out` (BGRA, premultiplied, top row first). NO
- * where WebKit does not composite here, or there is no GPU: then it is a snapshot. */
-- (BOOL)composeInto:(unsigned char *)out width:(int)width height:(int)height {
-    static int off = -1;
-    if (off < 0)
-        off = getenv("SPATIMESH_WEBKIT_SNAPSHOT") != NULL;
-    if (off || !webkit_composites(self.view.layer, 0))
-        return NO;
+static BOOL gpu_ready(void) {
     if (!gpu) {
         gpu = MTLCreateSystemDefaultDevice();
         gpu_queue = [gpu newCommandQueue];
-        if (!gpu || !gpu_queue)
-            return NO;
     }
+    return gpu && gpu_queue;
+}
+
+/* Whether this tab's pictures can come from its layers at all. */
+- (BOOL)composes {
+    static int off = -1;
+    if (off < 0)
+        off = getenv("SPATIMESH_WEBKIT_SNAPSHOT") != NULL;
+    return !off && webkit_composites(self.view.layer, 0) && gpu_ready();
+}
+
+/* The page's layers as they are now, in a tree of their own, `width` by `height` pixels, its
+ * top row first (Metal's first row is the one CARenderer calls the bottom). */
+- (CALayer *)pageTreeWidth:(int)width height:(int)height {
+    double scale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 1.0;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    CALayer *root = [CALayer layer];
+    root.anchorPoint = CGPointZero;
+    root.position = CGPointZero;
+    root.bounds = CGRectMake(0, 0, width, height);
+    CALayer *page = copy_layer(self.view.layer);
+    page.anchorPoint = CGPointZero;
+    page.position = CGPointZero;
+    page.transform = CATransform3DConcat(CATransform3DMakeScale(scale, -scale, 1), CATransform3DMakeTranslation(0, height, 0));
+    [root addSublayer:page];
+    [CATransaction commit];
+    /* A tree nobody has committed yet draws as nothing. */
+    [CATransaction flush];
+    return root;
+}
+
+static void render_into(CARenderer *r, CALayer *root) {
+    r.layer = root;
+    r.bounds = root.bounds;
+    [r beginFrameAtTime:CACurrentMediaTime() timeStamp:NULL];
+    [r addUpdateRect:r.bounds];
+    [r render];
+    [r endFrame];
+}
+
+static IOSurfaceRef new_surface(int width, int height) {
+    NSDictionary *properties = @{
+        (id)kIOSurfaceWidth: @(width),
+        (id)kIOSurfaceHeight: @(height),
+        (id)kIOSurfaceBytesPerElement: @4,
+        (id)kIOSurfacePixelFormat: @((uint32_t)'BGRA'),
+        /* Found by its number from the window's process (IOSurfaceLookup). */
+        (id)kIOSurfaceIsGlobal: @YES,
+    };
+    return IOSurfaceCreate((__bridge CFDictionaryRef)properties);
+}
+
+/* The page drawn on the GPU into whichever of the two surfaces the window does not hold, for
+ * the window to use as it is: 1 drawn, 0 not now (the window holds both), -1 not possible here. */
+- (int)renderSurfaceWidth:(int)width height:(int)height {
+    if (![self composes])
+        return -1;
+    if (!self.surface0 || (int)IOSurfaceGetWidth(self.surface0) != width || (int)IOSurfaceGetHeight(self.surface0) != height) {
+        /* A new size: new surfaces. The old ones live on in the window while it holds them. */
+        if (self.surface0)
+            CFRelease(self.surface0);
+        if (self.surface1)
+            CFRelease(self.surface1);
+        self.surface0 = new_surface(width, height);
+        self.surface1 = new_surface(width, height);
+        if (!self.surface0 || !self.surface1)
+            return -1;
+        NSMutableArray *renderers = [NSMutableArray array];
+        CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+        for (int i = 0; i < 2; i++) {
+            MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                                                         width:(NSUInteger)width
+                                                                                        height:(NSUInteger)height
+                                                                                     mipmapped:NO];
+            d.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+            d.storageMode = MTLStorageModeManaged;
+            id<MTLTexture> t = [gpu newTextureWithDescriptor:d iosurface:(i ? self.surface1 : self.surface0) plane:0];
+            CARenderer *r = t ? [CARenderer rendererWithMTLTexture:t options:@{kCARendererColorSpace: (__bridge id)space, kCARendererMetalCommandQueue: gpu_queue}] : nil;
+            if (!r) {
+                CGColorSpaceRelease(space);
+                return -1;
+            }
+            [renderers addObject:r];
+        }
+        CGColorSpaceRelease(space);
+        self.surfaceRenderers = renderers;
+        self.held0 = NO;
+        self.held1 = NO;
+        self.freshSurface = -1;
+        self.lastSurface = -1;
+    }
+    /* Not the one the window holds; of two free ones, not the one it was given last. */
+    int i;
+    if (!self.held0 && !self.held1)
+        i = self.lastSurface == 0 ? 1 : 0;
+    else if (!self.held0)
+        i = 0;
+    else if (!self.held1)
+        i = 1;
+    else
+        return 0;
+    render_into(self.surfaceRenderers[i], [self pageTreeWidth:width height:height]);
+    id<MTLCommandBuffer> done = [gpu_queue commandBuffer];
+    [done commit];
+    [done waitUntilCompleted];
+    if (i == 0)
+        self.held0 = YES;
+    else
+        self.held1 = YES;
+    /* One drawn before the window was told of it is not held by the window: given back. */
+    if (self.freshSurface >= 0 && self.freshSurface != i) {
+        if (self.freshSurface == 0)
+            self.held0 = NO;
+        else
+            self.held1 = NO;
+    }
+    self.freshSurface = i;
+    self.lastSurface = i;
+    return 1;
+}
+
+/* The page, `width` by `height` pixels, into `out` (BGRA, premultiplied, top row first). NO
+ * where WebKit does not composite here, or there is no GPU: then it is a snapshot. */
+- (BOOL)composeInto:(unsigned char *)out width:(int)width height:(int)height {
+    if (![self composes])
+        return NO;
     if (!self.texture || (int)self.texture.width != width || (int)self.texture.height != height) {
         MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                                                                                      width:(NSUInteger)width
@@ -562,43 +695,15 @@ static CALayer *copy_layer(CALayer *model) {
         if (!self.texture || !self.renderer)
             return NO;
     }
-    double scale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 1.0;
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    CALayer *root = [CALayer layer];
-    root.anchorPoint = CGPointZero;
-    root.position = CGPointZero;
-    root.bounds = CGRectMake(0, 0, width, height);
-    CALayer *page = copy_layer(self.view.layer);
-    page.anchorPoint = CGPointZero;
-    page.position = CGPointZero;
-    page.transform = CATransform3DMakeScale(scale, scale, 1);
-    [root addSublayer:page];
-    [CATransaction commit];
-    /* A tree nobody has committed yet draws as nothing. */
-    [CATransaction flush];
-    CARenderer *r = self.renderer;
-    r.layer = root;
-    r.bounds = root.bounds;
-    [r beginFrameAtTime:CACurrentMediaTime() timeStamp:NULL];
-    [r addUpdateRect:r.bounds];
-    [r render];
-    [r endFrame];
+    CALayer *root = [self pageTreeWidth:width height:height];
+    render_into(self.renderer, root);
     id<MTLCommandBuffer> done = [gpu_queue commandBuffer];
     id<MTLBlitCommandEncoder> blit = [done blitCommandEncoder];
     [blit synchronizeResource:self.texture];
     [blit endEncoding];
     [done commit];
     [done waitUntilCompleted];
-    /* The texture's first row is the page's last. */
-    size_t row = (size_t)width * 4;
-    unsigned char *flipped = malloc(row * (size_t)height);
-    if (!flipped)
-        return NO;
-    [self.texture getBytes:flipped bytesPerRow:row fromRegion:MTLRegionMake2D(0, 0, (NSUInteger)width, (NSUInteger)height) mipmapLevel:0];
-    for (int y = 0; y < height; y++)
-        memcpy(out + (size_t)y * row, flipped + (size_t)(height - 1 - y) * row, row);
-    free(flipped);
+    [self.texture getBytes:out bytesPerRow:(NSUInteger)width * 4 fromRegion:MTLRegionMake2D(0, 0, (NSUInteger)width, (NSUInteger)height) mipmapLevel:0];
     return YES;
 }
 
@@ -630,6 +735,12 @@ static CALayer *copy_layer(CALayer *model) {
         return;
     self.lastSnapshot = t;
     if (self.width > 0 && self.height > 0) {
+        int drawn = [self renderSurfaceWidth:self.width height:self.height];
+        if (drawn >= 0) {
+            if (drawn > 0)
+                wake();
+            return;
+        }
         unsigned char *fresh = malloc((size_t)self.width * (size_t)self.height * 4);
         if (fresh && [self composeInto:fresh width:self.width height:self.height]) {
             [self took:fresh width:self.width height:self.height];
@@ -985,6 +1096,8 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
         if (find(e, id))
             return 0;
         MeshTab *tab = [[MeshTab alloc] init];
+        tab.freshSurface = -1;
+        tab.lastSurface = -1;
         tab.ident = id;
         tab.engine = e;
         tab.width = MAX(width, 1);
@@ -1449,6 +1562,30 @@ int spatimesh_damage(Engine *e, uint64_t id, int *x, int *y, int *w, int *h) {
     *w = MIN(tab.pixelsWidth, tab.width);
     *h = MIN(tab.pixelsHeight, tab.height);
     return 1;
+}
+
+int spatimesh_surface(Engine *e, uint64_t id, uint32_t *surface, int *width, int *height) {
+    MeshTab *tab = find(e, id);
+    if (!tab || tab.freshSurface < 0)
+        return 0;
+    IOSurfaceRef s = tab.freshSurface == 0 ? tab.surface0 : tab.surface1;
+    tab.freshSurface = -1;
+    if (!s)
+        return 0;
+    *surface = IOSurfaceGetID(s);
+    *width = (int)IOSurfaceGetWidth(s);
+    *height = (int)IOSurfaceGetHeight(s);
+    return 1;
+}
+
+void spatimesh_release_surface(Engine *e, uint64_t id, uint32_t surface) {
+    MeshTab *tab = find(e, id);
+    if (!tab)
+        return;
+    if (tab.surface0 && IOSurfaceGetID(tab.surface0) == surface)
+        tab.held0 = NO;
+    if (tab.surface1 && IOSurfaceGetID(tab.surface1) == surface)
+        tab.held1 = NO;
 }
 
 int spatimesh_copy(Engine *e, uint64_t id, unsigned char *pixels, int width, int height) {
