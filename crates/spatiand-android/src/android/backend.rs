@@ -162,7 +162,16 @@ pub fn run(
     let mut left_scroll = spatiand_input::PadScroll::default();
     let mut prefs = crate::prefs::Prefs::load();
     super::adopt_paired_hosts(&mut prefs);
-    let mut remotes = crate::remote::Remotes::start(&mut runtime.display_handle, &prefs);
+    // A Mac in 2D mode watches no host: its own 2D view has them, and a host shows its windows
+    // to one viewer at a time. They are watched from when the glasses have the session.
+    let mut remotes_started = !super::desk_on();
+    let mut remotes = if remotes_started {
+        crate::remote::Remotes::start(&mut runtime.display_handle, &prefs)
+    } else {
+        crate::remote::Remotes::default()
+    };
+    // This machine's own clipboard, where it is not the session's (a Mac's pasteboard).
+    remotes.local_clipboard = super::local_clipboard();
     let mut typed_event: Option<ShellEvent> = None;
     let mut keyboard_for_shell = false;
     // The click plays into the session's own output here (see `crate::click`).
@@ -294,12 +303,21 @@ pub fn run(
                 draw_phone(&mut renderer, p);
             }
             let desk = super::desk_tick(&mut runtime.state);
+            if desk {
+                crate::clipboard::exchange(&mut remotes, &mut runtime.state);
+            }
             runtime.state.space.refresh();
             display.dispatch_clients(&mut runtime.state)?;
             display.flush_clients()?;
             event_loop.dispatch(Some(Duration::from_millis(if desk { 4 } else { 50 })), runtime)?;
             continue;
         };
+        if !remotes_started {
+            let local = remotes.local_clipboard.take();
+            remotes = crate::remote::Remotes::start(&mut runtime.display_handle, &prefs);
+            remotes.local_clipboard = local;
+            remotes_started = true;
+        }
         let generation = output.generation;
         let (w, h) = output.size;
         let on_glasses = hmd.is_some() && w >= h * 3;

@@ -28,6 +28,9 @@ final class Room {
     /// The session is running and the glasses have it.
     var inGlasses: Bool { running && !desk }
     private let sound = MacSound()
+    /// The Mac's pasteboard kept in step with the session's clipboard, as a host's is: what is
+    /// copied in Spatiand's own applications, on a host or on this Mac pastes in any of them.
+    private let pasteboard = ClipboardSync()
     private var soundTimer: Timer?
     var onChange: (() -> Void)?
 
@@ -77,6 +80,13 @@ final class Room {
         sp_begin({ _, what, id, a, b, c, text in
             Room.shared.asked(what, id: id, a: a, b: b, c: c, text: text.map { String(cString: $0) } ?? "")
         }, nil)
+        pasteboard.send = { said in
+            guard let data = try? JSONSerialization.data(withJSONObject: said),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            sp_clipboard_said(json)
+        }
+        pasteboard.start()
+        pasteboard.connected = true
     }
 
     /// Start the room: the session, then somewhere for it to draw. From 2D mode, the session
@@ -179,6 +189,13 @@ final class Room {
             DispatchQueue.main.async { if #available(macOS 15.0, *) { RoomRecorder.shared.stop() } else { print("recording: needs macOS 15") } }
         case SP_SAVED:
             print("saved \(text)")
+        case SP_CLIPBOARD:
+            DispatchQueue.main.async {
+                guard let data = text.data(using: .utf8),
+                      let said = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                      let body = (said["host"] as? [String: Any])?["Clipboard"] as? [String: Any] else { return }
+                self.pasteboard.fromHost(body)
+            }
         case SP_DESK_OPEN, SP_DESK_PICTURE, SP_DESK_TITLE, SP_DESK_SIZE, SP_DESK_CLOSE:
             DispatchQueue.main.async { DeskWindows.shared.asked(what, id: id, a: a, b: b, text: text) }
         default:

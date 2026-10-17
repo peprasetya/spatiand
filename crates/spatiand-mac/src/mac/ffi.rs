@@ -78,6 +78,9 @@ pub enum Asked {
     DeskSize = 33,
     /// Window `id` has closed, or the glasses have it now.
     DeskClose = 34,
+    /// The session's clipboard to the Mac's pasteboard (`pasteboard`): `text` is the 2D link's
+    /// JSON for a host's clipboard message, `{"host": {"Clipboard": {...}}}`.
+    Clipboard = 35,
 }
 
 pub type Callback =

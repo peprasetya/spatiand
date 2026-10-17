@@ -47,6 +47,7 @@ enum {
     SP_DESK_TITLE = 32,       // window id's title is text
     SP_DESK_SIZE = 33,        // window id is a by b pixels now
     SP_DESK_CLOSE = 34,       // window id has closed, or the glasses have it now
+    SP_CLIPBOARD = 35,        // the session's clipboard to the pasteboard; text is {"host": {"Clipboard": ...}}
 };
 
 typedef void (*sp_asked_fn)(void *user, int32_t what, uint32_t id, double a, double b, double c,
@@ -164,6 +165,11 @@ void sp_desk_focus(uint32_t id, bool focused);
 void sp_desk_pinch(uint32_t id, float scale);
 void sp_desk_resize(uint32_t id, int32_t width, int32_t height);
 void sp_desk_close(uint32_t id);
+
+// The Mac's pasteboard is a peer of the session's clipboard, as a host is: what it has to say,
+// as the 2D link says it to a host ({"Clipboard": {"Offer"|"Want"|"Data": ...}}). The session's
+// side comes as SP_CLIPBOARD.
+void sp_clipboard_said(const char *json);
 
 #ifdef __cplusplus
 }

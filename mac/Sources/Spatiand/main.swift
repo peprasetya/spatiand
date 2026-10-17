@@ -1058,6 +1058,40 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-desk") {
     then(2) { shoot("clicked") }
     then(0.5) { for c in "hrtf wikipedia" { if let code = keys[c] { key(code, String(c)) } }; key(0x24, "\r") }
     then(8) { shoot("searched") }
+    // The clipboard, both ways, through the session's and the Mac's (a pasteboard of the test's
+    // own, SPATIAND_PASTEBOARD): pasted into the bar, the address copied out, a page's text
+    // copied out.
+    let board = ProcessInfo.processInfo.environment["SPATIAND_PASTEBOARD"].map { NSPasteboard(name: .init($0)) }
+    func command(_ code: UInt16) { if let id = id() { sp_desk_key(id, 0x37, true); press(code); sp_desk_key(id, 0x37, false) } }
+    then(0.5) {
+        guard let board else { print("desk: clipboard: not tested (no SPATIAND_PASTEBOARD)"); return }
+        board.clearContents()
+        board.setString("spatiandpastetest", forType: .string)
+    }
+    then(2) { command(0x25); command(0x09); press(0x24) }
+    then(8) { shoot("pasted") }
+    // Waits for the pasteboard to change from `before`, and says what came and how long it took.
+    func watch(_ what: String, _ before: String?, _ started: Date = Date()) {
+        let now = board?.string(forType: .string)
+        if now != before || Date().timeIntervalSince(started) > 5 {
+            let took = Int(Date().timeIntervalSince(started) * 1000)
+            print("desk: clipboard after copying the \(what): \((now ?? "nothing").prefix(60).replacingOccurrences(of: "\n", with: " ")) (\(now != before ? "\(took) ms" : "no change in 5 s"))")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { watch(what, before, started) }
+    }
+    then(0.5) { command(0x25); type("example.com"); press(0x24) }
+    then(6) { let before = board?.string(forType: .string); command(0x25); command(0x08); watch("address", before) }
+    then(6) { press(0x35) }
+    then(0.5) {
+        guard let id = id() else { return }
+        sp_desk_motion(id, 300, 400); sp_desk_button(id, 0x110, true); sp_desk_button(id, 0x110, false)
+    }
+    then(1) { let before = board?.string(forType: .string); command(0x00); command(0x08); watch("page", before) }
+    // Pasted into a page: DuckDuckGo's search box has the focus when it opens.
+    then(6) { board?.clearContents(); board?.setString("spatiandpagepaste", forType: .string); command(0x25); type("duckduckgo.com"); press(0x24) }
+    then(8) { command(0x09); press(0x24) }
+    then(8) { shoot("page-pasted") }
     then(0.5) { DeskWindows.shared.all.first?.performClose(nil) }
     then(4) {
         print("desk: after the close button: \(DeskWindows.shared.all.count) window(s) left")

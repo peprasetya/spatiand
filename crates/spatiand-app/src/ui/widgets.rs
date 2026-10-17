@@ -701,6 +701,8 @@ pub struct Field {
     pub secret: bool,
     /// Where the caret is, in characters from the start.
     caret: usize,
+    /// The other end of the selection, when there is one: what is between it and the caret.
+    anchor: Option<usize>,
     area: Rect,
 }
 
@@ -722,6 +724,49 @@ impl Field {
     pub fn set(&mut self, text: impl Into<String>) {
         self.text = text.into();
         self.caret = self.text.chars().count();
+        self.anchor = None;
+    }
+
+    /// Everything chosen, as Control-A (Command-A) does: what is typed next replaces it.
+    pub fn select_all(&mut self) {
+        self.caret = self.text.chars().count();
+        self.anchor = Some(0);
+    }
+
+    /// The chosen part, from and to, in characters; none when nothing is.
+    fn selection(&self) -> Option<(usize, usize)> {
+        let anchor = self.anchor?.min(self.text.chars().count());
+        let caret = self.caret.min(self.text.chars().count());
+        (anchor != caret).then(|| (anchor.min(caret), anchor.max(caret)))
+    }
+
+    /// What is chosen, if anything is.
+    pub fn selected_text(&self) -> Option<String> {
+        let (from, to) = self.selection()?;
+        Some(self.text.chars().skip(from).take(to - from).collect())
+    }
+
+    /// Take out what is chosen. Whether there was anything.
+    fn delete_selection(&mut self) -> bool {
+        let Some((from, to)) = self.selection() else {
+            self.anchor = None;
+            return false;
+        };
+        let (a, b) = (self.byte_at(from), self.byte_at(to));
+        self.text.replace_range(a..b, "");
+        self.caret = from;
+        self.anchor = None;
+        true
+    }
+
+    /// Put text in at the caret, in place of what is chosen: a paste. One line: what would
+    /// have broken it is a space.
+    pub fn insert(&mut self, text: &str) {
+        self.delete_selection();
+        let text: String = text.chars().map(|c| if c == '\n' || c == '\r' || c == '\t' { ' ' } else { c }).collect();
+        let at = self.byte_at(self.caret);
+        self.text.insert_str(at, &text);
+        self.caret += text.chars().count();
     }
 
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl, rect: Rect) {
@@ -746,6 +791,15 @@ impl Field {
         let caret = if before.is_empty() { 0.0 } else { p.measure(gl, &format!("{before}|"), theme::ROW_EM, wide).0 - stop };
         let slide = (caret - text.w + 6.0).max(0.0);
         p.clip(gl, text);
+        if let Some((from, to)) = self.selection() {
+            let width = |p: &mut Painter, chars: usize| {
+                let part: String = shown.chars().take(chars).collect();
+                if part.is_empty() { 0.0 } else { p.measure(gl, &format!("{part}|"), theme::ROW_EM, wide).0 - stop }
+            };
+            let (a, b) = (width(p, from), width(p, to));
+            let wash = Rect::new(text.x + a - slide, rect.y + rect.h * 0.18, (b - a).max(2.0), rect.h * 0.64);
+            p.fill(gl, wash, 2.0, if self.focused { [0.42, 0.68, 1.0, 0.42] } else { theme::SELECTED_AWAY });
+        }
         if !self.text.is_empty() {
             let (_, h) = p.measure(gl, &shown, theme::ROW_EM, wide);
             p.text(gl, &shown, text.x - slide, text.y + (text.h - h) * 0.5, theme::ROW_EM, wide, theme::INK);
@@ -767,6 +821,63 @@ impl Field {
             return None;
         }
         let length = self.text.chars().count();
+        // Control, or Command on a Mac: the clipboard's keys, and choosing everything.
+        let command = modifiers.control || modifiers.logo;
+        if command {
+            match key {
+                Key::Char('a') => {
+                    self.select_all();
+                    return None;
+                }
+                Key::Char('c') => {
+                    if let Some(chosen) = self.selected_text().filter(|_| !self.secret) {
+                        crate::clipboard::copy(chosen);
+                    }
+                    return None;
+                }
+                Key::Char('x') => {
+                    if let Some(chosen) = self.selected_text().filter(|_| !self.secret) {
+                        crate::clipboard::copy(chosen);
+                        self.delete_selection();
+                        return Some(Typed::Changed);
+                    }
+                    return None;
+                }
+                Key::Char('v') => {
+                    if let Some(pasted) = crate::clipboard::text() {
+                        self.insert(&pasted);
+                        return Some(Typed::Changed);
+                    }
+                    return None;
+                }
+                _ => {}
+            }
+        }
+        // Moving the caret with Shift held chooses; without, lets go of what was chosen (to
+        // its near end, for Left and Right).
+        let moving = matches!(key, Key::Left | Key::Right | Key::Home | Key::End);
+        if moving {
+            if modifiers.shift {
+                self.anchor.get_or_insert(self.caret);
+            } else if let Some((from, to)) = self.selection() {
+                self.anchor = None;
+                match key {
+                    Key::Left => {
+                        self.caret = from;
+                        return None;
+                    }
+                    Key::Right => {
+                        self.caret = to;
+                        return None;
+                    }
+                    _ => {}
+                }
+            } else {
+                self.anchor = None;
+            }
+        } else if matches!(key, Key::Backspace | Key::Delete) && self.delete_selection() {
+            return Some(Typed::Changed);
+        }
         match key {
             Key::Enter => return Some(Typed::Entered),
             Key::Left => self.caret = self.caret.saturating_sub(1),
@@ -791,10 +902,9 @@ impl Field {
                 return Some(Typed::Changed);
             }
             _ => {
-                if let Some(typed) = text.as_deref() {
-                    let at = self.byte_at(self.caret);
-                    self.text.insert_str(at, typed);
-                    self.caret += typed.chars().count();
+                // What a key with Control or Command types is a command, not text.
+                if let Some(typed) = text.as_deref().filter(|_| !command) {
+                    self.insert(typed);
                     return Some(Typed::Changed);
                 }
             }

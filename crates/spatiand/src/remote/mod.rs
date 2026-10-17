@@ -380,6 +380,19 @@ pub struct Remotes {
     shown_pairing: Option<PairingView>,
     /// Counts viewports sent, so a picture can say which one it was drawn for.
     viewport_seq: u32,
+    /// This machine's own clipboard, where it is not the session's: a Mac's pasteboard. A peer
+    /// of the session's clipboard as a host is, by name.
+    pub local_clipboard: Option<LocalClipboard>,
+}
+
+/// A clipboard of this machine's that the session's is to be kept in step with, as a host's is:
+/// what it says is taken as a host's saying, and what the session has to say to everyone is
+/// said to it too. See `crate::clipboard`.
+pub struct LocalClipboard {
+    pub name: &'static str,
+    /// What it has said since the last look.
+    pub take: fn() -> Vec<spatiand_stream::control::Clipboard>,
+    pub say: fn(spatiand_stream::control::Clipboard),
 }
 
 struct PairingInProgress {
@@ -559,14 +572,19 @@ impl Remotes {
     /// Everything the hosts have said about the clipboard since the last look, each with the
     /// host that said it.
     pub fn clipboard_said(&self) -> Vec<(String, spatiand_stream::control::Clipboard)> {
-        self.hosts
+        let mut said: Vec<_> = self
+            .hosts
             .iter()
             .flat_map(|host| {
                 host.take_clipboard()
                     .into_iter()
                     .map(|what| (host.host.clone(), what))
             })
-            .collect()
+            .collect();
+        if let Some(local) = &self.local_clipboard {
+            said.extend((local.take)().into_iter().map(|what| (local.name.to_string(), what)));
+        }
+        said
     }
 
     /// Pass on what the session's clipboard has to say.
@@ -579,10 +597,15 @@ impl Remotes {
                     }
                     host.clipboard(what.clone());
                 }
+                if let Some(local) = self.local_clipboard.as_ref().filter(|l| except.as_deref() != Some(l.name)) {
+                    (local.say)(what);
+                }
             }
             crate::clipboard::Say::Just { host, what } => {
                 if let Some(remote) = self.hosts.iter().find(|h| h.host == host) {
                     remote.clipboard(what);
+                } else if let Some(local) = self.local_clipboard.as_ref().filter(|l| l.name == host) {
+                    (local.say)(what);
                 }
             }
         }

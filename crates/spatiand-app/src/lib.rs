@@ -36,6 +36,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+pub mod clipboard;
 pub mod config;
 pub mod gl;
 mod keys;
@@ -380,6 +381,17 @@ impl App {
         self.wire.show_pixels(window, size, fill)
     }
 
+    /// Put text on the clipboard, which is the room's: every machine it can see pastes it.
+    /// The same as [`clipboard::copy`].
+    pub fn copy_text(&mut self, text: impl Into<String>) {
+        clipboard::copy(text);
+    }
+
+    /// What is on the clipboard, if it is text. The same as [`clipboard::text`].
+    pub fn clipboard_text(&self) -> Option<String> {
+        clipboard::text()
+    }
+
     /// Wake [`App::wait`] when `fd` has something to read -- a child process's output, a
     /// socket -- as well as for the room. What is read, and when, is the application's.
     pub fn watch(&mut self, fd: i32) {
@@ -396,6 +408,9 @@ impl App {
     /// the application has said since the last call, so nothing reaches the room until this is
     /// called.
     pub fn wait(&mut self, timeout: Option<Duration>) -> Result<Vec<Event>, String> {
+        if let Some(text) = clipboard::take_wanted() {
+            self.wire.copy(text);
+        }
         let now = Instant::now();
         let deadline = timeout.map(|t| now + t);
         // A held key repeats on this side of the wire, so its next repeat is a reason to wake.

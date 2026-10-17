@@ -180,6 +180,15 @@ pub fn desk_tick(_state: &mut crate::Spatiand) -> bool {
     false
 }
 
+pub fn desk_on() -> bool {
+    false
+}
+
+/// The phone's own clipboard is not joined to the session's yet.
+pub fn local_clipboard() -> Option<crate::remote::LocalClipboard> {
+    None
+}
+
 /// A notification to show under the status bar: who it is from, then what it says. Android's
 /// are not read yet.
 pub fn notice() -> String {

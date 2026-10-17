@@ -25,6 +25,24 @@ mod ext;
 use ext::{ExtPopup, Told};
 use spatimesh::extensions::runtime::Runtime;
 
+/// Script requests of the page clipboard's, told apart from an extension's (which count from 1).
+const PAGE_CLIPBOARD: u64 = 1 << 62;
+
+/// What is chosen in the page -- in a field, or in the text -- following the focus into frames
+/// of the same origin; taken out of the page too if CUT.
+const PAGE_COPY: &str = "(function(cut){function go(d){var e=d.activeElement;\
+if(e&&(e.tagName==='IFRAME'||e.tagName==='FRAME')){try{if(e.contentDocument)return go(e.contentDocument)}catch(x){}}\
+var t='';if(e&&(e.tagName==='INPUT'||e.tagName==='TEXTAREA')&&typeof e.selectionStart==='number'){\
+t=e.value.substring(e.selectionStart,e.selectionEnd)}else{var s=d.getSelection&&d.getSelection();t=s?String(s):''}\
+if(cut&&t){d.execCommand('delete')}return t}return go(document)})(CUT)";
+
+/// Typed into whatever has the focus, as a paste is: the page hears it as input.
+const PAGE_PASTE: &str = "(function(t){function go(d){var e=d.activeElement;\
+if(e&&(e.tagName==='IFRAME'||e.tagName==='FRAME')){try{if(e.contentDocument)return go(e.contentDocument)}catch(x){}}\
+if(d.execCommand('insertText',false,t))return;if(e&&(e.tagName==='INPUT'||e.tagName==='TEXTAREA')){\
+var a=e.selectionStart,b=e.selectionEnd;e.setRangeText(t,a,b,'end');e.dispatchEvent(new Event('input',{bubbles:true}))}}\
+go(document)})(TEXT)";
+
 pub const WINDOW: (u32, u32) = (1600, 1000);
 const TAB_TOP: f32 = 10.0;
 const TAB_H: f32 = 46.0;
@@ -287,6 +305,25 @@ impl Browser {
         self.hosts.get_mut(profile)
     }
 
+    /// Copy, cut, paste and choose all in a page, by `key`'s letter. Whether it was one of them.
+    fn page_clipboard(&mut self, tab: TabId, key: char) -> bool {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let (code, request) = match key {
+            'c' | 'x' => {
+                let request = PAGE_CLIPBOARD | NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                (PAGE_COPY.replace("CUT", if key == 'x' { "true" } else { "false" }), request)
+            }
+            'v' => {
+                let Some(text) = spatiand_app::clipboard::text() else { return true };
+                (PAGE_PASTE.replace("TEXT", &serde_json::to_string(&text).unwrap_or_default()), 0)
+            }
+            'a' => ("document.execCommand('selectAll')".to_string(), 0),
+            _ => return false,
+        };
+        self.tell(tab, ToHost::RunScript { tab, world: String::new(), all_frames: false, code, request, boot: false });
+        true
+    }
+
     fn tell(&mut self, tab: TabId, message: ToHost) {
         let profile = self.tabs.tab(tab).map(|t| t.profile.clone()).or_else(|| self.hidden.get(&tab).cloned());
         let Some(profile) = profile else { return };
@@ -428,6 +465,13 @@ impl Browser {
             FromHost::Happened(Happened::Extension { tab, json }) => {
                 let profile = profile.to_string();
                 self.with_extensions(|rt, b| rt.call(b, &profile, tab, &json));
+            }
+            // What was chosen in a page, asked for by Command-C or -X (`page_clipboard`).
+            FromHost::Happened(Happened::ScriptResult { request, result, .. }) if request & PAGE_CLIPBOARD != 0 => {
+                let chosen = result.ok().and_then(|json| serde_json::from_str::<String>(&json).ok()).filter(|t| !t.is_empty());
+                if let Some(text) = chosen {
+                    spatiand_app::clipboard::copy(text);
+                }
             }
             FromHost::Happened(Happened::ScriptResult { request, result, .. }) => {
                 self.with_extensions(|rt, b| rt.script_result(b, request, result));
@@ -1398,6 +1442,7 @@ impl Browser {
                         win.editing = true;
                         win.address.focused = true;
                         win.fresh = true;
+                        win.address.select_all();
                         self.focus_pages();
                     }
                 }
@@ -1560,6 +1605,7 @@ impl Browser {
                     win.editing = true;
                     win.address.focused = true;
                     win.fresh = true;
+                    win.address.select_all();
                     self.focus_pages();
                     true
                 }
@@ -1644,11 +1690,9 @@ impl Browser {
                     self.go(w, &typed);
                 }
                 _ => {
-                    // The first thing typed into a freshly chosen bar replaces what was there.
+                    // A freshly chosen bar has its whole address chosen (`select_all`), so the
+                    // first thing typed or pasted replaces it, as in any browser.
                     let types = text.as_deref().is_some_and(|t| !t.is_empty()) && !command(m);
-                    if win.fresh && (types || matches!(key, Key::Backspace | Key::Delete)) {
-                        win.address.set("");
-                    }
                     if !matches!(key, Key::Left | Key::Right | Key::Home | Key::End) || types {
                         win.fresh = false;
                     }
@@ -1656,6 +1700,15 @@ impl Browser {
                 }
             }
             return;
+        }
+        // The clipboard's keys over a page: done in the page itself, the same on every engine,
+        // through the room's clipboard (and so with the hosts' and this machine's own).
+        if pressed && command(m) && !self.covered(w, tab) {
+            if let Key::Char(c) = key {
+                if self.page_clipboard(tab, c.to_ascii_lowercase()) {
+                    return;
+                }
+            }
         }
         if pressed && key == Key::Escape && self.tabs.tab(tab).is_some_and(|t| t.loading) {
             self.tell(tab, ToHost::Stop { tab });
