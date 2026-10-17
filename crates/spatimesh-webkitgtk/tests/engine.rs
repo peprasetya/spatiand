@@ -96,6 +96,8 @@ impl Host {
                         self.seen.push(Happened::Picture { tab });
                     }
                     FromHost::Happened(h) => self.seen.push(h),
+                    // Only a Mac's WebKit hands pictures over on the GPU.
+                    FromHost::Surface { tab, id, .. } => self.send(ToHost::ReleaseSurface { tab, id }),
                     FromHost::Hello { .. } => {}
                 }
             }

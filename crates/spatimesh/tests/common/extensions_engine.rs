@@ -152,6 +152,7 @@ fn step(rt: &mut Runtime, w: &mut Window) {
     for (message, _) in w.link.receive_from_host() {
         match message {
             FromHost::Picture { tab, buffer, .. } => w.send(ToHost::Release { tab, buffer }),
+            FromHost::Surface { tab, id, .. } => w.send(ToHost::ReleaseSurface { tab, id }),
             FromHost::Happened(Happened::Extension { tab, json }) => rt.call(w, "default", tab, &json),
             FromHost::Happened(Happened::ScriptResult { request, result, .. }) => rt.script_result(w, request, result),
             FromHost::Happened(Happened::Title { tab, title }) => w.titles.push((tab, title)),
