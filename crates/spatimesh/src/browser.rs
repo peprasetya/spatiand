@@ -71,6 +71,8 @@ enum Hover {
     Address,
     Star,
     Menu,
+    /// The window's profile, beside the menu.
+    Profile,
     Page,
     /// An extension's button in the toolbar, by its place there.
     Action(usize),
@@ -101,6 +103,8 @@ enum Action {
     SearchWith(String),
     OpenProfile(String),
     NewProfile,
+    /// The colour of this window's profile.
+    ProfileColour([u8; 3]),
     Open(String),
     /// An extension turned on or off.
     ToggleExtension(String),
@@ -1055,6 +1059,17 @@ impl Browser {
             Action::OpenProfile(id) => {
                 self.new_window(&id, None);
             }
+            Action::ProfileColour(colour) => {
+                match profiles::set_colour(&self.store, &profile, colour) {
+                    Ok(()) => {
+                        self.profiles = profiles::list(&self.store);
+                        for win in self.wins.iter_mut() {
+                            win.dirty = true;
+                        }
+                    }
+                    Err(e) => self.say(format!("Not changed: {e}")),
+                }
+            }
             Action::NewProfile => {
                 let name = format!("Profile {}", self.profiles.len() + 1);
                 if let Ok(new) = profiles::add(&self.store, &name) {
@@ -1178,6 +1193,41 @@ impl Browser {
         let width = 560.0;
         let height = (rows.len() as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 24.0).min(win.page.h);
         let rect = Rect::new(win.page.right() - width - 8.0, win.page.y + 4.0, width, height);
+        let mut list = List::default();
+        list.focused = true;
+        self.wins[w].popup = Some(Popup { rows, actions, rect, list, choose_for: None });
+        self.focus_pages();
+    }
+
+    /// The profile button's list: which profile this window is, the others to open a window in,
+    /// and the colour this one's windows are.
+    fn profile_menu(&mut self, w: usize) {
+        let key = self.wins[w].key;
+        let profile = self.tabs.window(key).map(|x| x.profile.clone()).unwrap_or_default();
+        let mut rows = vec![Row::heading("This window's profile")];
+        let mut actions = vec![Action::Nothing];
+        for p in self.profiles.clone() {
+            let (label, mark) = if p.id == profile { (p.name.clone(), "\u{2713} this window") } else { (p.name.clone(), "open a window") };
+            rows.push(Row::with(label, mark));
+            actions.push(if p.id == profile { Action::Nothing } else { Action::OpenProfile(p.id) });
+        }
+        rows.push(Row::with("Private", if profile == PRIVATE { "\u{2713} this window" } else { "open a window" }));
+        actions.push(if profile == PRIVATE { Action::Nothing } else { Action::NewPrivateWindow });
+        rows.push(Row::new("New profile").icon(Icon::Plus));
+        actions.push(Action::NewProfile);
+        if profile != PRIVATE {
+            let mine = self.profile(&profile);
+            rows.push(Row::heading(format!("Colour of {}", mine.name)));
+            actions.push(Action::Nothing);
+            for (name, colour) in profiles::COLOUR_CHOICES {
+                rows.push(Row::with(*name, if *colour == mine.colour { "\u{2713}" } else { "" }));
+                actions.push(Action::ProfileColour(*colour));
+            }
+        }
+        let win = &self.wins[w];
+        let width = 460.0;
+        let height = (rows.len() as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 24.0).min(win.page.h);
+        let rect = Rect::new(win.page.right() - width - 8.0 - TOOL_H, win.page.y + 4.0, width, height);
         let mut list = List::default();
         list.focused = true;
         self.wins[w].popup = Some(Popup { rows, actions, rect, list, choose_for: None });
@@ -1601,6 +1651,13 @@ impl Browser {
                     self.menu(w);
                 }
             }
+            Hover::Profile => {
+                if self.wins[w].popup.is_some() {
+                    self.dismiss_popup(w);
+                } else {
+                    self.profile_menu(w);
+                }
+            }
             _ => {}
         }
     }
@@ -1885,6 +1942,9 @@ impl Browser {
                 look::backdrop(p, gl);
                 let all = p.bounds();
                 if !win.fullscreen {
+                    // The window in its profile's colour: the bars washed with it, the page framed in it.
+                    p.fill(gl, Rect::new(all.x, all.y, all.w, win.page.y - all.y), 0.0, profile_colour(&profile, 0.22));
+                    p.fill(gl, win.page.inset(-4.0), 15.0, profile_colour(&profile, 0.9));
                     draw_tabs(p, gl, win, &window, tabs, &profile, all);
                     draw_toolbar(p, gl, win, active.as_ref(), marked, &profile, all, &actions, &icons);
                 }
@@ -2145,6 +2205,12 @@ fn draw_tabs(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, window: &spa
 }
 
 #[allow(clippy::too_many_arguments)]
+/// A profile's colour, as the painter takes it.
+fn profile_colour(profile: &Profile, alpha: f32) -> [f32; 4] {
+    let c = profile.colour;
+    [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, alpha]
+}
+
 fn draw_toolbar(
     p: &mut Painter,
     gl: &spatiand_app::Gl,
@@ -2181,6 +2247,16 @@ fn draw_toolbar(
     bar.take_left(12.0);
     let menu = button(p, bar.take_right(side), Hover::Menu, Icon::Options, true, false);
     bar.take_right(4.0);
+    // Whose window this is, plainly: the profile's colour and name, next to the menu.
+    let colour = profile_colour(profile, 1.0);
+    let name: String = profile.name.chars().take(14).collect();
+    let pill_w = (p.measure(gl, &name, theme::ROW_EM * 0.7, 400.0).0 + 54.0).min(220.0);
+    let who = bar.take_right(pill_w);
+    let pill = Rect::new(who.x, who.y + (who.h - 40.0) * 0.5, who.w, 40.0);
+    p.fill(gl, pill, 20.0, profile_colour(profile, if win.hover == Hover::Profile { 0.55 } else { 0.38 }));
+    p.fill(gl, Rect::new(pill.x + 14.0, pill.y + 13.0, 14.0, 14.0), 7.0, colour);
+    p.label(gl, &name, Rect::new(pill.x + 36.0, pill.y, pill.w - 46.0, pill.h), theme::ROW_EM * 0.7, theme::INK, 0.0);
+    bar.take_right(8.0);
     let private = profile.is_private();
     let star = button(p, bar.take_right(side), Hover::Star, Icon::Link, !private && tab.is_some_and(|t| !is_start(&t.url)), marked);
     bar.take_right(12.0);
@@ -2214,10 +2290,6 @@ fn draw_toolbar(
     if !actions.is_empty() {
         bar.take_right(8.0);
     }
-    if private {
-        let note = bar.take_right(130.0);
-        look::chip(p, gl, note.x, note.y + (note.h - 34.0) * 0.5, "Private", look::VIOLET);
-    }
     win.address.draw(p, gl, bar);
     if loading {
         // How much of the page has come, along the foot of the bar.
@@ -2225,7 +2297,7 @@ fn draw_toolbar(
         let line = Rect::new(bar.x + 8.0, bar.bottom() - 3.0, (bar.w - 16.0) * progress, 3.0);
         p.fill(gl, line, 1.5, look::BLUE);
     }
-    win.buttons = [(Hover::Back, back), (Hover::Forward, forward), (Hover::Reload, reload), (Hover::Star, star), (Hover::Menu, menu), (Hover::Nothing, Rect::default())];
+    win.buttons = [(Hover::Back, back), (Hover::Forward, forward), (Hover::Reload, reload), (Hover::Star, star), (Hover::Menu, menu), (Hover::Profile, pill)];
 }
 
 fn draw_start(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, profile: &Profile, note: Option<&str>) {

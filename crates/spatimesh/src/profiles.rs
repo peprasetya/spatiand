@@ -90,6 +90,27 @@ pub fn add(store: &Store, name: &str) -> Result<Profile, String> {
     Ok(profile)
 }
 
+/// The colours a profile's windows may be, by name: the first six are the ones new profiles are
+/// given in turn.
+pub const COLOUR_CHOICES: &[(&str, [u8; 3])] = &[
+    ("Blue", [55, 166, 247]),
+    ("Teal", [22, 230, 192]),
+    ("Violet", [143, 107, 242]),
+    ("Orange", [242, 160, 61]),
+    ("Pink", [235, 87, 120]),
+    ("Green", [120, 200, 90]),
+    ("Red", [226, 64, 64]),
+    ("Yellow", [236, 206, 60]),
+    ("Grey", [150, 156, 168]),
+];
+
+/// The colour its windows are drawn in, from now on (on every machine).
+pub fn set_colour(store: &Store, id: &str, colour: [u8; 3]) -> Result<(), String> {
+    let mut profile = get(store, id).filter(|p| !p.is_private()).ok_or("no such profile")?;
+    profile.colour = colour;
+    store.write(&file(id), &profile)
+}
+
 pub fn rename(store: &Store, id: &str, name: &str) -> Result<(), String> {
     let mut profile = get(store, id).filter(|p| !p.is_private()).ok_or("no such profile")?;
     profile.name = name.trim().to_string();
