@@ -368,7 +368,7 @@ impl Sound {
         let rate = 48_000u32;
         let mut child = std::process::Command::new("pw-cat")
             .args(["--playback", "--raw", "--format", "f32", "--rate", &rate.to_string(), "--channels", &channels.to_string()])
-            .args(["--channel-map", map, "--latency", "40ms", "--media-role", "Movie", "-"])
+            .args(["--channel-map", &map, "--latency", "40ms", "--media-role", "Movie", "-"])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
