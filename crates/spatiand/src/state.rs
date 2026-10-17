@@ -316,7 +316,7 @@ impl Spatiand {
         // Stereo, head-locked and immersive surfaces. Binding it says nothing and changes
         // nothing: an application that ignores it is an ordinary window, which is the whole
         // design. See `crate::xr` and the protocol XML.
-        dh.create_global::<Self, spatiand_proto::server::spatiand_xr_v1::SpatiandXrV1, _>(7, ());
+        dh.create_global::<Self, spatiand_proto::server::spatiand_xr_v1::SpatiandXrV1, _>(8, ());
 
         // The screen clients see. Refresh is a placeholder until a backend reports the real
         // one; the size is the size every toplevel is offered.
@@ -504,6 +504,14 @@ impl Spatiand {
     /// part of it.
     pub fn app_id_of(&self, window: &smithay::desktop::Window) -> Option<String> {
         self.instance_of(window).map(|id| plain_app_id(&id).to_string())
+    }
+
+    /// What the window with this layout id hands its sound over as: what it said with
+    /// `set_sound_key`, or else its instance (see [`State::instance_of`]).
+    pub fn sound_key_of_id(&self, id: usize) -> Option<String> {
+        let window = self.space.elements().find(|w| self.layout.id_of(w) == Some(id))?.clone();
+        let said = window.toplevel().and_then(|t| crate::xr::sound_key_of(t.wl_surface()));
+        said.or_else(|| self.instance_of(&window))
     }
 
     pub fn instance_of_id(&self, id: usize) -> Option<String> {

@@ -77,6 +77,30 @@ impl SoundGroup {
     pub fn new() -> SoundGroup {
         SoundGroup::default()
     }
+
+    /// A group handed to the room under `key` (see `spatiand_app::App::set_sound_key`), not the
+    /// application's own name: placed at the window that says it is this.
+    pub fn keyed(key: &str) -> SoundGroup {
+        let group = SoundGroup::default();
+        *group.0.key.lock().unwrap() = Some(key.to_string());
+        group
+    }
+
+    /// Hand it over under another name from now on: what it belongs to has moved (a page to
+    /// another window). The output is opened again under the new name, if it is open.
+    pub fn set_key(&self, key: &str) {
+        let bus = &self.0;
+        let mut out = bus.out.lock().unwrap();
+        if bus.key.lock().unwrap().as_deref() == Some(key) {
+            return;
+        }
+        *bus.key.lock().unwrap() = Some(key.to_string());
+        if let Some((_, _, channels)) = out.take() {
+            if let Ok(again) = Sound::open_output(bus, channels) {
+                *out = Some(again);
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -85,6 +109,8 @@ struct Bus {
     /// The output, open while there is a voice to hear; its rate and channels.
     out: Mutex<Option<(Going, u32, u16)>>,
     dead: std::sync::Arc<AtomicBool>,
+    /// The name it is handed to the room under, if not the application's.
+    key: Mutex<Option<String>>,
 }
 
 /// Each count of channels the room and the Deck's sink place, by name, in order.
@@ -272,7 +298,7 @@ impl Sound {
         head.extend_from_slice(&channels.to_le_bytes());
         head.extend_from_slice(&rate.to_le_bytes());
         // Whose sound it is: the session gives that application's windows the slot.
-        let app = std::env::var("SPATIAND_APP_ID").unwrap_or_else(|_| "id.prasetya.spatiand.spatireel".into());
+        let app = bus.key.lock().unwrap().clone().or_else(|| std::env::var("SPATIAND_APP_ID").ok()).unwrap_or_else(|| "id.prasetya.spatiand.spatireel".into());
         head.extend_from_slice(&(app.len() as u16).to_le_bytes());
         head.extend_from_slice(app.as_bytes());
         socket.write_all(&head).ok()?;

@@ -52,7 +52,7 @@
     The per-frame values are not on the wire at all -- see the pose channel.
   </description>
 
-  <interface name="spatiand_xr_v1" version="7">
+  <interface name="spatiand_xr_v1" version="8">
     <description summary="stereoscopic and head-tracked surfaces">
       The factory. Binding it says nothing and changes nothing.
     </description>
@@ -129,7 +129,7 @@
     </enum>
   </interface>
 
-  <interface name="spatiand_xr_surface_v1" version="6">
+  <interface name="spatiand_xr_surface_v1" version="8">
     <description summary="how a surface is drawn for two eyes">
       All state here is double-buffered: it takes effect on the next
       wl_surface.commit, like everything else about a surface. Changing layout
@@ -434,6 +434,23 @@
         Off by default. Double-buffered like everything else here.
       </description>
       <arg name="enable" type="uint" summary="0 or 1"/>
+    </request>
+
+    <request name="set_sound_key" since="8">
+      <description summary="which sound is this window's">
+        A client that hands its sound to the compositor itself -- rather than
+        playing it where the compositor can see which process made it -- says
+        with what name it hands it over, so that the sound is placed at this
+        window and not at another window of the same application. Each window
+        of a client may have a key of its own (two pages of a browser, three
+        films in three windows of one player) or share one.
+
+        The name is the client's to choose and means nothing else. A window
+        that never says is placed by its application id, as before.
+
+        Double-buffered like everything else here.
+      </description>
+      <arg name="key" type="string" summary="the name its sound is handed over with"/>
     </request>
 
     <event name="pinch" since="6">

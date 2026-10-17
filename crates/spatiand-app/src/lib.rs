@@ -326,6 +326,19 @@ impl App {
 
     /// Where the window's pictures are clear (alpha zero), the room shows through: for a
     /// picture shown whole on nothing. Windows are otherwise opaque. From the next picture on.
+    /// Name the sound that belongs to this window, for a process with more than one window
+    /// each of whose sound is its own (a browser's pages): whatever hands sound to the room
+    /// under this name (`spatiand_media::SoundGroup::keyed`) is placed at this window. A window
+    /// that is not given one has its application's: [`App::sound_name`].
+    pub fn set_sound_key(&mut self, window: WindowId, key: &str) {
+        self.wire.set_sound_key(window, key);
+    }
+
+    /// What this process's sound is handed to the room as, unless a window says otherwise.
+    pub fn sound_name(&self) -> &str {
+        &self.app_id
+    }
+
     pub fn set_see_through(&mut self, window: WindowId, clear: bool) {
         self.wire.set_see_through(window, clear);
     }

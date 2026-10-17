@@ -188,6 +188,8 @@ pub struct Media {
     sounds: HashMap<Key, (spatiand_media::Stream, Instant)>,
     /// Each tab's one sound output: its films, its `<audio>` and its Web Audio mixed together.
     groups: HashMap<TabId, spatiand_media::SoundGroup>,
+    /// The name each tab's sound is handed to the room under: its window's.
+    keys: HashMap<TabId, String>,
     out: Vec<(TabId, String)>,
     keyed: Option<Keyed>,
     /// Tabs whose films have a new picture to be drawn.
@@ -466,10 +468,22 @@ impl Media {
         self.items.retain(|(t, _, _), _| *t != tab);
         self.sounds.retain(|(t, _, _), _| *t != tab);
         self.groups.remove(&tab);
+        self.keys.remove(&tab);
     }
 
     fn group(&mut self, tab: TabId) -> spatiand_media::SoundGroup {
-        self.groups.entry(tab).or_default().clone()
+        group_of(&mut self.groups, &self.keys, tab)
+    }
+
+    /// The tab is in the window whose sound is handed over as `key`: its sound goes there.
+    pub fn set_tab_key(&mut self, tab: TabId, key: &str) {
+        if self.keys.get(&tab).map(String::as_str) == Some(key) {
+            return;
+        }
+        self.keys.insert(tab, key.to_string());
+        if let Some(group) = self.groups.get(&tab) {
+            group.set_key(key);
+        }
     }
 
     fn tell(&mut self, key: &Key, mut m: Value) {
@@ -536,7 +550,7 @@ impl Media {
                 let Some(item) = self.items.get_mut(&key) else { continue };
                 if let (Some(source), None) = (item.mse.clone(), item.player.as_ref()) {
                     if source.ready() {
-                        match Player::open_source_in(source, self.groups.entry(key.0).or_default()) {
+                        match Player::open_source_in(source, &group_of(&mut self.groups, &self.keys, key.0)) {
                             Ok(mut player) => {
                                 if item.rate > 0.0 && item.rate != 1.0 {
                                     player.set_speed(item.rate);
@@ -956,6 +970,17 @@ fn open(name: String, page: String, start: f64, group: spatiand_media::SoundGrou
     rx
 }
 
+/// A tab's sound group, made under its window's name the first time it is wanted.
+fn group_of(groups: &mut HashMap<TabId, spatiand_media::SoundGroup>, keys: &HashMap<TabId, String>, tab: TabId) -> spatiand_media::SoundGroup {
+    groups
+        .entry(tab)
+        .or_insert_with(|| match keys.get(&tab) {
+            Some(key) => spatiand_media::SoundGroup::keyed(key),
+            None => spatiand_media::SoundGroup::new(),
+        })
+        .clone()
+}
+
 /// A film's own tracks, as the page's audioTracks, videoTracks and textTracks are made of them.
 fn tracks(info: &spatiand_media::player::Info) -> Value {
     let name = |t: &spatiand_media::player::Track| -> String {
@@ -1099,19 +1124,27 @@ precision highp float;
 in vec2 v_uv;
 in vec2 v_px;
 uniform sampler2D u_page;
-uniform vec4 u_holes[8];
+uniform vec4 u_holes[32];
 uniform int u_count;
 uniform vec3 u_key;
 out vec4 o_color;
 void main() {
     vec4 page = texture(u_page, v_uv);
     bool hole = false;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 32; i++) {
         if (i >= u_count) break;
         vec4 h = u_holes[i];
         if (v_px.x >= h.x && v_px.y >= h.y && v_px.x < h.x + h.z && v_px.y < h.y + h.w) hole = true;
     }
     if (!hole) {
+        // The key with no film under it -- a film with no picture yet, or the edge the page has
+        // scrolled to a frame before the film follows: black, as a browser's empty film is,
+        // and never the key's green.
+        vec3 off = abs(page.rgb - u_key);
+        if (max(off.r, max(off.g, off.b)) < 0.03) {
+            o_color = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
         o_color = vec4(page.rgb, 1.0);
         return;
     }
@@ -1159,8 +1192,8 @@ impl Keyed {
 
     fn draw(&self, gl: &Gl, view: (f32, f32), rect: [f32; 4], uv: [f32; 4], texture: glow::Texture, holes: &[[f32; 4]]) {
         let g = gl.api();
-        let mut flat = [0f32; 32];
-        for (i, h) in holes.iter().take(8).enumerate() {
+        let mut flat = [0f32; 128];
+        for (i, h) in holes.iter().take(32).enumerate() {
             flat[i * 4..i * 4 + 4].copy_from_slice(h);
         }
         unsafe {
@@ -1174,7 +1207,7 @@ impl Keyed {
             g.uniform_2_f32(self.at[1].as_ref(), view.0, view.1);
             g.uniform_4_f32(self.at[2].as_ref(), uv[0], uv[1], uv[2], uv[3]);
             g.uniform_4_f32_slice(self.at[3].as_ref(), &flat);
-            g.uniform_1_i32(self.at[4].as_ref(), holes.len().min(8) as i32);
+            g.uniform_1_i32(self.at[4].as_ref(), holes.len().min(32) as i32);
             g.uniform_3_f32(self.at[5].as_ref(), KEY[0] as f32 / 255.0, KEY[1] as f32 / 255.0, KEY[2] as f32 / 255.0);
             g.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
             g.bind_vertex_array(None);

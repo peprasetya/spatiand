@@ -168,17 +168,95 @@ pub fn launch(app: &AppEntry, wayland_display: &str, extra: &[(String, String)])
 /// Not on the Deck, where an application plays into its window's PipeWire sink.
 #[cfg(any(target_os = "macos", target_os = "android"))]
 pub mod sound {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
     use std::io::Read;
     use std::os::unix::net::{UnixListener, UnixStream};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Mutex, OnceLock};
 
     use spatiand_audio::server::Slot;
 
-    /// Each sounding application, by its id, and its windows' slot once it has one.
-    fn senders() -> &'static Mutex<HashMap<String, Option<Slot>>> {
-        static SENDERS: OnceLock<Mutex<HashMap<String, Option<Slot>>>> = OnceLock::new();
+    /// Each name sound comes with (an application's instance, or a window of it: see
+    /// `set_sound_key`), what is waiting from each connection under it, and the slot of its
+    /// window once that is known.
+    ///
+    /// More than one connection may hand sound over under one name -- a browser's own player and
+    /// its engine's -- and a window has one place in the room: what they send is added together
+    /// here, a hundredth of a second at a time, before it is placed, so that the HRTF hears one
+    /// sound of one layout and not two taking turns.
+    #[derive(Default)]
+    struct Named {
+        feeds: HashMap<u64, Feed>,
+        slot: Option<Slot>,
+    }
+
+    struct Feed {
+        channels: usize,
+        waiting: VecDeque<i16>,
+    }
+
+    fn senders() -> &'static Mutex<HashMap<String, Named>> {
+        static SENDERS: OnceLock<Mutex<HashMap<String, Named>>> = OnceLock::new();
         SENDERS.get_or_init(Default::default)
+    }
+
+    /// Each channel count the room places, by its channels' names, in order.
+    fn names(channels: usize) -> &'static [&'static str] {
+        match channels {
+            1 => &["MONO"],
+            2 => &["FL", "FR"],
+            6 => &["FL", "FR", "FC", "LFE", "RL", "RR"],
+            8 => &["FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR"],
+            10 => &["FL", "FR", "FC", "LFE", "RL", "RR", "TFL", "TFR", "TRL", "TRR"],
+            _ => &["FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR", "TFL", "TFR", "TRL", "TRR"],
+        }
+    }
+
+    /// The fewest channels that hold every feed's.
+    fn covering(counts: impl Iterator<Item = usize>) -> usize {
+        let counts: Vec<usize> = counts.collect();
+        let holds = |layout: usize, feed: usize| {
+            let have = names(layout);
+            names(feed).iter().all(|n| have.contains(n) || (*n == "MONO" && have.contains(&"FL")))
+        };
+        [1, 2, 6, 8, 10, 12].into_iter().find(|&layout| counts.iter().all(|&c| holds(layout, c))).unwrap_or(12)
+    }
+
+    /// A hundredth of a second of every feed under a name, added together: its samples and
+    /// channel count. `None` while there is only one feed and it has less than that waiting.
+    fn mixed(named: &mut Named, frames: usize) -> Option<(Vec<i16>, usize)> {
+        if named.feeds.len() == 1 {
+            let feed = named.feeds.values_mut().next()?;
+            let n = frames * feed.channels;
+            if feed.waiting.len() < n {
+                return None;
+            }
+            return Some((feed.waiting.drain(..n).collect(), feed.channels));
+        }
+        let channels = covering(named.feeds.values().map(|f| f.channels));
+        let to_names = names(channels);
+        let mut out = vec![0f32; frames * channels];
+        for feed in named.feeds.values_mut() {
+            let own = feed.channels;
+            let n = (frames * own).min(feed.waiting.len() / own * own);
+            let taken: Vec<i16> = feed.waiting.drain(..n).collect();
+            let to: Vec<Vec<(usize, f32)>> = names(own)
+                .iter()
+                .map(|n| match to_names.iter().position(|m| m == n) {
+                    Some(i) => vec![(i, 1.0)],
+                    None if *n == "MONO" && channels >= 2 => vec![(0, std::f32::consts::FRAC_1_SQRT_2), (1, std::f32::consts::FRAC_1_SQRT_2)],
+                    None => Vec::new(),
+                })
+                .collect();
+            for (f, frame) in taken.chunks_exact(own).enumerate() {
+                for (c, v) in frame.iter().enumerate() {
+                    for &(i, gain) in &to[c] {
+                        out[f * channels + i] += *v as f32 * gain;
+                    }
+                }
+            }
+        }
+        Some((out.into_iter().map(|v| v.clamp(-32768.0, 32767.0) as i16).collect(), channels))
     }
 
     pub fn socket_path() -> Option<std::path::PathBuf> {
@@ -186,6 +264,7 @@ pub mod sound {
     }
 
     fn serve(mut stream: UnixStream) {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
         let mut head = [0u8; 12];
         if let Err(e) = stream.read_exact(&mut head) {
             log::warn!("a sound connection said nothing: {e}");
@@ -201,11 +280,12 @@ pub mod sound {
             return;
         }
         let app = String::from_utf8_lossy(&id).into_owned();
+        let me = NEXT.fetch_add(1, Ordering::Relaxed);
         log::info!("sound from {app}: {channels} channels");
-        senders().lock().unwrap().entry(app.clone()).or_insert(None);
+        senders().lock().unwrap().entry(app.clone()).or_default().feeds.insert(me, Feed { channels, waiting: VecDeque::new() });
         // A hundredth of a second at a time, as it comes.
-        let mut bytes = vec![0u8; 480 * channels * 2];
-        let mut pcm = vec![0i16; 480 * channels];
+        const FRAMES: usize = 480;
+        let mut bytes = vec![0u8; FRAMES * channels * 2];
         // SPATIAND_DEBUG_OWN_SOUND: how loud it is, once a second, for a test to read.
         let debug = std::env::var_os("SPATIAND_DEBUG_OWN_SOUND").is_some();
         let (mut peak, mut blocks) = (0i32, 0u32);
@@ -213,9 +293,7 @@ pub mod sound {
             if let Err(e) = stream.read_exact(&mut bytes) {
                 break e;
             }
-            for (sample, pair) in pcm.iter_mut().zip(bytes.chunks_exact(2)) {
-                *sample = i16::from_le_bytes([pair[0], pair[1]]);
-            }
+            let pcm: Vec<i16> = bytes.chunks_exact(2).map(|pair| i16::from_le_bytes([pair[0], pair[1]])).collect();
             if debug {
                 peak = peak.max(pcm.iter().map(|s| (*s as i32).abs()).max().unwrap_or(0));
                 blocks += 1;
@@ -224,10 +302,37 @@ pub mod sound {
                     (peak, blocks) = (0, 0);
                 }
             }
-            let slot = senders().lock().unwrap().get(&app).copied().flatten();
-            spatiand_audio::server::feed_local(slot, &pcm, channels);
+            // Queued under the name; the first connection under it -- the one longest there --
+            // mixes and hands over, so the name is heard at one pace whatever the others do.
+            let out = {
+                let mut all = senders().lock().unwrap();
+                let Some(named) = all.get_mut(&app) else { continue };
+                if let Some(feed) = named.feeds.get_mut(&me) {
+                    feed.waiting.extend(pcm.iter().copied());
+                    // Never more than a tenth of a second behind: a feed that runs ahead of
+                    // the one setting the pace loses its oldest.
+                    let most = FRAMES * 10 * feed.channels;
+                    if feed.waiting.len() > most {
+                        let extra = feed.waiting.len() - most;
+                        feed.waiting.drain(..extra);
+                    }
+                }
+                let leader = named.feeds.keys().min().copied() == Some(me);
+                if leader { mixed(named, FRAMES).map(|(pcm, ch)| (pcm, ch, named.slot)) } else { None }
+            };
+            if let Some((pcm, ch, slot)) = out {
+                spatiand_audio::server::feed_local(slot, &pcm, ch);
+            }
         };
-        senders().lock().unwrap().remove(&app);
+        {
+            let mut all = senders().lock().unwrap();
+            if let Some(named) = all.get_mut(&app) {
+                named.feeds.remove(&me);
+                if named.feeds.is_empty() {
+                    all.remove(&app);
+                }
+            }
+        }
         log::info!("sound from {app} has ended ({ended})");
     }
 
@@ -253,16 +358,16 @@ pub mod sound {
 
     /// The applications sounding that have no slot yet, by id.
     pub fn waiting() -> Vec<String> {
-        senders().lock().unwrap().iter().filter(|(_, s)| s.is_none()).map(|(a, _)| a.clone()).collect()
+        senders().lock().unwrap().iter().filter(|(_, s)| s.slot.is_none()).map(|(a, _)| a.clone()).collect()
     }
 
     /// Say which slot a sounding application's windows have.
     pub fn assign(app: &str, slot: Slot) {
         if let Some(entry) = senders().lock().unwrap().get_mut(app) {
-            if entry.is_none() {
+            if entry.slot.is_none() {
                 log::info!("sound from {app} is placed through slot {slot}");
             }
-            *entry = Some(slot);
+            entry.slot = Some(slot);
         }
     }
 }

@@ -129,7 +129,7 @@ impl Wire {
         let data_devices: Option<wl_data_device_manager::WlDataDeviceManager> = globals.bind(&handle, 1..=3, ()).ok();
         let data_device = data_devices.as_ref().map(|m| m.get_data_device(&seat, &handle, ()));
         let dmabuf = globals.bind(&handle, 3..=3, ()).ok();
-        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=7, ()).ok();
+        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=8, ()).ok();
         let viewporter = globals.bind(&handle, 1..=1, ()).ok();
         // A compositor with the room's protocol and no word on the mode is an older Spatiand,
         // which has only ever had two eyes; one without the protocol is somebody's desktop.
@@ -311,6 +311,15 @@ impl Wire {
         if let Some(xr) = self.xr_of(id) {
             if xr.version() >= 6 {
                 xr.set_see_through(clear as u32);
+            }
+        }
+    }
+
+    pub(crate) fn set_sound_key(&mut self, id: WindowId, key: &str) {
+        if let Some(xr) = self.xr_of(id) {
+            // Not to a room older than this request: it would end the connection.
+            if xr.version() >= 8 {
+                xr.set_sound_key(key.to_string());
             }
         }
     }

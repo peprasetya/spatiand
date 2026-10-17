@@ -154,6 +154,10 @@ struct TabView {
 struct Win {
     key: WindowKey,
     id: WindowId,
+    /// What this window's pages' sound is handed to the room as (`set_sound_key`): the first
+    /// window the process's own name -- which the engine's own sound, all pages' at once, is
+    /// handed over as too -- and each after it a name of its own.
+    sound: String,
     size: (u32, u32),
     ready: bool,
     dirty: bool,
@@ -192,6 +196,8 @@ pub struct Browser {
     bookmarks: HashMap<String, Vec<Bookmark>>,
     tabs: Tabs,
     wins: Vec<Win>,
+    /// Windows' sounds named so far (`name_sound`).
+    sounds_named: u32,
     views: HashMap<TabId, TabView>,
     hosts: HashMap<String, Host>,
     program: Program,
@@ -244,6 +250,7 @@ impl Browser {
             bookmarks: HashMap::new(),
             tabs: Tabs::new(),
             wins: Vec::new(),
+            sounds_named: 0,
             views: HashMap::new(),
             hosts: HashMap::new(),
             program: crate::engines::program(),
@@ -292,6 +299,14 @@ impl Browser {
         self.wins.iter().position(|w| w.id == id)
     }
 
+    /// A new window's sound's name, said to the room.
+    fn name_sound(&mut self, id: WindowId) -> String {
+        self.sounds_named += 1;
+        let name = if self.sounds_named == 1 { self.app.sound_name().to_string() } else { format!("{}#{}", self.app.sound_name(), self.sounds_named) };
+        self.app.set_sound_key(id, &name);
+        name
+    }
+
     fn win_of_key(&self, key: WindowKey) -> Option<usize> {
         self.wins.iter().position(|w| w.key == key)
     }
@@ -305,7 +320,7 @@ impl Browser {
                     self.app.watch(host.link.raw_fd());
                     // Pages' media played here, from the engine's first page on.
                     if spatimesh::media::ours() {
-                        host.send(&ToHost::PageScript { code: spatimesh::media::PAGE_JS.to_string() });
+                        host.send(&ToHost::PageScript { code: spatimesh::media::page_js() });
                     }
                     self.hosts.insert(profile.to_string(), host);
                     self.extensions_to_new_engine(profile);
@@ -533,6 +548,11 @@ impl Browser {
                 } else if json.contains("\"t\":\"hello\"") && json.contains("\"top\":true") {
                     self.set_fullscreen(tab, false, false);
                 }
+                // Its sound is its window's, wherever the tab is now.
+                if let Some(w) = self.tabs.window_of(tab).and_then(|k| self.win_of_key(k)) {
+                    let key = self.wins[w].sound.clone();
+                    self.media.set_tab_key(tab, &key);
+                }
                 self.media.said(tab, &json);
             }
             FromHost::Happened(happened) if self.hidden.contains_key(&happened.tab()) => self.hidden_happened(profile, happened),
@@ -680,9 +700,11 @@ impl Browser {
         let key = self.tabs.new_window(profile);
         let title = if profile == PRIVATE { "SpatiMesh (Private)" } else { "SpatiMesh" };
         let id = self.app.open(title, WINDOW);
+        let sound = self.name_sound(id);
         let mut win = Win {
             key,
             id,
+            sound,
             size: WINDOW,
             ready: false,
             dirty: true,
@@ -892,9 +914,11 @@ impl Browser {
         let key = self.tabs.new_window(&profile);
         let title = if profile == PRIVATE { "SpatiMesh (Private)" } else { "SpatiMesh" };
         let id = self.app.open(title, WINDOW);
+        let sound = self.name_sound(id);
         let mut win = Win {
             key,
             id,
+            sound,
             size: WINDOW,
             ready: false,
             dirty: true,

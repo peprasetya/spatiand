@@ -12,6 +12,7 @@ pub struct Media;
 impl Media {
     pub fn said(&mut self, _tab: TabId, _json: &str) {}
     pub fn forget(&mut self, _tab: TabId) {}
+    pub fn set_tab_key(&mut self, _tab: TabId, _key: &str) {}
     pub fn tick(&mut self) {}
     pub fn capture(&mut self, _gl: &Gl) {}
     pub fn take_out(&mut self) -> Vec<(TabId, String)> {

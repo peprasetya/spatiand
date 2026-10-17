@@ -1160,7 +1160,10 @@ pub fn run(
                         sinks_changed = true;
                     }
                     Some(app_id) if own_app(&app_id) => {
-                        spatial_audio.adopt_keyed(id, &format!("own:{app_id}"), spatiand_audio::server::Width::Full);
+                        // Each window by the name its sound comes with: two pages of one
+                        // browser are two places in the room.
+                        let key = runtime.state.sound_key_of_id(id).unwrap_or(app_id);
+                        spatial_audio.adopt_keyed(id, &format!("own:{key}"), spatiand_audio::server::Width::Full);
                     }
                     Some(_) => spatial_audio.adopt(id, pid),
                     None => awaiting_app_id.push((id, Instant::now(), pid)),
@@ -1172,7 +1175,8 @@ pub fn run(
                         spatial_audio.adopt_keyed(*id, &app_id, crate::remote::sound_width(&app_id));
                         sinks_changed = true;
                     } else if own_app(&app_id) {
-                        spatial_audio.adopt_keyed(*id, &format!("own:{app_id}"), spatiand_audio::server::Width::Full);
+                        let key = runtime.state.sound_key_of_id(*id).unwrap_or(app_id);
+                        spatial_audio.adopt_keyed(*id, &format!("own:{key}"), spatiand_audio::server::Width::Full);
                     } else {
                         spatial_audio.adopt(*id, *pid);
                     }
