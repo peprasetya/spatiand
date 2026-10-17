@@ -223,8 +223,14 @@ pub mod sound {
     }
 
     /// A hundredth of a second of every feed under a name, added together: its samples and
-    /// channel count. `None` while there is only one feed and it has less than that waiting.
+    /// channel count; `None` until there is that much to give. With more than one feed, it is
+    /// given once any of them is two hundredths ahead -- whichever is sounding sets the pace,
+    /// and one that sends nothing (an engine's tap with nothing playing) holds nothing up --
+    /// and a feed that is still sending gives what it has.
     fn mixed(named: &mut Named, frames: usize) -> Option<(Vec<i16>, usize)> {
+        if named.feeds.len() > 1 && !named.feeds.values().any(|f| f.waiting.len() >= 2 * frames * f.channels) {
+            return None;
+        }
         if named.feeds.len() == 1 {
             let feed = named.feeds.values_mut().next()?;
             let n = frames * feed.channels;
@@ -302,8 +308,7 @@ pub mod sound {
                     (peak, blocks) = (0, 0);
                 }
             }
-            // Queued under the name; the first connection under it -- the one longest there --
-            // mixes and hands over, so the name is heard at one pace whatever the others do.
+            // Queued under the name, and as much handed over as there is to give.
             let out = {
                 let mut all = senders().lock().unwrap();
                 let Some(named) = all.get_mut(&app) else { continue };
@@ -317,10 +322,13 @@ pub mod sound {
                         feed.waiting.drain(..extra);
                     }
                 }
-                let leader = named.feeds.keys().min().copied() == Some(me);
-                if leader { mixed(named, FRAMES).map(|(pcm, ch)| (pcm, ch, named.slot)) } else { None }
+                let mut out = Vec::new();
+                while let Some((pcm, ch)) = mixed(named, FRAMES) {
+                    out.push((pcm, ch, named.slot));
+                }
+                out
             };
-            if let Some((pcm, ch, slot)) = out {
+            for (pcm, ch, slot) in out {
                 spatiand_audio::server::feed_local(slot, &pcm, ch);
             }
         };
@@ -334,6 +342,37 @@ pub mod sound {
             }
         }
         log::info!("sound from {app} has ended ({ended})");
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn feed(channels: usize, samples: usize, value: i16) -> Feed {
+            Feed { channels, waiting: std::iter::repeat_n(value, samples * channels).collect() }
+        }
+
+        #[test]
+        fn one_feed_that_sends_nothing_holds_nothing_up() {
+            let mut named = Named::default();
+            named.feeds.insert(1, feed(2, 0, 0));
+            named.feeds.insert(2, feed(2, 480, 1000));
+            assert!(mixed(&mut named, 480).is_none(), "one hundredth is not yet two ahead");
+            named.feeds.get_mut(&2).unwrap().waiting.extend(std::iter::repeat_n(1000, 480 * 2));
+            let (pcm, channels) = mixed(&mut named, 480).expect("the sounding one sets the pace");
+            assert_eq!((pcm.len(), channels), (960, 2));
+            assert!(pcm.iter().all(|s| *s == 1000));
+        }
+
+        #[test]
+        fn mono_and_stereo_are_added_into_stereo() {
+            let mut named = Named::default();
+            named.feeds.insert(1, feed(1, 960, 1000));
+            named.feeds.insert(2, feed(2, 960, 100));
+            let (pcm, channels) = mixed(&mut named, 480).unwrap();
+            assert_eq!(channels, 2);
+            assert_eq!(pcm[0], 100 + (1000.0 * std::f32::consts::FRAC_1_SQRT_2) as i16);
+        }
     }
 
     /// Start listening, once, where the session's own applications will look.
