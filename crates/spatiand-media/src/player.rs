@@ -331,6 +331,10 @@ struct Shared {
     /// And each decoder has emptied what it was given since.
     video_out: AtomicBool,
     audio_out: AtomicBool,
+    /// Which picture decoder is the one: one that finds it is not any more stops.
+    video_generation: AtomicU64,
+    /// When the picture decoder last got anywhere: see `Player::watch_decoder`.
+    video_alive: Mutex<Instant>,
 }
 
 const NO_STREAM: u64 = u64::MAX;
@@ -345,6 +349,9 @@ pub struct Player {
     /// How much later than its sound a picture is shown, in seconds: for a film whose two
     /// were put together out of step.
     lip: f64,
+    /// While the platform's decoder makes the pictures: its stream and start, and its thread
+    /// (an index into `threads`), for going over to software if it hangs.
+    hardware: Option<(SendPointer<ffi::AVStream>, f64, usize)>,
 }
 
 /// What is opened, owned by the reader thread once it starts.
@@ -574,9 +581,12 @@ impl Player {
                 read_out: AtomicBool::new(false),
                 video_out: AtomicBool::new(video_stream.is_none()),
                 audio_out: AtomicBool::new(audio_stream.is_none()),
+                video_generation: AtomicU64::new(0),
+                video_alive: Mutex::new(Instant::now()),
             });
 
             let mut threads = Vec::new();
+            let mut hardware = None;
             if let Some(index) = video_stream {
                 let stream = streams[index];
                 let parameters = (*stream).codecpar;
@@ -592,9 +602,12 @@ impl Player {
                     open_decoder(stream, false)
                 })?;
                 info.hardware = HARDWARE.filter(|_| on_gpu).map(|(_, _, name)| name);
+                if on_gpu {
+                    hardware = Some((SendPointer(stream), start, threads.len()));
+                }
                 let stream = SendPointer(stream);
                 let shared = shared.clone();
-                threads.push(spawn("pictures", move || decode_pictures(decoder, stream, on_gpu, start, shared)));
+                threads.push(spawn("pictures", move || decode_pictures(decoder, stream, on_gpu, start, shared, 0)));
             }
             // Every sound stream gets a decoder when it is chosen, not before: see `decode_sound`.
             if audio_stream.is_some() && shared.sound.is_some() {
@@ -621,7 +634,7 @@ impl Player {
                 info.duration,
                 info.hardware.unwrap_or("decoded in software"),
             );
-            Ok(Player { shared, info, threads, showing: None, lip: 0.0 })
+            Ok(Player { shared, info, threads, showing: None, lip: 0.0, hardware })
         }
     }
 
@@ -708,8 +721,11 @@ impl Player {
                 read_out: AtomicBool::new(false),
                 video_out: AtomicBool::new(video_stream.is_none()),
                 audio_out: AtomicBool::new(audio_stream.is_none()),
+                video_generation: AtomicU64::new(0),
+                video_alive: Mutex::new(Instant::now()),
             });
             let mut threads = Vec::new();
+            let mut hardware = None;
             if let Some(index) = video_stream {
                 let stream = streams[index];
                 let parameters = (*stream).codecpar;
@@ -723,9 +739,12 @@ impl Player {
                     open_decoder(stream, false)
                 })?;
                 info.hardware = HARDWARE.filter(|_| on_gpu).map(|(_, _, name)| name);
+                if on_gpu {
+                    hardware = Some((SendPointer(stream), 0.0, threads.len()));
+                }
                 let stream = SendPointer(stream);
                 let shared = shared.clone();
-                threads.push(spawn("pictures", move || decode_pictures(decoder, stream, on_gpu, 0.0, shared)));
+                threads.push(spawn("pictures", move || decode_pictures(decoder, stream, on_gpu, 0.0, shared, 0)));
             }
             if audio_stream.is_some() && shared.sound.is_some() {
                 let streams: Vec<SendPointer<ffi::AVStream>> = streams.iter().map(|s| SendPointer(*s)).collect();
@@ -755,7 +774,7 @@ impl Player {
                 info.frame_rate,
                 info.hardware.unwrap_or("decoded in software"),
             );
-            Ok(Player { shared, info, threads, showing: None, lip: 0.0 })
+            Ok(Player { shared, info, threads, showing: None, lip: 0.0, hardware })
         }
     }
 
@@ -887,7 +906,12 @@ impl Player {
     pub fn end_state(&self) -> String {
         let s = &self.shared;
         format!(
-            "read out {}, pictures out {}, sound out {}, pictures waiting {}, seek {:?}, sound empty {:?}",
+            "packets: pictures {} ({:.2} s), sound {} ({:.2} s); target {:.2}; read out {}, pictures out {}, sound out {}, pictures waiting {}, seek {:?}, sound empty {:?}",
+            s.video.len(),
+            s.video.seconds(),
+            s.audio.len(),
+            s.audio.seconds(),
+            s.target.lock().unwrap().0,
             s.read_out.load(Ordering::Relaxed),
             s.video_out.load(Ordering::Relaxed),
             s.audio_out.load(Ordering::Relaxed),
@@ -908,7 +932,44 @@ impl Player {
     }
 
     /// The picture that should be on show now, and whether it is a new one since last asked.
+    /// The platform's decoder has been seen to stop for good, deep inside the system, on some
+    /// streams (YouTube's, through a page's MediaSource, on an Intel Mac's VideoToolbox) --
+    /// the clock and the sound going on and the picture standing still at the first frame. A
+    /// decoder that has had pictures to make and made nothing for a second and a half is left
+    /// where it is, and software decodes from where the film is instead.
+    fn watch_decoder(&mut self) {
+        let Some((stream, start, thread)) = self.hardware.as_ref().map(|(s, st, t)| (s.0, *st, *t)) else { return };
+        let stuck = self.shared.video_alive.lock().unwrap().elapsed() > Duration::from_millis(1500);
+        if !stuck || self.shared.video.len() == 0 {
+            return;
+        }
+        log::warn!("the platform's decoder has stopped making pictures; decoding in software from here");
+        self.hardware = None;
+        let generation = self.shared.video_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        // Its thread is not waited for: it may never come back. Told it is not the one, it
+        // ends if it does.
+        if thread < self.threads.len() {
+            drop(self.threads.remove(thread));
+        }
+        let decoder = match unsafe { open_decoder(stream, false) } {
+            Ok((decoder, _)) => decoder,
+            Err(e) => {
+                log::warn!("{e}");
+                return;
+            }
+        };
+        self.info.hardware = None;
+        *self.shared.video_alive.lock().unwrap() = Instant::now();
+        let shared = self.shared.clone();
+        let stream = SendPointer(stream);
+        self.threads.push(spawn("pictures", move || decode_pictures(decoder, stream, false, start, shared, generation)));
+        // From a key frame: the new decoder knows nothing of what the old one was given.
+        let at = self.position();
+        self.seek(at);
+    }
+
     pub fn picture(&mut self) -> (Option<Arc<Picture>>, bool) {
+        self.watch_decoder();
         let shared = &self.shared;
         let serial = shared.serial.load(Ordering::Relaxed);
         let now = self.position() - self.lip;
@@ -1180,6 +1241,9 @@ fn read_source(
             // the decoder with the first frame coded by it.
             let changed = cursor.params.as_ref().is_none_or(|p| !Arc::ptr_eq(p, &frame.params));
             if changed {
+                if cursor.params.is_some() {
+                    log::info!("a MediaSource's track changed its description at {:.2} (key frame {})", frame.pts as f64 / 1e6, frame.key);
+                }
                 let extra = frame.params.extradata();
                 if !extra.is_empty() && cursor.params.as_ref().is_none_or(|p| p.extradata() != extra) {
                     let side = ffi::av_packet_new_side_data(packet, ffi::AV_PKT_DATA_NEW_EXTRADATA, extra.len());
@@ -1310,15 +1374,17 @@ unsafe fn settle(frame: *mut ffi::AVFrame, scaler: &mut *mut ffi::SwsContext) ->
     Some((plain, kind))
 }
 
-fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu: bool, start: f64, shared: Arc<Shared>) {
+fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu: bool, start: f64, shared: Arc<Shared>, generation: u64) {
     let _ = stream;
     unsafe {
         let mut frame = ffi::av_frame_alloc();
         let mut scaler: *mut ffi::SwsContext = ptr::null_mut();
         let mut serial = shared.serial.load(Ordering::Relaxed);
         let mut complained = false;
-        while !shared.stop.load(Ordering::Relaxed) {
+        let mine = || shared.video_generation.load(Ordering::Relaxed) == generation;
+        while !shared.stop.load(Ordering::Relaxed) && mine() {
             let Ok((packet, packet_serial)) = shared.video.pop() else { continue };
+            *shared.video_alive.lock().unwrap() = Instant::now();
             if packet_serial != shared.serial.load(Ordering::Relaxed) {
                 continue;
             }
@@ -1350,11 +1416,14 @@ fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu
                 let picture = Picture { frame: held, pixels, width, height, time, colour, serial };
                 let mut pictures = shared.pictures.lock().unwrap();
                 while pictures.len() >= PICTURES_AHEAD && !shared.stop.load(Ordering::Relaxed) && serial == shared.serial.load(Ordering::Relaxed) {
+                    // Waiting for room is not being stuck.
+                    *shared.video_alive.lock().unwrap() = Instant::now();
                     pictures = shared.room.wait_timeout(pictures, Duration::from_millis(20)).unwrap().0;
                 }
-                if serial == shared.serial.load(Ordering::Relaxed) {
+                if serial == shared.serial.load(Ordering::Relaxed) && mine() {
                     pictures.push_back(picture);
                 }
+                *shared.video_alive.lock().unwrap() = Instant::now();
             }
             if ending {
                 ffi::avcodec_flush_buffers(decoder.context);
