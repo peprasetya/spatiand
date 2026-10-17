@@ -403,3 +403,65 @@ impl Inner {
         }
     }
 }
+
+/// Sound made by something other than a film -- a web page's own, its Web Audio -- played as a
+/// film's is: into the room at this application's window, or the machine's speakers where there
+/// is no room. Pushed as it is made; what would wait more than a third of a second is dropped,
+/// so a source that runs ahead never builds up a delay.
+pub struct Stream {
+    sound: Sound,
+    /// Resampling from the source's rate, carried from one push to the next.
+    phase: f64,
+    last: Vec<f32>,
+}
+
+impl Stream {
+    /// Open for sound of `channels` channels.
+    pub fn open(channels: u16) -> Result<Stream, String> {
+        let sound = Sound::open(channels.max(1))?;
+        let last = vec![0.0; sound.channels() as usize];
+        Ok(Stream { sound, phase: 0.0, last })
+    }
+
+    /// Interleaved samples of `channels` channels at `rate` a second.
+    pub fn push(&mut self, samples: &[f32], channels: usize, rate: u32) {
+        let channels = channels.max(1);
+        let frames = samples.len() / channels;
+        if frames == 0 {
+            return;
+        }
+        let out_channels = self.sound.channels() as usize;
+        let step = rate as f64 / self.sound.rate() as f64;
+        let mut out = Vec::with_capacity(((frames as f64 / step) as usize + 2) * out_channels);
+        let pick = |frame: &[f32], c: usize| -> f32 {
+            // Missing channels from those there are: mono to both, stereo's two to the front.
+            if c < frame.len() {
+                frame[c]
+            } else if frame.len() == 1 {
+                frame[0]
+            } else {
+                0.0
+            }
+        };
+        let mut position = self.phase;
+        while position <= (frames - 1) as f64 {
+            let a = position.floor() as isize;
+            let t = (position - a as f64) as f32;
+            let b = ((a + 1) as usize).min(frames - 1);
+            let later = &samples[b * channels..b * channels + channels];
+            for c in 0..out_channels {
+                let before = if a < 0 { *self.last.get(c).unwrap_or(&0.0) } else { pick(&samples[a as usize * channels..a as usize * channels + channels], c) };
+                out.push(before * (1.0 - t) + pick(later, c) * t);
+            }
+            position += step;
+        }
+        self.phase = position - frames as f64;
+        let tail = &samples[(frames - 1) * channels..frames * channels];
+        self.last = (0..out_channels).map(|c| pick(tail, c)).collect();
+        let _ = self.sound.offer(&Block { samples: out, time: f64::NAN, serial: 0 });
+    }
+
+    pub fn set_volume(&self, volume: f32) {
+        self.sound.set_volume(volume);
+    }
+}

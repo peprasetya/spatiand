@@ -102,6 +102,8 @@ impl Item {
 #[derive(Default)]
 pub struct Media {
     items: HashMap<Key, Item>,
+    /// Pages' Web Audio, each AudioContext's mix as it comes, and when it last sounded.
+    sounds: HashMap<Key, (spatiand_media::Stream, Instant)>,
     out: Vec<(TabId, String)>,
     keyed: Option<Keyed>,
     /// Tabs whose films have a new picture to be drawn.
@@ -144,6 +146,32 @@ impl Media {
             "close" => {
                 self.items.remove(&key);
             }
+            "audio" => match m["a"].as_str().unwrap_or("") {
+                "open" => match spatiand_media::Stream::open(2) {
+                    Ok(stream) => {
+                        self.sounds.insert(key, (stream, Instant::now()));
+                    }
+                    Err(e) => log::warn!("media: no sound for a page's Web Audio: {e}"),
+                },
+                "data" => {
+                    use base64::Engine as _;
+                    let Some((stream, last)) = self.sounds.get_mut(&key) else { return };
+                    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(m["d"].as_str().unwrap_or("")) else { return };
+                    let samples: Vec<f32> = bytes.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0).collect();
+                    stream.push(&samples, 2, m["rate"].as_u64().unwrap_or(48_000) as u32);
+                    if std::env::var_os("SPATIMESH_DEBUG_MEDIA").is_some() && last.elapsed() > Duration::from_millis(900) {
+                        let peak = samples.iter().fold(0f32, |a, s| a.max(s.abs()));
+                        log::info!("media: a page's Web Audio, {} samples at {} Hz, peak {peak:.4}", samples.len(), m["rate"]);
+                    }
+                    if std::env::var_os("SPATIMESH_DEBUG_MEDIA").is_none() || last.elapsed() > Duration::from_millis(900) {
+                        *last = Instant::now();
+                    }
+                }
+                "close" => {
+                    self.sounds.remove(&key);
+                }
+                _ => {}
+            },
             "play" => {
                 if let Some(item) = self.items.get_mut(&key) {
                     item.playing = true;
@@ -217,11 +245,13 @@ impl Media {
             }
             "bye" => {
                 self.items.retain(|(t, f, _), _| !(*t == tab && *f == frame));
+                self.sounds.retain(|(t, f, _), _| !(*t == tab && *f == frame));
                 self.fresh.push(tab);
             }
             "hello" if m["top"].as_bool() == Some(true) => {
                 // A new document in the tab's top frame: everything of the one before is gone.
                 self.items.retain(|(t, f, _), _| *t != tab || *f == frame);
+                self.sounds.retain(|(t, f, _), _| *t != tab || *f == frame);
                 self.fresh.push(tab);
             }
             _ => {}
@@ -231,6 +261,7 @@ impl Media {
     /// A tab closed, crashed or went to another engine: its media stops.
     pub fn forget(&mut self, tab: TabId) {
         self.items.retain(|(t, _, _), _| *t != tab);
+        self.sounds.retain(|(t, _, _), _| *t != tab);
     }
 
     fn tell(&mut self, key: &Key, mut m: Value) {
@@ -261,6 +292,7 @@ impl Media {
     /// Whether a tab has something of its own playing (its title says so: `browser::draw`).
     pub fn playing_in(&self, tab: TabId) -> bool {
         self.items.iter().any(|((t, _, _), i)| *t == tab && i.playing && !(i.muted || i.volume == 0.0))
+            || self.sounds.iter().any(|((t, _, _), (_, last))| *t == tab && last.elapsed() < Duration::from_secs(1))
     }
 
     /// Whether anything is playing: the window then goes round at the films' pace.

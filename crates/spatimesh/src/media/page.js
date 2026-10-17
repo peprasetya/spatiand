@@ -689,8 +689,72 @@
   // ---- step 4: MediaSource ----
   function msReceive(m) {}
 
-  // ---- step 2: Web Audio ----
+  // ---- step 2: Web Audio, to the room ----
+  // Every AudioContext is made as it always is, but what the page connects to its destination
+  // reaches a node of ours instead, which hands the mix to the window (the room, at this window)
+  // and gives the engine's own output silence. OfflineAudioContext renders to the page, not to a
+  // speaker, and is left alone.
   function audioReceive(m) {}
+  var nextAudio = 1;
+  var b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  function base64(bytes) {
+    var out = '', i = 0, n = bytes.length;
+    for (; i + 2 < n; i += 3) {
+      var v = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+      out += b64chars[v >> 18] + b64chars[(v >> 12) & 63] + b64chars[(v >> 6) & 63] + b64chars[v & 63];
+    }
+    if (i < n) {
+      var w = bytes[i] << 16 | (i + 1 < n ? bytes[i + 1] << 8 : 0);
+      out += b64chars[w >> 18] + b64chars[(w >> 12) & 63] + (i + 1 < n ? b64chars[(w >> 6) & 63] : '=') + '=';
+    }
+    return out;
+  }
+  function wrapAudio(Native) {
+    if (!Native || !Native.prototype) return Native;
+    var destination = native(Native.prototype, 'destination');
+    function Wrapped(options) {
+      var ctx = arguments.length ? new Native(options) : new Native();
+      try { capture(ctx, destination); } catch (e) {}
+      return ctx;
+    }
+    Wrapped.prototype = Native.prototype;
+    O.setPrototypeOf(Wrapped, Native);
+    try { defineProperty(Wrapped, 'name', { value: Native.name }); } catch (e) {}
+    try { defineProperty(Native.prototype, 'constructor', { value: Wrapped, configurable: true, writable: true }); } catch (e) {}
+    return Wrapped;
+  }
+  function capture(ctx, destination) {
+    var real = destination.get.call(ctx);
+    if (!ctx.createScriptProcessor) return;
+    var id = nextAudio++, opened = false, frames = 2048;
+    var sink = ctx.createGain();
+    var tap = ctx.createScriptProcessor(frames, 2, 2);
+    var quiet = ctx.createGain();
+    quiet.gain.value = 0;
+    sink.connect(tap); tap.connect(quiet); quiet.connect(real);
+    ['maxChannelCount'].forEach(function (k) { try { defineProperty(sink, k, { get: function () { return real[k]; } }); } catch (e) {} });
+    defineProperty(ctx, 'destination', { configurable: true, get: function () { return sink; } });
+    var pcm = new Int16Array(frames * 2), bytes = new Uint8Array(pcm.buffer);
+    tap.onaudioprocess = function (ev) {
+      var input = ev.inputBuffer, l = input.getChannelData(0), r = input.numberOfChannels > 1 ? input.getChannelData(1) : l;
+      var loud = false, n = l.length;
+      if (pcm.length !== n * 2) { pcm = new Int16Array(n * 2); bytes = new Uint8Array(pcm.buffer); }
+      for (var i = 0; i < n; i++) {
+        var a = l[i], b = r[i];
+        if (a !== 0 || b !== 0) loud = true;
+        pcm[i * 2] = a <= -1 ? -32768 : a >= 1 ? 32767 : a * 32767;
+        pcm[i * 2 + 1] = b <= -1 ? -32768 : b >= 1 ? 32767 : b * 32767;
+      }
+      if (!loud) return;
+      if (!opened) { opened = true; send({ t: 'audio', a: 'open', id: id, rate: ctx.sampleRate, channels: 2 }); }
+      send({ t: 'audio', a: 'data', id: id, rate: ctx.sampleRate, d: base64(bytes) });
+    };
+    nativeAddListener.call(ctx, 'statechange', function () {
+      if (ctx.state === 'closed' && opened) { opened = false; send({ t: 'audio', a: 'close', id: id }); }
+    });
+  }
+  if (window.AudioContext) window.AudioContext = wrapAudio(window.AudioContext);
+  if (window.webkitAudioContext) window.webkitAudioContext = wrapAudio(window.webkitAudioContext);
 
   // ---- this document, to the window: here, and gone ----
   send({ t: 'hello', top: TOP });
