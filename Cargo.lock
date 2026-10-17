@@ -4876,6 +4876,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spatiand-app",
+ "spatiand-media",
  "spatiand-sync",
  "url",
 ]

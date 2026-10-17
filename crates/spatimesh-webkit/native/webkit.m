@@ -36,6 +36,7 @@ enum {
     EV_DIALOG,
     EV_EXTENSION,
     EV_SCRIPT_RESULT,
+    EV_MEDIA,
 };
 
 typedef struct {
@@ -182,6 +183,9 @@ struct Engine {
      * those compiled, by extension. */
     NSMutableDictionary<NSString *, NSString *> *ruleSources;
     NSMutableDictionary<NSString *, WKContentRuleList *> *ruleLists;
+    /* SpatiMesh's own script for every frame's every document (its media), and what the top
+     * frame is given before it, to say things to the window with. */
+    NSString *pageScript;
 };
 
 static Engine *the_engine;
@@ -403,6 +407,11 @@ static CFTimeInterval now(void) {
 }
 
 - (void)userContentController:(WKUserContentController *)controller didReceiveScriptMessage:(WKScriptMessage *)message {
+    if ([message.name isEqualToString:@"spatimeshMedia"]) {
+        if ([message.body isKindOfClass:[NSString class]] && message.frameInfo.isMainFrame)
+            push(self.engine, EV_MEDIA, self.ident, 0, 0, 0, message.body, nil);
+        return;
+    }
     if ([message.name isEqualToString:@"spatimeshExt"]) {
         if ([message.body isKindOfClass:[NSString class]])
             [self extensionSaid:message.body frame:message.frameInfo world:message.world];
@@ -646,6 +655,14 @@ static void apply_extensions(MeshTab *tab) {
     tab.handlerWorlds = [NSMutableArray array];
     [c removeAllUserScripts];
     [c addUserScript:[[WKUserScript alloc] initWithSource:SelectScript injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+    if (e->pageScript.length) {
+        /* Before anything of the page's, in every frame; the top frame first given its way out,
+         * kept where the page's own scripts cannot replace it. */
+        NSString *code = [NSString stringWithFormat:
+            @"if(window.top===window){(function(){var h=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.spatimeshMedia;"
+             "if(h){var p=h.postMessage.bind(h);window.__spatimeshMediaPost=function(s){p(s);};}})();}\n%@", e->pageScript];
+        [c addUserScript:[[WKUserScript alloc] initWithSource:code injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:NO]];
+    }
     if (!e->extensions.count)
         return;
     WKContentWorld *page = [WKContentWorld pageWorld];
@@ -809,6 +826,7 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
         config.websiteDataStore = e->store;
         register_schemes(config, e);
         [config.userContentController addScriptMessageHandler:tab name:@"spatimeshSelect"];
+        [config.userContentController addScriptMessageHandler:tab name:@"spatimeshMedia"];
         MeshWebView *view = [[MeshWebView alloc] initWithFrame:NSMakeRect(0, 0, window.contentView.bounds.size.width, window.contentView.bounds.size.height) configuration:config];
         view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         view.navigationDelegate = tab;
@@ -1417,6 +1435,16 @@ void spatimesh_ext_done(Engine *e) {
  * there first if `boot`; with `all_frames`, in the other frames its contexts have spoken from
  * too. The top frame's result is told if there is a `request`: in the page's own world, its
  * value once it settles (the code is then one expression), as Chrome's executeScript has it. */
+/* SpatiMesh's own script for every frame's every document, from the next document on; the
+ * pages open now have it put in again for theirs. */
+void spatimesh_set_page_script(Engine *e, const char *code) {
+    @autoreleasepool {
+        e->pageScript = code ? [NSString stringWithUTF8String:code] : nil;
+        for (MeshTab *tab in e->tabs.allValues)
+            apply_extensions(tab);
+    }
+}
+
 void spatimesh_run_script(Engine *e, uint64_t ident, const char *world, int all_frames, const char *code, uint64_t request, int boot) {
     @autoreleasepool {
         MeshTab *tab = find(e, ident);

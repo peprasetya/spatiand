@@ -21,6 +21,7 @@ use crate::engines::{Host, Program};
 use crate::page::PageTexture;
 
 mod ext;
+mod media;
 
 use ext::{ExtPopup, Told};
 use spatimesh::extensions::runtime::Runtime;
@@ -211,6 +212,8 @@ pub struct Browser {
     icons: HashMap<(String, String), Option<PageTexture>>,
     /// Which buffer holds each tab's newest picture.
     latest_buffer: HashMap<TabId, u8>,
+    /// Pages' films and sounds, played here (`media`).
+    media: media::Media,
 }
 
 fn command(m: Modifiers) -> bool {
@@ -250,6 +253,7 @@ impl Browser {
             toast: None,
             icons: HashMap::new(),
             latest_buffer: HashMap::new(),
+            media: media::Media::default(),
         };
         let mut extensions = Runtime::new(browser.store.clone());
         extensions.set_addresses(crate::engines::extension_addresses(&browser.program));
@@ -291,8 +295,12 @@ impl Browser {
     fn host(&mut self, profile: &str) -> Option<&mut Host> {
         if !self.hosts.contains_key(profile) {
             match Host::start(&self.program, &self.store, profile) {
-                Ok(host) => {
+                Ok(mut host) => {
                     self.app.watch(host.link.raw_fd());
+                    // Pages' media played here, from the engine's first page on.
+                    if spatimesh::media::ours() {
+                        host.send(&ToHost::PageScript { code: spatimesh::media::PAGE_JS.to_string() });
+                    }
                     self.hosts.insert(profile.to_string(), host);
                     self.extensions_to_new_engine(profile);
                 }
@@ -476,6 +484,7 @@ impl Browser {
             FromHost::Happened(Happened::ScriptResult { request, result, .. }) => {
                 self.with_extensions(|rt, b| rt.script_result(b, request, result));
             }
+            FromHost::Happened(Happened::Media { tab, json }) => self.media.said(tab, &json),
             FromHost::Happened(happened) if self.hidden.contains_key(&happened.tab()) => self.hidden_happened(profile, happened),
             FromHost::Happened(happened) => self.happened(happened),
         }
@@ -579,6 +588,7 @@ impl Browser {
             }
             Happened::CloseTab { tab } => self.close_tab(tab),
             Happened::Crashed { tab, why } => {
+                self.media.forget(tab);
                 if let Some(t) = self.tabs.tab_mut(tab) {
                     t.crashed = Some(why);
                     t.loading = false;
@@ -603,7 +613,7 @@ impl Browser {
                 self.focus_pages();
             }
             // Taken by `heard` before they come here.
-            Happened::Extension { .. } | Happened::ScriptResult { .. } => {}
+            Happened::Extension { .. } | Happened::ScriptResult { .. } | Happened::Media { .. } => {}
         }
         let _ = tab;
     }
@@ -707,6 +717,7 @@ impl Browser {
     }
 
     fn close_tab(&mut self, tab: TabId) {
+        self.media.forget(tab);
         self.tell(tab, ToHost::Close { tab });
         let profile = self.tabs.tab(tab).map(|t| t.profile.clone());
         let window = self.tabs.window_of(tab);
@@ -1304,6 +1315,10 @@ impl Browser {
         let over_page = hover == Hover::Page && !self.covered(w, tab);
         if over_page || self.wins[w].pressed_in_page.is_some() {
             self.wins[w].in_page = true;
+            let zoom = self.settings.zoom();
+            if self.media.pointer(tab, (x - page.x) / zoom, (y - page.y) / zoom, false) {
+                self.dirty_tab(tab);
+            }
             let m = modifiers(self.app.modifiers());
             self.tell(tab, ToHost::Pointer { tab, x: x - page.x, y: y - page.y, button: None, modifiers: m });
         } else if std::mem::take(&mut self.wins[w].in_page) {
@@ -1413,6 +1428,13 @@ impl Browser {
                 self.wins[w].pressed_in_page = Some(engine_button);
             }
             let page = self.wins[w].page;
+            let zoom = self.settings.zoom();
+            // A film's own controls (SpatiMesh's, for an element that asked for the browser's).
+            if pressed && engine_button == engine::Button::Left && self.media.pointer(tab, (x - page.x) / zoom, (y - page.y) / zoom, true) {
+                self.wins[w].pressed_in_page = None;
+                self.dirty_tab(tab);
+                return;
+            }
             let m = modifiers(self.app.modifiers());
             self.tell(tab, ToHost::Pointer { tab, x: x - page.x, y: y - page.y, button: Some((engine_button, pressed)), modifiers: m });
             return;
@@ -1751,7 +1773,7 @@ impl Browser {
             // A speaker before it while any of the window's tabs is playing: the room places
             // SpatiMesh's sound -- one stream for all its windows, as the engine plays it -- at
             // the window that says it plays (`audio::says_it_plays`).
-            let playing = window.tabs.iter().any(|t| self.tabs.tab(*t).is_some_and(|t| t.playing));
+            let playing = window.tabs.iter().any(|t| self.tabs.tab(*t).is_some_and(|t| t.playing) || self.media.playing_in(*t));
             let title = if playing { format!("\u{1F50A} {title}") } else { title };
             let id = self.wins[w].id;
             self.app.set_title(id, &title);
@@ -1765,7 +1787,8 @@ impl Browser {
             let icons: Vec<Option<spatiand_app::ui::Texture>> = actions.iter().map(|a| self.icon(a)).collect();
             let ext_popup = self.ext_popups.get(&key).map(|p| (p.rect, p.tab));
             let toast = self.toast.as_ref().filter(|(_, at)| at.elapsed() < TOAST).map(|(t, _)| t.clone());
-            let (painter, wins, views, tabs) = (&mut self.painter, &mut self.wins, &self.views, &self.tabs);
+            let zoom = self.settings.zoom();
+            let (painter, wins, views, tabs, media) = (&mut self.painter, &mut self.wins, &self.views, &self.tabs, &mut self.media);
             let win = &mut wins[w];
             let size = win.size;
             let marked = active.as_ref().is_some_and(|t| profile.id != PRIVATE && self.bookmarks.get(&profile.id).is_some_and(|b| bookmarks::find(b, &t.url).is_some()));
@@ -1786,7 +1809,12 @@ impl Browser {
                         // shows its last picture until the next arrives, not stretched.
                         let shown = Rect::new(page.x, page.y, (texture.width as f32).min(page.w), (texture.height as f32).min(page.h));
                         let uv = [0.0, 0.0, shown.w / texture.width as f32, shown.h / texture.height as f32];
-                        p.image(gl, texture.texture(), shown, uv, 0.0, [1.0, 1.0, 1.0, 1.0], true);
+                        if media.films_in(tab.id) {
+                            // Its films under it, where their boxes are (`media`).
+                            media.draw(gl, p, tab.id, page, shown, uv, texture.raw(), zoom);
+                        } else {
+                            p.image(gl, texture.texture(), shown, uv, 0.0, [1.0, 1.0, 1.0, 1.0], true);
+                        }
                     } else {
                         p.fill(gl, page, 12.0, theme::GROUND);
                         let note = if starting { "Starting the web engine\u{2026}" } else { "" };
@@ -1887,7 +1915,7 @@ impl Browser {
     pub fn run(&mut self) -> Result<(), String> {
         loop {
             let busy = self.tabs.tabs().any(|t| t.loading) || self.in_flight.is_some();
-            let mut wait = if busy { 30 } else { 500 };
+            let mut wait = if self.media.busy() { 8 } else if busy { 30 } else { 500 };
             let next_tick = self.extensions.as_ref().and_then(Runtime::next_tick);
             if let Some(at) = next_tick {
                 wait = wait.min(at.saturating_duration_since(Instant::now()).as_millis() as u64);
@@ -1898,6 +1926,13 @@ impl Browser {
                 }
             }
             self.hear();
+            self.media.tick();
+            for (tab, code) in self.media.take_out() {
+                self.tell(tab, ToHost::RunScript { tab, world: String::new(), all_frames: false, code, request: 0, boot: false });
+            }
+            for tab in self.media.take_fresh() {
+                self.dirty_tab(tab);
+            }
             self.tell_extensions();
             if next_tick.is_some_and(|at| at <= Instant::now()) {
                 self.with_extensions(|rt, b| rt.tick(b));

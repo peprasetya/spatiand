@@ -86,6 +86,7 @@ extern "C" {
     fn spatimesh_ext_css(e: *mut Raw, code: *const c_char);
     fn spatimesh_ext_done(e: *mut Raw);
     fn spatimesh_run_script(e: *mut Raw, id: u64, world: *const c_char, all_frames: c_int, code: *const c_char, request: u64, boot: c_int);
+    fn spatimesh_set_page_script(e: *mut Raw, code: *const c_char);
     fn spatimesh_ext_decider(decide: DecideFn);
     fn spatimesh_ext_rules(e: *mut Raw, id: *const c_char, webkit: *const c_char);
 }
@@ -364,6 +365,7 @@ impl Shim {
                 text: text(e.text2),
             },
             13 => Happened::Extension { tab, json: text(e.text) },
+            15 => Happened::Media { tab, json: text(e.text) },
             14 => Happened::ScriptResult { tab, request: e.number as u64, result: if e.a != 0 { Ok(text(e.text)) } else { Err(text(e.text)) } },
             _ => return None,
         })
@@ -536,6 +538,11 @@ impl Engine for Shim {
             *kept = rules;
         }
         unsafe { spatimesh_ext_done(self.raw) };
+    }
+
+    fn set_page_script(&mut self, code: &str) {
+        let code = c(code);
+        unsafe { spatimesh_set_page_script(self.raw, code.as_ptr()) };
     }
 
     fn run_script(&mut self, tab: TabId, world: &str, all_frames: bool, code: &str, request: u64, boot: bool) {

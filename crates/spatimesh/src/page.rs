@@ -65,6 +65,10 @@ impl PageTexture {
         }
     }
 
+    pub fn raw(&self) -> glow::Texture {
+        self.raw
+    }
+
     pub fn texture(&self) -> Texture {
         Texture::from_raw(self.raw, self.width, self.height)
     }

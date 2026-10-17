@@ -1331,6 +1331,13 @@ static void send_run(cef_frame_t *frame, const char *world, const char *code, ui
     frame->send_process_message(frame, PID_RENDERER, m);
 }
 
+/* SpatiMesh's own script for every frame's every document (its media). Not given to this
+ * engine yet: its pages play their media with the engine's own player. */
+void spatimesh_set_page_script(Engine *e, const char *code) {
+    (void)e;
+    (void)code;
+}
+
 /* Code run in a tab's top frame (and its other frames), in `world` ("" the page's own; an
  * extension's: in its closure, its API set up first if `boot`); the top frame's result told. */
 void spatimesh_run_script(Engine *e, uint64_t id, const char *world, int all_frames, const char *code, uint64_t request, int boot) {

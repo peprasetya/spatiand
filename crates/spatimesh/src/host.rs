@@ -156,6 +156,7 @@ pub fn serve(mut engine: Box<dyn Engine>, mut link: Link) {
                     Err(e) => log::warn!("the profile's extensions could not be read: {e}"),
                 },
                 ToHost::RunScript { tab, world, all_frames, code, request, boot } => engine.run_script(tab, &world, all_frames, &code, request, boot),
+                ToHost::PageScript { code } => engine.set_page_script(&code),
             }
         }
         if link.is_closed() {

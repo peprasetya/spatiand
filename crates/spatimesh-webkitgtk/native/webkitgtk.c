@@ -677,6 +677,13 @@ static void on_script_done(GObject *source, GAsyncResult *result, gpointer data)
     g_free(asked);
 }
 
+/* SpatiMesh's own script for every frame's every document (its media). Not given to this
+ * engine yet: its pages play their media with the engine's own player. */
+void spatimesh_set_page_script(Engine *e, const char *code) {
+    (void)e;
+    (void)code;
+}
+
 /* Code run in a tab's top frame, in `world` ("" the page's own), the extension's API set up
  * there first if `boot`. Only the top frame here: WebKitGTK runs scripts from outside the
  * page in no other (`all_frames` is for engines that can). */

@@ -182,6 +182,9 @@ pub enum Happened {
     /// What code run with [`Engine::run_script`] gave in the tab's top frame: its value as
     /// JSON, or why it failed.
     ScriptResult { tab: TabId, request: u64, result: Result<String, String> },
+    /// What SpatiMesh's media script in the tab's top frame says to the window (JSON): its
+    /// films, sounds and MediaSources, played by Spatiand's own player (`crate::media`).
+    Media { tab: TabId, json: String },
 }
 
 impl Happened {
@@ -200,7 +203,8 @@ impl Happened {
             | Happened::Choose { tab, .. }
             | Happened::Dialog { tab, .. }
             | Happened::Extension { tab, .. }
-            | Happened::ScriptResult { tab, .. } => *tab,
+            | Happened::ScriptResult { tab, .. }
+            | Happened::Media { tab, .. } => *tab,
             Happened::OpenTab { opener, .. } => *opener,
         }
     }
@@ -252,6 +256,11 @@ pub trait Engine {
     /// extension's, its API set up there first if `boot`), in the top frame or in every frame.
     /// If `request` is not 0, the top frame's result is told as [`Happened::ScriptResult`].
     fn run_script(&mut self, _tab: TabId, _world: &str, _all_frames: bool, _code: &str, _request: u64, _boot: bool) {}
+    /// SpatiMesh's own script, for the page's world at the start of every frame's every
+    /// document from now on, before the page's own. In the top frame it is given, before it
+    /// runs, `window.__spatimeshMediaPost(json)`: what it says to the window, as
+    /// [`Happened::Media`]. What the window says back reaches it by [`Engine::run_script`].
+    fn set_page_script(&mut self, _code: &str) {}
 }
 
 /// What a profile is to the engine that holds it.

@@ -11,6 +11,7 @@ pub mod bookmarks;
 pub mod engine;
 pub mod extensions;
 pub mod host;
+pub mod media;
 pub mod profiles;
 pub mod settings;
 pub mod store;

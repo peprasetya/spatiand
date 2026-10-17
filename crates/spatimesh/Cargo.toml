@@ -30,6 +30,9 @@ percent-encoding = "2"
 regex = "1"
 # Extensions' toolbar pictures.
 png = "0.17"
+# Pages' films and sounds, played by Spatiand's own player rather than the engine's
+# (docs/spatimesh.md, "Media"): FFmpeg and the platform's decoder.
+spatiand-media = { path = "../spatiand-media" }
 
 [dev-dependencies]
 # What keeps Spatiand's applications' settings the same on every machine, for the test that

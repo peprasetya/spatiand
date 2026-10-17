@@ -41,6 +41,9 @@ pub enum ToHost {
     Extensions { set: String },
     /// Code to run in a tab ([`crate::engine::Engine::run_script`]).
     RunScript { tab: TabId, world: String, all_frames: bool, code: String, request: u64, boot: bool },
+    /// SpatiMesh's own code for the start of every frame's every document, in the page's world
+    /// ([`crate::engine::Engine::set_page_script`]): its media (`crate::media`).
+    PageScript { code: String },
 }
 
 /// From an engine host to its window.
@@ -340,6 +343,10 @@ impl ToHost {
                 b.u64(*tab).str(world).bool(*all_frames).str(code).u64(*request).bool(*boot);
                 21
             }
+            ToHost::PageScript { code } => {
+                b.str(code);
+                22
+            }
         };
         frame(tag, b)
     }
@@ -381,6 +388,7 @@ impl ToHost {
             }
             20 => ToHost::Extensions { set: i.str()? },
             21 => ToHost::RunScript { tab: i.u64()?, world: i.str()?, all_frames: i.bool()?, code: i.str()?, request: i.u64()?, boot: i.bool()? },
+            22 => ToHost::PageScript { code: i.str()? },
             _ => return None,
         })
     }
@@ -479,6 +487,10 @@ impl FromHost {
                     };
                     24
                 }
+                Happened::Media { tab, json } => {
+                    b.u64(*tab).str(json);
+                    25
+                }
             },
         };
         frame(tag, b)
@@ -530,6 +542,7 @@ impl FromHost {
                 FromHost::Happened(Happened::Dialog { tab, kind, message, text })
             }
             23 => FromHost::Happened(Happened::Extension { tab: i.u64()?, json: i.str()? }),
+            25 => FromHost::Happened(Happened::Media { tab: i.u64()?, json: i.str()? }),
             24 => {
                 let (tab, request, ok, text) = (i.u64()?, i.u64()?, i.bool()?, i.str()?);
                 FromHost::Happened(Happened::ScriptResult { tab, request, result: if ok { Ok(text) } else { Err(text) } })
