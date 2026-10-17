@@ -33,6 +33,8 @@ png = "0.17"
 # Pages' films and sounds, played by Spatiand's own player rather than the engine's
 # (docs/spatimesh.md, "Media"): FFmpeg and the platform's decoder.
 spatiand-media = { path = "../spatiand-media" }
+# A film's picture for a page that draws it itself (drawImage, WebGL): sent as a JPEG.
+jpeg-encoder = "0.6"
 
 [dev-dependencies]
 # What keeps Spatiand's applications' settings the same on every machine, for the test that

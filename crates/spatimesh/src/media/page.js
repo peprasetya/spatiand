@@ -295,6 +295,7 @@
       var durationChanged = st.duration !== duration && !(isNaN(st.duration) && isNaN(duration));
       st.duration = duration;
       st.width = m.width || 0; st.height = m.height || 0;
+      st.fps = m.fps > 0 ? m.fps : 30;
       st.seekable = st.duration > 0 && st.duration !== Infinity ? [[0, st.duration]] : [];
       if (first) {
         st.readyState = 1;
@@ -427,7 +428,8 @@
     if (st.readyState < 1) { st.pendingSeek = t; return; }
     st.seeking = true;
     fire(st.el, 'seeking');
-    send({ t: 'seek', id: st.id, at: t });
+    if (likelyDrawn(st) && !st.wantFrames) st.wantFrames = now();
+    send({ t: 'seek', id: st.id, at: t, picture: !!st.wantFrames || likelyDrawn(st) });
   }
 
   function settleWaiters(st) {
@@ -684,7 +686,150 @@
   setTimeout_(settleTimer, 30);
 
   // ---- step 3: the film's picture, for a page that draws it itself ----
-  function frameIn(st, frame, then) { if (then) then(); }
+  // The engine has no picture of the film to give drawImage, WebGL, createImageBitmap,
+  // VideoFrame or captureStream, so each film keeps a canvas of its own with its latest picture
+  // in it, the film's own size, and that canvas is given them instead. The window sends pictures
+  // only while a page is using them (asked again each second they are) -- and for a film the page
+  // keeps out of sight or asks for with crossOrigin, as the ones a page makes thumbnails from are,
+  // with every seek; `seeked` waits for that picture, so a thumbnail drawn on `seeked` has it.
+  var nativeCanvasDraw = typeof CanvasRenderingContext2D !== 'undefined' ? CanvasRenderingContext2D.prototype.drawImage : null;
+  function canvasOf(st) {
+    if (!st.canvas) {
+      st.canvas = document.createElement('canvas');
+      st.canvas.width = st.width || 2; st.canvas.height = st.height || 2;
+    }
+    return st.canvas;
+  }
+  function frameIn(st, frame, then) {
+    var bytes;
+    try {
+      var text = atob(frame);
+      bytes = new Uint8Array(text.length);
+      for (var i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
+    } catch (e) { if (then) then(); return; }
+    createImageBitmap(new Blob([bytes], { type: 'image/jpeg' })).then(function (bitmap) {
+      var c = canvasOf(st);
+      var w = st.width || bitmap.width, h = st.height || bitmap.height;
+      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+      nativeCanvasDraw.call(c.getContext('2d'), bitmap, 0, 0, w, h);
+      if (bitmap.close) bitmap.close();
+      st.hasFrame = true;
+      if (then) then();
+    }, function () { if (then) then(); });
+  }
+  // A page has used the film's picture: the window keeps sending them.
+  function used(st) {
+    var t = now();
+    if (!st.wantFrames || t - st.wantFrames > 1000) { st.wantFrames = t; send({ t: 'frames', id: st.id }); }
+    return canvasOf(st);
+  }
+  // Films a page likely makes pictures of: asked for with crossOrigin, or kept out of sight.
+  function likelyDrawn(st) {
+    var el = st.el;
+    if (nativeHasAttribute.call(el, 'crossorigin')) return true;
+    if (!el.isConnected) return true;
+    var cs = nativeGetComputed(el);
+    return cs.display === 'none' || cs.visibility === 'hidden';
+  }
+  function swap(source) {
+    if (source && VideoProto && source instanceof HTMLVideoElement && managed.has(source)) return used(stateOf(source));
+    return source;
+  }
+  if (nativeCanvasDraw) {
+    defineProperty(CanvasRenderingContext2D.prototype, 'drawImage', { configurable: true, writable: true, value: function (image) {
+      if (image && managed.has(image)) {
+        var args = Array.prototype.slice.call(arguments);
+        args[0] = swap(image);
+        return nativeCanvasDraw.apply(this, args);
+      }
+      return nativeCanvasDraw.apply(this, arguments);
+    } });
+  }
+  if (typeof OffscreenCanvasRenderingContext2D !== 'undefined') {
+    var offDraw = OffscreenCanvasRenderingContext2D.prototype.drawImage;
+    defineProperty(OffscreenCanvasRenderingContext2D.prototype, 'drawImage', { configurable: true, writable: true, value: function (image) {
+      var args = Array.prototype.slice.call(arguments);
+      args[0] = swap(image);
+      return offDraw.apply(this, args);
+    } });
+  }
+  ['WebGLRenderingContext', 'WebGL2RenderingContext'].forEach(function (name) {
+    var G = window[name];
+    if (!G) return;
+    ['texImage2D', 'texSubImage2D'].forEach(function (method) {
+      var f = G.prototype[method];
+      if (!f) return;
+      defineProperty(G.prototype, method, { configurable: true, writable: true, value: function () {
+        var args = Array.prototype.slice.call(arguments);
+        for (var i = 0; i < args.length; i++) if (args[i] && typeof args[i] === 'object' && managed.has(args[i])) args[i] = swap(args[i]);
+        return f.apply(this, args);
+      } });
+    });
+  });
+  if (window.createImageBitmap) {
+    var nativeBitmap = window.createImageBitmap;
+    window.createImageBitmap = function (image) {
+      var args = Array.prototype.slice.call(arguments);
+      args[0] = swap(image);
+      return nativeBitmap.apply(window, args);
+    };
+  }
+  if (typeof VideoFrame !== 'undefined') {
+    var NativeFrame = VideoFrame;
+    var Frame = function (image, init) {
+      if (image && managed.has(image)) {
+        var st = stateOf(image);
+        init = O.assign({ timestamp: Math.round(time(st) * 1e6) }, init || {});
+        return new NativeFrame(used(st), init);
+      }
+      return arguments.length > 1 ? new NativeFrame(image, init) : new NativeFrame(image);
+    };
+    Frame.prototype = NativeFrame.prototype;
+    O.setPrototypeOf(Frame, NativeFrame);
+    window.VideoFrame = Frame;
+  }
+  if (VideoProto) {
+    defineProperty(MediaProto, 'captureStream', { configurable: true, writable: true, value: function (rate) {
+      var st = stateOf(this), c = used(st);
+      st.capturing = true;
+      return c.captureStream ? c.captureStream(rate) : null;
+    } });
+    // Called once for each picture of the film shown, with what it was.
+    var frameCallbacks = new WeakMap(), nextHandle = 1;
+    defineProperty(VideoProto, 'requestVideoFrameCallback', { configurable: true, writable: true, value: function (cb) {
+      var st = stateOf(this), list = frameCallbacks.get(st);
+      if (!list) { list = []; frameCallbacks.set(st, list); }
+      var handle = nextHandle++;
+      list.push({ handle: handle, cb: cb });
+      watchFrames(st);
+      return handle;
+    } });
+    defineProperty(VideoProto, 'cancelVideoFrameCallback', { configurable: true, writable: true, value: function (handle) {
+      var list = frameCallbacks.get(stateOf(this));
+      if (list) for (var i = 0; i < list.length; i++) if (list[i].handle === handle) list.splice(i, 1);
+    } });
+    var presented = new WeakMap();
+    function watchFrames(st) {
+      if (st.watching) return;
+      st.watching = true;
+      var last = -1;
+      (function tick(stamp) {
+        var list = frameCallbacks.get(st);
+        if (!list || !list.length) { st.watching = false; return; }
+        // Once for each of the film's pictures: its frame number, not the clock between them.
+        var t = time(st), shown = Math.floor(t * (st.fps || 30) + 1e-6);
+        if (shown !== last && st.readyState >= 2) {
+          last = shown;
+          var count = (presented.get(st) || 0) + 1;
+          presented.set(st, count);
+          var now_ = now(), calls = list.splice(0);
+          var meta = { presentationTime: now_, expectedDisplayTime: now_ + 16, width: st.width, height: st.height, mediaTime: t, presentedFrames: count, processingDuration: 0 };
+          calls.forEach(function (c) { try { c.cb.call(st.el, stamp, meta); } catch (e) { setTimeout_(function () { throw e; }); } });
+        }
+        raf(tick);
+      })(now());
+    }
+  }
 
   // ---- step 4: MediaSource ----
   function msReceive(m) {}

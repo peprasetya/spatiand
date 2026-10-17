@@ -1927,6 +1927,9 @@ impl Browser {
             }
             self.hear();
             self.media.tick();
+            if let Ok(gl) = self.app.gl() {
+                self.media.capture(gl);
+            }
             for (tab, code) in self.media.take_out() {
                 self.tell(tab, ToHost::RunScript { tab, world: String::new(), all_frames: false, code, request: 0, boot: false });
             }

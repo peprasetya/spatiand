@@ -61,6 +61,16 @@ struct Item {
     screen: Option<Screen>,
     /// When the pointer was last over its box: its controls show for a while after.
     hovered: Option<Instant>,
+    /// The page is drawing the film's picture itself until then: pictures are sent it.
+    frames_until: Option<Instant>,
+    /// The picture last sent, and when.
+    sent: Option<(*const Picture, Instant)>,
+    /// A seek the page wants a picture with: `seeked` is told with it.
+    seek_picture: bool,
+    /// A seek finished, to be told with its picture: where it ended.
+    seeked: Option<f64>,
+    /// Where pictures are drawn to be read back: a texture and its framebuffer, of this size.
+    readback: Option<(glow::Texture, glow::Framebuffer, (u32, u32))>,
 }
 
 impl Item {
@@ -88,6 +98,51 @@ impl Item {
             picture: None,
             screen: None,
             hovered: None,
+            frames_until: None,
+            sent: None,
+            seek_picture: false,
+            seeked: None,
+            readback: None,
+        }
+    }
+
+    /// The picture drawn at no more than 1280 across, read back and made a JPEG.
+    fn read_back(&mut self, gl: &Gl, picture: &Arc<Picture>) -> Option<Vec<u8>> {
+        let (pw, ph) = (picture.width.max(1), picture.height.max(1));
+        let scale = (1280.0 / pw as f32).min(1.0);
+        let size = (((pw as f32 * scale) as u32).max(2), ((ph as f32 * scale) as u32).max(2));
+        if self.screen.is_none() {
+            self.screen = Screen::new(gl).ok();
+        }
+        let screen = self.screen.as_mut()?;
+        screen.load(gl, picture);
+        let g = gl.api();
+        unsafe {
+            if self.readback.as_ref().is_some_and(|(_, _, s)| *s != size) {
+                if let Some((texture, framebuffer, _)) = self.readback.take() {
+                    g.delete_framebuffer(framebuffer);
+                    g.delete_texture(texture);
+                }
+            }
+            if self.readback.is_none() {
+                let texture = g.create_texture().ok()?;
+                g.bind_texture(glow::TEXTURE_2D, Some(texture));
+                g.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA8 as i32, size.0 as i32, size.1 as i32, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+                let framebuffer = g.create_framebuffer().ok()?;
+                g.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+                g.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(texture), 0);
+                self.readback = Some((texture, framebuffer, size));
+            }
+            let (_, framebuffer, _) = self.readback.unwrap();
+            g.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+            g.viewport(0, 0, size.0 as i32, size.1 as i32);
+            screen.draw(gl, size, [0.0, 0.0, size.0 as f32, size.1 as f32], [0.0, 0.0, 1.0, 1.0]);
+            let mut rgba = vec![0u8; (size.0 * size.1 * 4) as usize];
+            g.read_pixels(0, 0, size.0 as i32, size.1 as i32, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut rgba)));
+            g.bind_framebuffer(glow::FRAMEBUFFER, None);
+            let mut jpeg = Vec::new();
+            jpeg_encoder::Encoder::new(&mut jpeg, 82).encode(&rgba, size.0 as u16, size.1 as u16, jpeg_encoder::ColorType::Rgba).ok()?;
+            Some(jpeg)
         }
     }
 
@@ -193,10 +248,17 @@ impl Media {
                     }
                 }
             }
+            "frames" => {
+                if let Some(item) = self.items.get_mut(&key) {
+                    item.frames_until = Some(Instant::now() + Duration::from_millis(2500));
+                    item.sent = None;
+                }
+            }
             "seek" => {
                 let at = m["at"].as_f64().unwrap_or(0.0);
                 if let Some(item) = self.items.get_mut(&key) {
                     item.ended = false;
+                    item.seek_picture = m["picture"].as_bool().unwrap_or(false);
                     item.seek = Some((at, Instant::now()));
                     if let Some(player) = item.player.as_mut() {
                         player.seek(at);
@@ -337,7 +399,7 @@ impl Media {
                     if !item.told_meta {
                         item.told_meta = true;
                         let duration = if info.duration > 0.0 { json!(info.duration) } else { json!(-1.0) };
-                        said.push(json!({ "t": "meta", "duration": duration, "width": info.width, "height": info.height }));
+                        said.push(json!({ "t": "meta", "duration": duration, "width": info.width, "height": info.height, "fps": info.frame_rate }));
                         said.push(json!({ "t": "state", "ready": true, "at": player.position(), "buffered": buffered(&item.url, info.duration, player.position()) }));
                     }
                     let (picture, new) = player.picture();
@@ -358,7 +420,13 @@ impl Media {
                             item.seek = None;
                             item.last_at = at;
                             item.moved_at = Instant::now();
-                            said.push(json!({ "t": "state", "seeked": true, "at": at, "buffered": buffered(&item.url, info.duration, at) }));
+                            if item.seek_picture && item.picture.is_some() {
+                                // Told with its picture, by `capture`.
+                                item.seeked = Some(at);
+                                item.sent = None;
+                            } else {
+                                said.push(json!({ "t": "state", "seeked": true, "at": at, "buffered": buffered(&item.url, info.duration, at) }));
+                            }
                         }
                     }
                     if item.playing && item.seek.is_none() {
@@ -400,6 +468,37 @@ impl Media {
             if gone {
                 self.items.remove(&key);
             }
+        }
+    }
+
+    /// Pictures for pages that draw their films themselves (`page.js`, step 3): read back from
+    /// the GPU and sent as JPEGs, no more than thirty a second, only while they are being used --
+    /// and with a seek the page wants one for.
+    pub fn capture(&mut self, gl: &Gl) {
+        let keys: Vec<Key> = self.items.keys().cloned().collect();
+        for key in keys {
+            let message = {
+                let Some(item) = self.items.get_mut(&key) else { continue };
+                let wanted = item.frames_until.is_some_and(|t| t > Instant::now()) || item.seeked.is_some();
+                let Some(picture) = item.picture.clone().filter(|_| wanted) else { continue };
+                let new = item.sent.is_none_or(|(p, _)| p != Arc::as_ptr(&picture));
+                let due = item.sent.is_none_or(|(_, at)| at.elapsed() >= Duration::from_millis(33));
+                if !(new && due) && item.seeked.is_none() {
+                    continue;
+                }
+                let Some(jpeg) = item.read_back(gl, &picture) else { continue };
+                item.sent = Some((Arc::as_ptr(&picture), Instant::now()));
+                use base64::Engine as _;
+                let frame = base64::engine::general_purpose::STANDARD.encode(jpeg);
+                match item.seeked.take() {
+                    Some(at) => {
+                        let duration = item.player.as_ref().map_or(0.0, |p| p.info().duration);
+                        json!({ "t": "state", "seeked": true, "at": at, "frame": frame, "buffered": buffered(&item.url, duration, at) })
+                    }
+                    None => json!({ "t": "frame", "frame": frame }),
+                }
+            };
+            self.tell(&key, message);
         }
     }
 
