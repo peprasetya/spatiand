@@ -24,7 +24,7 @@ pub mod screen;
 #[cfg(feature = "engine")]
 mod sound;
 #[cfg(feature = "engine")]
-pub use sound::Stream;
+pub use sound::{SoundGroup, Stream};
 #[cfg(feature = "engine")]
 pub mod still;
 

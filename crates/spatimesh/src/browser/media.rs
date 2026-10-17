@@ -178,6 +178,8 @@ pub struct Media {
     sources: HashMap<Key, Source>,
     /// Pages' Web Audio, each AudioContext's mix as it comes, and when it last sounded.
     sounds: HashMap<Key, (spatiand_media::Stream, Instant)>,
+    /// Each tab's one sound output: its films, its `<audio>` and its Web Audio mixed together.
+    groups: HashMap<TabId, spatiand_media::SoundGroup>,
     out: Vec<(TabId, String)>,
     keyed: Option<Keyed>,
     /// Tabs whose films have a new picture to be drawn.
@@ -223,7 +225,7 @@ impl Media {
                     return;
                 }
                 match target(&url) {
-                    Some(name) => item.opening = Some(open(name, page, start)),
+                    Some(name) => item.opening = Some(open(name, page, start, self.group(tab))),
                     None => {
                         log::info!("media: {url} is the engine's to play");
                         self.tell(&key, json!({ "t": "release" }));
@@ -237,7 +239,7 @@ impl Media {
             }
             "ms" => self.media_source(tab, &frame, &m),
             "audio" => match m["a"].as_str().unwrap_or("") {
-                "open" => match spatiand_media::Stream::open(2) {
+                "open" => match spatiand_media::Stream::open_in(&self.group(tab), 2) {
                     Ok(stream) => {
                         self.sounds.insert(key, (stream, Instant::now()));
                     }
@@ -439,6 +441,11 @@ impl Media {
         self.sources.retain(|(t, _, _), _| *t != tab);
         self.items.retain(|(t, _, _), _| *t != tab);
         self.sounds.retain(|(t, _, _), _| *t != tab);
+        self.groups.remove(&tab);
+    }
+
+    fn group(&mut self, tab: TabId) -> spatiand_media::SoundGroup {
+        self.groups.entry(tab).or_default().clone()
     }
 
     fn tell(&mut self, key: &Key, mut m: Value) {
@@ -505,7 +512,7 @@ impl Media {
                 let Some(item) = self.items.get_mut(&key) else { continue };
                 if let (Some(source), None) = (item.mse.clone(), item.player.as_ref()) {
                     if source.ready() {
-                        match Player::open_source(source) {
+                        match Player::open_source_in(source, self.groups.entry(key.0).or_default()) {
                             Ok(mut player) => {
                                 if item.rate > 0.0 && item.rate != 1.0 {
                                     player.set_speed(item.rate);
@@ -896,14 +903,14 @@ fn target(url: &str) -> Option<String> {
 
 /// Open on a thread of its own: a network's file may take seconds to answer. Paused at once,
 /// so nothing is heard until the page says play.
-fn open(name: String, page: String, start: f64) -> mpsc::Receiver<Result<Player, String>> {
+fn open(name: String, page: String, start: f64, group: spatiand_media::SoundGroup) -> mpsc::Receiver<Result<Player, String>> {
     let (tx, rx) = mpsc::channel();
     let _ = std::thread::Builder::new().name("media-open".into()).spawn(move || {
         let mut options = vec![("user_agent".to_string(), USER_AGENT.to_string())];
         if page.starts_with("http") {
             options.push(("referer".to_string(), page.clone()));
         }
-        let result = Player::open_with(&name, &options).map(|mut player| {
+        let result = Player::open_in(&name, &options, &group).map(|mut player| {
             player.set_paused(true);
             if start > 0.0 {
                 player.seek(start);

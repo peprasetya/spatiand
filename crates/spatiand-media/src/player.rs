@@ -484,6 +484,11 @@ impl Player {
     /// As [`Player::open`], with what FFmpeg is to be told about how to fetch it: `headers`
     /// for a server that wants a cookie with every request, say.
     pub fn open_with(url: &str, options: &[(String, String)]) -> Result<Player, String> {
+        Player::open_in(url, options, &crate::SoundGroup::new())
+    }
+
+    /// As [`Player::open_with`], its sound mixed into `group`'s output with the rest of a page's.
+    pub fn open_in(url: &str, options: &[(String, String)], group: &crate::SoundGroup) -> Result<Player, String> {
         let name = CString::new(url).map_err(|_| "a name with a nul in it".to_string())?;
         unsafe {
             let mut format = ptr::null_mut();
@@ -548,7 +553,7 @@ impl Player {
             }
 
             let wanted = info.audio_playing.and_then(|index| info.audio.get(index)).map_or(2, |track| track.channels);
-            let sound = audio_stream.and_then(|_| Sound::open(wanted).map_err(|e| log::warn!("no sound: {e}")).ok()).map(Arc::new);
+            let sound = audio_stream.and_then(|_| Sound::open_in(group, wanted).map_err(|e| log::warn!("no sound: {e}")).ok()).map(Arc::new);
             let shared = Arc::new(Shared {
                 stop: AtomicBool::new(false),
                 paused: AtomicBool::new(false),
@@ -624,6 +629,11 @@ impl Player {
     /// times from wherever the player is, with the same decoders, sound and clock as a file.
     /// The source must be [`crate::mse::Source::ready`].
     pub fn open_source(source: Arc<crate::mse::Source>) -> Result<Player, String> {
+        Player::open_source_in(source, &crate::SoundGroup::new())
+    }
+
+    /// As [`Player::open_source`], its sound mixed into `group`'s output.
+    pub fn open_source_in(source: Arc<crate::mse::Source>, group: &crate::SoundGroup) -> Result<Player, String> {
         use crate::mse::{Cursor, MICROS};
         unsafe {
             // The tracks: the first picture and the first sound of the source's buffers.
@@ -677,7 +687,7 @@ impl Player {
                 info.audio_playing = Some(0);
             }
             let wanted = info.audio.first().map_or(2, |t| t.channels.max(1));
-            let sound = audio_stream.and_then(|_| Sound::open(wanted).map_err(|e| log::warn!("no sound: {e}")).ok()).map(Arc::new);
+            let sound = audio_stream.and_then(|_| Sound::open_in(group, wanted).map_err(|e| log::warn!("no sound: {e}")).ok()).map(Arc::new);
             let shared = Arc::new(Shared {
                 stop: AtomicBool::new(false),
                 paused: AtomicBool::new(false),
