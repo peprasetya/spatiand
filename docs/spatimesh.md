@@ -267,25 +267,82 @@ kind (a Chrome V3 one, a Firefox V2 one) running in CI; SpatiMesh's window (inst
 toolbar's buttons and badges, popups, options); CEF's bridge, in CI against CEF 126; Android's;
 the Mac's.
 
-## Media: Spatiand's own FFmpeg (decided 2026-10-16)
+## Media: Spatiand's own player, as part of the page (built 2026-10-17)
 
-The owner's decision: SpatiMesh plays modern media -- H.264, H.265, AV1 (where the hardware has
-it), any audio codec, MP4, WebM, MKV, and AVI, DivX and Xvid if it can -- with the FFmpeg the rest
-of Spatiand uses (streaming from spatiand-host, SpatiReel), widened where it is too narrow.
+The owner's decision (2026-10-16, widened 2026-10-17): every film and sound in a page is played by
+Spatiand's own player -- `spatiand-media`, FFmpeg with VideoToolbox, VA-API or MediaCodec under it
+and software for the rest, SpatiReel's engine -- and not the web engine's; only DRM stays the
+engine's. So every format plays everywhere (MKV, AVI, H.265, AV1, Opus, FLAC, AC-3...), and every
+sound goes to the room at its window. It is part of the page, not laid over it: the page's scripts
+see and drive the element as they would any browser's.
 
-* **A media file opened in SpatiMesh** (a link to one, or a page that is one) is played by
-  Spatiand's media engine (`spatiand-media`: FFmpeg with VA-API, VideoToolbox or MediaCodec under
-  it, software for the rest), the same engine as SpatiReel's, in the tab itself, with its
-  controls: every format that engine plays, on every platform, whatever the web engine can do.
-* **Video inside a page** (`<video>`, and Media Source Extensions: YouTube and the like) is the
-  web engine's own pipeline, which cannot take another FFmpeg: Steam's Chromium has the codecs
-  Valve built it with, WebKitGTK the distribution's GStreamer plugins (gst-libav is FFmpeg),
-  WebKit on the Mac Apple's, Android's WebView the device's. A `<video>` whose file the engine
-  cannot play is handed to Spatiand's engine as above.
-* **Spatiand's FFmpeg**: on the Deck SteamOS's own 7.1.1 (headers vendored, libraries the
-  system's: docs/remote.md), on the Mac Homebrew's, on the Beam Pro android/ffmpeg/build.sh's,
-  in CI tools/ci-deps.sh's 7.1.1. The Beam Pro's is widened: dav1d for AV1 where MediaCodec has
-  none, and MediaCodec wired for H.264/H.265/AV1 in the player (it decodes in software there now).
+**In the page** (`src/media/page.js`, put into every frame of every document before the page's
+own scripts, in the page's world):
+
+* **HTMLMediaElement** is taken over: `src` and `<source>` (the engine is never given them; the
+  page reads back what it wrote), `load`, `play()` and its promise (with browsers' rule for what may
+  start by itself), `pause`, `currentTime`, `duration`, `paused`, `ended`, `seeking`, `readyState`,
+  `networkState`, `buffered`, `seekable`, `volume`, `muted`, `playbackRate`, `loop`, `autoplay`,
+  `preload`, `poster`, `controls`, `videoWidth`/`videoHeight`, `canPlayType`, `error`, and every
+  media event, in browsers' order; the engine's own events for these elements are swallowed. A
+  camera's stream (`srcObject`) and anything given media keys stay the engine's.
+* **The picture**: the element's box is painted a key colour, `rgb(1,254,3)`; the window draws the
+  film under the page where the box is (by `object-fit` and `object-position`), and draws the page
+  over it with the key see-through. Where the page draws over the film half see-through (a caption
+  bar, a gradient, anti-aliased text), how much of the key is left in a pixel says how see-through
+  it is, and the film shows through by as much -- exact for anything that is not itself green.
+  The poster is the engine's until there is a picture. Controls asked for with `controls` are
+  SpatiMesh's own, drawn by the window and done through the element.
+* **Web Audio**: every `AudioContext`'s destination is a node of SpatiMesh's; the mix goes to the
+  window (and the engine is given silence), and from there to the room at the window.
+  `OfflineAudioContext` is left alone.
+* **Scripts reading the picture**: `drawImage`, WebGL's `texImage2D`/`texSubImage2D`,
+  `createImageBitmap`, WebCodecs' `VideoFrame` and `captureStream` are given a canvas of the film's
+  size holding its latest picture; `requestVideoFrameCallback` is called once per picture. The
+  window sends pictures (read back from the GPU, JPEG, at most 1280 across and 30 a second) only
+  while they are used, and with every seek for a film kept out of sight or asked for with
+  `crossOrigin` (a thumbnail-maker); `seeked` waits for that picture.
+* **MediaSource** (YouTube, most streaming players), `SourceBuffer`, `SourceBufferList`,
+  `isTypeSupported`, their object URLs and Safari's `ManagedMediaSource` are SpatiMesh's: appends go
+  to the window and finish, with buffered ranges, removes, `abort`, `timestampOffset`, `duration`,
+  `endOfStream` and errors, as the engine's would. A page that calls
+  `requestMediaKeySystemAccess` (DRM) keeps the engine's MediaSource from then on.
+* Frames below the top one speak to the window through their parent (postMessage), which moves
+  what they say about places onto its own page; only the top frame talks to the engine.
+
+**In the window** (`src/browser/media.rs`): a player per element, opened on a thread (paused until
+the page says play); its time, readiness, buffering, seeks and end told to the page; what the
+player cannot open (a server that wants the page's cookies) handed back to the engine. MediaSources
+are `spatiand_media::mse`: each SourceBuffer's bytes read by FFmpeg's own demuxer as they come (a
+new one from each initialization segment, found by MP4's and WebM's top-level boxes and elements),
+coded frames kept by time per track with what an append covers taken out first (the MSE
+specification's coded frame removal), an append done when its demuxer has read it all;
+`Player::open_source` plays them with a reader that walks the tracks in decode order from wherever
+a seek puts it, hands a new initialization segment's description to the decoder (a change of
+quality), and ends with the page's `endOfStream`, which makes the length where the media ends.
+
+**Each engine's part** is only the script and its way out (`Engine::set_page_script`,
+`Happened::Media`; the window answers with `run_script` in the top frame): a message handler on
+WebKit and WebKitGTK, a V8 function sending a process message on Steam's Chromium (the script
+travels to the pages' process with each browser), a JavaScript interface and document-start script
+on Android. `SPATIMESH_MEDIA=engine` leaves media to the engine; built without the `media` feature
+(no FFmpeg), so is everything.
+
+**Checked**: on the Mac (WebKit) and the Deck (Steam's Chromium), in the room's compositor: an MKV
+of H.264 and Opus with a half see-through caption over it (VideoToolbox, VA-API), the page's events
+and `play()` as a browser's, a WebM with SpatiMesh's controls, a page's Web Audio at its level
+(Mac), `drawImage` of a detached film seeked for a thumbnail, a playing film drawn into a canvas
+every frame and made a WebGL texture, `requestVideoFrameCallback` at the film's rate (Mac),
+MediaSources of H.264 and AAC in fragments (buffered, seek, end), VP9 and Opus WebM appended in
+uneven slices and a change of quality halfway (Mac); YouTube streaming through it (Mac, AV1).
+**Not yet**: anything on the Beam Pro; WebKitGTK only by CI's engine tests; in the glasses; sound
+heard (tests run muted); subtitles from `<track>`; fullscreen of the element (the engine's
+fullscreen of a box with the film in it shows the box's key); `audioTracks`/`videoTracks`; a
+MediaSource in a worker; AV1 offered to pages where the machine can only decode it in software.
+
+**Spatiand's FFmpeg**: on the Deck SteamOS's own 7.1.1 (headers vendored, libraries the system's:
+docs/remote.md), on the Mac Homebrew's, on the Beam Pro android/ffmpeg/build.sh's, in CI
+tools/ci-deps.sh's 7.1.1.
 
 ## Sound
 
@@ -353,7 +410,7 @@ private profile writes nothing at all.
 | Android (WebView) | yes | the Rust side's launch through a stand-in launcher; the Java compiles against Android 34; the wire's bytes the same from Java as from Rust; the APK builds (`spatiand-apk` artifact) | everything at run time on the Beam Pro: the launcher starts the engine's service, pages draw through the virtual display, input, a second profile in its own process, the private one leaving nothing |
 | SteamOS (Steam's CEF) | yes | compiles against CEF 126's headers; CI runs the six engine tests against CEF's own 126 build laid out as Steam's; **on the Deck against Steam's own CEF** (Valve's build, above): the six engine tests, the extensions test and the compositor end to end, sandbox on, outside Steam's runtime (2026-10-17) | Game Mode's display; on glasses |
 | Sync | through spatiand-sync, as Spatiand's other settings | two machines through spatiand-sync in a test (`tests/sync.rs`) | two real machines linked |
-| Media through Spatiand's FFmpeg | being built (above) | -- | -- |
+| Media through Spatiand's own player, part of the page | yes: files, Web Audio, pictures for scripts, MediaSource (above) | Mac and Deck in the compositor, test pages and YouTube (above) | the Beam Pro; in the glasses; by ear |
 | Sound placed per window | Mac: the engine host's sound to the room, at the window that plays (above); Deck: SpatiMesh's sink, which Steam's Chromium inherits | Mac: a page's sound reaches the session at its level | in the glasses, by ear; the Deck's by ear; two SpatiMesh windows playing at once are one stream |
 | Extensions: the runtime (`extensions/`) | yes: manifest V2/V3, install (folder, .zip, .crx, .xpi), messages and ports, storage, tabs, windows, scripting, action, alarms, notifications, permissions, management, menus, commands, offscreen, bookmarks, webNavigation events; declarativeNetRequest's static, dynamic and session rules (`dnr.rs`: Chrome's order -- priority, then allow, block, upgrade, redirect; `urlFilter`, domains, resource types, methods, `allowAllRequests`; redirects by path, URL, substitution and transform), applied by each engine as below | unit tests against a stand-in browser; api.js run in Node for both flavours and both kinds of context (`tests/api_js.rs`) | -- |
 | Extensions on WebKitGTK | yes: content scripts in each extension's own world (WebKit's patterns, a guard where they cannot say exactly), its pages' API, `chrome-extension://` and `moz-extension://` served, code run in a tab | a Chrome MV3 extension (service worker, storage, tabs.query, a web-accessible file, scripting.executeScript, a declarativeNetRequest rule blocking a fetch) and a Firefox MV2 one (background scripts, promises, its add-on id) run end to end (`spatimesh-webkitgtk/tests/extensions.rs`) | **top frame only**: content scripts in other frames run and can call, but answers and events reach only the top frame's (WebKitGTK runs outside code in no other frame; a web-process extension would); no blocking webRequest; declarativeNetRequest as WebKit's content filters: what they cannot say (`allowAllRequests` beyond the frame, redirects, header and method conditions) is left out, and `getMatchedRules` is not told |

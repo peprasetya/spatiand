@@ -37,8 +37,8 @@ docs/spatimesh.md; this is what a new session needs on top of it.
    blocked requests (Dnr.java's unreadable body), redirects, resource-type guessing.
 4. Mac: only the end-to-end test has run; everything else by hand.
 5. Task #11: the window's extension UI (toolbar buttons, badges, popups, options) end to end.
-6. Task #14: media through Spatiand's FFmpeg in SpatiMesh.
-7. Sound placed per window.
+6. ~~Task #14: media through Spatiand's FFmpeg~~: done 2026-10-17, as part of the page (docs/spatimesh.md, "Media").
+7. Sound placed per window: pages' media and Web Audio go to the room at the window (2026-10-17); on the Mac the engine's own sound (DRM) is tapped (`native/sound.m`).
 
 ## Checking locally (Linux)
 
