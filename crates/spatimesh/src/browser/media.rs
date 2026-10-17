@@ -77,6 +77,8 @@ struct Item {
     hovered: Option<Instant>,
     /// The page is drawing the film's picture itself until then: pictures are sent it.
     frames_until: Option<Instant>,
+    /// How wide the page draws them, if it said: they are sent no wider.
+    frames_width: u32,
     /// The picture last sent, and when.
     sent: Option<(*const Picture, Instant)>,
     /// A seek the page wants a picture with: `seeked` is told with it.
@@ -121,6 +123,7 @@ impl Item {
             screen: None,
             hovered: None,
             frames_until: None,
+            frames_width: 0,
             sent: None,
             seek_picture: false,
             seeked: None,
@@ -134,7 +137,9 @@ impl Item {
     /// The picture drawn at no more than 1280 across, read back and made a JPEG.
     fn read_back(&mut self, gl: &Gl, picture: &Arc<Picture>) -> Option<Vec<u8>> {
         let (pw, ph) = (picture.width.max(1), picture.height.max(1));
-        let scale = (1280.0 / pw as f32).min(1.0);
+        // As wide as the page draws it (never under 64), and never more than 1280 across.
+        let widest = if self.frames_width > 0 { self.frames_width.clamp(64, 1280) } else { 1280 };
+        let scale = (widest as f32 / pw as f32).min(1.0);
         let size = (((pw as f32 * scale) as u32).max(2), ((ph as f32 * scale) as u32).max(2));
         if self.screen.is_none() {
             self.screen = Screen::new(gl).ok();
@@ -298,6 +303,7 @@ impl Media {
             "frames" => {
                 if let Some(item) = self.items.get_mut(&key) {
                     item.frames_until = Some(Instant::now() + Duration::from_millis(2500));
+                    item.frames_width = m["width"].as_u64().unwrap_or(0) as u32;
                     item.sent = None;
                 }
             }

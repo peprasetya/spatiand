@@ -737,10 +737,27 @@
     }, function () { if (then) then(); });
   }
   // A page has used the film's picture: the window keeps sending them.
-  function used(st) {
+  // `width`: how wide the page draws it, where that is known (a 2D canvas): pictures are sent
+  // that wide and no wider -- a glow behind a film drawn into a small canvas needs no 1280.
+  // Unknown, it is the widest they are sent.
+  function used(st, width) {
     var t = now();
-    if (!st.wantFrames || t - st.wantFrames > 1000) { st.wantFrames = t; send({ t: 'frames', id: st.id }); }
+    var wide = width > 0 ? Math.ceil(width) : 0;
+    if (!st.drawnSince || t - st.drawnSince > 1000) { st.drawnSince = t; st.drawnWidth = wide; }
+    else if (st.drawnWidth !== 0) st.drawnWidth = wide === 0 ? 0 : Math.max(st.drawnWidth, wide);
+    if (!st.wantFrames || t - st.wantFrames > 1000 || st.toldWidth !== st.drawnWidth) {
+      st.wantFrames = t;
+      st.toldWidth = st.drawnWidth;
+      send({ t: 'frames', id: st.id, width: st.drawnWidth });
+    }
     return canvasOf(st);
+  }
+  // How wide drawImage's arguments draw it, at most as wide as what it draws into.
+  function drawnWidth(context, args) {
+    var w = args.length >= 9 ? args[7] : args.length >= 5 ? args[3] : 0;
+    var into = context && context.canvas && context.canvas.width;
+    if (!(w > 0)) return into > 0 ? into : 0;
+    return into > 0 ? Math.min(Math.abs(w), into) : Math.abs(w);
   }
   // Films a page likely makes pictures of: asked for with crossOrigin, or kept out of sight.
   function likelyDrawn(st) {
@@ -750,15 +767,15 @@
     var cs = nativeGetComputed(el);
     return cs.display === 'none' || cs.visibility === 'hidden';
   }
-  function swap(source) {
-    if (source && VideoProto && source instanceof HTMLVideoElement && managed.has(source)) return used(stateOf(source));
+  function swap(source, width) {
+    if (source && VideoProto && source instanceof HTMLVideoElement && managed.has(source)) return used(stateOf(source), width || 0);
     return source;
   }
   if (nativeCanvasDraw) {
     defineProperty(CanvasRenderingContext2D.prototype, 'drawImage', { configurable: true, writable: true, value: function (image) {
       if (image && managed.has(image)) {
         var args = Array.prototype.slice.call(arguments);
-        args[0] = swap(image);
+        args[0] = swap(image, drawnWidth(this, args));
         return nativeCanvasDraw.apply(this, args);
       }
       return nativeCanvasDraw.apply(this, arguments);
@@ -768,7 +785,7 @@
     var offDraw = OffscreenCanvasRenderingContext2D.prototype.drawImage;
     defineProperty(OffscreenCanvasRenderingContext2D.prototype, 'drawImage', { configurable: true, writable: true, value: function (image) {
       var args = Array.prototype.slice.call(arguments);
-      args[0] = swap(image);
+      args[0] = swap(image, drawnWidth(this, args));
       return offDraw.apply(this, args);
     } });
   }
