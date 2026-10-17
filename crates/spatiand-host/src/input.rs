@@ -279,6 +279,32 @@ pub fn apply(host: &mut Host, window: WindowId, input: Input, time_ms: u32) {
             pointer.axis(host, frame);
             pointer.frame(host);
         }
+        // A pad's scroll as a touchpad's: exact, and flung on by the application when it stops.
+        Input::FingerScroll {
+            horizontal,
+            vertical,
+        } => {
+            let Some(pointer) = host.seat.get_pointer() else {
+                return;
+            };
+            let mut frame = AxisFrame::new(time_ms).source(AxisSource::Finger);
+            if horizontal != 0.0 {
+                frame = frame.value(Axis::Horizontal, horizontal);
+            }
+            if vertical != 0.0 {
+                frame = frame.value(Axis::Vertical, vertical);
+            }
+            pointer.axis(host, frame);
+            pointer.frame(host);
+        }
+        Input::ScrollStop => {
+            let Some(pointer) = host.seat.get_pointer() else {
+                return;
+            };
+            let frame = AxisFrame::new(time_ms).source(AxisSource::Finger).stop(Axis::Vertical).stop(Axis::Horizontal);
+            pointer.axis(host, frame);
+            pointer.frame(host);
+        }
         Input::Key { code, pressed } => {
             let Some(keyboard) = host.seat.get_keyboard() else {
                 return;

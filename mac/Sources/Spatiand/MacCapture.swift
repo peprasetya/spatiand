@@ -348,6 +348,15 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         return CGPoint(x: f.minX + CGFloat(x) / w * f.width, y: f.minY + CGFloat(y) / h * f.height)
     }
 
+    /// How many of the Mac's points one of the picture's pixels is: a distance in the room's
+    /// units, made the Mac's.
+    func pointsPerPixel() -> Double {
+        let f = frame()
+        let part = lastContent.width > 0 ? lastContent.size : lastSize
+        let h = part.height > 0 ? part.height : f.height * scale
+        return h > 0 ? Double(f.height / h) : 1
+    }
+
     /// The other way: where a point of the Mac's screen is in the picture, in its pixels.
     func pixel(at point: CGPoint) -> CGPoint {
         let f = frame()

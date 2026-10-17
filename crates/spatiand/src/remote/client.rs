@@ -102,6 +102,8 @@ pub struct Client {
     last_time: u32,
     /// Which window the pointer is over, so a button knows where it landed.
     pointer_on: Option<u32>,
+    /// This frame's scroll is a finger's (`axis_source`), not a wheel's.
+    scroll_by_finger: bool,
     /// Which window has the keys.
     keyboard_on: Option<u32>,
     /// What is being held down, so it can be let go of when focus leaves.
@@ -182,6 +184,7 @@ impl Client {
             input: Vec::new(),
             last_time: 0,
             pointer_on: None,
+            scroll_by_finger: false,
             keyboard_on: None,
             held_keys: Vec::new(),
             held_buttons: Vec::new(),
@@ -990,16 +993,28 @@ impl Dispatch<wl_pointer::WlPointer, ()> for Client {
                         }
                         _ => (0.0, value),
                     };
-                    state.told(
-                        id,
-                        Input::Scroll {
-                            horizontal,
-                            vertical,
-                        },
-                        Some(time),
-                    );
+                    let input = if state.scroll_by_finger {
+                        Input::FingerScroll { horizontal, vertical }
+                    } else {
+                        Input::Scroll { horizontal, vertical }
+                    };
+                    state.told(id, input, Some(time));
                 }
             }
+            wl_pointer::Event::AxisSource { axis_source } => {
+                state.scroll_by_finger = matches!(
+                    axis_source,
+                    wayland_client::WEnum::Value(wl_pointer::AxisSource::Finger | wl_pointer::AxisSource::Continuous)
+                );
+            }
+            wl_pointer::Event::AxisStop { time, .. } => {
+                // Both axes stop in one frame: told once.
+                if let (Some(id), true) = (state.pointer_on, state.scroll_by_finger) {
+                    state.told(id, Input::ScrollStop, Some(time));
+                    state.scroll_by_finger = false;
+                }
+            }
+            wl_pointer::Event::Frame => state.scroll_by_finger = false,
             _ => {}
         }
     }

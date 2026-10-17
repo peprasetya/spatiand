@@ -92,6 +92,28 @@ enum MacInput {
         event.post(tap: .cghidEventTap)
     }
 
+    /// A pad's scroll as a trackpad's, where the real pointer is: continuous, exact to the point,
+    /// in phases (began, changed, ended) so an application scrolls it as it scrolls a trackpad
+    /// rather than animating a wheel notch for each, and carried on by momentum when the
+    /// finger leaves. `dx`/`dy` in points, positive moving the content up and left.
+    static let pad = PadScroll()
+
+    /// The wheel, where the real pointer is put, as one event of a gesture.
+    static func realScroll(dx: Double, dy: Double, at point: CGPoint, phase: Int64, momentum: Int64) {
+        CGWarpMouseCursorPosition(point)
+        guard let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: Int32(dy.rounded()), wheel2: Int32(dx.rounded()), wheel3: 0) else { return }
+        event.location = point
+        event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+        event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(dy.rounded()))
+        event.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(dx.rounded()))
+        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: dy)
+        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: dx)
+        event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+        event.setIntegerValueField(.scrollWheelEventMomentumPhase, value: momentum)
+        event.setIntegerValueField(.eventSourceUserData, value: spatiandEventMark)
+        event.post(tap: .cghidEventTap)
+    }
+
     /// A mouse event at `point` (the global space, points) for a window.
     static func mouse(_ type: CGEventType, button: CGMouseButton, at point: CGPoint, clicks: Int, window: CGWindowID, pid: pid_t) {
         guard let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: button) else { return }
@@ -127,5 +149,82 @@ enum MacInput {
         cg.type = .flagsChanged
         cg.flags = CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue) & 0xFFFF_0000)
         cg.postToPid(pid)
+    }
+}
+
+
+/// One pad's scroll gesture, replayed as a trackpad's (see `MacInput.pad`). Everything on
+/// `MacInput.real`, the queue the host's input is posted on.
+final class PadScroll {
+    // CGScrollPhase and CGMomentumScrollPhase.
+    private static let began: Int64 = 1, changed: Int64 = 2, ended: Int64 = 4
+    private static let glideBegin: Int64 = 1, glideOn: Int64 = 2, glideEnd: Int64 = 3
+
+    private var going = false
+    private var point = CGPoint.zero
+    private var last = Date.distantPast
+    /// Points a second, smoothed over the last movements: what momentum starts from.
+    private var velocity = (x: 0.0, y: 0.0)
+    private var glide: DispatchSourceTimer?
+    /// No word of the finger leaving for this long, and the gesture is over without momentum.
+    private var quiet: DispatchWorkItem?
+
+    func moved(dx: Double, dy: Double, at point: CGPoint) {
+        stopGlide()
+        let now = Date()
+        let dt = now.timeIntervalSince(last)
+        if going && dt > 0 && dt < 0.1 {
+            let k = min(1, dt / 0.05)
+            velocity = (velocity.x + (dx / dt - velocity.x) * k, velocity.y + (dy / dt - velocity.y) * k)
+        } else {
+            velocity = (0, 0)
+        }
+        last = now
+        self.point = point
+        MacInput.realScroll(dx: dx, dy: dy, at: point, phase: going ? Self.changed : Self.began, momentum: 0)
+        going = true
+        quiet?.cancel()
+        let end = DispatchWorkItem { [weak self] in self?.end(carryOn: false) }
+        quiet = end
+        MacInput.real.asyncAfter(deadline: .now() + 0.25, execute: end)
+    }
+
+    /// The finger has left the pad.
+    func stopped() {
+        end(carryOn: true)
+    }
+
+    private func end(carryOn: Bool) {
+        quiet?.cancel()
+        quiet = nil
+        guard going else { return }
+        going = false
+        MacInput.realScroll(dx: 0, dy: 0, at: point, phase: Self.ended, momentum: 0)
+        // A finger that had stopped before it left leaves the page where it is.
+        let fresh = Date().timeIntervalSince(last) < 0.08
+        guard carryOn, fresh, hypot(velocity.x, velocity.y) > 120 else { return }
+        var v = velocity
+        var first = true
+        let timer = DispatchSource.makeTimerSource(queue: MacInput.real)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(16))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            // As a trackpad's: a little slower each frame, until it is too slow to see.
+            v = (v.x * 0.95, v.y * 0.95)
+            if hypot(v.x, v.y) < 20 {
+                MacInput.realScroll(dx: 0, dy: 0, at: self.point, phase: 0, momentum: Self.glideEnd)
+                self.stopGlide()
+                return
+            }
+            MacInput.realScroll(dx: v.x * 0.016, dy: v.y * 0.016, at: self.point, phase: 0, momentum: first ? Self.glideBegin : Self.glideOn)
+            first = false
+        }
+        glide = timer
+        timer.resume()
+    }
+
+    private func stopGlide() {
+        glide?.cancel()
+        glide = nil
     }
 }

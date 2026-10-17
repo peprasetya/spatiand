@@ -252,9 +252,10 @@ fn run(stream: std::os::unix::net::UnixStream, inbox: Receiver<Command>) {
                     Input::Button { button, pressed } => {
                         ffi::tell_window(Asked::WindowButton, window, button as f64, pressed as u8 as f64, 0.0)
                     }
-                    Input::Scroll { horizontal, vertical } => {
+                    Input::Scroll { horizontal, vertical } | Input::FingerScroll { horizontal, vertical } => {
                         ffi::tell_window(Asked::WindowScroll, window, horizontal, vertical, 0.0)
                     }
+                    Input::ScrollStop => {}
                     Input::Key { code, pressed } => {
                         // As the Mac's own key code, which is what the app posts.
                         let mac = super::keycodes::mac_of(code).map(|m| m as f64).unwrap_or(-1.0);
