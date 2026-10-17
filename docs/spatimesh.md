@@ -309,6 +309,12 @@ own scripts, in the page's world):
   `requestMediaKeySystemAccess` (DRM) keeps the engine's MediaSource from then on.
 * Frames below the top one speak to the window through their parent (postMessage), which moves
   what they say about places onto its own page; only the top frame talks to the engine.
+* **Fullscreen** is SpatiMesh's on every engine (WebKit offers an embedded view none): the
+  element is fixed over its frame's viewport (a frame's element over its parent's), the window
+  gives the page all of itself with no bars, and Escape, another tab or a new page ends it. The
+  page sees `requestFullscreen`, `fullscreenElement`, `exitFullscreen`, the `fullscreenchange`
+  events and their `on…` handlers (players look for those before they trust the API), WebKit's
+  prefixed names, and `screen` the size of the viewport while it lasts.
 
 **In the window** (`src/browser/media.rs`): a player per element, opened on a thread (paused until
 the page says play); its time, readiness, buffering, seeks and end told to the page; what the
@@ -334,10 +340,10 @@ and `play()` as a browser's, a WebM with SpatiMesh's controls, a page's Web Audi
 (Mac), `drawImage` of a detached film seeked for a thumbnail, a playing film drawn into a canvas
 every frame and made a WebGL texture, `requestVideoFrameCallback` at the film's rate (Mac),
 MediaSources of H.264 and AAC in fragments (buffered, seek, end), VP9 and Opus WebM appended in
-uneven slices and a change of quality halfway (Mac); YouTube streaming through it (Mac, AV1).
+uneven slices and a change of quality halfway (Mac); YouTube streaming through it (Mac, AV1), its
+fullscreen ('f', Escape) with the film playing throughout.
 **Not yet**: anything on the Beam Pro; WebKitGTK only by CI's engine tests; in the glasses; sound
-heard (tests run muted); subtitles from `<track>`; fullscreen of the element (the engine's
-fullscreen of a box with the film in it shows the box's key); `audioTracks`/`videoTracks`; a
+heard (tests run muted); subtitles from `<track>`; `audioTracks`/`videoTracks`; a
 MediaSource in a worker; AV1 offered to pages where the machine can only decode it in software.
 
 **Spatiand's FFmpeg**: on the Deck SteamOS's own 7.1.1 (headers vendored, libraries the system's:
