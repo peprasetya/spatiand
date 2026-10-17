@@ -3,19 +3,23 @@
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=native/webkit.m");
+    println!("cargo:rerun-if-changed=native/sound.m");
     println!("cargo:rerun-if-changed=Info.plist");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return;
     }
     cc::Build::new()
         .file("native/webkit.m")
+        .file("native/sound.m")
         .flag("-fobjc-arc")
         .flag("-fmodules")
         // AppKit's own deprecations, and the SPI it is asked for by name, are not this file's.
         .flag("-Wno-deprecated-declarations")
         .flag("-Wno-unused-parameter")
+        // macOS 14.2's process taps, used where they exist (sound.m asks first).
+        .flag("-Wno-unguarded-availability-new")
         .compile("spatimesh_webkit");
-    for framework in ["WebKit", "AppKit", "Foundation", "CoreGraphics", "QuartzCore"] {
+    for framework in ["WebKit", "AppKit", "Foundation", "CoreGraphics", "QuartzCore", "CoreAudio"] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
     // A browser loads plain http:// pages too, which App Transport Security allows only where

@@ -1748,6 +1748,11 @@ impl Browser {
                 Some(t) => format!("{} \u{2014} SpatiMesh", t.label()),
                 None => "SpatiMesh".to_string(),
             };
+            // A speaker before it while any of the window's tabs is playing: the room places
+            // SpatiMesh's sound -- one stream for all its windows, as the engine plays it -- at
+            // the window that says it plays (`audio::says_it_plays`).
+            let playing = window.tabs.iter().any(|t| self.tabs.tab(*t).is_some_and(|t| t.playing));
+            let title = if playing { format!("\u{1F50A} {title}") } else { title };
             let id = self.wins[w].id;
             self.app.set_title(id, &title);
             let engine_note = self.hosts.get(&window.profile).and_then(|h| h.engine.clone());

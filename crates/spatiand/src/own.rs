@@ -206,12 +206,23 @@ pub mod sound {
         // A hundredth of a second at a time, as it comes.
         let mut bytes = vec![0u8; 480 * channels * 2];
         let mut pcm = vec![0i16; 480 * channels];
+        // SPATIAND_DEBUG_OWN_SOUND: how loud it is, once a second, for a test to read.
+        let debug = std::env::var_os("SPATIAND_DEBUG_OWN_SOUND").is_some();
+        let (mut peak, mut blocks) = (0i32, 0u32);
         let ended = loop {
             if let Err(e) = stream.read_exact(&mut bytes) {
                 break e;
             }
             for (sample, pair) in pcm.iter_mut().zip(bytes.chunks_exact(2)) {
                 *sample = i16::from_le_bytes([pair[0], pair[1]]);
+            }
+            if debug {
+                peak = peak.max(pcm.iter().map(|s| (*s as i32).abs()).max().unwrap_or(0));
+                blocks += 1;
+                if blocks == 100 {
+                    log::info!("sound from {app}: peak {peak} in the last second");
+                    (peak, blocks) = (0, 0);
+                }
             }
             let slot = senders().lock().unwrap().get(&app).copied().flatten();
             spatiand_audio::server::feed_local(slot, &pcm, channels);

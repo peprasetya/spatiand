@@ -1011,6 +1011,24 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-desk") {
     func then(_ wait: Double, _ step: @escaping () -> Void) { t += wait; DispatchQueue.main.asyncAfter(deadline: .now() + t, execute: step) }
     then(0.5) { Room.shared.openOwn(name) }
     then(8) { shoot("opened") }
+    if name == "SpatiMesh", args.count > 2 {
+        // --selftest-desk SpatiMesh <folder> <address>: the address opened and its page clicked,
+        // for its sound; then closed. With SPATIAND_DEBUG_OWN_SOUND, the session says how loud
+        // what reaches it is.
+        then(0.5) {
+            guard let id = id() else { return }
+            sp_desk_key(id, 0x37, true); press(0x25); sp_desk_key(id, 0x37, false)
+            for c in args[2] {
+                if c == ":" { sp_desk_key(id, 0x38, true); press(0x29); sp_desk_key(id, 0x38, false) } else if let code = keys[c] { press(code) }
+            }
+            press(0x24)
+        }
+        then(6) { if let id = id() { sp_desk_motion(id, 500, 500); sp_desk_button(id, 0x110, true); sp_desk_button(id, 0x110, false) } }
+        then(12) { shoot("sound") }
+        then(0.5) { DeskWindows.shared.all.first?.performClose(nil) }
+        then(4) { Room.shared.stop(); exit(0) }
+        application.run()
+    }
     if name != "SpatiMesh" {
         // The others: shown, resized, closed.
         then(0.5) { DeskWindows.shared.all.first?.setContentSize(NSSize(width: 1000, height: 700)) }

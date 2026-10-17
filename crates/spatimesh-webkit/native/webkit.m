@@ -50,6 +50,7 @@ typedef struct {
 
 typedef struct Engine Engine;
 
+void spatimesh_sound_playing(const pid_t *pids, size_t count);
 static void push(Engine *e, int kind, uint64_t tab, double number, int a, int b, NSString *text, NSString *text2);
 static void wake(void);
 
@@ -485,6 +486,24 @@ static CFTimeInterval now(void) {
     }];
 }
 
+/* The processes WebKit plays this tab's sound from, as the web view says by SPI (the GPU
+ * process; the page's own, where it plays there), to be tapped for the room (sound.m). */
+- (void)soundToTheRoom {
+    pid_t pids[2] = {0, 0};
+    size_t n = 0;
+    for (NSString *name in @[ @"_gpuProcessIdentifier", @"_webProcessIdentifier" ]) {
+        SEL selector = NSSelectorFromString(name);
+        if ([self.view respondsToSelector:selector])
+            pids[n++] = ((pid_t (*)(id, SEL))objc_msgSend)(self.view, selector);
+    }
+    static BOOL told;
+    if (n == 0 && !told) {
+        told = YES;
+        fprintf(stderr, "spatimesh-webkit: this WebKit does not say which process plays a page's sound; it plays on the Mac\n");
+    }
+    spatimesh_sound_playing(pids, n);
+}
+
 - (void)checkSound {
     if (@available(macOS 12.0, *)) {
         __weak MeshTab *weakSelf = self;
@@ -493,6 +512,8 @@ static CFTimeInterval now(void) {
             if (!tab)
                 return;
             BOOL playing = state == WKMediaPlaybackStatePlaying;
+            if (playing)
+                [tab soundToTheRoom];
             if (playing != tab.playing) {
                 tab.playing = playing;
                 push(tab.engine, EV_SOUND, tab.ident, 0, playing, 0, nil, nil);

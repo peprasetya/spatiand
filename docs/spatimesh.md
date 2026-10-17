@@ -301,10 +301,19 @@ placed at the window its tab is in; a tab dragged to another window takes it alo
   instance id asks for it (as remote applications' windows already have, keyed by id) and writes
   where they are to `$XDG_RUNTIME_DIR`. Where that fails the sound still plays, placed at
   SpatiMesh as a whole, the launch-time routing every app gets.
-* **Mac.** WebKit plays every page of an engine host from one GPU process, so pages cannot be
-  told apart. The host taps its own WebKit processes (a Core Audio process tap, as the Mac tap
-  does for Mac apps) and hands the sound to the room (`spatiand-sound`) as the window of the tab
-  that is playing (`requestMediaPlaybackState`). Two windows playing at once are heard from one.
+* **Mac (built 2026-10-17).** WebKit plays every page of an engine host from its GPU process,
+  which is launchd's child and "responsible" to whatever started the session, so neither the
+  room nor the Mac's own application taps can tell it is SpatiMesh's. The engine host asks the
+  web view for its GPU and page processes (`_gpuProcessIdentifier`, `_webProcessIdentifier`,
+  SPI) when a tab plays, taps them itself (`spatimesh-webkit/native/sound.m`: a Core Audio
+  process tap, the original muted only while it is read, under the Spatiand app's permission to
+  record what the Mac plays) and writes it to the session's `spatiand-sound` socket under the
+  window process's `SPATIAND_APP_ID`, as SpatiReel does. In the room it is placed at SpatiMesh's
+  window through the HRTF; in 2D mode it plays unplaced, as plain stereo; with no session it is
+  not tapped. One stream for the whole engine host: a window whose tab is playing says so in its
+  title (a speaker first), which is the window the room places it at. Checked: a page's tone
+  arrives at the session at the level it was played (`--selftest-desk SpatiMesh <folder>
+  <address>` run as the app, `SPATIAND_DEBUG_OWN_SOUND=1`); not yet heard in the glasses.
 * **Android.** WebView plays through the app's own output, with no way to take its sound, per
   tab or at all, short of screen-recording consent: **its sound is not placed in the room**.
 
@@ -345,7 +354,7 @@ private profile writes nothing at all.
 | SteamOS (Steam's CEF) | yes | compiles against CEF 126's headers; CI runs the six engine tests against CEF's own 126 build laid out as Steam's; **on the Deck against Steam's own CEF** (Valve's build, above): the six engine tests, the extensions test and the compositor end to end, sandbox on, outside Steam's runtime (2026-10-17) | Game Mode's display; on glasses |
 | Sync | through spatiand-sync, as Spatiand's other settings | two machines through spatiand-sync in a test (`tests/sync.rs`) | two real machines linked |
 | Media through Spatiand's FFmpeg | being built (above) | -- | -- |
-| Sound placed per window | **no** | -- | each engine plays its pages' sound itself, not placed at the tab's window (at most where Spatiand places SpatiMesh as a whole) |
+| Sound placed per window | Mac: the engine host's sound to the room, at the window that plays (above); Deck: SpatiMesh's sink, which Steam's Chromium inherits | Mac: a page's sound reaches the session at its level | in the glasses, by ear; the Deck's by ear; two SpatiMesh windows playing at once are one stream |
 | Extensions: the runtime (`extensions/`) | yes: manifest V2/V3, install (folder, .zip, .crx, .xpi), messages and ports, storage, tabs, windows, scripting, action, alarms, notifications, permissions, management, menus, commands, offscreen, bookmarks, webNavigation events; declarativeNetRequest's static, dynamic and session rules (`dnr.rs`: Chrome's order -- priority, then allow, block, upgrade, redirect; `urlFilter`, domains, resource types, methods, `allowAllRequests`; redirects by path, URL, substitution and transform), applied by each engine as below | unit tests against a stand-in browser; api.js run in Node for both flavours and both kinds of context (`tests/api_js.rs`) | -- |
 | Extensions on WebKitGTK | yes: content scripts in each extension's own world (WebKit's patterns, a guard where they cannot say exactly), its pages' API, `chrome-extension://` and `moz-extension://` served, code run in a tab | a Chrome MV3 extension (service worker, storage, tabs.query, a web-accessible file, scripting.executeScript, a declarativeNetRequest rule blocking a fetch) and a Firefox MV2 one (background scripts, promises, its add-on id) run end to end (`spatimesh-webkitgtk/tests/extensions.rs`) | **top frame only**: content scripts in other frames run and can call, but answers and events reach only the top frame's (WebKitGTK runs outside code in no other frame; a web-process extension would); no blocking webRequest; declarativeNetRequest as WebKit's content filters: what they cannot say (`allowAllRequests` beyond the frame, redirects, header and method conditions) is left out, and `getMatchedRules` is not told |
 | Extensions in the window | yes: the toolbar's buttons and badges, popups over the window, the menu's extensions (on/off, load, reload, remove), `--load-extension` | builds; not exercised in the compositor end to end | by hand: load an extension from the menu, press its button, its popup, its badge |
