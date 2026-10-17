@@ -98,6 +98,12 @@
       ev.stopImmediatePropagation();
       var m = d.__spatimeshMediaUp;
       below[m.f] = ev.source;
+      if (m.t === 'fullscreen') {
+        // A frame below going fullscreen: its frame element fills this page, as browsers do.
+        var frame = frameOf(ev.source);
+        if (frame) { if (m.on) enterFs(frame, ev.source); else if (fsElement === frame) leaveFs(false, true); }
+        return;
+      }
       // Places said by a frame below are on its page: here they are moved to this one.
       if (m.places) {
         var el = frameOf(ev.source);
@@ -269,6 +275,7 @@
   // ---- what the window says ----
   function receive(m) {
     if (m.t === 'ms') { msReceive(m); return; }
+    if (m.t === 'fullscreen-exit') { if (fsElement) leaveFs(); return; }
     if (m.t === 'audio') { audioReceive(m); return; }
     var st = byId[m.id];
     if (!st) return;
@@ -1137,6 +1144,65 @@
   }
   if (window.AudioContext) window.AudioContext = wrapAudio(window.AudioContext);
   if (window.webkitAudioContext) window.webkitAudioContext = wrapAudio(window.webkitAudioContext);
+
+  // ---- fullscreen ----
+  // The engines' own fullscreen is no use here (WebKit's is not even offered to pages in an
+  // embedded view), so it is SpatiMesh's: the element is fixed over the whole of its frame's
+  // viewport, a frame's element over its parent's, and the window makes the page the whole window.
+  // The page sees requestFullscreen, fullscreenElement, fullscreenEnabled, exitFullscreen and the
+  // fullscreenchange events as a browser's (WebKit's prefixed names too).
+  var fsElement = null, fsSaved = null, fsChild = null;
+  var FS = { position: 'fixed', top: '0', left: '0', right: '0', bottom: '0', width: '100vw', height: '100vh', 'max-width': 'none',
+    'max-height': 'none', 'min-width': '0', 'min-height': '0', margin: '0', 'z-index': '2147483647', transform: 'none', 'box-sizing': 'border-box' };
+  function fsEvents(el) {
+    ['fullscreenchange', 'webkitfullscreenchange'].forEach(function (name) {
+      var ev = new Event_(name, { bubbles: true, composed: true });
+      ours.add(ev);
+      nativeDispatch.call(el && el.isConnected ? el : document, ev);
+    });
+  }
+  function enterFs(el, child) {
+    if (fsElement === el) return Promise_.resolve();
+    if (fsElement) leaveFs(true);
+    fsSaved = O.keys(FS).concat(['background-color']).map(function (k) { return [k, el.style.getPropertyValue(k), el.style.getPropertyPriority(k)]; });
+    O.keys(FS).forEach(function (k) { el.style.setProperty(k, FS[k], 'important'); });
+    // What is behind it is not to be seen, as a browser's backdrop is black.
+    var bg = nativeGetComputed(el).backgroundColor;
+    if (!managed.has(el) && (bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent')) el.style.setProperty('background-color', '#000', 'important');
+    fsElement = el;
+    fsChild = child || null;
+    send({ t: 'fullscreen', on: true });
+    soon(function () { fsEvents(el); places(); });
+    return Promise_.resolve();
+  }
+  function leaveFs(quiet, fromBelow) {
+    var el = fsElement;
+    if (!el) return Promise_.resolve();
+    (fsSaved || []).forEach(function (s) { if (s[1]) el.style.setProperty(s[0], s[1], s[2]); else el.style.removeProperty(s[0]); });
+    fsElement = null; fsSaved = null;
+    if (fsChild && !fromBelow) postMessage_(fsChild, { __spatimeshMediaDown: { t: 'fullscreen-exit' } });
+    fsChild = null;
+    if (!quiet) send({ t: 'fullscreen', on: false });
+    soon(function () { fsEvents(el); places(); });
+    return Promise_.resolve();
+  }
+  function fsMethod(proto, name, f) { try { defineProperty(proto, name, { configurable: true, writable: true, value: f }); } catch (e) {} }
+  function fsGetter(proto, name, f) { try { defineProperty(proto, name, { configurable: true, enumerable: true, get: f }); } catch (e) {} }
+  ['requestFullscreen', 'webkitRequestFullscreen', 'webkitRequestFullScreen'].forEach(function (n) {
+    fsMethod(ElementProto, n, function () { return enterFs(this); });
+  });
+  if (VideoProto) ['webkitEnterFullscreen', 'webkitEnterFullScreen'].forEach(function (n) { fsMethod(VideoProto, n, function () { enterFs(this); }); });
+  ['exitFullscreen', 'webkitExitFullscreen', 'webkitCancelFullScreen'].forEach(function (n) {
+    fsMethod(Document.prototype, n, function () { return leaveFs(); });
+  });
+  ['fullscreenElement', 'webkitFullscreenElement', 'webkitCurrentFullScreenElement'].forEach(function (n) {
+    fsGetter(Document.prototype, n, function () { return fsElement; });
+  });
+  ['fullscreenEnabled', 'webkitFullscreenEnabled', 'webkitFullScreenKeyboardInputAllowed'].forEach(function (n) {
+    fsGetter(Document.prototype, n, function () { return true; });
+  });
+  ['fullscreen', 'webkitIsFullScreen'].forEach(function (n) { fsGetter(Document.prototype, n, function () { return !!fsElement; }); });
+  if (VideoProto) fsGetter(VideoProto, 'webkitDisplayingFullscreen', function () { return fsElement === this; });
 
   // ---- this document, to the window: here, and gone ----
   send({ t: 'hello', top: TOP });

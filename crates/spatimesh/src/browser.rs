@@ -170,6 +170,8 @@ struct Win {
     plus: Rect,
     buttons: [(Hover, Rect); 6],
     page: Rect,
+    /// The page has the whole window: something in it is fullscreen (`media/page.js`).
+    fullscreen: bool,
     /// A button went down on the page and has not come up: moves go to the page meanwhile.
     pressed_in_page: Option<engine::Button>,
     in_page: bool,
@@ -365,6 +367,41 @@ impl Browser {
     }
 
     /// Tell every tab of a window its page's size, where that changed.
+    /// Where the page is in a window: under the bars, or all of it while fullscreen.
+    fn lay_out_page(&mut self, w: usize) {
+        let size = self.wins[w].size;
+        self.wins[w].page = if self.wins[w].fullscreen { Rect::new(0.0, 0.0, size.0 as f32, size.1 as f32) } else { page_rect(size) };
+        self.size_pages(w);
+        self.wins[w].dirty = true;
+    }
+
+    /// Something in a tab's page went fullscreen, or came out: the window gives the page all of
+    /// itself, or its bars back. `tell` says it to the page (the wearer left it, by Escape or by
+    /// going to another tab).
+    fn set_fullscreen(&mut self, tab: TabId, on: bool, tell: bool) {
+        let Some(key) = self.tabs.window_of(tab) else { return };
+        let Some(w) = self.win_of_key(key) else { return };
+        if on && self.tabs.active(key) != Some(tab) {
+            return;
+        }
+        if self.wins[w].fullscreen == on {
+            return;
+        }
+        self.wins[w].fullscreen = on;
+        self.wins[w].popup = None;
+        self.lay_out_page(w);
+        if tell && !on {
+            let code = "window.__spatimeshMediaIn&&window.__spatimeshMediaIn({\"t\":\"fullscreen-exit\"})".to_string();
+            self.tell(tab, ToHost::RunScript { tab, world: String::new(), all_frames: false, code, request: 0, boot: false });
+        }
+    }
+
+    fn set_fullscreen_off_quietly(&mut self, w: usize, tab: TabId) {
+        let _ = w;
+        let code = "window.__spatimeshMediaIn&&window.__spatimeshMediaIn({\"t\":\"fullscreen-exit\"})".to_string();
+        self.tell(tab, ToHost::RunScript { tab, world: String::new(), all_frames: false, code, request: 0, boot: false });
+    }
+
     fn size_pages(&mut self, w: usize) {
         let view = self.view_of(w);
         let Some(window) = self.tabs.window(self.wins[w].key).cloned() else { return };
@@ -488,7 +525,16 @@ impl Browser {
             FromHost::Happened(Happened::ScriptResult { request, result, .. }) => {
                 self.with_extensions(|rt, b| rt.script_result(b, request, result));
             }
-            FromHost::Happened(Happened::Media { tab, json }) => self.media.said(tab, &json),
+            FromHost::Happened(Happened::Media { tab, json }) => {
+                // Fullscreen is the window's to do; a new document in the tab ends it.
+                if json.contains("\"t\":\"fullscreen\"") {
+                    let on = json.contains("\"on\":true");
+                    self.set_fullscreen(tab, on, false);
+                } else if json.contains("\"t\":\"hello\"") && json.contains("\"top\":true") {
+                    self.set_fullscreen(tab, false, false);
+                }
+                self.media.said(tab, &json);
+            }
             FromHost::Happened(happened) if self.hidden.contains_key(&happened.tab()) => self.hidden_happened(profile, happened),
             FromHost::Happened(happened) => self.happened(happened),
         }
@@ -651,6 +697,7 @@ impl Browser {
             plus: Rect::default(),
             buttons: [(Hover::Back, Rect::default()); 6],
             page: Rect::default(),
+            fullscreen: false,
             pressed_in_page: None,
             in_page: false,
             popup: None,
@@ -684,6 +731,14 @@ impl Browser {
     /// The tab in front of a window changed: the bar shows its address, the keyboard goes to it.
     fn after_tab_change(&mut self, key: WindowKey) {
         let Some(w) = self.win_of_key(key) else { return };
+        // Another tab: the one that was fullscreen is not any more.
+        if self.wins[w].fullscreen {
+            self.wins[w].fullscreen = false;
+            if let Some(was) = self.wins[w].told_active {
+                self.set_fullscreen_off_quietly(w, was);
+            }
+            self.lay_out_page(w);
+        }
         let engine = self.settings.search_engine();
         let active = self.tabs.active(key).and_then(|t| self.tabs.tab(t)).cloned();
         let win = &mut self.wins[w];
@@ -854,6 +909,7 @@ impl Browser {
             plus: Rect::default(),
             buttons: [(Hover::Back, Rect::default()); 6],
             page: page_rect(WINDOW),
+            fullscreen: false,
             pressed_in_page: None,
             in_page: false,
             popup: None,
@@ -1197,9 +1253,8 @@ impl Browser {
             Event::Resized { width, height, .. } => {
                 let size = (width.max(640), height.max(400));
                 self.wins[w].size = size;
-                self.wins[w].page = page_rect(size);
                 self.app.resize(id, size);
-                self.size_pages(w);
+                self.lay_out_page(w);
                 self.wins[w].dirty = true;
                 self.wins[w].popup = None;
             }
@@ -1736,6 +1791,10 @@ impl Browser {
                 }
             }
         }
+        if pressed && key == Key::Escape && self.wins[w].fullscreen {
+            self.set_fullscreen(tab, false, true);
+            return;
+        }
         if pressed && key == Key::Escape && self.tabs.tab(tab).is_some_and(|t| t.loading) {
             self.tell(tab, ToHost::Stop { tab });
         }
@@ -1801,8 +1860,10 @@ impl Browser {
                 p.begin(gl, picture, picture.1 as f32 / size.1 as f32, theme::GROUND);
                 look::backdrop(p, gl);
                 let all = p.bounds();
-                draw_tabs(p, gl, win, &window, tabs, &profile, all);
-                draw_toolbar(p, gl, win, active.as_ref(), marked, &profile, all, &actions, &icons);
+                if !win.fullscreen {
+                    draw_tabs(p, gl, win, &window, tabs, &profile, all);
+                    draw_toolbar(p, gl, win, active.as_ref(), marked, &profile, all, &actions, &icons);
+                }
                 // The page.
                 let page = win.page;
                 p.fill(gl, page, 12.0, [1.0, 1.0, 1.0, 1.0]);
