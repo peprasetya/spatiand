@@ -263,7 +263,12 @@ pub fn feed(slot: Option<Slot>, pcm: &[i16], channels: usize) {
 /// a late burst is not heard, and sound that was made a moment ago in the next process arrives
 /// like clockwork and would only be 150 ms behind its picture for it.
 pub fn feed_local(slot: Option<Slot>, pcm: &[i16], channels: usize) {
-    if let Some(state) = slot.and_then(|slot| shared().slots.lock().ok()?.get(&slot).cloned()) {
+    if let Some(slot) = slot {
+        let Some(state) = shared().slots.lock().ok().and_then(|slots| slots.get(&slot).cloned()) else {
+            // Its window has closed: what it still sends is not heard, rather than heard
+            // unplaced in both ears.
+            return;
+        };
         state.local.store(true, Ordering::Relaxed);
     }
     feed(slot, pcm, channels);

@@ -919,12 +919,10 @@ impl Browser {
             self.told.push(Told::WindowRemoved { profile, window: win.key });
         }
         for tab in self.tabs.close_window(win.key) {
+            // Its films and sounds stop with it, as a tab closed alone does.
+            self.media.forget(tab);
             self.tell_profile(profile.as_deref(), ToHost::Close { tab });
-            if let Some(view) = self.views.remove(&tab) {
-                if let (Some(texture), Ok(gl)) = (view.texture, self.app.gl()) {
-                    texture.destroy(gl);
-                }
-            }
+            self.forget_view(tab);
         }
         self.app.close(win.id);
         if let Some(profile) = profile {
