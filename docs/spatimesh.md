@@ -300,7 +300,7 @@ own scripts, in the page's world):
   `createImageBitmap`, WebCodecs' `VideoFrame` and `captureStream` are given a canvas of the film's
   size holding its latest picture; `requestVideoFrameCallback` is called once per picture. The
   window sends pictures (read back from the GPU, JPEG, at most 1280 across and 30 a second) only
-  while they are used, and with every seek for a film kept out of sight or asked for with
+  while they are used, as wide as the page draws them, and with every seek for a film kept out of sight or asked for with
   `crossOrigin` (a thumbnail-maker); `seeked` waits for that picture.
 * **MediaSource** (YouTube, most streaming players), `SourceBuffer`, `SourceBufferList`,
   `isTypeSupported`, their object URLs and Safari's `ManagedMediaSource` are SpatiMesh's: appends go
@@ -362,16 +362,30 @@ second sound track chosen by the page, a worker's MediaSource played (Mac).
 heard (tests run muted); `<track>` cue settings (position, line, alignment: cues are always at
 the bottom, centred); a disc's picture subtitles in a page (the path is there, untested); AV1 offered to pages where the machine can only decode it in software.
 
-**Load (2026-10-17).** Pages are offered only codecs this machine decodes in hardware
-(`spatiand_media::hardware`: VideoToolbox's answer on a Mac; everything elsewhere, for now) --
-an Intel Mac turns AV1 away and YouTube streams VP9 -- and `SPATIMESH_SOFTWARE_CODECS` overrides
-the list. A hardware decoder that has made nothing for 1.5 s with packets waiting is replaced
-by software from a key frame: on this Intel Mac VideoToolbox stops for good in
-`VTDecompressionSessionWaitForAsynchronousFrames` on YouTube's VP9 and H.264 through a
-MediaSource (not on files of the same codecs, nor a local MediaSource) -- **cause not found**,
-so YouTube is decoded in software here after the first two seconds. WebKit's pages are pictured
-from its own layers on the GPU: YouTube's blurred glow had cost 94 ms a picture by
-`takeSnapshot`. YouTube in the test room, release builds: about 55% of a core in all, from 250%.
+**Load (2026-10-17, 2026-10-18).** Pages are offered only codecs this machine decodes in hardware
+(`spatiand_media::hardware`: VideoToolbox's answer on a Mac; everything elsewhere, for now), and
+`SPATIMESH_SOFTWARE_CODECS` overrides the list. **On a Mac VP9 and AV1 are never offered**: they
+are supplemental decoders, run in a service of their own, and VP9's makes one picture of a
+MediaSource's pieces and then never answers (`VTDecompressionSessionWaitForAsynchronousFrames`;
+sampled 2026-10-18), and a second film opened meanwhile hung SpatiMesh with it. H.264, the GPU's
+own decoder, takes YouTube's pieces without fault, so YouTube streams H.264 here. A hardware
+decoder that has made nothing for 1.5 s with packets waiting is still replaced by software from a
+key frame, and a player that ends waits at most a second for its threads (one stuck in a decoder
+is left behind). A window closed stops its pages' films; the room drops sound whose window has
+gone rather than play it unplaced.
+
+WebKit's pages reach the window **on the GPU, uncopied**: the engine host renders WebKit's own
+compositing layers with Core Animation into two IOSurfaces per tab and names the one just drawn
+(`FromHost::Surface`); the window samples it through ANGLE and gives the one it replaces back
+(`ToHost::ReleaseSurface`). Before, `takeSnapshot` repainted pages on the CPU (YouTube's blurred
+glow: 94 ms a picture), and each picture was read back, compared and copied three times more.
+Pictures come at 60 a second while the page changes, 15 while a film plays, 2 when idle.
+
+One YouTube film at 720p60 in the test room, release builds, every process of SpatiMesh's
+counted (window, engine host, WebKit's page/GPU/network processes, the decoder service): about
+56% of a core (2026-10-18), from 250% (2026-10-17). Safari on the same film, its window on the
+Mac's screen: about 42% (the Mac's own compositing of Safari not counted, nor the room's of
+SpatiMesh).
 
 **Spatiand's FFmpeg**: on the Deck SteamOS's own 7.1.1 (headers vendored, libraries the system's:
 docs/remote.md), on the Mac Homebrew's, on the Beam Pro android/ffmpeg/build.sh's, in CI
@@ -420,7 +434,8 @@ linked Spatiand and spatiand-host by `spatiand-sync`, newest file winning, delet
 ```text
 apps/spatimesh/settings/<name>.json                one file per setting: search, custom_search,
                                                    home, zoom, developer
-apps/spatimesh/profiles/<id>/profile.json          name, colour
+apps/spatimesh/profiles/<id>/profile.json          name, colour, lock (a PIN's or password's
+                                                   salted hash, 100 000 rounds of SHA-256)
 apps/spatimesh/profiles/<id>/bookmarks/<id>.json   one file per bookmark or folder
 ```
 
@@ -437,6 +452,23 @@ website data (cookies, storage: an engine's own format, and a login is a machine
 `~/.local/share/spatiand/spatimesh/<profile>`; cache, `~/.cache/spatiand/spatimesh/<profile>`;
 downloads in progress, in the cache until finished; history and extensions, in `local/`. The
 private profile writes nothing at all.
+
+## Profiles: whose window this is, and its lock (2026-10-18)
+
+Beside the menu button, a pill of the profile's colour and name; the window's bars are washed in
+that colour and its page framed in it. The pill's list: the profiles (choosing another opens a
+window of it), a new profile, **Settings of** the window's profile, and **Lock profiles now**.
+The settings: its name, what its windows ask for (nothing, a PIN of 4 to 12 digits, or a password
+of at least 6 characters; typed twice; changed or removed only after the present one), and its
+colour.
+
+A profile with a lock asks for it **when a window of it opens and none of its windows is open
+here**; once typed, more windows of it open without asking, until the last of its windows closes
+or the padlock beside the pill (or Lock profiles now) locks every profile that has one. A locked
+window shows only the profile's colour, its name and the field: not its tabs, not its address,
+and its title says only that it is locked; its pages' sound is hushed (they play on, unheard).
+Five wrong tries in a row and the next waits half a minute. The lock keeps a window from being
+looked at; it does not encrypt the profile's website data on disk.
 
 ## Built, checked, and not checked (2026-10-16)
 
