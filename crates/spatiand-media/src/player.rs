@@ -1020,8 +1020,19 @@ impl Drop for Player {
         if let Some(sound) = self.shared.sound.as_ref() {
             sound.stop();
         }
+        // Each is waited for, but not for ever: one inside the platform's decoder may never
+        // come back (`watch_decoder`), and a page closing or a program ending must not hang on
+        // it. One still out after a second is left to end by itself, told to stop.
+        let until = Instant::now() + Duration::from_secs(1);
         for thread in self.threads.drain(..) {
-            let _ = thread.join();
+            while !thread.is_finished() && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if thread.is_finished() {
+                let _ = thread.join();
+            } else {
+                log::warn!("a film's {} thread did not stop; it is left behind", thread.thread().name().unwrap_or("?"));
+            }
         }
     }
 }

@@ -38,7 +38,12 @@ pub fn software_only() -> Vec<&'static str> {
         (Family::Vp9, &["vp09", "vp9"][..]),
         (Family::Av1, &["av01", "av1"][..]),
     ] {
-        if !platform::decodes(family) {
+        // A Mac's VP9 (and AV1) decoders are supplemental, run in a service of their own; given
+        // a MediaSource's pieces, VP9's makes one picture and never answers again (2026-10-18,
+        // an Intel Mac, YouTube), and a second film opened meanwhile waits on it. Its H.264 is
+        // the GPU's own and takes them whole, so pages here are told VP9 is not to be had.
+        let stalls = cfg!(target_os = "macos") && matches!(family, Family::Vp9 | Family::Av1);
+        if !platform::decodes(family) || stalls {
             out.extend_from_slice(names);
         }
     }
