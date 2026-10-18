@@ -29,6 +29,9 @@ struct MacWindowInfo: Equatable {
     let frame: CGRect
     /// Set when this is not a window but a whole screen, shown as one; see `MacScreens`.
     var display: CGDirectDisplayID? = nil
+    /// macOS asking something -- a permission, a password, whether to open what was downloaded
+    /// -- in a panel of a system agent's; see `MacWindows.isPrompt`.
+    var prompt = false
 }
 
 enum MacWindows {
@@ -114,14 +117,38 @@ enum MacWindows {
         return find(window, 0)
     }
 
+    /// The system's agents that ask the person at the Mac something, in a panel above every
+    /// window: a permission (UserNotificationCenter, which shows every privacy prompt, and the
+    /// accessibility one's own), a password or a fingerprint (SecurityAgent, LocalAuthentication),
+    /// whether to open something downloaded (CoreServicesUIAgent).
+    static let promptAgents: Set<String> = [
+        "com.apple.UserNotificationCenter",
+        "com.apple.accessibility.universalAccessAuthWarn",
+        "com.apple.SecurityAgent",
+        "com.apple.LocalAuthentication.UIAgent",
+        "com.apple.CoreServicesUIAgent",
+    ]
+
+    /// Whether a window is one of those questions: in the glasses nothing on the Mac's own
+    /// screen is seen, and a question no one sees is one no one answers.
+    static func isPrompt(bundle: String, layer: Int) -> Bool {
+        layer > 0 && layer < 1000 && promptAgents.contains(bundle)
+    }
+
     /// The windows worth offering: ordinary, on screen, big enough to be a window and not one of
-    /// Spatiand's own.
+    /// Spatiand's own; and macOS's questions, which sit above the ordinary windows.
     static func list() async -> [MacWindowInfo] {
         guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true) else { return [] }
         let mine = ProcessInfo.processInfo.processIdentifier
         return content.windows.compactMap { w in
-            guard w.windowLayer == 0, w.isOnScreen, w.frame.width >= 160, w.frame.height >= 100,
-                  let app = w.owningApplication, app.processID != mine, !app.applicationName.isEmpty else { return nil }
+            guard let app = w.owningApplication, app.processID != mine, !app.applicationName.isEmpty, w.isOnScreen else { return nil }
+            if isPrompt(bundle: app.bundleIdentifier, layer: w.windowLayer), w.frame.width >= 60, w.frame.height >= 40 {
+                var info = MacWindowInfo(windowID: w.windowID, pid: app.processID, bundle: app.bundleIdentifier, app: "macOS asks",
+                                         title: w.title ?? "", frame: w.frame)
+                info.prompt = true
+                return info
+            }
+            guard w.windowLayer == 0, w.frame.width >= 160, w.frame.height >= 100 else { return nil }
             return MacWindowInfo(windowID: w.windowID, pid: app.processID, bundle: app.bundleIdentifier, app: app.applicationName,
                                  title: w.title ?? "", frame: w.frame)
         }

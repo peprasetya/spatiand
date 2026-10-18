@@ -235,6 +235,13 @@ final class RoomWindows {
                         _ = announce(info, hidden: true)
                         continue
                     }
+                    // **macOS asking something comes out at once**, however many came this scan and
+                    // whether or not it was there when the room began: it waits on an answer,
+                    // and the Mac's own screen is not seen from the glasses.
+                    if info.prompt {
+                        sp_window_show(announce(info, hidden: true))
+                        continue
+                    }
                     // Only windows in their own right; see `MacWindows.isOrdinary`.
                     guard MacWindows.isOrdinary(info) else {
                         passedOver.insert(info.windowID)

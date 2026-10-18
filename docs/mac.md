@@ -92,6 +92,15 @@ not connect to hosts. `--selftest-click` moves the real pointer: not while the M
   *Applications*; choosing one brings it out. Only windows on show are captured. A window opened
   while the room is going comes out at once. A tab is not a window: a new tab, or another tab
   chosen, is the same window in the room showing something else.
+* **macOS asking something comes into the room** (2026-10-18): a privacy permission
+  (UserNotificationCenter shows them all), the accessibility one, a password or Touch ID
+  (SecurityAgent, LocalAuthentication), whether to open something downloaded
+  (CoreServicesUIAgent). These are panels above every window (layer 8 for UserNotificationCenter),
+  not windows, so the list took none of them; now each comes out at once as a window called
+  *macOS asks*, whether or not it was there when the room began, and goes when it is answered.
+  Checked: such a panel (a plain `CFUserNotification`) is listed and captured alone. Not checked:
+  a click answering it from the glasses, and typing into SecurityAgent, which keeps its keyboard
+  to itself.
 * **Screens** are in the same list, above the applications: each display the Mac has but the
   glasses, and a virtual one. A screen is a window whose picture is everything on that display
   and whose pointer is the Mac's real one. The virtual screen is a `CGVirtualDisplay`
