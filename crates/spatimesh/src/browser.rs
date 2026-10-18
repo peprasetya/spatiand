@@ -1,7 +1,7 @@
 //! The window process: every SpatiMesh window, what is drawn around the page, and where the
 //! wearer's input goes. The pages themselves are the engine hosts' (`engines.rs`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::os::unix::net::UnixListener;
 use std::time::{Duration, Instant};
@@ -11,7 +11,7 @@ use spatiand_app::{App, Button as PointerButton, Event, Key, Modifiers, WindowId
 use spatimesh::address::{self, shown};
 use spatimesh::bookmarks::{self, At, Bookmark};
 use spatimesh::engine::{self, Choice, DialogKind, Happened, KeyPress, TabId, View};
-use spatimesh::profiles::{self, Profile, PRIVATE};
+use spatimesh::profiles::{self, LockKind, Profile, PRIVATE};
 use spatimesh::settings::Settings;
 use spatimesh::store::Store;
 use spatimesh::tabs::{Place, Tabs, WindowKey};
@@ -73,6 +73,8 @@ enum Hover {
     Menu,
     /// The window's profile, beside the menu.
     Profile,
+    /// The padlock beside it: every profile with a PIN or password locked at once.
+    Lock,
     Page,
     /// An extension's button in the toolbar, by its place there.
     Action(usize),
@@ -105,6 +107,14 @@ enum Action {
     NewProfile,
     /// The colour of this window's profile.
     ProfileColour([u8; 3]),
+    /// This window's profile's own settings: its name, its lock, its colour.
+    ProfileSettings,
+    RenameProfile,
+    SetLock(LockKind),
+    /// The PIN or password asked for first, then a new one, or none.
+    ChangeLock,
+    RemoveLock,
+    LockAll,
     Open(String),
     /// An extension turned on or off.
     ToggleExtension(String),
@@ -121,6 +131,22 @@ enum Own {
     LoadExtension(String),
     /// Which extension of this profile's to remove.
     RemoveExtension(String),
+    /// A new name for this profile.
+    RenameProfile(String),
+    /// A new PIN or password for this profile, and then the same again.
+    NewLock(String, LockKind),
+    ConfirmLock(String, LockKind, String),
+    /// The profile's PIN or password as it is, before it is changed (or, `true`, removed).
+    OldLock(String, bool),
+}
+
+/// A locked window: nothing of it is shown, not even its tabs' names, until its profile's PIN
+/// or password is typed.
+struct LockPane {
+    field: Field,
+    /// Why the last try did not open it.
+    said: Option<String>,
+    ok: Rect,
 }
 
 /// A list over the page: the menu, a `<select>`'s choices, the bookmarks of the start page.
@@ -176,7 +202,7 @@ struct Win {
     drag: Option<Drag>,
     placed: Vec<(TabId, Rect, Rect)>,
     plus: Rect,
-    buttons: [(Hover, Rect); 6],
+    buttons: [(Hover, Rect); 7],
     page: Rect,
     /// The page has the whole window: something in it is fullscreen (`media/page.js`).
     fullscreen: bool,
@@ -189,6 +215,8 @@ struct Win {
     action_buttons: Vec<(String, Rect)>,
     /// The tab the extensions were last told is in front.
     told_active: Option<TabId>,
+    /// Locked: its profile's PIN or password is wanted before anything else.
+    lock: Option<LockPane>,
 }
 
 pub struct Browser {
@@ -224,6 +252,11 @@ pub struct Browser {
     last_focused: Option<WindowKey>,
     /// Something said for a few seconds: a notification, an extension installed.
     toast: Option<(String, Instant)>,
+    /// The profiles with a lock that were opened here, and stay open while any window of
+    /// theirs is, until the lock button.
+    unlocked: HashSet<String>,
+    /// Wrong tries in a row, and when the last was: five, and the next waits half a minute.
+    tries: (u32, Instant),
     /// The extensions' buttons' pictures.
     icons: HashMap<(String, String), Option<PageTexture>>,
     /// Which buffer holds each tab's newest picture.
@@ -268,6 +301,8 @@ impl Browser {
             ext_popups: HashMap::new(),
             last_focused: None,
             toast: None,
+            unlocked: HashSet::new(),
+            tries: (0, Instant::now()),
             icons: HashMap::new(),
             latest_buffer: HashMap::new(),
             media: media::Media::default(),
@@ -441,7 +476,7 @@ impl Browser {
             let ext_popup = self.ext_popups.get(&win.key).map(|p| p.tab);
             for &tab in &window.tabs {
                 let active = window.active_tab() == Some(tab);
-                let overlay = win.popup.is_some() || ext_popup.is_some() || self.views.get(&tab).is_some_and(|v| v.question.is_some());
+                let overlay = win.popup.is_some() || ext_popup.is_some() || win.lock.is_some() || self.views.get(&tab).is_some_and(|v| v.question.is_some());
                 wanted.push((tab, active && win.focused && !win.editing && !overlay));
             }
             // An extension's popup has the keyboard while it is open.
@@ -774,7 +809,7 @@ impl Browser {
             drag: None,
             placed: Vec::new(),
             plus: Rect::default(),
-            buttons: [(Hover::Back, Rect::default()); 6],
+            buttons: [(Hover::Back, Rect::default()); 7],
             page: Rect::default(),
             fullscreen: false,
             pressed_in_page: None,
@@ -783,9 +818,14 @@ impl Browser {
             start: None,
             action_buttons: Vec::new(),
             told_active: None,
+            lock: None,
         };
         win.address.hint = "Search or type an address".into();
         win.page = page_rect(WINDOW);
+        // A profile with a lock, none of whose windows is open here: its PIN first.
+        if self.profile(profile).lock.is_some() && !self.unlocked.contains(profile) {
+            win.lock = Some(lock_pane(self.profile(profile).lock.as_ref().map_or(LockKind::Pin, |l| l.kind)));
+        }
         self.wins.push(win);
         self.told.push(Told::WindowCreated(key));
         let home = self.settings.home.clone();
@@ -795,6 +835,10 @@ impl Browser {
             self.told.push(Told::TabCreated(tab));
         }
         self.after_tab_change(key);
+        let w = self.wins.len() - 1;
+        if self.wins[w].lock.is_some() {
+            self.hush_window(w);
+        }
         key
     }
 
@@ -888,6 +932,7 @@ impl Browser {
         }
         if let Some(profile) = profile {
             self.end_idle_host(&profile);
+            self.relock_if_gone(&profile);
         }
     }
 
@@ -927,6 +972,104 @@ impl Browser {
         self.app.close(win.id);
         if let Some(profile) = profile {
             self.end_idle_host(&profile);
+            self.relock_if_gone(&profile);
+        }
+    }
+
+    /// A profile none of whose windows is open any more is locked again: the next window of
+    /// it asks.
+    fn relock_if_gone(&mut self, profile: &str) {
+        if !self.wins.iter().any(|w| self.tabs.window(w.key).is_some_and(|x| x.profile == profile)) {
+            self.unlocked.remove(profile);
+        }
+    }
+
+    /// A window's pages unheard while it is locked, and heard again when it opens.
+    fn hush_window(&mut self, w: usize) {
+        let on = self.wins[w].lock.is_some();
+        let tabs = self.tabs.window(self.wins[w].key).map(|x| x.tabs.clone()).unwrap_or_default();
+        for tab in tabs {
+            self.media.hush(tab, on);
+        }
+    }
+
+    /// The lock button: every profile with a PIN or password is locked, and every window of
+    /// theirs shows nothing until it is typed.
+    fn lock_all(&mut self) {
+        let locked: Vec<Profile> = self.profiles.iter().filter(|p| p.lock.is_some()).cloned().collect();
+        if locked.is_empty() {
+            self.say("No profile has a PIN or password yet: the profile button's settings give one".into());
+            return;
+        }
+        self.unlocked.clear();
+        for w in 0..self.wins.len() {
+            let Some(profile) = self.tabs.window(self.wins[w].key).map(|x| x.profile.clone()) else { continue };
+            if let Some(lock) = locked.iter().find(|p| p.id == profile).and_then(|p| p.lock.as_ref()) {
+                let win = &mut self.wins[w];
+                win.popup = None;
+                win.editing = false;
+                win.lock = Some(lock_pane(lock.kind));
+                win.dirty = true;
+                self.hush_window(w);
+            }
+        }
+        self.focus_pages();
+    }
+
+    /// What was typed into a locked window: its profile's windows open if it is right.
+    fn try_unlock(&mut self, w: usize) {
+        let Some(profile) = self.tabs.window(self.wins[w].key).map(|x| x.profile.clone()) else { return };
+        let Some(lock) = self.profile(&profile).lock else {
+            self.wins[w].lock = None;
+            return;
+        };
+        let (wrong, last) = self.tries;
+        let wait = Duration::from_secs(30).saturating_sub(last.elapsed());
+        let Some(pane) = self.wins[w].lock.as_mut() else { return };
+        pane.said = None;
+        if wrong >= 5 && !wait.is_zero() {
+            pane.said = Some(format!("Too many wrong tries: wait {} s", wait.as_secs() + 1));
+            return;
+        }
+        let typed = std::mem::take(&mut pane.field.text);
+        pane.field.set(String::new());
+        if lock.opens(&typed) {
+            self.tries = (0, Instant::now());
+            self.unlocked.insert(profile.clone());
+            for i in 0..self.wins.len() {
+                if self.tabs.window(self.wins[i].key).is_some_and(|x| x.profile == profile) {
+                    self.wins[i].lock = None;
+                    self.wins[i].dirty = true;
+                    self.hush_window(i);
+                }
+            }
+            self.focus_pages();
+        } else {
+            self.tries = (if wrong >= 5 { 1 } else { wrong + 1 }, Instant::now());
+            pane.said = Some(format!("That is not the {}", lock.kind.name()));
+        }
+    }
+
+    /// Input to a locked window: only to its field and its button.
+    fn locked_input(&mut self, w: usize, event: Event) {
+        self.wins[w].dirty = true;
+        self.wins[w].hover = Hover::Nothing;
+        match event {
+            Event::PointerMoved { x, y, .. } => self.wins[w].pointer = (x, y),
+            Event::Button { button: PointerButton::Left, pressed: false, .. } => {
+                let (x, y) = self.wins[w].pointer;
+                if self.wins[w].lock.as_ref().is_some_and(|l| l.ok.contains(x, y)) {
+                    self.try_unlock(w);
+                }
+            }
+            Event::Key { key, pressed: true, text, modifiers, .. } => {
+                if key == Key::Enter {
+                    self.try_unlock(w);
+                } else if let Some(pane) = self.wins[w].lock.as_mut() {
+                    pane.field.input(&Input::Key { key, text, modifiers });
+                }
+            }
+            _ => {}
         }
     }
 
@@ -986,7 +1129,7 @@ impl Browser {
             drag: None,
             placed: Vec::new(),
             plus: Rect::default(),
-            buttons: [(Hover::Back, Rect::default()); 6],
+            buttons: [(Hover::Back, Rect::default()); 7],
             page: page_rect(WINDOW),
             fullscreen: false,
             pressed_in_page: None,
@@ -995,6 +1138,7 @@ impl Browser {
             start: None,
             action_buttons: Vec::new(),
             told_active: None,
+            lock: None,
         };
         win.address.hint = "Search or type an address".into();
         self.wins.push(win);
@@ -1121,6 +1265,24 @@ impl Browser {
                     Err(e) => self.say(format!("Not changed: {e}")),
                 }
             }
+            Action::ProfileSettings => self.profile_settings(w),
+            Action::RenameProfile => {
+                let name = self.profile(&profile).name;
+                self.ask_own_with(w, Own::RenameProfile(profile), "This profile's new name:", false, &name);
+            }
+            Action::SetLock(kind) => {
+                let message = match kind {
+                    LockKind::Pin => "A PIN for this profile, 4 to 12 digits. A window of it opened when none is open asks for it, and so does every window of it after the lock button:",
+                    LockKind::Password => "A password for this profile, at least 6 characters. A window of it opened when none is open asks for it, and so does every window of it after the lock button:",
+                };
+                self.ask_own_with(w, Own::NewLock(profile, kind), message, true, "");
+            }
+            Action::ChangeLock | Action::RemoveLock => {
+                let kind = self.profile(&profile).lock.map_or(LockKind::Pin, |l| l.kind);
+                let remove = action == Action::RemoveLock;
+                self.ask_own_with(w, Own::OldLock(profile, remove), &format!("This profile's {} as it is now:", kind.name()), true, "");
+            }
+            Action::LockAll => self.lock_all(),
             Action::NewProfile => {
                 let name = format!("Profile {}", self.profiles.len() + 1);
                 if let Ok(new) = profiles::add(&self.store, &name) {
@@ -1153,19 +1315,118 @@ impl Browser {
         self.focus_pages();
     }
 
+    /// This window's profile's settings, in a list as the menu is: its name, its PIN or
+    /// password, its colour.
+    fn profile_settings(&mut self, w: usize) {
+        let key = self.wins[w].key;
+        let id = self.tabs.window(key).map(|x| x.profile.clone()).unwrap_or_default();
+        if id == PRIVATE {
+            return;
+        }
+        let mine = self.profile(&id);
+        let mut rows = vec![Row::heading(format!("Settings of {}", mine.name)), Row::with("Name", format!("{}  \u{270E}", mine.name))];
+        let mut actions = vec![Action::Nothing, Action::RenameProfile];
+        rows.push(Row::heading("Asked for when a window opens"));
+        actions.push(Action::Nothing);
+        match mine.lock.as_ref() {
+            None => {
+                rows.push(Row::with("Nothing", "\u{2713}"));
+                actions.push(Action::Nothing);
+                rows.push(Row::new("A PIN\u{2026}").icon(Icon::Lock));
+                actions.push(Action::SetLock(LockKind::Pin));
+                rows.push(Row::new("A password\u{2026}").icon(Icon::Lock));
+                actions.push(Action::SetLock(LockKind::Password));
+            }
+            Some(lock) => {
+                rows.push(Row::with(format!("Its {}", lock.kind.name()), "\u{2713}").icon(Icon::Lock));
+                actions.push(Action::Nothing);
+                rows.push(Row::new(format!("Change the {}\u{2026}", lock.kind.name())));
+                actions.push(Action::ChangeLock);
+                rows.push(Row::new(format!("Ask for nothing\u{2026}")));
+                actions.push(Action::RemoveLock);
+            }
+        }
+        rows.push(Row::heading("Colour of its windows"));
+        actions.push(Action::Nothing);
+        for (name, colour) in profiles::COLOUR_CHOICES {
+            rows.push(Row::with(*name, if *colour == mine.colour { "\u{2713}" } else { "" }));
+            actions.push(Action::ProfileColour(*colour));
+        }
+        let win = &self.wins[w];
+        let width = 520.0;
+        let height = (rows.len() as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 24.0).min(win.page.h);
+        let rect = Rect::new(win.page.right() - width - 8.0 - TOOL_H, win.page.y + 4.0, width, height);
+        let mut list = List::default();
+        list.focused = true;
+        self.wins[w].popup = Some(Popup { rows, actions, rect, list, choose_for: None });
+        self.focus_pages();
+    }
+
     /// A question of SpatiMesh's own, in the question pane over the tab in front.
     fn ask_own(&mut self, w: usize, own: Own, message: &str) {
+        self.ask_own_with(w, own, message, false, "");
+    }
+
+    /// The same, its answer hidden as typed (`secret`), or begun with `text`.
+    fn ask_own_with(&mut self, w: usize, own: Own, message: &str, secret: bool, text: &str) {
         let Some(tab) = self.tabs.active(self.wins[w].key) else { return };
         let mut field = Field::default();
         field.focused = true;
+        field.secret = secret;
+        field.set(text.to_string());
         let question = Question { kind: DialogKind::Prompt, message: message.to_string(), field, ok: Rect::default(), cancel: Rect::default(), own: Some(own) };
         self.views.entry(tab).or_default().question = Some(question);
         self.wins[w].dirty = true;
         self.focus_pages();
     }
 
-    fn answered_own(&mut self, own: Own, text: String) {
+    fn answered_own(&mut self, w: usize, own: Own, text: String) {
         match own {
+            Own::RenameProfile(profile) => match profiles::rename(&self.store, &profile, &text) {
+                Ok(()) => {
+                    self.profiles = profiles::list(&self.store);
+                    for win in self.wins.iter_mut() {
+                        win.dirty = true;
+                    }
+                }
+                Err(e) => self.say(format!("Not renamed: {e}")),
+            },
+            Own::NewLock(profile, kind) => match kind.refuses(&text) {
+                Some(why) => self.say(format!("Not set: {why}")),
+                None => self.ask_own_with(w, Own::ConfirmLock(profile, kind, text), &format!("The same {} again, to be sure of it:", kind.name()), true, ""),
+            },
+            Own::ConfirmLock(profile, kind, first) => {
+                if text != first {
+                    self.say(format!("Not set: the two were not the same {}", kind.name()));
+                } else {
+                    match profiles::set_lock(&self.store, &profile, Some((kind, &text))) {
+                        Ok(()) => {
+                            self.profiles = profiles::list(&self.store);
+                            // Whoever set it has the profile open.
+                            self.unlocked.insert(profile);
+                            self.say(format!("This profile now asks for its {}", kind.name()));
+                        }
+                        Err(e) => self.say(format!("Not set: {e}")),
+                    }
+                }
+            }
+            Own::OldLock(profile, remove) => {
+                let Some(lock) = self.profile(&profile).lock else { return };
+                if !lock.opens(&text) {
+                    self.say(format!("That is not the {}", lock.kind.name()));
+                } else if remove {
+                    match profiles::set_lock(&self.store, &profile, None) {
+                        Ok(()) => {
+                            self.profiles = profiles::list(&self.store);
+                            self.say("This profile asks for nothing now".into());
+                        }
+                        Err(e) => self.say(format!("Not changed: {e}")),
+                    }
+                } else {
+                    let kind = lock.kind;
+                    self.ask_own_with(w, Own::NewLock(profile, kind), &format!("The new {}:", kind.name()), true, "");
+                }
+            }
             Own::LoadExtension(profile) => match self.install_extension(&profile, &text) {
                 Ok(name) => self.say(format!("{name} is installed")),
                 Err(e) => self.say(format!("Not installed: {e}")),
@@ -1268,13 +1529,11 @@ impl Browser {
         actions.push(Action::NewProfile);
         if profile != PRIVATE {
             let mine = self.profile(&profile);
-            rows.push(Row::heading(format!("Colour of {}", mine.name)));
-            actions.push(Action::Nothing);
-            for (name, colour) in profiles::COLOUR_CHOICES {
-                rows.push(Row::with(*name, if *colour == mine.colour { "\u{2713}" } else { "" }));
-                actions.push(Action::ProfileColour(*colour));
-            }
+            rows.push(Row::new(format!("Settings of {}\u{2026}", mine.name)).icon(Icon::Options));
+            actions.push(Action::ProfileSettings);
         }
+        rows.push(Row::new("Lock profiles now").icon(Icon::Lock));
+        actions.push(Action::LockAll);
         let win = &self.wins[w];
         let width = 460.0;
         let height = (rows.len() as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 24.0).min(win.page.h);
@@ -1352,7 +1611,10 @@ impl Browser {
         let Some(question) = self.views.get_mut(&tab).and_then(|v| v.question.take()) else { return };
         if let Some(own) = question.own {
             if accepted {
-                self.answered_own(own, question.field.text.trim().to_string());
+                // A PIN or password is taken as typed; anything else without its ends' spaces.
+                let secret = question.field.secret;
+                let text = if secret { question.field.text.clone() } else { question.field.text.trim().to_string() };
+                self.answered_own(w, own, text);
             }
             self.wins[w].dirty = true;
             self.focus_pages();
@@ -1370,6 +1632,10 @@ impl Browser {
         }
         let Some(id) = event.window() else { return true };
         let Some(w) = self.win_index(id) else { return true };
+        if self.wins[w].lock.is_some() && !matches!(event, Event::Ready { .. } | Event::Resized { .. } | Event::CloseRequested { .. } | Event::Focus { .. }) {
+            self.locked_input(w, event);
+            return true;
+        }
         match event {
             Event::Ready { .. } => {
                 self.wins[w].ready = true;
@@ -1709,6 +1975,7 @@ impl Browser {
                     self.profile_menu(w);
                 }
             }
+            Hover::Lock => self.lock_all(),
             _ => {}
         }
     }
@@ -1970,6 +2237,8 @@ impl Browser {
             // the window that says it plays (`audio::says_it_plays`).
             let playing = window.tabs.iter().any(|t| self.tabs.tab(*t).is_some_and(|t| t.playing) || self.media.playing_in(*t));
             let title = if playing { format!("\u{1F50A} {title}") } else { title };
+            // A locked window says nothing of what is in it.
+            let title = if self.wins[w].lock.is_some() { format!("{} is locked \u{2014} SpatiMesh", profile.name) } else { title };
             let id = self.wins[w].id;
             self.app.set_title(id, &title);
             let engine_note = self.hosts.get(&window.profile).and_then(|h| h.engine.clone());
@@ -1992,6 +2261,11 @@ impl Browser {
                 p.begin(gl, picture, picture.1 as f32 / size.1 as f32, theme::GROUND);
                 look::backdrop(p, gl);
                 let all = p.bounds();
+                if let Some(pane) = win.lock.as_mut() {
+                    draw_lock(p, gl, all, &profile, pane);
+                    p.end(gl);
+                    return;
+                }
                 if !win.fullscreen {
                     // The window in its profile's colour: the bars washed with it, the page framed in it.
                     p.fill(gl, Rect::new(all.x, all.y, all.w, win.page.y - all.y), 0.0, profile_colour(&profile, 0.22));
@@ -2298,6 +2572,8 @@ fn draw_toolbar(
     bar.take_left(12.0);
     let menu = button(p, bar.take_right(side), Hover::Menu, Icon::Options, true, false);
     bar.take_right(4.0);
+    let lock = button(p, bar.take_right(side), Hover::Lock, Icon::Lock, true, false);
+    bar.take_right(4.0);
     // Whose window this is, plainly: the profile's colour and name, next to the menu.
     let colour = profile_colour(profile, 1.0);
     let name: String = profile.name.chars().take(14).collect();
@@ -2348,7 +2624,7 @@ fn draw_toolbar(
         let line = Rect::new(bar.x + 8.0, bar.bottom() - 3.0, (bar.w - 16.0) * progress, 3.0);
         p.fill(gl, line, 1.5, look::BLUE);
     }
-    win.buttons = [(Hover::Back, back), (Hover::Forward, forward), (Hover::Reload, reload), (Hover::Star, star), (Hover::Menu, menu), (Hover::Profile, pill)];
+    win.buttons = [(Hover::Back, back), (Hover::Forward, forward), (Hover::Reload, reload), (Hover::Star, star), (Hover::Menu, menu), (Hover::Profile, pill), (Hover::Lock, lock)];
 }
 
 fn draw_start(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, profile: &Profile, note: Option<&str>) {
@@ -2382,24 +2658,62 @@ fn draw_notice(p: &mut Painter, gl: &spatiand_app::Gl, page: Rect, title: &str, 
     look::keys(p, gl, inner.take_top(40.0), hint, 0.0, 1.0);
 }
 
+fn lock_pane(kind: LockKind) -> LockPane {
+    let mut field = Field::default();
+    field.focused = true;
+    field.secret = true;
+    field.hint = match kind {
+        LockKind::Pin => "PIN".into(),
+        LockKind::Password => "Password".into(),
+    };
+    LockPane { field, said: None, ok: Rect::default() }
+}
+
+/// A locked window, whole: its profile's colour and name, and where its PIN goes.
+fn draw_lock(p: &mut Painter, gl: &spatiand_app::Gl, all: Rect, profile: &Profile, pane: &mut LockPane) {
+    p.fill(gl, all, 0.0, profile_colour(profile, 0.22));
+    let card = Rect::new(all.x + all.w * 0.5 - 340.0, all.y + all.h * 0.5 - 190.0, 680.0, 340.0);
+    look::glass(p, gl, card, 28.0, 1.0);
+    let mut inner = card.inset(36.0);
+    let icon = inner.take_top(72.0);
+    p.fill(gl, Rect::new(icon.x + icon.w * 0.5 - 36.0, icon.y, 72.0, 72.0), 36.0, profile_colour(profile, 0.9));
+    draw_icon(p, gl, Icon::Lock, Rect::new(icon.x + icon.w * 0.5 - 22.0, icon.y + 14.0, 44.0, 44.0), theme::INK);
+    inner.take_top(16.0);
+    p.label(gl, &format!("{} is locked", profile.name), inner.take_top(52.0), theme::TITLE_EM * 0.7, theme::INK, 0.5);
+    let kind = profile.lock.as_ref().map_or(LockKind::Pin, |l| l.kind);
+    let said = pane.said.clone().unwrap_or_else(|| format!("Its {} opens its windows", kind.name()));
+    let ink = if pane.said.is_some() { [1.0, 0.62, 0.55, 1.0] } else { theme::INK_DETAIL };
+    p.label(gl, &said, inner.take_top(40.0), theme::DETAIL_EM, ink, 0.5);
+    inner.take_top(16.0);
+    let mut row = inner.take_top(theme::ROW_HEIGHT);
+    pane.ok = row.take_right(160.0);
+    row.take_right(16.0);
+    pane.field.draw(p, gl, row);
+    p.fill(gl, pane.ok, theme::ROW_RADIUS, theme::SELECTED);
+    p.label(gl, "Open", pane.ok, theme::ROW_EM * 0.86, theme::INK, 0.5);
+}
+
 fn question_buttons(page: Rect, kind: DialogKind) -> (Rect, Rect) {
-    let pane = question_pane(page);
+    let pane = question_pane(page, kind);
     let ok = Rect::new(pane.right() - 28.0 - 160.0, pane.bottom() - 28.0 - theme::ROW_HEIGHT, 160.0, theme::ROW_HEIGHT);
     let cancel = if kind == DialogKind::Alert { Rect::default() } else { Rect { x: ok.x - 180.0, ..ok } };
     (ok, cancel)
 }
 
-fn question_pane(page: Rect) -> Rect {
-    Rect::new(page.x + page.w * 0.5 - 420.0, page.y + 60.0, 840.0, 300.0)
+/// Taller with a field to type in, which goes between the words and the buttons.
+fn question_pane(page: Rect, kind: DialogKind) -> Rect {
+    let height = if kind == DialogKind::Prompt { 300.0 + theme::ROW_HEIGHT } else { 300.0 };
+    Rect::new(page.x + page.w * 0.5 - 420.0, page.y + 60.0, 840.0, height)
 }
 
 fn draw_question(p: &mut Painter, gl: &spatiand_app::Gl, page: Rect, question: &Question) {
     p.fill(gl, page, 12.0, [0.0, 0.0, 0.0, 0.45]);
-    let pane = question_pane(page);
+    let pane = question_pane(page, question.kind);
     look::glass(p, gl, pane, 24.0, 1.0);
     let mut inner = pane.inset(28.0);
     let heading = match (&question.own, question.kind) {
-        (Some(_), _) => "Extensions",
+        (Some(Own::LoadExtension(_) | Own::RemoveExtension(_)), _) => "Extensions",
+        (Some(_), _) => "This profile",
         (None, DialogKind::Leave) => "Leave this page?",
         (None, _) => "The page asks",
     };
@@ -2409,6 +2723,7 @@ fn draw_question(p: &mut Painter, gl: &spatiand_app::Gl, page: Rect, question: &
     if question.kind == DialogKind::Prompt {
         let mut field = Field::default();
         field.focused = true;
+        field.secret = question.field.secret;
         field.set(question.field.text.clone());
         field.draw(p, gl, inner.take_top(theme::ROW_HEIGHT));
     }

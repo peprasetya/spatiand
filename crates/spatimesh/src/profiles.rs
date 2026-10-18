@@ -22,6 +22,66 @@ pub struct Profile {
     pub colour: [u8; 3],
     #[serde(default)]
     pub created: u64,
+    /// What opens its windows when none is open, or after the lock button: a PIN or a
+    /// password, kept only as a salted hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<Lock>,
+}
+
+/// A profile's PIN or password, as it is kept: never the thing itself.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Lock {
+    pub kind: LockKind,
+    salt: String,
+    hash: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LockKind {
+    Pin,
+    Password,
+}
+
+impl LockKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            LockKind::Pin => "PIN",
+            LockKind::Password => "password",
+        }
+    }
+
+    /// Why `secret` will not do, if it will not: a PIN is 4 to 12 digits, a password at least
+    /// 6 characters.
+    pub fn refuses(self, secret: &str) -> Option<&'static str> {
+        match self {
+            LockKind::Pin if !(4..=12).contains(&secret.len()) || !secret.bytes().all(|b| b.is_ascii_digit()) => Some("A PIN is 4 to 12 digits"),
+            LockKind::Password if secret.chars().count() < 6 => Some("A password is at least 6 characters"),
+            _ => None,
+        }
+    }
+}
+
+/// Many rounds of SHA-256, so that a copy of the profile's file (it is synced) does not give a
+/// short PIN up in a moment.
+fn hash(salt: &str, secret: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::digest(format!("{salt}\u{0}{secret}").as_bytes());
+    for _ in 0..100_000 {
+        digest = Sha256::digest(digest);
+    }
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+impl Lock {
+    pub fn new(kind: LockKind, secret: &str) -> Lock {
+        let salt = new_id();
+        Lock { kind, hash: hash(&salt, secret), salt }
+    }
+
+    pub fn opens(&self, secret: &str) -> bool {
+        hash(&self.salt, secret) == self.hash
+    }
 }
 
 impl Profile {
@@ -34,7 +94,7 @@ impl Profile {
 const COLOURS: &[[u8; 3]] = &[[55, 166, 247], [22, 230, 192], [143, 107, 242], [242, 160, 61], [235, 87, 120], [120, 200, 90]];
 
 pub fn private() -> Profile {
-    Profile { id: PRIVATE.to_string(), name: "Private".to_string(), colour: [96, 96, 112], created: 0 }
+    Profile { id: PRIVATE.to_string(), name: "Private".to_string(), colour: [96, 96, 112], created: 0, lock: None }
 }
 
 fn file(id: &str) -> String {
@@ -50,7 +110,7 @@ pub fn list(store: &Store) -> Vec<Profile> {
         .filter_map(|id| store.read::<Profile>(&file(&id)).map(|p| Profile { id, ..p }))
         .collect();
     if found.is_empty() {
-        let first = Profile { id: FIRST.to_string(), name: "Personal".to_string(), colour: COLOURS[0], created: 0 };
+        let first = Profile { id: FIRST.to_string(), name: "Personal".to_string(), colour: COLOURS[0], created: 0, lock: None };
         // Every machine makes this one on its own: another's, renamed perhaps, wins over it.
         if let Err(e) = store.write_default(&file(FIRST), &first) {
             log::warn!("the first profile could not be written: {e}");
@@ -82,7 +142,7 @@ pub fn get(store: &Store, id: &str) -> Option<Profile> {
 
 pub fn add(store: &Store, name: &str) -> Result<Profile, String> {
     let count = list(store).len();
-    let profile = Profile { id: new_id(), name: name.trim().to_string(), colour: COLOURS[count % COLOURS.len()], created: now_ms() };
+    let profile = Profile { id: new_id(), name: name.trim().to_string(), colour: COLOURS[count % COLOURS.len()], created: now_ms(), lock: None };
     if profile.name.is_empty() {
         return Err("a profile needs a name".into());
     }
@@ -117,6 +177,21 @@ pub fn rename(store: &Store, id: &str, name: &str) -> Result<(), String> {
     if profile.name.is_empty() {
         return Err("a profile needs a name".into());
     }
+    store.write(&file(id), &profile)
+}
+
+/// Its windows ask for this PIN or password from now on (on every machine), or for nothing.
+pub fn set_lock(store: &Store, id: &str, lock: Option<(LockKind, &str)>) -> Result<(), String> {
+    let mut profile = get(store, id).filter(|p| !p.is_private()).ok_or("no such profile")?;
+    profile.lock = match lock {
+        Some((kind, secret)) => {
+            if let Some(why) = kind.refuses(secret) {
+                return Err(why.into());
+            }
+            Some(Lock::new(kind, secret))
+        }
+        None => None,
+    };
     store.write(&file(id), &profile)
 }
 
@@ -165,6 +240,22 @@ mod tests {
         assert!(get(&store, &work.id).is_none());
         assert!(!store.data_dir(&work.id).exists(), "its website data went with it");
         assert!(add(&store, "  ").is_err());
+    }
+
+    #[test]
+    fn a_lock_opens_to_its_own_secret_only() {
+        let scratch = Scratch::new("profiles-lock");
+        let store = scratch.store();
+        list(&store);
+        assert!(set_lock(&store, FIRST, Some((LockKind::Pin, "12a4"))).is_err(), "a PIN is digits");
+        assert!(set_lock(&store, FIRST, Some((LockKind::Pin, "123"))).is_err(), "and at least four");
+        set_lock(&store, FIRST, Some((LockKind::Pin, "2468"))).unwrap();
+        let lock = get(&store, FIRST).unwrap().lock.unwrap();
+        assert!(lock.opens("2468") && !lock.opens("2469"));
+        let kept = std::fs::read_to_string(store.shared_dir().join(file(FIRST))).unwrap();
+        assert!(!kept.contains("2468"), "the PIN itself is not written down");
+        set_lock(&store, FIRST, None).unwrap();
+        assert!(get(&store, FIRST).unwrap().lock.is_none());
     }
 
     #[test]

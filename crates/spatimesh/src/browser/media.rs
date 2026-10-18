@@ -481,6 +481,11 @@ impl Media {
         group_of(&mut self.groups, &self.keys, tab)
     }
 
+    /// Nothing of the tab heard, or heard again: its window is locked, or open.
+    pub fn hush(&mut self, tab: TabId, on: bool) {
+        self.group(tab).set_hushed(on);
+    }
+
     /// The tab is in the window whose sound is handed over as `key`: its sound goes there.
     pub fn set_tab_key(&mut self, tab: TabId, key: &str) {
         if self.keys.get(&tab).map(String::as_str) == Some(key) {

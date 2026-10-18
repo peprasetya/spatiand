@@ -86,6 +86,11 @@ impl SoundGroup {
         group
     }
 
+    /// Nothing of it heard while `on` (a locked window's pages), though it plays on.
+    pub fn set_hushed(&self, on: bool) {
+        self.0.hushed.store(on, Ordering::Relaxed);
+    }
+
     /// Hand it over under another name from now on: what it belongs to has moved (a page to
     /// another window). The output is opened again under the new name, if it is open.
     pub fn set_key(&self, key: &str) {
@@ -111,6 +116,7 @@ struct Bus {
     dead: std::sync::Arc<AtomicBool>,
     /// The name it is handed to the room under, if not the application's.
     key: Mutex<Option<String>>,
+    hushed: AtomicBool,
 }
 
 /// Each count of channels the room and the Deck's sink place, by name, in order.
@@ -170,6 +176,10 @@ impl Bus {
                     }
                 }
             }
+        }
+        // Hushed: every voice still goes on (its film keeps time), and nothing is heard.
+        if self.hushed.load(Ordering::Relaxed) {
+            out.fill(0.0);
         }
     }
 
