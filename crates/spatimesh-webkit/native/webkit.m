@@ -552,6 +552,38 @@ static CALayer *copy_layer(CALayer *model) {
     return m;
 }
 
+/* For finding out why something does not show: on SIGUSR1, every tab's layers as WebKit has
+ * them -- their kinds, places, whether they are shown and have a picture; nothing of what is in
+ * them -- to $TMPDIR/spatimesh-layers-<pid>.txt. */
+static void describe_layer(NSMutableString *out, CALayer *model, int depth) {
+    CALayer *l = model.presentationLayer ?: model;
+    [out appendFormat:@"%*s%s bounds=%@ pos=%@ opacity=%.2f/%.2f hidden=%d clip=%d contents=%s mask=%d subs=%lu%s\n", depth * 2, "",
+                      object_getClassName(model), NSStringFromRect(NSRectFromCGRect(l.bounds)), NSStringFromPoint(NSPointFromCGPoint(l.position)),
+                      model.opacity, l.opacity, model.hidden, model.masksToBounds,
+                      model.contents ? object_getClassName(model.contents) : "-", model.mask != nil, (unsigned long)model.sublayers.count,
+                      model.animationKeys.count ? [[NSString stringWithFormat:@" anim=%@", [model.animationKeys componentsJoinedByString:@","]] UTF8String] : ""];
+    if (depth < 60)
+        for (CALayer *sub in model.sublayers)
+            describe_layer(out, sub, depth + 1);
+}
+
+static void listen_for_layer_dump(void) {
+    static dispatch_source_t source;
+    signal(SIGUSR1, SIG_IGN);
+    source = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGUSR1, 0, dispatch_get_main_queue());
+    dispatch_source_set_event_handler(source, ^{
+        NSMutableString *out = [NSMutableString string];
+        for (NSNumber *key in the_engine->tabs) {
+            MeshTab *tab = the_engine->tabs[key];
+            [out appendFormat:@"== tab %@ webkit-composites=%d\n", key, webkit_composites(tab.view.layer, 0)];
+            describe_layer(out, tab.view.layer, 0);
+        }
+        NSString *path = [NSTemporaryDirectory() stringByAppendingFormat:@"spatimesh-layers-%d.txt", getpid()];
+        [out writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    });
+    dispatch_resume(source);
+}
+
 static BOOL gpu_ready(void) {
     if (!gpu) {
         gpu = MTLCreateSystemDefaultDevice();
@@ -1078,6 +1110,7 @@ Engine *spatimesh_new(const char *data, const char *cache) {
         }
         e->visited = [[NSClassFromString(@"_WKVisitedLinkStore") alloc] init];
         the_engine = e;
+        listen_for_layer_dump();
         e->timer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0 repeats:YES block:^(NSTimer *timer) {
             for (MeshTab *tab in the_engine->tabs.allValues)
                 [tab snapshotIfDue];
