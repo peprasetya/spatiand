@@ -21,6 +21,10 @@ pub struct Store {
     pub device: String,
     pub jellyfin: Vec<jellyfin::Account>,
     pub vibrefy: Vec<vibrefy::Account>,
+    /// The Vibrefy server last paired with, so that pairing again is only a new code.
+    pub vibrefy_last: Option<String>,
+    /// Its session ran out and it was let go of, and home offers to pair with it again.
+    pub vibrefy_lapsed: bool,
 }
 
 pub fn path() -> PathBuf {

@@ -84,6 +84,11 @@ pub trait Source: Send + Sync {
     fn unfinished(&self) -> Vec<Item> {
         Vec::new()
     }
+    /// Whether the server has said this sign-in is over, so the source is no use until it
+    /// is signed in to again.
+    fn expired(&self) -> bool {
+        false
+    }
 }
 
 /// A picture as pixels, no wider than a tile needs.

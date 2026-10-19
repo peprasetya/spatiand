@@ -11,6 +11,7 @@ all - but it is also the shortest honest statement of what the wire format actua
 import json
 import os
 import re
+import secrets
 import sys
 import socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +26,11 @@ COOKIE = "JSESSIONID=fake-session-cookie"
 PAIR_CODE = "48219037"
 # Who the pairing signs in as: two runs with two names are two accounts on one server.
 ACCOUNT = os.environ.get("FAKE_VIBREFY_ACCOUNT", "someone@example.com")
+# With FAKE_VIBREFY_SESSIONS=1 sessions are real enough to end: each client gets its own
+# cookie, only a pairing signs it in, and the JSON face answers anything else with the 401 a
+# lapsed session gets. Sessions live in this process, so restarting it signs everybody out.
+SESSIONS = os.environ.get("FAKE_VIBREFY_SESSIONS") == "1"
+signed_in = set()
 progress = {}
 
 
@@ -78,10 +84,25 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Set-Cookie", COOKIE + "; Path=/")
+        self.send_header("Set-Cookie", self.cookie() + "; Path=/")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def session(self):
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == "JSESSIONID":
+                return value
+        return None
+
+    def cookie(self):
+        if not SESSIONS:
+            return COOKIE
+        # The session the client has, or a new one for a client with none.
+        if not getattr(self, "fresh", None):
+            self.fresh = self.session() or secrets.token_hex(8)
+        return "JSESSIONID=" + self.fresh
 
     def body(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -96,6 +117,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(urlparse(self.path).path)
         form = self.body()
+        self.fresh = None
+        if SESSIONS and path != "/pair" and self.session() not in signed_in:
+            return self.send_json({"error": "not signed in"}, 401)
 
         if path.startswith("/files"):
             return self.send_json(listing(path[len("/files"):].strip("/")))
@@ -121,6 +145,7 @@ class Handler(BaseHTTPRequestHandler):
                                        "seconds": 180, "account": None})
             if order == "Poll":
                 # Approved straight away: there is nobody here to press Approve.
+                signed_in.add(self.cookie().partition("=")[2])
                 return self.send_json({"state": "done", "account": ACCOUNT})
             if order == "Claim":
                 if form.get("code") == PAIR_CODE:
