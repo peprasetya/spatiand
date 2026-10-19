@@ -295,8 +295,20 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let preferences = NSMenuItem(title: "Settings\u{2026}", action: #selector(openSettings), keyEquivalent: ",")
         preferences.target = self
         menu.addItem(preferences)
+        let restart = NSMenuItem(title: "Restart Spatiand", action: #selector(restartApp), keyEquivalent: "")
+        restart.target = self
+        menu.addItem(restart)
         let quit = NSMenuItem(title: "Quit Spatiand", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
+    }
+
+    /// Quits as Quit does, and a shell left behind opens the app again once this one is gone.
+    @objc private func restartApp() {
+        let opener = Process()
+        opener.executableURL = URL(fileURLWithPath: "/bin/sh")
+        opener.arguments = ["-c", "while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done; open \"$0\"", Bundle.main.bundlePath]
+        try? opener.run()
+        NSApp.terminate(nil)
     }
 
     /// This Mac as a computer other devices can use the windows of.
