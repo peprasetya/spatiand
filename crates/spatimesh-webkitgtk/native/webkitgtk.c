@@ -36,6 +36,7 @@ enum {
     EV_EXTENSION,
     EV_SCRIPT_RESULT,
     EV_MEDIA,
+    EV_COOKIES,
 };
 
 typedef struct {
@@ -118,6 +119,7 @@ typedef struct Engine {
     /* SpatiMesh's own script for every frame's every document (its media). */
     char *page_script;
     GHashTable *filters;
+    WebKitCookieManager *cookies;
 } Engine;
 
 static guint32 now_ms(void) {
@@ -763,6 +765,7 @@ Engine *spatimesh_new(const char *data, const char *cache) {
         g_free(file);
     }
     webkit_cookie_manager_set_accept_policy(cookies, WEBKIT_COOKIE_POLICY_ACCEPT_NO_THIRD_PARTY);
+    e->cookies = g_object_ref(cookies);
     g_object_unref(manager);
     webkit_web_context_set_cache_model(e->context, WEBKIT_CACHE_MODEL_WEB_BROWSER);
     e->settings = webkit_settings_new();
@@ -1294,4 +1297,96 @@ void spatimesh_set_window(Engine *e, uint64_t id, guint32 window) {
     (void)e;
     (void)id;
     (void)window;
+}
+
+/* ---- cookies (docs/spatimesh.md, "Logins and history on every machine") ------------------- */
+
+#if WEBKIT_CHECK_VERSION(2, 42, 0)
+static void got_cookies(GObject *source, GAsyncResult *result, gpointer data) {
+    Engine *e = data;
+    GList *all = webkit_cookie_manager_get_all_cookies_finish(WEBKIT_COOKIE_MANAGER(source), result, NULL);
+    GString *lines = g_string_new(NULL);
+    for (GList *l = all; l; l = l->next) {
+        SoupCookie *c = l->data;
+        GDateTime *expires = soup_cookie_get_expires(c);
+        const char *same = "";
+        switch (soup_cookie_get_same_site_policy(c)) {
+        case SOUP_SAME_SITE_POLICY_LAX: same = "Lax"; break;
+        case SOUP_SAME_SITE_POLICY_STRICT: same = "Strict"; break;
+        case SOUP_SAME_SITE_POLICY_NONE: same = "None"; break;
+        default: break;
+        }
+        g_string_append_printf(lines, "%s\t%s\t%s\t%s\t%lld\t%d\t%d\t%s\n", soup_cookie_get_name(c), soup_cookie_get_value(c),
+                               soup_cookie_get_domain(c), soup_cookie_get_path(c), expires ? (long long)g_date_time_to_unix(expires) : -1LL,
+                               soup_cookie_get_secure(c) ? 1 : 0, soup_cookie_get_http_only(c) ? 1 : 0, same);
+    }
+    g_list_free_full(all, (GDestroyNotify)soup_cookie_free);
+    push(e, EV_COOKIES, 0, 0, 0, 0, lines->str, NULL);
+    g_string_free(lines, TRUE);
+}
+#endif
+
+void spatimesh_cookies_ask(Engine *e) {
+#if WEBKIT_CHECK_VERSION(2, 42, 0)
+    webkit_cookie_manager_get_all_cookies(e->cookies, NULL, got_cookies, e);
+#else
+    (void)e;
+#endif
+}
+
+/* A cookie from a line of `Cookie::line`. */
+static SoupCookie *cookie_of(const char *line) {
+    char **f = g_strsplit(line, "\t", 9);
+    SoupCookie *c = NULL;
+    if (g_strv_length(f) >= 7 && f[0][0] && f[2][0]) {
+        c = soup_cookie_new(f[0], f[1], f[2], f[3][0] ? f[3] : "/", -1);
+        long long expires = g_ascii_strtoll(f[4], NULL, 10);
+        if (expires >= 0) {
+            GDateTime *when = g_date_time_new_from_unix_utc(expires);
+            soup_cookie_set_expires(c, when);
+            g_date_time_unref(when);
+        }
+        soup_cookie_set_secure(c, strcmp(f[5], "1") == 0);
+        soup_cookie_set_http_only(c, strcmp(f[6], "1") == 0);
+        if (f[7]) {
+            if (strcmp(f[7], "Strict") == 0)
+                soup_cookie_set_same_site_policy(c, SOUP_SAME_SITE_POLICY_STRICT);
+            else if (strcmp(f[7], "Lax") == 0)
+                soup_cookie_set_same_site_policy(c, SOUP_SAME_SITE_POLICY_LAX);
+            else if (strcmp(f[7], "None") == 0)
+                soup_cookie_set_same_site_policy(c, SOUP_SAME_SITE_POLICY_NONE);
+        }
+    }
+    g_strfreev(f);
+    return c;
+}
+
+static void each_cookie(Engine *e, const char *lines, int add) {
+    char **all = g_strsplit(lines, "\n", -1);
+    for (char **line = all; *line; line++) {
+        SoupCookie *c = cookie_of(*line);
+        if (!c)
+            continue;
+        if (add)
+            webkit_cookie_manager_add_cookie(e->cookies, c, NULL, NULL, NULL);
+        else
+            webkit_cookie_manager_delete_cookie(e->cookies, c, NULL, NULL, NULL);
+        soup_cookie_free(c);
+    }
+    g_strfreev(all);
+}
+
+void spatimesh_cookies_set(Engine *e, const char *lines) {
+    each_cookie(e, lines, 1);
+}
+
+void spatimesh_cookies_remove(Engine *e, const char *lines) {
+    each_cookie(e, lines, 0);
+}
+
+/* WebKitGTK has no way to be told of links visited elsewhere: they look visited once visited
+ * here. */
+void spatimesh_visited(Engine *e, const char *urls) {
+    (void)e;
+    (void)urls;
 }

@@ -25,6 +25,7 @@
 #include <libgen.h>
 #include <math.h>
 #include <poll.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -44,6 +45,7 @@
 #include "include/capi/cef_client_capi.h"
 #include "include/capi/cef_command_line_capi.h"
 #include "include/capi/cef_context_menu_handler_capi.h"
+#include "include/capi/cef_cookie_capi.h"
 #include "include/capi/cef_dialog_handler_capi.h"
 #include "include/capi/cef_display_handler_capi.h"
 #include "include/capi/cef_download_handler_capi.h"
@@ -75,6 +77,7 @@
     X(cef_shutdown)                                                                               \
     X(cef_do_message_loop_work)                                                                   \
     X(cef_browser_host_create_browser_sync)                                                       \
+    X(cef_cookie_manager_get_global_manager)                                                      \
     X(cef_string_utf8_to_utf16)                                                                   \
     X(cef_string_utf16_to_utf8)                                                                   \
     X(cef_string_utf16_clear)                                                                     \
@@ -302,6 +305,7 @@ enum {
     EV_EXTENSION,
     EV_SCRIPT_RESULT,
     EV_MEDIA,
+    EV_COOKIES,
 };
 
 typedef struct {
@@ -374,6 +378,9 @@ static int64_t now_ms(void) {
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+/* Events are queued from the UI thread, and a cookie visitor may be let go of on another. */
+static pthread_mutex_t queue_lock = PTHREAD_MUTEX_INITIALIZER;
+
 static Queued *queue(int kind, uint64_t tab, double number, int a, int b, const char *text, const char *text2) {
     Queued *q = calloc(1, sizeof *q);
     q->ev.kind = kind;
@@ -383,11 +390,13 @@ static Queued *queue(int kind, uint64_t tab, double number, int a, int b, const 
     q->ev.b = b;
     q->ev.text = text ? strdup(text) : NULL;
     q->ev.text2 = text2 ? strdup(text2) : NULL;
+    pthread_mutex_lock(&queue_lock);
     if (last)
         last->next = q;
     else
         first = q;
     last = q;
+    pthread_mutex_unlock(&queue_lock);
     return q;
 }
 
@@ -2866,12 +2875,16 @@ int spatimesh_next_event(Engine *e, MeshEvent *out) {
     free(current.text);
     free(current.text2);
     memset(&current, 0, sizeof current);
+    pthread_mutex_lock(&queue_lock);
     Queued *q = first;
+    if (q) {
+        first = q->next;
+        if (!first)
+            last = NULL;
+    }
+    pthread_mutex_unlock(&queue_lock);
     if (!q)
         return 0;
-    first = q->next;
-    if (!first)
-        last = NULL;
     current = q->ev;
     free(q);
     *out = current;
@@ -2949,3 +2962,164 @@ void spatimesh_cef_shutdown(void) {
     if (private_folder)
         nftw(private_folder, remove_one, 16, FTW_DEPTH | FTW_PHYS);
 }
+
+/* ---- cookies (docs/spatimesh.md, "Logins and history on every machine") ------------------- */
+
+/* Chromium's times are microseconds since 1601. */
+#define UNIX_EPOCH_IN_CHROMIUM 11644473600LL
+
+/* All the cookies, a line each (`Cookie::line`), said as one event when Chromium lets go of the
+ * visitor: it is called once per cookie and not at all when there are none. */
+typedef struct {
+    cef_cookie_visitor_t handler;
+    atomic_int refs;
+    char *lines;
+    size_t len, cap;
+} Visitor;
+
+static void visitor_done(Visitor *v) {
+    push(EV_COOKIES, 0, 0, 0, 0, v->lines ? v->lines : "", NULL);
+    free(v->lines);
+    free(v);
+}
+
+REFCOUNTED(Visitor, v, visitor_done(v))
+
+static void clean(char *s) {
+    for (; *s; s++)
+        if (*s == '\t' || *s == '\n')
+            *s = ' ';
+}
+
+static int CEF_CALLBACK visit_cookie(cef_cookie_visitor_t *self, const cef_cookie_t *c, int count, int total, int *delete_cookie) {
+    Visitor *v = (Visitor *)self;
+    char *f[4] = {utf8_of(&c->name), utf8_of(&c->value), utf8_of(&c->domain), utf8_of(&c->path)};
+    for (int i = 0; i < 4; i++)
+        clean(f[i]);
+    long long expires = c->has_expires ? c->expires.val / 1000000 - UNIX_EPOCH_IN_CHROMIUM : -1;
+    const char *same = c->same_site == CEF_COOKIE_SAME_SITE_LAX_MODE        ? "Lax"
+                       : c->same_site == CEF_COOKIE_SAME_SITE_STRICT_MODE   ? "Strict"
+                       : c->same_site == CEF_COOKIE_SAME_SITE_NO_RESTRICTION ? "None"
+                                                                             : "";
+    char *line = NULL;
+    int n = asprintf(&line, "%s\t%s\t%s\t%s\t%lld\t%d\t%d\t%s\n", f[0], f[1], f[2], f[3], expires, c->secure ? 1 : 0, c->httponly ? 1 : 0, same);
+    for (int i = 0; i < 4; i++)
+        free(f[i]);
+    if (n > 0) {
+        if (v->len + (size_t)n + 1 > v->cap) {
+            v->cap = (v->len + (size_t)n + 1) * 2;
+            v->lines = realloc(v->lines, v->cap);
+        }
+        memcpy(v->lines + v->len, line, (size_t)n + 1);
+        v->len += (size_t)n;
+    }
+    free(line);
+    *delete_cookie = 0;
+    return 1;
+}
+
+static cef_cookie_manager_t *cookie_jar(void) {
+    return started ? p_cef_cookie_manager_get_global_manager(NULL) : NULL;
+}
+
+void spatimesh_cookies_ask(Engine *e) {
+    cef_cookie_manager_t *jar = cookie_jar();
+    Visitor *v = calloc(1, sizeof *v);
+    COUNTED(v, Visitor, sizeof(cef_cookie_visitor_t));
+    v->handler.visit = visit_cookie;
+    if (!jar) {
+        v->handler.base.release(&v->handler.base);
+        return;
+    }
+    /* Chromium holds the visitor while it visits, and lets go when done. */
+    if (!jar->visit_all_cookies(jar, &v->handler))
+        v->handler.base.release(&v->handler.base);
+    jar->base.release(&jar->base);
+}
+
+/* Each line of `Cookie::line`: its fields, split in place. */
+static int fields_of(char *line, char *f[8]) {
+    int n = 0;
+    f[n++] = line;
+    for (char *p = line; *p && n < 8; p++)
+        if (*p == '\t') {
+            *p = 0;
+            f[n++] = p + 1;
+        }
+    for (int i = n; i < 8; i++)
+        f[i] = "";
+    return n;
+}
+
+/* The address Chromium wants beside a cookie: its host, by the scheme it is sent over. */
+static char *address_of(const char *domain, const char *path, int secure) {
+    char *url = NULL;
+    if (asprintf(&url, "%s://%s%s", secure ? "https" : "http", domain[0] == '.' ? domain + 1 : domain, path[0] == '/' ? path : "/") < 0)
+        return NULL;
+    return url;
+}
+
+static void each_cookie(const char *lines, int add) {
+    cef_cookie_manager_t *jar = cookie_jar();
+    if (!jar)
+        return;
+    char *all = strdup(lines ? lines : "");
+    char *save = NULL;
+    for (char *line = strtok_r(all, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        char *f[8];
+        if (fields_of(line, f) < 7 || !f[0][0] || !f[2][0])
+            continue;
+        int secure = strcmp(f[5], "1") == 0;
+        char *url = address_of(f[2], f[3], secure);
+        if (!url)
+            continue;
+        cef_string_t address = {0}, name = {0};
+        set_text(&address, url);
+        set_text(&name, f[0]);
+        if (add) {
+            cef_cookie_t c;
+            memset(&c, 0, sizeof c);
+            set_text(&c.name, f[0]);
+            set_text(&c.value, f[1]);
+            /* A host's own cookie is made with no domain; a domain's keeps its dot. */
+            if (f[2][0] == '.')
+                set_text(&c.domain, f[2]);
+            set_text(&c.path, f[3][0] ? f[3] : "/");
+            c.secure = secure;
+            c.httponly = strcmp(f[6], "1") == 0;
+            long long expires = strtoll(f[4], NULL, 10);
+            if (expires >= 0) {
+                c.has_expires = 1;
+                c.expires.val = (expires + UNIX_EPOCH_IN_CHROMIUM) * 1000000;
+            }
+            c.same_site = strcmp(f[7], "Strict") == 0 ? CEF_COOKIE_SAME_SITE_STRICT_MODE
+                          : strcmp(f[7], "Lax") == 0  ? CEF_COOKIE_SAME_SITE_LAX_MODE
+                          : strcmp(f[7], "None") == 0 ? CEF_COOKIE_SAME_SITE_NO_RESTRICTION
+                                                      : CEF_COOKIE_SAME_SITE_UNSPECIFIED;
+            jar->set_cookie(jar, &address, &c, NULL);
+            clear_text(&c.name);
+            clear_text(&c.value);
+            clear_text(&c.domain);
+            clear_text(&c.path);
+        } else {
+            jar->delete_cookies(jar, &address, &name, NULL);
+        }
+        clear_text(&address);
+        clear_text(&name);
+        free(url);
+    }
+    free(all);
+    jar->base.release(&jar->base);
+}
+
+void spatimesh_cookies_set(Engine *e, const char *lines) {
+    each_cookie(lines, 1);
+}
+
+void spatimesh_cookies_remove(Engine *e, const char *lines) {
+    each_cookie(lines, 0);
+}
+
+/* Chromium has no way to be told of links visited elsewhere: they look visited once visited
+ * here. */
+void spatimesh_visited(Engine *e, const char *urls) {}

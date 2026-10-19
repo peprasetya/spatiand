@@ -8,8 +8,10 @@
 
 pub mod address;
 pub mod bookmarks;
+pub mod cookies;
 pub mod engine;
 pub mod extensions;
+pub mod history;
 pub mod host;
 pub mod media;
 pub mod profiles;

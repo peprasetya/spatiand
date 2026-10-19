@@ -61,6 +61,12 @@ jobs:
           . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null
           cargo build -p spatiand -p spatimesh -p spatimesh-webkitgtk --locked
           python3 -I tools/spatimesh-e2e.py target/debug target/spatimesh-e2e
+      # Two machines' SpatiMesh sharing one synchronised folder: a login and a visit on one are
+      # there on the other.
+      - name: SpatiMesh's logins and history on two machines, end to end
+        run: |
+          . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null
+          python3 -I tools/spatimesh-sync-e2e.py target/debug/spatiand target/debug target/spatimesh-e2e/sync
       - uses: actions/upload-artifact@v4
         if: always()
         with:

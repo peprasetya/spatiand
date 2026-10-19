@@ -21,6 +21,7 @@ use crate::engines::{Host, Program};
 use crate::page::PageTexture;
 
 mod ext;
+mod kept;
 #[cfg(feature = "media")]
 mod media;
 #[cfg(not(feature = "media"))]
@@ -265,6 +266,8 @@ pub struct Browser {
     latest_buffer: HashMap<TabId, u8>,
     /// Pages' films and sounds, played here (`media`).
     media: media::Media,
+    /// Each running profile's cookies and history, the same on every machine (`kept`).
+    kept: HashMap<String, kept::Kept>,
 }
 
 fn command(m: Modifiers) -> bool {
@@ -308,6 +311,7 @@ impl Browser {
             icons: HashMap::new(),
             latest_buffer: HashMap::new(),
             media: media::Media::default(),
+            kept: HashMap::new(),
         };
         let mut extensions = Runtime::new(browser.store.clone());
         extensions.set_addresses(crate::engines::extension_addresses(&browser.program));
@@ -365,6 +369,7 @@ impl Browser {
                     }
                     self.hosts.insert(profile.to_string(), host);
                     self.extensions_to_new_engine(profile);
+                    self.kept_started(profile);
                 }
                 Err(e) => {
                     log::error!("no engine for {profile}: {e}");
@@ -517,6 +522,7 @@ impl Browser {
         let Some(host) = self.hosts.remove(profile) else { return };
         self.app.unwatch(host.link.raw_fd());
         self.extensions_engine_gone(profile);
+        self.kept_ended(profile);
         let why = match (&host.failed, &host.engine) {
             (Some(why), _) => format!("The engine for this profile's pages could not be started: {why}"),
             (None, Some(e)) if e.starts_with("failed") => e.clone(),
@@ -611,6 +617,8 @@ impl Browser {
                 }
                 self.media.said(tab, &json);
             }
+            FromHost::Happened(Happened::Cookies { cookies }) => self.kept_cookies(profile, Some(cookies), None),
+            FromHost::Happened(Happened::CookiesSent { sent }) => self.kept_cookies(profile, None, Some(sent)),
             FromHost::Happened(happened) if self.hidden.contains_key(&happened.tab()) => self.hidden_happened(profile, happened),
             FromHost::Happened(happened) => self.happened(happened),
         }
@@ -700,8 +708,13 @@ impl Browser {
         }
         match happened {
             Happened::Title { tab, title } => {
+                let mut loaded = false;
                 if let Some(t) = self.tabs.tab_mut(tab) {
                     t.title = title;
+                    loaded = !t.loading;
+                }
+                if loaded {
+                    self.kept_page(tab, false);
                 }
                 self.dirty_bar(tab);
             }
@@ -718,12 +731,17 @@ impl Browser {
                 self.dirty_bar(tab);
             }
             Happened::Progress { tab, progress, loading } => {
+                let mut finished = false;
                 if let Some(t) = self.tabs.tab_mut(tab) {
+                    finished = t.loading && !loading;
                     t.progress = progress;
                     t.loading = loading;
                     if loading {
                         t.crashed = None;
                     }
+                }
+                if finished {
+                    self.kept_page(tab, true);
                 }
                 self.dirty_bar(tab);
             }
@@ -778,6 +796,7 @@ impl Browser {
             }
             // Taken by `heard` before they come here.
             Happened::Extension { .. } | Happened::ScriptResult { .. } | Happened::Media { .. } => {}
+            Happened::Cookies { .. } | Happened::CookiesSent { .. } => {}
         }
         let _ = tab;
     }
@@ -945,6 +964,7 @@ impl Browser {
             if let Some(host) = self.hosts.remove(profile) {
                 self.app.unwatch(host.link.raw_fd());
                 self.extensions_engine_gone(profile);
+                self.kept_ended(profile);
             }
         }
     }
@@ -2383,6 +2403,7 @@ impl Browser {
                     win.start = None;
                     win.dirty = true;
                 }
+                self.kept_synced();
             }
             self.seen_changes = latest;
         }
@@ -2431,6 +2452,7 @@ impl Browser {
             }
             self.accept_other_starts();
             self.notice_sync();
+            self.kept_tick();
             if self.wins.is_empty() {
                 return Ok(());
             }

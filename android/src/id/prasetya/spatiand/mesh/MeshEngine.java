@@ -304,6 +304,67 @@ public class MeshEngine extends Service {
 
     /** SpatiMesh's own script for every frame's every document (its media), or none. */
     private String pageScript;
+    /** Every page the profile visited, on any machine (Chrome.getVisitedHistory). */
+    private final java.util.Set<String> visited = new java.util.HashSet<>();
+
+    /** Cookies and visited pages, the same on every machine (docs/spatimesh.md, "Logins and
+     *  history on every machine"). WebView cannot list its cookies: it is asked what it would
+     *  send to each address, and the window makes the cookies out of that. */
+    private void kept(Wire.ToHost m) {
+        android.webkit.CookieManager jar = android.webkit.CookieManager.getInstance();
+        try {
+            if (m.tag == Wire.ASK_COOKIES) {
+                JSONArray addresses = new JSONArray(m.json), sent = new JSONArray();
+                for (int i = 0; i < addresses.length(); i++) {
+                    String url = addresses.getString(i);
+                    String header = jar.getCookie(url);
+                    sent.put(new JSONArray().put(url).put(header == null ? "" : header));
+                }
+                send(Wire.cookiesSent(sent.toString()));
+            } else if (m.tag == Wire.SET_COOKIES) {
+                JSONObject both = new JSONObject(m.json);
+                JSONArray set = both.optJSONArray("set"), remove = both.optJSONArray("remove");
+                for (int i = 0; set != null && i < set.length(); i++)
+                    setCookie(jar, set.getJSONObject(i), false);
+                for (int i = 0; remove != null && i < remove.length(); i++)
+                    setCookie(jar, remove.getJSONObject(i), true);
+                jar.flush();
+            } else {
+                JSONArray urls = new JSONArray(m.json);
+                synchronized (visited) {
+                    for (int i = 0; i < urls.length(); i++)
+                        visited.add(urls.getString(i));
+                }
+            }
+        } catch (JSONException e) {
+            Log.w(TAG, "cookies or visited pages not understood: " + e);
+        }
+    }
+
+    /** A cookie made, replaced, or (`gone`) removed, as a Set-Cookie header from its own address. */
+    private static void setCookie(android.webkit.CookieManager jar, JSONObject c, boolean gone) throws JSONException {
+        String domain = c.getString("domain"), path = c.optString("path", "/");
+        boolean secure = c.optBoolean("secure");
+        StringBuilder header = new StringBuilder(c.getString("name")).append('=').append(gone ? "" : c.optString("value"));
+        if (domain.startsWith("."))
+            header.append("; Domain=").append(domain);
+        header.append("; Path=").append(path);
+        if (gone) {
+            header.append("; Max-Age=0");
+        } else if (c.has("expires")) {
+            long seconds = (long) c.getDouble("expires") - System.currentTimeMillis() / 1000;
+            header.append("; Max-Age=").append(Math.max(seconds, 0));
+        }
+        if (secure)
+            header.append("; Secure");
+        if (c.optBoolean("http_only"))
+            header.append("; HttpOnly");
+        String same = c.optString("same_site", "");
+        if (!same.isEmpty())
+            header.append("; SameSite=").append(same);
+        String host = domain.startsWith(".") ? domain.substring(1) : domain;
+        jar.setCookie((secure ? "https://" : "http://") + host + path, header.toString());
+    }
 
     private void handle(Wire.ToHost m) {
         if (m.tag == Wire.OPEN) {
@@ -316,6 +377,10 @@ public class MeshEngine extends Service {
         }
         if (m.tag == Wire.RUN_SCRIPT) {
             runScript(pages.get(m.tab), m);
+            return;
+        }
+        if (m.tag == Wire.ASK_COOKIES || m.tag == Wire.SET_COOKIES || m.tag == Wire.VISITED) {
+            kept(m);
             return;
         }
         if (m.tag == Wire.PAGE_SCRIPT) {
@@ -1217,6 +1282,14 @@ public class MeshEngine extends Service {
 
         Chrome(Page page) {
             this.page = page;
+        }
+
+        /** Pages visited here and on the profile's other machines: their links look visited. */
+        @Override
+        public void getVisitedHistory(android.webkit.ValueCallback<String[]> callback) {
+            synchronized (visited) {
+                callback.onReceiveValue(visited.toArray(new String[0]));
+            }
         }
 
         @Override

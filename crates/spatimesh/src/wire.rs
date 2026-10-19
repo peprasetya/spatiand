@@ -12,7 +12,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
-use crate::engine::{Button, Canvas, Choice, Cursor, DialogKind, Format, Happened, KeyPress, Modifiers, Rect, TabId, View};
+use crate::engine::{Button, Canvas, Choice, Cookie, Cursor, DialogKind, Format, Happened, KeyPress, Modifiers, Rect, TabId, View};
 
 /// From a window to its engine host.
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +46,12 @@ pub enum ToHost {
     PageScript { code: String },
     /// The window is done with this picture of the tab's on the GPU ([`FromHost::Surface`]).
     ReleaseSurface { tab: TabId, id: u32 },
+    /// Say the profile's cookies ([`crate::engine::Engine::ask_cookies`]).
+    AskCookies { addresses: Vec<String> },
+    /// Cookies from another machine ([`crate::engine::Engine::set_cookies`]).
+    SetCookies { set: Vec<Cookie>, remove: Vec<Cookie> },
+    /// Pages visited on another machine ([`crate::engine::Engine::add_visited`]).
+    Visited { urls: Vec<String> },
 }
 
 /// From an engine host to its window.
@@ -357,6 +363,19 @@ impl ToHost {
                 b.u64(*tab).u32(*id);
                 23
             }
+            // Lists as JSON, which Android's side reads with its own JSON.
+            ToHost::AskCookies { addresses } => {
+                b.str(&serde_json::to_string(addresses).unwrap_or_default());
+                24
+            }
+            ToHost::SetCookies { set, remove } => {
+                b.str(&serde_json::json!({ "set": set, "remove": remove }).to_string());
+                25
+            }
+            ToHost::Visited { urls } => {
+                b.str(&serde_json::to_string(urls).unwrap_or_default());
+                26
+            }
         };
         frame(tag, b)
     }
@@ -400,6 +419,17 @@ impl ToHost {
             21 => ToHost::RunScript { tab: i.u64()?, world: i.str()?, all_frames: i.bool()?, code: i.str()?, request: i.u64()?, boot: i.bool()? },
             22 => ToHost::PageScript { code: i.str()? },
             23 => ToHost::ReleaseSurface { tab: i.u64()?, id: i.u32()? },
+            24 => ToHost::AskCookies { addresses: serde_json::from_str(&i.str()?).ok()? },
+            25 => {
+                #[derive(serde::Deserialize)]
+                struct Both {
+                    set: Vec<Cookie>,
+                    remove: Vec<Cookie>,
+                }
+                let both: Both = serde_json::from_str(&i.str()?).ok()?;
+                ToHost::SetCookies { set: both.set, remove: both.remove }
+            }
+            26 => ToHost::Visited { urls: serde_json::from_str(&i.str()?).ok()? },
             _ => return None,
         })
     }
@@ -506,6 +536,14 @@ impl FromHost {
                     b.u64(*tab).str(json);
                     25
                 }
+                Happened::Cookies { cookies } => {
+                    b.str(&serde_json::to_string(cookies).unwrap_or_default());
+                    26
+                }
+                Happened::CookiesSent { sent } => {
+                    b.str(&serde_json::to_string(sent).unwrap_or_default());
+                    27
+                }
             },
         };
         frame(tag, b)
@@ -559,6 +597,8 @@ impl FromHost {
             }
             23 => FromHost::Happened(Happened::Extension { tab: i.u64()?, json: i.str()? }),
             25 => FromHost::Happened(Happened::Media { tab: i.u64()?, json: i.str()? }),
+            26 => FromHost::Happened(Happened::Cookies { cookies: serde_json::from_str(&i.str()?).ok()? }),
+            27 => FromHost::Happened(Happened::CookiesSent { sent: serde_json::from_str(&i.str()?).ok()? }),
             24 => {
                 let (tab, request, ok, text) = (i.u64()?, i.u64()?, i.bool()?, i.str()?);
                 FromHost::Happened(Happened::ScriptResult { tab, request, result: if ok { Ok(text) } else { Err(text) } })
@@ -1038,6 +1078,19 @@ mod tests {
         }
     }
 
+    fn cookie() -> Cookie {
+        Cookie {
+            name: "sid".into(),
+            value: "x=y".into(),
+            domain: ".example.com".into(),
+            path: "/".into(),
+            expires: Some(1_900_000_000.0),
+            secure: true,
+            http_only: true,
+            same_site: "Lax".into(),
+        }
+    }
+
     #[test]
     fn every_message_comes_back_the_same() {
         let to_host = vec![
@@ -1055,6 +1108,9 @@ mod tests {
             ToHost::Quit,
             ToHost::Extensions { set: "{\"extensions\":[]}".into() },
             ToHost::RunScript { tab: 8, world: "spatimesh-abc".into(), all_frames: true, code: "1+1".into(), request: 42, boot: true },
+            ToHost::AskCookies { addresses: vec!["https://a.example/".into()] },
+            ToHost::SetCookies { set: vec![cookie()], remove: vec![Cookie { expires: None, ..cookie() }] },
+            ToHost::Visited { urls: vec!["https://a.example/x".into()] },
         ];
         for message in to_host {
             let bytes = message.encode();
@@ -1075,6 +1131,8 @@ mod tests {
             FromHost::Happened(Happened::Extension { tab: 4, json: "{\"c\":\"ready\"}".into() }),
             FromHost::Happened(Happened::ScriptResult { tab: 4, request: 42, result: Ok("2".into()) }),
             FromHost::Happened(Happened::ScriptResult { tab: 4, request: 43, result: Err("no".into()) }),
+            FromHost::Happened(Happened::Cookies { cookies: vec![cookie()] }),
+            FromHost::Happened(Happened::CookiesSent { sent: vec![("https://a.example/".into(), "sid=1; b=2".into())] }),
         ];
         for message in from_host {
             let bytes = message.encode();

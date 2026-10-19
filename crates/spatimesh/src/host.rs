@@ -158,6 +158,9 @@ pub fn serve(mut engine: Box<dyn Engine>, mut link: Link) {
                 ToHost::RunScript { tab, world, all_frames, code, request, boot } => engine.run_script(tab, &world, all_frames, &code, request, boot),
                 ToHost::PageScript { code } => engine.set_page_script(&code),
                 ToHost::ReleaseSurface { tab, id } => engine.release_surface(tab, id),
+                ToHost::AskCookies { addresses } => engine.ask_cookies(&addresses),
+                ToHost::SetCookies { set, remove } => engine.set_cookies(&set, &remove),
+                ToHost::Visited { urls } => engine.add_visited(&urls),
             }
         }
         if link.is_closed() {

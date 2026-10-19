@@ -189,6 +189,76 @@ pub enum Happened {
     /// What SpatiMesh's media script in the tab's top frame says to the window (JSON): its
     /// films, sounds and MediaSources, played by Spatiand's own player (`crate::media`).
     Media { tab: TabId, json: String },
+    /// The profile's cookies, all of them, as asked for with [`Engine::ask_cookies`].
+    Cookies { cookies: Vec<Cookie> },
+    /// What an engine that cannot list its cookies (Android's) sends to each address it was
+    /// asked about, as a page there would get it: `name=value; name=value`, by address.
+    CookiesSent { sent: Vec<(String, String)> },
+}
+
+/// A cookie, as every engine keeps one: a domain that starts with a dot is the domain's and
+/// its hosts', one without is that host's alone. `expires` is in seconds since 1970; none is a
+/// cookie for the session.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Cookie {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<f64>,
+    #[serde(default)]
+    pub secure: bool,
+    #[serde(default)]
+    pub http_only: bool,
+    /// "Lax", "Strict", "None", or empty for the engine's own default.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub same_site: String,
+}
+
+impl Cookie {
+    /// What makes it the same cookie as another: a new one with these replaces it.
+    pub fn key(&self) -> (&str, &str, &str) {
+        (&self.name, &self.domain, &self.path)
+    }
+
+    /// One line a C engine reads or writes: the fields between tabs, which no cookie has in it.
+    pub fn line(&self) -> String {
+        format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            self.name,
+            self.value,
+            self.domain,
+            self.path,
+            self.expires.map_or(String::from("-1"), |e| format!("{e:.0}")),
+            self.secure as u8,
+            self.http_only as u8,
+            self.same_site
+        )
+    }
+
+    /// Cookies from the lines of [`Cookie::line`].
+    pub fn from_lines(text: &str) -> Vec<Cookie> {
+        text.lines()
+            .filter_map(|line| {
+                let f: Vec<&str> = line.split('\t').collect();
+                if f.len() < 7 || f[0].is_empty() || f[2].is_empty() {
+                    return None;
+                }
+                let expires = f[4].parse::<f64>().ok().filter(|e| *e >= 0.0);
+                Some(Cookie {
+                    name: f[0].into(),
+                    value: f[1].into(),
+                    domain: f[2].to_ascii_lowercase(),
+                    path: if f[3].is_empty() { "/".into() } else { f[3].into() },
+                    expires,
+                    secure: f[5] == "1",
+                    http_only: f[6] == "1",
+                    same_site: f.get(7).map_or(String::new(), |s| s.to_string()),
+                })
+            })
+            .collect()
+    }
 }
 
 impl Happened {
@@ -210,6 +280,8 @@ impl Happened {
             | Happened::ScriptResult { tab, .. }
             | Happened::Media { tab, .. } => *tab,
             Happened::OpenTab { opener, .. } => *opener,
+            // The profile's, not a tab's.
+            Happened::Cookies { .. } | Happened::CookiesSent { .. } => 0,
         }
     }
 }
@@ -270,6 +342,13 @@ pub trait Engine {
     /// runs, `window.__spatimeshMediaPost(json)`: what it says to the window, as
     /// [`Happened::Media`]. What the window says back reaches it by [`Engine::run_script`].
     fn set_page_script(&mut self, _code: &str) {}
+    /// Say all the profile's cookies, as [`Happened::Cookies`], soon. `addresses` are where
+    /// an engine that cannot list them all is to look ([`Happened::CookiesSent`]).
+    fn ask_cookies(&mut self, _addresses: &[String]) {}
+    /// Cookies from another machine: `set` made or replaced, `remove` gone.
+    fn set_cookies(&mut self, _set: &[Cookie], _remove: &[Cookie]) {}
+    /// Pages visited on another machine, for links to them to look visited.
+    fn add_visited(&mut self, _urls: &[String]) {}
 }
 
 /// What a profile is to the engine that holds it.

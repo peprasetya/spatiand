@@ -446,12 +446,58 @@ ago, so that a version of it from another machine (renamed, say) always wins ove
 `crates/spatimesh/tests/sync.rs` runs two machines through `spatiand-sync` itself: profiles,
 bookmarks and settings changed apart end up the same on both, deletions included, and website
 data and cache never cross. A running SpatiMesh notices within three seconds what the
-synchroniser brought (the folder's newest change) and reloads it. Never in it, never synced,
-thrown away freely:
-website data (cookies, storage: an engine's own format, and a login is a machine's own),
-`~/.local/share/spatiand/spatimesh/<profile>`; cache, `~/.cache/spatiand/spatimesh/<profile>`;
-downloads in progress, in the cache until finished; history and extensions, in `local/`. The
-private profile writes nothing at all.
+synchroniser brought (the folder's newest change) and reloads it. Cookies and history are in it
+too (below). Never in it, never synced, thrown away freely: the engine's own website data
+(storage, its cookie database), `~/.local/share/spatiand/spatimesh/<profile>`; cache,
+`~/.cache/spatiand/spatimesh/<profile>`; downloads in progress, in the cache until finished;
+extensions, in `local/`. The private profile writes nothing at all.
+
+## Logins and history on every machine (2026-10-19)
+
+Log in on the Mac, be logged in on the Beam Pro and the Deck; a page visited on one is a visited
+link on the others.
+
+```text
+apps/spatimesh/profiles/<id>/cookies/<site>.json              a site's cookies (its domain, no dot)
+apps/spatimesh/profiles/<id>/history/<machine>-<YYYY-MM>.json  a machine's visits in a month
+local/spatimesh/profiles/<id>/cookies.json                    what engine and files last agreed on
+local/spatimesh/machine.json                                  this machine's name for its files
+```
+
+**Cookies** (`crates/spatimesh/src/cookies.rs`, the window's side in `browser/kept.rs`). Each
+engine keeps cookies in its own format, so the window asks its engine for all of them
+(`ToHost::AskCookies`, answered by `Happened::Cookies`) three seconds after a page has loaded,
+every minute, and when the synchroniser brought something; it merges three ways, site by site,
+against the files and what the two last agreed on: changed here is written out, changed
+elsewhere is given to the engine (`ToHost::SetCookies`), removed on either side (a logout) is
+removed on both. Only cookies that outlive the session cross (an engine forgetting its session
+cookies when it ends must not log the other machines out), and an expiry moved by less than a day
+is not a change (sites renewing theirs on every page would write a file each time). An answer to
+an ask made before cookies were given to the engine is thrown away and asked again. The engines:
+WKWebView's cookie store; WebKitGTK's cookie manager (2.42 and later); Steam's Chromium's global
+cookie manager; Android's WebView cannot list its cookies, so it is asked what it would send to
+each address the window names (each known cookie's own, and the hosts of recent visits), and the
+window makes the cookies out of that (`Happened::CookiesSent`): a known cookie keeps what is known
+of it, a new one is taken as the host's own, kept a week. The cookies are in the shared folder as
+the engines keep theirs on disk, readable by whoever can read the folder; a profile's lock guards
+its windows, not these files.
+
+**History** (`crates/spatimesh/src/history.rs`). A page is remembered when it has loaded (its
+title brought up to date when it comes after); each machine writes only its own month's file, so
+the synchroniser never has two versions of one; a machine removes its own files over a year old.
+Every engine is told every address visited on any machine (`ToHost::Visited`): WKWebView's
+visited-link store (`_WKVisitedLinkStore`, SPI; a bare WKWebView shows no link as visited, so it
+is told this machine's visits too) and Android's `WebChromeClient.getVisitedHistory` show them as
+visited; WebKitGTK and Chromium have no way to be told, and show only their own.
+
+Checked: unit tests (two machines' folders: a login reaching the other, a logout, both changed
+while apart, session cookies and renewals, Android's answers made into cookies; visits);
+`tools/spatimesh-sync-e2e.py`, two SpatiMesh homes sharing one folder in the room's snapshot
+compositor -- on this Mac (2026-10-19): A's HttpOnly login written out, B's request carrying it,
+B showing A's page as visited; in CI with WebKitGTK; each engine's cookies said, made and removed
+(`cookies_are_said_made_and_removed`, WebKitGTK and CEF, in CI). Not yet run: Android (no device
+here), the Deck's Steam Chromium itself, real sites' logins (Google may bind a login to the
+device it was made on).
 
 ## Profiles: whose window this is, and its lock (2026-10-18)
 

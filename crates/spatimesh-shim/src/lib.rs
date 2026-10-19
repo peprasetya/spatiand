@@ -16,7 +16,7 @@ use spatimesh::extensions::dnr;
 use spatimesh::extensions::set::{self, ExtensionSet, Script};
 
 use spatimesh::engine::{
-    Button, Canvas, Choice, Cursor, DialogKind, Engine, Format, Happened, KeyPress, Modifiers, ProfileSetup, Rect, TabId, View,
+    Button, Canvas, Choice, Cookie, Cursor, DialogKind, Engine, Format, Happened, KeyPress, Modifiers, ProfileSetup, Rect, TabId, View,
 };
 
 #[repr(C)]
@@ -92,6 +92,13 @@ extern "C" {
     fn spatimesh_set_page_script(e: *mut Raw, code: *const c_char);
     fn spatimesh_ext_decider(decide: DecideFn);
     fn spatimesh_ext_rules(e: *mut Raw, id: *const c_char, webkit: *const c_char);
+    // Cookies and visited links (docs/spatimesh.md, "Logins and history on every machine"):
+    // all the cookies said later as one event (kind 16) of `Cookie::line`s; cookies set and
+    // removed as those lines; pages visited elsewhere, one address to a line.
+    fn spatimesh_cookies_ask(e: *mut Raw);
+    fn spatimesh_cookies_set(e: *mut Raw, lines: *const c_char);
+    fn spatimesh_cookies_remove(e: *mut Raw, lines: *const c_char);
+    fn spatimesh_visited(e: *mut Raw, urls: *const c_char);
 }
 
 type ServeFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut *const c_char, *mut *mut u8, *mut usize) -> c_int;
@@ -369,6 +376,7 @@ impl Shim {
             },
             13 => Happened::Extension { tab, json: text(e.text) },
             15 => Happened::Media { tab, json: text(e.text) },
+            16 => Happened::Cookies { cookies: Cookie::from_lines(&text(e.text)) },
             14 => Happened::ScriptResult { tab, request: e.number as u64, result: if e.a != 0 { Ok(text(e.text)) } else { Err(text(e.text)) } },
             _ => return None,
         })
@@ -555,6 +563,25 @@ impl Engine for Shim {
 
     fn release_surface(&mut self, tab: TabId, id: u32) {
         unsafe { spatimesh_release_surface(self.raw, tab, id) };
+    }
+
+    fn ask_cookies(&mut self, _addresses: &[String]) {
+        unsafe { spatimesh_cookies_ask(self.raw) };
+    }
+
+    fn set_cookies(&mut self, set: &[Cookie], remove: &[Cookie]) {
+        let lines = |all: &[Cookie]| c(&all.iter().map(Cookie::line).collect::<Vec<_>>().join("\n"));
+        if !remove.is_empty() {
+            unsafe { spatimesh_cookies_remove(self.raw, lines(remove).as_ptr()) };
+        }
+        if !set.is_empty() {
+            unsafe { spatimesh_cookies_set(self.raw, lines(set).as_ptr()) };
+        }
+    }
+
+    fn add_visited(&mut self, urls: &[String]) {
+        let urls = c(&urls.iter().filter(|u| !u.contains('\n')).cloned().collect::<Vec<_>>().join("\n"));
+        unsafe { spatimesh_visited(self.raw, urls.as_ptr()) };
     }
 
     fn pump(&mut self, wait: Duration, canvas: &mut dyn Canvas) -> Vec<Happened> {

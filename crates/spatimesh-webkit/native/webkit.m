@@ -40,6 +40,7 @@ enum {
     EV_EXTENSION,
     EV_SCRIPT_RESULT,
     EV_MEDIA,
+    EV_COOKIES,
 };
 
 typedef struct {
@@ -228,6 +229,9 @@ struct Engine {
     /* SpatiMesh's own script for every frame's every document (its media), and what the top
      * frame is given before it, to say things to the window with. */
     NSString *pageScript;
+    /* Visited links, every tab's: WebKit's own store (SPI), which a bare WKWebView fills with
+     * nothing; SpatiMesh tells it each page shown here and on the profile's other machines. */
+    id visited;
 };
 
 static Engine *the_engine;
@@ -1062,11 +1066,17 @@ Engine *spatimesh_new(const char *data, const char *cache) {
         if (!data) {
             e->store = [WKWebsiteDataStore nonPersistentDataStore];
         } else if (@available(macOS 14.0, *)) {
+            /* Named by the profile's id where the wearer's profiles are kept (as it always was),
+             * by the whole folder anywhere else: a test's profile, or a second SpatiMesh home,
+             * never shares the wearer's logins. */
             NSString *path = [NSString stringWithUTF8String:data];
-            e->store = [WKWebsiteDataStore dataStoreForIdentifier:uuid_of(path.lastPathComponent.UTF8String)];
+            NSString *usual = [NSHomeDirectory() stringByAppendingPathComponent:@".local/share/spatiand/spatimesh"];
+            NSString *name = [path.stringByDeletingLastPathComponent isEqualToString:usual] ? path.lastPathComponent : path;
+            e->store = [WKWebsiteDataStore dataStoreForIdentifier:uuid_of(name.UTF8String)];
         } else {
             e->store = [WKWebsiteDataStore defaultDataStore];
         }
+        e->visited = [[NSClassFromString(@"_WKVisitedLinkStore") alloc] init];
         the_engine = e;
         e->timer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0 repeats:YES block:^(NSTimer *timer) {
             for (MeshTab *tab in the_engine->tabs.allValues)
@@ -1127,6 +1137,9 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
         WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
         config.websiteDataStore = e->store;
         config.applicationNameForUserAgent = safari_name();
+        SEL use_visited = NSSelectorFromString(@"_setVisitedLinkStore:");
+        if (e->visited && [config respondsToSelector:use_visited])
+            ((void (*)(NSObject *, SEL, NSObject *))objc_msgSend)(config, use_visited, e->visited);
         register_schemes(config, e);
         [config.userContentController addScriptMessageHandler:tab name:@"spatimeshSelect"];
         [config.userContentController addScriptMessageHandler:tab name:@"spatimeshMedia"];
@@ -1830,6 +1843,95 @@ void spatimesh_run_script(Engine *e, uint64_t ident, const char *world, int all_
                          if (error && [error.domain isEqualToString:WKErrorDomain] && error.code == WKErrorJavaScriptInvalidFrameTarget)
                              [kept removeObjectForKey:key];
                        }];
+        }
+    }
+}
+
+/* ---- cookies and visited links (docs/spatimesh.md, "Logins and history on every machine") -- */
+
+static NSString *field(NSString *s) {
+    return [[s ?: @"" stringByReplacingOccurrencesOfString:@"\t" withString:@" "] stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+}
+
+void spatimesh_cookies_ask(Engine *e) {
+    @autoreleasepool {
+        [e->store.httpCookieStore getAllCookies:^(NSArray<NSHTTPCookie *> *all) {
+            NSMutableString *lines = [NSMutableString string];
+            for (NSHTTPCookie *c in all) {
+                NSString *same = @"";
+                if (@available(macOS 10.15, *)) {
+                    if ([c.sameSitePolicy isEqualToString:NSHTTPCookieSameSiteLax])
+                        same = @"Lax";
+                    else if ([c.sameSitePolicy isEqualToString:NSHTTPCookieSameSiteStrict])
+                        same = @"Strict";
+                }
+                [lines appendFormat:@"%@\t%@\t%@\t%@\t%.0f\t%d\t%d\t%@\n", field(c.name), field(c.value), field(c.domain), field(c.path),
+                                    c.expiresDate ? c.expiresDate.timeIntervalSince1970 : -1.0, c.secure ? 1 : 0, c.HTTPOnly ? 1 : 0, same];
+            }
+            push(e, EV_COOKIES, 0, 0, 0, 0, lines, nil);
+        }];
+    }
+}
+
+/* A cookie from a line of `Cookie::line`. */
+static NSHTTPCookie *cookie_of(NSString *line) {
+    NSArray<NSString *> *f = [line componentsSeparatedByString:@"\t"];
+    if (f.count < 7 || f[0].length == 0 || f[2].length == 0)
+        return nil;
+    NSMutableDictionary *p = [NSMutableDictionary dictionary];
+    p[NSHTTPCookieName] = f[0];
+    p[NSHTTPCookieValue] = f[1];
+    p[NSHTTPCookieDomain] = f[2];
+    p[NSHTTPCookiePath] = f[3].length ? f[3] : @"/";
+    double expires = f[4].doubleValue;
+    if (expires >= 0)
+        p[NSHTTPCookieExpires] = [NSDate dateWithTimeIntervalSince1970:expires];
+    else
+        p[NSHTTPCookieDiscard] = @"TRUE";
+    if ([f[5] isEqualToString:@"1"])
+        p[NSHTTPCookieSecure] = @"TRUE";
+    if ([f[6] isEqualToString:@"1"])
+        p[@"HttpOnly"] = @"TRUE";
+    if (f.count > 7 && f[7].length) {
+        if (@available(macOS 10.15, *))
+            p[NSHTTPCookieSameSitePolicy] = [f[7] isEqualToString:@"Strict"] ? NSHTTPCookieSameSiteStrict : NSHTTPCookieSameSiteLax;
+    }
+    return [NSHTTPCookie cookieWithProperties:p];
+}
+
+static void each_cookie(const char *lines, void (^with)(NSHTTPCookie *)) {
+    for (NSString *line in [text_of(lines) componentsSeparatedByString:@"\n"]) {
+        NSHTTPCookie *c = cookie_of(line);
+        if (c)
+            with(c);
+    }
+}
+
+void spatimesh_cookies_set(Engine *e, const char *lines) {
+    @autoreleasepool {
+        WKHTTPCookieStore *jar = e->store.httpCookieStore;
+        each_cookie(lines, ^(NSHTTPCookie *c) { [jar setCookie:c completionHandler:nil]; });
+    }
+}
+
+void spatimesh_cookies_remove(Engine *e, const char *lines) {
+    @autoreleasepool {
+        WKHTTPCookieStore *jar = e->store.httpCookieStore;
+        each_cookie(lines, ^(NSHTTPCookie *c) { [jar deleteCookie:c completionHandler:nil]; });
+    }
+}
+
+void spatimesh_visited(Engine *e, const char *urls) {
+    @autoreleasepool {
+        if (!e->visited)
+            return;
+        SEL add = NSSelectorFromString(@"addVisitedLinkWithURL:");
+        if (![e->visited respondsToSelector:add])
+            return;
+        for (NSString *text in [text_of(urls) componentsSeparatedByString:@"\n"]) {
+            NSURL *url = text.length ? [NSURL URLWithString:text] : nil;
+            if (url)
+                ((void (*)(id, SEL, NSURL *))objc_msgSend)(e->visited, add, url);
         }
     }
 }

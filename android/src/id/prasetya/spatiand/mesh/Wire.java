@@ -20,7 +20,7 @@ public final class Wire {
     public static final int OPEN = 1, CLOSE = 2, LOAD = 3, BACK = 4, FORWARD = 5, RELOAD = 6, STOP = 7,
             RESIZE = 8, POINTER = 9, POINTER_LEFT = 10, SCROLL = 11, KEY = 12, FOCUS = 13, WINDOW = 14,
             MUTE = 15, RELEASE = 16, QUIT = 17, CHOOSE = 18, ANSWER = 19, EXTENSIONS = 20, RUN_SCRIPT = 21,
-            PAGE_SCRIPT = 22;
+            PAGE_SCRIPT = 22, ASK_COOKIES = 24, SET_COOKIES = 25, VISITED = 26;
 
     // Dialogs, as Happened::Dialog numbers them.
     public static final int ALERT = 0, CONFIRM = 1, PROMPT = 2, LEAVE = 3;
@@ -51,6 +51,9 @@ public final class Wire {
         public String world = "", script = "";
         public boolean allFrames, boot;
         public long request;
+        /** Cookies and visited pages: JSON (crates/spatimesh/src/wire.rs) -- the addresses to
+         *  look at, {"set": [...], "remove": [...]}, or the pages visited elsewhere. */
+        public String json = "";
     }
 
     private static final class In {
@@ -133,6 +136,9 @@ public final class Wire {
                     break;
                 case PAGE_SCRIPT:
                     m.script = i.str();
+                    break;
+                case ASK_COOKIES: case SET_COOKIES: case VISITED:
+                    m.json = i.str();
                     break;
                 default:
                     return null;
@@ -233,6 +239,9 @@ public final class Wire {
     public static byte[] extension(long tab, String json) { return new Out(23).u64(tab).str(json).bytes(); }
     /** What SpatiMesh's media script in a tab's top frame says to the window. */
     public static byte[] media(long tab, String json) { return new Out(25).u64(tab).str(json).bytes(); }
+
+    /** What this engine would send to each address it was asked about: [[address, "a=1; b=2"], ...]. */
+    public static byte[] cookiesSent(String json) { return new Out(27).str(json).bytes(); }
 
     /** Code run for `request`: its value as JSON, or what went wrong. */
     public static byte[] scriptResult(long tab, long request, boolean ok, String text) {

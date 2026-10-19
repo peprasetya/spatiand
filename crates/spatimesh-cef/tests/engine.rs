@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::time::{Duration, Instant};
 
-use spatimesh::engine::{Button, DialogKind, Format, Happened, KeyPress, Modifiers, ProfileSetup, TabId, View};
+use spatimesh::engine::{Button, Cookie, DialogKind, Format, Happened, KeyPress, Modifiers, ProfileSetup, TabId, View};
 use spatimesh::wire::{FromHost, Link, Pictures, ToHost};
 
 const PROGRAM: &str = env!("CARGO_BIN_EXE_spatimesh-cef");
@@ -150,6 +150,14 @@ impl Host {
                 let key = KeyPress { code: 0, key: spatiand_app::Key::Char(ch), text: Some(ch.to_string()), pressed, repeat: false, modifiers: Modifiers::default() };
                 self.send(ToHost::Key { tab, key });
             }
+        }
+    }
+
+    fn cookies(&mut self) -> Vec<Cookie> {
+        self.send(ToHost::AskCookies { addresses: Vec::new() });
+        match self.wait_for("the profile's cookies", 20, |h| matches!(h, Happened::Cookies { .. })) {
+            Happened::Cookies { cookies } => cookies,
+            _ => unreachable!(),
         }
     }
 
@@ -383,3 +391,44 @@ fn a_profile_keeps_its_cookies_and_the_private_one_does_not() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+
+/// The window's side of logins on every machine (docs/spatimesh.md): the engine says all its
+/// cookies, and makes and removes those it is given.
+#[test]
+fn cookies_are_said_made_and_removed() {
+    if !can_run() {
+        return;
+    }
+    let server = cookie_server();
+    let root = std::env::temp_dir().join(format!("spatimesh-cef-cookies-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let Some(mut host) = Host::start(&kept(&root)) else { return };
+    host.send(ToHost::Open { tab: 1, url: format!("{server}/set"), view: View::new(200, 100, 1.0) });
+    host.title(1, "set");
+    host.loaded(1);
+    let jar = host.cookies();
+    let kept = jar.iter().find(|c| c.name == "kept").unwrap_or_else(|| panic!("the page's cookie is said: {jar:?}")).clone();
+    assert_eq!((kept.value.as_str(), kept.domain.as_str(), kept.path.as_str()), ("yes", "127.0.0.1", "/"));
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+    assert!(kept.expires.is_some_and(|e| (e - now - 3600.0).abs() < 120.0), "its expiry: {:?}", kept.expires);
+
+    let made = Cookie {
+        name: "made".into(),
+        value: "elsewhere".into(),
+        domain: "127.0.0.1".into(),
+        path: "/".into(),
+        expires: Some((now + 7200.0).round()),
+        secure: false,
+        http_only: false,
+        same_site: String::new(),
+    };
+    host.send(ToHost::SetCookies { set: vec![made.clone()], remove: vec![kept] });
+    std::thread::sleep(Duration::from_millis(500));
+    host.send(ToHost::Load { tab: 1, url: format!("{server}/show") });
+    assert_eq!(host.title(1, "cookie:"), "cookie:made=elsewhere", "the page has the cookie made, not the one removed");
+    let jar = host.cookies();
+    assert!(jar.iter().any(|c| c.name == "made" && c.expires.is_some_and(|e| (e - made.expires.unwrap()).abs() < 2.0)), "{jar:?}");
+    assert!(!jar.iter().any(|c| c.name == "kept"), "{jar:?}");
+    host.quit();
+    let _ = std::fs::remove_dir_all(&root);
+}
