@@ -36,6 +36,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+pub mod clipboard;
 pub mod config;
 pub mod gl;
 mod keys;
@@ -325,6 +326,19 @@ impl App {
 
     /// Where the window's pictures are clear (alpha zero), the room shows through: for a
     /// picture shown whole on nothing. Windows are otherwise opaque. From the next picture on.
+    /// Name the sound that belongs to this window, for a process with more than one window
+    /// each of whose sound is its own (a browser's pages): whatever hands sound to the room
+    /// under this name (`spatiand_media::SoundGroup::keyed`) is placed at this window. A window
+    /// that is not given one has its application's: [`App::sound_name`].
+    pub fn set_sound_key(&mut self, window: WindowId, key: &str) {
+        self.wire.set_sound_key(window, key);
+    }
+
+    /// What this process's sound is handed to the room as, unless a window says otherwise.
+    pub fn sound_name(&self) -> &str {
+        &self.app_id
+    }
+
     pub fn set_see_through(&mut self, window: WindowId, clear: bool) {
         self.wire.set_see_through(window, clear);
     }
@@ -380,6 +394,17 @@ impl App {
         self.wire.show_pixels(window, size, fill)
     }
 
+    /// Put text on the clipboard, which is the room's: every machine it can see pastes it.
+    /// The same as [`clipboard::copy`].
+    pub fn copy_text(&mut self, text: impl Into<String>) {
+        clipboard::copy(text);
+    }
+
+    /// What is on the clipboard, if it is text. The same as [`clipboard::text`].
+    pub fn clipboard_text(&self) -> Option<String> {
+        clipboard::text()
+    }
+
     /// Wake [`App::wait`] when `fd` has something to read -- a child process's output, a
     /// socket -- as well as for the room. What is read, and when, is the application's.
     pub fn watch(&mut self, fd: i32) {
@@ -396,6 +421,9 @@ impl App {
     /// the application has said since the last call, so nothing reaches the room until this is
     /// called.
     pub fn wait(&mut self, timeout: Option<Duration>) -> Result<Vec<Event>, String> {
+        if let Some(text) = clipboard::take_wanted() {
+            self.wire.copy(text);
+        }
         let now = Instant::now();
         let deadline = timeout.map(|t| now + t);
         // A held key repeats on this side of the wire, so its next repeat is a reason to wake.

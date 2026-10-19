@@ -92,6 +92,15 @@ not connect to hosts. `--selftest-click` moves the real pointer: not while the M
   *Applications*; choosing one brings it out. Only windows on show are captured. A window opened
   while the room is going comes out at once. A tab is not a window: a new tab, or another tab
   chosen, is the same window in the room showing something else.
+* **macOS asking something comes into the room** (2026-10-18): a privacy permission
+  (UserNotificationCenter shows them all), the accessibility one, a password or Touch ID
+  (SecurityAgent, LocalAuthentication), whether to open something downloaded
+  (CoreServicesUIAgent). These are panels above every window (layer 8 for UserNotificationCenter),
+  not windows, so the list took none of them; now each comes out at once as a window called
+  *macOS asks*, whether or not it was there when the room began, and goes when it is answered.
+  Checked: such a panel (a plain `CFUserNotification`) is listed and captured alone. Not checked:
+  a click answering it from the glasses, and typing into SecurityAgent, which keeps its keyboard
+  to itself.
 * **Screens** are in the same list, above the applications: each display the Mac has but the
   glasses, and a virtual one. A screen is a window whose picture is everything on that display
   and whose pointer is the Mac's real one. The virtual screen is a `CGVirtualDisplay`
@@ -126,6 +135,39 @@ not connect to hosts. `--selftest-click` moves the real pointer: not while the M
   `SPATIAND_STEADY=0` to compare).
 * From a Mac, Command is sent to a host as Control.
 
+## 2D mode: Spatiand's own applications as Mac windows
+
+Without glasses the app shows a host's windows itself (`RemoteWindow.swift`, as SpatiWorld's
+are). Spatiand's own applications -- SpatiMesh, SpatiReel, SpatiLoupe, SpatiQuill, SpatiShelf --
+are clients of the compositor on every platform, so in 2D the app starts the compositor anyway,
+the first time one is opened from the menu bar's **Spatiand App** submenu (`Room.openOwn`),
+with no glasses' screen and the glasses left alone (`sp_hold_glasses(false)`, `sp_desk(true)`).
+The loop's pass with nothing to draw into calls `super::desk_tick`
+(`crates/spatiand-mac/src/mac/desk.rs`; Android's is empty), which:
+
+* tells the app each window (`SP_DESK_OPEN`, `_TITLE`, `_SIZE`, `_CLOSE`) and each new picture
+  (`SP_DESK_PICTURE`: the global `IOSurface` the application already draws into, by number,
+  read from the window's placeholder as `remote_video` reads it);
+* asks for the next picture at about 60 Hz (frame callbacks) and says the mode is flat;
+* gives each window what the app sends back (`sp_desk_motion`, `_button`, `_scroll`, `_key`,
+  `_focus`, `_pinch`, `_resize`, `_close`, `_launch`) through the seat, as the snapshot's
+  scripted steps do.
+
+`DeskWindows.swift` makes an ordinary resizable Mac window per window: the `IOSurface` as the
+view's layer contents (fitted to the window; held in use until the next one is on screen, which
+is how the application knows not to draw into it), one point per pixel of the application's, so
+its text is the size it was made to be. Keys are taken by a local event monitor while one of these
+windows is key, Command's included (AppKit never sends a view the release of a Command key), so
+Command-L, -T, -W are the application's; a held key repeats in the application at the Mac's own
+rate. The close button asks the application, which closes. While any is open Spatiand is a
+regular application (Dock icon, Command-Tab), an accessory again when none is. Each
+application's window remembers its frame.
+
+Plugged in, the glasses take the same session: `Room.start` from 2D mode turns `sp_desk` off
+(the Mac windows go), holds the glasses and gives the session the glasses' screen; the
+applications are not restarted and their windows are in the room. Unplugged, the app still
+starts over as a new process (see `Room`), which ends the applications.
+
 ## The Mac as a host
 
 Switched on in Spatiand's settings (Computers), and paired from its menu. To a Deck or a Beam
@@ -154,6 +196,7 @@ when run from the bundle. **The ones marked ✋ move the Mac's real pointer.**
 | `--selftest-child [--goes] [--tab]` | a window with something beside it, which then goes; or with a second tab chosen |
 | `--selftest-terminal-tabs <title>` | switches the tabs of a real Terminal window |
 | `--selftest-menu <App>` | opens an application's menus as a list, and one level of them |
+| `--selftest-desk <App> [folder]` | 2D mode: one of Spatiand's own applications as a Mac window, in a process of its own (the running Spatiand is not touched). SpatiMesh: an address typed (Command-L), resized, scrolled, then a click and a search typed as AppKit events; the others: opened, resized; then each closed by its close button. The window as the window server shows it is saved after each step |
 | `--selftest-app-sound <App>` | takes a playing application's sound for the room; with `SPATIAND_TEST_TURN=1` turns the head it is placed for and says how loud each ear is |
 | `--selftest-screen [--virtual]` | brings a screen into the room |
 | `--selftest-windows [--and-choose]` | the list of windows |

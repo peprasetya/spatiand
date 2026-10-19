@@ -210,16 +210,24 @@ pub fn run(
     let mut renderer = {
         let node =
             std::env::var("SPATIAND_RENDER_NODE").unwrap_or_else(|_| "/dev/dri/renderD128".into());
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&node)?;
-        let gbm = GbmDevice::new(DeviceFd::from(std::os::fd::OwnedFd::from(file)))?;
-        let egl_display = unsafe { EGLDisplay::new(gbm)? };
+        let egl_display = match std::fs::OpenOptions::new().read(true).write(true).open(&node) {
+            Ok(file) => {
+                let gbm = GbmDevice::new(DeviceFd::from(std::os::fd::OwnedFd::from(file)))?;
+                log::info!("offscreen renderer on {node}");
+                unsafe { EGLDisplay::new(gbm)? }
+            }
+            // No GPU at all -- a container, a CI runner: Mesa's software device draws the same
+            // frame, slowly. Clients hand their pictures over as shared memory then.
+            Err(e) => {
+                let device = smithay::backend::egl::EGLDevice::enumerate()?
+                    .find(|d| d.extensions().iter().any(|x| x == "EGL_MESA_device_software"))
+                    .ok_or_else(|| format!("{node}: {e}, and no software EGL device either"))?;
+                log::info!("offscreen renderer in software ({node}: {e})");
+                unsafe { EGLDisplay::new(device)? }
+            }
+        };
         let egl_context = EGLContext::new(&egl_display)?;
-        let renderer = unsafe { GlesRenderer::new(egl_context)? };
-        log::info!("offscreen renderer ready on {node}");
-        renderer
+        unsafe { GlesRenderer::new(egl_context)? }
     };
     // The Mac has no render node: ANGLE's display, with no surface. See `mac::egl`.
     #[cfg(target_os = "macos")]
@@ -1516,6 +1524,8 @@ enum Scripted {
     Key(Vec<u32>, u32),
     /// A key held down, or let go: `keydown:42` holds Shift for the clicks after it.
     Hold(u32, bool),
+    /// `size:1400,900`: the window asked to be that size, as a drag of its corner would.
+    Size(i32, i32),
     Type(String),
     Wait(f32),
     Dump(String),
@@ -1539,6 +1549,7 @@ fn scripted_steps() -> Vec<Scripted> {
                 ("scroll", [dx, dy]) => Scripted::Scroll(*dx, *dy),
                 ("pinch", [scale]) => Scripted::Pinch(*scale),
                 ("wait", [seconds]) => Scripted::Wait(*seconds as f32),
+                ("size", [w, h]) => Scripted::Size(*w as i32, *h as i32),
                 ("key", _) => {
                     let mut held = Vec::new();
                     let mut code = None;
@@ -1690,6 +1701,12 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
             }
             pointer.axis(state, frame);
             pointer.frame(state);
+        }
+        Scripted::Size(w, h) => {
+            if let Some(window) = chosen_window(state, windows).map(|w| w.window.clone()) {
+                state.request_size(&window, (*w, *h).into());
+                log::info!("asked the window to be {w}x{h}");
+            }
         }
         Scripted::Pinch(scale) => {
             pointer_event(state, windows, *at, None);

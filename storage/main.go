@@ -61,6 +61,26 @@ type place struct {
 	Pid   int    `json:"pid"`
 	// The address a native application is given, with the user name and token in it.
 	Dav string `json:"dav"`
+	// The program this is, and its size and time: an application installed beside a newer one
+	// replaces this service rather than keep speaking to it (crates/spatiand-storage).
+	Program string `json:"program"`
+	Stamp   string `json:"stamp"`
+}
+
+// programStamp says which program this is and which build of it: its size and modification time.
+func programStamp() (string, string) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", ""
+	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	info, err := os.Stat(exe)
+	if err != nil {
+		return exe, ""
+	}
+	return exe, fmt.Sprintf("%d-%d", info.Size(), info.ModTime().UnixNano())
 }
 
 func runtimeFile() string {
@@ -415,7 +435,8 @@ func main() {
 		}
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
-	where := place{Port: port, Token: token, Pid: os.Getpid(), Dav: fmt.Sprintf("http://spatiand:%s@127.0.0.1:%d/dav/", token, port)}
+	program, stamp := programStamp()
+	where := place{Port: port, Token: token, Pid: os.Getpid(), Dav: fmt.Sprintf("http://spatiand:%s@127.0.0.1:%d/dav/", token, port), Program: program, Stamp: stamp}
 	encoded, _ := json.Marshal(where)
 	file := runtimeFile()
 	if err := os.WriteFile(file+".new", encoded, 0o600); err == nil {

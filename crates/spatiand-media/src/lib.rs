@@ -9,6 +9,7 @@
 //! had libmpv; [`screen`] draws what it decodes.
 
 pub mod audio;
+pub mod hardware;
 pub mod hints;
 pub mod layout;
 pub mod mesh;
@@ -16,11 +17,15 @@ pub mod stretch;
 pub mod subs;
 
 #[cfg(feature = "engine")]
+pub mod mse;
+#[cfg(feature = "engine")]
 pub mod player;
 #[cfg(feature = "engine")]
 pub mod screen;
 #[cfg(feature = "engine")]
 mod sound;
+#[cfg(feature = "engine")]
+pub use sound::{SoundGroup, Stream};
 #[cfg(feature = "engine")]
 pub mod still;
 

@@ -202,6 +202,14 @@ struct Applied(Mutex<XrState>);
 #[derive(Debug, Default)]
 struct Object(Mutex<Option<spatiand_xr_surface_v1::SpatiandXrSurfaceV1>>);
 
+/// The name a surface's sound is handed to the session with (`set_sound_key`).
+struct SoundKey(Mutex<Option<String>>);
+
+/// What a surface said its sound is handed over as, if it said.
+pub fn sound_key_of(surface: &WlSurface) -> Option<String> {
+    with_states(surface, |states| states.data_map.get::<SoundKey>().and_then(|k| k.0.lock().ok()?.clone()))
+}
+
 /// Read a surface's committed stereo state.
 ///
 /// `XrState::default()` for a surface nobody has configured, which is a mono window — so the
@@ -549,6 +557,18 @@ impl Dispatch<spatiand_xr_surface_v1::SpatiandXrSurfaceV1, Mutex<Pending>> for S
             }
             spatiand_xr_surface_v1::Request::SetSeeThrough { enable } => {
                 pending.next.see_through = enable != 0;
+            }
+            spatiand_xr_surface_v1::Request::SetSoundKey { key } => {
+                // Kept on the surface, not with the rest: a name is not something to copy
+                // with every frame's state, and it is wanted once, when the window arrives.
+                if let Some(surface) = pending.surface.as_ref() {
+                    with_states(surface, |states| {
+                        states.data_map.insert_if_missing_threadsafe(|| SoundKey(Mutex::new(None)));
+                        if let Some(held) = states.data_map.get::<SoundKey>() {
+                            *held.0.lock().unwrap() = (!key.is_empty()).then_some(key);
+                        }
+                    });
+                }
             }
             spatiand_xr_surface_v1::Request::SetFramePose { token: _, x, y, z, w } => {
                 let q = [x, y, z, w].map(|c| c as f32 / 1e6);

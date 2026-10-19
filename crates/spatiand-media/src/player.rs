@@ -331,6 +331,10 @@ struct Shared {
     /// And each decoder has emptied what it was given since.
     video_out: AtomicBool,
     audio_out: AtomicBool,
+    /// Which picture decoder is the one: one that finds it is not any more stops.
+    video_generation: AtomicU64,
+    /// When the picture decoder last got anywhere: see `Player::watch_decoder`.
+    video_alive: Mutex<Instant>,
 }
 
 const NO_STREAM: u64 = u64::MAX;
@@ -345,6 +349,9 @@ pub struct Player {
     /// How much later than its sound a picture is shown, in seconds: for a film whose two
     /// were put together out of step.
     lip: f64,
+    /// While the platform's decoder makes the pictures: its stream and start, and its thread
+    /// (an index into `threads`), for going over to software if it hangs.
+    hardware: Option<(SendPointer<ffi::AVStream>, f64, usize)>,
 }
 
 /// What is opened, owned by the reader thread once it starts.
@@ -484,6 +491,11 @@ impl Player {
     /// As [`Player::open`], with what FFmpeg is to be told about how to fetch it: `headers`
     /// for a server that wants a cookie with every request, say.
     pub fn open_with(url: &str, options: &[(String, String)]) -> Result<Player, String> {
+        Player::open_in(url, options, &crate::SoundGroup::new())
+    }
+
+    /// As [`Player::open_with`], its sound mixed into `group`'s output with the rest of a page's.
+    pub fn open_in(url: &str, options: &[(String, String)], group: &crate::SoundGroup) -> Result<Player, String> {
         let name = CString::new(url).map_err(|_| "a name with a nul in it".to_string())?;
         unsafe {
             let mut format = ptr::null_mut();
@@ -548,7 +560,7 @@ impl Player {
             }
 
             let wanted = info.audio_playing.and_then(|index| info.audio.get(index)).map_or(2, |track| track.channels);
-            let sound = audio_stream.and_then(|_| Sound::open(wanted).map_err(|e| log::warn!("no sound: {e}")).ok()).map(Arc::new);
+            let sound = audio_stream.and_then(|_| Sound::open_in(group, wanted).map_err(|e| log::warn!("no sound: {e}")).ok()).map(Arc::new);
             let shared = Arc::new(Shared {
                 stop: AtomicBool::new(false),
                 paused: AtomicBool::new(false),
@@ -569,9 +581,12 @@ impl Player {
                 read_out: AtomicBool::new(false),
                 video_out: AtomicBool::new(video_stream.is_none()),
                 audio_out: AtomicBool::new(audio_stream.is_none()),
+                video_generation: AtomicU64::new(0),
+                video_alive: Mutex::new(Instant::now()),
             });
 
             let mut threads = Vec::new();
+            let mut hardware = None;
             if let Some(index) = video_stream {
                 let stream = streams[index];
                 let parameters = (*stream).codecpar;
@@ -587,9 +602,12 @@ impl Player {
                     open_decoder(stream, false)
                 })?;
                 info.hardware = HARDWARE.filter(|_| on_gpu).map(|(_, _, name)| name);
+                if on_gpu {
+                    hardware = Some((SendPointer(stream), start, threads.len()));
+                }
                 let stream = SendPointer(stream);
                 let shared = shared.clone();
-                threads.push(spawn("pictures", move || decode_pictures(decoder, stream, on_gpu, start, shared)));
+                threads.push(spawn("pictures", move || decode_pictures(decoder, stream, on_gpu, start, shared, 0)));
             }
             // Every sound stream gets a decoder when it is chosen, not before: see `decode_sound`.
             if audio_stream.is_some() && shared.sound.is_some() {
@@ -616,7 +634,154 @@ impl Player {
                 info.duration,
                 info.hardware.unwrap_or("decoded in software"),
             );
-            Ok(Player { shared, info, threads, showing: None, lip: 0.0 })
+            Ok(Player { shared, info, threads, showing: None, lip: 0.0, hardware })
+        }
+    }
+
+    /// Play a web page's MediaSource (`crate::mse`): its tracks' frames, read in order of their
+    /// times from wherever the player is, with the same decoders, sound and clock as a file.
+    /// The source must be [`crate::mse::Source::ready`].
+    pub fn open_source(source: Arc<crate::mse::Source>) -> Result<Player, String> {
+        Player::open_source_in(source, &crate::SoundGroup::new())
+    }
+
+    /// As [`Player::open_source`], its sound mixed into `group`'s output.
+    pub fn open_source_in(source: Arc<crate::mse::Source>, group: &crate::SoundGroup) -> Result<Player, String> {
+        use crate::mse::{Cursor, MICROS};
+        unsafe {
+            // The tracks: the first picture and the first sound of the source's buffers.
+            let (video, audio) = {
+                let state = source.state.lock().unwrap();
+                let mut video = None;
+                let mut audio = None;
+                for (b, buffer) in state.buffers.iter().enumerate() {
+                    let Some(buffer) = buffer else { continue };
+                    for (t, track) in buffer.tracks.iter().enumerate() {
+                        let Some(params) = track.params.clone() else { continue };
+                        match params.kind() {
+                            k if k == ffi::AVMEDIA_TYPE_VIDEO && video.is_none() => video = Some(Cursor { buffer: b, track: t, last: None, params: Some(params) }),
+                            k if k == ffi::AVMEDIA_TYPE_AUDIO && audio.is_none() => audio = Some(Cursor { buffer: b, track: t, last: None, params: Some(params) }),
+                            _ => {}
+                        }
+                    }
+                }
+                (video, audio)
+            };
+            if video.is_none() && audio.is_none() {
+                return Err("the MediaSource has no track yet".into());
+            }
+            // A container of no file, only to hold the tracks' descriptions as the decoders
+            // expect to find them: the picture's stream first, the sound's second.
+            let mut format = ffi::avformat_alloc_context();
+            let add = |cursor: &Option<Cursor>| -> Option<usize> {
+                let params = cursor.as_ref()?.params.as_ref()?;
+                let stream = ffi::avformat_new_stream(format, ptr::null());
+                ffi::avcodec_parameters_copy((*stream).codecpar, params.0);
+                (*stream).time_base = MICROS;
+                Some((*format).nb_streams as usize - 1)
+            };
+            let video_stream = add(&video);
+            let audio_stream = add(&audio);
+            let streams = std::slice::from_raw_parts((*format).streams, (*format).nb_streams as usize);
+            let mut info = Info { duration: source.duration().max(0.0), ..Info::default() };
+            if info.duration.is_nan() {
+                info.duration = 0.0;
+            }
+            if let Some(index) = audio_stream {
+                let parameters = (*streams[index]).codecpar;
+                info.audio.push(Track {
+                    stream: index,
+                    codec: text(ffi::avcodec_get_name((*parameters).codec_id)).unwrap_or_default(),
+                    profile: None,
+                    channels: (*parameters).ch_layout.nb_channels.max(0) as u16,
+                    language: None,
+                    title: None,
+                });
+                info.audio_playing = Some(0);
+            }
+            let wanted = info.audio.first().map_or(2, |t| t.channels.max(1));
+            let sound = audio_stream.and_then(|_| Sound::open_in(group, wanted).map_err(|e| log::warn!("no sound: {e}")).ok()).map(Arc::new);
+            let shared = Arc::new(Shared {
+                stop: AtomicBool::new(false),
+                paused: AtomicBool::new(false),
+                serial: AtomicU64::new(0),
+                video: Queue::default(),
+                audio: Queue::default(),
+                pictures: Mutex::new(VecDeque::new()),
+                room: Condvar::new(),
+                sound,
+                wall: Mutex::new(Wall { time: 0.0, since: Instant::now() }),
+                seek: Mutex::new(None),
+                target: Mutex::new((0.0, false)),
+                audio_stream: AtomicU64::new(audio_stream.map_or(NO_STREAM, |s| s as u64)),
+                speed: std::sync::atomic::AtomicU32::new(1f32.to_bits()),
+                subtitle_stream: AtomicU64::new(NO_STREAM),
+                subtitle: Queue::default(),
+                cues: Mutex::new(Vec::new()),
+                read_out: AtomicBool::new(false),
+                video_out: AtomicBool::new(video_stream.is_none()),
+                audio_out: AtomicBool::new(audio_stream.is_none()),
+                video_generation: AtomicU64::new(0),
+                video_alive: Mutex::new(Instant::now()),
+            });
+            let mut threads = Vec::new();
+            let mut hardware = None;
+            if let Some(index) = video_stream {
+                let stream = streams[index];
+                let parameters = (*stream).codecpar;
+                info.width = (*parameters).width.max(0) as u32;
+                info.height = (*parameters).height.max(0) as u32;
+                info.video_codec = text(ffi::avcodec_get_name((*parameters).codec_id)).unwrap_or_default();
+                info.frame_rate = source_frame_rate(&source, video.as_ref().unwrap());
+                let wanted = std::env::var("SPATIAND_MEDIA_HARDWARE").as_deref() != Ok("0");
+                let (decoder, on_gpu) = open_decoder(stream, wanted).or_else(|e| {
+                    log::warn!("{e}; trying without the platform's decoder");
+                    open_decoder(stream, false)
+                })?;
+                info.hardware = HARDWARE.filter(|_| on_gpu).map(|(_, _, name)| name);
+                if on_gpu {
+                    hardware = Some((SendPointer(stream), 0.0, threads.len()));
+                }
+                let stream = SendPointer(stream);
+                let shared = shared.clone();
+                threads.push(spawn("pictures", move || decode_pictures(decoder, stream, on_gpu, 0.0, shared, 0)));
+            }
+            if audio_stream.is_some() && shared.sound.is_some() {
+                let streams: Vec<SendPointer<ffi::AVStream>> = streams.iter().map(|s| SendPointer(*s)).collect();
+                let shared = shared.clone();
+                threads.push(spawn("sound", move || decode_sound(streams, 0.0, shared)));
+            }
+            {
+                let shared = shared.clone();
+                let held = SendPointer(format as *mut ffi::AVStream as *mut c_void as *mut ffi::AVStream);
+                let source = source.clone();
+                threads.push(spawn("reader", move || {
+                    let held = held;
+                    read_source(source, video, audio, video_stream, audio_stream, shared);
+                    let mut format = held.0 as *mut c_void as *mut ffi::AVFormatContext;
+                    ffi::avformat_free_context(format);
+                    format = ptr::null_mut();
+                    let _ = format;
+                }));
+            }
+            format = ptr::null_mut();
+            let _ = format;
+            log::info!(
+                "playing a MediaSource: {}x{} {} at {:.2} a second, {}",
+                info.width,
+                info.height,
+                info.video_codec,
+                info.frame_rate,
+                info.hardware.unwrap_or("decoded in software"),
+            );
+            Ok(Player { shared, info, threads, showing: None, lip: 0.0, hardware })
+        }
+    }
+
+    /// The film's length, when it is learnt after it was opened (a MediaSource's).
+    pub fn set_duration(&mut self, seconds: f64) {
+        if seconds.is_finite() && seconds > 0.0 {
+            self.info.duration = seconds;
         }
     }
 
@@ -645,9 +810,11 @@ impl Player {
         let (target, shown) = *shared.target.lock().unwrap();
         // Just after a seek the clocks still tell the old time: until something from after it
         // has been seen or heard, the film is where it was asked to go.
-        let position = match shared.sound.as_ref().and_then(|sound| sound.time(shared.serial.load(Ordering::Relaxed))) {
+        // Sound that has nowhere to go any more keeps no time: the wall does.
+        let sound = shared.sound.as_ref().filter(|s| s.alive());
+        let position = match sound.and_then(|sound| sound.time(shared.serial.load(Ordering::Relaxed))) {
             Some(heard) => heard,
-            None if shared.sound.is_some() && !shared.audio_out.load(Ordering::Relaxed) => target,
+            None if sound.is_some() && !shared.audio_out.load(Ordering::Relaxed) => target,
             None => {
                 let wall = shared.wall.lock().unwrap();
                 if shared.paused.load(Ordering::Relaxed) || !shown {
@@ -699,6 +866,12 @@ impl Player {
         cues[..before].iter().rev().take(4).find(|cue| cue.end > now).cloned()
     }
 
+    /// Every cue of the subtitle track on show that has been read so far, in order: what is
+    /// coming as well as what is on now.
+    pub fn subtitle_cues(&self) -> Vec<Arc<Cue>> {
+        self.shared.cues.lock().unwrap().clone()
+    }
+
     /// Play faster or slower than the film was made, its sound's pitch staying where it was.
     pub fn set_speed(&mut self, speed: f32) {
         let speed = speed.clamp(0.5, 3.0);
@@ -729,6 +902,25 @@ impl Player {
         }
     }
 
+    /// What [`Player::ended`] looks at, in a line: for a log.
+    pub fn end_state(&self) -> String {
+        let s = &self.shared;
+        format!(
+            "packets: pictures {} ({:.2} s), sound {} ({:.2} s); target {:.2}; read out {}, pictures out {}, sound out {}, pictures waiting {}, seek {:?}, sound empty {:?}",
+            s.video.len(),
+            s.video.seconds(),
+            s.audio.len(),
+            s.audio.seconds(),
+            s.target.lock().unwrap().0,
+            s.read_out.load(Ordering::Relaxed),
+            s.video_out.load(Ordering::Relaxed),
+            s.audio_out.load(Ordering::Relaxed),
+            s.pictures.lock().unwrap().len(),
+            *s.seek.lock().unwrap(),
+            s.sound.as_ref().map(|x| x.empty()),
+        )
+    }
+
     /// The film has been played to its end.
     pub fn ended(&self) -> bool {
         let shared = &self.shared;
@@ -736,11 +928,48 @@ impl Player {
             && shared.video_out.load(Ordering::Relaxed)
             && shared.pictures.lock().unwrap().is_empty()
             && shared.seek.lock().unwrap().is_none()
-            && (shared.sound.is_none() || shared.audio_out.load(Ordering::Relaxed) && shared.sound.as_ref().is_some_and(|s| s.empty()))
+            && (shared.sound.as_ref().is_none_or(|s| !s.alive()) || shared.audio_out.load(Ordering::Relaxed) && shared.sound.as_ref().is_some_and(|s| s.empty()))
     }
 
     /// The picture that should be on show now, and whether it is a new one since last asked.
+    /// The platform's decoder has been seen to stop for good, deep inside the system, on some
+    /// streams (YouTube's, through a page's MediaSource, on an Intel Mac's VideoToolbox) --
+    /// the clock and the sound going on and the picture standing still at the first frame. A
+    /// decoder that has had pictures to make and made nothing for a second and a half is left
+    /// where it is, and software decodes from where the film is instead.
+    fn watch_decoder(&mut self) {
+        let Some((stream, start, thread)) = self.hardware.as_ref().map(|(s, st, t)| (s.0, *st, *t)) else { return };
+        let stuck = self.shared.video_alive.lock().unwrap().elapsed() > Duration::from_millis(1500);
+        if !stuck || self.shared.video.len() == 0 {
+            return;
+        }
+        log::warn!("the platform's decoder has stopped making pictures; decoding in software from here");
+        self.hardware = None;
+        let generation = self.shared.video_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        // Its thread is not waited for: it may never come back. Told it is not the one, it
+        // ends if it does.
+        if thread < self.threads.len() {
+            drop(self.threads.remove(thread));
+        }
+        let decoder = match unsafe { open_decoder(stream, false) } {
+            Ok((decoder, _)) => decoder,
+            Err(e) => {
+                log::warn!("{e}");
+                return;
+            }
+        };
+        self.info.hardware = None;
+        *self.shared.video_alive.lock().unwrap() = Instant::now();
+        let shared = self.shared.clone();
+        let stream = SendPointer(stream);
+        self.threads.push(spawn("pictures", move || decode_pictures(decoder, stream, false, start, shared, generation)));
+        // From a key frame: the new decoder knows nothing of what the old one was given.
+        let at = self.position();
+        self.seek(at);
+    }
+
     pub fn picture(&mut self) -> (Option<Arc<Picture>>, bool) {
+        self.watch_decoder();
         let shared = &self.shared;
         let serial = shared.serial.load(Ordering::Relaxed);
         let now = self.position() - self.lip;
@@ -791,8 +1020,19 @@ impl Drop for Player {
         if let Some(sound) = self.shared.sound.as_ref() {
             sound.stop();
         }
+        // Each is waited for, but not for ever: one inside the platform's decoder may never
+        // come back (`watch_decoder`), and a page closing or a program ending must not hang on
+        // it. One still out after a second is left to end by itself, told to stop.
+        let until = Instant::now() + Duration::from_secs(1);
         for thread in self.threads.drain(..) {
-            let _ = thread.join();
+            while !thread.is_finished() && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if thread.is_finished() {
+                let _ = thread.join();
+            } else {
+                log::warn!("a film's {} thread did not stop; it is left behind", thread.thread().name().unwrap_or("?"));
+            }
         }
     }
 }
@@ -891,6 +1131,154 @@ fn read(source: Source, shared: Arc<Shared>) {
         ffi::av_packet_free(&mut packet);
         ffi::avformat_close_input(&mut format);
     }
+}
+
+/// A MediaSource's frames for the decoders, in order of their decode times across the tracks,
+/// from wherever a seek puts the player; waiting where nothing has been appended yet, and done
+/// when the page has said the stream has ended and everything has been given.
+fn read_source(
+    source: Arc<crate::mse::Source>,
+    mut video: Option<crate::mse::Cursor>,
+    mut audio: Option<crate::mse::Cursor>,
+    video_stream: Option<usize>,
+    audio_stream: Option<usize>,
+    shared: Arc<Shared>,
+) {
+    let mut video_done = video.is_none();
+    let mut audio_done = audio.is_none();
+    while !shared.stop.load(Ordering::Relaxed) {
+        if let Some(seconds) = shared.seek.lock().unwrap().take() {
+            let micros = (seconds * 1e6) as i64;
+            {
+                let state = source.state.lock().unwrap();
+                if let Some(c) = video.as_mut() {
+                    c.last = state.start_of(c.buffer, c.track, micros, true);
+                }
+                if let Some(c) = audio.as_mut() {
+                    c.last = state.start_of(c.buffer, c.track, micros, false);
+                }
+            }
+            shared.serial.fetch_add(1, Ordering::Relaxed);
+            shared.video.clear();
+            shared.audio.clear();
+            shared.pictures.lock().unwrap().clear();
+            shared.room.notify_all();
+            if let Some(sound) = shared.sound.as_ref() {
+                sound.clear();
+            }
+            video_done = video.is_none();
+            audio_done = audio.is_none();
+            shared.read_out.store(false, Ordering::Relaxed);
+            shared.video_out.store(video.is_none(), Ordering::Relaxed);
+            shared.audio_out.store(audio.is_none(), Ordering::Relaxed);
+        }
+        if shared.read_out.load(Ordering::Relaxed) || enough(&shared, video.is_some()) {
+            std::thread::sleep(Duration::from_millis(8));
+            continue;
+        }
+        let serial = shared.serial.load(Ordering::Relaxed);
+        let state = source.state.lock().unwrap();
+        if state.closed {
+            break;
+        }
+        // Each track's next frame after where it has got to.
+        let next = |c: &Option<crate::mse::Cursor>, state: &crate::mse::State| -> Option<i64> {
+            let c = c.as_ref()?;
+            let track = state.track(c.buffer, c.track)?;
+            let after = c.last.map_or(i64::MIN, |l| l + 1);
+            track.frames.range(after..).next().map(|(d, _)| *d)
+        };
+        let nv = if video_done { None } else { next(&video, &state) };
+        let na = if audio_done { None } else { next(&audio, &state) };
+        let pick = match (nv, na) {
+            (Some(v), Some(a)) => Some(if v <= a { 0 } else { 1 }),
+            (Some(_), None) => Some(0),
+            (None, Some(_)) => Some(1),
+            (None, None) => None,
+        };
+        let Some(which) = pick else {
+            if state.ended {
+                // Everything there is has been given: the end, for whichever has run out.
+                if !video_done {
+                    shared.video.push(None, serial);
+                    video_done = true;
+                }
+                if !audio_done {
+                    shared.audio.push(None, serial);
+                    audio_done = true;
+                }
+                shared.read_out.store(true, Ordering::Relaxed);
+            } else {
+                // Waiting for the page to append more.
+                let _ = source.changed.wait_timeout(state, Duration::from_millis(50)).unwrap();
+            }
+            continue;
+        };
+        if state.ended {
+            // A track with nothing more, while the other goes on: its end now.
+            if nv.is_none() && !video_done && video.is_some() {
+                shared.video.push(None, serial);
+                video_done = true;
+            }
+            if na.is_none() && !audio_done && audio.is_some() {
+                shared.audio.push(None, serial);
+                audio_done = true;
+            }
+        }
+        let (cursor, dts, stream, queue) = if which == 0 {
+            (video.as_mut().unwrap(), nv.unwrap(), video_stream.unwrap(), &shared.video)
+        } else {
+            (audio.as_mut().unwrap(), na.unwrap(), audio_stream.unwrap(), &shared.audio)
+        };
+        let Some(frame) = state.track(cursor.buffer, cursor.track).and_then(|t| t.frames.get(&dts)) else {
+            cursor.last = Some(dts);
+            continue;
+        };
+        unsafe {
+            let packet = ffi::av_packet_alloc();
+            if ffi::av_new_packet(packet, frame.data.len() as c_int) < 0 {
+                ffi::av_packet_free(&mut (packet as *mut _));
+                continue;
+            }
+            ptr::copy_nonoverlapping(frame.data.as_ptr(), (*packet).data, frame.data.len());
+            (*packet).pts = frame.pts;
+            (*packet).dts = frame.dts;
+            (*packet).duration = frame.duration;
+            (*packet).stream_index = stream as c_int;
+            if frame.key {
+                (*packet).flags |= ffi::AV_PKT_FLAG_KEY as c_int;
+            }
+            // A new initialization segment's description (a page changing quality): handed to
+            // the decoder with the first frame coded by it.
+            let changed = cursor.params.as_ref().is_none_or(|p| !Arc::ptr_eq(p, &frame.params));
+            if changed {
+                if cursor.params.is_some() {
+                    log::info!("a MediaSource's track changed its description at {:.2} (key frame {})", frame.pts as f64 / 1e6, frame.key);
+                }
+                let extra = frame.params.extradata();
+                if !extra.is_empty() && cursor.params.as_ref().is_none_or(|p| p.extradata() != extra) {
+                    let side = ffi::av_packet_new_side_data(packet, ffi::AV_PKT_DATA_NEW_EXTRADATA, extra.len());
+                    if !side.is_null() {
+                        ptr::copy_nonoverlapping(extra.as_ptr(), side, extra.len());
+                    }
+                }
+                cursor.params = Some(frame.params.clone());
+            }
+            let time = frame.pts as f64 / 1e6;
+            cursor.last = Some(dts);
+            drop(state);
+            queue.push_at(Some(Packet(packet)), serial, time);
+        }
+    }
+}
+
+/// A MediaSource's picture track's frame rate, from how far apart its frames are.
+fn source_frame_rate(source: &crate::mse::Source, cursor: &crate::mse::Cursor) -> f64 {
+    let state = source.state.lock().unwrap();
+    let Some(track) = state.track(cursor.buffer, cursor.track) else { return 0.0 };
+    let mut durations: Vec<i64> = track.frames.values().take(64).map(|f| f.duration).filter(|d| *d > 0).collect();
+    durations.sort_unstable();
+    durations.get(durations.len() / 2).map_or(0.0, |d| 1e6 / *d as f64)
 }
 
 unsafe fn colour_of(frame: *const ffi::AVFrame) -> Colour {
@@ -997,15 +1385,17 @@ unsafe fn settle(frame: *mut ffi::AVFrame, scaler: &mut *mut ffi::SwsContext) ->
     Some((plain, kind))
 }
 
-fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu: bool, start: f64, shared: Arc<Shared>) {
+fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu: bool, start: f64, shared: Arc<Shared>, generation: u64) {
     let _ = stream;
     unsafe {
         let mut frame = ffi::av_frame_alloc();
         let mut scaler: *mut ffi::SwsContext = ptr::null_mut();
         let mut serial = shared.serial.load(Ordering::Relaxed);
         let mut complained = false;
-        while !shared.stop.load(Ordering::Relaxed) {
+        let mine = || shared.video_generation.load(Ordering::Relaxed) == generation;
+        while !shared.stop.load(Ordering::Relaxed) && mine() {
             let Ok((packet, packet_serial)) = shared.video.pop() else { continue };
+            *shared.video_alive.lock().unwrap() = Instant::now();
             if packet_serial != shared.serial.load(Ordering::Relaxed) {
                 continue;
             }
@@ -1037,11 +1427,14 @@ fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu
                 let picture = Picture { frame: held, pixels, width, height, time, colour, serial };
                 let mut pictures = shared.pictures.lock().unwrap();
                 while pictures.len() >= PICTURES_AHEAD && !shared.stop.load(Ordering::Relaxed) && serial == shared.serial.load(Ordering::Relaxed) {
+                    // Waiting for room is not being stuck.
+                    *shared.video_alive.lock().unwrap() = Instant::now();
                     pictures = shared.room.wait_timeout(pictures, Duration::from_millis(20)).unwrap().0;
                 }
-                if serial == shared.serial.load(Ordering::Relaxed) {
+                if serial == shared.serial.load(Ordering::Relaxed) && mine() {
                     pictures.push_back(picture);
                 }
+                *shared.video_alive.lock().unwrap() = Instant::now();
             }
             if ending {
                 ffi::avcodec_flush_buffers(decoder.context);

@@ -102,6 +102,15 @@ fn source_of(surface: &WlSurface) -> Option<Source> {
     .flatten()
 }
 
+/// The global `IOSurface` a Spatiand application's window shows, and the name of its run of
+/// them: what 2D mode shows on the Mac (`desk`).
+pub fn shared_surface_of(surface: &WlSurface) -> Option<(u32, u64)> {
+    match source_of(surface)? {
+        Source::Shared { surface, stream } => Some((surface, stream)),
+        Source::Token(_) => None,
+    }
+}
+
 fn token_of(surface: &WlSurface) -> Option<u32> {
     match source_of(surface)? {
         Source::Token(token) => Some(token),

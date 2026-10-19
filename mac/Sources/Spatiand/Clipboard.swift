@@ -11,7 +11,9 @@
 import AppKit
 
 final class ClipboardSync {
-    private let board = NSPasteboard.general
+    /// The Mac's clipboard; a pasteboard of its own when `SPATIAND_PASTEBOARD` names one, so a
+    /// test leaves the owner's clipboard alone.
+    let board = ProcessInfo.processInfo.environment["SPATIAND_PASTEBOARD"].map { NSPasteboard(name: .init($0)) } ?? NSPasteboard.general
     private var lastChange: Int
     private var timer: Timer?
     private var offeredText: String?
@@ -29,7 +31,7 @@ final class ClipboardSync {
         didSet { if connected { lastChange = board.changeCount; offer() } }
     }
 
-    init() { lastChange = NSPasteboard.general.changeCount }
+    init() { lastChange = board.changeCount }
 
     func start() {
         timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in self?.poll() }

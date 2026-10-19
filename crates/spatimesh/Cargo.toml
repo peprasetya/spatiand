@@ -1,0 +1,48 @@
+[package]
+name = "spatimesh"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SpatiMesh: Spatiand's web browser"
+
+# See docs/spatimesh.md. One process holds the windows and draws the browser around the page;
+# every tab is a process of its own holding the platform's web engine (WebKit on the Mac,
+# WebKitGTK on Linux, the system WebView on Android) behind one interface, so that one tab
+# crashing takes nothing else with it.
+# `media`: pages' media played by Spatiand's own player, which needs FFmpeg where it is built.
+# Without it, the engine plays them as it always did.
+[features]
+default = ["media"]
+media = ["dep:spatiand-media", "dep:jpeg-encoder"]
+
+[dependencies]
+spatiand-app = { path = "../spatiand-app" }
+log.workspace = true
+env_logger.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+libc = "0.2"
+# Extensions: their packages (zip, inflated), Chrome's ids (SHA-256 of a key, given in base64),
+# and the URLs their patterns are matched against.
+flate2 = "1"
+sha2 = "0.10"
+base64 = "0.22"
+url = "2"
+percent-encoding = "2"
+# declarativeNetRequest's rules (their urlFilter and regexFilter), and the patterns engines are
+# given as regular expressions.
+regex = "1"
+# Extensions' toolbar pictures.
+png = "0.17"
+# Pages' films and sounds, played by Spatiand's own player rather than the engine's
+# (docs/spatimesh.md, "Media"): FFmpeg and the platform's decoder.
+spatiand-media = { path = "../spatiand-media", optional = true }
+# A film's picture for a page that draws it itself (drawImage, WebGL): sent as a JPEG.
+jpeg-encoder = { version = "0.6", optional = true }
+
+[dev-dependencies]
+# What keeps Spatiand's applications' settings the same on every machine, for the test that
+# SpatiMesh's survive it (tests/sync.rs).
+spatiand-sync = { path = "../spatiand-sync" }

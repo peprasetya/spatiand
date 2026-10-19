@@ -1,0 +1,21 @@
+[package]
+name = "spatimesh-webkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SpatiMesh's engine host on the Mac: WebKit (WKWebView)"
+
+# A program of its own, started by SpatiMesh's window process, one per profile in use
+# (docs/spatimesh.md); its native half is Objective-C against WebKit (native/webkit.m). Built
+# anywhere, it does something only on a Mac.
+[dependencies]
+spatimesh = { path = "../spatimesh", default-features = false }
+spatimesh-shim = { path = "../spatimesh-shim" }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[build-dependencies]
+cc = "1"

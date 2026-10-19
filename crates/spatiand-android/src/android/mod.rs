@@ -174,6 +174,21 @@ pub fn glasses_waiting(shared: &Shared, _holding: bool) -> bool {
 /// Every window on the Beam Pro is a host's, and is the size the room gives any window.
 pub fn size_new_windows(_state: &mut crate::Spatiand, _windows: &mut [crate::scene::WindowQuad]) {}
 
+/// The Mac's 2D mode, which shows the session's windows on its desktop. The Beam Pro has no
+/// desktop of its own to show them on.
+pub fn desk_tick(_state: &mut crate::Spatiand) -> bool {
+    false
+}
+
+pub fn desk_on() -> bool {
+    false
+}
+
+/// The phone's own clipboard is not joined to the session's yet.
+pub fn local_clipboard() -> Option<crate::remote::LocalClipboard> {
+    None
+}
+
 /// A notification to show under the status bar: who it is from, then what it says. Android's
 /// are not read yet.
 pub fn notice() -> String {

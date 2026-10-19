@@ -552,7 +552,7 @@ final class MacHost {
         let info = s.info
         // A message with no fields is its bare name.
         if let name = input as? String {
-            if name == "Leave" { return }
+            if name == "ScrollStop" { MacInput.real.async { MacInput.pad.stopped() } }
             return
         }
         guard let (kind, body) = (input as? [String: Any])?.first, let fields = body as? [String: Any] else { return }
@@ -610,6 +610,19 @@ final class MacHost {
                 // Scrolled where the real pointer is, so the window has to be what is under it.
                 if again, info.display == nil { MacInput.bringForward(info, at: point, others: others) }
                 MacInput.realScroll(dx: pixels(h), dy: pixels(v), at: point)
+            }
+        case "FingerScroll":
+            // A pad's: exact, in the picture's pixels, and the Mac's points are fewer.
+            let scale = s.capture.pointsPerPixel()
+            let h = -((fields["horizontal"] as? NSNumber)?.doubleValue ?? 0) * scale
+            let v = -((fields["vertical"] as? NSNumber)?.doubleValue ?? 0) * scale
+            let point = s.capture.screenPoint(x: lastPoint.0, y: lastPoint.1)
+            let others = Set(shared.values.map(\.info.windowID)).union(offered.values.map(\.windowID))
+            let again = Date().timeIntervalSince(scrolledAt) > 0.5
+            scrolledAt = Date()
+            MacInput.real.async {
+                if again, info.display == nil { MacInput.bringForward(info, at: point, others: others) }
+                MacInput.pad.moved(dx: h, dy: v, at: point)
             }
         case "Key":
             guard let code = (fields["code"] as? NSNumber)?.uint32Value, let down = fields["pressed"] as? Bool else { return }

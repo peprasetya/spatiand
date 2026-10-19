@@ -19,6 +19,32 @@ use serde_json::{json, Value};
 struct Place {
     port: u16,
     token: String,
+    #[serde(default)]
+    pid: i32,
+    /// The program it is and which build of it (`storage/main.go`, `programStamp`); missing
+    /// from a service older than these.
+    #[serde(default)]
+    program: Option<String>,
+    #[serde(default)]
+    stamp: Option<String>,
+}
+
+impl Place {
+    /// Whether the running service is an older build of the program installed beside this one:
+    /// Spatiand was updated, and the service, which outlives the applications, was not. A
+    /// service from somewhere else (another build, a test's) is left alone.
+    fn outdated_by(&self, ours: &std::path::Path) -> bool {
+        let Some(program) = &self.program else { return true };
+        let ours = std::fs::canonicalize(ours).unwrap_or_else(|_| ours.to_path_buf());
+        std::path::Path::new(program) == ours && self.stamp.as_deref() != stamp(&ours).as_deref()
+    }
+}
+
+/// A program's size and modification time, as the service writes its own.
+fn stamp(program: &std::path::Path) -> Option<String> {
+    let meta = std::fs::metadata(program).ok()?;
+    let nanos = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    Some(format!("{}-{nanos}", meta.len()))
 }
 
 /// A connection to the service.
@@ -95,11 +121,25 @@ fn percent(path: &str) -> String {
 }
 
 impl Storage {
-    fn read_place() -> Option<Storage> {
+    fn read_place() -> Option<(Storage, Place)> {
         let raw = std::fs::read_to_string(runtime_file()).ok()?;
         let place: Place = serde_json::from_str(&raw).ok()?;
-        let storage = Storage { port: place.port, token: place.token };
-        storage.ping().then_some(storage)
+        let storage = Storage { port: place.port, token: place.token.clone() };
+        storage.ping().then_some((storage, place))
+    }
+
+    /// Stop a service that is out of date, and wait until it no longer answers.
+    fn replace(storage: &Storage, place: &Place) {
+        log::info!("the storage service running (pid {}) is older than the one installed: replacing it", place.pid);
+        #[cfg(unix)]
+        if place.pid > 0 {
+            unsafe { libc::kill(place.pid, libc::SIGTERM) };
+        }
+        let started = Instant::now();
+        while storage.ping() && started.elapsed() < Duration::from_secs(4) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = std::fs::remove_file(runtime_file());
     }
 
     fn ping(&self) -> bool {
@@ -108,10 +148,14 @@ impl Storage {
 
     /// The service, started if it is not running. Errs only when it cannot be started.
     pub fn connect() -> Result<Storage, String> {
-        if let Some(storage) = Storage::read_place() {
-            return Ok(storage);
+        let program = program();
+        if let Some((storage, place)) = Storage::read_place() {
+            match &program {
+                Some(ours) if place.outdated_by(ours) => Storage::replace(&storage, &place),
+                _ => return Ok(storage),
+            }
         }
-        let program = program().ok_or("the storage service is not installed beside this program")?;
+        let program = program.ok_or("the storage service is not installed beside this program")?;
         // On its own, not a child of this application: it serves native applications too, and
         // outlives whichever Spatiand application started it.
         let mut command = Command::new(&program);
@@ -136,7 +180,7 @@ impl Storage {
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(8) {
             std::thread::sleep(Duration::from_millis(100));
-            if let Some(storage) = Storage::read_place() {
+            if let Some((storage, _)) = Storage::read_place() {
                 return Ok(storage);
             }
         }
@@ -238,5 +282,26 @@ mod tests {
     fn addresses_are_escaped_and_carry_the_token() {
         let s = Storage { port: 47731, token: "t0k".into() };
         assert_eq!(s.url("My Drive", "a b/ü.jpg"), "http://spatiand:t0k@127.0.0.1:47731/dav/My%20Drive/a%20b/%C3%BC.jpg");
+    }
+
+    #[test]
+    fn an_older_build_of_our_own_service_is_replaced_and_anyone_elses_is_not() {
+        let dir = std::env::temp_dir().join(format!("spatiand-storage-stamp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ours = dir.join("spatiand-storage");
+        std::fs::write(&ours, b"new build").unwrap();
+        let ours = std::fs::canonicalize(&ours).unwrap();
+        let place = |program: Option<&std::path::Path>, stamp: Option<String>| Place {
+            port: 1,
+            token: String::new(),
+            pid: 0,
+            program: program.map(|p| p.to_string_lossy().into_owned()),
+            stamp,
+        };
+        assert!(place(None, None).outdated_by(&ours), "a service from before services said what they are");
+        assert!(place(Some(&ours), Some("1-2".into())).outdated_by(&ours));
+        assert!(!place(Some(&ours), stamp(&ours)).outdated_by(&ours));
+        assert!(!place(Some(&dir.join("elsewhere")), Some("1-2".into())).outdated_by(&ours));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

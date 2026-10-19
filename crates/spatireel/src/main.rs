@@ -83,6 +83,8 @@ struct Reel {
     looked_for_servers: Option<Instant>,
     ready: bool,
     dirty: bool,
+    /// The size the window is when no film is in it: the wearer's, once they have resized it.
+    home_size: (u32, u32),
 }
 
 impl Reel {
@@ -215,7 +217,7 @@ impl Reel {
             None
         });
         playing.close(&mut self.app, self.window);
-        self.app.resize(self.window, WINDOW);
+        self.app.resize(self.window, self.home_size);
         self.app.set_title(self.window, "SpatiReel");
         // What was just left is now part watched: a list drawn before is stale.
         match std::mem::replace(&mut self.screen, Screen::Empty) {
@@ -410,6 +412,15 @@ impl Reel {
             // The film's own surface was closed: the film is over.
             Event::CloseRequested { .. } => self.stop(false),
             Event::Ready { window, .. } if *window == self.window => self.ready = true,
+            // Resized -- a corner dragged in the room, or a Mac window in 2D mode -- the lists
+            // are laid out again at the new size. Not while a film is in the window: its picture
+            // is the film's own, which the room or the Mac scales to fit.
+            Event::Resized { window, width, height } if *window == self.window => {
+                self.home_size = ((*width).max(640), (*height).max(400));
+                if self.playing.is_none() {
+                    self.app.resize(self.window, self.home_size);
+                }
+            }
             Event::Mode(mode) => log::info!("the wearer now sees {mode:?}"),
             Event::Hands => {
                 if let Some((playing, _)) = self.playing.as_mut() {
@@ -531,6 +542,7 @@ fn main() {
             looked_for_servers: None,
             ready: false,
             dirty: true,
+            home_size: WINDOW,
         };
         reel.gather();
         reel.go_home();

@@ -162,7 +162,16 @@ pub fn run(
     let mut left_scroll = spatiand_input::PadScroll::default();
     let mut prefs = crate::prefs::Prefs::load();
     super::adopt_paired_hosts(&mut prefs);
-    let mut remotes = crate::remote::Remotes::start(&mut runtime.display_handle, &prefs);
+    // A Mac in 2D mode watches no host: its own 2D view has them, and a host shows its windows
+    // to one viewer at a time. They are watched from when the glasses have the session.
+    let mut remotes_started = !super::desk_on();
+    let mut remotes = if remotes_started {
+        crate::remote::Remotes::start(&mut runtime.display_handle, &prefs)
+    } else {
+        crate::remote::Remotes::default()
+    };
+    // This machine's own clipboard, where it is not the session's (a Mac's pasteboard).
+    remotes.local_clipboard = super::local_clipboard();
     let mut typed_event: Option<ShellEvent> = None;
     let mut keyboard_for_shell = false;
     // The click plays into the session's own output here (see `crate::click`).
@@ -288,15 +297,27 @@ pub fn run(
         glasses = output_for(&shared.glasses, &egl_display, renderer.egl_context(), glasses.take());
         phone = output_for(&shared.phone, &egl_display, renderer.egl_context(), phone.take());
         let Some(output) = glasses.as_ref() else {
-            // Nowhere to draw the world. Keep the clients answered and the panel drawn.
+            // Nowhere to draw the world. Keep the clients answered and the panel drawn -- and on
+            // a Mac in 2D mode, the windows shown on its desktop (`super::desk_tick`).
             if let Some(p) = phone.as_mut() {
                 draw_phone(&mut renderer, p);
             }
+            let desk = super::desk_tick(&mut runtime.state);
+            if desk {
+                crate::clipboard::exchange(&mut remotes, &mut runtime.state);
+            }
+            runtime.state.space.refresh();
             display.dispatch_clients(&mut runtime.state)?;
             display.flush_clients()?;
-            event_loop.dispatch(Some(Duration::from_millis(50)), runtime)?;
+            event_loop.dispatch(Some(Duration::from_millis(if desk { 4 } else { 50 })), runtime)?;
             continue;
         };
+        if !remotes_started {
+            let local = remotes.local_clipboard.take();
+            remotes = crate::remote::Remotes::start(&mut runtime.display_handle, &prefs);
+            remotes.local_clipboard = local;
+            remotes_started = true;
+        }
         let generation = output.generation;
         let (w, h) = output.size;
         let on_glasses = hmd.is_some() && w >= h * 3;
@@ -1139,7 +1160,10 @@ pub fn run(
                         sinks_changed = true;
                     }
                     Some(app_id) if own_app(&app_id) => {
-                        spatial_audio.adopt_keyed(id, &format!("own:{app_id}"), spatiand_audio::server::Width::Full);
+                        // Each window by the name its sound comes with: two pages of one
+                        // browser are two places in the room.
+                        let key = runtime.state.sound_key_of_id(id).unwrap_or(app_id);
+                        spatial_audio.adopt_keyed(id, &format!("own:{key}"), spatiand_audio::server::Width::Full);
                     }
                     Some(_) => spatial_audio.adopt(id, pid),
                     None => awaiting_app_id.push((id, Instant::now(), pid)),
@@ -1151,7 +1175,8 @@ pub fn run(
                         spatial_audio.adopt_keyed(*id, &app_id, crate::remote::sound_width(&app_id));
                         sinks_changed = true;
                     } else if own_app(&app_id) {
-                        spatial_audio.adopt_keyed(*id, &format!("own:{app_id}"), spatiand_audio::server::Width::Full);
+                        let key = runtime.state.sound_key_of_id(*id).unwrap_or(app_id);
+                        spatial_audio.adopt_keyed(*id, &format!("own:{key}"), spatiand_audio::server::Width::Full);
                     } else {
                         spatial_audio.adopt(*id, *pid);
                     }

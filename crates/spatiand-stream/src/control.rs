@@ -249,6 +249,12 @@ pub enum Input {
     /// The layout stays on the host, which is the only end that knows what the application
     /// expects. Sending characters instead would break every game that reads scancodes.
     Key { code: u32, pressed: bool },
+    /// A scroll by a finger on a pad, in pixels: to be scrolled exactly this far, as a
+    /// touchpad does, not turned into wheel notches. (At the end so a host older than this
+    /// skips it rather than misreading what follows.)
+    FingerScroll { horizontal: f64, vertical: f64 },
+    /// The finger has left the pad: the scroll carries on by its own momentum, as a touchpad's.
+    ScrollStop,
 }
 
 /// A session's event times, turned into this machine's with the gaps between them kept.

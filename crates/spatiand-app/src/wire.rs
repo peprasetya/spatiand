@@ -12,10 +12,10 @@ use std::time::{Duration, Instant};
 
 use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContents};
 use wayland_client::protocol::{
-    wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
-    wl_shm_pool, wl_surface,
+    wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source,
+    wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
 };
-use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
+use wayland_client::{event_created_child, Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1};
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
@@ -82,7 +82,21 @@ pub(crate) struct Wire {
     keyboard_on: Option<WindowId>,
     /// Buffers of a GPU's pictures the compositor has finished with: (window, key).
     pub(crate) released: Vec<(WindowId, u32)>,
+    /// The room's clipboard: see `crate::clipboard`.
+    data_devices: Option<wl_data_device_manager::WlDataDeviceManager>,
+    data_device: Option<wl_data_device::WlDataDevice>,
+    /// What each offer on the way says it can be, by the forms it lists before it is chosen.
+    offers: HashMap<wl_data_offer::WlDataOffer, Vec<String>>,
+    /// The offer that is the clipboard now, to be let go of when the next comes.
+    selection: Option<wl_data_offer::WlDataOffer>,
+    /// What this application put on the clipboard, while it is there.
+    source: Option<wl_data_source::WlDataSource>,
+    /// The newest input event's serial: a copy is made "in answer to" one.
+    serial: u32,
 }
+
+/// Text's names, the best first.
+const TEXT_FORMS: &[&str] = &["text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "TEXT", "STRING"];
 
 /// The buffer's part in a `wl_buffer`'s user data.
 #[derive(Clone, Copy)]
@@ -109,9 +123,13 @@ impl Wire {
         let compositor = globals.bind(&handle, 4..=6, ()).map_err(|e| format!("no wl_compositor: {e}"))?;
         let shell = globals.bind(&handle, 1..=6, ()).map_err(|e| format!("no xdg_wm_base: {e}"))?;
         let shm = globals.bind(&handle, 1..=2, ()).map_err(|e| format!("no wl_shm: {e}"))?;
-        let _seat: wl_seat::WlSeat = globals.bind(&handle, 5..=9, ()).map_err(|e| format!("no seat: {e}"))?;
+        let seat: wl_seat::WlSeat = globals.bind(&handle, 5..=9, ()).map_err(|e| format!("no seat: {e}"))?;
+        // The clipboard, where there is one to join: a compositor without it only means no
+        // copying and pasting.
+        let data_devices: Option<wl_data_device_manager::WlDataDeviceManager> = globals.bind(&handle, 1..=3, ()).ok();
+        let data_device = data_devices.as_ref().map(|m| m.get_data_device(&seat, &handle, ()));
         let dmabuf = globals.bind(&handle, 3..=3, ()).ok();
-        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=7, ()).ok();
+        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=8, ()).ok();
         let viewporter = globals.bind(&handle, 1..=1, ()).ok();
         // A compositor with the room's protocol and no word on the mode is an older Spatiand,
         // which has only ever had two eyes; one without the protocol is somebody's desktop.
@@ -136,6 +154,12 @@ impl Wire {
             pointer_on: None,
             keyboard_on: None,
             released: Vec::new(),
+            data_devices,
+            data_device,
+            offers: HashMap::new(),
+            selection: None,
+            source: None,
+            serial: 0,
         };
         Ok((wire, queue))
     }
@@ -287,6 +311,15 @@ impl Wire {
         if let Some(xr) = self.xr_of(id) {
             if xr.version() >= 6 {
                 xr.set_see_through(clear as u32);
+            }
+        }
+    }
+
+    pub(crate) fn set_sound_key(&mut self, id: WindowId, key: &str) {
+        if let Some(xr) = self.xr_of(id) {
+            // Not to a room older than this request: it would end the connection.
+            if xr.version() >= 8 {
+                xr.set_sound_key(key.to_string());
             }
         }
     }
@@ -491,6 +524,23 @@ impl Wire {
     pub(crate) fn forget_dmabuf(&mut self, id: WindowId, key: u32) {
         if let Some(buffer) = self.windows.get_mut(&id).and_then(|w| w.foreign.remove(&key)) {
             buffer.destroy();
+        }
+    }
+
+    /// Put text on the clipboard: this application serves it while it is there.
+    pub(crate) fn copy(&mut self, text: String) {
+        let (Some(manager), Some(device)) = (self.data_devices.as_ref(), self.data_device.as_ref()) else {
+            log::warn!("the compositor has no clipboard: nothing copied");
+            return;
+        };
+        log::info!("copied {} characters to the clipboard", text.chars().count());
+        let source = manager.create_data_source(&self.handle, std::sync::Arc::new(text));
+        for form in TEXT_FORMS {
+            source.offer(form.to_string());
+        }
+        device.set_selection(Some(&source), self.serial);
+        if let Some(old) = self.source.replace(source) {
+            old.destroy();
         }
     }
 
@@ -740,7 +790,8 @@ impl Dispatch<wl_seat::WlSeat, ()> for Wire {
 impl Dispatch<wl_pointer::WlPointer, ()> for Wire {
     fn event(state: &mut Self, _: &wl_pointer::WlPointer, event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         match event {
-            wl_pointer::Event::Enter { surface, surface_x, surface_y, .. } => {
+            wl_pointer::Event::Enter { surface, surface_x, surface_y, serial, .. } => {
+                state.serial = serial;
                 state.pointer_on = state.ids.get(&surface).copied();
                 if let Some(window) = state.pointer_on {
                     state.events.push(Event::PointerMoved { window, x: surface_x as f32, y: surface_y as f32 });
@@ -756,7 +807,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for Wire {
                     state.events.push(Event::PointerMoved { window, x: surface_x as f32, y: surface_y as f32 });
                 }
             }
-            wl_pointer::Event::Button { button, state: pressed, .. } => {
+            wl_pointer::Event::Button { button, state: pressed, serial, .. } => {
+                state.serial = serial;
                 if let Some(window) = state.pointer_on {
                     let pressed = matches!(pressed, WEnum::Value(wl_pointer::ButtonState::Pressed));
                     // Linux's own numbers for a mouse's buttons, which is what the wire carries.
@@ -789,7 +841,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for Wire {
             wl_keyboard::Event::Keymap { format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1), fd, size } => {
                 state.keyboard.keymap(fd, size);
             }
-            wl_keyboard::Event::Enter { surface, .. } => {
+            wl_keyboard::Event::Enter { surface, serial, .. } => {
+                state.serial = serial;
                 state.keyboard_on = state.ids.get(&surface).copied();
                 if let Some(window) = state.keyboard_on {
                     state.events.push(Event::Focus { window, focused: true });
@@ -805,11 +858,106 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for Wire {
                 state.keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
             }
             wl_keyboard::Event::RepeatInfo { rate, delay } => state.keyboard.repeat_info(rate, delay),
-            wl_keyboard::Event::Key { key, state: pressed, .. } => {
+            wl_keyboard::Event::Key { key, state: pressed, serial, .. } => {
+                state.serial = serial;
                 if let Some(window) = state.keyboard_on {
                     let pressed = matches!(pressed, WEnum::Value(wl_keyboard::KeyState::Pressed));
                     state.keyboard.key(key, pressed, window, &mut state.events);
                 }
+            }
+            _ => {}
+        }
+    }
+}
+
+// --- the clipboard ---
+
+ignore! {
+    wl_data_device_manager::WlDataDeviceManager => (),
+}
+
+impl Dispatch<wl_data_device::WlDataDevice, ()> for Wire {
+    fn event(state: &mut Self, _: &wl_data_device::WlDataDevice, event: wl_data_device::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        match event {
+            wl_data_device::Event::DataOffer { id } => {
+                state.offers.insert(id, Vec::new());
+            }
+            wl_data_device::Event::Selection { id } => {
+                if let Some(old) = state.selection.take() {
+                    if Some(&old) != id.as_ref() {
+                        state.offers.remove(&old);
+                        old.destroy();
+                    }
+                }
+                let generation = crate::clipboard::changed();
+                let Some(offer) = id else { return };
+                let forms = state.offers.get(&offer).cloned().unwrap_or_default();
+                state.selection = Some(offer.clone());
+                let Some(form) = TEXT_FORMS.iter().find(|f| forms.iter().any(|o| o.eq_ignore_ascii_case(f))) else { return };
+                let mut fds = [0i32; 2];
+                if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+                    return;
+                }
+                // SAFETY: both ends are new and ours alone.
+                let (read, write) = unsafe { (std::fs::File::from_raw_fd(fds[0]), std::os::fd::OwnedFd::from_raw_fd(fds[1])) };
+                offer.receive(form.to_string(), write.as_fd());
+                drop(write);
+                // Read on a thread: whoever holds the clipboard may be slow, and may even be this
+                // application, which serves it from this very loop.
+                std::thread::Builder::new()
+                    .name("clipboard-read".into())
+                    .spawn(move || {
+                        use std::io::Read;
+                        let mut bytes = Vec::new();
+                        let _ = read.take(16 << 20).read_to_end(&mut bytes);
+                        crate::clipboard::read(generation, String::from_utf8(bytes).ok());
+                    })
+                    .ok();
+            }
+            _ => {}
+        }
+    }
+
+    event_created_child!(Wire, wl_data_device::WlDataDevice, [
+        wl_data_device::EVT_DATA_OFFER_OPCODE => (wl_data_offer::WlDataOffer, ()),
+    ]);
+}
+
+impl Dispatch<wl_data_offer::WlDataOffer, ()> for Wire {
+    fn event(state: &mut Self, offer: &wl_data_offer::WlDataOffer, event: wl_data_offer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let wl_data_offer::Event::Offer { mime_type } = event {
+            state.offers.entry(offer.clone()).or_default().push(mime_type);
+        }
+    }
+}
+
+impl Dispatch<wl_data_source::WlDataSource, std::sync::Arc<String>> for Wire {
+    fn event(
+        state: &mut Self,
+        source: &wl_data_source::WlDataSource,
+        event: wl_data_source::Event,
+        text: &std::sync::Arc<String>,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_data_source::Event::Send { fd, .. } => {
+                // Written on a thread: a reader that is slow to read must not stop this loop.
+                let text = text.clone();
+                std::thread::Builder::new()
+                    .name("clipboard-write".into())
+                    .spawn(move || {
+                        use std::io::Write;
+                        let mut file = std::fs::File::from(fd);
+                        let _ = file.write_all(text.as_bytes());
+                    })
+                    .ok();
+            }
+            wl_data_source::Event::Cancelled => {
+                if state.source.as_ref() == Some(source) {
+                    state.source = None;
+                }
+                source.destroy();
             }
             _ => {}
         }

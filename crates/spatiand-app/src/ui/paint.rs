@@ -232,6 +232,28 @@ impl Painter {
         }
     }
 
+    /// Take GL back after something else drew with it mid-frame (a film, with a program of its
+    /// own): this painter's program, shapes and blending, as `begin` left them.
+    pub fn rebind(&self, gl: &Gl) {
+        let g = gl.api();
+        unsafe {
+            g.enable(glow::BLEND);
+            g.blend_func(glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
+            g.use_program(Some(self.program));
+            g.bind_vertex_array(Some(self.vao));
+            g.uniform_2_f32(self.at[1].as_ref(), self.view.0, self.view.1);
+            g.uniform_1_i32(self.at[6].as_ref(), 0);
+            g.uniform_2_f32(self.at[7].as_ref(), self.scale.0, self.scale.1);
+            g.uniform_2_f32(self.at[8].as_ref(), self.origin.0, self.origin.1);
+            g.active_texture(glow::TEXTURE0);
+        }
+    }
+
+    /// The picture's size in pixels, and where its logical pixels start in it.
+    pub fn view(&self) -> ((f32, f32), (f32, f32), (f32, f32)) {
+        (self.view, self.origin, self.scale)
+    }
+
     /// The picture's size in logical pixels.
     pub fn bounds(&self) -> Rect {
         Rect::new(0.0, 0.0, self.logical.0, self.logical.1)

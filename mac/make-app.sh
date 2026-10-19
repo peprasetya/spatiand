@@ -20,7 +20,7 @@ cp .build/release/Spatiand "$app/Contents/MacOS/Spatiand"
 # looks for them (crates/spatiand/src/own.rs). SpatiReel, SpatiLoupe and SpatiShelf link the
 # FFmpeg this Mac has (Homebrew's): the app is for this Mac. bindgen wants to be told where
 # libclang is. Each is built on its own, so that one that does not build leaves the others.
-OWN="spatireel spatiloupe spatiquill spatishelf"
+OWN="spatireel spatiloupe spatiquill spatishelf spatimesh"
 for own in $OWN; do
   if (cd .. && LIBCLANG_PATH="${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib}" \
       MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release -p "$own"); then
@@ -29,6 +29,16 @@ for own in $OWN; do
     echo "warning: $own did not build; the app is made without it"
   fi
 done
+# SpatiMesh's web engine: WebKit, in a program of its own beside SpatiMesh, which starts one for
+# each profile in use (docs/spatimesh.md).
+if [ -f "$app/Contents/MacOS/spatimesh" ]; then
+  if (cd .. && MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release -p spatimesh-webkit); then
+    cp ../target/release/spatimesh-webkit "$app/Contents/MacOS/spatimesh-webkit"
+    OWN="$OWN spatimesh-webkit"
+  else
+    echo "warning: spatimesh-webkit did not build; SpatiMesh will show no pages"
+  fi
+fi
 # The storage service the applications reach remotes through: Go, with rclone linked in.
 if command -v go >/dev/null && ../storage/build.sh mac "$app/Contents/MacOS/spatiand-storage"; then
   OWN="$OWN spatiand-storage"

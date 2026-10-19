@@ -67,6 +67,20 @@ pub enum Asked {
     MenuChoose = 25,
     /// Up a level: say that one, or that the menu is done with if this was the top.
     MenuBack = 26,
+    /// 2D mode (`desk`): window `id` of the session's is to be shown on the Mac, `a` by `b`
+    /// pixels; `text` is its title, a new line, and its application's id.
+    DeskOpen = 30,
+    /// Window `id`'s newest picture is the global `IOSurface` numbered `a`.
+    DeskPicture = 31,
+    /// Window `id`'s title is `text` now.
+    DeskTitle = 32,
+    /// Window `id` is `a` by `b` pixels now.
+    DeskSize = 33,
+    /// Window `id` has closed, or the glasses have it now.
+    DeskClose = 34,
+    /// The session's clipboard to the Mac's pasteboard (`pasteboard`): `text` is the 2D link's
+    /// JSON for a host's clipboard message, `{"host": {"Clipboard": {...}}}`.
+    Clipboard = 35,
 }
 
 pub type Callback =
@@ -78,6 +92,10 @@ fn call(what: Asked, id: u32, a: f64, b: f64, c: f64, text: &str) {
     let Some((callback, user)) = *CALLBACK.lock().unwrap() else { return };
     let text = CString::new(text.replace('\0', "")).unwrap_or_default();
     callback(user as *mut c_void, what as i32, id, a, b, c, text.as_ptr());
+}
+
+pub fn call_text(what: Asked, id: u32, a: f64, b: f64, c: f64, text: &str) {
+    call(what, id, a, b, c, text);
 }
 
 pub fn tell(what: Asked, text: &str) {
