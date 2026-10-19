@@ -516,7 +516,22 @@ static BOOL webkit_composites(CALayer *layer, int depth) {
  * is going), in a tree of its own that a CARenderer may draw: one shown in a window it may not. */
 static CALayer *copy_layer(CALayer *model) {
     CALayer *l = model.presentationLayer ?: model;
-    CALayer *m = [CALayer layer];
+    CALayer *m;
+    if ([model isKindOfClass:[CAShapeLayer class]]) {
+        /* A rounded clip's mask (an overflow box with border-radius: Gmail's menus) is a shape:
+         * a plain layer in its place would hide everything it masks. */
+        CAShapeLayer *from = (CAShapeLayer *)l, *shape = [CAShapeLayer layer];
+        shape.path = from.path;
+        shape.fillColor = from.fillColor;
+        shape.fillRule = from.fillRule;
+        shape.strokeColor = from.strokeColor;
+        shape.lineWidth = from.lineWidth;
+        m = shape;
+    } else if ([model isKindOfClass:[CATransformLayer class]]) {
+        m = [CATransformLayer layer];
+    } else {
+        m = [CALayer layer];
+    }
     m.bounds = l.bounds;
     m.position = l.position;
     m.anchorPoint = l.anchorPoint;
@@ -557,10 +572,10 @@ static CALayer *copy_layer(CALayer *model) {
  * them -- to $TMPDIR/spatimesh-layers-<pid>.txt. */
 static void describe_layer(NSMutableString *out, CALayer *model, int depth) {
     CALayer *l = model.presentationLayer ?: model;
-    [out appendFormat:@"%*s%s bounds=%@ pos=%@ opacity=%.2f/%.2f hidden=%d clip=%d contents=%s mask=%d subs=%lu%s\n", depth * 2, "",
+    [out appendFormat:@"%*s%s bounds=%@ pos=%@ opacity=%.2f/%.2f hidden=%d clip=%d contents=%s mask=%s subs=%lu%s\n", depth * 2, "",
                       object_getClassName(model), NSStringFromRect(NSRectFromCGRect(l.bounds)), NSStringFromPoint(NSPointFromCGPoint(l.position)),
                       model.opacity, l.opacity, model.hidden, model.masksToBounds,
-                      model.contents ? object_getClassName(model.contents) : "-", model.mask != nil, (unsigned long)model.sublayers.count,
+                      model.contents ? object_getClassName(model.contents) : "-", model.mask ? object_getClassName(model.mask) : "0", (unsigned long)model.sublayers.count,
                       model.animationKeys.count ? [[NSString stringWithFormat:@" anim=%@", [model.animationKeys componentsJoinedByString:@","]] UTF8String] : ""];
     if (depth < 60)
         for (CALayer *sub in model.sublayers)
