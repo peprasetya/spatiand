@@ -257,3 +257,21 @@ SpatiLoupe with a GLB in both eyes, HEIC and a PDF, SpatiShelf with pictures.
 Also: SpatiLoupe asked for a file that is not in its folder's list panicked; it says the file would not open now.
 
 Checked on the Mac in the snapshot backend (window placement, tear-off, bandwidth, accounts and Remove against `tools/fake-vibrefy.py` -- which takes `FAKE_VIBREFY_ACCOUNT` now -- the skip buttons, a 4K film's size, a portrait picture seen through, a PDF's contents, page field and held Escape, a pinch). **Not checked**: two SpatiReels' sound on the live Mac backend (the snapshot backend has no own-sound slots), the Deck (asleep), the Beam Pro.
+
+## 2026-10-19: a Vibrefy pairing runs out
+
+A Vibrefy session lasts about four hours (the owner's estimate). When the server answers the JSON
+face with its 401 -- the one answer that cannot be a network failure; a picture's or a stream's
+"signed out" can be, and is not acted on -- SpatiReel lets that server go without asking: it is
+taken out of `spatireel.json`, and home says it was signed out. Its address is kept
+(`vibrefy_last`, with `vibrefy_lapsed`), so home shows a **Vibrefy · host / Signed out ·
+reconnect** tile: Enter on it asks that server for a code at once, and approving the code on a
+signed-in device is all that is left. Delete on the tile puts it away. "Add a server → Vibrefy"
+also starts with the last address filled in. Removing a server on purpose keeps the address for
+the form but offers no reconnect tile.
+
+`tools/fake-vibrefy.py` with `FAKE_VIBREFY_SESSIONS=1` gives each client its own session, signs
+in only by pairing, and loses every session when it is restarted -- which is how this was
+checked in the snapshot backend: paired, server restarted, home showed the tile and the store
+had dropped the account; Reconnect paired and opened the server; the prefill; Delete on the
+tile; and the session ending while inside a server's folder (back home, with the message).

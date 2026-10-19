@@ -3,10 +3,15 @@
 //! Vibrefy says nothing about a film but its name and where the wearer left it, so a film's
 //! layout is read from its name, as the port read it. Signing in is by pairing: this device
 //! shows eight digits, and a device already signed in approves them.
+//!
+//! A pairing lasts hours, not for ever. When the server says, in its unmistakable way (a
+//! JSON 401), that the session is over, the source says it has [`expired`](Source::expired)
+//! and is let go of; its address is kept so that pairing again is only a new code.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use vibrefy_api::client::VibrefyClient;
+use vibrefy_api::client::{ApiError, VibrefyClient};
 use vibrefy_api::models::MediaItem;
 
 use super::{Item, Picture, Play, Source, Watching};
@@ -22,6 +27,8 @@ pub struct Account {
 pub struct Server {
     client: VibrefyClient,
     account: Account,
+    /// The server has said this session is not signed in.
+    ended: AtomicBool,
 }
 
 const WATCHING: &str = "\u{1}watching";
@@ -71,7 +78,19 @@ impl Server {
     pub fn new(account: Account) -> Server {
         let client = VibrefyClient::new(&account.address);
         client.restore_cookies(account.cookies.clone());
-        Server { client, account }
+        Server { client, account, ended: AtomicBool::new(false) }
+    }
+
+    /// An answer from the JSON surface, as words; a 401 also marks the session over. Only
+    /// that surface's answers come through here: its 401 cannot be a passing network
+    /// failure, where the pictures' and the session-in-the-path endpoints' can.
+    fn heard<T>(&self, answer: Result<T, ApiError>) -> Result<T, String> {
+        answer.map_err(|e| {
+            if matches!(e, ApiError::NotAuthenticated) {
+                self.ended.store(true, Ordering::Relaxed);
+            }
+            e.to_string()
+        })
     }
 
     /// Films from here and there in the library, in no order: the server keeps no such list
@@ -81,7 +100,7 @@ impl Server {
         let mut dice = Dice::new();
         let mut films: Vec<Item> = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let top: Vec<MediaItem> = self.client.browse("").map_err(|e| e.to_string())?.items().cloned().collect();
+        let top: Vec<MediaItem> = self.heard(self.client.browse(""))?.items().cloned().collect();
         let mut folders: Vec<MediaItem> = top.iter().filter(|m| m.kind.is_browsable()).cloned().collect();
         films.extend(top.iter().filter(|m| m.is_video()).map(item));
         for _ in 0..12 {
@@ -137,11 +156,11 @@ impl Source for Server {
             Some(folder) if folder.key == RANDOM => self.random(),
             Some(folder) if folder.key == WATCHING => {
                 // The stream addresses need the session's number, which only a listing gives.
-                self.client.browse("").map_err(|e| e.to_string())?;
-                Ok(self.client.watching().map_err(|e| e.to_string())?.iter().filter(|m| m.is_video()).map(item).collect())
+                self.heard(self.client.browse(""))?;
+                Ok(self.heard(self.client.watching())?.iter().filter(|m| m.is_video()).map(item).collect())
             }
             _ => {
-                let listing = self.client.browse(folder.map_or("", |f| f.key.as_str())).map_err(|e| e.to_string())?;
+                let listing = self.heard(self.client.browse(folder.map_or("", |f| f.key.as_str())))?;
                 let mut seen = std::collections::HashSet::new();
                 let mut items: Vec<Item> = Vec::new();
                 if folder.is_none() && self.client.watching().is_ok_and(|w| !w.is_empty()) {
@@ -158,10 +177,16 @@ impl Source for Server {
     }
 
     fn unfinished(&self) -> Vec<Item> {
-        if self.client.session_id().is_none() && self.client.browse("").is_err() {
+        // Asked of every server whenever home is shown, and so where an ended session is
+        // found out: the listing is asked each time, not only before the first.
+        if self.heard(self.client.browse("")).is_err() {
             return Vec::new();
         }
-        self.client.watching().map(|films| films.iter().filter(|m| m.is_video()).map(item).collect()).unwrap_or_default()
+        self.heard(self.client.watching()).map(|films| films.iter().filter(|m| m.is_video()).map(item).collect()).unwrap_or_default()
+    }
+
+    fn expired(&self) -> bool {
+        self.ended.load(Ordering::Relaxed)
     }
 
     fn picture(&self, item: &Item) -> Option<Picture> {
@@ -171,7 +196,7 @@ impl Source for Server {
 
     fn play(&self, item: &Item) -> Result<Play, String> {
         if self.client.session_id().is_none() {
-            self.client.browse("").map_err(|e| e.to_string())?;
+            self.heard(self.client.browse(""))?;
         }
         Ok(Play { url: self.client.stream_url(&item.key).map_err(|e| e.to_string())?, options: Vec::new() })
     }
@@ -183,7 +208,7 @@ impl Source for Server {
             Watching::At { seconds, .. } | Watching::Stopped { seconds, .. } => seconds as i64,
             Watching::Finished => vibrefy_api::progress::FINISHED,
         };
-        if let Err(e) = self.client.save_progress(&key, seconds) {
+        if let Err(e) = self.heard(self.client.save_progress(&key, seconds)) {
             log::warn!("{}: {e}", self.label());
         }
     }

@@ -113,7 +113,7 @@ impl Reel {
 
     fn go_home(&mut self) {
         let ticket = self.ticket();
-        let home = Home::new(&self.sources, ticket);
+        let home = Home::new(&self.sources, self.lapsed(), ticket);
         // What is part watched, asked of every source at once; each answers when it can.
         for (index, entry) in self.sources.iter().enumerate() {
             let source = entry.source.clone();
@@ -131,6 +131,49 @@ impl Reel {
         self.screen = Screen::Home(home);
         self.app.set_title(self.window, "SpatiReel");
         self.dirty = true;
+    }
+
+    /// The Vibrefy server whose session ran out, while it is not paired with again.
+    fn lapsed(&self) -> Option<String> {
+        let store = self.store.lock().unwrap();
+        let address = store.vibrefy_last.clone().filter(|_| store.vibrefy_lapsed)?;
+        (!store.vibrefy.iter().any(|kept| kept.address == address)).then_some(address)
+    }
+
+    /// Servers that have said their sign-in is over are let go of, without being asked: a
+    /// Vibrefy pairing lasts hours. Its address is kept, and home offers to pair again.
+    fn drop_expired(&mut self) {
+        if self.playing.is_some() {
+            return;
+        }
+        let ended: Vec<(String, Account)> = self
+            .sources
+            .iter()
+            .filter(|entry| entry.source.expired())
+            .filter_map(|entry| match &entry.kind {
+                Kind::Server(account) => Some((entry.source.label(), account.clone())),
+                _ => None,
+            })
+            .collect();
+        if ended.is_empty() {
+            return;
+        }
+        {
+            let mut store = self.store.lock().unwrap();
+            for (label, account) in &ended {
+                log::info!("{label}: the server says this session is over; it is let go of");
+                if let Account::Vibrefy(account) = account {
+                    store.vibrefy.retain(|kept| kept != account);
+                    store.vibrefy_last = Some(account.address.clone());
+                    store.vibrefy_lapsed = true;
+                }
+            }
+            store.save();
+        }
+        self.gather();
+        self.go_home();
+        let names: Vec<&str> = ended.iter().map(|(label, _)| label.as_str()).collect();
+        self.screen.trouble(format!("{}: signed out by the server. Reconnect asks for a new code.", names.join(", ")));
     }
 
     fn list(&mut self, browse: &mut Browse) {
@@ -217,16 +260,35 @@ impl Reel {
                 if let Err(e) = self.play(entry.source.clone(), item.clone()) {
                     log::warn!("{}: {e}", item.title);
                     self.screen.trouble(format!("{} would not play: {e}", item.title));
+                    self.drop_expired();
                 }
             }
-            Act::Add => self.screen = Screen::Add(Add::new()),
+            Act::Add => self.screen = Screen::Add(Add::new(self.store.lock().unwrap().vibrefy_last.clone())),
+            Act::Reconnect(address) => {
+                let mut add = Add::new(Some(address));
+                let act = add.pair_again();
+                self.screen = Screen::Add(add);
+                self.act(act);
+            }
+            Act::Dismiss => {
+                let mut store = self.store.lock().unwrap();
+                store.vibrefy_lapsed = false;
+                store.save();
+                drop(store);
+                self.go_home();
+            }
             Act::Forget(source) => {
                 if let Some(Entry { kind: Kind::Server(account), .. }) = self.sources.get(source) {
                     {
                         let mut store = self.store.lock().unwrap();
                         match account {
                             Account::Jellyfin(account) => store.jellyfin.retain(|kept| kept != account),
-                            Account::Vibrefy(account) => store.vibrefy.retain(|kept| kept != account),
+                            Account::Vibrefy(account) => {
+                                store.vibrefy.retain(|kept| kept != account);
+                                // Removed on purpose: not offered back, but still the address
+                                // the form starts with.
+                                store.vibrefy_lapsed = false;
+                            }
                         }
                         store.save();
                     }
@@ -321,6 +383,8 @@ impl Reel {
                                     // account on the same server is a source of its own.
                                     store.vibrefy.retain(|kept| !(kept.address == account.address && kept.account == account.account));
                                     store.vibrefy.push(account.clone());
+                                    store.vibrefy_last = Some(account.address.clone());
+                                    store.vibrefy_lapsed = false;
                                 }
                             }
                             store.save();
@@ -450,6 +514,7 @@ impl Reel {
                 }
             }
             self.answers();
+            self.drop_expired();
             self.draw()?;
         }
     }
@@ -486,12 +551,12 @@ fn main() {
         if let Ok(add) = std::env::var("SPATIREEL_ADD") {
             let parts: Vec<&str> = add.splitn(4, ',').collect();
             if let ["vibrefy", address] = parts[..] {
-                reel.screen = Screen::Add(Add::new());
+                reel.screen = Screen::Add(Add::new(None));
                 reel.act(Act::Pair { address: address.into(), cancelled: Arc::default() });
             }
             if let [kind, address, user, password] = parts[..] {
                 let flavour = if kind == "emby" { jellyfin::Flavour::Emby } else { jellyfin::Flavour::Jellyfin };
-                reel.screen = Screen::Add(Add::new());
+                reel.screen = Screen::Add(Add::new(None));
                 reel.act(Act::SignIn { flavour, address: address.into(), user: user.into(), password: password.into() });
             }
         }

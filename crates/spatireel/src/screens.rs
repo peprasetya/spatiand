@@ -32,6 +32,10 @@ pub enum Act {
     SignIn { flavour: Flavour, address: String, user: String, password: String },
     /// Ask a Vibrefy server for a code and wait for it to be approved, until `cancelled`.
     Pair { address: String, cancelled: Arc<AtomicBool> },
+    /// Pair with this Vibrefy server again, its session having run out: straight to a code.
+    Reconnect(String),
+    /// Stop offering to pair again.
+    Dismiss,
 }
 
 pub enum Screen {
@@ -119,8 +123,11 @@ pub struct Home {
     films: Vec<Unfinished>,
     next_id: usize,
     shelf: Strip,
-    /// The sources' tiles, and after them the one that adds a server.
+    /// The sources' tiles, and after them the one that pairs again, if there is one, and the
+    /// one that adds a server.
     places: Vec<Tile>,
+    /// The Vibrefy server whose session ran out.
+    lapsed: Option<String>,
     kinds: Vec<Kind>,
     sources: Strip,
     /// Which shelf the keys are going to: the films', or the sources'.
@@ -132,7 +139,7 @@ pub struct Home {
 }
 
 impl Home {
-    pub fn new(sources: &[Entry], ticket: u64) -> Home {
+    pub fn new(sources: &[Entry], lapsed: Option<String>, ticket: u64) -> Home {
         let tinted = |color: [f32; 4]| Some(([color[0], color[1], color[2], 0.55], [color[0] * 0.35, color[1] * 0.35, color[2] * 0.5, 0.35]));
         let mut places: Vec<Tile> = sources
             .iter()
@@ -152,6 +159,16 @@ impl Home {
                 Tile { title: entry.source.label(), detail: Some(detail), glyph: (!glyph.is_empty()).then(|| glyph.into()), icon, tint: tinted(tint), ..Tile::default() }
             })
             .collect();
+        if let Some(address) = &lapsed {
+            places.push(Tile {
+                title: vibrefy_name(address),
+                // A new code is all it takes: the address is kept.
+                detail: Some("Signed out \u{b7} reconnect".into()),
+                glyph: Some("V".into()),
+                tint: tinted([0.62, 0.66, 0.74, 1.0]),
+                ..Tile::default()
+            });
+        }
         places.push(Tile { title: "Add a server".into(), detail: Some("Jellyfin, Emby or Vibrefy".into()), icon: Some(Icon::Plus), ..Tile::default() });
         let mut home = Home {
             ticket,
@@ -160,6 +177,7 @@ impl Home {
             shelf: Strip::default(),
             places,
             kinds: sources.iter().map(|e| e.kind.clone()).collect(),
+            lapsed,
             sources: Strip::default(),
             on_films: false,
             arrived: Vec::new(),
@@ -257,6 +275,10 @@ impl Home {
                 Key::Down => self.focus(false),
                 Key::Delete | Key::Backspace if !self.on_films => {
                     let at = self.sources.cursor;
+                    // Nothing is kept by the offer to pair again: once is enough to put it away.
+                    if at == self.kinds.len() && self.lapsed.is_some() {
+                        return Act::Dismiss;
+                    }
                     if matches!(self.kinds.get(at), Some(Kind::Server(_))) {
                         // Twice, as the server's own Remove button is: once is easily a slip.
                         if self.removing.is_some_and(|(was, since)| was == at && since.elapsed() < Duration::from_secs(4)) {
@@ -288,7 +310,13 @@ impl Home {
         }
         if let Some(chosen) = self.sources.input(input) {
             self.focus(false);
-            return if chosen < self.kinds.len() { Act::Open { source: chosen, folder: None } } else { Act::Add };
+            if chosen < self.kinds.len() {
+                return Act::Open { source: chosen, folder: None };
+            }
+            if let Some(address) = self.lapsed.clone().filter(|_| chosen == self.kinds.len()) {
+                return Act::Reconnect(address);
+            }
+            return Act::Add;
         }
         Act::Nothing
     }
@@ -531,6 +559,13 @@ impl Browse {
 
 // --- adding a server ---
 
+/// A Vibrefy server as the wearer would call it: its host, as the source's label has it.
+fn vibrefy_name(address: &str) -> String {
+    let address = address.trim_end_matches('/');
+    let host = address.split_once("://").map_or(address, |(_, rest)| rest);
+    format!("Vibrefy \u{b7} {}", host.split([':', '/']).next().unwrap_or(host))
+}
+
 /// The code a Vibrefy server gave to be approved, for the screen that is showing it. Set by
 /// the thread that asked.
 static CODE: Mutex<Option<String>> = Mutex::new(None);
@@ -561,10 +596,12 @@ pub struct Add {
     cancelled: Arc<AtomicBool>,
     trouble: Option<String>,
     pointer: (f32, f32),
+    /// The Vibrefy server last paired with, which its address field starts with.
+    last: Option<String>,
 }
 
 impl Add {
-    pub fn new() -> Add {
+    pub fn new(last: Option<String>) -> Add {
         *CODE.lock().unwrap() = None;
         let mut kinds = Strip::default();
         kinds.shape = Shape::Wide;
@@ -574,7 +611,25 @@ impl Add {
         fields[1].hint = "Name".into();
         fields[2].hint = "Password".into();
         fields[2].secret = true;
-        Add { stage: Stage::Pick, kinds, fields, focus: 0, go: Button::default(), back: Button::default(), busy: None, cancelled: Arc::default(), trouble: None, pointer: (0.0, 0.0) }
+        Add { stage: Stage::Pick, kinds, fields, focus: 0, go: Button::default(), back: Button::default(), busy: None, cancelled: Arc::default(), trouble: None, pointer: (0.0, 0.0), last }
+    }
+
+    /// Straight to pairing with the server last paired with: the code is asked for at once.
+    pub fn pair_again(&mut self) -> Act {
+        self.pair();
+        self.submit()
+    }
+
+    /// The Vibrefy form, its address the last one paired with until something else is typed.
+    fn pair(&mut self) {
+        self.stage = Stage::Pair;
+        if self.fields[0].text.trim().is_empty() {
+            if let Some(last) = &self.last {
+                self.fields[0].set(last.trim_end_matches('/'));
+            }
+        }
+        // With the address there already, the keys start on the button that asks for a code.
+        self.focus = if self.fields[0].text.is_empty() { 0 } else { 1 };
     }
 
     pub fn failed(&mut self, why: String) {
@@ -699,12 +754,12 @@ impl Add {
         }
         if matches!(self.stage, Stage::Pick) {
             if let Some(chosen) = self.kinds.input(input) {
-                self.stage = match chosen {
-                    0 => Stage::Form(Flavour::Jellyfin),
-                    1 => Stage::Form(Flavour::Emby),
-                    _ => Stage::Pair,
-                };
                 self.focus = 0;
+                match chosen {
+                    0 => self.stage = Stage::Form(Flavour::Jellyfin),
+                    1 => self.stage = Stage::Form(Flavour::Emby),
+                    _ => self.pair(),
+                }
                 self.trouble = None;
             }
             return Act::Nothing;
