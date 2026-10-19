@@ -916,6 +916,17 @@ static WKUserScript *user_script(NSString *code, WKUserScriptInjectionTime when,
 
 /* Extensions' addresses in a new tab's configuration: served by the shim, and (once) secure
  * ones, as Chrome's are, where WebKit lets that be said. */
+/* A bare WKWebView's user agent ends at "(KHTML, like Gecko)", with no "Version/… Safari/…", and
+ * sites such as Google Drive take that for an old, unsupported browser. Say the Safari this Mac
+ * has, as Safari itself does. */
+static NSString *safari_name(void) {
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:@"/Applications/Safari.app/Contents/Info.plist"];
+    NSString *version = info[@"CFBundleShortVersionString"];
+    if (version.length == 0)
+        version = @"26.0";
+    return [NSString stringWithFormat:@"Version/%@ Safari/605.1.15", version];
+}
+
 static void register_schemes(WKWebViewConfiguration *config, Engine *e) {
     static BOOL secured;
     for (NSString *scheme in @[ @"chrome-extension", @"moz-extension" ]) {
@@ -1115,6 +1126,7 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
         [window setFrameOrigin:NSZeroPoint];
         WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
         config.websiteDataStore = e->store;
+        config.applicationNameForUserAgent = safari_name();
         register_schemes(config, e);
         [config.userContentController addScriptMessageHandler:tab name:@"spatimeshSelect"];
         [config.userContentController addScriptMessageHandler:tab name:@"spatimeshMedia"];

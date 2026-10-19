@@ -1884,7 +1884,7 @@ pub fn run(
             // Where new windows will open. Refreshed every frame so an app launched after a
             // head turn appears in front of the wearer rather than at world zero.
             runtime.state.spawn_yaw = tracker.euler_degrees().yaw.to_radians();
-            runtime.state.layout.view_pitch = crate::window::facing(tracker.orientation()).1;
+            runtime.state.layout.view_pitch = crate::window::facing(tracker.recentred_orientation()).1;
 
             // Surfaces that asked to be head-locked follow the view, every frame.
             //
@@ -2277,7 +2277,11 @@ pub fn run(
             // and cheap when the answer has not changed, because the renderer only fetches
             // new filters once a direction has moved further than anyone can hear.
             if spatial_audio.is_on() {
-                let head = tracker.orientation();
+                // The head the picture is drawn from: recentred. A recentre turns the view by
+                // the head's yaw as well as bringing the windows round, so the raw head is off
+                // from the room by however far it was turned when the wearer recentred, and
+                // every window's sound was heard that far round from its picture.
+                let head = tracker.recentred_orientation();
                 // Every window that could be what an app's sound is coming from -- including
                 // the one that has become the room, which has no quad to be found among and
                 // so was silently left out of this for as long as environments have existed.

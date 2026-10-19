@@ -699,6 +699,9 @@ pub struct Field {
     pub hint: String,
     /// What is typed is not to be read over a shoulder: drawn as dots.
     pub secret: bool,
+    /// The text's size, when not the rows' own ([`theme::ROW_EM`]): a browser's address
+    /// is long and wants more of it in view.
+    pub em: Option<f32>,
     /// Where the caret is, in characters from the start.
     caret: usize,
     /// The other end of the selection, when there is one: what is between it and the caret.
@@ -715,6 +718,11 @@ pub enum Typed {
 }
 
 impl Field {
+    /// An empty field whose text is `em` high rather than a row's.
+    pub fn sized(em: f32) -> Self {
+        Field { em: Some(em), ..Field::default() }
+    }
+
     pub const HEIGHT: f32 = theme::ROW_HEIGHT;
 
     pub fn contains(&self, x: f32, y: f32) -> bool {
@@ -771,6 +779,7 @@ impl Field {
 
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl, rect: Rect) {
         self.area = rect;
+        let em = self.em.unwrap_or(theme::ROW_EM);
         self.caret = self.caret.min(self.text.chars().count());
         p.fill(gl, rect, theme::ROW_RADIUS, theme::RAISED);
         if self.focused {
@@ -779,7 +788,7 @@ impl Field {
         let text = Rect { x: rect.x + theme::ROW_INSET, w: rect.w - theme::ROW_INSET * 2.0, ..rect };
         let wide = 8192.0 / p.scale();
         if self.text.is_empty() {
-            p.label(gl, &self.hint, text, theme::ROW_EM, theme::INK_HINT, 0.0);
+            p.label(gl, &self.hint, text, em, theme::INK_HINT, 0.0);
         }
         // What is before the caret decides where the caret is; a field too full to show it
         // all slides left so that the caret is never out of sight.
@@ -787,22 +796,22 @@ impl Field {
         let before: String = shown.chars().take(self.caret).collect();
         // A trailing space has no ink and so no width as far as the text setter is concerned:
         // measured with something after it, and that something taken off again.
-        let stop = p.measure(gl, "|", theme::ROW_EM, wide).0;
-        let caret = if before.is_empty() { 0.0 } else { p.measure(gl, &format!("{before}|"), theme::ROW_EM, wide).0 - stop };
+        let stop = p.measure(gl, "|", em, wide).0;
+        let caret = if before.is_empty() { 0.0 } else { p.measure(gl, &format!("{before}|"), em, wide).0 - stop };
         let slide = (caret - text.w + 6.0).max(0.0);
         p.clip(gl, text);
         if let Some((from, to)) = self.selection() {
             let width = |p: &mut Painter, chars: usize| {
                 let part: String = shown.chars().take(chars).collect();
-                if part.is_empty() { 0.0 } else { p.measure(gl, &format!("{part}|"), theme::ROW_EM, wide).0 - stop }
+                if part.is_empty() { 0.0 } else { p.measure(gl, &format!("{part}|"), em, wide).0 - stop }
             };
             let (a, b) = (width(p, from), width(p, to));
             let wash = Rect::new(text.x + a - slide, rect.y + rect.h * 0.18, (b - a).max(2.0), rect.h * 0.64);
             p.fill(gl, wash, 2.0, if self.focused { [0.42, 0.68, 1.0, 0.42] } else { theme::SELECTED_AWAY });
         }
         if !self.text.is_empty() {
-            let (_, h) = p.measure(gl, &shown, theme::ROW_EM, wide);
-            p.text(gl, &shown, text.x - slide, text.y + (text.h - h) * 0.5, theme::ROW_EM, wide, theme::INK);
+            let (_, h) = p.measure(gl, &shown, em, wide);
+            p.text(gl, &shown, text.x - slide, text.y + (text.h - h) * 0.5, em, wide, theme::INK);
         }
         p.unclip(gl);
         if self.focused {

@@ -53,6 +53,8 @@ const TAB_TOP: f32 = 10.0;
 const TAB_H: f32 = 46.0;
 const TOOL_TOP: f32 = 62.0;
 const TOOL_H: f32 = 52.0;
+/// The address bar's text: smaller than a row's, so more of a long address is in view.
+const ADDRESS_EM: f32 = 26.0;
 const PAGE_TOP: f32 = 122.0;
 const MARGIN: f32 = 10.0;
 /// How long something said in a toast stays.
@@ -803,7 +805,7 @@ impl Browser {
             focused: false,
             pointer: (0.0, 0.0),
             hover: Hover::Nothing,
-            address: Field::default(),
+            address: Field::sized(ADDRESS_EM),
             editing: false,
             fresh: false,
             drag: None,
@@ -1123,7 +1125,7 @@ impl Browser {
             focused: false,
             pointer: (0.0, 0.0),
             hover: Hover::Nothing,
-            address: Field::default(),
+            address: Field::sized(ADDRESS_EM),
             editing: false,
             fresh: false,
             drag: None,

@@ -387,6 +387,7 @@ public class MeshEngine extends Service {
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setMediaPlaybackRequiresUserGesture(true);
         settings.setBuiltInZoomControls(false);
+        settings.setUserAgentString(desktopAgent(settings.getUserAgentString()));
         if (isPrivate)
             settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         view.setWebViewClient(new Client(page));
@@ -1339,5 +1340,13 @@ public class MeshEngine extends Service {
                 Log.w(TAG, "a list the page described badly: " + e);
             }
         }
+    }
+
+    /** A window in the room is a desktop browser's: say what Chrome's "Desktop site" says, Linux
+     *  on a PC, with this WebView's own Chrome version, so sites give the desktop pages. */
+    static String desktopAgent(String webview) {
+        java.util.regex.Matcher chrome = java.util.regex.Pattern.compile("Chrome/([0-9.]+)").matcher(webview);
+        String version = chrome.find() ? chrome.group(1) : "120.0.0.0";
+        return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + version + " Safari/537.36";
     }
 }
