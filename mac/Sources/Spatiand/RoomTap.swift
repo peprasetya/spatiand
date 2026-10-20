@@ -76,6 +76,23 @@ final class RoomTap {
     // plus a hand's worth has it taken off, and that put forgotten.
     private let warpLock = NSLock()
     private var warps: [(by: CGVector, at: UInt64)] = []
+    /// The last put, wherever it was to.
+    private var lastPut: (to: CGPoint, at: UInt64)?
+
+    /// Whether a movement says where the cursor was before the last put: one already on its way
+    /// when the cursor was put, which still has it where it was. Sent to that place, the pointer
+    /// went back for a moment and forward again (pointer.log, 2026-10-20, after the cursor was
+    /// made the pointer's place).
+    func fromBeforePut(_ event: CGEvent, dx: Double, dy: Double) -> Bool {
+        warpLock.lock(); defer { warpLock.unlock() }
+        guard let put = lastPut, clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - put.at < 150_000_000 else { return false }
+        let off = hypot(event.location.x - put.to.x, event.location.y - put.to.y)
+        if off <= hypot(dx, dy) * 1.5 + 6 {
+            lastPut = nil // the cursor is seen where it was put: later ones are after it
+            return false
+        }
+        return true
+    }
 
     /// Put the real cursor at `point`. From any thread.
     func warp(to point: CGPoint) {
@@ -83,6 +100,7 @@ final class RoomTap {
         let from = CGEvent(source: nil)?.location ?? point
         CGWarpMouseCursorPosition(point)
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        lastPut = (point, now)
         warps.removeAll { now - $0.at > 1_000_000_000 }
         let by = CGVector(dx: point.x - from.x, dy: point.y - from.y)
         // Small ones are not kept: a hand's movement is easily taken for one of them.
@@ -114,6 +132,13 @@ final class RoomTap {
     }
     /// When the hand last moved during a drag in a window of this Mac's (uptime, ns).
     private var handDragged: UInt64 = 0
+    /// When the hand last moved at all (uptime, ns).
+    private var handMoved: UInt64 = 0
+    /// Whether the hand has moved just now: a pointer moving otherwise moved with the head.
+    var handIsMoving: Bool {
+        warpLock.lock(); defer { warpLock.unlock() }
+        return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - handMoved < 80_000_000
+    }
     /// Whether the hand has moved in the drag just now: a pointer moving otherwise moved with the head.
     var handIsDragging: Bool {
         warpLock.lock(); defer { warpLock.unlock() }
@@ -250,6 +275,7 @@ final class RoomTap {
         switch type {
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
             let dx = event.getDoubleValueField(.mouseEventDeltaX), dy = event.getDoubleValueField(.mouseEventDeltaY)
+            warpLock.lock(); handMoved = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); warpLock.unlock()
             trace?("\(type.rawValue),\(dx),\(dy),\(event.location.x),\(event.location.y)")
             var (tx, ty) = travel(of: event)
             // **In a screen of this Mac's the cursor is where the pointer is**, and the hand
@@ -259,7 +285,11 @@ final class RoomTap {
             // gives it back whenever another application is in front, which in a screen is
             // always.) At an edge of the display the cursor stops, and the hand's own travel
             // beyond it is added, so the pointer can still leave the screen.
-            if let at = RoomWindows.shared.screenPointer() {
+            if let at = RoomWindows.shared.screenPointer(), fromBeforePut(event, dx: dx, dy: dy) {
+                // Its own travel, then: it was made before the put, so the put is not in it.
+                (tx, ty) = (dx, dy)
+                RoomWindows.shared.noteScreenPointer(CGPoint(x: at.x + tx, y: at.y + ty))
+            } else if let at = RoomWindows.shared.screenPointer() {
                 let here = event.location
                 tx = here.x - at.x
                 ty = here.y - at.y
@@ -269,7 +299,7 @@ final class RoomTap {
                 }
                 RoomWindows.shared.noteScreenPointer(CGPoint(x: at.x + tx, y: at.y + ty))
             }
-            PointerLog.shared.note(String(format: "hand %ld %.1f %.1f at %.1f %.1f -> %.1f %.1f%@", Int(type.rawValue), dx, dy, event.location.x, event.location.y, tx, ty, (tx != dx || ty != dy) ? " (to the cursor)" : ""))
+            PointerLog.shared.note(String(format: "hand %ld %.1f %.1f at %.1f %.1f -> %.1f %.1f%@", Int(type.rawValue), dx, dy, event.location.x, event.location.y, tx, ty, (tx != dx || ty != dy) ? " (to the cursor)" : " (its own)"))
             sp_pointer(Float(tx), Float(ty), buttons, 0, 0)
         case .leftMouseDown: buttons |= 1; sp_pointer(0, 0, buttons, 0, 0)
         case .leftMouseUp: buttons &= ~1; sp_pointer(0, 0, buttons, 0, 0)

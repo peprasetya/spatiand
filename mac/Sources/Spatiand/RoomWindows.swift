@@ -631,8 +631,15 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         // **In a screen the pointer is the Mac's real one**: put where the room's is, and moved
         // as a mouse moves it, so that whatever is under it there knows.
         PointerLog.shared.inScreen = entries[id]?.info.display != nil
-        setScreenPointer(entries[id]?.info.display != nil && !down.contains(id) ? p : nil)
-        if entries[id]?.info.display != nil {
+        // **While the hand moves, the hand has the cursor.** The room says where its pointer is
+        // a frame or two late: put there, the cursor went back to where the hand had been,
+        // the hand's next movement sent the pointer on from there, further each time -- 324,
+        // 1012, 1678 points (pointer.log). So the head puts the cursor only with the hand still,
+        // and until then what the room says is not taken over what the hand has done.
+        let screen = entries[id]?.info.display != nil
+        if screen, RoomTap.shared.handIsMoving, !down.contains(id) { return }
+        setScreenPointer(screen && !down.contains(id) ? p : nil)
+        if screen {
             // Only when it has strayed: the hand moves both the room's pointer and the real
             // cursor by the same travel, so they stay together. Put on every movement, as it
             // was, each put came back inside a later movement, and with the Mac busy the
