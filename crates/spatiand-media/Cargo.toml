@@ -13,7 +13,7 @@ description = "What a film is and how it is played: FFmpeg, each platform's deco
 # `cargo test -p spatiand-media --no-default-features`.
 [features]
 default = ["engine"]
-engine = ["dep:rsmpeg", "dep:spatiand-app"]
+engine = ["dep:rsmpeg", "dep:spatiand-app", "dep:ureq"]
 
 [dependencies]
 log.workspace = true
@@ -22,6 +22,8 @@ libc = "0.2"
 spatiand-app = { path = "../spatiand-app", optional = true }
 # The same binding, pinned the same way, as `spatiand-video`: the Deck has FFmpeg 7.1's
 # libraries and vendored headers for them.
+# Films on web servers, fetched in pieces (`fetch`).
+ureq = { version = "2", optional = true }
 rsmpeg = { version = "0.18", default-features = false, features = ["ffmpeg7_1", "link_system_ffmpeg"], optional = true }
 
 # The sound device, where there is one to open: a Mac's, a phone's. On the Deck sound goes to
@@ -36,4 +38,8 @@ png = "0.17"
 
 [[example]]
 name = "frame"
+required-features = ["engine"]
+
+[[example]]
+name = "stream"
 required-features = ["engine"]

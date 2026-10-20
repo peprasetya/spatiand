@@ -275,3 +275,33 @@ in only by pairing, and loses every session when it is restarted -- which is how
 checked in the snapshot backend: paired, server restarted, home showed the tile and the store
 had dropped the account; Reconnect paired and opened the server; the prefill; Delete on the
 tile; and the session ending while inside a server's folder (back home, with the message).
+
+## 2026-10-20: films from a server fetched as a browser fetches them
+
+The owner: SpatiReel (and the old Vibrefy app) stutter playing normally from Vibrefy over the
+internet, where Chrome is smooth; pfSense shows Vibrefy pulling from Google Drive but its
+upload to the player flat. Vibrefy's `/stream` (its source is in the owner's
+`~/eclipse/Projects/Vibrefy`: `StreamBean`, `content/stream.jsp`, `HttpTool.pipeRange`) costs two
+Drive API calls per request, then relays Drive to the player through an 8 KB buffer in 8 MB
+Drive range requests one after another -- nothing reaches the player while each next Drive
+request starts. FFmpeg's `http:` reads at the film's pace with only the reader's 4 s of packets
+(and, since 2026-10-16, a 1 MB socket buffer) in hand, so the whole chain runs at the film's
+bitrate and any Drive pause longer than that is a stall; a stalled connection is also what
+Jetty's idle timeout eventually cuts. Chrome reads ahead much further, as fast as the line
+goes.
+
+`spatiand-media::fetch` now does what a browser does, for every `http(s)` film with a known
+length that a server sends in parts: each place the demuxer reads from is fetched about 30 s
+of the film ahead (8-64 MB) by one exact `Range: bytes=a-b` at a time, read at full speed to
+its end, asked again when half has been read; held in memory only, 16 MB kept behind; a seek
+cuts the request it leaves behind. The player hands FFmpeg a custom `AVIOContext` over it.
+Playlists, servers that do not answer ranges, and options other than user agent, referer,
+cookies and headers still go to FFmpeg's own protocols; `SPATIAND_MEDIA_FETCH=ffmpeg` puts
+everything back on them.
+
+Checked on the Mac with `examples/stream.rs` (plays a URL with nobody watching and counts
+stalls) against a stand-in server with a shared line, a delay before each first byte and
+outages: open, seek and steady play no worse than FFmpeg's own, few large requests, none
+left stalled; and SpatiReel playing from `tools/fake-vibrefy.py`. **Not checked**: the real
+Vibrefy over the internet -- the owner's ears and pfSense. A server-side improvement worth
+having regardless: `pipeRange` could ask Drive for the next 8 MB while relaying this one.

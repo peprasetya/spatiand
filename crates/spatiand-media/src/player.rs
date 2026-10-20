@@ -352,6 +352,8 @@ pub struct Player {
     /// While the platform's decoder makes the pictures: its stream and start, and its thread
     /// (an index into `threads`), for going over to software if it hangs.
     hardware: Option<(SendPointer<ffi::AVStream>, f64, usize)>,
+    /// A film on a web server, being fetched.
+    remote: Option<crate::fetch::Remote>,
 }
 
 /// What is opened, owned by the reader thread once it starts.
@@ -359,6 +361,8 @@ struct Source {
     format: *mut ffi::AVFormatContext,
     video_stream: Option<usize>,
     start: f64,
+    /// What `format` reads through, where it is not FFmpeg's own: freed after it.
+    io: Option<crate::fetch::Io>,
 }
 unsafe impl Send for Source {}
 
@@ -501,10 +505,20 @@ impl Player {
             let mut format = ptr::null_mut();
             let mut told: *mut ffi::AVDictionary = ptr::null_mut();
             let network = url.starts_with("http://") || url.starts_with("https://");
-            let own: &[(&str, &str)] = if network { &[("recv_buffer_size", NETWORK_BUFFER)] } else { &[] };
-            for (key, value) in own.iter().map(|(k, v)| (k.to_string(), v.to_string())).chain(options.iter().cloned()) {
-                if let (Ok(key), Ok(value)) = (CString::new(key.as_str()), CString::new(value.as_str())) {
-                    ffi::av_dict_set(&mut told, key.as_ptr(), value.as_ptr(), 0);
+            // A film on a web server is fetched as a browser fetches one (`fetch`), where it can
+            // be; what cannot is left to FFmpeg's own protocols.
+            let remote = if network { crate::fetch::Remote::open(url, options) } else { None };
+            let io = remote.as_ref().map(|remote| remote.io());
+            if let Some(io) = &io {
+                format = ffi::avformat_alloc_context();
+                (*format).pb = io.context;
+                (*format).flags |= ffi::AVFMT_FLAG_CUSTOM_IO as c_int;
+            } else {
+                let own: &[(&str, &str)] = if network { &[("recv_buffer_size", NETWORK_BUFFER)] } else { &[] };
+                for (key, value) in own.iter().map(|(k, v)| (k.to_string(), v.to_string())).chain(options.iter().cloned()) {
+                    if let (Ok(key), Ok(value)) = (CString::new(key.as_str()), CString::new(value.as_str())) {
+                        ffi::av_dict_set(&mut told, key.as_ptr(), value.as_ptr(), 0);
+                    }
                 }
             }
             let opened = ffi::avformat_open_input(&mut format, name.as_ptr(), ptr::null(), &mut told);
@@ -529,6 +543,11 @@ impl Player {
             let start = if (*format).start_time != ffi::AV_NOPTS_VALUE { (*format).start_time as f64 / ffi::AV_TIME_BASE as f64 } else { 0.0 };
             if (*format).duration != ffi::AV_NOPTS_VALUE {
                 info.duration = (*format).duration as f64 / ffi::AV_TIME_BASE as f64;
+            }
+            if let Some(remote) = &remote {
+                // How far ahead to fetch is in the film's seconds, so its pace is wanted.
+                let rate = if (*format).bit_rate > 0 { (*format).bit_rate as f64 / 8.0 } else { remote.size() as f64 / info.duration };
+                remote.set_rate(rate);
             }
             for (index, stream) in streams.iter().enumerate() {
                 let parameters = (**stream).codecpar;
@@ -621,7 +640,7 @@ impl Player {
                 threads.push(spawn("words", move || decode_words(streams, start, shared)));
             }
             {
-                let source = Source { format, video_stream, start };
+                let source = Source { format, video_stream, start, io };
                 let shared = shared.clone();
                 threads.push(spawn("reader", move || read(source, shared)));
             }
@@ -634,7 +653,7 @@ impl Player {
                 info.duration,
                 info.hardware.unwrap_or("decoded in software"),
             );
-            Ok(Player { shared, info, threads, showing: None, lip: 0.0, hardware })
+            Ok(Player { shared, info, threads, showing: None, lip: 0.0, hardware, remote })
         }
     }
 
@@ -774,7 +793,7 @@ impl Player {
                 info.frame_rate,
                 info.hardware.unwrap_or("decoded in software"),
             );
-            Ok(Player { shared, info, threads, showing: None, lip: 0.0, hardware })
+            Ok(Player { shared, info, threads, showing: None, lip: 0.0, hardware, remote: None })
         }
     }
 
@@ -1013,6 +1032,10 @@ impl Player {
 impl Drop for Player {
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::Relaxed);
+        // A read waiting on the network gives up at once.
+        if let Some(remote) = self.remote.as_ref() {
+            remote.close();
+        }
         self.shared.room.notify_all();
         self.shared.video.arrived.notify_all();
         self.shared.audio.arrived.notify_all();
@@ -1062,7 +1085,7 @@ fn enough(shared: &Shared, video: bool) -> bool {
 
 /// The reader: the file's packets, sorted into the two queues, and seeks.
 fn read(source: Source, shared: Arc<Shared>) {
-    let Source { mut format, video_stream, start } = source;
+    let Source { mut format, video_stream, start, io } = source;
     unsafe {
         let mut packet = ffi::av_packet_alloc();
         while !shared.stop.load(Ordering::Relaxed) {
@@ -1130,6 +1153,7 @@ fn read(source: Source, shared: Arc<Shared>) {
         }
         ffi::av_packet_free(&mut packet);
         ffi::avformat_close_input(&mut format);
+        drop(io);
     }
 }
 
