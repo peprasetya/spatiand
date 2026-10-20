@@ -106,8 +106,12 @@ final class RoomTap {
     }
 
     private var lastFollow = Date.distantPast
-    /// Where the last movement said the cursor was.
-    private var lastSeen: CGPoint?
+    static func displayBounds(at point: CGPoint) -> CGRect? {
+        var display: CGDirectDisplayID = 0
+        var count: UInt32 = 0
+        guard CGGetDisplaysWithPoint(point, 1, &display, &count) == .success, count > 0 else { return nil }
+        return CGDisplayBounds(display)
+    }
     /// When the hand last moved during a drag in a window of this Mac's (uptime, ns).
     private var handDragged: UInt64 = 0
     /// Whether the hand has moved in the drag just now: a pointer moving otherwise moved with the head.
@@ -247,18 +251,25 @@ final class RoomTap {
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
             let dx = event.getDoubleValueField(.mouseEventDeltaX), dy = event.getDoubleValueField(.mouseEventDeltaY)
             trace?("\(type.rawValue),\(dx),\(dy),\(event.location.x),\(event.location.y)")
-            // **The trackpad is kept from moving the Mac's cursor while the room has it**
-            // (`hold`), and macOS undoes that unasked: the log of a screen showed the cursor
-            // moving by each event's travel, the hand and the room's pointer fighting over it.
-            // Said again whenever the cursor is seen to have moved with the hand.
-            let moved = lastSeen.map { abs(event.location.x - $0.x - dx) < 1.5 && abs(event.location.y - $0.y - dy) < 1.5 && (dx != 0 || dy != 0) } ?? false
-            lastSeen = event.location
-            if moved {
-                CGAssociateMouseAndMouseCursorPosition(0)
-                PointerLog.shared.note("the cursor moved with the hand: kept from it again")
+            var (tx, ty) = travel(of: event)
+            // **In a screen of this Mac's the cursor is where the pointer is**, and the hand
+            // moves it there itself: so the room's pointer is sent to where the cursor now is,
+            // exactly, and not by a travel that the cursor being put by the head's movements
+            // keeps spoiling. (Keeping the hand from the cursor does not last there: macOS
+            // gives it back whenever another application is in front, which in a screen is
+            // always.) At an edge of the display the cursor stops, and the hand's own travel
+            // beyond it is added, so the pointer can still leave the screen.
+            if let at = RoomWindows.shared.screenPointer() {
+                let here = event.location
+                tx = here.x - at.x
+                ty = here.y - at.y
+                if let bounds = Self.displayBounds(at: here) {
+                    if (here.x <= bounds.minX + 0.5 && dx < 0) || (here.x >= bounds.maxX - 1.5 && dx > 0) { tx += dx }
+                    if (here.y <= bounds.minY + 0.5 && dy < 0) || (here.y >= bounds.maxY - 1.5 && dy > 0) { ty += dy }
+                }
+                RoomWindows.shared.noteScreenPointer(CGPoint(x: at.x + tx, y: at.y + ty))
             }
-            let (tx, ty) = travel(of: event)
-            PointerLog.shared.note(String(format: "hand %ld %.1f %.1f at %.1f %.1f -> %.1f %.1f%@", Int(type.rawValue), dx, dy, event.location.x, event.location.y, tx, ty, (tx != dx || ty != dy) ? " (less a put)" : ""))
+            PointerLog.shared.note(String(format: "hand %ld %.1f %.1f at %.1f %.1f -> %.1f %.1f%@", Int(type.rawValue), dx, dy, event.location.x, event.location.y, tx, ty, (tx != dx || ty != dy) ? " (to the cursor)" : ""))
             sp_pointer(Float(tx), Float(ty), buttons, 0, 0)
         case .leftMouseDown: buttons |= 1; sp_pointer(0, 0, buttons, 0, 0)
         case .leftMouseUp: buttons &= ~1; sp_pointer(0, 0, buttons, 0, 0)

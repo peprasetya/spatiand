@@ -152,6 +152,25 @@ final class RoomWindows {
         return pointerNow[id]
     }
     private var pointerNow: [UInt32: CGPoint] = [:]
+    /// Where the room's pointer is on the Mac's screen, in points, while it is in a screen.
+    private var inScreenAt: CGPoint?
+
+    /// While the room's pointer is in a screen of this Mac's: where, in the Mac's points.
+    func screenPointer() -> CGPoint? {
+        insideLock.lock(); defer { insideLock.unlock() }
+        return inScreenAt
+    }
+
+    /// Where the pointer has been sent: until the room says, this is where it is.
+    func noteScreenPointer(_ p: CGPoint) {
+        insideLock.lock(); defer { insideLock.unlock() }
+        if inScreenAt != nil { inScreenAt = p }
+    }
+
+    private func setScreenPointer(_ p: CGPoint?) {
+        insideLock.lock(); defer { insideLock.unlock() }
+        inScreenAt = p
+    }
     private func notePointer(_ id: UInt32, _ p: CGPoint?) {
         insideLock.lock()
         pointerNow[id] = p
@@ -522,6 +541,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             case SP_WINDOW_FOCUS: focus(id)
             case SP_WINDOW_MOTION: motion(id, x: a, y: b)
             case SP_WINDOW_LEAVE:
+                if entries[id]?.info.display != nil { setScreenPointer(nil); PointerLog.shared.inScreen = false }
                 at[id] = nil
                 notePointer(id, nil)
                 setInside(!at.isEmpty)
@@ -611,6 +631,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         // **In a screen the pointer is the Mac's real one**: put where the room's is, and moved
         // as a mouse moves it, so that whatever is under it there knows.
         PointerLog.shared.inScreen = entries[id]?.info.display != nil
+        setScreenPointer(entries[id]?.info.display != nil && !down.contains(id) ? p : nil)
         if entries[id]?.info.display != nil {
             // Only when it has strayed: the hand moves both the room's pointer and the real
             // cursor by the same travel, so they stay together. Put on every movement, as it
