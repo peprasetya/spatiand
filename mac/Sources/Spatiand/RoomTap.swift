@@ -85,7 +85,8 @@ final class RoomTap {
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         warps.removeAll { now - $0.at > 1_000_000_000 }
         let by = CGVector(dx: point.x - from.x, dy: point.y - from.y)
-        if abs(by.dx) >= 0.5 || abs(by.dy) >= 0.5 { warps.append((by, now)) }
+        // Small ones are not kept: a hand's movement is easily taken for one of them.
+        if hypot(by.dx, by.dy) >= 8 { warps.append((by, now)) }
         warpLock.unlock()
     }
 
@@ -105,6 +106,8 @@ final class RoomTap {
     }
 
     private var lastFollow = Date.distantPast
+    /// Where the last movement said the cursor was.
+    private var lastSeen: CGPoint?
     /// When the hand last moved during a drag in a window of this Mac's (uptime, ns).
     private var handDragged: UInt64 = 0
     /// Whether the hand has moved in the drag just now: a pointer moving otherwise moved with the head.
@@ -244,6 +247,16 @@ final class RoomTap {
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
             let dx = event.getDoubleValueField(.mouseEventDeltaX), dy = event.getDoubleValueField(.mouseEventDeltaY)
             trace?("\(type.rawValue),\(dx),\(dy),\(event.location.x),\(event.location.y)")
+            // **The trackpad is kept from moving the Mac's cursor while the room has it**
+            // (`hold`), and macOS undoes that unasked: the log of a screen showed the cursor
+            // moving by each event's travel, the hand and the room's pointer fighting over it.
+            // Said again whenever the cursor is seen to have moved with the hand.
+            let moved = lastSeen.map { abs(event.location.x - $0.x - dx) < 1.5 && abs(event.location.y - $0.y - dy) < 1.5 && (dx != 0 || dy != 0) } ?? false
+            lastSeen = event.location
+            if moved {
+                CGAssociateMouseAndMouseCursorPosition(0)
+                PointerLog.shared.note("the cursor moved with the hand: kept from it again")
+            }
             let (tx, ty) = travel(of: event)
             PointerLog.shared.note(String(format: "hand %ld %.1f %.1f at %.1f %.1f -> %.1f %.1f%@", Int(type.rawValue), dx, dy, event.location.x, event.location.y, tx, ty, (tx != dx || ty != dy) ? " (less a put)" : ""))
             sp_pointer(Float(tx), Float(ty), buttons, 0, 0)
