@@ -453,6 +453,11 @@ impl Reel {
                 }
             }
             Event::Mode(mode) => log::info!("the wearer now sees {mode:?}"),
+            Event::Focus { window, focused } if *window == self.window => {
+                if let Some((playing, _)) = self.playing.as_mut() {
+                    playing.focus(*focused);
+                }
+            }
             Event::Hands => {
                 if let Some((playing, _)) = self.playing.as_mut() {
                     playing.hands();

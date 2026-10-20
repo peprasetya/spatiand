@@ -168,6 +168,10 @@ pub struct Playing {
     controls_until: Instant,
     /// Whether the room has ever said the wearer's hands stirred (`Event::Hands`).
     hands_heard: bool,
+    /// Whether the room has the keyboard on this window, and whether the pointer is over it:
+    /// the controls come for the wearer's hands only when one of the two is so.
+    focused: bool,
+    inside: bool,
     toggle: Button,
     /// Ten seconds back and on, either side of the toggle.
     rewind: Button,
@@ -254,6 +258,8 @@ impl Playing {
             pointer: (0.0, 0.0),
             controls_until: Instant::now() + CONTROLS_SHOWN,
             hands_heard: false,
+            focused: false,
+            inside: false,
             toggle: Button::default(),
             rewind: Button::default(),
             skip: Button::default(),
@@ -301,7 +307,16 @@ impl Playing {
     /// From then on, pointer motion alone no longer brings them, since it sweeps with the head.
     pub fn hands(&mut self) {
         self.hands_heard = true;
-        self.stir();
+        // Hands on some other window are not this one's business.
+        if self.focused || self.inside {
+            self.stir();
+        }
+    }
+
+    /// The room gave the keyboard to this window, or took it away.
+    pub fn focus(&mut self, focused: bool) {
+        self.focused = focused;
+        self.dirty = true;
     }
 
     fn stir(&mut self) {
@@ -699,7 +714,13 @@ impl Playing {
         // Motion is the head's as often as the hand's: only a room too old to say which
         // (no `Event::Hands` ever) has it wake the controls.
         let motion = matches!(input, Input::Pointer { .. } | Input::PointerLeft);
-        if !motion || !self.hands_heard {
+        match input {
+            Input::Pointer { .. } => self.inside = true,
+            Input::PointerLeft => self.inside = false,
+            _ => {}
+        }
+        // A pointer leaving is no reason to show anything.
+        if (!motion || !self.hands_heard) && !matches!(input, Input::PointerLeft) {
             self.stir();
         }
         if let Input::Pointer { x, y } = input {
