@@ -1769,7 +1769,10 @@ fn kind_word(kind: &str) -> String {
 
 fn copy_text(text: &str) {
     let program = if cfg!(target_os = "macos") { "pbcopy" } else { "wl-copy" };
-    if let Ok(mut child) = Command::new(program).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+    // `pbcopy` takes what text is from the locale, which a Mac application started from the
+    // Finder has not got: MacRoman, then, and a name past ASCII turned to mojibake.
+    let utf8 = [("LANG", "en_US.UTF-8"), ("LC_CTYPE", "en_US.UTF-8")];
+    if let Ok(mut child) = Command::new(program).envs(utf8).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
         if let Some(mut stdin) = child.stdin.take() {
             let _ = std::io::Write::write_all(&mut stdin, text.as_bytes());
         }

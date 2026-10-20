@@ -163,6 +163,11 @@ fn clipboard_on() -> bool {
     std::env::var("SPATIQUILL_CLIPBOARD").as_deref() != Ok("off")
 }
 
+/// What the clipboard's programs are told text is. `pbcopy` and `pbpaste` take it from the
+/// locale, and a Mac application started from the Finder has none: they then read and write
+/// MacRoman, and every name with a character past ASCII comes out as mojibake.
+const UTF8: [(&str, &str); 2] = [("LANG", "en_US.UTF-8"), ("LC_CTYPE", "en_US.UTF-8")];
+
 /// The machine's own clipboard, where there is a way to reach it from here.
 fn system_copy(text: &str) {
     if !clipboard_on() {
@@ -176,7 +181,7 @@ fn system_copy(text: &str) {
         None
     };
     if let Some((program, args)) = program {
-        if let Ok(mut child) = Command::new(program).args(args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+        if let Ok(mut child) = Command::new(program).args(args).envs(UTF8).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
             if let Some(mut stdin) = child.stdin.take() {
                 let _ = stdin.write_all(text.as_bytes());
             }
@@ -196,7 +201,7 @@ fn system_paste() -> Option<String> {
     } else {
         return None;
     };
-    let out = Command::new(program.0).args(program.1).stderr(Stdio::null()).output().ok()?;
+    let out = Command::new(program.0).args(program.1).envs(UTF8).stderr(Stdio::null()).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
