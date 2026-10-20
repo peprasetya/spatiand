@@ -249,6 +249,10 @@ impl Shared {
                     return Err("the connection ended early".into());
                 }
                 let mut state = self.state.lock().unwrap();
+                // Cut under the lock, so nothing is written once a seek has cut it.
+                if stopped() {
+                    return Ok(at);
+                }
                 let mut taken = 0;
                 while taken < got {
                     let block = at / BLOCK;
@@ -258,7 +262,9 @@ impl Shared {
                     // what is missing is added, and the bytes passed over still count as taken.
                     let inside = (at - block * BLOCK) as usize;
                     let count = (length - inside).min(got - taken);
-                    if data.len() == inside {
+                    // A gap before this place is left for a request that starts there.
+                    if data.len() >= inside && data.len() < inside + count {
+                        data.truncate(inside);
                         data.extend_from_slice(&chunk[taken..taken + count]);
                     }
                     *used = Instant::now();
