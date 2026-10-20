@@ -240,6 +240,7 @@ impl Shared {
             let mut reader = response.into_reader().take(to - from);
             let mut chunk = vec![0u8; BLOCK as usize];
             let mut at = from;
+            let mut wrote = false;
             while at < to {
                 if stopped() {
                     return Ok(at);
@@ -264,6 +265,7 @@ impl Shared {
                     let count = (length - inside).min(got - taken);
                     // A gap before this place is left for a request that starts there.
                     if data.len() >= inside && data.len() < inside + count {
+                        wrote = true;
                         data.truncate(inside);
                         data.extend_from_slice(&chunk[taken..taken + count]);
                     }
@@ -277,7 +279,9 @@ impl Shared {
                 drop(state);
                 self.changed.notify_all();
             }
-            Ok(at)
+            // A request that added nothing is not progress: asked again at once, it would be
+            // asked again for ever.
+            if wrote { Ok(at) } else { Err("it added nothing".into()) }
         });
         let mut state = self.state.lock().unwrap();
         state.runs.retain(|run| !Arc::ptr_eq(&run.cancel, &cancel));
@@ -457,9 +461,13 @@ impl Remote {
 
     /// Stop fetching, and let any read waiting give up.
     pub fn close(&self) {
+        // Not waiting for the lock: closing must work whatever the fetching is doing, and every
+        // request looks at `closed` as well as at its own cancel.
         self.shared.closed.store(true, Ordering::Relaxed);
-        for run in self.shared.state.lock().unwrap().runs.iter() {
-            run.cancel.store(true, Ordering::Relaxed);
+        if let Ok(state) = self.shared.state.try_lock() {
+            for run in state.runs.iter() {
+                run.cancel.store(true, Ordering::Relaxed);
+            }
         }
         self.shared.changed.notify_all();
     }
