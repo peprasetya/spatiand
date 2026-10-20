@@ -254,9 +254,13 @@ impl Shared {
                     let block = at / BLOCK;
                     let length = self.block_len(block);
                     let (data, used) = state.blocks.entry(block).or_insert_with(|| (Vec::with_capacity(length), Instant::now()));
-                    let room = length - data.len();
-                    let count = room.min(got - taken);
-                    data.extend_from_slice(&chunk[taken..taken + count]);
+                    // Another request may have filled this block already, or part of it: only
+                    // what is missing is added, and the bytes passed over still count as taken.
+                    let inside = (at - block * BLOCK) as usize;
+                    let count = (length - inside).min(got - taken);
+                    if data.len() == inside {
+                        data.extend_from_slice(&chunk[taken..taken + count]);
+                    }
                     *used = Instant::now();
                     taken += count;
                     at += count as u64;
