@@ -46,6 +46,11 @@ final class RoomWindows {
     private var highest: CGWindowID = 0
     /// Windows that are not windows in their own right, so as not to ask about them again.
     private var passedOver: Set<CGWindowID> = []
+    /// Windows whose kind could not be told yet, and when they were first seen: asked again
+    /// each scan for a few seconds before being passed over.
+    /// Whether it was a window opened while the room was going is kept with it: by the time
+    /// it is told, it is no longer above `highest`.
+    private var untold: [CGWindowID: (since: Date, opened: Bool)] = [:]
     private var focused: UInt32 = 0
     /// Where the pointer is in each window, in its pixels, as last said.
     private var at: [UInt32: CGPoint] = [:]
@@ -243,8 +248,21 @@ final class RoomWindows {
                         continue
                     }
                     // Only windows in their own right; see `MacWindows.isOrdinary`.
-                    guard MacWindows.isOrdinary(info) else {
+                    let openedNow = untold[info.windowID]?.opened ?? (scanned && info.windowID > highest)
+                    switch MacWindows.ordinary(info) {
+                    case true?:
+                        untold[info.windowID] = nil
+                    case false?:
                         passedOver.insert(info.windowID)
+                        continue
+                    case nil:
+                        let first = untold[info.windowID]?.since ?? Date()
+                        untold[info.windowID] = (first, openedNow)
+                        if Date().timeIntervalSince(first) > 8 {
+                            print("room windows: passing over \(info.app) window \(info.windowID) (\(info.title)): its kind never became known")
+                            untold[info.windowID] = nil
+                            passedOver.insert(info.windowID)
+                        }
                         continue
                     }
                     // **A tab is not a window.** Each tab of a window is a window of its own to
@@ -271,7 +289,7 @@ final class RoomWindows {
                     // while it is going comes out at once**, in front of the wearer -- a new
                     // browser window asked for with Command-N is wanted where it can be seen.
                     let id = announce(info, hidden: true)
-                    let opened = scanned && info.windowID > highest
+                    let opened = openedNow
                     // Never a crowd at once: what macOS lists can come back short for a scan
                     // and whole the next, and a burst of windows each being captured has
                     // brought the Mac to its knees. Two a scan; the rest wait in the list.
@@ -303,6 +321,7 @@ final class RoomWindows {
                 scanned = true
                 highest = max(highest, all.map(\.windowID).max() ?? 0)
                 passedOver.formIntersection(Set(all.map(\.windowID)))
+                untold = untold.filter { id, _ in all.contains(where: { $0.windowID == id }) }
                 for (id, entry) in entries {
                     if let now = all.first(where: { $0.windowID == entry.info.windowID }) {
                         entries[id]?.missed = 0
