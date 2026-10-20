@@ -203,6 +203,16 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// A screen's picture at the size it looks rather than in every pixel it is drawn with.
     var pointsOnly = false
 
+    /// Whether a screen's picture has the Mac's pointer in it. Taken out while the Mac's
+    /// pointer trails the room's -- the hand moving, the head having moved the room's on --
+    /// and put back once it is under it again: two pointers, one following the other, were
+    /// seen catching up.
+    func showCursor(_ on: Bool) {
+        guard isScreen, let config, let stream, config.showsCursor != on else { return }
+        config.showsCursor = on
+        stream.updateConfiguration(config) { _ in }
+    }
+
     /// A whole screen: everything on it but Spatiand's own windows, with the Mac's pointer in
     /// the picture, since in a screen that is the pointer.
     private func startScreen(_ wanted: CGDirectDisplayID) async throws {

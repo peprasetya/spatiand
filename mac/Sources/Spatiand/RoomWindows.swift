@@ -598,6 +598,20 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         return capture.screenPoint(x: Double(p.x), y: Double(p.y))
     }
 
+    private var catchUpDue = false
+
+    /// The hand has stopped (or is still moving: asked again): the cursor goes to the pointer.
+    private func catchUp() {
+        catchUpDue = false
+        guard let (id, room) = at.first(where: { entries[$0.key]?.info.display != nil }) else { return }
+        if RoomTap.shared.handIsMoving {
+            catchUpDue = true
+            queue.asyncAfter(deadline: .now() + 0.1) { [self] in catchUp() }
+            return
+        }
+        motion(id, x: room.x, y: room.y)
+    }
+
     private func motion(_ id: UInt32, x: Double, y: Double) {
         // Onto a window it was not on: that window comes to the top, so that what is under the
         // real pointer is this window and not whichever lay over it on the Mac's own screen.
@@ -637,8 +651,20 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         // 1012, 1678 points (pointer.log). So the head puts the cursor only with the hand still,
         // and until then what the room says is not taken over what the hand has done.
         let screen = entries[id]?.info.display != nil
-        if screen, RoomTap.shared.handIsMoving, !down.contains(id) { return }
+        if screen, RoomTap.shared.handIsMoving, !down.contains(id) {
+            let here = CGEvent(source: nil)?.location ?? p
+            let gap = hypot(here.x - p.x, here.y - p.y)
+            if gap > 6 { entries[id]?.capture?.showCursor(false) } else if gap < 3 { entries[id]?.capture?.showCursor(true) }
+            // The hand may stop with no more word from the room: then the cursor is put
+            // where the pointer is, and shown, a moment after.
+            if !catchUpDue {
+                catchUpDue = true
+                queue.asyncAfter(deadline: .now() + 0.1) { [self] in catchUp() }
+            }
+            return
+        }
         setScreenPointer(screen && !down.contains(id) ? p : nil)
+        if screen { entries[id]?.capture?.showCursor(true) }
         if screen {
             // Only when it has strayed: the hand moves both the room's pointer and the real
             // cursor by the same travel, so they stay together. Put on every movement, as it

@@ -7,6 +7,9 @@
 //    put     the Mac's cursor put where the room's pointer is, in a screen
 //    raise   the cursor put for scrolling (readyToScroll)
 //  Kept to 4 MB: then the old file is pointer.log.old.
+//
+//  Off unless SPATIAND_POINTER_LOG=1 is in Spatiand's environment
+//  (launchctl setenv SPATIAND_POINTER_LOG 1, then Restart Spatiand): the pointer is fixed for now.
 
 import Foundation
 
@@ -19,8 +22,11 @@ final class PointerLog {
     /// Whether the room's pointer is in a screen: lines are written only then.
     var inScreen = false
 
-    func note(_ line: String) {
-        guard inScreen else { return }
+    private let on = ProcessInfo.processInfo.environment["SPATIAND_POINTER_LOG"] == "1"
+
+    func note(_ line: @autoclosure () -> String) {
+        guard on, inScreen else { return }
+        let line = line()
         let ms = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1_000_000
         queue.async { [self] in
             if handle == nil || written > 4 << 20 {
