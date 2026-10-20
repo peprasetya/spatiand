@@ -4,7 +4,11 @@
 //! looks at between pictures. Two threads: one for what the wearer is waiting on -- a
 //! folder's list, a sign-in -- and one for pictures, so that forty posters arriving do not
 //! stand between a press and its folder. Telling a server where a film has got to has a
-//! third, so that a server slow to answer delays neither.
+//! third, so that a server slow to answer delays neither. A film being opened has a thread of
+//! its own ([`Work::alone`]): a long film's index may take many seconds to fetch.
+//!
+//! Nothing here may wait on the main loop: while it is not reading what the room sends, the
+//! room may give up on it.
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 
@@ -25,6 +29,8 @@ pub enum Done {
     SignedIn(Result<crate::Account, String>),
     /// Servers on the network that answered.
     Found(Vec<dlna::Found>),
+    /// A film opened, or not: which asking, what was asked to play, and from where.
+    Opened { ticket: u64, source: std::sync::Arc<dyn crate::source::Source>, item: Item, result: Result<(spatiand_media::player::Player, String), String> },
 }
 
 type Job = Box<dyn FnOnce() -> Option<Done> + Send>;
@@ -33,6 +39,7 @@ pub struct Work {
     calls: Sender<Job>,
     pictures: Sender<Job>,
     reports: Sender<Job>,
+    answers: Sender<Done>,
     pub done: Receiver<Done>,
 }
 
@@ -53,7 +60,17 @@ fn worker(name: &str, done: Sender<Done>) -> Sender<Job> {
 impl Work {
     pub fn new() -> Work {
         let (done, answers) = channel();
-        Work { calls: worker("calls", done.clone()), pictures: worker("pictures", done.clone()), reports: worker("reports", done), done: answers }
+        Work { calls: worker("calls", done.clone()), pictures: worker("pictures", done.clone()), reports: worker("reports", done.clone()), answers: done, done: answers }
+    }
+
+    /// A job on a thread of its own, waiting behind nothing and holding nothing up.
+    pub fn alone(&self, job: impl FnOnce() -> Option<Done> + Send + 'static) {
+        let answers = self.answers.clone();
+        let _ = std::thread::Builder::new().name("opening".into()).spawn(move || {
+            if let Some(answer) = job() {
+                let _ = answers.send(answer);
+            }
+        });
     }
 
     pub fn call(&self, job: impl FnOnce() -> Option<Done> + Send + 'static) {

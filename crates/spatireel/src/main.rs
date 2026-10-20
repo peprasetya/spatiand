@@ -80,6 +80,8 @@ struct Reel {
     playing: Option<(Playing, Watched)>,
     /// The next number for an asking whose answer may come too late to be wanted.
     ticket: u64,
+    /// The film being opened, by its asking's number.
+    opening: Option<u64>,
     looked_for_servers: Option<Instant>,
     ready: bool,
     dirty: bool,
@@ -194,9 +196,28 @@ impl Reel {
         self.dirty = true;
     }
 
+    /// Open a film on a thread of its own, and play it when it is open (`Done::Opened`): a long
+    /// film's index may take many seconds to fetch, and a program that stops answering the room
+    /// for as long is one the room lets go of.
+    fn open(&mut self, source: Arc<dyn Source>, item: Item) {
+        let ticket = self.ticket();
+        self.opening = Some(ticket);
+        self.screen.trouble(format!("Opening {}\u{2026}", item.title));
+        self.work.alone(move || {
+            let result = source.play(&item).and_then(|play| Playing::open_player(&play.url, &play.options, item.resume).map(|player| (player, play.url)));
+            Some(Done::Opened { ticket, source, item, result })
+        });
+    }
+
+    /// Play a film now: for one on this machine, given at the start.
     fn play(&mut self, source: Arc<dyn Source>, item: Item) -> Result<(), String> {
         let play = source.play(&item)?;
-        let playing = Playing::open(self.app.gl()?, &play.url, &play.options, &item.name, &item.title, item.layout, item.resume)?;
+        let player = Playing::open_player(&play.url, &play.options, item.resume)?;
+        self.begin(source, item, player, &play.url)
+    }
+
+    fn begin(&mut self, source: Arc<dyn Source>, item: Item, player: spatiand_media::player::Player, url: &str) -> Result<(), String> {
+        let playing = Playing::new(self.app.gl()?, player, url, &item.name, &item.title, item.layout)?;
         self.app.set_title(self.window, &item.title);
         let (told, started) = (source.clone(), item.clone());
         self.work.report(move || told.watching(&started, Watching::Started));
@@ -257,11 +278,7 @@ impl Reel {
             }
             Act::Play { source, item } => {
                 let Some(entry) = self.sources.get(source) else { return };
-                if let Err(e) = self.play(entry.source.clone(), item.clone()) {
-                    log::warn!("{}: {e}", item.title);
-                    self.screen.trouble(format!("{} would not play: {e}", item.title));
-                    self.drop_expired();
-                }
+                self.open(entry.source.clone(), item);
             }
             Act::Add => self.screen = Screen::Add(Add::new(self.store.lock().unwrap().vibrefy_last.clone())),
             Act::Reconnect(address) => {
@@ -355,6 +372,20 @@ impl Reel {
                             let label = self.sources.get(source).map(|e| e.source.label()).unwrap_or_default();
                             home.unfinished(source, &label, items);
                         }
+                    }
+                }
+                Done::Opened { ticket, source, item, result } => {
+                    // Asked for and then given up on (another film chosen, or the program
+                    // closing): dropped here, which closes it.
+                    if self.opening != Some(ticket) || self.playing.is_some() {
+                        continue;
+                    }
+                    self.opening = None;
+                    self.screen.trouble(String::new());
+                    if let Err(e) = result.and_then(|(player, url)| self.begin(source, item.clone(), player, &url)) {
+                        log::warn!("{}: {e}", item.title);
+                        self.screen.trouble(format!("{} would not play: {e}", item.title));
+                        self.drop_expired();
                     }
                 }
                 Done::Found(found) => {
@@ -539,6 +570,7 @@ fn main() {
             screen: Screen::Empty,
             playing: None,
             ticket: 0,
+            opening: None,
             looked_for_servers: None,
             ready: false,
             dirty: true,

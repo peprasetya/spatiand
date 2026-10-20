@@ -38,6 +38,11 @@ const MOST_AHEAD: u64 = 64 * 1024 * 1024;
 /// While the film is being opened its pace is not known, and the demuxer jumps about -- to an
 /// index at the end, back to the start -- so only this much is fetched past each place.
 const OPENING_AHEAD: u64 = 1024 * 1024;
+/// ...unless the demuxer reads on and on from one place, as it does an index: then each request
+/// is four times what it has read there so far, up to this; and an index at the end of the file
+/// is asked for to the end at once. A long film's index is tens of megabytes, and was otherwise
+/// fetched a megabyte at a time, a server's wait before each.
+const OPENING_MOST: u64 = 16 * 1024 * 1024;
 /// The least asked for at once, once open: fewer, larger requests.
 const LEAST_ASKED: u64 = 4 * 1024 * 1024;
 /// What is kept behind reading, for a demuxer that steps back.
@@ -58,6 +63,8 @@ struct Ask {
 /// A place reading goes on from, and when it last did.
 struct Head {
     id: u64,
+    /// Where it began.
+    from: u64,
     at: u64,
     used: Instant,
 }
@@ -182,9 +189,17 @@ impl Shared {
         if Instant::now() < state.retry {
             return;
         }
-        let lively: Vec<(u64, u64)> = state.heads.iter().filter(|head| !left(head.used)).map(|head| (head.id, head.at)).collect();
-        let ahead = (state.ahead / lively.len().max(1) as u64).max(OPENING_AHEAD.min(state.ahead));
-        for (id, at) in lively {
+        let lively: Vec<(u64, u64, u64)> = state.heads.iter().filter(|head| !left(head.used)).map(|head| (head.id, head.from, head.at)).collect();
+        let shared_ahead = (state.ahead / lively.len().max(1) as u64).max(OPENING_AHEAD.min(state.ahead));
+        for (id, from, at) in lively {
+            let ahead = if state.ahead > OPENING_AHEAD {
+                shared_ahead
+            } else if self.size - at <= OPENING_MOST {
+                // Near the end while opening is an index stored there: all of it, at once.
+                self.size - at
+            } else {
+                (at.saturating_sub(from) * 4).clamp(OPENING_AHEAD, OPENING_MOST)
+            };
             if state.runs.iter().any(|run| run.head == id) {
                 continue;
             }
@@ -318,7 +333,7 @@ impl Shared {
                 }
                 state.next_head += 1;
                 let id = state.next_head;
-                state.heads.push(Head { id, at, used: now });
+                state.heads.push(Head { id, from: at, at, used: now });
             }
         }
         // The same request may serve two heads that have come together: one is enough.

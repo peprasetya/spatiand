@@ -208,15 +208,21 @@ fn beside(film: &str) -> Vec<Cue> {
 }
 
 impl Playing {
-    /// Play what is at `url`. `name` is the file's name, for what it says of the film's layout;
-    /// `said` is a layout the film's source vouches for, which outranks the name; `title` is
-    /// what the wearer calls it; `resume` is where to take it up, in seconds.
-    #[allow(clippy::too_many_arguments)]
-    pub fn open(gl: &Gl, url: &str, options: &[(String, String)], name: &str, title: &str, said: Option<VideoLayout>, resume: f64) -> Result<Playing, String> {
+    /// Open what is at `url`, and take it up `resume` seconds in. It may take a long time -- a
+    /// long film's index is fetched first -- so it is not done on the thread that answers the
+    /// room.
+    pub fn open_player(url: &str, options: &[(String, String)], resume: f64) -> Result<Player, String> {
         let mut player = Player::open_with(url, options)?;
         if resume > 5.0 {
             player.seek(resume);
         }
+        Ok(player)
+    }
+
+    /// Play `player`, opened from `url`. `name` is the file's name, for what it says of the
+    /// film's layout; `said` is a layout the film's source vouches for, which outranks the name;
+    /// `title` is what the wearer calls it.
+    pub fn new(gl: &Gl, mut player: Player, url: &str, name: &str, title: &str, said: Option<VideoLayout>) -> Result<Playing, String> {
         // `SPATIREEL_SPEED=1.5` starts at that pace, for a test that cannot reach the menu.
         if let Some(speed) = std::env::var("SPATIREEL_SPEED").ok().and_then(|s| s.parse().ok()) {
             player.set_speed(speed);

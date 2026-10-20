@@ -69,10 +69,12 @@ impl Screen {
     }
 
     /// Something went wrong that the wearer should be told, wherever they are.
+    /// A line at the foot of the screen; nothing, to take it away.
     pub fn trouble(&mut self, said: String) {
+        let said = (!said.is_empty()).then_some(said);
         match self {
-            Screen::Home(home) => home.trouble = Some(said),
-            Screen::Browse(browse) => browse.trouble = Some(said),
+            Screen::Home(home) => home.trouble = said,
+            Screen::Browse(browse) => browse.trouble = said,
             _ => {}
         }
     }
