@@ -226,6 +226,7 @@ final class RoomTap {
             let dx = event.getDoubleValueField(.mouseEventDeltaX), dy = event.getDoubleValueField(.mouseEventDeltaY)
             trace?("\(type.rawValue),\(dx),\(dy),\(event.location.x),\(event.location.y)")
             let (tx, ty) = travel(of: event)
+            PointerLog.shared.note(String(format: "hand %ld %.1f %.1f at %.1f %.1f -> %.1f %.1f%@", Int(type.rawValue), dx, dy, event.location.x, event.location.y, tx, ty, (tx != dx || ty != dy) ? " (from where it was put)" : ""))
             sp_pointer(Float(tx), Float(ty), buttons, 0, 0)
         case .leftMouseDown: buttons |= 1; sp_pointer(0, 0, buttons, 0, 0)
         case .leftMouseUp: buttons &= ~1; sp_pointer(0, 0, buttons, 0, 0)

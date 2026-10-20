@@ -52,6 +52,8 @@ final class RoomWindows {
     /// it is told, it is no longer above `highest`.
     private var untold: [CGWindowID: (since: Date, opened: Bool)] = [:]
     private var focused: UInt32 = 0
+    /// The window the Mac had in front at the last scan.
+    private var macFront: CGWindowID?
     /// Where the pointer is in each window, in its pixels, as last said.
     private var at: [UInt32: CGPoint] = [:]
     private var down: Set<UInt32> = []
@@ -318,6 +320,19 @@ final class RoomWindows {
                     becomes(id, info)
                     break
                 }
+                // **A window the Mac brings to the front comes out**, if it was waiting in
+                // the list: `open .` in a terminal for a folder Finder already has a window
+                // of, or an application asked for again, opens nothing new -- the Mac raises
+                // the window it has, which was put away in the room, and nothing was seen.
+                // Not while the wearer is working on a whole screen of the Mac's: there,
+                // windows come to the front under their own hand, and are seen on the screen.
+                let front = MacWindows.frontWindow()
+                if scanned, let front, front != macFront, entries[focused]?.info.display == nil,
+                   let (id, _) = entries.first(where: { $0.value.info.windowID == front && $0.value.capture == nil && $0.value.info.display == nil }) {
+                    print("windows: the Mac brought \(entries[id]!.info.app) \u{201C}\(entries[id]!.info.title)\u{201D} to the front; it comes out")
+                    sp_window_show(id)
+                }
+                macFront = front
                 scanned = true
                 highest = max(highest, all.map(\.windowID).max() ?? 0)
                 passedOver.formIntersection(Set(all.map(\.windowID)))
@@ -376,7 +391,10 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
                 if top.pid != info.pid { NSRunningApplication(processIdentifier: info.pid)?.activate(options: []) }
             }
             let here = CGEvent(source: nil)?.location ?? p
-            if hypot(here.x - p.x, here.y - p.y) > 4 { RoomTap.shared.warp(to: p) }
+            if hypot(here.x - p.x, here.y - p.y) > 4 {
+                PointerLog.shared.note(String(format: "raise %.1f %.1f from %.1f %.1f (window %ld of %ld pointed at)", p.x, p.y, here.x, here.y, Int(id), at.count))
+                RoomTap.shared.warp(to: p)
+            }
         }
     }
 
@@ -578,7 +596,9 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         if down.contains(id) { return }
         // **In a screen the pointer is the Mac's real one**: put where the room's is, and moved
         // as a mouse moves it, so that whatever is under it there knows.
+        PointerLog.shared.inScreen = entries[id]?.info.display != nil
         if entries[id]?.info.display != nil {
+            PointerLog.shared.note(String(format: "put %.1f %.1f (room %.1f %.1f in window %ld)", p.x, p.y, x, y, Int(id)))
             RoomTap.shared.warp(to: p)
             post(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left))
             return

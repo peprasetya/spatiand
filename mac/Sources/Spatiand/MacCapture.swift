@@ -65,6 +65,16 @@ enum MacWindows {
     /// and not something an application puts up beside one: the list under an address bar, a
     /// tooltip, a menu. Those come and go with every keystroke, and each taken for a window
     /// was a new window in the room that took the keys from the one being typed in.
+    /// The window the Mac has in front: the frontmost application's focused window.
+    static func frontWindow() -> CGWindowID? {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(app.processIdentifier), kAXFocusedWindowAttribute as CFString, &value) == .success,
+              let window = value, CFGetTypeID(window) == AXUIElementGetTypeID() else { return nil }
+        var id: CGWindowID = 0
+        return _AXUIElementGetWindow(window as! AXUIElement, &id) == .success && id != 0 ? id : nil
+    }
+
     static func isOrdinary(_ info: MacWindowInfo) -> Bool { ordinary(info) ?? false }
 
     /// As `isOrdinary`, but nil when it cannot be told yet: a window just opened is on the
