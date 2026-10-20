@@ -66,20 +66,26 @@ final class RoomTap {
     /// a held button and nothing needs doing here.
     private lazy var systemDrags = SystemGestures.enabled().contains("three-finger drag")
 
-    // **Putting the Mac's real cursor somewhere, and the mouse's travel afterwards.** The first
-    // movement heard after the cursor has been put carries the distance it was put, as though
-    // the hand had made it. But that same event also says where the cursor is, which is where
-    // it was put plus what the hand really did: so for that one event the travel is read from
-    // there, exactly, whatever the size. Events already on their way when it was put are told
-    // by their time, and keep the travel they say.
+    // **Putting the Mac's real cursor somewhere, and the mouse's travel afterwards.** A movement
+    // heard after the cursor has been put carries the distance it was put, as though the hand
+    // had made it. Which movement is not certain: with the Mac busy, several puts were on their
+    // way at once, and one event's time said it came before the put whose distance it carried
+    // -- a thousand points taken for the hand's, the room's pointer sent across the screen, the
+    // cursor put there, and back (pointer.log, 2026-10-20). So every put of the last second is
+    // kept with the distance it moved the cursor, and an event whose travel is that distance
+    // plus a hand's worth has it taken off, and that put forgotten.
     private let warpLock = NSLock()
-    private var warped: (to: CGPoint, at: UInt64)?
+    private var warps: [(by: CGVector, at: UInt64)] = []
 
     /// Put the real cursor at `point`. From any thread.
     func warp(to point: CGPoint) {
         warpLock.lock()
+        let from = CGEvent(source: nil)?.location ?? point
         CGWarpMouseCursorPosition(point)
-        warped = (point, clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
+        let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        warps.removeAll { now - $0.at > 1_000_000_000 }
+        let by = CGVector(dx: point.x - from.x, dy: point.y - from.y)
+        if abs(by.dx) >= 0.5 || abs(by.dy) >= 0.5 { warps.append((by, now)) }
         warpLock.unlock()
     }
 
@@ -87,13 +93,25 @@ final class RoomTap {
         let dx = event.getDoubleValueField(.mouseEventDeltaX), dy = event.getDoubleValueField(.mouseEventDeltaY)
         warpLock.lock()
         defer { warpLock.unlock() }
-        guard let w = warped, event.timestamp >= w.at else { return (dx, dy) }
-        warped = nil
-        let here = event.location
-        return (Double(here.x - w.to.x), Double(here.y - w.to.y))
+        // The put whose distance best accounts for this travel, if taking it off leaves less.
+        var best: (index: Int, left: Double)?
+        for (i, w) in warps.enumerated() {
+            let left = hypot(dx - w.by.dx, dy - w.by.dy)
+            if left < hypot(dx, dy), left < 60, left < (best?.left ?? .infinity) { best = (i, left) }
+        }
+        guard let best else { return (dx, dy) }
+        let w = warps.remove(at: best.index)
+        return (dx - w.by.dx, dy - w.by.dy)
     }
 
     private var lastFollow = Date.distantPast
+    /// When the hand last moved during a drag in a window of this Mac's (uptime, ns).
+    private var handDragged: UInt64 = 0
+    /// Whether the hand has moved in the drag just now: a pointer moving otherwise moved with the head.
+    var handIsDragging: Bool {
+        warpLock.lock(); defer { warpLock.unlock() }
+        return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - handDragged < 80_000_000
+    }
 
     /// While set, told of every movement of the mouse the room takes: for tracing.
     var trace: ((String) -> Void)?
@@ -212,6 +230,7 @@ final class RoomTap {
         // of the way each time, by how far apart they are in the window.
         // (Only with the button really down: the room hears of its coming up a frame late.)
         if buttons & 1 != 0, type == .mouseMoved || type == .leftMouseDragged, let lag = RoomWindows.shared.dragLag(cursor: event.location) {
+            warpLock.lock(); handDragged = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); warpLock.unlock()
             let now = Date()
             if now.timeIntervalSince(lastFollow) > 0.03 {
                 lastFollow = now
@@ -226,7 +245,7 @@ final class RoomTap {
             let dx = event.getDoubleValueField(.mouseEventDeltaX), dy = event.getDoubleValueField(.mouseEventDeltaY)
             trace?("\(type.rawValue),\(dx),\(dy),\(event.location.x),\(event.location.y)")
             let (tx, ty) = travel(of: event)
-            PointerLog.shared.note(String(format: "hand %ld %.1f %.1f at %.1f %.1f -> %.1f %.1f%@", Int(type.rawValue), dx, dy, event.location.x, event.location.y, tx, ty, (tx != dx || ty != dy) ? " (from where it was put)" : ""))
+            PointerLog.shared.note(String(format: "hand %ld %.1f %.1f at %.1f %.1f -> %.1f %.1f%@", Int(type.rawValue), dx, dy, event.location.x, event.location.y, tx, ty, (tx != dx || ty != dy) ? " (less a put)" : ""))
             sp_pointer(Float(tx), Float(ty), buttons, 0, 0)
         case .leftMouseDown: buttons |= 1; sp_pointer(0, 0, buttons, 0, 0)
         case .leftMouseUp: buttons &= ~1; sp_pointer(0, 0, buttons, 0, 0)

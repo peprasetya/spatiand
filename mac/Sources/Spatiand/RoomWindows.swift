@@ -593,14 +593,35 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         // windows the hand's own events go straight to the application (see `RoomTap`), with
         // its own travel and its own cursor -- which an application turning a 3D object holds
         // still, or hides, as it likes -- and the room's pointer is the one that follows.
-        if down.contains(id) { return }
+        // **But a drag goes where the head takes the pointer.** With the hand still, a pointer
+        // that moves moved with the head; the real cursor is taken there, dragging, so that
+        // what is held follows the pointer the wearer sees.
+        if down.contains(id) {
+            let here = CGEvent(source: nil)?.location ?? p
+            if !RoomTap.shared.handIsDragging, hypot(here.x - p.x, here.y - p.y) > 2 {
+                PointerLog.shared.note(String(format: "drag %.1f %.1f from %.1f %.1f (head)", p.x, p.y, here.x, here.y))
+                RoomTap.shared.warp(to: p)
+                let event = CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: p, mouseButton: .left)
+                event?.setIntegerValueField(.mouseEventDeltaX, value: Int64((p.x - here.x).rounded()))
+                event?.setIntegerValueField(.mouseEventDeltaY, value: Int64((p.y - here.y).rounded()))
+                post(event)
+            }
+            return
+        }
         // **In a screen the pointer is the Mac's real one**: put where the room's is, and moved
         // as a mouse moves it, so that whatever is under it there knows.
         PointerLog.shared.inScreen = entries[id]?.info.display != nil
         if entries[id]?.info.display != nil {
-            PointerLog.shared.note(String(format: "put %.1f %.1f (room %.1f %.1f in window %ld)", p.x, p.y, x, y, Int(id)))
-            RoomTap.shared.warp(to: p)
-            post(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left))
+            // Only when it has strayed: the hand moves both the room's pointer and the real
+            // cursor by the same travel, so they stay together. Put on every movement, as it
+            // was, each put came back inside a later movement, and with the Mac busy the
+            // pointer jumped about the screen.
+            let here = CGEvent(source: nil)?.location ?? p
+            if hypot(here.x - p.x, here.y - p.y) > 3 {
+                PointerLog.shared.note(String(format: "put %.1f %.1f from %.1f %.1f (room %.1f %.1f in window %ld)", p.x, p.y, here.x, here.y, x, y, Int(id)))
+                RoomTap.shared.warp(to: p)
+                post(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left))
+            }
             return
         }
         // Only pointed at, the real cursor is left alone and the application is told by an
