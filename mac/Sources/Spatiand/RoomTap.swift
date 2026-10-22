@@ -299,7 +299,12 @@ final class RoomTap {
                 }
                 RoomWindows.shared.noteScreenPointer(CGPoint(x: at.x + tx, y: at.y + ty))
             }
-            PointerLog.shared.note(String(format: "hand %ld %.1f %.1f at %.1f %.1f -> %.1f %.1f%@", Int(type.rawValue), dx, dy, event.location.x, event.location.y, tx, ty, (tx != dx || ty != dy) ? " (to the cursor)" : " (its own)"))
+            PointerLog.shared.note({
+                // Where the room's pointer was at the last frame, across and up from -1 to 1 of the view.
+                var vx: Float = 0, vy: Float = 0
+                sp_pointer_where(&vx, &vy)
+                return String(format: "hand %ld %.1f %.1f at %.1f %.1f -> %.1f %.1f%@ | room view %.3f %.3f", Int(type.rawValue), dx, dy, event.location.x, event.location.y, tx, ty, (tx != dx || ty != dy) ? " (to the cursor)" : " (its own)", vx, vy)
+            }())
             sp_pointer(Float(tx), Float(ty), buttons, 0, 0)
         case .leftMouseDown: buttons |= 1; sp_pointer(0, 0, buttons, 0, 0)
         case .leftMouseUp: buttons &= ~1; sp_pointer(0, 0, buttons, 0, 0)

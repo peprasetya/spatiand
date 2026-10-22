@@ -678,6 +678,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             }
             return
         }
+        PointerLog.shared.note(String(format: "window %.1f %.1f -> %.1f %.1f (window %ld)", x, y, p.x, p.y, Int(id)))
         // Only pointed at, the real cursor is left alone and the application is told by an
         // event of its own: enough for what lights up under a pointer.
         if let pid = entries[id]?.info.pid, let event = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left) {

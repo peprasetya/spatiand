@@ -1,4 +1,4 @@
-//  PointerLog.swift — every movement of the Mac's pointer while it is in a screen of the room,
+//  PointerLog.swift — every movement of the Mac's pointer while the room has it,
 //  written to ~/Library/Logs/Spatiand/pointer.log, to find where it jumps.
 //
 //  One line each: the time in milliseconds, what it was, and its numbers --
@@ -6,6 +6,7 @@
 //            travel the room was given, and whether that was read from where the cursor was put
 //    put     the Mac's cursor put where the room's pointer is, in a screen
 //    raise   the cursor put for scrolling (readyToScroll)
+//    window  the room's pointer in a window of this Mac's (not a screen), and where that is on the Mac
 //  Kept to 4 MB: then the old file is pointer.log.old.
 //
 //  Off unless SPATIAND_POINTER_LOG=1 is in Spatiand's environment
@@ -25,7 +26,7 @@ final class PointerLog {
     private let on = ProcessInfo.processInfo.environment["SPATIAND_POINTER_LOG"] == "1"
 
     func note(_ line: @autoclosure () -> String) {
-        guard on, inScreen else { return }
+        guard on else { return }
         let line = line()
         let ms = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1_000_000
         queue.async { [self] in
