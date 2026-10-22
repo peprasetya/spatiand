@@ -48,7 +48,7 @@ pub enum ApiError {
     /// client with no browser can tell an ended session from an empty library.
     #[error("this Vibrefy session is not signed in")]
     NotAuthenticated,
-    #[error("could not reach {url}: {source}")]
+    #[error("could not reach {url}: {}", reason(source))]
     Unreachable {
         url: String,
         #[source]
@@ -62,6 +62,38 @@ pub enum ApiError {
     /// unchanged: the pairing throttle in particular is something the user needs told.
     #[error("{0}")]
     Server(String),
+}
+
+/// Tries a request again when the connection itself failed. The first connection after the
+/// machine has been idle can fail with "no route to host" while the network wakes, and the
+/// next a moment later goes through: one such failure was a library that would not open.
+fn again<T>(mut send: impl FnMut() -> std::result::Result<T, ureq::Error>) -> std::result::Result<T, ureq::Error> {
+    let mut tries = 0;
+    loop {
+        match send() {
+            Err(ureq::Error::Transport(t))
+                if tries < 3 && matches!(t.kind(), ureq::ErrorKind::ConnectionFailed | ureq::ErrorKind::Dns) =>
+            {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(300 * tries));
+            }
+            other => return other,
+        }
+    }
+}
+
+/// What went wrong, without the address the transport puts in front of it: the message already
+/// names the address, and saying it twice made a line too long to read on one line.
+fn reason(transport: &ureq::Transport) -> String {
+    let all = transport.to_string();
+    match transport.url() {
+        Some(url) => all
+            .strip_prefix(&format!("{url}: "))
+            .or_else(|| all.strip_prefix(&format!("{}: ", url.as_str().trim_end_matches('/'))))
+            .unwrap_or(&all)
+            .to_string(),
+        None => all,
+    }
 }
 
 pub type Result<T> = std::result::Result<T, ApiError>;
@@ -182,7 +214,7 @@ impl VibrefyClient {
             request = request.set("Cookie", &cookie);
         }
 
-        let response = match request.send_form(form) {
+        let response = match again(|| request.clone().send_form(form)) {
             Ok(response) => response,
             Err(ureq::Error::Status(401, _)) => return Err(ApiError::NotAuthenticated),
             Err(ureq::Error::Status(status, _)) => {
@@ -337,12 +369,12 @@ impl VibrefyClient {
     /// subtitles and the sibling list. Whether the session is really over is a question
     /// for the JSON surface, which answers it with a 401 and cannot be mistaken.
     fn get_json_array(&self, url: &str) -> Result<Option<Vec<Value>>> {
-        let response = self
+        let request = self
             .agent
             .get(url)
             .set("Referer", &self.base_url)
-            .set("User-Agent", USER_AGENT)
-            .call();
+            .set("User-Agent", USER_AGENT);
+        let response = again(|| request.clone().call());
         let body = match response {
             Ok(response) => response
                 .into_string()
@@ -378,7 +410,7 @@ impl VibrefyClient {
         if let Some(cookie) = self.jar.lock().unwrap().header_for(&self.host) {
             request = request.set("Cookie", &cookie);
         }
-        let response = match request.call() {
+        let response = match again(|| request.clone().call()) {
             Ok(response) => response,
             Err(ureq::Error::Status(_, _)) => return Ok(None),
             Err(ureq::Error::Transport(transport)) => {
