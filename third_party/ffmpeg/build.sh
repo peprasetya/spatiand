@@ -100,8 +100,11 @@ linux)
     # The system's OpenSSL, libva and Opus (the voice sent to a host is Opus, and FFmpeg's own
     # encoder is experimental): each a library every Linux the Deck or CI is has already.
     (cd "$build" && "$src/ffmpeg-$FFMPEG_VERSION/configure" $common \
-        --enable-vaapi --enable-libdrm --enable-bzlib --enable-libopus \
-        --extra-ldflags="-Wl,-rpath,\$\$ORIGIN")
+        --enable-vaapi --enable-libdrm --enable-bzlib --enable-libopus)
+    # No search path in the libraries themselves ($ORIGIN does not survive configure and make
+    # alike on every shell): a program finds them by its own, set as DT_RPATH, which -- unlike
+    # RUNPATH -- also serves the libraries it loads (the Deck: its .cargo/config.toml; CI:
+    # LD_LIBRARY_PATH).
     ;;
 *) echo "no such platform: $platform" >&2; exit 1 ;;
 esac

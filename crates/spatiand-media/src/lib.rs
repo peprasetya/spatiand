@@ -44,11 +44,35 @@ pub(crate) fn trusted_certificates() {
         }
         // macOS keeps its roots for OpenSSL-style readers here; Linux distributions in one of these.
         let files = ["/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt"];
-        if let Some(file) = files.iter().find(|f| std::path::Path::new(f).exists()) {
+        let found = files.iter().map(std::path::PathBuf::from).find(|f| f.exists()).or_else(android_roots);
+        if let Some(file) = found {
             // Before any thread of the media's reads it: the first film opened is the first use.
             unsafe { std::env::set_var("SSL_CERT_FILE", file) };
         }
     });
+}
+
+/// Android's roots are a folder of one certificate a file, named by a hash OpenSSL no longer
+/// uses: put together into one file in the app's own temporary folder, made again each start.
+#[cfg(feature = "engine")]
+fn android_roots() -> Option<std::path::PathBuf> {
+    let dir = ["/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts"]
+        .into_iter()
+        .map(std::path::Path::new)
+        .find(|d| d.is_dir())?;
+    let mut all = String::new();
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        if let Ok(text) = std::fs::read_to_string(entry.path()) {
+            // Each file is the certificate in PEM, then its details in words: only the PEM is wanted.
+            if let (Some(a), Some(b)) = (text.find("-----BEGIN CERTIFICATE-----"), text.find("-----END CERTIFICATE-----")) {
+                all.push_str(&text[a..b + "-----END CERTIFICATE-----".len()]);
+                all.push('\n');
+            }
+        }
+    }
+    let file = std::env::temp_dir().join("trusted-certificates.pem");
+    std::fs::write(&file, all).ok()?;
+    Some(file)
 }
 
 pub use audio::{AudioSummary, SPATIAND_LAYOUTS};

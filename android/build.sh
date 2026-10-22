@@ -25,11 +25,12 @@ PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
 
 # Spatiand's own applications (docs/spatiand-apps.md): programs of their own, carried in the
 # APK's library folder as lib<name>.so -- the only name Android extracts there -- and started
-# by the compositor (crates/spatiand/src/own.rs). Three decode with FFmpeg, built here once
-# for Android with MediaCodec in it; SpatiLoupe draws PDFs with PDFium; SpatiShelf reaches
-# remotes through the storage service, which is Go and built for Android from this Mac.
-ffmpeg/build.sh
-FF=$(pwd)/ffmpeg/out
+# by the compositor (crates/spatiand/src/own.rs). Four decode with FFmpeg -- the one Spatiand
+# ships on every platform (third_party/ffmpeg), built here once for Android with MediaCodec in
+# it; SpatiLoupe draws PDFs with PDFium; SpatiShelf reaches remotes through the storage
+# service, which is Go and built for Android from this Mac.
+../third_party/ffmpeg/build.sh android
+FF=$(cd ../third_party/ffmpeg/out/android && pwd)
 [ "$(uname -s)" = Darwin ] && export LIBCLANG_PATH=${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib}
 PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
     FFMPEG_INCLUDE_DIR=$FF/include FFMPEG_LIBS_DIR=$FF/lib FFMPEG_LINK_MODE=dynamic \
@@ -58,6 +59,12 @@ rm -rf $OUT && mkdir -p $OUT/classes $OUT/dex $OUT/apk/lib/arm64-v8a $OUT/assets
 # The keyboard layouts, unpacked into the app's files on first start.
 cp -R xkbcommon/out/xkb $OUT/assets/xkb
 cp mysofa/out/default.sofa $OUT/assets/
+# What the licences ask to go with the libraries (third_party/NOTICES.md).
+. ../third_party/ffmpeg/versions.sh
+mkdir -p $OUT/assets/licences
+cp ../third_party/NOTICES.md $OUT/assets/licences/
+cp "../third_party/ffmpeg/src/ffmpeg-$FFMPEG_VERSION/COPYING.LGPLv3" $OUT/assets/licences/
+cp "../third_party/ffmpeg/src/openssl-$OPENSSL_VERSION/LICENSE.txt" $OUT/assets/licences/OpenSSL-LICENSE.txt
 $BT/aapt2 compile --dir res -o $OUT/res.zip
 $BT/aapt2 link -I $JAR --manifest AndroidManifest.xml -A $OUT/assets -o $OUT/base.apk $OUT/res.zip
 javac --release 17 -Xlint:-options -classpath "$JAR:$CLASSPATH" -d $OUT/classes $(find src -name '*.java')
