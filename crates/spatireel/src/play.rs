@@ -307,8 +307,11 @@ impl Playing {
     /// From then on, pointer motion alone no longer brings them, since it sweeps with the head.
     pub fn hands(&mut self) {
         self.hands_heard = true;
-        // Hands on some other window are not this one's business.
-        if self.focused || self.inside {
+        // Hands on some other window are not this one's business, and typing into another
+        // program counts as hands too, whatever the room thinks has the keyboard: only the
+        // pointer over this window is told apart. Keys this window receives wake it by
+        // themselves, in `input`.
+        if self.inside {
             self.stir();
         }
     }
