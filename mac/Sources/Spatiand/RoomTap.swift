@@ -122,13 +122,15 @@ final class RoomTap {
         // (pointer.log, 2026-10-22) -- what the put was said to be from had not matched. The
         // cursor is exactly where it was put, so the hand's own part is too small to matter:
         // that one movement counts for nothing.
-        if let put = putUnseen, clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - put.at < 1_000_000_000,
+        // Nor is it only the far ones, or only soon after: 15 and 26 points came back the same
+        // way, and 306 a second and a half after the put, 208 after four (pointer.log,
+        // 2026-10-22) -- none of them the distance put, so nothing to take off. What the
+        // cursor has done since the put is all the hand can have done.
+        if let put = putUnseen, clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - put.at < 10_000_000_000,
            hypot(event.location.x - put.to.x, event.location.y - put.to.y) < 2.5 {
             putUnseen = nil
-            if hypot(dx, dy) > 20 {
-                warps.removeAll()
-                return (0, 0)
-            }
+            warps.removeAll()
+            return (event.location.x - put.to.x, event.location.y - put.to.y)
         }
         // The put whose distance best accounts for this travel, if taking it off leaves less.
         var best: (index: Int, left: Double)?
