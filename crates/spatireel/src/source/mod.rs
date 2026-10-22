@@ -40,6 +40,31 @@ pub struct Item {
     pub layout: Option<VideoLayout>,
     /// Whether there is a picture to ask for at all.
     pub pictured: bool,
+    /// When it last changed, in any one unit, where the source says: what "last updated" orders by.
+    pub modified: i64,
+}
+
+/// Numbers in no particular order, which is all a shuffle wants: no dependency for it.
+pub struct Dice(u64);
+
+impl Dice {
+    pub fn new() -> Dice {
+        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
+        Dice(seed | 1)
+    }
+
+    pub fn below(&mut self, limit: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % limit.max(1) as u64) as usize
+    }
+
+    pub fn shuffle<T>(&mut self, things: &mut [T]) {
+        for i in (1..things.len()).rev() {
+            things.swap(i, self.below(i + 1));
+        }
+    }
 }
 
 /// A picture of an item, as the source has it.

@@ -46,7 +46,15 @@ pub enum Screen {
 }
 
 /// A picture wanted: (which asking, which tile, which source, of what).
-pub type Wanted = (u64, usize, usize, Item);
+pub type Wanted = (u64, usize, usize, Item, Option<Shown>);
+
+/// Which pictures are on show right now, by their place in the list as it came. A picture
+/// asked for and not yet fetched is let go of if its tile has been scrolled away from.
+pub type Shown = Arc<Mutex<std::collections::HashSet<usize>>>;
+
+/// How long a tile must stay on show before its picture is asked for: scrolling past does
+/// not ask for the pictures passed.
+const DWELL: Duration = Duration::from_millis(250);
 
 impl Screen {
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl, sources: &[Entry]) {
@@ -76,6 +84,15 @@ impl Screen {
             Screen::Home(home) => home.trouble = said,
             Screen::Browse(browse) => browse.trouble = said,
             _ => {}
+        }
+    }
+
+    /// A picture was not fetched, its tile having gone from view: it may be asked for again.
+    pub fn passed(&mut self, ticket: u64, index: usize) {
+        if let Screen::Browse(browse) = self {
+            if browse.ticket == ticket {
+                browse.passed(index);
+            }
         }
     }
 
@@ -241,7 +258,7 @@ impl Home {
         let mut wanted = Vec::new();
         for (index, film) in self.films.iter_mut().enumerate() {
             if on_show.contains(&index) && film.item.pictured && !std::mem::replace(&mut film.asked, true) {
-                wanted.push((ticket, film.id, film.source, film.item.clone()));
+                wanted.push((ticket, film.id, film.source, film.item.clone(), None));
             }
         }
         wanted
@@ -332,6 +349,26 @@ pub enum State {
     Failed(String),
 }
 
+/// The order a folder is shown in. Every folder starts by name.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Sort {
+    Name,
+    Updated,
+    Random,
+}
+
+impl Sort {
+    const ALL: [Sort; 3] = [Sort::Name, Sort::Updated, Sort::Random];
+
+    fn label(self) -> &'static str {
+        match self {
+            Sort::Name => "A\u{2013}Z",
+            Sort::Updated => "Updated",
+            Sort::Random => "Random",
+        }
+    }
+}
+
 pub struct Browse {
     pub source: usize,
     label: String,
@@ -342,6 +379,14 @@ pub struct Browse {
     items: Vec<Item>,
     tiles: Vec<Tile>,
     asked: Vec<bool>,
+    /// Where each of these was in the list as it came, which is what its picture is asked
+    /// for and comes back by: the order below is the wearer's to change.
+    origin: Vec<usize>,
+    /// Since when each tile has been on show, by `origin`.
+    since: std::collections::HashMap<usize, Instant>,
+    shown: Shown,
+    sort: Sort,
+    sorts: [Button; 3],
     grid: Grid,
     pub state: State,
     pub ticket: u64,
@@ -373,6 +418,11 @@ impl Browse {
             items: Vec::new(),
             tiles: Vec::new(),
             asked: Vec::new(),
+            origin: Vec::new(),
+            since: std::collections::HashMap::new(),
+            shown: Shown::default(),
+            sort: Sort::Name,
+            sorts: Default::default(),
             grid,
             state: State::Loading(Instant::now()),
             ticket: 0,
@@ -412,7 +462,58 @@ impl Browse {
         self.left.extend(self.tiles.drain(..).filter_map(|tile| tile.picture));
         self.items.clear();
         self.asked.clear();
+        self.origin.clear();
+        self.since.clear();
+        self.shown.lock().unwrap().clear();
         self.arrived.clear();
+        self.sort = Sort::Name;
+    }
+
+    /// Whether the order can be told apart from the name's: not when the server says nothing
+    /// of when things changed.
+    fn dated(&self) -> bool {
+        self.items.iter().any(|item| item.modified > 0)
+    }
+
+    /// Show this folder in `sort` order. The pictures already fetched go with their tiles.
+    fn arrange(&mut self, sort: Sort) {
+        // Folders stay ahead of films, as the server lists them; the order is within each.
+        let mut order: Vec<usize> = (0..self.items.len()).collect();
+        order.sort_by_key(|i| (!self.items[*i].folder, self.origin[*i]));
+        let split = order.iter().take_while(|i| self.items[**i].folder).count();
+        let (folders, films) = order.split_at_mut(split);
+        match sort {
+            Sort::Name => {}
+            Sort::Updated => {
+                folders.sort_by_key(|i| std::cmp::Reverse(self.items[*i].modified));
+                films.sort_by_key(|i| std::cmp::Reverse(self.items[*i].modified));
+            }
+            Sort::Random => {
+                let mut dice = crate::source::Dice::new();
+                dice.shuffle(folders);
+                dice.shuffle(films);
+            }
+        }
+        fn take<T>(from: &mut Vec<T>, order: &[usize]) -> Vec<T>
+        where
+            T: Default,
+        {
+            order.iter().map(|i| std::mem::take(&mut from[*i])).collect()
+        }
+        self.items = take(&mut self.items, &order);
+        self.tiles = take(&mut self.tiles, &order);
+        self.asked = order.iter().map(|i| self.asked[*i]).collect();
+        self.origin = order.iter().map(|i| self.origin[*i]).collect();
+        self.sort = sort;
+        self.grid.cursor = 0;
+        self.grid.top();
+    }
+
+    /// A picture not fetched, because its tile was no longer on show: it is not asked for.
+    fn passed(&mut self, origin: usize) {
+        if let Some(at) = self.origin.iter().position(|o| *o == origin) {
+            self.asked[at] = false;
+        }
     }
 
     pub fn listed(&mut self, result: Result<Vec<Item>, String>) {
@@ -427,6 +528,8 @@ impl Browse {
                     .map(|item| Tile { title: item.title.clone(), detail: item.detail.clone(), progress: item.progress, icon: item.folder.then_some(Icon::Folder), ..Tile::default() })
                     .collect();
                 self.asked = vec![false; items.len()];
+                self.origin = (0..items.len()).collect();
+                self.sort = Sort::Name;
                 let came_from = self.came_from.take().and_then(|key| items.iter().position(|item| item.key == key));
                 self.grid.cursor = self.restore.take().or(came_from).unwrap_or(0).min(items.len().saturating_sub(1));
                 self.items = items;
@@ -435,14 +538,24 @@ impl Browse {
         }
     }
 
+    /// The pictures of the tiles that have been on show for a moment, each asked for once.
+    /// Whatever is further than the view, or only passing through it, waits: a server may
+    /// have to take a frame out of a large file for each.
     fn wanted(&mut self) -> Vec<Wanted> {
         let mut wanted = Vec::new();
         // The grid's idea of what is on show is from when it was last drawn, which may have
         // been a list with more in it.
-        for index in self.grid.in_view() {
-            let Some(item) = self.items.get(index) else { break };
-            if item.pictured && !std::mem::replace(&mut self.asked[index], true) {
-                wanted.push((self.ticket, index, self.source, item.clone()));
+        let on_show: Vec<usize> = self.grid.in_view().filter(|index| *index < self.items.len()).collect();
+        let origins: std::collections::HashSet<usize> = on_show.iter().map(|index| self.origin[*index]).collect();
+        self.since.retain(|origin, _| origins.contains(origin));
+        *self.shown.lock().unwrap() = origins;
+        for index in on_show {
+            let origin = self.origin[index];
+            let since = *self.since.entry(origin).or_insert_with(Instant::now);
+            let item = &self.items[index];
+            if item.pictured && !self.asked[index] && since.elapsed() >= DWELL {
+                self.asked[index] = true;
+                wanted.push((self.ticket, origin, self.source, item.clone(), Some(self.shown.clone())));
             }
         }
         wanted
@@ -457,8 +570,8 @@ impl Browse {
         for old in self.left.drain(..) {
             p.forget(gl, old);
         }
-        for (index, still) in self.arrived.drain(..) {
-            if let Some(tile) = self.tiles.get_mut(index) {
+        for (origin, still) in self.arrived.drain(..) {
+            if let Some(tile) = self.origin.iter().position(|o| *o == origin).and_then(|at| self.tiles.get_mut(at)) {
                 tile.picture = p.texture(gl, &still.rgba, still.width, still.height).ok();
             }
         }
@@ -472,11 +585,27 @@ impl Browse {
             self.up.draw_icon(p, gl, top.take_left(Button::HEIGHT), Icon::Up, "");
             top.take_left(22.0);
         }
-        if self.server {
+        // Taking a server away is for its top, where it is not mistaken for anything else: in
+        // a folder it is a button where a slip of the pointer is all it takes.
+        if self.can_remove() {
             let label = if self.asking_to_remove() { "Press again to remove" } else { "Remove" };
             let width = Button::icon_width(p, gl, label);
             self.remove.draw_icon(p, gl, top.take_right(width), Icon::Trash, label);
             top.take_right(16.0);
+        }
+        if matches!(self.state, State::Ready) && !self.local && self.items.len() > 1 {
+            // Right to left, so the first reads first.
+            for (button, sort) in self.sorts.iter_mut().zip(Sort::ALL).rev() {
+                if sort == Sort::Updated && !self.items.iter().any(|item| item.modified > 0) {
+                    button.focused = false;
+                    continue;
+                }
+                let width = Button::width(p, gl, sort.label());
+                button.focused = self.sort == sort;
+                button.draw(p, gl, top.take_right(width), sort.label());
+                top.take_right(8.0);
+            }
+            top.take_right(8.0);
         }
         let title = if self.local {
             let path = self.path();
@@ -521,8 +650,22 @@ impl Browse {
         }
     }
 
+    /// Whether the button that takes this server away is to be had: at its top only.
+    fn can_remove(&self) -> bool {
+        self.server && self.trail.is_empty()
+    }
+
     fn input(&mut self, input: &Input) -> Act {
-        if self.server && self.remove.input(input) {
+        if matches!(self.state, State::Ready) && !self.local {
+            for (at, sort) in Sort::ALL.into_iter().enumerate() {
+                let usable = sort != Sort::Updated || self.dated();
+                if usable && self.sorts[at].input(input) && (sort == Sort::Random || self.sort != sort) {
+                    self.arrange(sort);
+                    return Act::Nothing;
+                }
+            }
+        }
+        if self.can_remove() && self.remove.input(input) {
             if self.asking_to_remove() {
                 return Act::Forget(self.source);
             }
@@ -802,5 +945,64 @@ impl Add {
             }
         }
         Act::Nothing
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(key: &str, folder: bool, modified: i64) -> Item {
+        Item { key: key.into(), title: key.into(), folder, modified, pictured: !folder, ..Item::default() }
+    }
+
+    fn browse() -> Browse {
+        let mut browse = Browse::new(0, "Vibrefy".into(), false, true);
+        browse.listed(Ok(vec![item("Dir", true, 5), item("a", false, 10), item("b", false, 30), item("c", false, 20)]));
+        browse
+    }
+
+    fn keys(browse: &Browse) -> Vec<&str> {
+        browse.items.iter().map(|i| i.key.as_str()).collect()
+    }
+
+    #[test]
+    fn a_folder_starts_by_name_and_is_sorted_by_what_is_asked() {
+        let mut b = browse();
+        assert_eq!(keys(&b), ["Dir", "a", "b", "c"]);
+        b.arrange(Sort::Updated);
+        assert_eq!(keys(&b), ["Dir", "b", "c", "a"]);
+        b.arrange(Sort::Name);
+        assert_eq!(keys(&b), ["Dir", "a", "b", "c"]);
+        b.arrange(Sort::Random);
+        assert_eq!(b.items[0].key, "Dir");
+        let mut films = keys(&b)[1..].to_vec();
+        films.sort();
+        assert_eq!(films, ["a", "b", "c"]);
+        // The tiles, the asked and the origins went with the items.
+        assert_eq!(b.tiles.len(), 4);
+        for (at, item) in b.items.iter().enumerate() {
+            assert_eq!(["Dir", "a", "b", "c"][b.origin[at]], item.key);
+            assert_eq!(b.tiles[at].title, item.title);
+        }
+        // Listing another folder starts by name again.
+        b.loading();
+        b.listed(Ok(vec![item("x", false, 1)]));
+        assert_eq!(b.sort, Sort::Name);
+    }
+
+    #[test]
+    fn remove_is_only_at_the_top_of_a_server() {
+        let mut b = browse();
+        assert!(b.can_remove());
+        b.enter(item("Dir", true, 0), 0);
+        assert!(!b.can_remove());
+    }
+
+    #[test]
+    fn only_tiles_that_stay_on_show_are_asked_for() {
+        let mut b = browse();
+        // Nothing has been drawn, so nothing is on show.
+        assert!(b.wanted().is_empty());
     }
 }

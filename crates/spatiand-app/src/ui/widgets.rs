@@ -370,14 +370,15 @@ impl Grid {
         self.area.contains(x, y)
     }
 
-    /// Which tiles are on show, or nearly: the ones whose pictures are worth fetching.
+    /// Which tiles are on show, as last drawn and no more: the only ones whose pictures are
+    /// worth fetching. Nothing before the first drawing.
     pub fn in_view(&self) -> std::ops::Range<usize> {
-        if self.columns == 0 || self.row_height <= 0.0 {
-            return 0..self.total.min(24);
+        let (first, last) = self.placed.iter().fold((usize::MAX, 0), |(a, b), (i, _)| (a.min(*i), b.max(*i + 1)));
+        if first == usize::MAX {
+            0..0
+        } else {
+            first..last
         }
-        let first = (self.scroll / self.row_height).floor().max(0.0) as usize;
-        let rows = (self.area.h / self.row_height).ceil() as usize + 2;
-        (first * self.columns).min(self.total)..((first + rows) * self.columns).min(self.total)
     }
 
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl, rect: Rect, tiles: &[Tile]) {
@@ -448,6 +449,11 @@ impl Grid {
 
     /// Whether a key would take the cursor off the top of the grid, for an application with
     /// something above it to give the keys to.
+    /// Back to the first row.
+    pub fn top(&mut self) {
+        self.scroll = 0.0;
+    }
+
     pub fn at_top(&self) -> bool {
         self.cursor < self.columns.max(1)
     }
@@ -540,13 +546,13 @@ impl Strip {
         self.area.contains(x, y)
     }
 
-    /// Which tiles are on show, or nearly.
+    /// Which tiles are on show, as last drawn and no more. Nothing before the first drawing.
     pub fn in_view(&self) -> std::ops::Range<usize> {
         let (first, last) = self.placed.iter().fold((usize::MAX, 0), |(a, b), (i, _)| (a.min(*i), b.max(*i + 1)));
         if first == usize::MAX {
-            0..self.total.min(8)
+            0..0
         } else {
-            first..(last + 2).min(self.total)
+            first..last
         }
     }
 

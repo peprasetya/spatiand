@@ -58,8 +58,12 @@ pub fn shelf(p: &mut Painter, gl: &Gl, all: &mut Rect, name: &str, lit: bool) {
 }
 
 /// Something said in the middle of an empty place.
+/// Wrapped to a column, so that all of it shows however long it is.
 pub fn message(p: &mut Painter, gl: &Gl, rect: Rect, text: &str, color: Color) {
-    p.label(gl, text, rect, theme::ROW_EM * 0.9, color, 0.5);
+    let em = theme::ROW_EM * 0.9;
+    let column = rect.w.min(1100.0);
+    let (w, h) = p.measure(gl, text, em, column);
+    p.text(gl, text, rect.x + (rect.w - w) * 0.5, rect.y + (rect.h - h).max(0.0) * 0.5, em, column, color);
 }
 
 /// Three dots taking turns, for something being waited on.
@@ -77,10 +81,12 @@ pub fn waiting(p: &mut Painter, gl: &Gl, rect: Rect, since: Instant) {
 /// A line at the foot of a screen: which keys do what, or what went wrong. A hint written
 /// with keys in brackets is drawn as [`keys`] draws it.
 pub fn foot(p: &mut Painter, gl: &Gl, all: &mut Rect, hint: &str, trouble: Option<&str>) {
-    let line = all.take_bottom(theme::FOOTER_EM * 1.9);
+    // What went wrong is wrapped, and takes as many lines as it needs.
+    let wrapped = trouble.map_or(0.0, |trouble| p.measure(gl, trouble, theme::FOOTER_EM, all.w).1);
+    let line = all.take_bottom((theme::FOOTER_EM * 1.9).max(wrapped + theme::FOOTER_EM * 0.5));
     match trouble {
         Some(trouble) => {
-            p.label(gl, trouble, line, theme::FOOTER_EM, TROUBLE, 0.0);
+            p.text(gl, trouble, line.x, line.y + (line.h - wrapped) * 0.5, theme::FOOTER_EM, line.w, TROUBLE);
         }
         // Keys only where the hint is written as keys: a path may have brackets in it.
         None if hint.starts_with('[') => {
