@@ -23,6 +23,8 @@ pub enum Done {
     Listed { ticket: u64, result: Result<Vec<Item>, String> },
     /// A tile's picture.
     Pictured { ticket: u64, index: usize, still: Option<Still> },
+    /// A tile's picture was not fetched, the tile having left the view while it waited.
+    Passed { ticket: u64, index: usize },
     /// The part-watched films of one source, for the home screen: which source, by its place.
     Unfinished { ticket: u64, source: usize, items: Vec<Item> },
     /// A sign-in finished, one way or the other.

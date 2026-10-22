@@ -85,6 +85,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>NSHighResolutionCapable</key><true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
     <key>NSAudioCaptureUsageDescription</key><string>Spatiand places a Mac application's sound where its window is in the glasses, which needs to take that sound from the speakers.</string>
+    <key>NSLocalNetworkUsageDescription</key><string>Spatiand's applications reach your own servers on this network, such as the film library SpatiReel plays from.</string>
     <key>NSMicrophoneUsageDescription</key><string>Spatiand sends your voice to an application on another computer when that application asks for the microphone.</string>
 </dict>
 </plist>
@@ -115,8 +116,9 @@ else
   echo "note: signed ad hoc, so each rebuild asks for Screen Recording and Accessibility again;"
   echo "      create the \"$IDENTITY_NAME\" certificate (see HoloFrame) to stop that"
 fi
-dest="$HOME/Applications/Spatiand.app"
-mkdir -p "$HOME/Applications"
+# Another checkout building its own app sets this, so as not to replace this one.
+dest="${SPATIAND_APP_DEST:-$HOME/Applications/Spatiand.app}"
+mkdir -p "$(dirname "$dest")"
 rm -rf "$dest"
 ditto --noextattr --norsrc "$app" "$dest"
 rm -rf "$stage"

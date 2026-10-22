@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use vibrefy_api::client::{ApiError, VibrefyClient};
 use vibrefy_api::models::MediaItem;
 
-use super::{Item, Picture, Play, Source, Watching};
+use super::{Dice, Item, Picture, Play, Source, Watching};
 
 /// What is kept of a server between sessions: its address and the session's cookies.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -34,29 +34,6 @@ pub struct Server {
 const WATCHING: &str = "\u{1}watching";
 const RANDOM: &str = "\u{1}random";
 
-/// Numbers in no particular order, which is all a shuffle wants: no dependency for it.
-struct Dice(u64);
-
-impl Dice {
-    fn new() -> Dice {
-        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
-        Dice(seed | 1)
-    }
-
-    fn below(&mut self, limit: usize) -> usize {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        (self.0 % limit.max(1) as u64) as usize
-    }
-
-    fn shuffle<T>(&mut self, things: &mut [T]) {
-        for i in (1..things.len()).rev() {
-            things.swap(i, self.below(i + 1));
-        }
-    }
-}
-
 fn item(media: &MediaItem) -> Item {
     let folder = media.kind.is_browsable();
     Item {
@@ -71,6 +48,7 @@ fn item(media: &MediaItem) -> Item {
         resume: media.resume_seconds.max(0) as f64,
         layout: None,
         pictured: media.has_artwork(),
+        modified: media.modified,
     }
 }
 

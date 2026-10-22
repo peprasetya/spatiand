@@ -168,6 +168,7 @@ pub fn item(value: &Value) -> Option<Item> {
         resume: at / TICKS,
         layout: value["Video3DFormat"].as_str().and_then(layout_of),
         pictured: value["ImageTags"]["Primary"].is_string(),
+        modified: 0,
     })
 }
 

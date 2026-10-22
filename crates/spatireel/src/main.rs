@@ -366,6 +366,7 @@ impl Reel {
                     }
                 }
                 Done::Pictured { ticket, index, still } => self.screen.pictured(ticket, index, still),
+                Done::Passed { ticket, index } => self.screen.passed(ticket, index),
                 Done::Unfinished { ticket, source, items } => {
                     if let Screen::Home(home) = &mut self.screen {
                         if home.ticket == ticket {
@@ -453,6 +454,11 @@ impl Reel {
                 }
             }
             Event::Mode(mode) => log::info!("the wearer now sees {mode:?}"),
+            Event::Focus { window, focused } if *window == self.window => {
+                if let Some((playing, _)) = self.playing.as_mut() {
+                    playing.focus(*focused);
+                }
+            }
             Event::Hands => {
                 if let Some((playing, _)) = self.playing.as_mut() {
                     playing.hands();
@@ -504,10 +510,16 @@ impl Reel {
             }
         }
         // Pictures wanted for what is on show are asked for, each once.
-        for (ticket, index, source, item) in self.screen.wanted() {
+        for (ticket, index, source, item, shown) in self.screen.wanted() {
             let Some(entry) = self.sources.get(source) else { continue };
             let source = entry.source.clone();
-            self.work.picture(move || Some(Done::Pictured { ticket, index, still: source.picture(&item).and_then(source::pixels) }));
+            self.work.picture(move || {
+                // Scrolled away from while it waited its turn: not worth the server's trouble.
+                if shown.is_some_and(|shown| !shown.lock().unwrap().contains(&index)) {
+                    return Some(Done::Passed { ticket, index });
+                }
+                Some(Done::Pictured { ticket, index, still: source.picture(&item).and_then(source::pixels) })
+            });
         }
         if !std::mem::take(&mut self.dirty) && !self.screen.animating() {
             return Ok(());
