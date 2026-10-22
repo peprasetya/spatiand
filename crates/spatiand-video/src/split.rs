@@ -28,7 +28,7 @@ impl Units {
                 Codec::H265 => ffi::AV_CODEC_ID_HEVC,
                 Codec::Av1 => ffi::AV_CODEC_ID_AV1,
             };
-            let parser = ffi::av_parser_init(id as i32);
+            let parser = ffi::av_parser_init(id as _);
             if parser.is_null() {
                 return Err(format!("no parser for {}", codec.label()));
             }
