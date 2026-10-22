@@ -40,15 +40,12 @@ final class RoomWindows {
     private var scan: Timer?
     /// Whether the windows open when the room began have been listed: from then on a new one is shown.
     private var scanned = false
-    /// The highest window number there was when the room began. macOS numbers windows upwards
-    /// and never reuses one in a session, so only a window above this is one opened since.
-    private var highest: CGWindowID = 0
-    /// Every window seen since: a window that was missing from one scan and is back is not new,
-    /// and is not brought out. **Not the highest seen so far** -- an application's helper
-    /// windows ("Window", Chrome's and Claude's among them) are numbered after the window
-    /// they go with and are often listed before it, and a new Chrome window from Command-N,
-    /// a Safari window for another profile, numbered below them, was taken for an old one
-    /// and waited in the list.
+    /// Every window seen on the Mac's screen since the room began: one not among them is one
+    /// that has just come on screen, and comes out. A window that was missing from one scan
+    /// and is back is not new. **Not told by its number** -- macOS numbers windows upwards,
+    /// but an application makes some long before it shows them: Finder's Connect to Server,
+    /// a tab Chrome lets be dragged out into a window of its own, an extension's window. Each
+    /// came on screen numbered below windows already seen and waited in the list.
     private var seen: Set<CGWindowID> = []
     /// Windows that are not windows in their own right, so as not to ask about them again.
     private var passedOver: Set<CGWindowID> = []
@@ -275,7 +272,7 @@ final class RoomWindows {
                         continue
                     }
                     // Only windows in their own right; see `MacWindows.isOrdinary`.
-                    let openedNow = untold[info.windowID]?.opened ?? (scanned && info.windowID > highest && !seen.contains(info.windowID))
+                    let openedNow = untold[info.windowID]?.opened ?? (scanned && !seen.contains(info.windowID))
                     switch MacWindows.ordinary(info) {
                     case true?:
                         untold[info.windowID] = nil
@@ -317,6 +314,7 @@ final class RoomWindows {
                     // browser window asked for with Command-N is wanted where it can be seen.
                     let id = announce(info, hidden: true)
                     let opened = openedNow
+                    if scanned { print("windows: \(info.app) \u{201C}\(info.title)\u{201D} (\(info.windowID)) has come on screen\(opened ? "" : ", but was there before")") }
                     // Never a crowd at once: what macOS lists can come back short for a scan
                     // and whole the next, and a burst of windows each being captured has
                     // brought the Mac to its knees. Two a scan; the rest wait in the list.
@@ -358,7 +356,6 @@ final class RoomWindows {
                     sp_window_show(id)
                 }
                 macFront = front
-                if !scanned { highest = all.map(\.windowID).max() ?? 0 }
                 scanned = true
                 seen.formUnion(all.map(\.windowID))
                 passedOver.formIntersection(Set(all.map(\.windowID)))
@@ -529,7 +526,6 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             entries.removeAll()
             following.removeAll()
             scanned = false
-            highest = 0
             seen.removeAll()
             passedOver.removeAll()
             publish()
