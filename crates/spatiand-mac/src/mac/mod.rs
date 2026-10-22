@@ -350,13 +350,14 @@ pub fn size_new_windows(state: &mut crate::Spatiand, _windows: &mut [crate::scen
             state.hide_window(&window);
         }
         if wanted.show {
-            state.show_window(&window);
-            // In front of the wearer, as a window chosen from the list is.
+            // In front of the wearer, as a window chosen from the list is: turned there first,
+            // then shown, which brings it in front of what it finds there.
             if let Some(mut placement) = state.layout.get(&window).filter(|_| !state.layout.is_pinned(&window)) {
                 placement.yaw = state.spawn_yaw;
                 placement.pitch = crate::window::clamp_pitch(state.layout.view_pitch);
                 state.layout.set(&window, placement);
             }
+            state.show_window(&window);
             state.focus_window(&window);
         }
         if !state.layout.is_hidden(&window) {

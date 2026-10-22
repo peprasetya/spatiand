@@ -984,9 +984,11 @@ impl Spatiand {
         }
     }
 
-    /// Bring a hidden window back where it was.
+    /// Bring a hidden window back where it was, in front of whatever is there now: a window
+    /// called is one the wearer wants to see.
     pub fn show_window(&mut self, window: &smithay::desktop::Window) {
         self.layout.set_hidden(window, false);
+        self.layout.bring_to_front(window);
     }
 
     /// Pin a window to the glass, or let it go back to where it was in the room.
