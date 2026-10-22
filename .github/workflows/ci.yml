@@ -9,8 +9,8 @@
 # it works. What a Deck, a Beam Pro and a pair of glasses do is still looked at by hand.
 #
 # `spatiand-host` is not built here: it links FFmpeg 8, which Ubuntu does not have; it is built on
-# deepmagpie (docs/remote.md). The media crates bind FFmpeg 7.1, which Ubuntu has not got either:
-# the linux job builds it once (tools/ci-deps.sh ffmpeg) and keeps it. The Mac's ANGLE comes from
+# deepmagpie (docs/remote.md). The media crates bind the FFmpeg Spatiand ships (third_party/ffmpeg),
+# which Ubuntu has not got either: the linux job builds it once (tools/ci-deps.sh ffmpeg) and keeps it. The Mac's ANGLE comes from
 # an installed Electron app and is not in the repository, so the Mac job builds the app but does
 # not package or run it. SpatiMesh (docs/spatimesh.md) is built by all three.
 name: ci
@@ -35,18 +35,18 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - name: FFmpeg 7.1, if an earlier run built it
+      - name: FFmpeg, if an earlier run built it
         id: ffmpeg
         uses: actions/cache/restore@v4
         with:
-          path: ~/ffmpeg-7.1
-          key: ffmpeg-7.1.1-opus-ubuntu-24.04
+          path: third_party/ffmpeg/out/linux
+          key: ffmpeg-${{ hashFiles('third_party/ffmpeg/versions.sh', 'third_party/ffmpeg/build.sh') }}-ubuntu-24.04
       - run: tools/ci-deps.sh linux ffmpeg
       - if: steps.ffmpeg.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ~/ffmpeg-7.1
-          key: ffmpeg-7.1.1-opus-ubuntu-24.04
+          path: third_party/ffmpeg/out/linux
+          key: ffmpeg-${{ hashFiles('third_party/ffmpeg/versions.sh', 'third_party/ffmpeg/build.sh') }}-ubuntu-24.04
       - uses: Swatinem/rust-cache@v2
       - run: . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null; cargo check --workspace --exclude spatiand-host --exclude spatiand-android --locked
       - run: . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null; cargo test --workspace --exclude spatiand-host --exclude spatiand-android --locked

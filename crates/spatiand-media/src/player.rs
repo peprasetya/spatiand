@@ -500,6 +500,7 @@ impl Player {
 
     /// As [`Player::open_with`], its sound mixed into `group`'s output with the rest of a page's.
     pub fn open_in(url: &str, options: &[(String, String)], group: &crate::SoundGroup) -> Result<Player, String> {
+        crate::trusted_certificates();
         let name = CString::new(url).map_err(|_| "a name with a nul in it".to_string())?;
         unsafe {
             let mut format = ptr::null_mut();

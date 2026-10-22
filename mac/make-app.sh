@@ -17,14 +17,33 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
 cp .build/release/Spatiand "$app/Contents/MacOS/Spatiand"
 # Spatiand's own applications, each a program beside the app's, which is where the launcher
-# looks for them (crates/spatiand/src/own.rs). SpatiReel, SpatiLoupe and SpatiShelf link the
-# FFmpeg this Mac has (Homebrew's): the app is for this Mac. bindgen wants to be told where
-# libclang is. Each is built on its own, so that one that does not build leaves the others.
+# looks for them (crates/spatiand/src/own.rs). SpatiReel, SpatiLoupe, SpatiShelf and SpatiMesh
+# link **the FFmpeg the app carries** (third_party/ffmpeg: the same version on every platform,
+# LGPL), not one the Mac happens to have: it is in Contents/Frameworks, found by the programs'
+# own search path. bindgen wants to be told where libclang is. Each is built on its own, so that
+# one that does not build leaves the others.
+../third_party/ffmpeg/build.sh mac
+FFMPEG=$(cd ../third_party/ffmpeg/out/mac && pwd)
+mkdir -p "$app/Contents/Frameworks"
+for lib in "$FFMPEG"/lib/lib*.[0-9]*.dylib; do
+  case "$lib" in *.*.*.*.dylib) continue ;; esac   # libavcodec.63.dylib, not libavcodec.63.1.102.dylib
+  cp "$lib" "$app/Contents/Frameworks/"
+done
+# And what the licences ask to go with them.
+mkdir -p "$app/Contents/Resources/licences"
+cp ../third_party/NOTICES.md "$app/Contents/Resources/licences/"
+. ../third_party/ffmpeg/versions.sh
+cp "../third_party/ffmpeg/src/ffmpeg-$FFMPEG_VERSION/COPYING.LGPLv3" "$app/Contents/Resources/licences/"
+cp "../third_party/ffmpeg/src/openssl-$OPENSSL_VERSION/LICENSE.txt" "$app/Contents/Resources/licences/OpenSSL-LICENSE.txt"
+cp Resources/hrtf/NOTICE.txt "$app/Contents/Resources/licences/mysofa-NOTICE.txt" 2>/dev/null || true
 OWN="spatireel spatiloupe spatiquill spatishelf spatimesh"
 for own in $OWN; do
   if (cd .. && LIBCLANG_PATH="${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib}" \
+      FFMPEG_PKG_CONFIG_PATH="$FFMPEG/lib/pkgconfig" \
       MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release -p "$own"); then
     cp "../target/release/$own" "$app/Contents/MacOS/$own"
+    otool -L "$app/Contents/MacOS/$own" | grep -q '@rpath/libav' \
+      && install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/$own"
   else
     echo "warning: $own did not build; the app is made without it"
   fi

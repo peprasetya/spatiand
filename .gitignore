@@ -8,3 +8,8 @@
 /spatiand-logs/
 # Fetched, not built: tools/fetch-pdfium.sh.
 /third_party/pdfium/
+
+# FFmpeg: sources, build folders and results, all made by third_party/ffmpeg/build.sh.
+/third_party/ffmpeg/src/
+/third_party/ffmpeg/build/
+/third_party/ffmpeg/out/

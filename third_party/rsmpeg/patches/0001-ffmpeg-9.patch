@@ -1,0 +1,67 @@
+diff -ru a/src/avcodec/codec.rs b/src/avcodec/codec.rs
+--- a/src/avcodec/codec.rs	2026-10-22 22:52:45
++++ b/src/avcodec/codec.rs	2026-10-22 22:52:45
+@@ -87,28 +87,38 @@
+ }
+ 
+ impl<'codec> AVCodec {
++    /// What the codec supports of one kind, by `avcodec_get_supported_config`: the codec's own
++    /// lists (`pix_fmts` and the rest) were taken out of `AVCodec` in FFmpeg 9.
++    fn supported<T>(&'codec self, config: ffi::AVCodecConfig) -> Option<&'codec [T]> {
++        let mut out: *const std::os::raw::c_void = std::ptr::null();
++        let mut num: std::os::raw::c_int = 0;
++        let ret = unsafe {
++            ffi::avcodec_get_supported_config(std::ptr::null(), self.as_ptr(), config, 0, &mut out, &mut num)
++        };
++        if ret < 0 || out.is_null() || num <= 0 {
++            return None;
++        }
++        Some(unsafe { std::slice::from_raw_parts(out as *const T, num as usize) })
++    }
++
+     /// Return supported framerates of this [`AVCodec`].
+     pub fn supported_framerates(&'codec self) -> Option<&'codec [AVRational]> {
+-        // terminates with AVRational{0, 0}
+-        unsafe { build_array(self.supported_framerates, AVRational { den: 0, num: 0 }) }
++        self.supported(ffi::AV_CODEC_CONFIG_FRAME_RATE)
+     }
+ 
+     /// Return supported pix_fmts of this [`AVCodec`].
+     pub fn pix_fmts(&'codec self) -> Option<&'codec [AVPixelFormat]> {
+-        // terminates with -1
+-        unsafe { build_array(self.pix_fmts, -1) }
++        self.supported(ffi::AV_CODEC_CONFIG_PIX_FORMAT)
+     }
+ 
+     /// Return supported samplerates of this [`AVCodec`].
+     pub fn supported_samplerates(&'codec self) -> Option<&'codec [i32]> {
+-        // terminates with 0
+-        unsafe { build_array(self.supported_samplerates, 0) }
++        self.supported(ffi::AV_CODEC_CONFIG_SAMPLE_RATE)
+     }
+ 
+     /// Return supported sample_fmts of this [`AVCodec`].
+     pub fn sample_fmts(&'codec self) -> Option<&'codec [AVSampleFormat]> {
+-        // terminates with -1
+-        unsafe { build_array(self.sample_fmts, -1) }
++        self.supported(ffi::AV_CODEC_CONFIG_SAMPLE_FORMAT)
+     }
+ }
+ 
+diff -ru a/src/avcodec/parser.rs b/src/avcodec/parser.rs
+--- a/src/avcodec/parser.rs	2026-10-22 22:52:45
++++ b/src/avcodec/parser.rs	2026-10-22 22:53:01
+@@ -10,11 +10,8 @@
+ impl AVCodecParserContext {
+     /// Allocate a [`AVCodecParserContext`] with given [`AVCodecID`].
+     pub fn init(codec_id: AVCodecID) -> Option<Self> {
+-        // For MSVC enum is i32, otherwises enum is u32.
+-        // ref: https://github.com/rust-lang/rust-bindgen/issues/1361
+-        #[cfg(not(target_env = "msvc"))]
+-        let codec_id = codec_id as i32;
+-        unsafe { ffi::av_parser_init(codec_id) }
++        // An int before FFmpeg 9, the enum itself from 9: whichever the bindings say.
++        unsafe { ffi::av_parser_init(codec_id as _) }
+             .upgrade()
+             .map(|x| unsafe { Self::from_raw(x) })
+     }
