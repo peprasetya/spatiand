@@ -76,6 +76,8 @@ final class RoomTap {
     // plus a hand's worth has it taken off, and that put forgotten.
     private let warpLock = NSLock()
     private var warps: [(by: CGVector, at: UInt64)] = []
+    /// The last put, until a movement is heard from where it put the cursor.
+    private var putUnseen: (to: CGPoint, at: UInt64)?
     /// The last put, wherever it was to.
     private var lastPut: (to: CGPoint, at: UInt64)?
 
@@ -103,6 +105,8 @@ final class RoomTap {
         lastPut = (point, now)
         warps.removeAll { now - $0.at > 1_000_000_000 }
         let by = CGVector(dx: point.x - from.x, dy: point.y - from.y)
+        putUnseen = (point, now)
+        PointerLog.shared.note(String(format: "warp %.1f %.1f from %.1f %.1f", point.x, point.y, from.x, from.y))
         // Small ones are not kept: a hand's movement is easily taken for one of them.
         if hypot(by.dx, by.dy) >= 8 { warps.append((by, now)) }
         warpLock.unlock()
@@ -112,6 +116,20 @@ final class RoomTap {
         let dx = event.getDoubleValueField(.mouseEventDeltaX), dy = event.getDoubleValueField(.mouseEventDeltaY)
         warpLock.lock()
         defer { warpLock.unlock() }
+        // **The first movement heard from where the cursor was put** carries the put, however
+        // far: a click in a window of this Mac's puts the cursor there, and its 1193 points
+        // came back as the hand's and sent the room's pointer to the corner of the view
+        // (pointer.log, 2026-10-22) -- what the put was said to be from had not matched. The
+        // cursor is exactly where it was put, so the hand's own part is too small to matter:
+        // that one movement counts for nothing.
+        if let put = putUnseen, clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - put.at < 1_000_000_000,
+           hypot(event.location.x - put.to.x, event.location.y - put.to.y) < 2.5 {
+            putUnseen = nil
+            if hypot(dx, dy) > 20 {
+                warps.removeAll()
+                return (0, 0)
+            }
+        }
         // The put whose distance best accounts for this travel, if taking it off leaves less.
         var best: (index: Int, left: Double)?
         for (i, w) in warps.enumerated() {
