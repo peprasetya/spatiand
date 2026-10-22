@@ -58,6 +58,76 @@ final class RoomTap {
     /// delivers them to that window as it would have -- momentum, phases, smart zoom and all.
     var overMacWindow: () -> Bool = { false }
 
+    // **One finger on the trackpad moves the room's pointer by itself.** What macOS says the
+    // cursor moved was spoiled by every put of the cursor -- a click, a window raised, the cursor
+    // caught up with the pointer -- and no filter caught all of it: the pointer still jumped. The
+    // fingers' own positions are not touched by any put, so they drive the pointer, and the
+    // cursor is only ever put where Spatiand wants it.
+    /// The finger moving the pointer, and where it was last, in the pad's points.
+    private var steering: (id: Int, x: Double, y: Double, at: Double)?
+    /// When a finger last moved the pointer (event time, s): the cursor's own movements then are not the room's.
+    private var steeredAt: Double = 0
+    /// How far macOS moves the cursor for a finger's travel, by the finger's speed: learnt as the
+    /// hand moves, so the pointer goes as far as the Mac's tracking speed would have taken it.
+    /// Per speed band, from slow (under 20 points a second) up, doubling.
+    private var gains: [Double] = Array(repeating: 1.6, count: 8)
+    /// What has been measured towards the next lesson: the finger's travel and the cursor's, since `since`.
+    private var lesson = (finger: 0.0, cursor: 0.0, since: 0.0, spoiled: false)
+
+    private static func band(_ speed: Double) -> Int { max(0, min(7, Int(log2(max(speed, 1) / 20)) + 1)) }
+    private func gain(_ speed: Double) -> Double {
+        // Between the bands' middles, not a step at each edge.
+        let f = max(0, min(7, log2(max(speed, 1) / 20) + 0.5))
+        let lo = Int(f), hi = min(7, lo + 1)
+        return gains[lo] + (gains[hi] - gains[lo]) * (f - Double(lo))
+    }
+
+    /// A finger's travel since the last, in the pad's points, or nil when no one finger is moving the pointer.
+    private func steer(_ event: NSEvent) -> (dx: Double, dy: Double)? {
+        let live = Array(event.allTouches().filter { $0.phase != .ended && $0.phase != .cancelled && !$0.isResting })
+        // One finger; or, with the button pressed, the finger that is not the one pressing it.
+        guard live.count == 1 || (live.count == 2 && buttons != 0) else { steering = nil; return nil }
+        let size = live[0].deviceSize
+        let now = event.timestamp
+        var best: (NSTouch, Double, Double)?
+        for t in live {
+            let x = Double(t.normalizedPosition.x * size.width), y = Double((1 - t.normalizedPosition.y) * size.height)
+            if steering?.id == t.identity.hash { return moved(t.identity.hash, x, y, now) }
+            if best == nil { best = (t, x, y) }
+        }
+        if let (t, x, y) = best { steering = (t.identity.hash, x, y, now) }
+        return nil
+    }
+
+    private func moved(_ id: Int, _ x: Double, _ y: Double, _ now: Double) -> (dx: Double, dy: Double)? {
+        guard let was = steering else { return nil }
+        steering = (id, x, y, now)
+        let dx = x - was.x, dy = y - was.y
+        let dt = max(now - was.at, 0.004)
+        let speed = hypot(dx, dy) / dt
+        let g = gain(speed)
+        steeredAt = now
+        lesson.finger += hypot(dx, dy)
+        if lesson.since == 0 { lesson.since = now }
+        return (dx * g, dy * g)
+    }
+
+    /// The cursor's movement as macOS made it, while a finger steers: what the lesson compares.
+    private func learn(_ dx: Double, _ dy: Double, at now: Double) {
+        warpLock.lock()
+        let put = lastPut.map { Double($0.at) / 1e9 } ?? 0
+        warpLock.unlock()
+        // A put in the last moment spoils what the cursor is said to have moved.
+        if hypot(dx, dy) > 80 || now - put < 0.3 { lesson.spoiled = true }
+        lesson.cursor += hypot(dx, dy)
+        guard lesson.since > 0, now - lesson.since >= 0.1 else { return }
+        if !lesson.spoiled, lesson.finger > 1, lesson.cursor > 0 {
+            let b = Self.band(lesson.finger / (now - lesson.since))
+            gains[b] = gains[b] * 0.9 + min(12, max(0.2, lesson.cursor / lesson.finger)) * 0.1
+        }
+        lesson = (0, 0, 0, false)
+    }
+
     // Three fingers and more.
     private var recognizer = GestureRecognizer()
     private var threeDown: (since: Double, x: Double, y: Double)?
@@ -299,6 +369,14 @@ final class RoomTap {
             let dx = event.getDoubleValueField(.mouseEventDeltaX), dy = event.getDoubleValueField(.mouseEventDeltaY)
             warpLock.lock(); handMoved = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); warpLock.unlock()
             trace?("\(type.rawValue),\(dx),\(dy),\(event.location.x),\(event.location.y)")
+            // A finger on the trackpad has moved the pointer already: this is only macOS's
+            // cursor following it, and what it says it moved is what the finger is learnt by.
+            let now = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1e9
+            if now - steeredAt < 0.15 {
+                learn(dx, dy, at: now)
+                PointerLog.shared.note(String(format: "cursor %ld %.1f %.1f at %.1f %.1f (the finger has it)", Int(type.rawValue), dx, dy, event.location.x, event.location.y))
+                return nil
+            }
             var (tx, ty) = travel(of: event)
             // **In a screen of this Mac's the cursor is where the pointer is**, and the hand
             // moves it there itself: so the room's pointer is sent to where the cursor now is,
@@ -370,6 +448,13 @@ final class RoomTap {
                 sp_pinch(Float(1 + gesture.magnification))
             } else if gesture.type == .gesture {
                 fingers(gesture)
+                // Not in a drag that a window of this Mac's has: there the application has the real cursor.
+                if !dragging, !(buttons & 1 != 0 && RoomWindows.shared.dragLag(cursor: .zero) != nil), let (tx, ty) = steer(gesture) {
+                    warpLock.lock(); handMoved = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); warpLock.unlock()
+                    if let at = RoomWindows.shared.screenPointer() { RoomWindows.shared.noteScreenPointer(CGPoint(x: at.x + tx, y: at.y + ty)) }
+                    PointerLog.shared.note(String(format: "finger -> %.1f %.1f (gains %@)", tx, ty, gains.map { String(format: "%.2f", $0) }.joined(separator: " ")))
+                    sp_pointer(Float(tx), Float(ty), buttons, 0, 0)
+                }
             }
         }
         return nil
