@@ -40,16 +40,22 @@ final class RoomWindows {
     private var scan: Timer?
     /// Whether the windows open when the room began have been listed: from then on a new one is shown.
     private var scanned = false
-    /// The highest window number seen so far. macOS numbers windows upwards and never reuses
-    /// one in a session, so only a window above this is one opened just now -- a window that
-    /// was missing from one scan and is back is not new, and is not brought out.
+    /// The highest window number there was when the room began. macOS numbers windows upwards
+    /// and never reuses one in a session, so only a window above this is one opened since.
     private var highest: CGWindowID = 0
+    /// Every window seen since: a window that was missing from one scan and is back is not new,
+    /// and is not brought out. **Not the highest seen so far** -- an application's helper
+    /// windows ("Window", Chrome's and Claude's among them) are numbered after the window
+    /// they go with and are often listed before it, and a new Chrome window from Command-N,
+    /// a Safari window for another profile, numbered below them, was taken for an old one
+    /// and waited in the list.
+    private var seen: Set<CGWindowID> = []
     /// Windows that are not windows in their own right, so as not to ask about them again.
     private var passedOver: Set<CGWindowID> = []
     /// Windows whose kind could not be told yet, and when they were first seen: asked again
     /// each scan for a few seconds before being passed over.
     /// Whether it was a window opened while the room was going is kept with it: by the time
-    /// it is told, it is no longer above `highest`.
+    /// it is told, it is among those `seen`.
     private var untold: [CGWindowID: (since: Date, opened: Bool)] = [:]
     private var focused: UInt32 = 0
     /// The window the Mac had in front at the last scan.
@@ -269,7 +275,7 @@ final class RoomWindows {
                         continue
                     }
                     // Only windows in their own right; see `MacWindows.isOrdinary`.
-                    let openedNow = untold[info.windowID]?.opened ?? (scanned && info.windowID > highest)
+                    let openedNow = untold[info.windowID]?.opened ?? (scanned && info.windowID > highest && !seen.contains(info.windowID))
                     switch MacWindows.ordinary(info) {
                     case true?:
                         untold[info.windowID] = nil
@@ -352,8 +358,9 @@ final class RoomWindows {
                     sp_window_show(id)
                 }
                 macFront = front
+                if !scanned { highest = all.map(\.windowID).max() ?? 0 }
                 scanned = true
-                highest = max(highest, all.map(\.windowID).max() ?? 0)
+                seen.formUnion(all.map(\.windowID))
                 passedOver.formIntersection(Set(all.map(\.windowID)))
                 untold = untold.filter { id, _ in all.contains(where: { $0.windowID == id }) }
                 for (id, entry) in entries {
@@ -523,6 +530,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             following.removeAll()
             scanned = false
             highest = 0
+            seen.removeAll()
             passedOver.removeAll()
             publish()
         }
