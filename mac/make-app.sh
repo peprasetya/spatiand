@@ -116,8 +116,9 @@ else
   echo "note: signed ad hoc, so each rebuild asks for Screen Recording and Accessibility again;"
   echo "      create the \"$IDENTITY_NAME\" certificate (see HoloFrame) to stop that"
 fi
-dest="$HOME/Applications/Spatiand.app"
-mkdir -p "$HOME/Applications"
+# Another checkout building its own app sets this, so as not to replace this one.
+dest="${SPATIAND_APP_DEST:-$HOME/Applications/Spatiand.app}"
+mkdir -p "$(dirname "$dest")"
 rm -rf "$dest"
 ditto --noextattr --norsrc "$app" "$dest"
 rm -rf "$stage"
