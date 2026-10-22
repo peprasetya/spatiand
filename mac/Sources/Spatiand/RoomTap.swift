@@ -128,9 +128,102 @@ final class RoomTap {
         lesson = (0, 0, 0, false)
     }
 
+    /// When a finger was last on the trackpad (uptime, s). Read from the room's windows' queue too.
+    private var touchedAt: Double = 0
+    /// **Whether the trackpad is the room's own just now**: a finger on it, or only just lifted.
+    /// Everything macOS makes of it then -- the cursor moved, a scroll, a pinch -- is taken and
+    /// dropped, and Spatiand does it all from the fingers; the cursor is put where Spatiand wants
+    /// it, as a touch screen puts it, and nowhere else. A mouse is not a trackpad and goes on as it was.
+    var fingerDriven: Bool {
+        warpLock.lock(); defer { warpLock.unlock() }
+        return Self.uptime - touchedAt < 0.3
+    }
+    private static var uptime: Double { Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1e9 }
+
+    /// Put the cursor back where Spatiand last put it, if macOS has moved it: never on the glasses.
+    private func pin(_ location: CGPoint) {
+        warpLock.lock()
+        var to = lastPut?.to
+        warpLock.unlock()
+        let glasses = Room.shared.screen.display
+        if to == nil || (glasses != nil && CGDisplayBounds(glasses!).contains(to!)) {
+            let main = CGDisplayBounds(CGMainDisplayID())
+            to = CGPoint(x: main.midX, y: main.midY)
+        }
+        guard let to, hypot(location.x - to.x, location.y - to.y) > 0.5 else { return }
+        CGWarpMouseCursorPosition(to)
+    }
+
+    // Two fingers: a scroll, or a pinch, decided as they start moving and kept until they lift.
+    private var two: (cx: Double, cy: Double, d: Double, mode: Int, gone: Double, spread: Double)?
+    /// The scroll's speed as the fingers left, in points a second: it carries on, slowing.
+    private var glide: (vx: Double, vy: Double)?
+    private var glideTimer: Timer?
+    private var lastScroll: (vx: Double, vy: Double, at: Double) = (0, 0, 0)
+    private lazy var natural: Bool = UserDefaults.standard.object(forKey: "com.apple.swipescrolldirection") as? Bool ?? true
+
+    private func scroll(_ dx: Double, _ dy: Double) {
+        // As a trackpad's own scroll in points: the content follows the fingers when scrolling is natural.
+        let sx = natural ? dx : -dx, sy = natural ? dy : -dy
+        sp_pointer(0, 0, buttons, Float(-sx / 15), Float(sy / 15))
+    }
+
+    private func twoFingers(_ live: [NSTouch], at now: Double) {
+        let size = live[0].deviceSize
+        let pts = live.map { (Double($0.normalizedPosition.x * size.width), Double((1 - $0.normalizedPosition.y) * size.height)) }
+        let cx = (pts[0].0 + pts[1].0) / 2, cy = (pts[0].1 + pts[1].1) / 2
+        let d = hypot(pts[0].0 - pts[1].0, pts[0].1 - pts[1].1)
+        guard var t = two else {
+            two = (cx, cy, d, 0, 0, 0)
+            stopGlide()
+            return
+        }
+        let mx = cx - t.cx, my = cy - t.cy, md = d - t.d
+        if t.mode == 0 {
+            t.gone += hypot(mx, my)
+            t.spread += abs(md)
+            if t.gone + t.spread > 4 { t.mode = t.spread > t.gone ? 2 : 1 }
+        }
+        if t.mode == 1 {
+            scroll(mx * 1.5, my * 1.5)
+            let dt = max(now - lastScroll.at, 0.004)
+            lastScroll = (lastScroll.vx * 0.5 + mx * 1.5 / dt * 0.5, lastScroll.vy * 0.5 + my * 1.5 / dt * 0.5, now)
+        } else if t.mode == 2, t.d > 1 {
+            sp_pinch(Float(d / t.d))
+        }
+        two = (cx, cy, d, t.mode, t.gone, t.spread)
+    }
+
+    private func twoLifted(at now: Double) {
+        if two?.mode == 1, now - lastScroll.at < 0.05, hypot(lastScroll.vx, lastScroll.vy) > 150 {
+            glide = (lastScroll.vx, lastScroll.vy)
+            glideTimer?.invalidate()
+            let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.glideOn() }
+            RunLoop.main.add(t, forMode: .common)
+            glideTimer = t
+        }
+        two = nil
+        lastScroll = (0, 0, 0)
+    }
+
+    private func glideOn() {
+        guard var g = glide, holding else { stopGlide(); return }
+        scroll(g.vx / 60, g.vy / 60)
+        g.vx *= 0.95; g.vy *= 0.95
+        if hypot(g.vx, g.vy) < 30 { stopGlide() } else { glide = g }
+    }
+
+    private func stopGlide() {
+        glideTimer?.invalidate()
+        glideTimer = nil
+        glide = nil
+    }
+
     // Three fingers and more.
     private var recognizer = GestureRecognizer()
     private var threeDown: (since: Double, x: Double, y: Double)?
+    /// When three fingers were last on the trackpad (uptime, s).
+    private var threeSeenAt: Double = 0
     private var dragging = false
     /// Whether macOS is doing three-finger drag itself (Accessibility's setting): then it sends
     /// a held button and nothing needs doing here.
@@ -353,7 +446,7 @@ final class RoomTap {
         // expects -- and the room's pointer is steered after the real cursor instead: a little
         // of the way each time, by how far apart they are in the window.
         // (Only with the button really down: the room hears of its coming up a frame late.)
-        if buttons & 1 != 0, type == .mouseMoved || type == .leftMouseDragged, let lag = RoomWindows.shared.dragLag(cursor: event.location) {
+        if buttons & 1 != 0, type == .mouseMoved || type == .leftMouseDragged, !fingerDriven, let lag = RoomWindows.shared.dragLag(cursor: event.location) {
             warpLock.lock(); handDragged = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); warpLock.unlock()
             let now = Date()
             if now.timeIntervalSince(lastFollow) > 0.03 {
@@ -371,10 +464,11 @@ final class RoomTap {
             trace?("\(type.rawValue),\(dx),\(dy),\(event.location.x),\(event.location.y)")
             // A finger on the trackpad has moved the pointer already: this is only macOS's
             // cursor following it, and what it says it moved is what the finger is learnt by.
-            let now = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1e9
-            if now - steeredAt < 0.15 {
-                learn(dx, dy, at: now)
+            let now = Self.uptime
+            if fingerDriven {
+                if now - steeredAt < 0.15 { learn(dx, dy, at: now) }
                 PointerLog.shared.note(String(format: "cursor %ld %.1f %.1f at %.1f %.1f (the finger has it)", Int(type.rawValue), dx, dy, event.location.x, event.location.y))
+                pin(event.location)
                 return nil
             }
             var (tx, ty) = travel(of: event)
@@ -406,6 +500,8 @@ final class RoomTap {
                 return String(format: "hand %ld %.1f %.1f at %.1f %.1f -> %.1f %.1f%@ | room view %.3f %.3f", Int(type.rawValue), dx, dy, event.location.x, event.location.y, tx, ty, (tx != dx || ty != dy) ? " (to the cursor)" : " (its own)", vx, vy)
             }())
             sp_pointer(Float(tx), Float(ty), buttons, 0, 0)
+        // macOS's own three-finger drag presses the button for it: here the fingers do that.
+        case .leftMouseDown where systemDrags && Self.uptime - threeSeenAt < 0.8, .leftMouseUp where systemDrags && Self.uptime - threeSeenAt < 0.8: return nil
         case .leftMouseDown: buttons |= 1; sp_pointer(0, 0, buttons, 0, 0)
         case .leftMouseUp: buttons &= ~1; sp_pointer(0, 0, buttons, 0, 0)
         case .rightMouseDown: buttons |= 2; sp_pointer(0, 0, buttons, 0, 0)
@@ -413,6 +509,8 @@ final class RoomTap {
         case .otherMouseDown: buttons |= 4; sp_pointer(0, 0, buttons, 0, 0)
         case .otherMouseUp: buttons &= ~4; sp_pointer(0, 0, buttons, 0, 0)
         case .scrollWheel:
+            // The trackpad's, and the glide macOS adds after it: the fingers have scrolled already.
+            if fingerDriven || event.getIntegerValueField(.scrollWheelEventMomentumPhase) != 0 { return nil }
             // Over a window of this Mac's own, macOS scrolls it: the real pointer is over it.
             if overMacWindow() { RoomWindows.shared.readyToScroll(); return pass }
             // In pixels where the device says them (a trackpad, a Magic Mouse), else in lines. A
@@ -442,14 +540,12 @@ final class RoomTap {
                 let touches = gesture.allTouches()
                 if !touches.isEmpty, touches.allSatisfy({ $0.type == .direct }) { return pass }
             }
-            if gesture.type == .magnify {
-                // Over a window of this Mac's own, the pinch is that application's.
-                if overMacWindow() { return pass }
-                sp_pinch(Float(1 + gesture.magnification))
-            } else if gesture.type == .gesture {
+            if gesture.type == .gesture {
+                let live = Array(gesture.allTouches().filter { $0.phase != .ended && $0.phase != .cancelled && !$0.isResting })
+                if !live.isEmpty { warpLock.lock(); touchedAt = Self.uptime; warpLock.unlock() }
+                if live.count == 2, buttons == 0 { twoFingers(live, at: gesture.timestamp) } else if two != nil { twoLifted(at: gesture.timestamp) }
                 fingers(gesture)
-                // Not in a drag that a window of this Mac's has: there the application has the real cursor.
-                if !dragging, !(buttons & 1 != 0 && RoomWindows.shared.dragLag(cursor: .zero) != nil), let (tx, ty) = steer(gesture) {
+                if !dragging, let (tx, ty) = steer(gesture) {
                     warpLock.lock(); handMoved = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); warpLock.unlock()
                     if let at = RoomWindows.shared.screenPointer() { RoomWindows.shared.noteScreenPointer(CGPoint(x: at.x + tx, y: at.y + ty)) }
                     PointerLog.shared.note(String(format: "finger -> %.1f %.1f (gains %@)", tx, ty, gains.map { String(format: "%.2f", $0) }.joined(separator: " ")))
@@ -472,7 +568,10 @@ final class RoomTap {
         let all = event.allTouches().filter { $0.phase != .ended && $0.phase != .cancelled }
         let touches = all.map { GestureRecognizer.Touch(id: $0.identity.hash, x: Double($0.normalizedPosition.x), y: Double($0.normalizedPosition.y)) }
         let now = event.timestamp
-        if touches.count == 3, !systemDrags {
+        if touches.count == 3 { threeSeenAt = Self.uptime }
+        // Done here even where macOS does three-finger drag itself: what it would do is dropped
+        // with the rest of what it makes of the trackpad (its press, see `handle`).
+        if touches.count == 3 {
             let x = touches.reduce(0) { $0 + $1.x } / 3, y = touches.reduce(0) { $0 + $1.y } / 3
             let size = all.first?.deviceSize ?? NSSize(width: 440, height: 300)
             if let held = threeDown {

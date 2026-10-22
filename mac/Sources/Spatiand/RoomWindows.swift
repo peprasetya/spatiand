@@ -655,7 +655,9 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         // 1012, 1678 points (pointer.log). So the head puts the cursor only with the hand still,
         // and until then what the room says is not taken over what the hand has done.
         let screen = entries[id]?.info.display != nil
-        if screen, RoomTap.shared.handIsMoving, !down.contains(id) {
+        // (Not with a finger on the trackpad: then the fingers drive the pointer and the cursor
+        // is only ever put, so it goes with the pointer, always.)
+        if screen, !RoomTap.shared.fingerDriven, RoomTap.shared.handIsMoving, !down.contains(id) {
             let here = CGEvent(source: nil)?.location ?? p
             let gap = hypot(here.x - p.x, here.y - p.y)
             if gap > 6 { entries[id]?.capture?.showCursor(false) } else if gap < 3 { entries[id]?.capture?.showCursor(true) }
@@ -675,7 +677,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             // was, each put came back inside a later movement, and with the Mac busy the
             // pointer jumped about the screen.
             let here = CGEvent(source: nil)?.location ?? p
-            if hypot(here.x - p.x, here.y - p.y) > 3 {
+            if hypot(here.x - p.x, here.y - p.y) > (RoomTap.shared.fingerDriven ? 0.5 : 3) {
                 PointerLog.shared.note(String(format: "put %.1f %.1f from %.1f %.1f (room %.1f %.1f in window %ld)", p.x, p.y, here.x, here.y, x, y, Int(id)))
                 RoomTap.shared.warp(to: p)
                 post(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left))
