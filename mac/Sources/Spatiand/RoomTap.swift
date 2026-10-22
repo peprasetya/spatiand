@@ -124,10 +124,12 @@ final class RoomTap {
         // that one movement counts for nothing.
         // Nor is it only the far ones, or only soon after: 15 and 26 points came back the same
         // way, and 306 a second and a half after the put, 208 after four (pointer.log,
-        // 2026-10-22) -- none of them the distance put, so nothing to take off. What the
-        // cursor has done since the put is all the hand can have done.
-        if let put = putUnseen, clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - put.at < 10_000_000_000,
-           hypot(event.location.x - put.to.x, event.location.y - put.to.y) < 2.5 {
+        // 2026-10-22) -- none of them the distance put, so nothing to take off; and after a
+        // minute untouched, still 18. What the cursor has done since the put is all the hand
+        // can have done: the cursor follows the hand everywhere in the log, never held. Near
+        // the put, then, and not only exactly at it (the hand had moved 3.6 points, and 458
+        // came with it); one made before the put is still where the cursor was, far off.
+        if let put = putUnseen, hypot(event.location.x - put.to.x, event.location.y - put.to.y) < 40 {
             putUnseen = nil
             warps.removeAll()
             return (event.location.x - put.to.x, event.location.y - put.to.y)
