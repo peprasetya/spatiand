@@ -48,6 +48,12 @@ pub enum Icon {
     Forward10,
     /// Locked: a padlock.
     Lock,
+    /// Lines of falling length: in the order of the names.
+    SortName,
+    /// A clock: what changed last.
+    SortRecent,
+    /// Two paths crossing: in no order.
+    Shuffle,
 }
 
 impl Icon {
@@ -85,6 +91,9 @@ impl Icon {
             Icon::Server => r#"<rect x="4" y="4" width="16" height="7" rx="1.8"/><rect x="4" y="13" width="16" height="7" rx="1.8"/><path d="M8 7.5h.1M8 16.5h.1"/>"#,
             Icon::Refresh => r#"<path d="M20 11a8 8 0 0 0-14.6-3.5M4 4v4h4M4 13a8 8 0 0 0 14.6 3.5M20 20v-4h-4"/>"#,
             Icon::Lock => r#"<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3M12 14.5v2.5"/>"#,
+            Icon::SortName => r#"<path d="M4 6.5h16M4 12h11M4 17.5h6"/>"#,
+            Icon::SortRecent => r#"<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>"#,
+            Icon::Shuffle => r#"<path d="M3.5 7h3.2c4 0 5.6 10 10.6 10H20M3.5 17h3.2c1.6 0 2.8-1 3.8-2.4M13.5 9.4c1-1.4 2.2-2.4 3.8-2.4H20M17.5 4.5L20 7l-2.5 2.5M17.5 14.5L20 17l-2.5 2.5"/>"#,
             Icon::Eye => r#""<path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>"#,
             Icon::Back10 => r#"<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v3.8h3.8"/><path d="M9.3 10.4l1.3-1v6" stroke-width="1.6"/><ellipse cx="14.4" cy="12.4" rx="1.7" ry="2.9" stroke-width="1.6"/>"#,
             Icon::Forward10 => r#"<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v3.8h-3.8"/><path d="M8.8 10.4l1.3-1v6" stroke-width="1.6"/><ellipse cx="13.9" cy="12.4" rx="1.7" ry="2.9" stroke-width="1.6"/>"#,

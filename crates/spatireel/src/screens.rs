@@ -360,11 +360,11 @@ enum Sort {
 impl Sort {
     const ALL: [Sort; 3] = [Sort::Name, Sort::Updated, Sort::Random];
 
-    fn label(self) -> &'static str {
+    fn icon(self) -> Icon {
         match self {
-            Sort::Name => "A\u{2013}Z",
-            Sort::Updated => "Updated",
-            Sort::Random => "Random",
+            Sort::Name => Icon::SortName,
+            Sort::Updated => Icon::SortRecent,
+            Sort::Random => Icon::Shuffle,
         }
     }
 }
@@ -600,9 +600,8 @@ impl Browse {
                     button.focused = false;
                     continue;
                 }
-                let width = Button::width(p, gl, sort.label());
                 button.focused = self.sort == sort;
-                button.draw(p, gl, top.take_right(width), sort.label());
+                button.draw_icon(p, gl, top.take_right(Button::HEIGHT), sort.icon(), "");
                 top.take_right(8.0);
             }
             top.take_right(8.0);
