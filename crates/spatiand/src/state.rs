@@ -474,19 +474,24 @@ impl Spatiand {
             return self.x11_pids.get(&x11.window_id()).copied().flatten();
         }
         use smithay::reexports::wayland_server::Resource;
-        let pid = window
-            .toplevel()?
-            .wl_surface()
-            .client()?
-            .get_credentials(&self.display_handle)
-            .ok()
-            .map(|c| c.pid as u32)?;
+        let pid = self.client_pid(&window.toplevel()?.wl_surface().client()?)?;
         // **Never this process.** A remote window's client is a thread of the session itself,
         // connected over a socket pair, so its credentials are the session's own. Answering
         // with that pid made "hold Y to force quit" on a remote window a way to kill the whole
         // session. A remote application is force-quit on its host instead; see
         // `remote::Remotes::force_quit`.
         (pid != std::process::id()).then_some(pid)
+    }
+
+    /// The process at the other end of a Wayland connection, if it can be known.
+    ///
+    /// **0 is not a process.** wayland-backend reads the peer's credentials on Linux and Android
+    /// only; everywhere else (the Mac) it answers 0 for every client. Taken at its word, every
+    /// window on a Mac was one process: SpatiWorld drawing the room made every other window its
+    /// "companion", and the window list showed SpatiWorld alone.
+    pub fn client_pid(&self, client: &smithay::reexports::wayland_server::Client) -> Option<u32> {
+        let pid = client.get_credentials(&self.display_handle).ok()?.pid;
+        (pid > 0).then_some(pid as u32)
     }
 
     /// The app id of the window with this layout id, if it has one yet.
@@ -754,7 +759,7 @@ impl Spatiand {
                 if !self.is_room(window, &surface) {
                     return None;
                 }
-                let pid = surface.client()?.get_credentials(&self.display_handle).ok()?.pid as u32;
+                let pid = self.client_pid(&surface.client()?)?;
                 // Never this process: a remote host's picture arrives over a socket pair.
                 (pid != std::process::id()).then_some(pid)
             })
@@ -979,9 +984,11 @@ impl Spatiand {
         }
     }
 
-    /// Bring a hidden window back where it was.
+    /// Bring a hidden window back where it was, in front of whatever is there now: a window
+    /// called is one the wearer wants to see.
     pub fn show_window(&mut self, window: &smithay::desktop::Window) {
         self.layout.set_hidden(window, false);
+        self.layout.bring_to_front(window);
     }
 
     /// Pin a window to the glass, or let it go back to where it was in the room.
@@ -1299,8 +1306,7 @@ impl XdgShellHandler for Spatiand {
                 use smithay::reexports::wayland_server::Resource;
                 t.wl_surface().client()
             })
-            .and_then(|c| c.get_credentials(&self.display_handle).ok())
-            .map(|c| c.pid as u32);
+            .and_then(|c| self.client_pid(&c));
         if let Some(id) = self.layout.id_of(&window) {
             let app_id = self.instance_of(&window);
             self.arrived_windows.push((id, pid, app_id));

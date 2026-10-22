@@ -271,6 +271,10 @@ pub struct WindowLayout {
     /// Cleared when the window stops saying it, which is what lets a browser's next one be
     /// recognised.
     recognised: HashSet<usize>,
+    /// The last window placed or brought to the front, and where those it moved back had been:
+    /// put away straight after, they go back there. A Mac's windows all arrive and are put away
+    /// at once, only to be listed, and each moved back what was on show.
+    moved_back_for: Option<(usize, Vec<(usize, f64)>)>,
 }
 
 impl WindowLayout {
@@ -285,8 +289,10 @@ impl WindowLayout {
     /// deal with than one you cannot find. `view_yaw` comes from the tracker via
     /// [`crate::state::Spatiand::spawn_yaw`].
     pub fn place(&mut self, window: &Window, view_yaw: f64) -> Placement {
+        let before = self.radii();
         let placement = self.room_for_new(view_yaw);
         if let Some(id) = self.id_for(window) {
+            self.moved_back_for = Some((id, before));
             self.placements.insert(id, placement);
             if self.focused.is_none() {
                 self.focused = Some(id);
@@ -295,51 +301,76 @@ impl WindowLayout {
         placement
     }
 
-    /// Where a new window goes, looking along `view_yaw`, moving back what it would cover
-    /// when there is no room in front of it.
+    /// Where a new window goes, looking along `view_yaw`, in front of what it would cover.
     fn room_for_new(&mut self, view_yaw: f64) -> Placement {
         // **In the middle of the view, in front of everything it would cover.** It was fanned
         // out -- straight ahead, then left, then right, further each time, by how many windows
         // were already open -- which looked random from where the wearer sat: the window just
-        // asked for was somewhere to be looked for. Now it is where they are looking, nearer
-        // than any window there, and if there is no room nearer those are moved back instead.
+        // asked for was somewhere to be looked for. Now it is where they are looking.
         let d = Placement::default();
-        let pitch = clamp_pitch(self.view_pitch);
-        let half = |p: &Placement| (p.width * 0.5 / p.radius.max(0.1)).atan();
-        let new_half = half(&d);
-        // Windows on show whose extent the new one would overlap, looking where it goes.
-        let covered: Vec<usize> = self
-            .placements
-            .iter()
-            .filter(|(id, p)| !self.hidden.contains(id) && !p.pip)
-            .filter(|(_, p)| {
-                let dyaw = (p.yaw - view_yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
-                let dpitch = p.pitch - pitch;
-                dyaw.abs() < half(p) + new_half && dpitch.abs() < (half(p) + new_half) * 0.8
-            })
-            .map(|(id, _)| *id)
-            .collect();
-        let nearest = covered.iter().filter_map(|id| self.placements.get(id)).map(|p| p.radius).fold(f64::INFINITY, f64::min);
-        let mut radius = d.radius;
-        if nearest.is_finite() {
-            let in_front = nearest - Self::STEP_FORWARD;
-            if in_front >= Self::NEAREST {
-                radius = in_front.min(d.radius);
-            } else {
-                // No room in front: the ones it covers go back, the new one at the usual place.
-                radius = d.radius.max(Self::NEAREST);
-                for id in &covered {
-                    if let Some(p) = self.placements.get_mut(id) {
-                        p.radius = p.radius.max(radius) + Self::STEP_FORWARD;
-                    }
-                }
-            }
-        }
-        Placement { pitch, yaw: view_yaw, radius, ..Default::default() }
+        let placement = Placement { pitch: clamp_pitch(self.view_pitch), yaw: view_yaw, ..d };
+        let radius = self.make_room(&placement, None).unwrap_or(d.radius);
+        Placement { radius, ..placement }
     }
 
-    /// How much nearer a new window is than the nearest it covers, in metres.
-    const STEP_FORWARD: f64 = 0.3;
+    /// Bring a window that is already in the room to the front where it now is (its yaw and
+    /// pitch already set): called from the list, or opened again. Its distance is kept when
+    /// nothing is in front of it.
+    pub fn bring_to_front(&mut self, window: &Window) {
+        let Some(id) = self.id_of(window) else { return };
+        let Some(placement) = self.placements.get(&id).copied() else { return };
+        if placement.pip {
+            return;
+        }
+        let before = self.radii();
+        if let Some(radius) = self.make_room(&placement, Some(id)) {
+            self.placements.insert(id, Placement { radius, ..placement });
+        }
+        self.moved_back_for = Some((id, before));
+    }
+
+    fn radii(&self) -> Vec<(usize, f64)> {
+        self.placements.iter().map(|(id, p)| (*id, p.radius)).collect()
+    }
+
+    /// The distance for a window put at `placement` to be in front of every window on show
+    /// that it covers, those being moved back to make room; nothing when it covers none.
+    ///
+    /// **As near as the nearest of them, which goes back a step** -- and not a step nearer
+    /// than it, as it was: each window opened came that much closer than the last, until
+    /// they were in the wearer's face.
+    fn make_room(&mut self, placement: &Placement, except: Option<usize>) -> Option<f64> {
+        let half = |p: &Placement| (p.width * 0.5 / p.radius.max(0.1)).atan();
+        let new_half = half(placement);
+        let mut covered: Vec<(usize, f64)> = self
+            .placements
+            .iter()
+            .filter(|(id, p)| Some(**id) != except && !self.hidden.contains(id) && !p.pip)
+            .filter(|(_, p)| {
+                let dyaw = (p.yaw - placement.yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+                let dpitch = p.pitch - placement.pitch;
+                dyaw.abs() < half(p) + new_half && dpitch.abs() < (half(p) + new_half) * 0.8
+            })
+            .map(|(id, p)| (*id, p.radius))
+            .collect();
+        if covered.is_empty() {
+            return None;
+        }
+        covered.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        let radius = covered[0].1.max(Self::NEAREST);
+        // Each one behind the one before it by at least a step, so two never share a place.
+        let mut behind = radius;
+        for (id, _) in covered {
+            if let Some(p) = self.placements.get_mut(&id) {
+                p.radius = p.radius.max(behind + Self::STEP_BACK);
+                behind = p.radius;
+            }
+        }
+        Some(radius)
+    }
+
+    /// How far a window covered by one brought to the front goes back, in metres.
+    const STEP_BACK: f64 = 0.3;
     /// Nearer than this a window is uncomfortable to look at (see `Placement::default`).
     const NEAREST: f64 = 1.3;
 
@@ -377,6 +408,13 @@ impl WindowLayout {
         if let Some(id) = self.id_of(window) {
             if hidden {
                 self.hidden.insert(id);
+                if let Some((_, before)) = self.moved_back_for.take_if(|(last, _)| *last == id) {
+                    for (other, radius) in before {
+                        if let Some(p) = self.placements.get_mut(&other).filter(|_| other != id) {
+                            p.radius = radius;
+                        }
+                    }
+                }
             } else {
                 self.hidden.remove(&id);
             }
@@ -711,17 +749,44 @@ mod tests {
         let p = layout.room_for_new(0.0);
         assert_eq!(p.yaw, 0.0);
         assert!(p.radius < layout.placements[&0].radius, "{} is not in front of {}", p.radius, layout.placements[&0].radius);
-        // And the one behind is where it was.
-        assert_eq!(layout.placements[&0].radius, Placement::default().radius);
+        // Where the old one was, and the old one a step back.
+        assert_eq!(p.radius, Placement::default().radius);
     }
 
     #[test]
-    fn with_no_room_in_front_the_covered_windows_go_back() {
+    fn new_windows_do_not_creep_nearer() {
+        // Each a step nearer than the last, five windows were at arm's length.
         let mut layout = WindowLayout::default();
-        layout.placements.insert(0, Placement { yaw: 0.0, radius: WindowLayout::NEAREST, ..Default::default() });
+        for id in 0..6 {
+            let p = layout.room_for_new(0.0);
+            assert_eq!(p.radius, Placement::default().radius, "window {id}");
+            layout.placements.insert(id, p);
+        }
+        let mut radii: Vec<f64> = layout.placements.values().map(|p| p.radius).collect();
+        radii.sort_by(f64::total_cmp);
+        assert!(radii.windows(2).all(|w| w[1] - w[0] >= WindowLayout::STEP_BACK - 1e-9), "{radii:?} share a place");
+    }
+
+    #[test]
+    fn a_window_too_near_is_not_followed_nearer() {
+        let mut layout = WindowLayout::default();
+        layout.placements.insert(0, Placement { yaw: 0.0, radius: 1.0, ..Default::default() });
         let p = layout.room_for_new(0.0);
         assert!(p.radius >= WindowLayout::NEAREST);
         assert!(layout.placements[&0].radius > p.radius, "the old window {} is not behind the new {}", layout.placements[&0].radius, p.radius);
+    }
+
+    #[test]
+    fn a_window_called_comes_in_front_of_the_one_there() {
+        let mut layout = WindowLayout::default();
+        window_at(&mut layout, 0, 0.0);
+        layout.placements.insert(1, Placement { yaw: 0.0, radius: 3.0, ..Default::default() });
+        let near = layout.placements[&0].radius;
+        let id = 1;
+        let placement = layout.placements[&id];
+        let r = layout.make_room(&placement, Some(id)).unwrap();
+        assert_eq!(r, near);
+        assert!(layout.placements[&0].radius > r);
     }
 
     #[test]

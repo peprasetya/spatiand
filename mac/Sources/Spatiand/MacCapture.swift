@@ -65,10 +65,27 @@ enum MacWindows {
     /// and not something an application puts up beside one: the list under an address bar, a
     /// tooltip, a menu. Those come and go with every keystroke, and each taken for a window
     /// was a new window in the room that took the keys from the one being typed in.
-    static func isOrdinary(_ info: MacWindowInfo) -> Bool {
-        guard let window = axWindow(info) else { return false }
+    /// The window the Mac has in front: the frontmost application's focused window.
+    static func frontWindow() -> CGWindowID? {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &value) == .success, let subrole = value as? String else { return false }
+        guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(app.processIdentifier), kAXFocusedWindowAttribute as CFString, &value) == .success,
+              let window = value, CFGetTypeID(window) == AXUIElementGetTypeID() else { return nil }
+        var id: CGWindowID = 0
+        return _AXUIElementGetWindow(window as! AXUIElement, &id) == .success && id != 0 ? id : nil
+    }
+
+    static func isOrdinary(_ info: MacWindowInfo) -> Bool { ordinary(info) ?? false }
+
+    /// As `isOrdinary`, but nil when it cannot be told yet: a window just opened is on the
+    /// screen's list a moment before its application lists it, or names what kind it is. A
+    /// sign-in window opened by a page was asked about in that moment, taken for a menu, and
+    /// never looked at again -- the login waited in a window nobody could see.
+    static func ordinary(_ info: MacWindowInfo) -> Bool? {
+        guard let window = axWindow(info) else { return nil }
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &value) == .success, let subrole = value as? String else { return nil }
+        if subrole == (kAXUnknownSubrole as String) { return nil }
         return subrole == (kAXStandardWindowSubrole as String) || subrole == (kAXDialogSubrole as String)
     }
 
@@ -185,6 +202,16 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     var isScreen: Bool { info.display != nil }
     /// A screen's picture at the size it looks rather than in every pixel it is drawn with.
     var pointsOnly = false
+
+    /// Whether a screen's picture has the Mac's pointer in it. Taken out while the Mac's
+    /// pointer trails the room's -- the hand moving, the head having moved the room's on --
+    /// and put back once it is under it again: two pointers, one following the other, were
+    /// seen catching up.
+    func showCursor(_ on: Bool) {
+        guard isScreen, let config, let stream, config.showsCursor != on else { return }
+        config.showsCursor = on
+        stream.updateConfiguration(config) { _ in }
+    }
 
     /// A whole screen: everything on it but Spatiand's own windows, with the Mac's pointer in
     /// the picture, since in a screen that is the pointer.
