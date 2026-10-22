@@ -64,6 +64,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func giveEverythingBack() {
         Room.shared.stop()
+        SystemGestures.swipesOff(false)
     }
 
     private func handleSignals() {
@@ -88,6 +89,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             exit(0)
         }
         handleSignals()
+        // Put back as they were if the last Spatiand ended with the room holding the trackpad.
+        SystemGestures.swipesOff(false)
         if let button = item.button {
             button.image = NSImage(systemSymbolName: "eyeglasses", accessibilityDescription: "Spatiand")
         }

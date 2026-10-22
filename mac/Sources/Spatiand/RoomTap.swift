@@ -189,12 +189,41 @@ final class RoomTap {
             let dt = max(now - lastScroll.at, 0.004)
             lastScroll = (lastScroll.vx * 0.5 + mx * 1.5 / dt * 0.5, lastScroll.vy * 0.5 + my * 1.5 / dt * 0.5, now)
         } else if t.mode == 2, t.d > 1 {
-            sp_pinch(Float(d / t.d))
+            // **Over what a Mac window shows, the pinch is the application's**, as macOS's own
+            // would be: a page zoomed in Safari, a picture in Preview. On its bar, or anywhere
+            // else in the room, it is the room's: the window nearer or further.
+            if pinchingApp == nil {
+                pinchingApp = overMacWindow()
+                if pinchingApp == true {
+                    RoomWindows.shared.readyToScroll()
+                    magnify(0, phase: 1)
+                }
+            }
+            if pinchingApp == true { magnify(d / t.d - 1, phase: 2) } else { sp_pinch(Float(d / t.d)) }
         }
         two = (cx, cy, d, t.mode, t.gone, t.spread)
     }
 
+    /// Whether the pinch going on is an application's (nil before it is decided).
+    private var pinchingApp: Bool?
+
+    /// A pinch as the trackpad's own reaches an application: a gesture event of the zoom kind,
+    /// by how much, and in which phase (1 began, 2 changed, 4 ended). The fields are the window
+    /// server's own, not in the public list.
+    private func magnify(_ by: Double, phase: Int64) {
+        guard let event = CGEvent(source: nil) else { return }
+        event.setIntegerValueField(CGEventField(rawValue: 55)!, value: 29)   // a gesture
+        event.setIntegerValueField(CGEventField(rawValue: 110)!, value: 8)   // of the zoom kind
+        event.setDoubleValueField(CGEventField(rawValue: 113)!, value: by)   // by this much
+        event.setIntegerValueField(CGEventField(rawValue: 132)!, value: phase)
+        event.location = CGEvent(source: nil)?.location ?? .zero
+        event.setIntegerValueField(.eventSourceUserData, value: spatiandEventMark)
+        event.post(tap: .cghidEventTap)
+    }
+
     private func twoLifted(at now: Double) {
+        if pinchingApp == true { magnify(0, phase: 4) }
+        pinchingApp = nil
         if two?.mode == 1, now - lastScroll.at < 0.05, hypot(lastScroll.vx, lastScroll.vy) > 150 {
             glide = (lastScroll.vx, lastScroll.vy)
             glideTimer?.invalidate()
@@ -224,6 +253,8 @@ final class RoomTap {
     private var threeDown: (since: Double, x: Double, y: Double)?
     /// When three fingers were last on the trackpad (uptime, s).
     private var threeSeenAt: Double = 0
+    /// macOS's three-finger drag has pressed the button, and its release is to be dropped too.
+    private var systemPressed = false
     private var dragging = false
     /// Whether macOS is doing three-finger drag itself (Accessibility's setting): then it sends
     /// a held button and nothing needs doing here.
@@ -350,8 +381,11 @@ final class RoomTap {
                                     .rightMouseDragged, .otherMouseDown, .otherMouseUp, .otherMouseDragged, .scrollWheel,
                                     .keyDown, .keyUp, .flagsChanged]
         for type in types { mask |= 1 << CGEventMask(type.rawValue) }
-        // Trackpad gestures: not in the public list, and what a pinch arrives as.
-        mask |= 1 << 29
+        // Trackpad gestures: not in the public list, and what a pinch arrives as. And the rest
+        // of their family -- rotate, begin and end, magnify, swipe, smart zoom, Look Up, a firm
+        // press -- which went past to the application under the cursor: a three-finger tap in the
+        // room opened Dictionary.
+        for raw in [18, 19, 20, 29, 30, 31, 32, 33, 34] as [UInt64] { mask |= 1 << raw }
         let me = Unmanaged.passUnretained(self).toOpaque()
         guard let made = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
                                            eventsOfInterest: mask, callback: { _, type, event, user in
@@ -382,6 +416,7 @@ final class RoomTap {
         if on, tap == nil, !install() { return }
         holding = on
         buttons = 0
+        SystemGestures.swipesOff(on)
         // The Mac's own pointer stays where it is while the room has the mouse: what moves is the
         // room's. Its travel still arrives in every event.
         CGAssociateMouseAndMouseCursorPosition(on ? 0 : 1)
@@ -501,7 +536,14 @@ final class RoomTap {
             }())
             sp_pointer(Float(tx), Float(ty), buttons, 0, 0)
         // macOS's own three-finger drag presses the button for it: here the fingers do that.
-        case .leftMouseDown where systemDrags && Self.uptime - threeSeenAt < 0.8, .leftMouseUp where systemDrags && Self.uptime - threeSeenAt < 0.8: return nil
+        // (Its release only with its press: a release dropped alone left the button held down,
+        // and every movement after was a drag.)
+        case .leftMouseDown where systemDrags && Self.uptime - threeSeenAt < 0.8:
+            systemPressed = true
+            return nil
+        case .leftMouseUp where systemPressed:
+            systemPressed = false
+            return nil
         case .leftMouseDown: buttons |= 1; sp_pointer(0, 0, buttons, 0, 0)
         case .leftMouseUp: buttons &= ~1; sp_pointer(0, 0, buttons, 0, 0)
         case .rightMouseDown: buttons |= 2; sp_pointer(0, 0, buttons, 0, 0)
@@ -531,7 +573,7 @@ final class RoomTap {
             let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
             if let bit = Self.modifierBit(code) { sp_key(code, event.flags.rawValue & bit != 0) }
         default:
-            guard type.rawValue == 29, let gesture = NSEvent(cgEvent: event) else { break }
+            guard (18...34).contains(type.rawValue), let gesture = NSEvent(cgEvent: event) else { break }
             // **The Touch Bar's touches come the same way as the trackpad's**, and are not the
             // room's: taken with the rest, the bar went dead for as long as the room had the
             // mouse. A finger on a screen is a direct touch; one on a trackpad is not.
