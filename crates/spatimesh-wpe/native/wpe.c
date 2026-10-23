@@ -85,7 +85,6 @@ static void add_damage(MeshView *v, int x, int y, int w, int h) {
 static gboolean mesh_view_render_buffer(WPEView *view, WPEBuffer *buffer, const WPERectangle *damage, guint n_damage, GError **error) {
     MeshView *v = (MeshView *)view;
     int width = wpe_buffer_get_width(buffer), height = wpe_buffer_get_height(buffer);
-    if (g_getenv("SPATIMESH_WPE_TRACE")) g_message("render_buffer %dx%d %s", width, height, G_OBJECT_TYPE_NAME(buffer));
     GBytes *pixels = NULL;
     int stride = width * 4;
     if (WPE_IS_BUFFER_SHM(buffer)) {
@@ -983,7 +982,6 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
     t->wpe = (MeshView *)webkit_web_view_get_wpe_view(t->view);
     t->wpe->on_picture = on_picture;
     t->wpe->data = t;
-    if (g_getenv("SPATIMESH_WPE_TRACE")) g_message("open: view %s toplevel %p mapped %d", G_OBJECT_TYPE_NAME(t->wpe), wpe_view_get_toplevel(WPE_VIEW(t->wpe)), wpe_view_get_mapped(WPE_VIEW(t->wpe)));
     wpe_toplevel_resize(wpe_view_get_toplevel(WPE_VIEW(t->wpe)), t->width, t->height);
     wpe_view_set_visible(WPE_VIEW(t->wpe), TRUE);
     webkit_web_view_set_zoom_level(t->view, zoom > 0.1 ? zoom : 1.0);

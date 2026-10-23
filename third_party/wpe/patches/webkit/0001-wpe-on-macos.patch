@@ -700,6 +700,24 @@ index 22c44ab7d..fd6d8db7e 100644
  #endif
  
  WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
+index f3daaef29..f22d6510a 100644
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
+@@ -622,6 +622,13 @@ AcceleratedSurface::SwapChain::SwapChain(AcceleratedSurface& surface)
+         setupBufferFormat();
+         break;
+ #endif
++#if OS(DARWIN) && !PLATFORM(GTK)
++    // Spatiand: WPE on macOS, whose display is ANGLE's default (Metal). No buffer of the GPU's
++    // to hand over yet (an IOSurface kind is to come): frames go by shared memory.
++    case PlatformDisplay::Type::Default:
++        m_type = Type::SharedMemory;
++        break;
++#endif
+ #else
+     case PlatformDisplay::Type::Surfaceless:
+ #if USE(GBM)
 diff --git a/Source/WebKit/WebProcess/WebProcess.cpp b/Source/WebKit/WebProcess/WebProcess.cpp
 index 1a40da5d1..8a87747e9 100644
 --- a/Source/WebKit/WebProcess/WebProcess.cpp

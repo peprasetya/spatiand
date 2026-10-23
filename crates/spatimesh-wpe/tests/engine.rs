@@ -278,25 +278,35 @@ fn lists_and_dialogs_are_ours_to_show() {
     host.quit();
 }
 
-/// Every process under `pid`, by its name.
+/// Every process under `pid`, by its name: from `ps`, on the Mac and Linux alike.
 fn descendants(pid: u32) -> Vec<(u32, String)> {
+    let out = std::process::Command::new("ps").args(["-A", "-o", "pid=,ppid=,comm="]).output().unwrap();
+    let all: Vec<(u32, u32, String)> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut f = line.split_whitespace();
+            let p = f.next()?.parse().ok()?;
+            let parent = f.next()?.parse().ok()?;
+            let name = f.collect::<Vec<_>>().join(" ");
+            Some((p, parent, name.rsplit('/').next().unwrap_or("").to_string()))
+        })
+        .collect();
     let mut found = Vec::new();
     let mut parents = vec![pid];
     while let Some(parent) = parents.pop() {
-        for entry in std::fs::read_dir("/proc").unwrap().flatten() {
-            let Some(p) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
-            let Ok(stat) = std::fs::read_to_string(format!("/proc/{p}/stat")) else { continue };
-            // pid (comm) state ppid ...
-            let Some(close) = stat.rfind(')') else { continue };
-            let name = stat[stat.find('(').unwrap() + 1..close].to_string();
-            let ppid: u32 = stat[close + 2..].split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-            if ppid == parent {
-                found.push((p, name));
-                parents.push(p);
+        for (p, pp, name) in &all {
+            if *pp == parent {
+                found.push((*p, name.clone()));
+                parents.push(*p);
             }
         }
     }
     found
+}
+
+/// WPE's web process (WebKitGTK's is "WebKitWebProcess").
+fn is_web_process(name: &str) -> bool {
+    name.starts_with("WPEWebProcess") || name.starts_with("WebKitWebProces")
 }
 
 #[test]
@@ -305,14 +315,14 @@ fn a_crashed_page_is_told_and_the_rest_go_on() {
     host.send(ToHost::Open { tab: 1, url: page("<title>one</title>"), view: View::new(200, 100, 1.0) });
     host.title(1, "one");
     host.loaded(1);
-    let before: Vec<u32> = descendants(host.child.id()).into_iter().filter(|(_, n)| n.starts_with("WebKitWebProces")).map(|(p, _)| p).collect();
+    let before: Vec<u32> = descendants(host.child.id()).into_iter().filter(|(_, n)| is_web_process(n)).map(|(p, _)| p).collect();
     host.send(ToHost::Open { tab: 2, url: page("<title>two</title>"), view: View::new(200, 100, 1.0) });
     host.title(2, "two");
     host.loaded(2);
     // The second tab's own process: the one that was not there before it.
     let second: Vec<u32> = descendants(host.child.id())
         .into_iter()
-        .filter(|(p, n)| n.starts_with("WebKitWebProces") && !before.contains(p))
+        .filter(|(p, n)| is_web_process(n) && !before.contains(p))
         .map(|(p, _)| p)
         .collect();
     assert!(!second.is_empty(), "the second tab has a process of its own");
