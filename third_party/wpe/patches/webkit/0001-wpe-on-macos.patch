@@ -539,6 +539,51 @@ index 53e089add..711b30103 100644
      [Validator='!!m_handle && *m_handle'] MachSendRight m_handle;
  #endif
  #if OS(WINDOWS)
+diff --git a/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp b/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp
+index 7d054a56b..1e0b5afc7 100644
+--- a/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp
++++ b/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp
+@@ -45,17 +45,40 @@
+ #include <glib-unix.h>
+ #endif
+ 
++#if OS(DARWIN)
++#include <dispatch/dispatch.h>
++#include <unistd.h>
++#endif
++
+ #if ENABLE(LLVM_PROFILE_GENERATION)
+ __attribute__((weak)) extern "C" int __llvm_profile_dump(void);
+ #endif
+ 
+ namespace WebKit {
+ 
++#if OS(DARWIN)
++static void parentExited(void*)
++{
++    _exit(0);
++}
++#endif
++
+ AuxiliaryProcessMainCommon::AuxiliaryProcessMainCommon()
+ {
+ #if ENABLE(BREAKPAD)
+     installBreakpadExceptionHandler();
+ #endif
++#if OS(DARWIN)
++    // Spatiand: WPE on macOS. The connection is a datagram socket there (macOS has no local
++    // SOCK_SEQPACKET), whose closing at one end the other is never told of: a process whose
++    // parent had gone lived on. So the parent itself is watched, and this one leaves with it.
++    pid_t parent = getppid();
++    dispatch_source_t watch = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, parent, DISPATCH_PROC_EXIT, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
++    dispatch_source_set_event_handler_f(watch, parentExited);
++    dispatch_resume(watch);
++    if (getppid() != parent)
++        _exit(0);
++#endif
+ }
+ 
+ // The command line is constructed in ProcessLauncher::launchProcess.
 diff --git a/Source/WebKit/UIProcess/API/C/WKNativeEvent.h b/Source/WebKit/UIProcess/API/C/WKNativeEvent.h
 index 71146aa2b..25f7deaad 100644
 --- a/Source/WebKit/UIProcess/API/C/WKNativeEvent.h
