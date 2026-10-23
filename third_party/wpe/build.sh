@@ -17,7 +17,7 @@ src=$work/src
 out=$work/out/$platform
 build=$work/build/$platform
 mkdir -p "$src" "$out" "$build"
-jobs=$( (sysctl -n hw.ncpu || nproc) 2>/dev/null )
+jobs=${JOBS:-$( (sysctl -n hw.ncpu || nproc) 2>/dev/null )}
 # meson and ninja for the GNOME libraries, from a folder of this script's own.
 [ -x "$work/.venv/bin/meson" ] || { python3 -m venv "$work/.venv" && "$work/.venv/bin/pip" install -q meson ninja; }
 PATH=$work/.venv/bin:$PATH
@@ -25,12 +25,28 @@ export PKG_CONFIG_PATH="$out/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 
 fetch() { # name url
     [ -d "$src/$1" ] && return
-    case $2 in *.gz) unpack=-xz ;; *) unpack=-xJ ;; esac
+    case $2 in *.gz) unpack=-xz ;; *.bz2) unpack=-xj ;; *) unpack=-xJ ;; esac
     curl -fsSL "$2" | tar $unpack -C "$src"
     for p in "$here/patches/${1%-*}"/*.patch; do
         [ -f "$p" ] && (cd "$src/$1" && patch -p1 < "$p")
     done
     return 0
+}
+cmake_lib() { # name [cmake options]
+    name=$1; shift
+    [ -f "$build/$name/.installed" ] && return
+    cmake -S "$src/$name" -B "$build/$name" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$out" \
+        -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_NAME_DIR="$out/lib" -DCMAKE_PREFIX_PATH="$out" \
+        -DCMAKE_IGNORE_PREFIX_PATH="/usr/local;/opt/homebrew" -DBUILD_SHARED_LIBS=ON "$@"
+    ninja -C "$build/$name" install
+    touch "$build/$name/.installed"
+}
+auto_lib() { # name [configure options]
+    name=$1; shift
+    [ -f "$build/$name/.installed" ] && return
+    mkdir -p "$build/$name"
+    (cd "$build/$name" && "$src/$name/configure" --prefix="$out" --disable-static --enable-shared "$@" && make -j"$jobs" && make install)
+    touch "$build/$name/.installed"
 }
 meson_lib() { # name [meson options]
     name=$1; shift
@@ -57,10 +73,78 @@ case $platform in
 mac)
     # The macOS Spatiand runs on, for every library built here (meson takes it from this).
     export MACOSX_DEPLOYMENT_TARGET=14.0
+    # **Nothing of Homebrew's**: pkg-config sees only what is built here (and the system's own
+    # libraries are found by the compilers without it). A library found by chance is one the
+    # app needs and does not carry.
+    export PKG_CONFIG_LIBDIR="$out/lib/pkgconfig"
+    # Our prefix ahead of clang's built-in /usr/local, where Homebrew's libintl and libpng sit.
+    export CPPFLAGS="-I$out/include" LDFLAGS="-L$out/lib"
+    export CFLAGS="$CPPFLAGS" CXXFLAGS="$CPPFLAGS"
+    unset PKG_CONFIG_PATH
+    # Python's own downloads (meson's) trust the system's roots.
+    export SSL_CERT_FILE=/etc/ssl/cert.pem
+
+    # What macOS has not got. Its own SQLite, libxml2, zlib, bzip2, expat, libffi and ICU are used.
+    gnu=https://ftp.gnu.org/gnu
+    fetch "zstd-$ZSTD_VERSION" "https://github.com/facebook/zstd/releases/download/v$ZSTD_VERSION/zstd-$ZSTD_VERSION.tar.gz"
+    [ -f "$build/zstd-$ZSTD_VERSION/.installed" ] || { cmake -S "$src/zstd-$ZSTD_VERSION/build/cmake" -B "$build/zstd-$ZSTD_VERSION" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$out" -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_NAME_DIR="$out/lib" \
+        -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_STATIC=OFF -DZSTD_BUILD_TESTS=OFF && ninja -C "$build/zstd-$ZSTD_VERSION" install && touch "$build/zstd-$ZSTD_VERSION/.installed"; }
+    fetch "pcre2-$PCRE2_VERSION" "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-$PCRE2_VERSION/pcre2-$PCRE2_VERSION.tar.bz2"
+    cmake_lib "pcre2-$PCRE2_VERSION" -DPCRE2_BUILD_PCRE2GREP=OFF -DPCRE2_BUILD_TESTS=OFF -DPCRE2_SUPPORT_JIT=ON
+    # gettext's libintl, which WebKit calls; GLib itself is built without it.
+    fetch "gettext-$GETTEXT_VERSION" "$gnu/gettext/gettext-$GETTEXT_VERSION.tar.xz"
+    [ -f "$build/gettext-$GETTEXT_VERSION/.installed" ] || { mkdir -p "$build/gettext-$GETTEXT_VERSION" && (cd "$build/gettext-$GETTEXT_VERSION" \
+        && "$src/gettext-$GETTEXT_VERSION/gettext-runtime/configure" --prefix="$out" --disable-static --enable-shared --disable-java \
+            --disable-csharp --disable-libasprintf --without-emacs --with-included-gettext \
+        && make -j"$jobs" -C intl && make -C intl install) && touch "$build/gettext-$GETTEXT_VERSION/.installed"; }
+    # macOS's own libffi, said to pkg-config (the system has no .pc of it, and meson, not finding
+    # it, went to download one).
+    sdk=$(xcrun --show-sdk-path)
+    mkdir -p "$out/lib/pkgconfig"
+    cat > "$out/lib/pkgconfig/libffi.pc" <<PC
+Name: libffi
+Description: macOS's own
+Version: 3.4.0
+Cflags: -I$sdk/usr/include/ffi
+Libs: -lffi
+PC
+    # The SDK's zlib, which libpng's .pc requires and macOS ships no .pc of.
+    cat > "$out/lib/pkgconfig/zlib.pc" <<PC
+Name: zlib
+Description: macOS's own
+Version: 1.2.12
+Libs: -lz
+PC
+    fetch "glib-$GLIB_VERSION" "https://download.gnome.org/sources/glib/${GLIB_VERSION%.*}/glib-$GLIB_VERSION.tar.xz"
+    meson_lib "glib-$GLIB_VERSION" -Dnls=disabled -Dtests=false -Dintrospection=disabled -Ddocumentation=false -Dman-pages=disabled \
+        -Dsysprof=disabled -Dlibelf=disabled -Dglib_debug=disabled
+    fetch "libpng-$LIBPNG_VERSION" "https://download.sourceforge.net/libpng/libpng-$LIBPNG_VERSION.tar.xz"
+    cmake_lib "libpng-$LIBPNG_VERSION" -DPNG_TESTS=OFF -DPNG_TOOLS=OFF -DPNG_STATIC=OFF -DPNG_FRAMEWORK=OFF
+    fetch "freetype-$FREETYPE_VERSION" "https://download.savannah.gnu.org/releases/freetype/freetype-$FREETYPE_VERSION.tar.xz"
+    meson_lib "freetype-$FREETYPE_VERSION" -Dharfbuzz=disabled -Dbrotli=disabled -Dpng=enabled -Dzlib=system -Dbzip2=enabled -Dtests=disabled
+    fetch "fontconfig-$FONTCONFIG_VERSION" "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/$FONTCONFIG_VERSION/fontconfig-$FONTCONFIG_VERSION.tar.xz"
+    meson_lib "fontconfig-$FONTCONFIG_VERSION" -Ddoc=disabled -Dtests=disabled -Dtools=disabled -Dcache-build=disabled -Dnls=disabled
+    fetch "libjpeg-turbo-$LIBJPEG_TURBO_VERSION" "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/$LIBJPEG_TURBO_VERSION/libjpeg-turbo-$LIBJPEG_TURBO_VERSION.tar.gz"
+    cmake_lib "libjpeg-turbo-$LIBJPEG_TURBO_VERSION" -DENABLE_STATIC=OFF -DWITH_TURBOJPEG=OFF
+    fetch "libwebp-$LIBWEBP_VERSION" "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-$LIBWEBP_VERSION.tar.gz"
+    cmake_lib "libwebp-$LIBWEBP_VERSION" -DWEBP_BUILD_ANIM_UTILS=OFF -DWEBP_BUILD_CWEBP=OFF -DWEBP_BUILD_DWEBP=OFF -DWEBP_BUILD_GIF2WEBP=OFF \
+        -DWEBP_BUILD_IMG2WEBP=OFF -DWEBP_BUILD_VWEBP=OFF -DWEBP_BUILD_WEBPINFO=OFF -DWEBP_BUILD_WEBPMUX=OFF -DWEBP_BUILD_EXTRAS=OFF
+    fetch "nghttp2-$NGHTTP2_VERSION" "https://github.com/nghttp2/nghttp2/releases/download/v$NGHTTP2_VERSION/nghttp2-$NGHTTP2_VERSION.tar.xz"
+    cmake_lib "nghttp2-$NGHTTP2_VERSION" -DENABLE_LIB_ONLY=ON -DBUILD_STATIC_LIBS=OFF -DENABLE_DOC=OFF -DBUILD_TESTING=OFF
+    fetch "libpsl-$LIBPSL_VERSION" "https://github.com/rockdaboot/libpsl/releases/download/$LIBPSL_VERSION/libpsl-$LIBPSL_VERSION.tar.gz"
+    meson_lib "libpsl-$LIBPSL_VERSION" -Druntime=no -Dtests=false -Ddocs=false
+    fetch "libtasn1-$LIBTASN1_VERSION" "$gnu/libtasn1/libtasn1-$LIBTASN1_VERSION.tar.gz"
+    auto_lib "libtasn1-$LIBTASN1_VERSION" --disable-doc
+    fetch "libgpg-error-$LIBGPG_ERROR_VERSION" "https://gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-$LIBGPG_ERROR_VERSION.tar.bz2"
+    auto_lib "libgpg-error-$LIBGPG_ERROR_VERSION" --disable-doc --disable-tests --disable-nls
+    fetch "libgcrypt-$LIBGCRYPT_VERSION" "https://gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-$LIBGCRYPT_VERSION.tar.bz2"
+    auto_lib "libgcrypt-$LIBGCRYPT_VERSION" --disable-doc --with-libgpg-error-prefix="$out"
+
     # OpenSSL: the one FFmpeg is built with, so the app carries one.
     "$here/../ffmpeg/build.sh" mac
     ssl=$(cd "$here/../ffmpeg/out/mac" && pwd)
-    export PKG_CONFIG_PATH="$PKG_CONFIG_PATH:$ssl/lib/pkgconfig"
+    export PKG_CONFIG_PATH="${PKG_CONFIG_PATH:+$PKG_CONFIG_PATH:}$ssl/lib/pkgconfig"
     fetch "glib-networking-$GLIB_NETWORKING_VERSION" "https://download.gnome.org/sources/glib-networking/${GLIB_NETWORKING_VERSION%.*}/glib-networking-$GLIB_NETWORKING_VERSION.tar.xz"
     meson_lib "glib-networking-$GLIB_NETWORKING_VERSION" -Dgnutls=disabled -Dopenssl=enabled -Dlibproxy=disabled -Dgnome_proxy=disabled -Dtests=false
     # The module finds OpenSSL two folders up, where WPE's libraries are and where it is copied.
@@ -122,6 +206,7 @@ esac
 # now: WebKit's own ANGLE would sit on the Mac's ANGLE, which is not done yet.
 mkdir -p "$build/webkit"
 (cd "$build/webkit" && cmake -G Ninja "$webkit" -DPORT=WPE -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$out" \
+    -DCMAKE_PREFIX_PATH="$out" -DCMAKE_IGNORE_PREFIX_PATH="/usr/local;/opt/homebrew" \
     $platform_options \
     -DENABLE_WPE_PLATFORM=ON -DENABLE_WPE_PLATFORM_HEADLESS=ON -DENABLE_WPE_PLATFORM_DRM=OFF -DENABLE_WPE_PLATFORM_WAYLAND=OFF \
     -DENABLE_WPE_LEGACY_API=OFF -DENABLE_WPE_QT_API=OFF -DUSE_GBM=OFF -DUSE_LIBDRM=OFF \
