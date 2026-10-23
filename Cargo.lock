@@ -4913,6 +4913,7 @@ name = "spatimesh-webkit"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "libc",
  "serde_json",
  "spatimesh",
  "spatimesh-shim",

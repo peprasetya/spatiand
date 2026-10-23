@@ -626,6 +626,11 @@ pub(crate) fn pump(wire: &mut Wire, queue: &mut EventQueue<Wire>, timeout: Optio
     fds.extend(watched.iter().map(|&fd| libc::pollfd { fd, events: libc::POLLIN, revents: 0 }));
     let wait = timeout.map_or(-1, |t| t.as_millis().min(i32::MAX as u128) as i32);
     let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, wait) };
+    // A compositor that has gone leaves the socket hung up. Whatever a read of it then says, the
+    // application is not wanted any more: it must end, not turn round the loop at a full core.
+    if ready > 0 && fds[0].revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 && fds[0].revents & libc::POLLIN == 0 {
+        return Err(lost(&"the connection is closed"));
+    }
     if ready > 0 && fds[0].revents != 0 {
         match guard.read() {
             Ok(_) => {}

@@ -16,6 +16,12 @@ final class Notices {
     static let shared = Notices()
 
     private var timer: Timer?
+    /// **Looking is done off the main thread**: it asks other applications, over accessibility, for
+    /// what they show, and each ask waits for the other application to answer -- as long as it
+    /// takes. On the main thread that was the pointer and keys stopping for a good part of a second
+    /// at a time. Everything below the timer is touched on this queue only.
+    private let queue = DispatchQueue(label: "spatiand.notices", qos: .utility)
+    private var looking = false
     private var shown = ""
     private var banner: AXUIElement?
 
@@ -25,7 +31,11 @@ final class Notices {
 
     func start() {
         guard timer == nil else { return }
-        let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in self?.look() }
+        let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard let self, !self.looking else { return }
+            self.looking = true
+            self.queue.async { self.look(); DispatchQueue.main.async { self.looking = false } }
+        }
         RunLoop.main.add(t, forMode: .common)
         timer = t
     }
@@ -33,8 +43,10 @@ final class Notices {
     func stop() {
         timer?.invalidate()
         timer = nil
-        if !shown.isEmpty { sp_notice("") }
-        shown = ""
+        queue.async { [self] in
+            if !shown.isEmpty { sp_notice("") }
+            shown = ""
+        }
     }
 
     private static func children(_ element: AXUIElement) -> [AXUIElement] {
@@ -98,20 +110,27 @@ final class Notices {
             shown = rest.isEmpty ? head : head + "\n" + rest
             since = Date()
             sp_notice(shown)
-            onShown?(shown)
+            let words = shown
+            DispatchQueue.main.async { [self] in onShown?(words) }
         } else if !shown.isEmpty, Date().timeIntervalSince(since) > 8 {
             // A glance's worth: the banner itself may stay on the Mac's screen much longer.
             shown = ""
             banner = nil
             sp_notice("")
-            onShown?("")
+            DispatchQueue.main.async { [self] in onShown?("") }
         }
     }
 
     /// The card in the room was pressed: press the banner, and bring what it opens into the room.
     func pressed() {
-        guard let banner else { return }
-        AXUIElementPerformAction(banner, kAXPressAction as CFString)
+        queue.async { [self] in
+            guard let banner else { return }
+            AXUIElementPerformAction(banner, kAXPressAction as CFString)
+            after()
+        }
+    }
+
+    private func after() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             if let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier, front != Bundle.main.bundleIdentifier {
                 RoomWindows.shared.follow(bundle: front)

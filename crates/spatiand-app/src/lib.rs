@@ -211,6 +211,7 @@ impl App {
     /// Connect to the Spatiand this process was started by. `app_id` names the application to
     /// the room -- its icon, its controller layout, where its sound is placed.
     pub fn connect(app_id: &str) -> Result<App, String> {
+        end_with_parent();
         let (wire, queue) = wire::Wire::connect()?;
         // Where the room cannot tell one process from another (the Mac, the Beam Pro), the
         // instance is named after the id, so that two of the same application each have their
@@ -435,4 +436,19 @@ impl App {
         self.wire.repeat(Instant::now());
         Ok(std::mem::take(&mut self.wire.events))
     }
+}
+
+/// Ends this process when the one that started it is gone, as a child of a Spatiand that has quit
+/// or been restarted would otherwise go on, orphaned, for as long as the Mac is up.
+pub fn end_with_parent() {
+    let parent = unsafe { libc::getppid() };
+    if parent <= 1 {
+        return;
+    }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if unsafe { libc::getppid() } != parent {
+            std::process::exit(0);
+        }
+    });
 }

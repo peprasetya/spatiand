@@ -32,6 +32,8 @@ final class Room {
     /// copied in Spatiand's own applications, on a host or on this Mac pastes in any of them.
     private let pasteboard = ClipboardSync()
     private var soundTimer: Timer?
+    private let soundQueue = DispatchQueue(label: "spatiand.sound", qos: .utility)
+    private var soundBusy = false
     var onChange: (() -> Void)?
 
     var status: String {
@@ -126,7 +128,17 @@ final class Room {
         // The sound of each application with a window on show, taken and placed at that window.
         if Settings.soundPlacement, !preview || ProcessInfo.processInfo.environment["SPATIAND_DEBUG_TAP"] != nil {
             sound.onProblem = { print("sound: \($0)") }
-            let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.sound.reconcile(wanted: RoomWindows.shared.onShow, screen: RoomWindows.shared.screenOnShow) }
+            // **Off the main thread**: it asks CoreAudio about every process that is playing, which
+            // takes as long as it takes, and the pointer and keys are on the main thread.
+            let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+                guard let self, !self.soundBusy else { return }
+                self.soundBusy = true
+                let wanted = RoomWindows.shared.onShow, screen = RoomWindows.shared.screenOnShow
+                self.soundQueue.async {
+                    self.sound.reconcile(wanted: wanted, screen: screen)
+                    DispatchQueue.main.async { self.soundBusy = false }
+                }
+            }
             RunLoop.main.add(t, forMode: .common)
             soundTimer = t
         }
@@ -141,7 +153,7 @@ final class Room {
         defer { stopping = false }
         soundTimer?.invalidate()
         Notices.shared.stop()
-        sound.stopAll()
+        soundQueue.sync { sound.stopAll() }
         RoomTap.shared.remove()
         RoomWindows.shared.clear()
         DeskWindows.shared.closeAll()

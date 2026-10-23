@@ -44,6 +44,32 @@ final class RoomTap {
 
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
+    /// The run loop of the thread the tap is heard on. **The tap is heard on a thread of its own**,
+    /// at the highest priority, and not on the main thread: the main thread draws, scans windows
+    /// and does the room's other work, and every event waited behind that -- a pointer half a
+    /// second behind the hand. Everything `handle` touches is safe from there: the room hears of
+    /// it through locks and queues, and the glide's timer runs on this thread's loop too.
+    private var tapLoop: CFRunLoop?
+
+    private final class LoopBox { var loop: CFRunLoop? }
+    private static func startTapThread() -> CFRunLoop {
+        let box = LoopBox()
+        let ready = DispatchSemaphore(value: 0)
+        let thread = Thread {
+            box.loop = CFRunLoopGetCurrent()
+            // Something to wait on, or the loop would return at once.
+            var context = CFRunLoopSourceContext()
+            if let keep = CFRunLoopSourceCreate(nil, 0, &context) { CFRunLoopAddSource(box.loop, keep, .commonModes) }
+            ready.signal()
+            CFRunLoopRun()
+        }
+        thread.name = "spatiand.pointer"
+        thread.qualityOfService = .userInteractive
+        thread.threadPriority = 1.0
+        thread.start()
+        ready.wait()
+        return box.loop!
+    }
     /// Whether the room has the pointer and keys now.
     private(set) var holding = false
     private var buttons: Int32 = 0
@@ -83,8 +109,7 @@ final class RoomTap {
     }
 
     /// A finger's travel since the last, in the pad's points, or nil when no one finger is moving the pointer.
-    private func steer(_ event: NSEvent) -> (dx: Double, dy: Double)? {
-        let live = Array(event.allTouches().filter { $0.phase != .ended && $0.phase != .cancelled && !$0.isResting })
+    private func steer(_ event: NSEvent, _ live: [NSTouch]) -> (dx: Double, dy: Double)? {
         // One finger; or, with the button pressed, the finger that is not the one pressing it.
         guard live.count == 1 || (live.count == 2 && buttons != 0) else { steering = nil; return nil }
         let size = live[0].deviceSize
@@ -155,7 +180,7 @@ final class RoomTap {
     }
 
     // Two fingers: a scroll, or a pinch, decided as they start moving and kept until they lift.
-    private var two: (cx: Double, cy: Double, d: Double, mode: Int, gone: Double, spread: Double)?
+    private var two: (cx: Double, cy: Double, d: Double, mode: Int, gone: Double, spread: Double, sx: Double, sy: Double, sd: Double)?
     /// The scroll's speed as the fingers left, in points a second: it carries on, slowing.
     private var glide: (vx: Double, vy: Double)?
     private var glideTimer: Timer?
@@ -174,20 +199,34 @@ final class RoomTap {
         let cx = (pts[0].0 + pts[1].0) / 2, cy = (pts[0].1 + pts[1].1) / 2
         let d = hypot(pts[0].0 - pts[1].0, pts[0].1 - pts[1].1)
         guard var t = two else {
-            two = (cx, cy, d, 0, 0, 0)
+            two = (cx, cy, d, 0, 0, 0, cx, cy, d)
             stopGlide()
             return
         }
         let mx = cx - t.cx, my = cy - t.cy, md = d - t.d
         if t.mode == 0 {
-            t.gone += hypot(mx, my)
-            t.spread += abs(md)
-            if t.gone + t.spread > 4 { t.mode = t.spread > t.gone ? 2 : 1 }
+            // Net travel from where the fingers landed, not the path: the little shake of two
+            // fingers adds up to a good deal of path and to nothing of travel.
+            t.gone = hypot(cx - t.sx, cy - t.sy)
+            t.spread = abs(d - t.sd)
+            // A scroll is the likelier: two fingers moving together always spread a little, and a
+            // pinch had to beat that to be taken, which made a scroll a pinch (the chat would not
+            // scroll, and the window went further).
+            if t.gone + t.spread > 5 { t.mode = t.spread > t.gone * 1.2 ? 2 : 1; gestureLog("two fingers, %@ (travel %.1f, spread %.1f)", t.mode == 2 ? "pinch" : "scroll", t.gone, t.spread) }
         }
         if t.mode == 1 {
-            scroll(mx * 1.5, my * 1.5)
+            // **Over what a Mac window shows, the scroll is the application's**: made as the
+            // trackpad makes it, in phases, so that a page, a chat or a list moves as it does under
+            // the real fingers. (macOS's own scroll is dropped with the rest of what it makes of the
+            // trackpad, so nothing else will do it.) Elsewhere in the room it is the room's.
+            if scrollingApp == nil {
+                scrollingApp = overMacWindow()
+                if scrollingApp == true { RoomWindows.shared.readyToScroll() }
+            }
+            let g = scrollingApp == true ? Self.appScrollGain : 1.5
+            if scrollingApp == true { scrollApp(mx * g, my * g, phase: 0); appScrollBegan = true } else { scroll(mx * g, my * g) }
             let dt = max(now - lastScroll.at, 0.004)
-            lastScroll = (lastScroll.vx * 0.5 + mx * 1.5 / dt * 0.5, lastScroll.vy * 0.5 + my * 1.5 / dt * 0.5, now)
+            lastScroll = (lastScroll.vx * 0.5 + mx * g / dt * 0.5, lastScroll.vy * 0.5 + my * g / dt * 0.5, now)
         } else if t.mode == 2, t.d > 1 {
             // **Over what a Mac window shows, the pinch is the application's**, as macOS's own
             // would be: a page zoomed in Safari, a picture in Preview. On its bar, or anywhere
@@ -201,11 +240,33 @@ final class RoomTap {
             }
             if pinchingApp == true { magnify(d / t.d - 1, phase: 2) } else { sp_pinch(Float(d / t.d)) }
         }
-        two = (cx, cy, d, t.mode, t.gone, t.spread)
+        two = (cx, cy, d, t.mode, t.gone, t.spread, t.sx, t.sy, t.sd)
     }
 
     /// Whether the pinch going on is an application's (nil before it is decided).
     private var pinchingApp: Bool?
+    /// Likewise the scroll: whether it is an application's, and whether its first movement has been sent.
+    private var scrollingApp: Bool?
+    private var appScrollBegan = false
+    private var appGlide = false
+    private var appGlideBegan = false
+    private var carry = (x: 0.0, y: 0.0)
+    private static let appScrollGain = 2.2
+
+    /// A scroll as the trackpad's own reaches an application, in points: `phase` 1 began, 4 changed,
+    /// 8 ended; `momentum` 1 began, 2 carries on, 3 ended (the glide after the fingers lift).
+    private func scrollApp(_ dx: Double, _ dy: Double, phase: Int64, momentum: Int64 = 0) {
+        let sx = (natural ? dx : -dx) + carry.x, sy = (natural ? dy : -dy) + carry.y
+        let px = sx.rounded(), py = sy.rounded()
+        carry = (sx - px, sy - py)
+        guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Int32(py), wheel2: Int32(px), wheel3: 0) else { return }
+        event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+        event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+        event.setIntegerValueField(.scrollWheelEventMomentumPhase, value: momentum)
+        event.location = CGEvent(source: nil)?.location ?? .zero
+        event.setIntegerValueField(.eventSourceUserData, value: spatiandEventMark)
+        event.post(tap: .cghidEventTap)
+    }
 
     /// A pinch as the trackpad's own reaches an application: a gesture event of the zoom kind,
     /// by how much, and in which phase (1 began, 2 changed, 4 ended). The fields are the window
@@ -224,11 +285,19 @@ final class RoomTap {
     private func twoLifted(at now: Double) {
         if pinchingApp == true { magnify(0, phase: 4) }
         pinchingApp = nil
-        if two?.mode == 1, now - lastScroll.at < 0.05, hypot(lastScroll.vx, lastScroll.vy) > 150 {
+        let toApp = scrollingApp == true
+        
+        scrollingApp = nil
+        appScrollBegan = false
+        carry = (0, 0)
+        gestureLog("two fingers lifted, mode %ld app %d speed %.0f last %.3f s ago", two?.mode ?? -1, toApp ? 1 : 0, hypot(lastScroll.vx, lastScroll.vy), now - lastScroll.at)
+        if two?.mode == 1, now - lastScroll.at < 0.12, hypot(lastScroll.vx, lastScroll.vy) > 100 {
+            appGlide = toApp
+            appGlideBegan = false
             glide = (lastScroll.vx, lastScroll.vy)
             glideTimer?.invalidate()
             let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.glideOn() }
-            RunLoop.main.add(t, forMode: .common)
+            RunLoop.current.add(t, forMode: .common)
             glideTimer = t
         }
         two = nil
@@ -237,12 +306,20 @@ final class RoomTap {
 
     private func glideOn() {
         guard var g = glide, holding else { stopGlide(); return }
-        scroll(g.vx / 60, g.vy / 60)
-        g.vx *= 0.95; g.vy *= 0.95
+        if appGlide {
+            scrollApp(g.vx / 60, g.vy / 60, phase: 0, momentum: appGlideBegan ? 2 : 1)
+            appGlideBegan = true
+        } else {
+            scroll(g.vx / 60, g.vy / 60)
+        }
+        let decay = appGlide ? 0.965 : 0.95
+        g.vx *= decay; g.vy *= decay
         if hypot(g.vx, g.vy) < 30 { stopGlide() } else { glide = g }
     }
 
     private func stopGlide() {
+        if glide != nil, appGlide, appGlideBegan { scrollApp(0, 0, phase: 0, momentum: 3) }
+        appGlide = false
         glideTimer?.invalidate()
         glideTimer = nil
         glide = nil
@@ -397,7 +474,9 @@ final class RoomTap {
         }
         tap = made
         source = CFMachPortCreateRunLoopSource(nil, made, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        let loop = Self.startTapThread()
+        tapLoop = loop
+        CFRunLoopAddSource(loop, source, .commonModes)
         CGEvent.tapEnable(tap: made, enable: true)
         return true
     }
@@ -405,7 +484,9 @@ final class RoomTap {
     func remove() {
         hold(false)
         if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
-        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+        if let source, let tapLoop { CFRunLoopRemoveSource(tapLoop, source, .commonModes) }
+        if let tapLoop { CFRunLoopStop(tapLoop) }
+        tapLoop = nil
         tap = nil
         source = nil
     }
@@ -564,6 +645,7 @@ final class RoomTap {
         case .keyDown:
             flags = event.flags
             let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+            lastKeyAt = Self.uptime
             if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { onRepeat?(code) } else { sp_key(code, true) }
         case .keyUp:
             flags = event.flags
@@ -583,19 +665,87 @@ final class RoomTap {
                 if !touches.isEmpty, touches.allSatisfy({ $0.type == .direct }) { return pass }
             }
             if gesture.type == .gesture {
-                let live = Array(gesture.allTouches().filter { $0.phase != .ended && $0.phase != .cancelled && !$0.isResting })
-                if !live.isEmpty { warpLock.lock(); touchedAt = Self.uptime; warpLock.unlock() }
-                if live.count == 2, buttons == 0 { twoFingers(live, at: gesture.timestamp) } else if two != nil { twoLifted(at: gesture.timestamp) }
-                fingers(gesture)
-                if !dragging, let (tx, ty) = steer(gesture) {
-                    warpLock.lock(); handMoved = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); warpLock.unlock()
-                    if let at = RoomWindows.shared.screenPointer() { RoomWindows.shared.noteScreenPointer(CGPoint(x: at.x + tx, y: at.y + ty)) }
-                    PointerLog.shared.note(String(format: "finger -> %.1f %.1f (gains %@)", tx, ty, gains.map { String(format: "%.2f", $0) }.joined(separator: " ")))
-                    sp_pointer(Float(tx), Float(ty), buttons, 0, 0)
-                }
+                // **The touches are read on the main thread**: off it, a trackpad's touches did not
+                // come (no scroll, pinch or gesture of the room's was ever made, and macOS's own
+                // scroll went through). Only the deciding is here, where it must be at once.
+                warpLock.lock(); touchedAt = Self.uptime; warpLock.unlock()
+                if gestureSeen < 12 { gestureSeen += 1; gestureLog("tap thread: gesture event, %ld touches visible", gesture.allTouches().count) }
+                if let copy = event.copy() { DispatchQueue.main.async { [self] in touched(copy) } }
             }
         }
         return nil
+    }
+
+    private var gestureSeen = 0
+
+    // **Palm rejection.** A touch is not a finger when it lands on the pad's edge (the sides, and
+    // the far edge by the keyboard, where a palm or a thumb rests), or just after a key was
+    // pressed (the hands are typing, and a palm touches down), or when macOS itself calls it
+    // resting. It stays a palm until it ends, unless it is drawn well in from where it began.
+    private var palms = Set<Int>()
+    private var firstAt: [Int: (x: Double, y: Double)] = [:]
+    private var lastKeyAt = 0.0
+
+    /// The fingers of a trackpad event that are fingers: not ended, not a palm.
+    private func hands(_ event: NSEvent) -> [NSTouch] {
+        var present = Set<Int>()
+        var out: [NSTouch] = []
+        for t in event.allTouches() {
+            let id = t.identity.hash
+            present.insert(id)
+            let x = Double(t.normalizedPosition.x), y = Double(t.normalizedPosition.y)
+            if let first = firstAt[id] {
+                if palms.contains(id), hypot(x - first.x, y - first.y) > 0.2 { palms.remove(id) }
+            } else {
+                firstAt[id] = (x, y)
+                // The edges only for a touch that lands alone or with one other: a hand of five
+                // lands its thumb and little finger on them.
+                let alone = event.allTouches().filter { $0.phase != .ended && $0.phase != .cancelled }.count < 3
+                if (alone && (x < 0.04 || x > 0.96 || y > 0.93)) || Self.uptime - lastKeyAt < 0.35 || t.isResting {
+                    palms.insert(id)
+                    gestureLog("palm rejected at %.2f %.2f", x, y)
+                }
+            }
+            if t.phase == .ended || t.phase == .cancelled || t.isResting || palms.contains(id) { continue }
+            out.append(t)
+        }
+        for id in Array(firstAt.keys) where !present.contains(id) { firstAt[id] = nil; palms.remove(id) }
+        return out
+    }
+    private var lateWorst = 0.0, lateSum = 0.0, lateCount = 0
+    private var lastTwoStamp = 0.0
+    private var lastTwoUptime = 0.0
+    private var seenOnMain = 0
+
+    /// A trackpad event with the fingers' positions, on the main thread.
+    private func touched(_ cg: CGEvent) {
+        guard holding, let gesture = NSEvent(cgEvent: cg) else { return }
+        // How late the main thread is with the fingers, in ms: the worst and the mean of each 200.
+        let late = (Self.uptime - gesture.timestamp) * 1000
+        lateWorst = max(lateWorst, late); lateSum += late; lateCount += 1
+        if lateCount >= 200 { gestureLog("touch events handled %.1f ms late on average, %.1f at worst (of 200)", lateSum / 200, lateWorst); lateWorst = 0; lateSum = 0; lateCount = 0 }
+        if seenOnMain < 12 { seenOnMain += 1; gestureLog("main thread: %ld touches visible", gesture.allTouches().count) }
+        let live = hands(gesture)
+        if live.count == 2, buttons == 0 {
+            twoFingers(live, at: gesture.timestamp)
+            lastTwoStamp = gesture.timestamp
+            lastTwoUptime = Self.uptime
+        } else if two != nil {
+            // **Every frame of the trackpad comes as more than one event**, and one of them does
+            // not have both fingers: taken for the fingers lifting, it ended the scroll after one
+            // step. They have lifted when no event has had both for a moment.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.07) { [self] in
+                if two != nil, Self.uptime - lastTwoUptime >= 0.065 { twoLifted(at: lastTwoStamp) }
+            }
+        }
+        fingers(gesture, live)
+        // Not while two fingers scroll: the event that has only one of them would steer the pointer away from the window.
+        if !dragging, two == nil, Self.uptime - lastTwoUptime > 0.2, let (tx, ty) = steer(gesture, live) {
+            warpLock.lock(); handMoved = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); warpLock.unlock()
+            if let at = RoomWindows.shared.screenPointer() { RoomWindows.shared.noteScreenPointer(CGPoint(x: at.x + tx, y: at.y + ty)) }
+            PointerLog.shared.note(String(format: "finger -> %.1f %.1f (gains %@)", tx, ty, gains.map { String(format: "%.2f", $0) }.joined(separator: " ")))
+            sp_pointer(Float(tx), Float(ty), buttons, 0, 0)
+        }
     }
 
     // MARK: three, four and five fingers
@@ -606,8 +756,9 @@ final class RoomTap {
     /// down, and moving them moves the pointer -- so a window is carried by its title bar, an
     /// edge is pulled, text is selected, with nothing pressed. **Four fingers** are the room's:
     /// up for the launcher, down to back out, a tap to recentre. Five are not used yet.
-    private func fingers(_ event: NSEvent) {
-        let all = event.allTouches().filter { $0.phase != .ended && $0.phase != .cancelled }
+    private var lastCount = 0
+    private func fingers(_ event: NSEvent, _ all: [NSTouch]) {
+        if all.count != lastCount { lastCount = all.count; if all.count >= 3 { gestureLog("%ld fingers down", all.count) } }
         let touches = all.map { GestureRecognizer.Touch(id: $0.identity.hash, x: Double($0.normalizedPosition.x), y: Double($0.normalizedPosition.y)) }
         let now = event.timestamp
         if touches.count == 3 { threeSeenAt = Self.uptime }
@@ -637,13 +788,33 @@ final class RoomTap {
                 sp_pointer(0, 0, buttons, 0, 0)
             }
         }
+        // The same split frames end a gesture early here: a frame with fewer than three fingers is
+        // only believed when no frame with three has come for a moment.
+        if touches.count < 3, recognizer.active {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.07) { [self] in
+                guard recognizer.active, Self.uptime - lastBigUptime >= 0.065 else { return }
+                if let done = recognizer.update([], at: lastBigStamp) { act(done) }
+            }
+            return
+        }
+        if touches.count >= 3 { lastBigUptime = Self.uptime; lastBigStamp = now }
         guard let done = recognizer.update(touches, at: now) else { return }
+        act(done)
+    }
+    private var lastBigUptime = 0.0
+    private var lastBigStamp = 0.0
+
+    private func act(_ done: GestureRecognizer.Event) {
         switch done {
         case .swipe(.up, fingers: 4): press(1)
         case .swipe(.down, fingers: 4): press(3)
         case .tap(fingers: 4): sp_recentre()
+        // Five fingers, as Launchpad and Show Desktop are on a Mac: squeezed, the launcher; spread, the settings.
+        case .pinch(fingers: 5, spreading: false): press(1)
+        case .pinch(fingers: 5, spreading: true): press(0)
         default: break
         }
+        gestureLog("%@", "\(done)")
     }
 
     /// The device-dependent bit of the flags that says one particular modifier key is down.
@@ -660,5 +831,23 @@ final class RoomTap {
         case 0x39: return 0x10000    // caps lock
         default: return nil
         }
+    }
+}
+
+/// What the trackpad's gestures were taken for, in ~/Library/Logs/Spatiand-gestures.log, with
+/// SPATIAND_GESTURE_LOG=1 (the system log does not keep an application's own lines): to see why
+/// a gesture did nothing, and how late the main thread is with the fingers.
+private let gestureLogLock = NSLock()
+private let gestureLogOn = ProcessInfo.processInfo.environment["SPATIAND_GESTURE_LOG"] == "1"
+func gestureLog(_ format: String, _ args: CVarArg...) {
+    guard gestureLogOn else { return }
+    let line = String(format: format, arguments: args)
+    gestureLogLock.lock(); defer { gestureLogLock.unlock() }
+    let path = NSHomeDirectory() + "/Library/Logs/Spatiand-gestures.log"
+    let text = String(format: "%.3f ", Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1e9) + line + "\n"
+    if let handle = FileHandle(forWritingAtPath: path) {
+        handle.seekToEndOfFile(); handle.write(Data(text.utf8)); try? handle.close()
+    } else {
+        FileManager.default.createFile(atPath: path, contents: Data(text.utf8))
     }
 }

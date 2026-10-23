@@ -25,7 +25,16 @@ final class PadInput {
     private(set) var names: [String] = []
     private var claimed = false
 
-    var enabled: Bool { Defaults.store.object(forKey: "gamepads") as? Bool ?? true }
+    /// Read from the preferences at most twice a second: this is asked 120 times a second, on the main thread.
+    private var enabledAt = Date.distantPast
+    private var enabledNow = true
+    var enabled: Bool {
+        if Date().timeIntervalSince(enabledAt) > 0.5 {
+            enabledAt = Date()
+            enabledNow = Defaults.store.object(forKey: "gamepads") as? Bool ?? true
+        }
+        return enabledNow
+    }
 
     func start() {
         guard timer == nil else { return }

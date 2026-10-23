@@ -31,6 +31,7 @@ fn find_own() {
 }
 
 fn main() {
+    watch_parent();
     #[cfg(wpe)]
     {
         find_own();
@@ -41,4 +42,18 @@ fn main() {
         eprintln!("spatimesh-wpe was built where there was no WPE WebKit (third_party/wpe/build.sh), and cannot show pages");
         std::process::exit(1);
     }
+}
+
+/// Ends with the SpatiMesh that started it: orphaned, an engine would go on for good.
+fn watch_parent() {
+    let parent = unsafe { libc::getppid() };
+    if parent <= 1 {
+        return;
+    }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if unsafe { libc::getppid() } != parent {
+            std::process::exit(0);
+        }
+    });
 }
