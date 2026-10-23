@@ -1,0 +1,10 @@
+# Where a Mac program finds the FFmpeg Spatiand carries (third_party/ffmpeg): beside it in the app
+# (Contents/Frameworks), or -- run from the build folder, as the tests and the snapshot room run
+# them -- in third_party/ffmpeg/out/mac, two or three folders up from target/<profile>[/deps].
+# Relative to the program, so the same on any checkout.
+[target.'cfg(target_os = "macos")']
+rustflags = [
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../Frameworks",
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../../third_party/ffmpeg/out/mac/lib",
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../../../third_party/ffmpeg/out/mac/lib",
+]

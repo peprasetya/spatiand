@@ -20,7 +20,7 @@ cp .build/release/Spatiand "$app/Contents/MacOS/Spatiand"
 # looks for them (crates/spatiand/src/own.rs). SpatiReel, SpatiLoupe, SpatiShelf and SpatiMesh
 # link **the FFmpeg the app carries** (third_party/ffmpeg: the same version on every platform,
 # LGPL), not one the Mac happens to have: it is in Contents/Frameworks, found by the programs'
-# own search path. bindgen wants to be told where libclang is. Each is built on its own, so that
+# own search path (.cargo/config.toml). bindgen wants to be told where libclang is. Each is built on its own, so that
 # one that does not build leaves the others.
 ../third_party/ffmpeg/build.sh mac
 FFMPEG=$(cd ../third_party/ffmpeg/out/mac && pwd)
@@ -42,8 +42,6 @@ for own in $OWN; do
       FFMPEG_PKG_CONFIG_PATH="$FFMPEG/lib/pkgconfig" \
       MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release -p "$own"); then
     cp "../target/release/$own" "$app/Contents/MacOS/$own"
-    otool -L "$app/Contents/MacOS/$own" | grep -q '@rpath/libav' \
-      && install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/$own"
   else
     echo "warning: $own did not build; the app is made without it"
   fi
