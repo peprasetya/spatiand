@@ -170,6 +170,34 @@ index e790f78f5..aae156f79 100644
          Default,
  #endif
      };
+diff --git a/Source/WebCore/platform/graphics/egl/GLDisplay.cpp b/Source/WebCore/platform/graphics/egl/GLDisplay.cpp
+index d122b5a3d..daf1538c9 100644
+--- a/Source/WebCore/platform/graphics/egl/GLDisplay.cpp
++++ b/Source/WebCore/platform/graphics/egl/GLDisplay.cpp
+@@ -109,6 +109,9 @@ GLDisplay::GLDisplay(EGLDisplay eglDisplay)
+     m_extensions.EXT_image_dma_buf_import = findExtension("EGL_EXT_image_dma_buf_import"_s);
+     m_extensions.EXT_image_dma_buf_import_modifiers = findExtension("EGL_EXT_image_dma_buf_import_modifiers"_s);
+     m_extensions.MESA_image_dma_buf_export = findExtension("EGL_MESA_image_dma_buf_export"_s);
++#if OS(DARWIN)
++    m_extensions.ANGLE_iosurface_client_buffer = findExtension("EGL_ANGLE_iosurface_client_buffer"_s);
++#endif
+ 
+ #if OS(ANDROID)
+     m_extensions.ANDROID_get_native_client_buffer = findExtension("EGL_ANDROID_get_native_client_buffer"_s);
+diff --git a/Source/WebCore/platform/graphics/egl/GLDisplay.h b/Source/WebCore/platform/graphics/egl/GLDisplay.h
+index 4971d556a..90a691fb3 100644
+--- a/Source/WebCore/platform/graphics/egl/GLDisplay.h
++++ b/Source/WebCore/platform/graphics/egl/GLDisplay.h
+@@ -67,6 +67,9 @@ public:
+         bool EXT_image_dma_buf_import_modifiers { false };
+         bool MESA_image_dma_buf_export { false };
+         bool ANDROID_native_fence_sync { false };
++#if OS(DARWIN)
++        bool ANGLE_iosurface_client_buffer { false };
++#endif
+ #if OS(ANDROID)
+         bool ANDROID_get_native_client_buffer { false };
+         bool ANDROID_image_native_buffer { false };
 diff --git a/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.cpp b/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.cpp
 index d0c80462c..5c6adddc0 100644
 --- a/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.cpp
@@ -684,8 +712,23 @@ index 1263f3a60..d4b044c8f 100644
  #include <wtf/spi/darwin/OSVariantSPI.h>
  #endif
  
+diff --git a/Source/WebKit/UIProcess/glib/AcceleratedBackingStore.messages.in b/Source/WebKit/UIProcess/glib/AcceleratedBackingStore.messages.in
+index 8ace95c1b..674fcc442 100644
+--- a/Source/WebKit/UIProcess/glib/AcceleratedBackingStore.messages.in
++++ b/Source/WebKit/UIProcess/glib/AcceleratedBackingStore.messages.in
+@@ -33,6 +33,10 @@ messages -> AcceleratedBackingStore {
+     DidCreateAndroidBuffer(uint64_t id, RefPtr<AHardwareBuffer> androidBuffer)
+ #endif
+ 
++#if OS(DARWIN) && ENABLE(WPE_PLATFORM)
++    DidCreateIOSurfaceBuffer(uint64_t id, uint32_t surfaceID, WebCore::IntSize size)
++#endif
++
+     DidDestroyBuffer(uint64_t id)
+     Frame(uint64_t id, Vector<WebCore::IntRect, 1> damage, UnixFileDescriptor syncFD)
+ 
 diff --git a/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.cpp b/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.cpp
-index 22c44ab7d..fd6d8db7e 100644
+index 22c44ab7d..7a4c320d0 100644
 --- a/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.cpp
 +++ b/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.cpp
 @@ -41,6 +41,11 @@
@@ -700,24 +743,518 @@ index 22c44ab7d..fd6d8db7e 100644
  #endif
  
  WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+@@ -183,6 +188,19 @@ void AcceleratedBackingStore::didCreateAndroidBuffer(uint64_t id, RefPtr<AHardwa
+ }
+ #endif // OS(ANDROID)
+ 
++#if OS(DARWIN)
++// Spatiand: WPE on macOS. The web process rendered into an IOSurface, found here by its ID: the
++// embedder shows that same GPU memory.
++void AcceleratedBackingStore::didCreateIOSurfaceBuffer(uint64_t id, uint32_t surfaceID, WebCore::IntSize size)
++{
++    auto buffer = adoptGRef(WPE_BUFFER(wpe_buffer_iosurface_new(wpe_view_get_display(m_wpeView.get()), size.width(), size.height(), surfaceID)));
++    m_bufferIDs.add(buffer.get(), id);
++    m_buffers.add(id, WTF::move(buffer));
++
++    notifyBufferConfigurationIfNeeded();
++}
++#endif // OS(DARWIN)
++
+ void AcceleratedBackingStore::didDestroyBuffer(uint64_t id)
+ {
+     if (auto buffer = m_buffers.take(id))
+@@ -226,6 +244,10 @@ static Expected<SkImageInfo, String> getImageInfoFromBuffer(const  GRefPtr<WPEBu
+         SkAlphaType alphaType = kPremul_SkAlphaType;
+         return SkImageInfo::Make(width, height, kBGRA_8888_SkColorType, alphaType, SkColorSpace::MakeSRGB());
+     }
++#if OS(DARWIN)
++    if (WPE_IS_BUFFER_IOSURFACE(buffer.get()))
++        return SkImageInfo::Make(width, height, kBGRA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
++#endif
+     return makeUnexpected("Failed to extract snapshot pixel information"_s);
+ }
+ 
+diff --git a/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.h b/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.h
+index dcb02699a..29367644c 100644
+--- a/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.h
++++ b/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.h
+@@ -87,6 +87,9 @@ private:
+     void didCreateSHMBuffer(uint64_t id, WebCore::ShareableBitmapHandle&&);
+ #if OS(ANDROID)
+     void didCreateAndroidBuffer(uint64_t id, RefPtr<AHardwareBuffer>&&);
++#endif
++#if OS(DARWIN)
++    void didCreateIOSurfaceBuffer(uint64_t id, uint32_t surfaceID, WebCore::IntSize);
+ #endif
+     void didChangeBufferConfiguration(uint32_t bufferCount);
+     void didDestroyBuffer(uint64_t id);
+diff --git a/Source/WebKit/WPEPlatform/CMakeLists.txt b/Source/WebKit/WPEPlatform/CMakeLists.txt
+index d996a7ba5..13c6468f7 100644
+--- a/Source/WebKit/WPEPlatform/CMakeLists.txt
++++ b/Source/WebKit/WPEPlatform/CMakeLists.txt
+@@ -125,6 +125,15 @@ if (USE_LIBDRM)
+     )
+ endif ()
+ 
++# Spatiand: WPE on macOS hands its pictures over as IOSurfaces.
++if (APPLE)
++    find_library(IOSURFACE_LIBRARY IOSurface REQUIRED)
++    find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
++    list(APPEND WPEPlatform_LIBRARIES ${IOSURFACE_LIBRARY} ${COREFOUNDATION_LIBRARY})
++    list(APPEND WPEPlatform_SOURCES ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferIOSurface.cpp)
++    list(APPEND WPEPlatform_INSTALLED_HEADERS ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferIOSurface.h)
++endif ()
++
+ if (ANDROID)
+     list(APPEND WPEPlatform_LIBRARIES Android::Android)
+     list(APPEND WPEPlatform_SOURCES ${WEBKIT_DIR}/WPEPlatform/wpe/WPEProcessManager.cpp)
+diff --git a/Source/WebKit/WPEPlatform/wpe/WPEBufferIOSurface.cpp b/Source/WebKit/WPEPlatform/wpe/WPEBufferIOSurface.cpp
+new file mode 100644
+index 000000000..cc1168425
+--- /dev/null
++++ b/Source/WebKit/WPEPlatform/wpe/WPEBufferIOSurface.cpp
+@@ -0,0 +1,127 @@
++/*
++ * Copyright (C) 2026 Spatiand. See WPEBufferIOSurface.h for the licence.
++ */
++
++#include "config.h"
++#include "WPEBufferIOSurface.h"
++
++#include <IOSurface/IOSurfaceRef.h>
++#include <wtf/glib/WTFGType.h>
++
++/**
++ * WPEBufferIOSurface:
++ *
++ * A #WPEBuffer that is an IOSurface: on macOS the GPU memory a web process renders into and the
++ * embedder shows, with nothing copied. The surface is found by its global ID.
++ */
++struct _WPEBufferIOSurfacePrivate {
++    guint32 surfaceID;
++    IOSurfaceRef surface;
++};
++WEBKIT_DEFINE_FINAL_TYPE(WPEBufferIOSurface, wpe_buffer_iosurface, WPE_TYPE_BUFFER, WPEBuffer)
++
++enum {
++    PROP_0,
++    PROP_SURFACE_ID,
++    N_PROPERTIES
++};
++
++static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
++
++static void wpeBufferIOSurfaceSetProperty(GObject* object, guint propId, const GValue* value, GParamSpec* paramSpec)
++{
++    auto* buffer = WPE_BUFFER_IOSURFACE(object);
++    switch (propId) {
++    case PROP_SURFACE_ID:
++        buffer->priv->surfaceID = g_value_get_uint(value);
++        buffer->priv->surface = IOSurfaceLookup(buffer->priv->surfaceID);
++        break;
++    default:
++        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propId, paramSpec);
++    }
++}
++
++static void wpeBufferIOSurfaceGetProperty(GObject* object, guint propId, GValue* value, GParamSpec* paramSpec)
++{
++    auto* buffer = WPE_BUFFER_IOSURFACE(object);
++    switch (propId) {
++    case PROP_SURFACE_ID:
++        g_value_set_uint(value, buffer->priv->surfaceID);
++        break;
++    default:
++        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propId, paramSpec);
++    }
++}
++
++static void wpeBufferIOSurfaceDispose(GObject* object)
++{
++    auto* priv = WPE_BUFFER_IOSURFACE(object)->priv;
++    if (priv->surface) {
++        CFRelease(priv->surface);
++        priv->surface = nullptr;
++    }
++    G_OBJECT_CLASS(wpe_buffer_iosurface_parent_class)->dispose(object);
++}
++
++/* Its pixels read back (BGRA, premultiplied), for a snapshot: not how pictures are shown. */
++static GBytes* wpeBufferIOSurfaceImportToPixels(WPEBuffer* buffer, GError** error)
++{
++    auto* priv = WPE_BUFFER_IOSURFACE(buffer)->priv;
++    if (!priv->surface) {
++        g_set_error_literal(error, WPE_BUFFER_ERROR, WPE_BUFFER_ERROR_IMPORT_FAILED, "IOSurface not found");
++        return nullptr;
++    }
++    IOSurfaceLock(priv->surface, kIOSurfaceLockReadOnly, nullptr);
++    size_t width = IOSurfaceGetWidth(priv->surface);
++    size_t height = IOSurfaceGetHeight(priv->surface);
++    size_t stride = IOSurfaceGetBytesPerRow(priv->surface);
++    auto* base = static_cast<const uint8_t*>(IOSurfaceGetBaseAddress(priv->surface));
++    auto* pixels = static_cast<uint8_t*>(g_malloc(width * height * 4));
++    for (size_t row = 0; row < height; ++row)
++        memcpy(pixels + row * width * 4, base + row * stride, width * 4);
++    IOSurfaceUnlock(priv->surface, kIOSurfaceLockReadOnly, nullptr);
++    GBytes* bytes = g_bytes_new_take(pixels, width * height * 4);
++    g_object_set_data_full(G_OBJECT(buffer), "wpe-buffer-iosurface-pixels", bytes, reinterpret_cast<GDestroyNotify>(g_bytes_unref));
++    return bytes;
++}
++
++static void wpe_buffer_iosurface_class_init(WPEBufferIOSurfaceClass* bufferClass)
++{
++    GObjectClass* objectClass = G_OBJECT_CLASS(bufferClass);
++    objectClass->set_property = wpeBufferIOSurfaceSetProperty;
++    objectClass->get_property = wpeBufferIOSurfaceGetProperty;
++    objectClass->dispose = wpeBufferIOSurfaceDispose;
++
++    WPE_BUFFER_CLASS(bufferClass)->import_to_pixels = wpeBufferIOSurfaceImportToPixels;
++
++    /**
++     * WPEBufferIOSurface:surface-id:
++     *
++     * The IOSurface's global ID.
++     */
++    sObjProperties[PROP_SURFACE_ID] =
++        g_param_spec_uint(
++            "surface-id",
++            nullptr, nullptr,
++            0, G_MAXUINT32, 0,
++            static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
++
++    g_object_class_install_properties(objectClass, N_PROPERTIES, sObjProperties.data());
++}
++
++WPEBufferIOSurface* wpe_buffer_iosurface_new(WPEDisplay* display, int width, int height, guint32 surfaceID)
++{
++    g_return_val_if_fail(WPE_IS_DISPLAY(display), nullptr);
++    return WPE_BUFFER_IOSURFACE(g_object_new(WPE_TYPE_BUFFER_IOSURFACE,
++        "display", display,
++        "width", width,
++        "height", height,
++        "surface-id", surfaceID,
++        nullptr));
++}
++
++guint32 wpe_buffer_iosurface_get_id(WPEBufferIOSurface* buffer)
++{
++    g_return_val_if_fail(WPE_IS_BUFFER_IOSURFACE(buffer), 0);
++    return buffer->priv->surfaceID;
++}
+diff --git a/Source/WebKit/WPEPlatform/wpe/WPEBufferIOSurface.h b/Source/WebKit/WPEPlatform/wpe/WPEBufferIOSurface.h
+new file mode 100644
+index 000000000..f02b74e89
+--- /dev/null
++++ b/Source/WebKit/WPEPlatform/wpe/WPEBufferIOSurface.h
+@@ -0,0 +1,49 @@
++/*
++ * Copyright (C) 2026 Spatiand. A WPE buffer on macOS: an IOSurface, the GPU's memory shared
++ * between processes, as a DMA-buf is on Linux.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES,
++ * INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
++ * PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT,
++ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
++ * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
++ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
++ * USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef WPEBufferIOSurface_h
++#define WPEBufferIOSurface_h
++
++#if !defined(__WPE_PLATFORM_H_INSIDE__) && !defined(BUILDING_WEBKIT)
++#error "Only <wpe/wpe-platform.h> can be included directly."
++#endif
++
++#include <glib-object.h>
++#include <wpe/WPEDefines.h>
++#include <wpe/WPEBuffer.h>
++
++G_BEGIN_DECLS
++
++#define WPE_TYPE_BUFFER_IOSURFACE (wpe_buffer_iosurface_get_type())
++WPE_API G_DECLARE_FINAL_TYPE (WPEBufferIOSurface, wpe_buffer_iosurface, WPE, BUFFER_IOSURFACE, WPEBuffer)
++
++/* `surface_id` is the IOSurface's global ID (IOSurfaceGetID): another process finds it by it. */
++WPE_API WPEBufferIOSurface *wpe_buffer_iosurface_new    (WPEDisplay         *display,
++                                                         int                 width,
++                                                         int                 height,
++                                                         guint32             surface_id);
++WPE_API guint32             wpe_buffer_iosurface_get_id (WPEBufferIOSurface *buffer);
++
++G_END_DECLS
++
++#endif /* WPEBufferIOSurface_h */
+diff --git a/Source/WebKit/WPEPlatform/wpe/WPEConfig.h.in b/Source/WebKit/WPEPlatform/wpe/WPEConfig.h.in
+index 4822c740a..b4bbf3c6a 100644
+--- a/Source/WebKit/WPEPlatform/wpe/WPEConfig.h.in
++++ b/Source/WebKit/WPEPlatform/wpe/WPEConfig.h.in
+@@ -31,6 +31,7 @@
+ #endif
+ 
+ #cmakedefine WPE_PLATFORM_BUFFER_ANDROID
++#cmakedefine WPE_PLATFORM_BUFFER_IOSURFACE
+ #cmakedefine WPE_PLATFORM_PROCESS_MANAGER_ANDROID
+ 
+ #cmakedefine WPE_PLATFORM_DRM
+diff --git a/Source/WebKit/WPEPlatform/wpe/wpe-platform.h b/Source/WebKit/WPEPlatform/wpe/wpe-platform.h
+index 012c653ae..1ba9f84d1 100644
+--- a/Source/WebKit/WPEPlatform/wpe/wpe-platform.h
++++ b/Source/WebKit/WPEPlatform/wpe/wpe-platform.h
+@@ -61,6 +61,10 @@
+ #include <wpe/WPEBufferAndroid.h>
+ #endif
+ 
++#ifdef WPE_PLATFORM_BUFFER_IOSURFACE
++#include <wpe/WPEBufferIOSurface.h>
++#endif
++
+ #ifdef WPE_PLATFORM_PROCESS_MANAGER_ANDROID
+ #include <wpe/WPEProcessManager.h>
+ #endif
 diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
-index f3daaef29..f22d6510a 100644
+index f3daaef29..2035cd472 100644
 --- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
 +++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
-@@ -622,6 +622,13 @@ AcceleratedSurface::SwapChain::SwapChain(AcceleratedSurface& surface)
+@@ -78,6 +78,11 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+ #include <wtf/UniStdExtras.h>
+ #endif
+ 
++#if OS(DARWIN) && ENABLE(WPE_PLATFORM)
++#include <CoreFoundation/CoreFoundation.h>
++#include <IOSurface/IOSurfaceRef.h>
++#endif
++
+ #if OS(ANDROID)
+ #include <WebCore/BufferFormatAndroid.h>
+ #include <android/hardware_buffer.h>
+@@ -456,6 +461,135 @@ void AcceleratedSurface::RenderTargetSHMImage::didRenderFrame()
+     glReadPixels(0, 0, m_bitmap->size().width(), m_bitmap->size().height(), GL_BGRA, GL_UNSIGNED_BYTE, m_bitmap->mutableSpan().data());
+ }
+ 
++#if OS(DARWIN) && ENABLE(WPE_PLATFORM)
++// ANGLE's EGL_ANGLE_iosurface_client_buffer.
++static constexpr EGLenum eglIOSurfaceANGLE = 0x3454;
++static constexpr EGLint eglIOSurfacePlaneANGLE = 0x345A;
++static constexpr EGLint eglTextureTypeANGLE = 0x345C;
++static constexpr EGLint eglTextureInternalFormatANGLE = 0x345D;
++static constexpr EGLint eglBindToTextureTargetANGLE = 0x348D;
++static constexpr EGLint eglTextureRectangleANGLE = 0x345B;
++static constexpr unsigned glTextureRectangleANGLE = 0x84F5;
++
++std::unique_ptr<AcceleratedSurface::RenderTarget> AcceleratedSurface::RenderTargetIOSurface::create(AcceleratedSurface& surface, const IntSize& size)
++{
++    // Global, so that another process finds it by its ID (what the embedder's own IOSurfaces are).
++    int width = size.width(), height = size.height(), bytesPerElement = 4;
++    uint32_t format = 'BGRA';
++    CFNumberRef w = CFNumberCreate(nullptr, kCFNumberIntType, &width);
++    CFNumberRef h = CFNumberCreate(nullptr, kCFNumberIntType, &height);
++    CFNumberRef bpe = CFNumberCreate(nullptr, kCFNumberIntType, &bytesPerElement);
++    CFNumberRef pf = CFNumberCreate(nullptr, kCFNumberSInt32Type, &format);
++    const void* keys[] = { kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement, kIOSurfacePixelFormat, kIOSurfaceIsGlobal };
++    const void* values[] = { w, h, bpe, pf, kCFBooleanTrue };
++    CFDictionaryRef properties = CFDictionaryCreate(nullptr, keys, values, 5, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
++    IOSurfaceRef ioSurface = IOSurfaceCreate(properties);
++    CFRelease(properties);
++    CFRelease(w);
++    CFRelease(h);
++    CFRelease(bpe);
++    CFRelease(pf);
++    if (!ioSurface) {
++        WTFLogAlways("Failed to create an IOSurface of size %dx%d", width, height);
++        return nullptr;
++    }
++
++    // A pbuffer of it, and a texture bound to that. The rendering context's own config is made
++    // for no surface at all (WebKit renders surfaceless) and makes no pbuffer -- ANGLE said
++    // EGL_BAD_ATTRIBUTE -- so one that makes pbuffers is chosen (ANGLE says which texture target
++    // it binds to in an attribute of its own, not EGL_BIND_TO_TEXTURE_RGBA).
++    EGLDisplay display = eglGetCurrentDisplay();
++    const EGLint configAttributes[] = {
++        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
++        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
++        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
++        EGL_NONE
++    };
++    EGLConfig config = nullptr;
++    EGLint found = 0;
++    if (!eglChooseConfig(display, configAttributes, &config, 1, &found) || !found) {
++        WTFLogAlways("No EGL config makes a pbuffer of an IOSurface (EGL error %#x)", eglGetError());
++        CFRelease(ioSurface);
++        return nullptr;
++    }
++    // A rectangle texture where ANGLE runs on OpenGL, a 2D one on Metal: ANGLE says which.
++    EGLint target = EGL_TEXTURE_2D;
++    eglGetConfigAttrib(display, config, eglBindToTextureTargetANGLE, &target);
++    unsigned glTarget = target == eglTextureRectangleANGLE ? glTextureRectangleANGLE : GL_TEXTURE_2D;
++    const EGLint attributes[] = {
++        EGL_WIDTH, width,
++        EGL_HEIGHT, height,
++        eglIOSurfacePlaneANGLE, 0,
++        EGL_TEXTURE_TARGET, target,
++        eglTextureInternalFormatANGLE, GL_BGRA_EXT,
++        EGL_TEXTURE_FORMAT, EGL_TEXTURE_RGBA,
++        eglTextureTypeANGLE, GL_UNSIGNED_BYTE,
++        EGL_NONE
++    };
++    EGLSurface pbuffer = eglCreatePbufferFromClientBuffer(display, eglIOSurfaceANGLE, ioSurface, config, attributes);
++    if (pbuffer == EGL_NO_SURFACE) {
++        WTFLogAlways("Failed to make a pbuffer of an IOSurface (EGL error %#x)", eglGetError());
++        CFRelease(ioSurface);
++        return nullptr;
++    }
++    unsigned texture = 0;
++    glGenTextures(1, &texture);
++    glBindTexture(glTarget, texture);
++    if (!eglBindTexImage(display, pbuffer, EGL_BACK_BUFFER)) {
++        WTFLogAlways("Failed to bind an IOSurface to a texture (EGL error %#x)", eglGetError());
++        glDeleteTextures(1, &texture);
++        eglDestroySurface(display, pbuffer);
++        CFRelease(ioSurface);
++        return nullptr;
++    }
++    return makeUnique<RenderTargetIOSurface>(surface, size, ioSurface, pbuffer, texture, glTarget);
++}
++
++AcceleratedSurface::RenderTargetIOSurface::RenderTargetIOSurface(AcceleratedSurface& surface, const IntSize& size, void* ioSurface, void* pbuffer, unsigned texture, unsigned target)
++    : RenderTargetShareableBuffer(surface, size)
++    , m_ioSurface(ioSurface)
++    , m_pbuffer(pbuffer)
++    , m_texture(texture)
++{
++    glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
++    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, m_texture, 0);
++    if (m_surface->useSkia())
++        createSkiaSurfaceForFramebuffer(m_fbo);
++
++    uint32_t surfaceID = IOSurfaceGetID(static_cast<IOSurfaceRef>(m_ioSurface));
++    WebProcess::singleton().parentProcessConnection()->send(Messages::AcceleratedBackingStore::DidCreateIOSurfaceBuffer(m_id, surfaceID, size), m_surface->surfaceID());
++}
++
++// The frame is in the IOSurface before anyone is told of it: Skia's work submitted and the GPU
++// waited for. (The shared-memory target gets this from reading its pixels back; without it the
++// embedder saw an IOSurface still empty.)
++void AcceleratedSurface::RenderTargetIOSurface::didRenderFrame()
++{
++    if (m_surface->useSkia()) {
++        auto& display = PlatformDisplay::sharedDisplay();
++        GLContext::ScopedGLContextCurrent scopedCurrent(*display.skiaGLContext());
++        display.skiaGrContext()->flushAndSubmit(GrSyncCpu::kYes);
++        glFinish();
++        return;
++    }
++    glFinish();
++}
++
++AcceleratedSurface::RenderTargetIOSurface::~RenderTargetIOSurface()
++{
++    m_skiaSurface = nullptr;
++    EGLDisplay display = eglGetCurrentDisplay();
++    if (m_texture) {
++        eglReleaseTexImage(display, m_pbuffer, EGL_BACK_BUFFER);
++        glDeleteTextures(1, &m_texture);
++    }
++    if (m_pbuffer)
++        eglDestroySurface(display, m_pbuffer);
++    if (m_ioSurface)
++        CFRelease(static_cast<IOSurfaceRef>(m_ioSurface));
++}
++#endif // OS(DARWIN) && ENABLE(WPE_PLATFORM)
++
+ std::unique_ptr<AcceleratedSurface::RenderTarget> AcceleratedSurface::RenderTargetTexture::create(AcceleratedSurface& surface, const IntSize& size)
+ {
+     auto texture = BitmapTexture::create(size);
+@@ -622,6 +756,16 @@ AcceleratedSurface::SwapChain::SwapChain(AcceleratedSurface& surface)
          setupBufferFormat();
          break;
  #endif
 +#if OS(DARWIN) && !PLATFORM(GTK)
-+    // Spatiand: WPE on macOS, whose display is ANGLE's default (Metal). No buffer of the GPU's
-+    // to hand over yet (an IOSurface kind is to come): frames go by shared memory.
++    // Spatiand: WPE on macOS, whose display is ANGLE's default (Metal): frames are IOSurfaces,
++    // shown as they are; by shared memory where ANGLE cannot make them.
 +    case PlatformDisplay::Type::Default:
-+        m_type = Type::SharedMemory;
++        if (display.eglExtensions().ANGLE_iosurface_client_buffer)
++            m_type = Type::IOSurface;
++        else
++            m_type = Type::SharedMemory;
 +        break;
 +#endif
  #else
      case PlatformDisplay::Type::Surfaceless:
  #if USE(GBM)
+@@ -773,6 +917,10 @@ std::unique_ptr<AcceleratedSurface::RenderTarget> AcceleratedSurface::SwapChain:
+     case Type::SharedMemory:
+         return RenderTargetSHMImage::create(m_surface.get(), m_size);
+ #endif
++#if OS(DARWIN) && ENABLE(WPE_PLATFORM)
++    case Type::IOSurface:
++        return RenderTargetIOSurface::create(m_surface.get(), m_size);
++#endif
+ #if USE(WPE_RENDERER)
+     case Type::WPEBackend:
+         ASSERT_NOT_REACHED();
+@@ -938,6 +1086,11 @@ bool AcceleratedSurface::shouldPaintMirrored() const
+     case SwapChain::Type::SharedMemory:
+         return false;
+ #endif
++#if OS(DARWIN) && ENABLE(WPE_PLATFORM)
++    // Drawn the right way up for whoever shows the IOSurface, as a DMA-buf is for WPE.
++    case SwapChain::Type::IOSurface:
++        return false;
++#endif
+ #if USE(WPE_RENDERER)
+     case SwapChain::Type::WPEBackend:
+         return true;
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.h b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.h
+index 8066fc3e4..af9e01572 100644
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.h
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.h
+@@ -323,6 +323,25 @@ private:
+         const Ref<WebCore::ShareableBitmap> m_bitmap;
+     };
+ 
++#if OS(DARWIN) && ENABLE(WPE_PLATFORM)
++    // Spatiand: WPE on macOS. Rendered into an IOSurface through ANGLE (on Metal), which the
++    // UI process -- and the embedder -- show as it is: nothing copied.
++    class RenderTargetIOSurface final : public RenderTargetShareableBuffer {
++    public:
++        static std::unique_ptr<RenderTarget> create(AcceleratedSurface&, const WebCore::IntSize&);
++        RenderTargetIOSurface(AcceleratedSurface&, const WebCore::IntSize&, void* ioSurface, void* pbuffer, unsigned texture, unsigned target);
++        ~RenderTargetIOSurface();
++
++    private:
++        bool supportsExplicitSync() const override { return false; }
++        void didRenderFrame() override;
++
++        void* m_ioSurface { nullptr };
++        void* m_pbuffer { nullptr };
++        unsigned m_texture { 0 };
++    };
++#endif
++
+     class RenderTargetTexture final : public RenderTargetShareableBuffer {
+     public:
+         static std::unique_ptr<RenderTarget> create(AcceleratedSurface&, const WebCore::IntSize&);
+@@ -368,6 +387,9 @@ private:
+             SharedMemory,
+             Texture,
+ #endif
++#if OS(DARWIN) && ENABLE(WPE_PLATFORM)
++            IOSurface,
++#endif
+ #if USE(WPE_RENDERER)
+             WPEBackend
+ #endif
 diff --git a/Source/WebKit/WebProcess/WebProcess.cpp b/Source/WebKit/WebProcess/WebProcess.cpp
 index 1a40da5d1..8a87747e9 100644
 --- a/Source/WebKit/WebProcess/WebProcess.cpp
@@ -798,10 +1335,10 @@ index 000000000..c28c1c322
 +
 +#endif
 diff --git a/Source/cmake/OptionsWPE.cmake b/Source/cmake/OptionsWPE.cmake
-index ecf52b4c5..308160cf8 100644
+index ecf52b4c5..f0ce5a633 100644
 --- a/Source/cmake/OptionsWPE.cmake
 +++ b/Source/cmake/OptionsWPE.cmake
-@@ -9,6 +9,17 @@ set(ENABLE_UNSAFE_BUFFER_USAGE_WARNING ON)
+@@ -9,6 +9,19 @@ set(ENABLE_UNSAFE_BUFFER_USAGE_WARNING ON)
  list(APPEND WEBKIT_UNSAFE_BUFFER_WARNING_FLAGS -Wno-unsafe-buffer-usage-in-format-attr-call)
  
  # Update Source/WTF/wtf/Platform.h to match required GLib versions.
@@ -813,7 +1350,9 @@ index ecf52b4c5..308160cf8 100644
 +    # What glibc has in it and macOS keeps apart: gettext. And Accelerate, which WebKit's own
 +    # code on any Darwin uses for image filters (USE(ACCELERATE)).
 +    find_package(Intl REQUIRED)
-+    link_libraries(${Intl_LIBRARIES} "-framework Accelerate")
++    link_libraries(${Intl_LIBRARIES} "-framework Accelerate" "-framework IOSurface" "-framework CoreFoundation")
++    # Pictures are IOSurfaces (WPEBufferIOSurface), handed over with nothing copied.
++    set(WPE_PLATFORM_BUFFER_IOSURFACE ON)
 +endif ()
 +
  find_package(GLib 2.70.0 REQUIRED COMPONENTS GioUnix Thread Module)

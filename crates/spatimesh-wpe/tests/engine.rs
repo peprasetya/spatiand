@@ -26,6 +26,47 @@ struct Host {
     seen: Vec<Happened>,
 }
 
+/// An IOSurface's picture, by its number (BGRA): what the window would show.
+#[cfg(target_os = "macos")]
+fn read_surface(id: u32) -> Option<(u32, u32, Format, Vec<u8>)> {
+    use std::ffi::c_void;
+    #[link(name = "IOSurface", kind = "framework")]
+    extern "C" {
+        fn IOSurfaceLookup(id: u32) -> *mut c_void;
+        fn IOSurfaceLock(surface: *mut c_void, options: u32, seed: *mut u32) -> i32;
+        fn IOSurfaceUnlock(surface: *mut c_void, options: u32, seed: *mut u32) -> i32;
+        fn IOSurfaceGetWidth(surface: *mut c_void) -> usize;
+        fn IOSurfaceGetHeight(surface: *mut c_void) -> usize;
+        fn IOSurfaceGetBytesPerRow(surface: *mut c_void) -> usize;
+        fn IOSurfaceGetBaseAddress(surface: *mut c_void) -> *const u8;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFRelease(object: *mut c_void);
+    }
+    unsafe {
+        let surface = IOSurfaceLookup(id);
+        if surface.is_null() {
+            return None;
+        }
+        IOSurfaceLock(surface, 1, std::ptr::null_mut());
+        let (width, height, stride) = (IOSurfaceGetWidth(surface), IOSurfaceGetHeight(surface), IOSurfaceGetBytesPerRow(surface));
+        let base = IOSurfaceGetBaseAddress(surface);
+        let mut pixels = Vec::with_capacity(width * height * 4);
+        for row in 0..height {
+            pixels.extend_from_slice(std::slice::from_raw_parts(base.add(row * stride), width * 4));
+        }
+        IOSurfaceUnlock(surface, 1, std::ptr::null_mut());
+        CFRelease(surface);
+        Some((width as u32, height as u32, Format::Bgra, pixels))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_surface(_id: u32) -> Option<(u32, u32, Format, Vec<u8>)> {
+    None
+}
+
 fn can_run() -> bool {
     // WPE draws through SpatiMesh's own platform, on no display.
     true
@@ -94,8 +135,14 @@ impl Host {
                         self.seen.push(Happened::Picture { tab });
                     }
                     FromHost::Happened(h) => self.seen.push(h),
-                    // Only a Mac's WebKit hands pictures over on the GPU.
-                    FromHost::Surface { tab, id, .. } => self.send(ToHost::ReleaseSurface { tab, id }),
+                    // A Mac's pictures come on the GPU, as IOSurfaces: read here, as the window shows them.
+                    FromHost::Surface { tab, id, .. } => {
+                        if let Some(picture) = read_surface(id) {
+                            self.latest.insert(tab, picture);
+                            self.seen.push(Happened::Picture { tab });
+                        }
+                        self.send(ToHost::ReleaseSurface { tab, id });
+                    }
                     FromHost::Hello { .. } => {}
                 }
             }

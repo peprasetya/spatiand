@@ -10,9 +10,9 @@
  * <select>'s list, a script's alert, a file chooser, a context menu -- is answered here, or
  * handed to SpatiMesh's window to draw.
  *
- * Pictures are copied, from WPE's shared-memory buffers: on a Mac WPE has no buffer kind on the
- * GPU yet (Linux's are DMA-bufs). An IOSurface buffer kind is to come, and with it
- * spatimesh_surface.
+ * Pictures stay on the GPU where they can: on a Mac each is an IOSurface the web process drew
+ * into, which the window shows as it is (spatimesh_surface), the same memory, nothing copied.
+ * Where WPE hands over shared memory, the picture is copied (spatimesh_copy).
  *
  * Most of this is the WebKitGTK engine's (crates/spatimesh-webkitgtk), whose API WPE's is but
  * for windows and input. What happens to pages is queued as events, popped by the Rust side
@@ -66,6 +66,11 @@ typedef struct {
     GBytes *pixels;
     int width, height, stride;
     int damaged, dx0, dy0, dx1, dy1;
+    /* Pictures on the GPU (IOSurfaces, on a Mac): the newest not yet offered to the window, and
+     * every one the window holds -- given back to WPE only when it lets go of it, so that WPE
+     * never draws into what is being shown. */
+    WPEBuffer *fresh_surface;
+    GPtrArray *held_surfaces;
     void (*on_picture)(gpointer);
     gpointer data;
 } MeshView;
@@ -85,6 +90,20 @@ static void add_damage(MeshView *v, int x, int y, int w, int h) {
 static gboolean mesh_view_render_buffer(WPEView *view, WPEBuffer *buffer, const WPERectangle *damage, guint n_damage, GError **error) {
     MeshView *v = (MeshView *)view;
     int width = wpe_buffer_get_width(buffer), height = wpe_buffer_get_height(buffer);
+#ifdef WPE_PLATFORM_BUFFER_IOSURFACE
+    if (WPE_IS_BUFFER_IOSURFACE(buffer)) {
+        /* Shown as it is. One the window never took is WPE's again at once. */
+        if (v->fresh_surface) {
+            wpe_view_buffer_released(view, v->fresh_surface);
+            g_object_unref(v->fresh_surface);
+        }
+        v->fresh_surface = g_object_ref(buffer);
+        wpe_view_buffer_rendered(view, buffer);
+        if (v->on_picture)
+            v->on_picture(v->data);
+        return TRUE;
+    }
+#endif
     GBytes *pixels = NULL;
     int stride = width * 4;
     if (WPE_IS_BUFFER_SHM(buffer)) {
@@ -140,6 +159,8 @@ static void mesh_view_constructed(GObject *object) {
 static void mesh_view_dispose(GObject *object) {
     MeshView *v = (MeshView *)object;
     g_clear_pointer(&v->pixels, g_bytes_unref);
+    g_clear_object(&v->fresh_surface);
+    g_clear_pointer(&v->held_surfaces, g_ptr_array_unref);
     G_OBJECT_CLASS(mesh_view_parent_class)->dispose(object);
 }
 
@@ -150,7 +171,7 @@ static void mesh_view_class_init(MeshViewClass *klass) {
 }
 
 static void mesh_view_init(MeshView *v) {
-    (void)v;
+    v->held_surfaces = g_ptr_array_new_with_free_func(g_object_unref);
 }
 
 /* A toplevel of one view, as large as the tab. */
@@ -1321,14 +1342,44 @@ int spatimesh_damage(Engine *e, uint64_t id, int *x, int *y, int *w, int *h) {
     return 1;
 }
 
-/* Pictures on the GPU, by number: not yet from this engine, whose pictures are copied. */
+/* The tab's newest picture on the GPU, by its IOSurface's number, once: from then on the
+ * window holds it, until spatimesh_release_surface. (A Mac's; elsewhere there are none.) */
 int spatimesh_surface(Engine *e, uint64_t id, uint32_t *surface, int *width, int *height) {
+#ifdef WPE_PLATFORM_BUFFER_IOSURFACE
+    Tab *t = find(e, id);
+    if (!t || !t->wpe->fresh_surface)
+        return 0;
+    WPEBuffer *buffer = t->wpe->fresh_surface;
+    t->wpe->fresh_surface = NULL;
+    g_ptr_array_add(t->wpe->held_surfaces, buffer);
+    *surface = wpe_buffer_iosurface_get_id(WPE_BUFFER_IOSURFACE(buffer));
+    *width = wpe_buffer_get_width(buffer);
+    *height = wpe_buffer_get_height(buffer);
+    return 1;
+#else
     (void)e; (void)id; (void)surface; (void)width; (void)height;
     return 0;
+#endif
 }
 
+/* The window let go of a picture: WPE may draw into it again. */
 void spatimesh_release_surface(Engine *e, uint64_t id, uint32_t surface) {
+#ifdef WPE_PLATFORM_BUFFER_IOSURFACE
+    Tab *t = find(e, id);
+    if (!t)
+        return;
+    GPtrArray *held = t->wpe->held_surfaces;
+    for (guint i = 0; i < held->len; i++) {
+        WPEBuffer *buffer = g_ptr_array_index(held, i);
+        if (wpe_buffer_iosurface_get_id(WPE_BUFFER_IOSURFACE(buffer)) == surface) {
+            wpe_view_buffer_released(WPE_VIEW(t->wpe), buffer);
+            g_ptr_array_remove_index(held, i);
+            return;
+        }
+    }
+#else
     (void)e; (void)id; (void)surface;
+#endif
 }
 
 /* The tab's picture, where it changed, into `pixels` (`width` by `height`, four bytes a pixel,
