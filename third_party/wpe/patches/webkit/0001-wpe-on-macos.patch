@@ -1,3 +1,36 @@
+diff --git a/Source/ThirdParty/skia/CMakeLists.txt b/Source/ThirdParty/skia/CMakeLists.txt
+index 49b926228..69078d0d2 100644
+--- a/Source/ThirdParty/skia/CMakeLists.txt
++++ b/Source/ThirdParty/skia/CMakeLists.txt
+@@ -175,6 +175,7 @@ add_library(Skia STATIC
+     src/core/SkPaint.cpp
+     src/core/SkPaintPriv.cpp
+     src/core/SkPath.cpp
++    src/core/SkPathDump.cpp
+     src/core/SkPathBuilder.cpp
+     src/core/SkPathData.cpp
+     src/core/SkPathEffect.cpp
+@@ -237,6 +238,7 @@ add_library(Skia STATIC
+     src/core/SkSpriteBlitter_ARGB32.cpp
+     src/core/SkStream.cpp
+     src/core/SkStrike.cpp
++    src/core/SkStrikeRef.cpp
+     src/core/SkStrikeCache.cpp
+     src/core/SkStrikeSpec.cpp
+     src/core/SkString.cpp
+diff --git a/Source/WTF/wtf/PlatformUse.h b/Source/WTF/wtf/PlatformUse.h
+index 0c16afbd6..b63bb903a 100644
+--- a/Source/WTF/wtf/PlatformUse.h
++++ b/Source/WTF/wtf/PlatformUse.h
+@@ -315,7 +315,7 @@
+ #endif
+ 
+ #if !defined(USE_TZONE_MALLOC)
+-#if (!USE(MIMALLOC) && !USE(SYSTEM_MALLOC)) && (CPU(ARM64) || CPU(X86_64)) && OS(DARWIN) && CPU(ADDRESS64)
++#if (!USE(MIMALLOC) && !USE(SYSTEM_MALLOC)) && (CPU(ARM64) || CPU(X86_64)) && OS(DARWIN) && CPU(ADDRESS64) && !PLATFORM(WPE)
+ #define USE_TZONE_MALLOC 1
+ #else
+ #define USE_TZONE_MALLOC 0
 diff --git a/Source/WTF/wtf/PlatformWPE.cmake b/Source/WTF/wtf/PlatformWPE.cmake
 index bdd219a66..698ad8da0 100644
 --- a/Source/WTF/wtf/PlatformWPE.cmake
@@ -72,6 +105,97 @@ index 3d2bf0ab1..63ae01bb3 100644
 +# Spatiand: what PAL's own crypto includes, named (on Linux their headers are in /usr/include
 +# and were found without).
 +list(APPEND PAL_LIBRARIES GLib::GLib LibGcrypt::LibGcrypt Tasn1::Tasn1)
+diff --git a/Source/WebCore/crypto/CryptoKey.cpp b/Source/WebCore/crypto/CryptoKey.cpp
+index 927efc02a..0227ec5d2 100644
+--- a/Source/WebCore/crypto/CryptoKey.cpp
++++ b/Source/WebCore/crypto/CryptoKey.cpp
+@@ -76,7 +76,7 @@ WebCoreOpaqueRoot root(CryptoKey* key)
+     return WebCoreOpaqueRoot { key };
+ }
+ 
+-#if !OS(DARWIN) || PLATFORM(GTK)
++#if !OS(DARWIN) || PLATFORM(GTK) || PLATFORM(WPE)
+ Vector<uint8_t> CryptoKey::randomData(size_t size)
+ {
+     Vector<uint8_t> result(size);
+diff --git a/Source/WebCore/crypto/keys/CryptoKeyEC.cpp b/Source/WebCore/crypto/keys/CryptoKeyEC.cpp
+index a062e96fb..7e433419a 100644
+--- a/Source/WebCore/crypto/keys/CryptoKeyEC.cpp
++++ b/Source/WebCore/crypto/keys/CryptoKeyEC.cpp
+@@ -31,7 +31,7 @@
+ #include "JsonWebKey.h"
+ #include <wtf/text/Base64.h>
+ 
+-#if OS(DARWIN) && !PLATFORM(GTK)
++#if OS(DARWIN) && !PLATFORM(GTK) && !PLATFORM(WPE)
+ #include <pal/crypto/CryptoTypes.h>
+ #include <pal/crypto/PlatformECKey.h>
+ #endif
+diff --git a/Source/WebCore/crypto/keys/CryptoKeyEC.h b/Source/WebCore/crypto/keys/CryptoKeyEC.h
+index 5c7e5dfdb..41fa6f334 100644
+--- a/Source/WebCore/crypto/keys/CryptoKeyEC.h
++++ b/Source/WebCore/crypto/keys/CryptoKeyEC.h
+@@ -29,7 +29,7 @@
+ #include <WebCore/CryptoKeyPair.h>
+ 
+ #include <wtf/Platform.h>
+-#if OS(DARWIN) && !PLATFORM(GTK)
++#if OS(DARWIN) && !PLATFORM(GTK) && !PLATFORM(WPE)
+ #include <WebCore/CommonCryptoUtilities.h>
+ 
+ #include <pal/crypto/CryptoTypes.h>
+diff --git a/Source/WebCore/crypto/keys/CryptoKeyRSA.h b/Source/WebCore/crypto/keys/CryptoKeyRSA.h
+index e219a0ef8..11d3f5958 100644
+--- a/Source/WebCore/crypto/keys/CryptoKeyRSA.h
++++ b/Source/WebCore/crypto/keys/CryptoKeyRSA.h
+@@ -28,7 +28,7 @@
+ #include "CryptoKey.h"
+ #include <wtf/Function.h>
+ 
+-#if OS(DARWIN) && !PLATFORM(GTK)
++#if OS(DARWIN) && !PLATFORM(GTK) && !PLATFORM(WPE)
+ #include "CommonCryptoUtilities.h"
+ 
+ typedef CCRSACryptorRef PlatformRSAKey;
+diff --git a/Source/WebCore/platform/graphics/PlatformDisplay.h b/Source/WebCore/platform/graphics/PlatformDisplay.h
+index e790f78f5..aae156f79 100644
+--- a/Source/WebCore/platform/graphics/PlatformDisplay.h
++++ b/Source/WebCore/platform/graphics/PlatformDisplay.h
+@@ -82,7 +82,7 @@ public:
+ #if OS(ANDROID)
+         Android,
+ #endif
+-#if PLATFORM(GTK) || OS(ANDROID)
++#if PLATFORM(GTK) || OS(ANDROID) || OS(DARWIN)
+         Default,
+ #endif
+     };
+diff --git a/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.cpp b/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.cpp
+index d0c80462c..5c6adddc0 100644
+--- a/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.cpp
++++ b/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.cpp
+@@ -26,7 +26,7 @@
+ #include "config.h"
+ #include "PlatformDisplayDefault.h"
+ 
+-#if PLATFORM(GTK) || OS(ANDROID)
++#if PLATFORM(GTK) || OS(ANDROID) || OS(DARWIN)
+ 
+ #include "GLContext.h"
+ #include <epoxy/egl.h>
+diff --git a/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.h b/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.h
+index d49cc0e37..d3ebea820 100644
+--- a/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.h
++++ b/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.h
+@@ -25,7 +25,7 @@
+ 
+ #pragma once
+ 
+-#if PLATFORM(GTK) || OS(ANDROID)
++#if PLATFORM(GTK) || OS(ANDROID) || OS(DARWIN)
+ 
+ #include "PlatformDisplay.h"
+ 
 diff --git a/Source/WebKit/CMakeLists.txt b/Source/WebKit/CMakeLists.txt
 index fd21e35f0..0f174b703 100644
 --- a/Source/WebKit/CMakeLists.txt
@@ -125,6 +249,513 @@ index 59ebe969d..f1e85e4fe 100644
  list(APPEND WebKit_PUBLIC_FRAMEWORK_HEADERS
      Shared/API/Cocoa/WKDataDetectorTypes.h
      Shared/API/Cocoa/WKFoundation.h
+diff --git a/Source/WebKit/NetworkProcess/NetworkConnectionToWebProcess.cpp b/Source/WebKit/NetworkProcess/NetworkConnectionToWebProcess.cpp
+index 7c959b54b..cb5c7393b 100644
+--- a/Source/WebKit/NetworkProcess/NetworkConnectionToWebProcess.cpp
++++ b/Source/WebKit/NetworkProcess/NetworkConnectionToWebProcess.cpp
+@@ -492,7 +492,7 @@ void NetworkConnectionToWebProcess::didClose(IPC::Connection& connection)
+     // Protect ourself as we might be otherwise be deleted during this function.
+     Ref<NetworkConnectionToWebProcess> protector(*this);
+ 
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+     CONNECTION_RELEASE_LOG(Loading, "didClose: WebProcess (%d) closed its connection. Aborting related loaders.", connection.remoteProcessID());
+ #else
+     CONNECTION_RELEASE_LOG(Loading, "didClose: WebProcess closed its connection. Aborting related loaders.");
+diff --git a/Source/WebKit/NetworkProcess/NetworkProcess.cpp b/Source/WebKit/NetworkProcess/NetworkProcess.cpp
+index 41ea74303..55e769185 100644
+--- a/Source/WebKit/NetworkProcess/NetworkProcess.cpp
++++ b/Source/WebKit/NetworkProcess/NetworkProcess.cpp
+@@ -1924,7 +1924,7 @@ void NetworkProcess::deleteWebsiteData(PAL::SessionID sessionID, OptionSet<Websi
+         if (connection->sessionID() != sessionID || activeWebProcesses.contains(identifier))
+             continue;
+ 
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+         Ref ipcConnection = connection->connection();
+         auto remoteProcessID = ipcConnection->remoteProcessID();
+         // Connection is not available.
+diff --git a/Source/WebKit/NetworkProcess/webrtc/NetworkMDNSRegister.cpp b/Source/WebKit/NetworkProcess/webrtc/NetworkMDNSRegister.cpp
+index 8046b81ec..870b64daa 100644
+--- a/Source/WebKit/NetworkProcess/webrtc/NetworkMDNSRegister.cpp
++++ b/Source/WebKit/NetworkProcess/webrtc/NetworkMDNSRegister.cpp
+@@ -33,7 +33,7 @@
+ #include <wtf/UUID.h>
+ #include <wtf/text/MakeString.h>
+ 
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+ #include <wtf/darwin/DispatchExtras.h>
+ #endif
+ 
+diff --git a/Source/WebKit/Platform/IPC/Attachment.h b/Source/WebKit/Platform/IPC/Attachment.h
+index 606d48b9e..ccaf9ccf5 100644
+--- a/Source/WebKit/Platform/IPC/Attachment.h
++++ b/Source/WebKit/Platform/IPC/Attachment.h
+@@ -26,7 +26,7 @@
+ 
+ #pragma once
+ 
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+ #include <wtf/MachSendRight.h>
+ #endif
+ 
+@@ -43,7 +43,7 @@ namespace IPC {
+ 
+ // IPC::Attachment is a type representing objects that cannot be transferred as data,
+ // rather they are transferred via operating system cross-process communication primitives.
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+ using Attachment = MachSendRight;
+ #elif OS(WINDOWS)
+ struct Attachment { }; // Windows does not need attachments at the moment.
+diff --git a/Source/WebKit/Platform/IPC/Connection.cpp b/Source/WebKit/Platform/IPC/Connection.cpp
+index 4eb090320..2069f0586 100644
+--- a/Source/WebKit/Platform/IPC/Connection.cpp
++++ b/Source/WebKit/Platform/IPC/Connection.cpp
+@@ -669,7 +669,7 @@ Error Connection::sendMessageImpl(UniqueRef<Encoder>&& encoder, OptionSet<SendOp
+     }
+ 
+     if (shouldNotifyOfQueueGrowingLarge) {
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+         RELEASE_LOG_ERROR(IPC, "Connection::sendMessage(): Too many messages (%zu) in the queue to remote PID: %d (most common: %u %" PUBLIC_LOG_STRING " messages), notifying client", outgoingMessagesCount, remoteProcessID(), maxOutgoingMessageNameCount, maxOutgoingMessageName.characters());
+ #else
+         RELEASE_LOG_ERROR(IPC, "Connection::sendMessage(): Too many messages (%zu) in the queue, notifying client (most common: %u %" PUBLIC_LOG_STRING " messages)", outgoingMessagesCount, maxOutgoingMessageNameCount, maxOutgoingMessageName.characters());
+@@ -999,7 +999,7 @@ auto Connection::waitForSyncReply(SyncRequestID syncRequestID, MessageName messa
+         timedOut = !protect(m_syncState)->wait(timeout);
+     }
+ 
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+     RELEASE_LOG_ERROR(IPC, "Connection::waitForSyncReply: Timed-out while waiting for reply for %" PUBLIC_LOG_STRING " from process %d, id=%" PRIu64, description(messageName).characters(), remoteProcessID(), syncRequestID.toUInt64());
+ #else
+     RELEASE_LOG_ERROR(IPC, "Connection::waitForSyncReply: Timed-out while waiting for reply for %s, id=%" PRIu64, description(messageName).characters(), syncRequestID.toUInt64());
+diff --git a/Source/WebKit/Platform/IPC/Connection.h b/Source/WebKit/Platform/IPC/Connection.h
+index 915dc5e5b..430f13da2 100644
+--- a/Source/WebKit/Platform/IPC/Connection.h
++++ b/Source/WebKit/Platform/IPC/Connection.h
+@@ -76,7 +76,7 @@
+ #include <wtf/android/RefPtrAndroid.h>
+ #endif
+ 
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+ #include <mach/mach_port.h>
+ #include <wtf/darwin/DispatchOSObject.h>
+ #include <wtf/darwin/XPCObjectPtr.h>
+@@ -323,7 +323,7 @@ public:
+         }
+         operator bool() const { return !!handle; }
+         HANDLE handle { 0 };
+-#elif OS(DARWIN)
++#elif (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+         explicit Identifier(Handle&& handle)
+             : Identifier(handle.leakSendRight())
+         {
+@@ -343,7 +343,7 @@ public:
+ #endif
+     };
+ 
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+     xpc_connection_t xpcConnection() const { return m_xpcConnection.get(); }
+     std::optional<audit_token_t> getAuditToken();
+     pid_t remoteProcessID() const;
+@@ -798,7 +798,7 @@ private:
+ #if PLATFORM(PLAYSTATION)
+     RefPtr<WTF::Thread> m_socketMonitor;
+ #endif
+-#elif OS(DARWIN)
++#elif (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+     // Called on the connection queue.
+     void receiveSourceEventHandler();
+     void initializeSendSource();
+diff --git a/Source/WebKit/Platform/IPC/ConnectionHandle.h b/Source/WebKit/Platform/IPC/ConnectionHandle.h
+index 223e447e4..f7a2a628d 100644
+--- a/Source/WebKit/Platform/IPC/ConnectionHandle.h
++++ b/Source/WebKit/Platform/IPC/ConnectionHandle.h
+@@ -31,7 +31,7 @@
+ 
+ #if USE(UNIX_DOMAIN_SOCKETS)
+ #include <wtf/unix/UnixFileDescriptor.h>
+-#elif OS(DARWIN)
++#elif (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+ #include <mach/mach.h>
+ #include <wtf/MachSendRight.h>
+ #include <wtf/StdLibExtras.h>
+@@ -62,7 +62,7 @@ public:
+     { }
+     explicit operator bool() const { return !!m_handle; }
+     [[nodiscard]] HANDLE leak() { return m_handle.leak(); }
+-#elif OS(DARWIN)
++#elif (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+     ConnectionHandle(MachSendRight&& sendRight)
+         : m_handle(WTF::move(sendRight))
+     { }
+@@ -77,7 +77,7 @@ private:
+     UnixFileDescriptor m_handle;
+ #elif OS(WINDOWS)
+     Win32Handle m_handle;
+-#elif OS(DARWIN)
++#elif (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+     MachSendRight m_handle;
+ #endif
+ };
+diff --git a/Source/WebKit/Platform/IPC/ConnectionHandle.serialization.in b/Source/WebKit/Platform/IPC/ConnectionHandle.serialization.in
+index a04e9a287..8f1c50a87 100644
+--- a/Source/WebKit/Platform/IPC/ConnectionHandle.serialization.in
++++ b/Source/WebKit/Platform/IPC/ConnectionHandle.serialization.in
+@@ -28,7 +28,7 @@ webkit_platform_header: "ConnectionHandle.h"
+ #if OS(WINDOWS)
+     Win32Handle m_handle;
+ #endif
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+     MachSendRight m_handle;
+ #endif
+ }
+diff --git a/Source/WebKit/Platform/IPC/Encoder.cpp b/Source/WebKit/Platform/IPC/Encoder.cpp
+index 406a67fc5..63bf0a123 100644
+--- a/Source/WebKit/Platform/IPC/Encoder.cpp
++++ b/Source/WebKit/Platform/IPC/Encoder.cpp
+@@ -35,7 +35,7 @@
+ #include <wtf/TZoneMallocInlines.h>
+ #include <wtf/UniqueRef.h>
+ 
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+ #include <wtf/MmapSpan.h>
+ #endif
+ 
+diff --git a/Source/WebKit/Platform/IPC/Encoder.h b/Source/WebKit/Platform/IPC/Encoder.h
+index ea85b7c33..610f69e15 100644
+--- a/Source/WebKit/Platform/IPC/Encoder.h
++++ b/Source/WebKit/Platform/IPC/Encoder.h
+@@ -35,7 +35,7 @@
+ #include <wtf/TZoneMalloc.h>
+ #include <wtf/Vector.h>
+ 
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+ #include <wtf/MmapSpan.h>
+ #else
+ #include <wtf/MallocSpan.h>
+@@ -117,7 +117,7 @@ private:
+     MessageName m_messageName;
+     uint64_t m_destinationID;
+ 
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+     using OutOfLineBufferSpan = MmapSpan<uint8_t>;
+ #else
+     using OutOfLineBufferSpan = MallocSpan<uint8_t>;
+diff --git a/Source/WebKit/Platform/IPC/IPCUtilities.h b/Source/WebKit/Platform/IPC/IPCUtilities.h
+index 9cf9d0856..52b988f25 100644
+--- a/Source/WebKit/Platform/IPC/IPCUtilities.h
++++ b/Source/WebKit/Platform/IPC/IPCUtilities.h
+@@ -33,6 +33,9 @@
+ 
+ #if USE(UNIX_DOMAIN_SOCKETS)
+ #include <wtf/unix/UnixFileDescriptor.h>
++#if USE(UNIX_DOMAIN_SOCKETS)
++#include <sys/socket.h>
++#endif
+ #endif
+ 
+ namespace IPC {
+@@ -64,6 +67,15 @@ enum PlatformConnectionOptions {
+ 
+ SocketPair createPlatformConnection(int socketType, unsigned options = SetCloexecOnClient | SetCloexecOnServer);
+ 
++// The socket type for a connection of messages: kept apart as messages. macOS has no
++// SOCK_SEQPACKET for local sockets; there, datagrams, each message being at most 4 KB with the
++// rest out of line (see createPlatformConnection, which makes room for that).
++#if OS(DARWIN)
++constexpr int messageSocketType = SOCK_DGRAM;
++#else
++constexpr int messageSocketType = SOCK_SEQPACKET;
++#endif
++
+ #endif
+ 
+ #if OS(WINDOWS)
+diff --git a/Source/WebKit/Platform/IPC/glib/ConnectionGLib.cpp b/Source/WebKit/Platform/IPC/glib/ConnectionGLib.cpp
+index d5b3cce63..bc7f2fb81 100644
+--- a/Source/WebKit/Platform/IPC/glib/ConnectionGLib.cpp
++++ b/Source/WebKit/Platform/IPC/glib/ConnectionGLib.cpp
+@@ -513,7 +513,7 @@ IGNORE_CLANG_WARNINGS_END
+ 
+ std::optional<Connection::ConnectionIdentifierPair> Connection::createConnectionIdentifierPair()
+ {
+-    SocketPair socketPair = createPlatformConnection(SOCK_SEQPACKET);
++    SocketPair socketPair = createPlatformConnection(messageSocketType);
+     return { { Identifier { WTF::move(socketPair.server) }, ConnectionHandle { WTF::move(socketPair.client) } } };
+ }
+ 
+diff --git a/Source/WebKit/Platform/IPC/unix/IPCUtilitiesUnix.cpp b/Source/WebKit/Platform/IPC/unix/IPCUtilitiesUnix.cpp
+index 5ba3ea569..fd25b89c1 100644
+--- a/Source/WebKit/Platform/IPC/unix/IPCUtilitiesUnix.cpp
++++ b/Source/WebKit/Platform/IPC/unix/IPCUtilitiesUnix.cpp
+@@ -50,6 +50,18 @@ SocketPair createPlatformConnection(int socketType, unsigned options)
+ 
+     RELEASE_ASSERT(socketpair(AF_UNIX, socketType, 0, sockets.data()) != -1);
+ 
++#if OS(DARWIN)
++    // A local datagram on macOS is at most the socket's send buffer, 2 KB by default: room for
++    // a whole message (4 KB) and a queue of them, both ways.
++    if (socketType == SOCK_DGRAM) {
++        int size = 256 * 1024;
++        for (int socket : sockets) {
++            setsockopt(socket, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
++            setsockopt(socket, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
++        }
++    }
++#endif
++
+     if (options & SetCloexecOnServer)
+         RELEASE_ASSERT(setCloseOnExec(sockets[1]));
+     if (options & SetCloexecOnClient)
+diff --git a/Source/WebKit/Shared/WebCoreArgumentCoders.serialization.in b/Source/WebKit/Shared/WebCoreArgumentCoders.serialization.in
+index 53e089add..711b30103 100644
+--- a/Source/WebKit/Shared/WebCoreArgumentCoders.serialization.in
++++ b/Source/WebKit/Shared/WebCoreArgumentCoders.serialization.in
+@@ -1653,7 +1653,7 @@ class WebCore::PasteboardCustomData {
+ #if USE(UNIX_DOMAIN_SOCKETS)
+ headers: <wtf/unix/UnixFileDescriptor.h> "ArgumentCodersUnix.h"
+ #endif
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+ header: <wtf/MachSendRight.h>
+ #endif
+ 
+@@ -1661,7 +1661,7 @@ header: <wtf/MachSendRight.h>
+ #if USE(UNIX_DOMAIN_SOCKETS)
+     [Validator='!!m_handle && *m_handle'] UnixFileDescriptor m_handle;
+ #endif
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+     [Validator='!!m_handle && *m_handle'] MachSendRight m_handle;
+ #endif
+ #if OS(WINDOWS)
+diff --git a/Source/WebKit/UIProcess/API/C/WKNativeEvent.h b/Source/WebKit/UIProcess/API/C/WKNativeEvent.h
+index 71146aa2b..25f7deaad 100644
+--- a/Source/WebKit/UIProcess/API/C/WKNativeEvent.h
++++ b/Source/WebKit/UIProcess/API/C/WKNativeEvent.h
+@@ -34,7 +34,7 @@
+ extern "C" {
+ #endif
+ 
+-#if defined(__APPLE__) && !TARGET_OS_IPHONE && !defined(BUILDING_GTK__)
++#if defined(__APPLE__) && !TARGET_OS_IPHONE && !defined(BUILDING_GTK__) && !defined(BUILDING_WPE__)
+ #ifdef __OBJC__
+ @class NSEvent;
+ #elif __cplusplus
+diff --git a/Source/WebKit/UIProcess/API/C/WKPagePrivate.h b/Source/WebKit/UIProcess/API/C/WKPagePrivate.h
+index f1153a906..4f34e654f 100644
+--- a/Source/WebKit/UIProcess/API/C/WKPagePrivate.h
++++ b/Source/WebKit/UIProcess/API/C/WKPagePrivate.h
+@@ -244,7 +244,7 @@ WK_EXPORT void WKPageFindStringForTesting(WKPageRef page, void* context, WKStrin
+ typedef void (*WKPageDoAfterProcessingAllPendingMouseEventsFunction)(void* functionContext);
+ WK_EXPORT void WKPageDoAfterProcessingAllPendingMouseEvents(WKPageRef page, void* context, WKPageDoAfterProcessingAllPendingMouseEventsFunction function);
+ 
+-#if !defined(__APPLE__)
++#if !defined(__APPLE__) || defined(BUILDING_WPE__)
+ typedef void (*WKPageDoAfterProcessingAllPendingKeyEventsFunction)(void* functionContext);
+ WK_EXPORT void WKPageDoAfterProcessingAllPendingKeyEvents(WKPageRef page, void* context, WKPageDoAfterProcessingAllPendingKeyEventsFunction function);
+ 
+diff --git a/Source/WebKit/UIProcess/Launcher/ProcessLauncher.cpp b/Source/WebKit/UIProcess/Launcher/ProcessLauncher.cpp
+index 4c9b9d6cc..c59a60571 100644
+--- a/Source/WebKit/UIProcess/Launcher/ProcessLauncher.cpp
++++ b/Source/WebKit/UIProcess/Launcher/ProcessLauncher.cpp
+@@ -30,7 +30,7 @@
+ #include <wtf/SystemTracing.h>
+ #include <wtf/WorkQueue.h>
+ 
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+ #include <mach/mach_init.h>
+ #include <mach/mach_traps.h>
+ #endif
+diff --git a/Source/WebKit/UIProcess/Launcher/glib/ProcessLauncherGLib.cpp b/Source/WebKit/UIProcess/Launcher/glib/ProcessLauncherGLib.cpp
+index b20208abf..1024c4f71 100644
+--- a/Source/WebKit/UIProcess/Launcher/glib/ProcessLauncherGLib.cpp
++++ b/Source/WebKit/UIProcess/Launcher/glib/ProcessLauncherGLib.cpp
+@@ -109,7 +109,7 @@ void ProcessLauncher::launchProcess()
+ 
+     GUniquePtr<gchar> processIdentifier(g_strdup_printf("%" PRIu64, m_launchOptions.processIdentifier.toUInt64()));
+ 
+-    IPC::SocketPair webkitSocketPair = IPC::createPlatformConnection(SOCK_SEQPACKET, connectionOptions());
++    IPC::SocketPair webkitSocketPair = IPC::createPlatformConnection(IPC::messageSocketType, connectionOptions());
+     GUniquePtr<gchar> webkitSocket(g_strdup_printf("%d", webkitSocketPair.client.value()));
+ 
+ #if OS(ANDROID)
+diff --git a/Source/WebKit/UIProcess/Network/NetworkProcessProxy.cpp b/Source/WebKit/UIProcess/Network/NetworkProcessProxy.cpp
+index d9dddf16a..0a3878e6e 100644
+--- a/Source/WebKit/UIProcess/Network/NetworkProcessProxy.cpp
++++ b/Source/WebKit/UIProcess/Network/NetworkProcessProxy.cpp
+@@ -360,7 +360,7 @@ void NetworkProcessProxy::getNetworkProcessConnection(WebProcessProxy& webProces
+ 
+ #if USE(UNIX_DOMAIN_SOCKETS) || OS(WINDOWS)
+         reply(NetworkProcessConnectionInfo { WTF::move(*identifier), cookieAcceptPolicy });
+-#elif OS(DARWIN)
++#elif (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+         Ref connection = protectedThis->connection();
+         MESSAGE_CHECK_COMPLETION_WITH_CONNECTION(*identifier, connection.get(), reply({ }));
+         reply(NetworkProcessConnectionInfo { WTF::move(*identifier) , cookieAcceptPolicy, connection->getAuditToken() });
+@@ -510,7 +510,7 @@ void NetworkProcessProxy::networkProcessDidTerminate(ProcessTerminationReason re
+ 
+ void NetworkProcessProxy::didClose(IPC::Connection& connection)
+ {
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+     RELEASE_LOG_ERROR(Process, "%p - NetworkProcessProxy::didClose (Network Process %d crash)", this, connection.remoteProcessID());
+ #else
+     RELEASE_LOG_ERROR(Process, "%p - NetworkProcessProxy::didClose (Network Process crash)", this);
+diff --git a/Source/WebKit/UIProcess/WebProcessProxy.cpp b/Source/WebKit/UIProcess/WebProcessProxy.cpp
+index 46f3b697a..f22cf5594 100644
+--- a/Source/WebKit/UIProcess/WebProcessProxy.cpp
++++ b/Source/WebKit/UIProcess/WebProcessProxy.cpp
+@@ -1445,7 +1445,7 @@ ProcessTerminationReason WebProcessProxy::terminationReason() const
+ 
+ void WebProcessProxy::didClose(IPC::Connection& connection)
+ {
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+     WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "didClose: (web process %d crash)", connection.remoteProcessID());
+ #else
+     WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "didClose (web process crash)");
+diff --git a/Source/WebKit/UIProcess/WebsiteData/WebsiteDataStore.cpp b/Source/WebKit/UIProcess/WebsiteData/WebsiteDataStore.cpp
+index 1263f3a60..d4b044c8f 100644
+--- a/Source/WebKit/UIProcess/WebsiteData/WebsiteDataStore.cpp
++++ b/Source/WebKit/UIProcess/WebsiteData/WebsiteDataStore.cpp
+@@ -85,7 +85,7 @@
+ #include <wtf/RunLoop.h>
+ #include <wtf/text/MakeString.h>
+ 
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+ #include <wtf/spi/darwin/OSVariantSPI.h>
+ #endif
+ 
+diff --git a/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.cpp b/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.cpp
+index 22c44ab7d..fd6d8db7e 100644
+--- a/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.cpp
++++ b/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.cpp
+@@ -41,6 +41,11 @@
+ #include <drm/drm_fourcc.h>
+ #elif USE(LIBDRM)
+ #include <drm_fourcc.h>
++#else
++// Spatiand: no libdrm (a Mac); the two pixel formats named here, as drm_fourcc.h has them.
++#define DRM_FOURCC_CODE(a, b, c, d) ((uint32_t)(a) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16) | ((uint32_t)(d) << 24))
++#define DRM_FORMAT_XRGB8888 DRM_FOURCC_CODE('X', 'R', '2', '4')
++#define DRM_FORMAT_ARGB8888 DRM_FOURCC_CODE('A', 'R', '2', '4')
+ #endif
+ 
+ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+diff --git a/Source/WebKit/WebProcess/WebProcess.cpp b/Source/WebKit/WebProcess/WebProcess.cpp
+index 1a40da5d1..8a87747e9 100644
+--- a/Source/WebKit/WebProcess/WebProcess.cpp
++++ b/Source/WebKit/WebProcess/WebProcess.cpp
+@@ -1451,7 +1451,7 @@ void WebProcess::logDiagnosticMessageForNetworkProcessCrash()
+ 
+ void WebProcess::networkProcessConnectionClosed(NetworkProcessConnection* connection)
+ {
+-#if OS(DARWIN)
++#if (OS(DARWIN) && !USE(UNIX_DOMAIN_SOCKETS))
+     WEBPROCESS_RELEASE_LOG(Loading, "networkProcessConnectionClosed: NetworkProcess (%d) closed its connection (Crashed)", connection ? connection->connection().remoteProcessID() : 0);
+ #else
+     WEBPROCESS_RELEASE_LOG(Loading, "networkProcessConnectionClosed: NetworkProcess closed its connection (Crashed)");
+diff --git a/Source/WebKit/WebProcess/glib/WebProcessGLib.cpp b/Source/WebKit/WebProcess/glib/WebProcessGLib.cpp
+index 85bc7f238..3faed2857 100644
+--- a/Source/WebKit/WebProcess/glib/WebProcessGLib.cpp
++++ b/Source/WebKit/WebProcess/glib/WebProcessGLib.cpp
+@@ -71,7 +71,7 @@
+ #include <WebCore/PlatformDisplayAndroid.h>
+ #endif
+ 
+-#if PLATFORM(GTK) || OS(ANDROID)
++#if PLATFORM(GTK) || OS(ANDROID) || OS(DARWIN)
+ #include <WebCore/PlatformDisplayDefault.h>
+ #endif
+ 
+@@ -179,7 +179,8 @@ void WebProcess::initializePlatformDisplayIfNeeded() const
+         return;
+     }
+ 
+-#if PLATFORM(GTK) || OS(ANDROID)
++    // (A Mac: EGL is ANGLE's, on Metal, whose default display is the one there is.)
++#if PLATFORM(GTK) || OS(ANDROID) || OS(DARWIN)
+     if (auto display = PlatformDisplayDefault::create()) {
+         PlatformDisplay::setSharedDisplay(WTF::move(display));
+         return;
+diff --git a/Source/bmalloc/CMakeLists.txt b/Source/bmalloc/CMakeLists.txt
+index b9eedea3a..faad18213 100644
+--- a/Source/bmalloc/CMakeLists.txt
++++ b/Source/bmalloc/CMakeLists.txt
+@@ -636,6 +636,9 @@ if (APPLE)
+     list(APPEND bmalloc_SOURCES
+         bmalloc/TZoneLog.cpp
+     )
++    if (PORT STREQUAL "WPE")
++        list(APPEND bmalloc_SOURCES bmalloc/ProcessCheckUnix.cpp)
++    endif ()
+ endif ()
+ 
+ set(bmalloc_LIBRARIES
+diff --git a/Source/bmalloc/bmalloc/ProcessCheckUnix.cpp b/Source/bmalloc/bmalloc/ProcessCheckUnix.cpp
+new file mode 100644
+index 000000000..c28c1c322
+--- /dev/null
++++ b/Source/bmalloc/bmalloc/ProcessCheckUnix.cpp
+@@ -0,0 +1,23 @@
++/*
++ * Spatiand: WPE on macOS. What ProcessCheck.mm gives Apple's ports, in plain C++: the process's
++ * name from the C library, and every process allowed what bmalloc allows a Linux one.
++ */
++
++#include "ProcessCheck.h"
++
++#if BOS(DARWIN)
++#include <stdlib.h>
++
++namespace bmalloc {
++
++#if BPLATFORM(COCOA) && !BPLATFORM(WATCHOS)
++bool gigacageEnabledForProcess() { return true; }
++#endif
++
++const char* processNameString() { return getprogname(); }
++
++bool shouldAllowMiniMode() { return true; }
++
++}
++
++#endif
+diff --git a/Source/cmake/OptionsWPE.cmake b/Source/cmake/OptionsWPE.cmake
+index ecf52b4c5..308160cf8 100644
+--- a/Source/cmake/OptionsWPE.cmake
++++ b/Source/cmake/OptionsWPE.cmake
+@@ -9,6 +9,17 @@ set(ENABLE_UNSAFE_BUFFER_USAGE_WARNING ON)
+ list(APPEND WEBKIT_UNSAFE_BUFFER_WARNING_FLAGS -Wno-unsafe-buffer-usage-in-format-attr-call)
+ 
+ # Update Source/WTF/wtf/Platform.h to match required GLib versions.
++# Spatiand: WPE on a Mac. ICU is the system's own (libicucore, unversioned symbols, as Apple's
++# WebKit has it), and EGL's types are the generic ones WPE is written against (on Apple, EGL's
++# native display is otherwise an int).
++if (APPLE)
++    add_definitions(-DU_DISABLE_RENAMING=1 -DEGL_NO_PLATFORM_SPECIFIC_TYPES)
++    # What glibc has in it and macOS keeps apart: gettext. And Accelerate, which WebKit's own
++    # code on any Darwin uses for image filters (USE(ACCELERATE)).
++    find_package(Intl REQUIRED)
++    link_libraries(${Intl_LIBRARIES} "-framework Accelerate")
++endif ()
++
+ find_package(GLib 2.70.0 REQUIRED COMPONENTS GioUnix Thread Module)
+ find_package(HarfBuzz 2.7.4 REQUIRED COMPONENTS ICU)
+ find_package(ICU 70.1 REQUIRED COMPONENTS data i18n uc)
 diff --git a/Source/cmake/WebKitCommon.cmake b/Source/cmake/WebKitCommon.cmake
 index d96e18503..25d271ed8 100644
 --- a/Source/cmake/WebKitCommon.cmake
@@ -159,9 +790,36 @@ index 9c0465867..41f9af9c0 100644
      if (PORT STREQUAL Mac)
          set(_version "Versions/A/")
 diff --git a/Source/cmake/WebKitMacros.cmake b/Source/cmake/WebKitMacros.cmake
-index 51074f8ad..eb3cd5d0f 100644
+index 51074f8ad..86733211c 100644
 --- a/Source/cmake/WebKitMacros.cmake
 +++ b/Source/cmake/WebKitMacros.cmake
+@@ -165,7 +165,7 @@ endfunction()
+ # ELF clang when an executable reuses a library PCH (-fPIE vs -fPIC). Fall back
+ # to a per-target prefix header on those ports.
+ function(WEBKIT_REUSE_PREFIX_HEADER _target _from _header)
+-    if (COMPILER_IS_CLANG AND APPLE)
++    if (COMPILER_IS_CLANG AND WEBKIT_COCOA)
+         target_precompile_headers(${_target} REUSE_FROM ${_from})
+     else ()
+         WEBKIT_ADD_PREFIX_HEADER(${_target} ${_header} PREFIX_NO_CODEGEN ${ARGN})
+@@ -173,7 +173,7 @@ function(WEBKIT_REUSE_PREFIX_HEADER _target _from _header)
+ endfunction()
+ 
+ function(_WEBKIT_ADD_PCH_OBJECT _target)
+-    if (NOT (COMPILER_IS_CLANG AND APPLE))
++    if (NOT (COMPILER_IS_CLANG AND WEBKIT_COCOA))
+         return()
+     endif ()
+     cmake_parse_arguments(PARSE_ARGV 1 _PO "PREFIX_NO_CODEGEN" "" "PREFIX_LANGUAGES")
+@@ -235,7 +235,7 @@ function(WEBKIT_ADD_PREFIX_HEADER_WITH_PARENT _target _base_target _header _pare
+         string(JOIN "," _lang_genex ${ARGN})
+         target_precompile_headers(${_target} PRIVATE
+             "$<$<COMPILE_LANGUAGE:${_lang_genex}>:${CMAKE_CURRENT_SOURCE_DIR}/${_header}>")
+-        if (APPLE)
++        if (WEBKIT_COCOA)
+             # FIXME: Upstream clang does not appear to propagate parent-PCH state to consumers
+             # of the child PCH (webkit.org/b/314763). Until that is root-caused, build the child
+             # prefix as a standalone PCH on non-Apple clang; the child header #includes its parent.
 @@ -509,7 +509,7 @@ macro(_WEBKIT_FRAMEWORK_LINK_FRAMEWORK _target_name)
      endif ()
      foreach (framework IN LISTS _public_frameworks)

@@ -71,12 +71,27 @@ mac)
     fetch "libsoup-$LIBSOUP_VERSION" "https://download.gnome.org/sources/libsoup/${LIBSOUP_VERSION%.*}/libsoup-$LIBSOUP_VERSION.tar.xz"
     meson_lib "libsoup-$LIBSOUP_VERSION" -Dtests=false -Dintrospection=disabled -Dvapi=disabled -Ddocs=disabled \
         -Dgssapi=disabled -Dntlm=disabled -Dbrotli=disabled -Dsysprof=disabled -Dpkcs11_tests=disabled -Dautobahn=disabled
-    # Text shaping, with the ICU part WebKit asks for (Homebrew's has not got it); ICU is Homebrew's for now.
-    export PKG_CONFIG_PATH="$PKG_CONFIG_PATH:$(ls -d /usr/local/opt/icu4c*/lib/pkgconfig /opt/homebrew/opt/icu4c*/lib/pkgconfig 2>/dev/null | head -1)"
+    # ICU is the system's (libicucore, as Apple's WebKit uses), with the headers WebKit carries
+    # for it: nothing to ship. Said to pkg-config so HarfBuzz uses the same one.
+    mkdir -p "$out/lib/pkgconfig"
+    for icu in icu-uc icu-i18n; do
+        cat > "$out/lib/pkgconfig/$icu.pc" <<PC
+Name: $icu
+Description: the system's ICU (libicucore), WebKit's headers for it
+Version: 74.0
+Cflags: -I$webkit/Source/WTF/icu -DU_DISABLE_RENAMING=1
+Libs: -licucore
+PC
+    done
+    # Text shaping, with the ICU part WebKit asks for (Homebrew's has not got it).
     fetch "harfbuzz-$HARFBUZZ_VERSION" "https://github.com/harfbuzz/harfbuzz/releases/download/$HARFBUZZ_VERSION/harfbuzz-$HARFBUZZ_VERSION.tar.xz"
     meson_lib "harfbuzz-$HARFBUZZ_VERSION" -Dicu=enabled -Dfreetype=enabled -Dglib=enabled -Dgobject=disabled \
         -Dcairo=disabled -Dchafa=disabled -Dtests=disabled -Ddocs=disabled -Dintrospection=disabled -Dutilities=disabled -Dcoretext=disabled
-    # GL for Skia and WPE: libepoxy with EGL, which on a Mac is ANGLE's (patched to load it).
+    # GL for Skia and WPE: libepoxy with EGL, which on a Mac is ANGLE's (patched to load it):
+    # the compositor's own ANGLE, beside WPE's libraries as it is in the app.
+    [ -f "$here/../../mac/vendor/angle/libEGL.dylib" ] || "$here/../../mac/fetch-angle.sh"
+    mkdir -p "$out/lib"
+    cp "$here/../../mac/vendor/angle/libEGL.dylib" "$here/../../mac/vendor/angle/libGLESv2.dylib" "$out/lib/"
     mkdir -p "$out/lib/pkgconfig"
     cat > "$out/lib/pkgconfig/egl.pc" <<PC
 Name: egl
@@ -86,13 +101,14 @@ Cflags: -I$webkit/Source/ThirdParty/ANGLE/include
 PC
     fetch "libepoxy-$LIBEPOXY_VERSION" "https://github.com/anholt/libepoxy/archive/refs/tags/$LIBEPOXY_VERSION.tar.gz"
     meson_lib "libepoxy-$LIBEPOXY_VERSION" -Degl=yes -Dglx=no -Dx11=false -Dtests=false -Ddocs=false
+    # epoxy/egl.h includes EGL's own headers: ANGLE's, beside it.
+    cp -R "$webkit/Source/ThirdParty/ANGLE/include/EGL" "$webkit/Source/ThirdParty/ANGLE/include/KHR" "$out/include/"
     # The keyboard: macOS has no xkbcommon. Its grammar needs a newer bison than macOS's 2.3.
     fetch "libxkbcommon-$XKBCOMMON_VERSION" "https://xkbcommon.org/download/libxkbcommon-$XKBCOMMON_VERSION.tar.xz"
     PATH=/usr/local/opt/bison/bin:/opt/homebrew/opt/bison/bin:$PATH meson_lib "libxkbcommon-$XKBCOMMON_VERSION" \
         -Denable-x11=false -Denable-wayland=false -Denable-docs=false -Denable-tools=false -Denable-xkbregistry=false
     sdk=$(xcrun --show-sdk-path)
-    icu=$(ls -d /usr/local/opt/icu4c* /opt/homebrew/opt/icu4c* 2>/dev/null | head -1)
-    platform_options="-DCMAKE_OSX_SYSROOT=$sdk -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 -DICU_ROOT=$icu
+    platform_options="-DCMAKE_OSX_SYSROOT=$sdk -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
         -DEpoxy_INCLUDE_DIR=$out/include -DEpoxy_LIBRARY=$out/lib/libepoxy.dylib"
     ;;
 *) echo "no such platform yet: $platform" >&2; exit 1 ;;
@@ -100,7 +116,8 @@ esac
 
 # WebKit, the WPE port, with only what SpatiMesh draws through: the headless platform (pictures
 # handed to Spatiand), no Wayland or DRM, no GObject introspection or documentation. Media is off
-# until it is SpatiMesh's own (FFmpeg); the inspector is on (developer tools).
+# until it is SpatiMesh's own (FFmpeg); the inspector is on (developer tools). WebGL is off for
+# now: WebKit's own ANGLE would sit on the Mac's ANGLE, which is not done yet.
 mkdir -p "$build/webkit"
 (cd "$build/webkit" && cmake -G Ninja "$webkit" -DPORT=WPE -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$out" \
     $platform_options \
@@ -110,7 +127,15 @@ mkdir -p "$build/webkit"
     -DUSE_LIBBACKTRACE=OFF -DUSE_LIBHYPHEN=OFF -DUSE_SYSPROF_CAPTURE=OFF -DENABLE_BUBBLEWRAP_SANDBOX=OFF \
     -DENABLE_SPEECH_SYNTHESIS=OFF -DENABLE_GAMEPAD=OFF -DUSE_JPEGXL=OFF -DUSE_AVIF=OFF -DUSE_WOFF2=OFF -DUSE_LCMS=OFF \
     -DENABLE_WEBDRIVER=OFF -DENABLE_MINIBROWSER=OFF -DENABLE_API_TESTS=OFF -DENABLE_VIDEO=OFF -DENABLE_WEB_AUDIO=OFF \
-    -DENABLE_MEDIA_STREAM=OFF -DENABLE_WEB_RTC=OFF -DUSE_GSTREAMER=OFF -DENABLE_SPELLCHECK=OFF -DENABLE_XSLT=OFF)
+    -DENABLE_MEDIA_STREAM=OFF -DENABLE_WEB_RTC=OFF -DUSE_GSTREAMER=OFF -DENABLE_SPELLCHECK=OFF -DENABLE_XSLT=OFF -DENABLE_WEBGL=OFF)
 ninja -C "$build/webkit" -j"$jobs"
 ninja -C "$build/webkit" install
+if [ "$platform" = mac ]; then
+    # The web and network processes find WPE's library two folders up (and are signed again,
+    # as macOS wants of anything changed).
+    for b in "$out"/libexec/wpe-webkit-2.0/WPE*Process; do
+        otool -l "$b" | grep -q '@loader_path/../../lib' || install_name_tool -add_rpath @loader_path/../../lib "$b"
+        codesign -f -s - "$b"
+    done
+fi
 echo "WPE $WPE_VERSION for $platform in $out"
