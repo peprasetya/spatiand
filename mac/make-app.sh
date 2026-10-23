@@ -58,6 +58,19 @@ if [ -f "$app/Contents/MacOS/spatimesh" ]; then
     echo "warning: spatimesh-webkit did not build; SpatiMesh will show no pages"
   fi
 fi
+# SpatiMesh's engine on WPE WebKit, where third_party/wpe/build.sh mac has made one: SpatiMesh
+# takes it over Apple's WebKit when it is here. For now it finds WPE's libraries where that
+# script put them (~/Developer/spatiand-wpe/out/mac), so the app is for this Mac; the libraries
+# go into the app when they are all built here and pinned (docs/spatimesh.md).
+if [ -f "$HOME/Developer/spatiand-wpe/out/mac/lib/pkgconfig/wpe-webkit-2.0.pc" ] && [ -f "$app/Contents/MacOS/spatimesh" ]; then
+  if (cd .. && MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release -p spatimesh-wpe); then
+    cp ../target/release/spatimesh-wpe "$app/Contents/MacOS/spatimesh-wpe"
+    cp ../third_party/wpe/mac/fonts.conf "$app/Contents/Resources/fonts.conf"
+    OWN="$OWN spatimesh-wpe"
+  else
+    echo "warning: spatimesh-wpe did not build; SpatiMesh uses Apple's WebKit"
+  fi
+fi
 # The storage service the applications reach remotes through: Go, with rclone linked in.
 if command -v go >/dev/null && ../storage/build.sh mac "$app/Contents/MacOS/spatiand-storage"; then
   OWN="$OWN spatiand-storage"

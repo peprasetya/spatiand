@@ -40,9 +40,9 @@ pub fn is_steamos() -> bool {
 }
 
 /// The engine program for this platform: Steam's Chromium on SteamOS, WebKitGTK on any other
-/// Linux, WebKit on the Mac, Android's WebView through Spatiand's launcher. `SPATIMESH_ENGINE`
-/// names another (`fake`, `webkitgtk`, `cef`, `webkit`, `launcher:<abstract socket>`, or a
-/// path).
+/// Linux, on the Mac WPE WebKit where the app carries it (third_party/wpe) and else Apple's
+/// WebKit, Android's WebView through Spatiand's launcher. `SPATIMESH_ENGINE` names another
+/// (`fake`, `webkitgtk`, `cef`, `webkit`, `wpe`, `launcher:<abstract socket>`, or a path).
 pub fn program() -> Program {
     let wanted = std::env::var("SPATIMESH_ENGINE").unwrap_or_default();
     #[cfg(target_os = "android")]
@@ -51,12 +51,19 @@ pub fn program() -> Program {
     }
     let name = match wanted.as_str() {
         "fake" => return Program::Fake("asked for with SPATIMESH_ENGINE".into()),
-        "" if cfg!(target_os = "macos") => "spatimesh-webkit",
+        "" if cfg!(target_os = "macos") => {
+            if beside("spatimesh-wpe").is_some() {
+                "spatimesh-wpe"
+            } else {
+                "spatimesh-webkit"
+            }
+        }
         "" if is_steamos() => "spatimesh-cef",
         "" => "spatimesh-webkitgtk",
         "webkitgtk" => "spatimesh-webkitgtk",
         "cef" => "spatimesh-cef",
         "webkit" => "spatimesh-webkit",
+        "wpe" => "spatimesh-wpe",
         // Android's way, with a launcher of one's own listening on this abstract socket.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         launcher if launcher.starts_with("launcher:") => return Program::Launched(launcher["launcher:".len()..].to_string()),
