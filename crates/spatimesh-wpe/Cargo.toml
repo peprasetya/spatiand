@@ -15,10 +15,10 @@ description = "SpatiMesh's engine host on WPE WebKit, which Spatiand builds and 
 [dependencies]
 spatimesh = { path = "../spatimesh", default-features = false }
 spatimesh-shim = { path = "../spatimesh-shim" }
+libc = "0.2"
 
 [dev-dependencies]
 spatiand-app = { path = "../spatiand-app" }
-libc = "0.2"
 serde_json.workspace = true
 
 [build-dependencies]
