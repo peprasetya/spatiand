@@ -545,6 +545,19 @@ index 5ba3ea569..fd25b89c1 100644
      if (options & SetCloexecOnServer)
          RELEASE_ASSERT(setCloseOnExec(sockets[1]));
      if (options & SetCloexecOnClient)
+diff --git a/Source/WebKit/PlatformWPE.cmake b/Source/WebKit/PlatformWPE.cmake
+index 7ca61370d..a15550a39 100644
+--- a/Source/WebKit/PlatformWPE.cmake
++++ b/Source/WebKit/PlatformWPE.cmake
+@@ -50,6 +50,8 @@ if (EXISTS "${TOOLS_DIR}/glib/apply-build-revision-to-files.py")
+ endif ()
+ 
+ add_definitions(-DLIBDIR="${LIB_INSTALL_DIR}")
++# The prefix in a header of its own, so that only what moves paths is rebuilt when it changes.
++file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/WPEInstallPrefix.h" CONTENT "#define INSTALL_PREFIX \"${CMAKE_INSTALL_PREFIX}\"\n")
+ add_definitions(-DPKGLIBDIR="${LIB_INSTALL_DIR}/wpe-webkit-${WPE_API_VERSION}")
+ add_definitions(-DPKGLIBEXECDIR="${LIBEXEC_INSTALL_DIR}")
+ add_definitions(-DDATADIR="${CMAKE_INSTALL_FULL_DATADIR}")
 diff --git a/Source/WebKit/Shared/WebCoreArgumentCoders.serialization.in b/Source/WebKit/Shared/WebCoreArgumentCoders.serialization.in
 index 53e089add..711b30103 100644
 --- a/Source/WebKit/Shared/WebCoreArgumentCoders.serialization.in
@@ -567,6 +580,76 @@ index 53e089add..711b30103 100644
      [Validator='!!m_handle && *m_handle'] MachSendRight m_handle;
  #endif
  #if OS(WINDOWS)
+diff --git a/Source/WebKit/Shared/glib/ProcessExecutablePathGLib.cpp b/Source/WebKit/Shared/glib/ProcessExecutablePathGLib.cpp
+index 64bcde96d..2cee21aea 100644
+--- a/Source/WebKit/Shared/glib/ProcessExecutablePathGLib.cpp
++++ b/Source/WebKit/Shared/glib/ProcessExecutablePathGLib.cpp
+@@ -25,6 +25,7 @@
+  */
+ 
+ #include "config.h"
++#include "RelocatedInstallPath.h"
+ #include "ProcessExecutablePath.h"
+ 
+ #include <glib.h>
+@@ -60,7 +61,7 @@ static String findWebKitProcess(const ASCIILiteral processName)
+     }
+ #endif
+ 
+-    return FileSystem::pathByAppendingComponent(FileSystem::stringFromFileSystemRepresentation(PKGLIBEXECDIR), processName);
++    return FileSystem::pathByAppendingComponent(FileSystem::stringFromFileSystemRepresentation(relocatedInstallPath(PKGLIBEXECDIR).c_str()), processName);
+ }
+ 
+ String executablePathOfWebProcess()
+diff --git a/Source/WebKit/Shared/glib/RelocatedInstallPath.h b/Source/WebKit/Shared/glib/RelocatedInstallPath.h
+new file mode 100644
+index 000000000..1b70228e3
+--- /dev/null
++++ b/Source/WebKit/Shared/glib/RelocatedInstallPath.h
+@@ -0,0 +1,43 @@
++/*
++ * A path WPE was installed to, moved along with the library: on macOS an app carries WPE in its
++ * bundle, so the prefix it was built for is swapped for the one this library was loaded from
++ * (the parent of the folder the library is in). Paths outside the prefix are kept as they are.
++ * Every path asked for is a folder; moved, the dots in its names below the prefix are underscores (wpe-webkit-2_0): codesign
++ * takes a folder with a dot in an app's code for a bundle, and refuses to sign the app.
++ */
++
++#pragma once
++
++#include <string>
++#include <string.h>
++
++#if defined(__APPLE__)
++#include "WPEInstallPrefix.h"
++#endif
++
++#if defined(__APPLE__) && defined(INSTALL_PREFIX)
++#include <dlfcn.h>
++#endif
++
++static inline std::string relocatedInstallPath(const char* builtPath)
++{
++#if defined(__APPLE__) && defined(INSTALL_PREFIX)
++    size_t prefixLength = strlen(INSTALL_PREFIX);
++    Dl_info info;
++    if (!strncmp(builtPath, INSTALL_PREFIX, prefixLength)
++        && dladdr(reinterpret_cast<void*>(&relocatedInstallPath), &info) && info.dli_fname) {
++        std::string library(info.dli_fname);
++        size_t libraryDirectory = library.rfind('/');
++        size_t prefix = libraryDirectory == std::string::npos ? libraryDirectory : library.rfind('/', libraryDirectory - 1);
++        if (prefix != std::string::npos && library.compare(0, prefix, INSTALL_PREFIX)) {
++            std::string below(builtPath + prefixLength);
++            for (auto& character : below) {
++                if (character == '.')
++                    character = '_';
++            }
++            return library.substr(0, prefix) + below;
++        }
++    }
++#endif
++    return builtPath;
++}
 diff --git a/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp b/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp
 index 7d054a56b..1e0b5afc7 100644
 --- a/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp
@@ -638,6 +721,38 @@ index f1153a906..4f34e654f 100644
  typedef void (*WKPageDoAfterProcessingAllPendingKeyEventsFunction)(void* functionContext);
  WK_EXPORT void WKPageDoAfterProcessingAllPendingKeyEvents(WKPageRef page, void* context, WKPageDoAfterProcessingAllPendingKeyEventsFunction function);
  
+diff --git a/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp b/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp
+index 549ee8968..6ae5d1bae 100644
+--- a/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp
++++ b/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp
+@@ -46,6 +46,7 @@
+ #include "WebKitURISchemeRequestPrivate.h"
+ #include "WebKitUserMessagePrivate.h"
+ #include "WebKitWebContextPrivate.h"
++#include "RelocatedInstallPath.h"
+ #include "WebKitWebViewPrivate.h"
+ #include "WebKitWebsiteDataManagerPrivate.h"
+ #include "WebKitWebsitePoliciesPrivate.h"
+@@ -346,8 +347,8 @@ static const char* injectedBundleDirectory()
+     if (bundleDirectory && g_file_test(bundleDirectory, G_FILE_TEST_IS_DIR))
+         return bundleDirectory;
+ 
+-    static const char* injectedBundlePath = PKGLIBDIR G_DIR_SEPARATOR_S "injected-bundle" G_DIR_SEPARATOR_S;
+-    return injectedBundlePath;
++    static const std::string injectedBundlePath = relocatedInstallPath(PKGLIBDIR G_DIR_SEPARATOR_S "injected-bundle" G_DIR_SEPARATOR_S);
++    return injectedBundlePath.c_str();
+ }
+ 
+ static void webkitWebContextGetProperty(GObject* object, guint propID, GValue* value, GParamSpec* paramSpec)
+@@ -512,7 +513,7 @@ static void webkit_web_context_class_init(WebKitWebContextClass* webContextClass
+ 
+     GObjectClass* gObjectClass = G_OBJECT_CLASS(webContextClass);
+ 
+-    bindtextdomain(GETTEXT_PACKAGE, LOCALEDIR);
++    bindtextdomain(GETTEXT_PACKAGE, relocatedInstallPath(LOCALEDIR).c_str());
+     bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8");
+ 
+     s_serviceWorkerNotificationProvider = makeUnique<WebKitNotificationProvider>(&WebNotificationManagerProxy::serviceWorkerManagerSingleton(), nullptr);
 diff --git a/Source/WebKit/UIProcess/Launcher/ProcessLauncher.cpp b/Source/WebKit/UIProcess/Launcher/ProcessLauncher.cpp
 index 4c9b9d6cc..c59a60571 100644
 --- a/Source/WebKit/UIProcess/Launcher/ProcessLauncher.cpp
@@ -789,10 +904,18 @@ index dcb02699a..29367644c 100644
      void didChangeBufferConfiguration(uint32_t bufferCount);
      void didDestroyBuffer(uint64_t id);
 diff --git a/Source/WebKit/WPEPlatform/CMakeLists.txt b/Source/WebKit/WPEPlatform/CMakeLists.txt
-index d996a7ba5..13c6468f7 100644
+index d996a7ba5..35047f192 100644
 --- a/Source/WebKit/WPEPlatform/CMakeLists.txt
 +++ b/Source/WebKit/WPEPlatform/CMakeLists.txt
-@@ -125,6 +125,15 @@ if (USE_LIBDRM)
+@@ -2,6 +2,7 @@ set_property(DIRECTORY . PROPERTY FOLDER "WPEPlatform")
+ 
+ set(WPE_PLATFORM_MODULE_DIR ${LIB_INSTALL_DIR}/wpe-platform-${WPE_API_VERSION}/modules)
+ add_definitions(-DWPE_PLATFORM_MODULE_DIR="${WPE_PLATFORM_MODULE_DIR}")
++file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/WPEInstallPrefix.h" CONTENT "#define INSTALL_PREFIX \"${CMAKE_INSTALL_PREFIX}\"\n")
+ 
+ file(MAKE_DIRECTORY ${WPEPlatform_DERIVED_SOURCES_DIR}/wpe)
+ 
+@@ -125,6 +126,15 @@ if (USE_LIBDRM)
      )
  endif ()
  
@@ -1008,6 +1131,27 @@ index 4822c740a..b4bbf3c6a 100644
  #cmakedefine WPE_PLATFORM_PROCESS_MANAGER_ANDROID
  
  #cmakedefine WPE_PLATFORM_DRM
+diff --git a/Source/WebKit/WPEPlatform/wpe/WPEExtensions.cpp b/Source/WebKit/WPEPlatform/wpe/WPEExtensions.cpp
+index bd355a0ca..6a797ddb9 100644
+--- a/Source/WebKit/WPEPlatform/wpe/WPEExtensions.cpp
++++ b/Source/WebKit/WPEPlatform/wpe/WPEExtensions.cpp
+@@ -24,6 +24,7 @@
+  */
+ 
+ #include "config.h"
++#include "../../Shared/glib/RelocatedInstallPath.h"
+ #include "WPEExtensions.h"
+ 
+ #include "WPEDisplay.h"
+@@ -66,7 +67,7 @@ void wpeEnsureExtensionPointsLoaded()
+                 g_io_modules_scan_all_in_directory_with_scope(paths.get()[i], scope);
+         }
+ 
+-        g_io_modules_scan_all_in_directory_with_scope(WPE_PLATFORM_MODULE_DIR, scope);
++        g_io_modules_scan_all_in_directory_with_scope(relocatedInstallPath(WPE_PLATFORM_MODULE_DIR).c_str(), scope);
+         g_io_module_scope_free(scope);
+ 
+         // Initialize types of builtin extensions.
 diff --git a/Source/WebKit/WPEPlatform/wpe/wpe-platform.h b/Source/WebKit/WPEPlatform/wpe/wpe-platform.h
 index 012c653ae..1ba9f84d1 100644
 --- a/Source/WebKit/WPEPlatform/wpe/wpe-platform.h

@@ -57,13 +57,45 @@ if [ -f "$app/Contents/MacOS/spatimesh" ]; then
   fi
 fi
 # SpatiMesh's engine on WPE WebKit, where third_party/wpe/build.sh mac has made one: SpatiMesh
-# takes it over Apple's WebKit when it is here. For now it finds WPE's libraries where that
-# script put them (~/Developer/spatiand-wpe/out/mac), so the app is for this Mac; the libraries
-# go into the app when they are all built here and pinned (docs/spatimesh.md).
-if [ -f "$HOME/Developer/spatiand-wpe/out/mac/lib/pkgconfig/wpe-webkit-2.0.pc" ] && [ -f "$app/Contents/MacOS/spatimesh" ]; then
+# takes it over Apple's WebKit when it is here. WPE and every library it was built on go into
+# Contents/Frameworks/wpe, laid out as the build's prefix (lib, libexec) so WebKit, which
+# finds its processes and modules from where its library was loaded, finds them in the app (share,
+# data, is not code and may not be among it: the Web Inspector's resources go in when it is done); the
+# dots in folder names are underscores there (wpe-webkit-2_0), since codesign takes a dotted
+# folder for a bundle (the WebKit patch looks for them so). The libraries name each other by the
+# build folder's path; here they are renamed to @rpath.
+WPE_OUT="$HOME/Developer/spatiand-wpe/out/mac"
+WPE_CODE=""
+if [ -f "$WPE_OUT/lib/pkgconfig/wpe-webkit-2.0.pc" ] && [ -f "$app/Contents/MacOS/spatimesh" ]; then
   if (cd .. && MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release -p spatimesh-wpe); then
+    wpe="$app/Contents/Frameworks/wpe"
+    mkdir -p "$wpe/lib" "$wpe/libexec"
+    cp -a "$WPE_OUT"/lib/*.dylib "$wpe/lib/"
+    for dir in gio wpe-webkit-2.0 wpe-platform-2.0; do if [ -d "$WPE_OUT/lib/$dir" ]; then cp -a "$WPE_OUT/lib/$dir" "$wpe/lib/$(echo $dir | tr . _)"; fi; done
+    cp -a "$WPE_OUT/libexec/wpe-webkit-2.0" "$wpe/libexec/wpe-webkit-2_0"
     cp ../target/release/spatimesh-wpe "$app/Contents/MacOS/spatimesh-wpe"
     cp ../third_party/wpe/mac/fonts.conf "$app/Contents/Resources/fonts.conf"
+    for f in $(find "$wpe" -type f \( -name '*.dylib' -o -name '*.so' -o -perm +111 \)) "$app/Contents/MacOS/spatimesh-wpe"; do
+      file "$f" | grep -q Mach-O || continue
+      case "$f" in *.dylib) install_name_tool -id "@rpath/$(basename "$f")" "$f" 2>/dev/null ;; esac
+      for dep in $(otool -L "$f" | tail -n +2 | awk '{print $1}' | grep "^$WPE_OUT/lib/"); do
+        install_name_tool -change "$dep" "@rpath/${dep#"$WPE_OUT/lib/"}" "$f" 2>/dev/null
+      done
+      otool -l "$f" | grep -A2 LC_RPATH | awk '/path /{print $2}' | grep "^$WPE_OUT" | while read -r old; do
+        install_name_tool -delete_rpath "$old" "$f" 2>/dev/null
+      done
+      WPE_CODE="$WPE_CODE $f"
+    done
+    for lib in "$wpe"/lib/*.dylib; do
+      [ -L "$lib" ] || otool -l "$lib" | grep -q '@loader_path$' || install_name_tool -add_rpath @loader_path "$lib" 2>/dev/null || true
+    done
+    # Plug-ins two folders below lib: GIO's TLS module, WebKit's injected bundle.
+    for so in $(find "$wpe/lib" -name '*.so'); do
+      otool -l "$so" | grep -q '@loader_path/../..' || install_name_tool -add_rpath @loader_path/../.. "$so" 2>/dev/null || true
+    done
+    install_name_tool -add_rpath @executable_path/../Frameworks/wpe/lib "$app/Contents/MacOS/spatimesh-wpe"
+    leftover=$(for f in $WPE_CODE; do otool -L "$f" | grep -e "$WPE_OUT" -e /usr/local -e /opt/homebrew || true; done)
+    [ -z "$leftover" ] || { echo "warning: WPE in the app still names the build folder or Homebrew:"; echo "$leftover"; }
     OWN="$OWN spatimesh-wpe"
   else
     echo "warning: spatimesh-wpe did not build; SpatiMesh uses Apple's WebKit"
@@ -134,13 +166,13 @@ IDENTITY=$(security find-identity -p codesigning 2>/dev/null | grep -F "\"$IDENT
   | sed -E 's/^[[:space:]]*[0-9]+\)[[:space:]]*([0-9A-F]+)[[:space:]]+.*$/\1/' | head -1)
 if [ -n "$IDENTITY" ]; then
   # What is inside is signed first, with the same certificate.
-  for lib in "$app"/Contents/Frameworks/*.dylib; do [ -f "$lib" ] && codesign --force --sign "$IDENTITY" "$lib" >/dev/null 2>&1; done
+  for lib in "$app"/Contents/Frameworks/*.dylib $WPE_CODE; do [ -f "$lib" ] && codesign --force --sign "$IDENTITY" "$lib" >/dev/null 2>&1; done
   for own in $OWN; do [ -f "$app/Contents/MacOS/$own" ] && codesign --force --sign "$IDENTITY" "$app/Contents/MacOS/$own" >/dev/null 2>&1; done
   codesign --force --sign "$IDENTITY" --identifier com.peprasetya.spatiand "$app" >/dev/null 2>&1 \
     && echo "signed with \"$IDENTITY_NAME\" ($IDENTITY): permissions survive rebuilds" \
     || { echo "warning: could not sign with \"$IDENTITY_NAME\"; signing ad hoc"; codesign --force --sign - "$app" >/dev/null 2>&1 || true; }
 else
-  for lib in "$app"/Contents/Frameworks/*.dylib; do [ -f "$lib" ] && codesign --force --sign - "$lib" >/dev/null 2>&1; done
+  for lib in "$app"/Contents/Frameworks/*.dylib $WPE_CODE; do [ -f "$lib" ] && codesign --force --sign - "$lib" >/dev/null 2>&1; done
   for own in $OWN; do [ -f "$app/Contents/MacOS/$own" ] && codesign --force --sign - "$app/Contents/MacOS/$own" >/dev/null 2>&1; done
   codesign --force --sign - "$app" >/dev/null 2>&1 || echo "warning: could not sign"
   echo "note: signed ad hoc, so each rebuild asks for Screen Recording and Accessibility again;"

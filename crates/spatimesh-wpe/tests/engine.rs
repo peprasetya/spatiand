@@ -17,6 +17,12 @@ use spatimesh::wire::{FromHost, Link, Pictures, ToHost};
 
 const PROGRAM: &str = env!("CARGO_BIN_EXE_spatimesh-wpe");
 
+/// The engine program to test: this crate's, or another copy named by SPATIMESH_WPE_PROGRAM,
+/// such as the one in the app, to see that the app's copy needs nothing from the build folder.
+fn program() -> PathBuf {
+    std::env::var_os("SPATIMESH_WPE_PROGRAM").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(PROGRAM))
+}
+
 struct Host {
     child: Child,
     link: Link,
@@ -85,7 +91,7 @@ impl Host {
         if !can_run() {
             return None;
         }
-        let (child, link) = spatimesh::host::start(Path::new(PROGRAM), setup).expect("the engine program starts");
+        let (child, link) = spatimesh::host::start(&program(), setup).expect("the engine program starts");
         let mut host = Host { child, link, pictures: HashMap::new(), latest: HashMap::new(), seen: Vec::new() };
         // The first thing a host says is what it is; "failed" if WebKitGTK could not start.
         let deadline = Instant::now() + Duration::from_secs(20);

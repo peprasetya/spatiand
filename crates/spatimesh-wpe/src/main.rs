@@ -12,7 +12,7 @@
 #[cfg(wpe)]
 fn find_own() {
     let exe = std::env::current_exe().ok();
-    let beside = exe.as_ref().and_then(|e| e.parent()).map(|d| d.join("../Frameworks"));
+    let beside = exe.as_ref().and_then(|e| e.parent()).map(|d| d.join("../Frameworks/wpe/lib"));
     let built = std::path::PathBuf::from(env!("SPATIMESH_WPE_DIR")).join("lib");
     if std::env::var_os("GIO_EXTRA_MODULES").is_none() {
         let modules = [beside.as_ref().map(|d| d.join("gio/modules")), Some(built.join("gio/modules"))];
