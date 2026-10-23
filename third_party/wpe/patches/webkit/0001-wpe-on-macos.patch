@@ -1,0 +1,182 @@
+diff --git a/Source/WTF/wtf/PlatformWPE.cmake b/Source/WTF/wtf/PlatformWPE.cmake
+index bdd219a66..698ad8da0 100644
+--- a/Source/WTF/wtf/PlatformWPE.cmake
++++ b/Source/WTF/wtf/PlatformWPE.cmake
+@@ -20,9 +20,6 @@ list(APPEND WTF_SOURCES
+     glib/TimeZoneGLib.cpp
+     glib/URLGLib.cpp
+ 
+-    linux/CurrentProcessMemoryStatus.cpp
+-    linux/HighPriorityThreads.cpp
+-
+     posix/CPUTimePOSIX.cpp
+     posix/FileHandlePOSIX.cpp
+     posix/FileSystemPOSIX.cpp
+@@ -37,13 +34,46 @@ list(APPEND WTF_SOURCES
+     unix/UniStdExtrasUnix.cpp
+ )
+ 
+-if (ANDROID)
++if (APPLE)
++    # Spatiand: WPE on macOS. The kernel's own (Mach) is used where WTF has it, from the Cocoa
++    # port's pieces that are plain C++; the rest is generic.
++    list(APPEND WTF_SOURCES
++        PlatformRegisters.cpp
++
++        cocoa/MemoryFootprintCocoa.cpp
++
++        generic/MemoryPressureHandlerGeneric.cpp
++    )
++    file(COPY mac/MachExceptions.defs DESTINATION ${WTF_DERIVED_SOURCES_DIR})
++    find_program(Mig_EXECUTABLE mig REQUIRED)
++    add_custom_command(
++        OUTPUT
++        ${WTF_DERIVED_SOURCES_DIR}/MachExceptionsServer.h
++        ${WTF_DERIVED_SOURCES_DIR}/mach_exc.h
++        ${WTF_DERIVED_SOURCES_DIR}/mach_excServer.c
++        ${WTF_DERIVED_SOURCES_DIR}/mach_excUser.c
++        MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/mac/MachExceptions.defs
++        WORKING_DIRECTORY ${WTF_DERIVED_SOURCES_DIR}
++        COMMAND ${Mig_EXECUTABLE} -header mach_exc.h -user mach_excUser.c
++            -sheader MachExceptionsServer.h -server mach_excServer.c
++            -DMACH_EXC_SERVER_TASKIDTOKEN_STATE -isysroot ${CMAKE_OSX_SYSROOT}
++            MachExceptions.defs
++        VERBATIM)
++    list(APPEND WTF_SOURCES
++        ${WTF_DERIVED_SOURCES_DIR}/mach_excServer.c
++        ${WTF_DERIVED_SOURCES_DIR}/mach_excUser.c
++    )
++    find_library(COREFOUNDATION_LIBRARY CoreFoundation)
++    list(APPEND WTF_LIBRARIES ${COREFOUNDATION_LIBRARY})
++elseif (ANDROID)
+     list(APPEND WTF_SOURCES
+         generic/MemoryFootprintGeneric.cpp
+         generic/MemoryPressureHandlerGeneric.cpp
+     )
+ else ()
+     list(APPEND WTF_SOURCES
++        linux/CurrentProcessMemoryStatus.cpp
++        linux/HighPriorityThreads.cpp
+         linux/MemoryFootprintLinux.cpp
+ 
+         unix/MemoryPressureHandlerUnix.cpp
+diff --git a/Source/WebCore/PAL/pal/PlatformWPE.cmake b/Source/WebCore/PAL/pal/PlatformWPE.cmake
+index 3d2bf0ab1..63ae01bb3 100644
+--- a/Source/WebCore/PAL/pal/PlatformWPE.cmake
++++ b/Source/WebCore/PAL/pal/PlatformWPE.cmake
+@@ -21,4 +21,6 @@ list(APPEND PAL_SOURCES
+     text/KillRing.cpp
+ )
+ 
+-list(APPEND PAL_LIBRARIES GLib::GLib)
++# Spatiand: what PAL's own crypto includes, named (on Linux their headers are in /usr/include
++# and were found without).
++list(APPEND PAL_LIBRARIES GLib::GLib LibGcrypt::LibGcrypt Tasn1::Tasn1)
+diff --git a/Source/WebKit/CMakeLists.txt b/Source/WebKit/CMakeLists.txt
+index fd21e35f0..0f174b703 100644
+--- a/Source/WebKit/CMakeLists.txt
++++ b/Source/WebKit/CMakeLists.txt
+@@ -774,7 +774,7 @@ set(WebKit_FRAMEWORKS
+     WebCore
+     bmalloc
+ )
+-if (APPLE)
++if (WEBKIT_COCOA)
+     list(APPEND WebKit_FRAMEWORKS WebKitLegacy)
+ endif ()
+ if (USE_APPLE_INTERNAL_SDK)
+@@ -963,7 +963,7 @@ if (SWIFT_REQUIRED)
+     if (NOT WIN32 AND NOT PORT STREQUAL "WPE")
+         list(APPEND WebKit_SWIFT_INTEROP_SOURCES UIProcess/ViewGestureController.cpp)
+     endif ()
+-    if (APPLE)
++    if (WEBKIT_COCOA)
+         list(APPEND WebKit_SWIFT_INTEROP_SOURCES
+             UIProcess/API/ios/WKWebViewIOS.mm
+             UIProcess/API/mac/WKWebViewMac.mm
+@@ -1506,7 +1506,7 @@ if (COMPILER_IS_GCC_OR_CLANG)
+     endif ()
+ endif ()
+ 
+-if (APPLE)
++if (WEBKIT_COCOA)
+     WEBKIT_ADD_TARGET_CXX_FLAGS(WebKit -fobjc-weak)
+     set_property(TARGET WebKit
+         PROPERTY LINK_LIBRARY_OVERRIDE_WebKitLegacy REEXPORT_FRAMEWORK)
+diff --git a/Source/WebKit/Headers.cmake b/Source/WebKit/Headers.cmake
+index 59ebe969d..f1e85e4fe 100644
+--- a/Source/WebKit/Headers.cmake
++++ b/Source/WebKit/Headers.cmake
+@@ -151,7 +151,7 @@ set(_webkit_c_api_headers
+ 
+ # The low-level WebKit C API is the public API on non-Cocoa ports (Windows, PlayStation),
+ # but is shipped as SPI (in PrivateHeaders) on Cocoa.
+-if (APPLE)
++if (WEBKIT_COCOA)
+     list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS ${_webkit_c_api_headers})
+ else ()
+     list(APPEND WebKit_PUBLIC_FRAMEWORK_HEADERS ${_webkit_c_api_headers})
+@@ -159,7 +159,7 @@ endif ()
+ unset(_webkit_c_api_headers)
+ 
+ # The Cocoa Objective-C SPI (and the C API relocated above) is only installed on Cocoa.
+-if (APPLE)
++if (WEBKIT_COCOA)
+ list(APPEND WebKit_PUBLIC_FRAMEWORK_HEADERS
+     Shared/API/Cocoa/WKDataDetectorTypes.h
+     Shared/API/Cocoa/WKFoundation.h
+diff --git a/Source/cmake/WebKitCommon.cmake b/Source/cmake/WebKitCommon.cmake
+index d96e18503..25d271ed8 100644
+--- a/Source/cmake/WebKitCommon.cmake
++++ b/Source/cmake/WebKitCommon.cmake
+@@ -6,6 +6,15 @@
+ if (NOT HAS_RUN_WEBKIT_COMMON)
+     set(HAS_RUN_WEBKIT_COMMON TRUE)
+ 
++    # Spatiand: Apple's own ports, the Cocoa ones, as against another port built on a Mac (WPE,
++    # for SpatiMesh). APPLE stays the toolchain's (Apple's linker, dylibs, frameworks to link);
++    # what is Apple's port's -- its sources, its frameworks, its headers -- asks this instead.
++    if (APPLE AND NOT PORT STREQUAL "WPE")
++        set(WEBKIT_COCOA ON)
++    else ()
++        set(WEBKIT_COCOA OFF)
++    endif ()
++
+     # Preset values are not replayed on auto-reconfigure; if CMake's "compiler
+     # changed" path wipes the cache, these silently revert. Stamp them outside
+     # the cache and refuse to proceed if any go missing.
+diff --git a/Source/cmake/WebKitFS.cmake b/Source/cmake/WebKitFS.cmake
+index 9c0465867..41f9af9c0 100644
+--- a/Source/cmake/WebKitFS.cmake
++++ b/Source/cmake/WebKitFS.cmake
+@@ -84,7 +84,7 @@ set(JavaScriptCore_SCRIPTS_DIR "${CMAKE_BINARY_DIR}/JavaScriptCore/Scripts")
+ # On Apple platforms, some targets build as framework bundles. Point their
+ # HEADERS variables to the inside of the framework bundle.
+ set(USE_FRAMEWORK_BUNDLES OFF)
+-if (APPLE)
++if (APPLE AND NOT PORT STREQUAL "WPE") # Spatiand: WPE on a Mac lays out as on Linux
+     set(USE_FRAMEWORK_BUNDLES ON)
+     if (PORT STREQUAL Mac)
+         set(_version "Versions/A/")
+diff --git a/Source/cmake/WebKitMacros.cmake b/Source/cmake/WebKitMacros.cmake
+index 51074f8ad..eb3cd5d0f 100644
+--- a/Source/cmake/WebKitMacros.cmake
++++ b/Source/cmake/WebKitMacros.cmake
+@@ -509,7 +509,7 @@ macro(_WEBKIT_FRAMEWORK_LINK_FRAMEWORK _target_name)
+     endif ()
+     foreach (framework IN LISTS _public_frameworks)
+         # FIXME: https://bugs.webkit.org/show_bug.cgi?id=231774
+-        if (APPLE)
++        if (WEBKIT_COCOA)
+             list(APPEND ${_target_name}_PRIVATE_LIBRARIES WebKit::${framework})
+         else ()
+             list(APPEND ${_target_name}_LIBRARIES WebKit::${framework})
+@@ -672,7 +672,7 @@ macro(WEBKIT_FRAMEWORK _target)
+         add_custom_command(TARGET ${_target} POST_BUILD COMMAND ${${_target}_POST_BUILD_COMMAND} VERBATIM)
+     endif ()
+ 
+-    if (APPLE AND NOT PORT STREQUAL "GTK" AND ${${_target}_LIBRARY_TYPE} MATCHES SHARED)
++    if (WEBKIT_COCOA AND NOT PORT STREQUAL "GTK" AND ${${_target}_LIBRARY_TYPE} MATCHES SHARED)
+         set_target_properties(${_target} PROPERTIES FRAMEWORK TRUE)
+         target_compile_options(${_target} BEFORE PUBLIC -F${CMAKE_BINARY_DIR})
+         install(TARGETS ${_target} FRAMEWORK DESTINATION ${LIB_INSTALL_DIR})
