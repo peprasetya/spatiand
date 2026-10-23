@@ -55,6 +55,8 @@ fi
 
 case $platform in
 mac)
+    # The macOS Spatiand runs on, for every library built here (meson takes it from this).
+    export MACOSX_DEPLOYMENT_TARGET=14.0
     # OpenSSL: the one FFmpeg is built with, so the app carries one.
     "$here/../ffmpeg/build.sh" mac
     ssl=$(cd "$here/../ffmpeg/out/mac" && pwd)

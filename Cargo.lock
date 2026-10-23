@@ -4933,6 +4933,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatimesh-wpe"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+ "serde_json",
+ "spatiand-app",
+ "spatimesh",
+ "spatimesh-shim",
+]
+
+[[package]]
 name = "spatiquill"
 version = "0.1.0"
 dependencies = [

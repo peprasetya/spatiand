@@ -34,6 +34,7 @@ members = [
     "crates/spatimesh-cef",
     "crates/spatimesh-shim",
     "crates/spatimesh-webkit",
+    "crates/spatimesh-wpe",
 ]
 
 [workspace.package]

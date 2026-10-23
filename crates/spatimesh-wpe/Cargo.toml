@@ -1,0 +1,26 @@
+[package]
+name = "spatimesh-wpe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SpatiMesh's engine host on WPE WebKit, which Spatiand builds and carries (third_party/wpe)"
+
+# A program of its own, started by SpatiMesh's window process, one per profile in use
+# (docs/spatimesh.md). It links the WPE WebKit third_party/wpe/build.sh made, found by pkg-config
+# under $SPATIAND_WPE (by default ~/Developer/spatiand-wpe/out/<platform>); built where that is
+# missing, it is built without it and says so when started, so that the rest of the workspace
+# builds anywhere.
+[dependencies]
+spatimesh = { path = "../spatimesh", default-features = false }
+spatimesh-shim = { path = "../spatimesh-shim" }
+
+[dev-dependencies]
+spatiand-app = { path = "../spatiand-app" }
+libc = "0.2"
+serde_json.workspace = true
+
+[build-dependencies]
+cc = "1"
+pkg-config = "0.3"
