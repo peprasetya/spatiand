@@ -434,6 +434,8 @@ static void on_progress(WebKitWebView *view, GParamSpec *p, Tab *t) {
 }
 
 static void on_load_changed(WebKitWebView *view, WebKitLoadEvent event, Tab *t) {
+    static const char *const names[] = { "started", "redirected", "committed", "finished" };
+    fprintf(stderr, "spatimesh-wpe: tab %llu %s %s\n", (unsigned long long)t->id, event < 4 ? names[event] : "?", webkit_web_view_get_uri(view) ? webkit_web_view_get_uri(view) : "");
     on_progress(view, NULL, t);
     if (event == WEBKIT_LOAD_COMMITTED || event == WEBKIT_LOAD_FINISHED)
         history(t);
@@ -496,10 +498,12 @@ static void on_terminated(WebKitWebView *view, WebKitWebProcessTerminationReason
     const char *why = reason == WEBKIT_WEB_PROCESS_CRASHED ? "The page's process crashed"
         : reason == WEBKIT_WEB_PROCESS_EXCEEDED_MEMORY_LIMIT ? "The page used too much memory"
         : "The page's process was ended";
+    fprintf(stderr, "spatimesh-wpe: tab %llu: %s\n", (unsigned long long)t->id, why);
     push(t->engine, EV_CRASHED, t->id, 0, 0, 0, why, NULL);
 }
 
 static gboolean on_failed(WebKitWebView *view, WebKitLoadEvent event, const char *uri, GError *error, Tab *t) {
+    fprintf(stderr, "spatimesh-wpe: tab %llu could not load %s: %s\n", (unsigned long long)t->id, uri ? uri : "", error ? error->message : "?");
     /* Stopped, or turned into a download: not failures anyone needs telling about. */
     if (g_error_matches(error, WEBKIT_NETWORK_ERROR, WEBKIT_NETWORK_ERROR_CANCELLED)
         || g_error_matches(error, WEBKIT_POLICY_ERROR, WEBKIT_POLICY_ERROR_FRAME_LOAD_INTERRUPTED_BY_POLICY_CHANGE))
@@ -1111,6 +1115,7 @@ void spatimesh_watch(Engine *e, int fd) {
 }
 
 int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int height, double zoom) {
+    fprintf(stderr, "spatimesh-wpe: tab %llu opens %s\n", (unsigned long long)id, uri ? uri : "");
     if (find(e, id))
         return 0;
     Tab *t = g_new0(Tab, 1);
@@ -1361,7 +1366,10 @@ void spatimesh_key(Engine *e, uint64_t id, int key, guint32 ch, int code, int pr
     Tab *t = find_shown(e, id);
     if (!t)
         return;
-    (void)text;
+    /* What it typed, where it typed something: the key alone is its unshifted letter, and WebKit
+     * types the key's own character (Shift-S would type "s"). */
+    if (key == 15 && text && *text)
+        ch = g_utf8_get_char(text);
     /* The hardware code as X and evdev number keys (Linux's plus 8), which WPE's keymap reads. */
     deliver(t, wpe_event_keyboard_new(pressed ? WPE_EVENT_KEYBOARD_KEY_DOWN : WPE_EVENT_KEYBOARD_KEY_UP, WPE_VIEW(t->wpe), WPE_INPUT_SOURCE_KEYBOARD,
         now_ms(), modifiers_of(modifiers), (guint)(code + 8), keyval_of(key, ch, code)));

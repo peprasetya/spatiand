@@ -425,6 +425,7 @@ impl Browser {
         let view = self.view_of(w);
         let window = self.wins[w].key;
         if let Some(host) = self.host(&profile) {
+            log::info!("tab {tab} opens {url} in {profile}'s engine");
             host.send(&ToHost::Open { tab, url, view });
             host.send(&ToHost::Window { tab, window });
         }
@@ -1218,6 +1219,7 @@ impl Browser {
         if crashed || !self.hosts.contains_key(&profile) || self.views.get(&tab).map_or(true, |v| v.told.is_none()) {
             self.reopen(tab);
         } else {
+            log::info!("tab {tab} loads {url}");
             self.tell(tab, ToHost::Load { tab, url: url.clone() });
         }
         self.wins[w].address.set(shown(&url, &self.settings.search_engine()));

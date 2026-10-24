@@ -210,10 +210,14 @@ impl Host {
         self.send(ToHost::Pointer { tab, x, y, button: Some((Button::Left, false)), modifiers: m });
     }
 
+    /// As the room types: the key is its unshifted letter, Shift held for a capital, and what
+    /// it typed beside.
     fn type_text(&mut self, tab: TabId, text: &str) {
         for ch in text.chars() {
+            let modifiers = Modifiers { shift: ch.is_uppercase(), ..Modifiers::default() };
+            let key_char = ch.to_lowercase().next().unwrap_or(ch);
             for pressed in [true, false] {
-                let key = KeyPress { code: 0, key: spatiand_app::Key::Char(ch), text: Some(ch.to_string()), pressed, repeat: false, modifiers: Modifiers::default() };
+                let key = KeyPress { code: 0, key: spatiand_app::Key::Char(key_char), text: Some(ch.to_string()), pressed, repeat: false, modifiers };
                 self.send(ToHost::Key { tab, key });
             }
         }
@@ -541,8 +545,8 @@ fn a_password_is_typed() {
     host.send(ToHost::Focus { tab: 1, focused: true });
     host.click(1, 50.0, 75.0);
     host.title(1, "focused");
-    host.type_text(1, "s3cret");
-    host.title(1, "typed:s3cret");
+    host.type_text(1, "S3cReT");
+    host.title(1, "typed:S3cReT");
     host.quit();
 }
 
