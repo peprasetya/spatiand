@@ -498,3 +498,23 @@ fn a_file_on_disk_is_shown() {
     host.quit();
     let _ = std::fs::remove_dir_all(folder);
 }
+
+/// A password field takes what is typed, as any other: WPE is given the keys by SpatiMesh, with
+/// no window of the Mac's to have them, so macOS's secure input has nothing to take them from.
+#[test]
+fn a_password_is_typed() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    let url = page(concat!(
+        "<input id=u style='position:absolute;left:10px;top:10px;width:200px;height:30px'>",
+        "<input id=p type=password style='position:absolute;left:10px;top:60px;width:200px;height:30px' ",
+        "onfocus=\"document.title='focused'\" oninput=\"document.title='typed:'+this.value\">"
+    ));
+    host.send(ToHost::Open { tab: 1, url, view: View::new(400, 300, 1.0) });
+    host.loaded(1);
+    host.send(ToHost::Focus { tab: 1, focused: true });
+    host.click(1, 50.0, 75.0);
+    host.title(1, "focused");
+    host.type_text(1, "s3cret");
+    host.title(1, "typed:s3cret");
+    host.quit();
+}
