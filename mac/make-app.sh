@@ -73,6 +73,12 @@ if [ -f "$WPE_OUT/lib/pkgconfig/wpe-webkit-2.0.pc" ] && [ -f "$app/Contents/MacO
     cp -a "$WPE_OUT"/lib/*.dylib "$wpe/lib/"
     for dir in gio wpe-webkit-2.0 wpe-platform-2.0; do if [ -d "$WPE_OUT/lib/$dir" ]; then cp -a "$WPE_OUT/lib/$dir" "$wpe/lib/$(echo $dir | tr . _)"; fi; done
     cp -a "$WPE_OUT/libexec/wpe-webkit-2.0" "$wpe/libexec/wpe-webkit-2_0"
+    # What the app carries already (OpenSSL from FFmpeg's build, ANGLE, put in further down) is
+    # carried once.
+    for lib in "$wpe"/lib/*.dylib; do
+      name=$(basename "$lib")
+      if [ -e "$app/Contents/Frameworks/$name" ] || [ -e "vendor/angle/$name" ]; then rm "$lib"; ln -s "../../$name" "$lib"; fi
+    done
     cp ../target/release/spatimesh-wpe "$app/Contents/MacOS/spatimesh-wpe"
     cp ../third_party/wpe/mac/fonts.conf "$app/Contents/Resources/fonts.conf"
     for f in $(find "$wpe" -type f \( -name '*.dylib' -o -name '*.so' -o -perm +111 \)) "$app/Contents/MacOS/spatimesh-wpe"; do
