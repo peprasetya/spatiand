@@ -157,6 +157,21 @@ index e219a0ef8..11d3f5958 100644
  #include "CommonCryptoUtilities.h"
  
  typedef CCRSACryptorRef PlatformRSAKey;
+diff --git a/Source/WebCore/loader/soup/ResourceLoaderSoup.cpp b/Source/WebCore/loader/soup/ResourceLoaderSoup.cpp
+index ff4640831..0b4d94e94 100644
+--- a/Source/WebCore/loader/soup/ResourceLoaderSoup.cpp
++++ b/Source/WebCore/loader/soup/ResourceLoaderSoup.cpp
+@@ -98,7 +98,9 @@ void ResourceLoader::loadGResource()
+         auto contentTypeString = contentTypeLookUpForKnownResource(fileName.get());
+         if (!contentTypeString) {
+             GUniquePtr<char> contentType(g_content_type_guess(fileName.get(), data, dataSize, nullptr));
+-            contentTypeString = String::fromLatin1(contentType.get());
++            // A GIO content type is a MIME type on Linux, but not on macOS (public.html).
++            GUniquePtr<char> mimeType(g_content_type_get_mime_type(contentType.get()));
++            contentTypeString = String::fromLatin1(mimeType ? mimeType.get() : contentType.get());
+         }
+         ResourceResponse response { WTF::move(url), extractMIMETypeFromMediaType(*contentTypeString), static_cast<long long>(dataSize), extractCharsetFromMediaType(*contentTypeString).toString() };
+         response.setHTTPStatusCode(200);
 diff --git a/Source/WebCore/platform/graphics/PlatformDisplay.h b/Source/WebCore/platform/graphics/PlatformDisplay.h
 index e790f78f5..aae156f79 100644
 --- a/Source/WebCore/platform/graphics/PlatformDisplay.h
@@ -303,6 +318,21 @@ index 41ea74303..55e769185 100644
          Ref ipcConnection = connection->connection();
          auto remoteProcessID = ipcConnection->remoteProcessID();
          // Connection is not available.
+diff --git a/Source/WebKit/NetworkProcess/soup/NetworkDataTaskSoup.cpp b/Source/WebKit/NetworkProcess/soup/NetworkDataTaskSoup.cpp
+index ca86b7c69..5ec59de8e 100644
+--- a/Source/WebKit/NetworkProcess/soup/NetworkDataTaskSoup.cpp
++++ b/Source/WebKit/NetworkProcess/soup/NetworkDataTaskSoup.cpp
+@@ -1463,7 +1463,9 @@ void NetworkDataTaskSoup::didGetFileInfo(GFileInfo* info)
+         m_response.setMimeType("text/html"_s);
+         m_response.setExpectedContentLength(-1);
+     } else {
+-        auto contentType = String::fromLatin1(g_file_info_get_content_type(info));
++        // A GIO content type is a MIME type on Linux, but not on macOS (public.html).
++        GUniquePtr<char> mimeType(g_content_type_get_mime_type(g_file_info_get_content_type(info)));
++        auto contentType = String::fromLatin1(mimeType ? mimeType.get() : g_file_info_get_content_type(info));
+         auto mimeTypeFromExtension = MIMETypeRegistry::mimeTypeForPath(m_response.url().path());
+         auto mimeTypeFromContent = extractMIMETypeFromMediaType(contentType);
+         // If an application calls g_app_info_get_default_for_type($ext) then Glib will return "application/x-extension-$ext" in mimeTypeFromExtension which WebKit doesn't know how to handle.
 diff --git a/Source/WebKit/NetworkProcess/webrtc/NetworkMDNSRegister.cpp b/Source/WebKit/NetworkProcess/webrtc/NetworkMDNSRegister.cpp
 index 8046b81ec..870b64daa 100644
 --- a/Source/WebKit/NetworkProcess/webrtc/NetworkMDNSRegister.cpp
@@ -753,6 +783,21 @@ index 549ee8968..6ae5d1bae 100644
      bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8");
  
      s_serviceWorkerNotificationProvider = makeUnique<WebKitNotificationProvider>(&WebNotificationManagerProxy::serviceWorkerManagerSingleton(), nullptr);
+diff --git a/Source/WebKit/UIProcess/Inspector/glib/RemoteInspectorHTTPServer.cpp b/Source/WebKit/UIProcess/Inspector/glib/RemoteInspectorHTTPServer.cpp
+index e10439f55..aa4e75040 100644
+--- a/Source/WebKit/UIProcess/Inspector/glib/RemoteInspectorHTTPServer.cpp
++++ b/Source/WebKit/UIProcess/Inspector/glib/RemoteInspectorHTTPServer.cpp
+@@ -103,7 +103,9 @@ unsigned RemoteInspectorHTTPServer::handleRequest(const char* path, SoupMessageH
+         const auto* data = static_cast<const guchar*>(g_bytes_get_data(bytes.get(), &dataSize));
+         GUniquePtr<char> fileName(g_path_get_basename(resourcePath.get()));
+         GUniquePtr<char> contentType(g_content_type_guess(fileName.get(), data, dataSize, nullptr));
+-        soup_message_headers_append(responseHeaders, "Content-Type", contentType.get());
++        // A GIO content type is a MIME type on Linux, but not on macOS (public.html).
++        GUniquePtr<char> mimeType(g_content_type_get_mime_type(contentType.get()));
++        soup_message_headers_append(responseHeaders, "Content-Type", mimeType ? mimeType.get() : contentType.get());
+         soup_message_body_append(responseBody, SOUP_MEMORY_COPY, data, dataSize);
+         return SOUP_STATUS_OK;
+     }
 diff --git a/Source/WebKit/UIProcess/Launcher/ProcessLauncher.cpp b/Source/WebKit/UIProcess/Launcher/ProcessLauncher.cpp
 index 4c9b9d6cc..c59a60571 100644
 --- a/Source/WebKit/UIProcess/Launcher/ProcessLauncher.cpp

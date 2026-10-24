@@ -485,3 +485,16 @@ fn cookies_are_said_made_and_removed() {
     host.quit();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_file_on_disk_is_shown() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    let folder = std::env::temp_dir().join(format!("spatimesh-wpe-file-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let file = folder.join("page.html");
+    std::fs::write(&file, "<title>from disk</title><p>here</p>").unwrap();
+    host.send(ToHost::Open { tab: 1, url: format!("file://{}", file.display()), view: View::new(200, 100, 1.0) });
+    host.title(1, "from disk");
+    host.quit();
+    let _ = std::fs::remove_dir_all(folder);
+}
