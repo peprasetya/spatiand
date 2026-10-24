@@ -1390,3 +1390,14 @@ void spatimesh_visited(Engine *e, const char *urls) {
     (void)e;
     (void)urls;
 }
+
+/* The developer tools: not yet here. WebKitGTK opens them as a GTK window of their own, which
+ * SpatiMesh's offscreen windows do not show; SpatiMesh on WPE has them as a tab. */
+int spatimesh_inspect(Engine *e, uint64_t id, uint64_t inspector, int width, int height) {
+    (void)e;
+    (void)id;
+    (void)inspector;
+    (void)width;
+    (void)height;
+    return 0;
+}

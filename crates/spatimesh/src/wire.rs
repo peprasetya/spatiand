@@ -52,6 +52,8 @@ pub enum ToHost {
     SetCookies { set: Vec<Cookie>, remove: Vec<Cookie> },
     /// Pages visited on another machine ([`crate::engine::Engine::add_visited`]).
     Visited { urls: Vec<String> },
+    /// Open the developer tools for `tab` as the tab `inspector` ([`crate::engine::Engine::inspect`]).
+    Inspect { tab: TabId, inspector: TabId, view: View },
 }
 
 /// From an engine host to its window.
@@ -376,6 +378,10 @@ impl ToHost {
                 b.str(&serde_json::to_string(urls).unwrap_or_default());
                 26
             }
+            ToHost::Inspect { tab, inspector, view } => {
+                b.u64(*tab).u64(*inspector).view(*view);
+                27
+            }
         };
         frame(tag, b)
     }
@@ -430,6 +436,7 @@ impl ToHost {
                 ToHost::SetCookies { set: both.set, remove: both.remove }
             }
             26 => ToHost::Visited { urls: serde_json::from_str(&i.str()?).ok()? },
+            27 => ToHost::Inspect { tab: i.u64()?, inspector: i.u64()?, view: i.view()? },
             _ => return None,
         })
     }
@@ -1111,6 +1118,7 @@ mod tests {
             ToHost::AskCookies { addresses: vec!["https://a.example/".into()] },
             ToHost::SetCookies { set: vec![cookie()], remove: vec![Cookie { expires: None, ..cookie() }] },
             ToHost::Visited { urls: vec!["https://a.example/x".into()] },
+            ToHost::Inspect { tab: 3, inspector: 9, view: View::new(800, 600, 2.0) },
         ];
         for message in to_host {
             let bytes = message.encode();

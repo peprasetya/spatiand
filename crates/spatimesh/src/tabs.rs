@@ -31,6 +31,8 @@ pub struct Tab {
     pub failed: Option<String>,
     /// The tab that opened it, while it is still where it was opened.
     pub opener: Option<TabId>,
+    /// The developer tools of this tab: no page of its own, and not kept in the history.
+    pub inspects: Option<TabId>,
 }
 
 impl Tab {
@@ -173,6 +175,7 @@ impl Tabs {
                 crashed: None,
                 failed: None,
                 opener,
+                inspects: None,
             },
         );
         let w = self.window_mut(window)?;

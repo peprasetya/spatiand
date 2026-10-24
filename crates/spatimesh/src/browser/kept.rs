@@ -68,7 +68,7 @@ impl Browser {
 
     /// A tab's page has loaded, or its title came after: remembered, and its cookies looked at.
     pub(super) fn kept_page(&mut self, tab: TabId, loaded: bool) {
-        let Some(t) = self.tabs.tab(tab) else { return };
+        let Some(t) = self.tabs.tab(tab).filter(|t| t.inspects.is_none()) else { return };
         let (profile, url, title) = (t.profile.clone(), t.url.clone(), t.title.clone());
         let Some(kept) = self.kept.get_mut(&profile) else { return };
         kept.history.visited(&self.store, &url, &title);

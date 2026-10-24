@@ -6,7 +6,7 @@
 //! docs/spatimesh.md.
 
 /// What WPE reads from the environment and is to find in Spatiand's own copy: GIO's TLS module
-/// (glib-networking, on OpenSSL) and, on a Mac, the font configuration that gives every script
+/// (glib-networking, on OpenSSL), the developer tools' pages and, on a Mac, the font configuration that gives every script
 /// its font (third_party/wpe/mac/fonts.conf). In the app beside this program; while developing,
 /// where third_party/wpe/build.sh put them. Set before any thread is.
 #[cfg(wpe)]
@@ -18,6 +18,15 @@ fn find_own() {
         let modules = [beside.as_ref().map(|d| d.join("gio/modules")), Some(built.join("gio/modules"))];
         if let Some(found) = modules.into_iter().flatten().find(|m| m.is_dir()) {
             std::env::set_var("GIO_EXTRA_MODULES", found);
+        }
+    }
+    // The developer tools' own pages (WebKit's inspector.gresource): in the app's Resources,
+    // or where the build put them.
+    if std::env::var_os("WEBKIT_INSPECTOR_RESOURCES_PATH").is_none() {
+        let resources = exe.as_ref().and_then(|e| e.parent()).map(|d| d.join("../Resources/wpe"));
+        let built = std::path::PathBuf::from(env!("SPATIMESH_WPE_DIR")).join("share/wpe-webkit-2.0");
+        if let Some(found) = [resources, Some(built)].into_iter().flatten().find(|d| d.join("inspector.gresource").is_file()) {
+            std::env::set_var("WEBKIT_INSPECTOR_RESOURCES_PATH", found);
         }
     }
     #[cfg(target_os = "macos")]

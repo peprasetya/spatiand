@@ -128,30 +128,43 @@ impl Host {
             }
             assert!(Instant::now() < deadline, "waited {seconds} s for {what}; saw {:?}", self.seen);
             assert!(!self.link.is_closed(), "the engine went while waiting for {what}");
-            self.link.wait_readable(50);
-            for (message, fds) in self.link.receive_from_host() {
-                match message {
-                    FromHost::Buffers { tab, width, height, format, .. } => {
-                        self.pictures.insert(tab, Pictures::map(width, height, format, fds).unwrap());
-                    }
-                    FromHost::Picture { tab, buffer, .. } => {
-                        let p = &self.pictures[&tab];
-                        self.latest.insert(tab, (p.width, p.height, p.format, p.buffer(buffer).unwrap().to_vec()));
-                        self.send(ToHost::Release { tab, buffer });
+            self.receive();
+        }
+    }
+
+    /// What the engine says in the next moment, kept.
+    fn receive(&mut self) {
+        self.link.wait_readable(50);
+        for (message, fds) in self.link.receive_from_host() {
+            match message {
+                FromHost::Buffers { tab, width, height, format, .. } => {
+                    self.pictures.insert(tab, Pictures::map(width, height, format, fds).unwrap());
+                }
+                FromHost::Picture { tab, buffer, .. } => {
+                    let p = &self.pictures[&tab];
+                    self.latest.insert(tab, (p.width, p.height, p.format, p.buffer(buffer).unwrap().to_vec()));
+                    self.send(ToHost::Release { tab, buffer });
+                    self.seen.push(Happened::Picture { tab });
+                }
+                FromHost::Happened(h) => self.seen.push(h),
+                // A Mac's pictures come on the GPU, as IOSurfaces: read here, as the window shows them.
+                FromHost::Surface { tab, id, .. } => {
+                    if let Some(picture) = read_surface(id) {
+                        self.latest.insert(tab, picture);
                         self.seen.push(Happened::Picture { tab });
                     }
-                    FromHost::Happened(h) => self.seen.push(h),
-                    // A Mac's pictures come on the GPU, as IOSurfaces: read here, as the window shows them.
-                    FromHost::Surface { tab, id, .. } => {
-                        if let Some(picture) = read_surface(id) {
-                            self.latest.insert(tab, picture);
-                            self.seen.push(Happened::Picture { tab });
-                        }
-                        self.send(ToHost::ReleaseSurface { tab, id });
-                    }
-                    FromHost::Hello { .. } => {}
+                    self.send(ToHost::ReleaseSurface { tab, id });
                 }
+                FromHost::Hello { .. } => {}
             }
+        }
+    }
+
+    /// Everything the engine says for `time`, kept, whatever it is.
+    fn settle(&mut self, time: Duration) {
+        let until = Instant::now() + time;
+        while Instant::now() < until && !self.link.is_closed() {
+            self.receive();
         }
     }
 
@@ -174,6 +187,20 @@ impl Host {
             Format::Bgra => [bytes[i + 2], bytes[i + 1], bytes[i]],
             Format::Rgba => [bytes[i], bytes[i + 1], bytes[i + 2]],
         }
+    }
+
+    /// The tab's newest picture as a PPM file where SPATIMESH_TEST_SHOTS names a folder, to be
+    /// looked at.
+    fn shot(&self, tab: TabId, name: &str) {
+        let Some(folder) = std::env::var_os("SPATIMESH_TEST_SHOTS") else { return };
+        let (width, height, ..) = self.latest[&tab];
+        let mut out = format!("P6 {width} {height} 255\n").into_bytes();
+        for y in 0..height {
+            for x in 0..width {
+                out.extend_from_slice(&self.pixel(tab, x, y));
+            }
+        }
+        let _ = std::fs::write(Path::new(&folder).join(format!("{name}.ppm")), out);
     }
 
     fn click(&mut self, tab: TabId, x: f32, y: f32) {
@@ -542,5 +569,33 @@ fn webgl_draws() {
         }
         assert!(Instant::now() < deadline, "the canvas never showed: {:?}", host.pixel(1, 50, 50));
     }
+    host.quit();
+}
+
+/// The developer tools: a tab of their own, drawn, that goes when their page does.
+#[test]
+fn developer_tools_are_a_tab() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    host.send(ToHost::Open { tab: 1, url: page("<title>inspected</title><p id=x>hello</p>"), view: View::new(400, 300, 1.0) });
+    host.loaded(1);
+    host.send(ToHost::Inspect { tab: 1, inspector: 2, view: View::new(800, 500, 1.0) });
+    // Their own page draws: wait for a picture of theirs with more than one colour in it.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        host.wait_for("a picture of the developer tools", 30, |h| matches!(h, Happened::Picture { tab: 2 }));
+        let (width, height, ..) = host.latest[&2];
+        let sample: Vec<[u8; 3]> = (0..20).map(|i| host.pixel(2, width * i / 20, height / 3)).collect();
+        if (width, height) == (800, 500) && sample.iter().any(|p| !near(*p, sample[0])) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the developer tools never drew: {width}x{height}");
+    }
+    host.shot(2, "developer-tools");
+    // Still open: WebKit moving their view between windows as it sets them up is not closing.
+    host.settle(Duration::from_secs(2));
+    assert!(!host.seen.iter().any(|h| matches!(h, Happened::CloseTab { tab: 2 })), "the developer tools closed by themselves: {:?}", host.seen);
+    // Closing the page closes them.
+    host.send(ToHost::Close { tab: 1 });
+    host.wait_for("the developer tools to close", 20, |h| matches!(h, Happened::CloseTab { tab: 2 }));
     host.quit();
 }

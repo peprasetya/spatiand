@@ -161,6 +161,11 @@ pub fn serve(mut engine: Box<dyn Engine>, mut link: Link) {
                 ToHost::AskCookies { addresses } => engine.ask_cookies(&addresses),
                 ToHost::SetCookies { set, remove } => engine.set_cookies(&set, &remove),
                 ToHost::Visited { urls } => engine.add_visited(&urls),
+                ToHost::Inspect { tab, inspector, view } => {
+                    if !engine.inspect(tab, inspector, view) {
+                        log::info!("{} has no developer tools", engine.name());
+                    }
+                }
             }
         }
         if link.is_closed() {

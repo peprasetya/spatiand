@@ -59,8 +59,8 @@ fi
 # SpatiMesh's engine on WPE WebKit, where third_party/wpe/build.sh mac has made one: SpatiMesh
 # takes it over Apple's WebKit when it is here. WPE and every library it was built on go into
 # Contents/Frameworks/wpe, laid out as the build's prefix (lib, libexec) so WebKit, which
-# finds its processes and modules from where its library was loaded, finds them in the app (share,
-# data, is not code and may not be among it: the Web Inspector's resources go in when it is done); the
+# finds its processes and modules from where its library was loaded, finds them in the app (its
+# data, the developer tools' pages, is in Resources: data may not be among code); the
 # dots in folder names are underscores there (wpe-webkit-2_0), since codesign takes a dotted
 # folder for a bundle (the WebKit patch looks for them so). The libraries name each other by the
 # build folder's path; here they are renamed to @rpath.
@@ -80,6 +80,11 @@ if [ -f "$WPE_OUT/lib/pkgconfig/wpe-webkit-2.0.pc" ] && [ -f "$app/Contents/MacO
       if [ -e "$app/Contents/Frameworks/$name" ] || [ -e "vendor/angle/$name" ]; then rm "$lib"; ln -s "../../$name" "$lib"; fi
     done
     cp ../target/release/spatimesh-wpe "$app/Contents/MacOS/spatimesh-wpe"
+    # The developer tools' pages: data, so in Resources (the engine program tells WebKit).
+    if [ -f "$WPE_OUT/share/wpe-webkit-2.0/inspector.gresource" ]; then
+      mkdir -p "$app/Contents/Resources/wpe"
+      cp "$WPE_OUT/share/wpe-webkit-2.0/inspector.gresource" "$app/Contents/Resources/wpe/"
+    fi
     cp ../third_party/wpe/mac/fonts.conf "$app/Contents/Resources/fonts.conf"
     for f in $(find "$wpe" -type f \( -name '*.dylib' -o -name '*.so' -o -perm +111 \)) "$app/Contents/MacOS/spatimesh-wpe"; do
       file "$f" | grep -q Mach-O || continue

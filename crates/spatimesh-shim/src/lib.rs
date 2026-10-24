@@ -99,6 +99,7 @@ extern "C" {
     fn spatimesh_cookies_set(e: *mut Raw, lines: *const c_char);
     fn spatimesh_cookies_remove(e: *mut Raw, lines: *const c_char);
     fn spatimesh_visited(e: *mut Raw, urls: *const c_char);
+    fn spatimesh_inspect(e: *mut Raw, id: u64, inspector: u64, width: c_int, height: c_int) -> c_int;
 }
 
 type ServeFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut *const c_char, *mut *mut u8, *mut usize) -> c_int;
@@ -582,6 +583,14 @@ impl Engine for Shim {
     fn add_visited(&mut self, urls: &[String]) {
         let urls = c(&urls.iter().filter(|u| !u.contains('\n')).cloned().collect::<Vec<_>>().join("\n"));
         unsafe { spatimesh_visited(self.raw, urls.as_ptr()) };
+    }
+
+    fn inspect(&mut self, tab: TabId, inspector: TabId, view: View) -> bool {
+        if unsafe { spatimesh_inspect(self.raw, tab, inspector, view.width as c_int, view.height as c_int) } == 0 {
+            return false;
+        }
+        self.views.insert(inspector, view);
+        true
     }
 
     fn pump(&mut self, wait: Duration, canvas: &mut dyn Canvas) -> Vec<Happened> {

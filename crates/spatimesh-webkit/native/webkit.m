@@ -1983,3 +1983,14 @@ void spatimesh_visited(Engine *e, const char *urls) {
         }
     }
 }
+
+/* The developer tools: not here. Apple's WebKit shows its Web Inspector in a window of its own,
+ * which the offscreen window SpatiMesh draws from does not; SpatiMesh on WPE has them as a tab. */
+int spatimesh_inspect(Engine *e, uint64_t id, uint64_t inspector, int width, int height) {
+    (void)e;
+    (void)id;
+    (void)inspector;
+    (void)width;
+    (void)height;
+    return 0;
+}

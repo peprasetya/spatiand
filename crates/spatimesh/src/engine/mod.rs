@@ -349,6 +349,14 @@ pub trait Engine {
     fn set_cookies(&mut self, _set: &[Cookie], _remove: &[Cookie]) {}
     /// Pages visited on another machine, for links to them to look visited.
     fn add_visited(&mut self, _urls: &[String]) {}
+    /// Open the developer tools (Web Inspector) for `tab`, as the tab `inspector`: from then on
+    /// it is a tab like the others (pictures, input, [`Engine::resize`], [`Engine::close`]),
+    /// except that it has no address to load. It ends with [`Happened::CloseTab`] when the
+    /// developer tools are closed from inside, and goes when `tab` does. False where the
+    /// engine has none.
+    fn inspect(&mut self, _tab: TabId, _inspector: TabId, _view: View) -> bool {
+        false
+    }
 }
 
 /// What a profile is to the engine that holds it.

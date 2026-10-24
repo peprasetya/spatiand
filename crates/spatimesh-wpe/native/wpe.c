@@ -73,6 +73,13 @@ typedef struct {
     GPtrArray *held_surfaces;
     void (*on_picture)(gpointer);
     gpointer data;
+    /* The size its window is to have, where WebKit makes the window (the developer tools'),
+     * and what to do when WebKit takes the window away (they were closed). */
+    int tab_width, tab_height;
+    void (*on_gone)(gpointer);
+    /* The window being watched for that: WebKit moves the view out of it and back while it
+     * sets the developer tools up, and lets the window go when they close. */
+    WPEToplevel *watched;
 } MeshView;
 typedef struct { WPEViewClass parent; } MeshViewClass;
 G_DEFINE_TYPE(MeshView, mesh_view, WPE_TYPE_VIEW)
@@ -138,12 +145,39 @@ static gboolean mesh_view_render_buffer(WPEView *view, WPEBuffer *buffer, const 
     return TRUE;
 }
 
+static void toplevel_gone(gpointer data, GObject *was) {
+    MeshView *v = data;
+    v->watched = NULL;
+    if (v->on_gone)
+        v->on_gone(v->data);
+}
+
+/* Watch the window the view is in, once it is to be told of its going (the developer tools). */
+static void watch_toplevel(MeshView *v) {
+    WPEToplevel *toplevel = wpe_view_get_toplevel(WPE_VIEW(v));
+    if (!v->on_gone || !toplevel || v->watched)
+        return;
+    v->watched = toplevel;
+    g_object_weak_ref(G_OBJECT(toplevel), toplevel_gone, v);
+}
+
+static void unwatch_toplevel(MeshView *v) {
+    if (v->watched)
+        g_object_weak_unref(G_OBJECT(v->watched), toplevel_gone, v);
+    v->watched = NULL;
+}
+
 static void on_toplevel(WPEView *view, GParamSpec *p, gpointer data) {
     WPEToplevel *toplevel = wpe_view_get_toplevel(view);
+    MeshView *mesh = (MeshView *)view;
     if (!toplevel) {
         wpe_view_unmap(view);
         return;
     }
+    watch_toplevel(mesh);
+    /* The developer tools' view comes in a window WebKit sized; it is the size of its tab. */
+    if (mesh->tab_width && mesh->tab_height)
+        wpe_toplevel_resize(toplevel, mesh->tab_width, mesh->tab_height);
     int width, height;
     wpe_toplevel_get_size(toplevel, &width, &height);
     if (width && height)
@@ -158,6 +192,7 @@ static void mesh_view_constructed(GObject *object) {
 
 static void mesh_view_dispose(GObject *object) {
     MeshView *v = (MeshView *)object;
+    unwatch_toplevel(v);
     g_clear_pointer(&v->pixels, g_bytes_unref);
     g_clear_object(&v->fresh_surface);
     g_clear_pointer(&v->held_surfaces, g_ptr_array_unref);
@@ -216,8 +251,12 @@ static gboolean mesh_display_connect(WPEDisplay *display, GError **error) {
     return TRUE;
 }
 
+static void bind_inspector_view(MeshView *v);
+
 static WPEView *mesh_display_create_view(WPEDisplay *display) {
-    return WPE_VIEW(g_object_new(mesh_view_get_type(), "display", display, NULL));
+    MeshView *v = (MeshView *)g_object_new(mesh_view_get_type(), "display", display, NULL);
+    bind_inspector_view(v);
+    return WPE_VIEW(v);
 }
 
 static WPEToplevel *mesh_display_create_toplevel(WPEDisplay *display, guint max_views) {
@@ -254,6 +293,10 @@ static WPEDisplay *mesh_display(void) {
             g_warning("SpatiMesh's WPE display: %s", error ? error->message : "?");
             g_clear_error(&error);
         }
+        /* The interface's font, as a desktop would say it: form controls and the developer
+         * tools are drawn with it (unsaid, they take the page's standard font, a serif). The
+         * generic family, which fonts.conf gives every script's font for. */
+        wpe_settings_set_string(wpe_display_get_settings(display), WPE_SETTING_FONT_NAME, "sans-serif 13", WPE_SETTINGS_SOURCE_PLATFORM, NULL);
     }
     return display;
 }
@@ -280,6 +323,10 @@ typedef struct {
     int main_handler;
     /* The media script's way out is registered once a tab has one. */
     int media_handler;
+    /* Developer tools: a page's (`inspector`, the tab showing them), or, for that tab, the page
+     * they are for (`inspected`). Such a tab has no web view of its own: WebKit makes its view
+     * on SpatiMesh's display, and it is `wpe` once made. */
+    uint64_t inspector, inspected;
 } Tab;
 
 /* One extension, as the window gave it (crates/spatimesh-shim): its scheme, its content
@@ -349,6 +396,19 @@ static void push(Engine *e, int kind, uint64_t tab, double number, int a, int b,
 
 static Tab *find(Engine *e, uint64_t id) {
     return g_hash_table_lookup(e->tabs, &id);
+}
+
+/* A tab with a page of its own (not the developer tools'). */
+static Tab *find_page(Engine *e, uint64_t id) {
+    Tab *t = find(e, id);
+    return t && t->view ? t : NULL;
+}
+
+/* A tab with a view to show and to give input to (the developer tools' has none until WebKit
+ * has made it). */
+static Tab *find_shown(Engine *e, uint64_t id) {
+    Tab *t = find(e, id);
+    return t && t->wpe ? t : NULL;
 }
 
 
@@ -510,6 +570,40 @@ static void on_picture(gpointer data) {
     ((Tab *)data)->fresh = 1;
 }
 
+/* The developer tools' tab waiting for the view WebKit makes for them (spatimesh_inspect): the
+ * next view made is theirs. */
+static Tab *waiting_inspector;
+static Tab *find(struct Engine *e, uint64_t id);
+
+/* The developer tools were closed (from inside them, or with their page): their tab goes. */
+static void on_inspector_gone(gpointer data) {
+    Tab *tools = data;
+    if (!tools->inspected)
+        return;
+    Tab *page = find(tools->engine, tools->inspected);
+    if (page)
+        page->inspector = 0;
+    tools->inspected = 0;
+    push(tools->engine, EV_CLOSE_TAB, tools->id, 0, 0, 0, NULL, NULL);
+}
+
+static void bind_inspector_view(MeshView *v) {
+    Tab *t = waiting_inspector;
+    if (!t)
+        return;
+    waiting_inspector = NULL;
+    /* Held by the tab: WebKit lets go of it when the developer tools close, maybe before the
+     * window has closed their tab. */
+    t->wpe = g_object_ref(v);
+    v->on_picture = on_picture;
+    v->data = t;
+    v->tab_width = t->width;
+    v->tab_height = t->height;
+    v->on_gone = on_inspector_gone;
+    watch_toplevel(v);
+    wpe_view_set_visible(WPE_VIEW(v), TRUE);
+}
+
 /* ---- the engine --------------------------------------------------------------------------- */
 
 static void free_tab(Tab *t) {
@@ -521,8 +615,34 @@ static void free_tab(Tab *t) {
         webkit_script_dialog_close(t->dialog);
         webkit_script_dialog_unref(t->dialog);
     }
-    t->wpe->on_picture = NULL;
-    g_object_unref(t->view);
+    if (t->wpe)
+        t->wpe->on_picture = NULL;
+    if (waiting_inspector == t)
+        waiting_inspector = NULL;
+    if (t->inspected) {
+        /* The developer tools' tab: they close with it. */
+        Tab *page = find_page(t->engine, t->inspected);
+        if (page) {
+            page->inspector = 0;
+            if (t->wpe)
+                t->wpe->on_gone = NULL;
+            webkit_web_view_toggle_inspector(page->view);
+        }
+    } else if (t->inspector) {
+        /* A page's: its developer tools go with it. */
+        Tab *tools = find(t->engine, t->inspector);
+        if (tools) {
+            tools->inspected = 0;
+            push(t->engine, EV_CLOSE_TAB, tools->id, 0, 0, 0, NULL, NULL);
+        }
+    }
+    if (t->view)
+        g_object_unref(t->view);
+    else if (t->wpe) {
+        t->wpe->on_gone = NULL;
+        unwatch_toplevel(t->wpe);
+        g_object_unref(t->wpe);
+    }
     if (t->worlds)
         g_ptr_array_unref(t->worlds);
     g_free(t);
@@ -912,7 +1032,7 @@ void spatimesh_set_page_script(Engine *e, const char *code) {
  * there first if `boot`. Only the top frame here: WebKit's GLib API runs scripts from outside the
  * page in no other (`all_frames` is for engines that can). */
 void spatimesh_run_script(Engine *e, uint64_t id, const char *world, int all_frames, const char *code, uint64_t request, int boot) {
-    Tab *t = find(e, id);
+    Tab *t = find_page(e, id);
     if (!t) {
         if (request)
             push(e, EV_SCRIPT_RESULT, id, (double)request, 0, 0, "No such tab", NULL);
@@ -1037,32 +1157,55 @@ void spatimesh_close(Engine *e, uint64_t id) {
     g_hash_table_remove(e->tabs, &id);
 }
 
+/* The developer tools (Web Inspector) for the tab `id`, as the tab `inspector`, `width` by
+ * `height`. WebKit makes their page and view itself, on SpatiMesh's display: the next view made
+ * is theirs (bind_inspector_view). 0 if the tab has no page, or has them open already. */
+int spatimesh_inspect(Engine *e, uint64_t id, uint64_t inspector, int width, int height) {
+    Tab *page = find_page(e, id);
+    if (!page || page->inspector || find(e, inspector))
+        return 0;
+    Tab *t = g_new0(Tab, 1);
+    t->id = inspector;
+    t->engine = e;
+    t->width = MAX(width, 1);
+    t->height = MAX(height, 1);
+    t->inspected = id;
+    uint64_t *key = g_new(uint64_t, 1);
+    *key = inspector;
+    g_hash_table_insert(e->tabs, key, t);
+    page->inspector = inspector;
+    waiting_inspector = t;
+    webkit_web_view_toggle_inspector(page->view);
+    push(e, EV_TITLE, inspector, 0, 0, 0, "Developer tools", NULL);
+    return 1;
+}
+
 void spatimesh_load(Engine *e, uint64_t id, const char *uri) {
-    Tab *t = find(e, id);
+    Tab *t = find_page(e, id);
     if (t)
         webkit_web_view_load_uri(t->view, uri);
 }
 
 void spatimesh_back(Engine *e, uint64_t id) {
-    Tab *t = find(e, id);
+    Tab *t = find_page(e, id);
     if (t)
         webkit_web_view_go_back(t->view);
 }
 
 void spatimesh_forward(Engine *e, uint64_t id) {
-    Tab *t = find(e, id);
+    Tab *t = find_page(e, id);
     if (t)
         webkit_web_view_go_forward(t->view);
 }
 
 void spatimesh_reload(Engine *e, uint64_t id) {
-    Tab *t = find(e, id);
+    Tab *t = find_page(e, id);
     if (t)
         webkit_web_view_reload(t->view);
 }
 
 void spatimesh_stop(Engine *e, uint64_t id) {
-    Tab *t = find(e, id);
+    Tab *t = find_page(e, id);
     if (t)
         webkit_web_view_stop_loading(t->view);
 }
@@ -1073,13 +1216,18 @@ void spatimesh_resize(Engine *e, uint64_t id, int width, int height, double zoom
         return;
     t->width = MAX(width, 1);
     t->height = MAX(height, 1);
-    wpe_toplevel_resize(wpe_view_get_toplevel(WPE_VIEW(t->wpe)), t->width, t->height);
-    if (zoom > 0.1 && webkit_web_view_get_zoom_level(t->view) != zoom)
+    if (t->wpe && t->inspected) {
+        t->wpe->tab_width = t->width;
+        t->wpe->tab_height = t->height;
+    }
+    if (t->wpe && wpe_view_get_toplevel(WPE_VIEW(t->wpe)))
+        wpe_toplevel_resize(wpe_view_get_toplevel(WPE_VIEW(t->wpe)), t->width, t->height);
+    if (t->view && zoom > 0.1 && webkit_web_view_get_zoom_level(t->view) != zoom)
         webkit_web_view_set_zoom_level(t->view, zoom);
 }
 
 void spatimesh_mute(Engine *e, uint64_t id, int muted) {
-    Tab *t = find(e, id);
+    Tab *t = find_page(e, id);
     if (t)
         webkit_web_view_set_is_muted(t->view, muted);
 }
@@ -1116,7 +1264,7 @@ static void cross(Tab *t, double x, double y, gboolean in) {
 
 /* `button`: 0 none (a move), 1 left, 2 middle, 3 right, 4 back, 5 forward. */
 void spatimesh_pointer(Engine *e, uint64_t id, double x, double y, int button, int pressed, int modifiers) {
-    Tab *t = find(e, id);
+    Tab *t = find_shown(e, id);
     if (!t)
         return;
     if (!t->entered) {
@@ -1149,7 +1297,7 @@ void spatimesh_pointer(Engine *e, uint64_t id, double x, double y, int button, i
 }
 
 void spatimesh_leave(Engine *e, uint64_t id) {
-    Tab *t = find(e, id);
+    Tab *t = find_shown(e, id);
     if (t && t->entered) {
         cross(t, -1, -1, FALSE);
         t->entered = 0;
@@ -1158,7 +1306,7 @@ void spatimesh_leave(Engine *e, uint64_t id) {
 }
 
 void spatimesh_scroll(Engine *e, uint64_t id, double x, double y, double dx, double dy, int modifiers) {
-    Tab *t = find(e, id);
+    Tab *t = find_shown(e, id);
     if (!t)
         return;
     if (!t->entered) {
@@ -1210,7 +1358,7 @@ static guint keyval_of(int key, guint32 ch, int code) {
 }
 
 void spatimesh_key(Engine *e, uint64_t id, int key, guint32 ch, int code, int pressed, int modifiers, const char *text) {
-    Tab *t = find(e, id);
+    Tab *t = find_shown(e, id);
     if (!t)
         return;
     (void)text;
@@ -1220,7 +1368,7 @@ void spatimesh_key(Engine *e, uint64_t id, int key, guint32 ch, int code, int pr
 }
 
 void spatimesh_focus(Engine *e, uint64_t id, int focused) {
-    Tab *t = find(e, id);
+    Tab *t = find_shown(e, id);
     if (!t)
         return;
     if (focused)
@@ -1327,7 +1475,7 @@ int spatimesh_next_event(Engine *e, MeshEvent *out) {
 
 /* Whether a tab's picture changed and has not been read, and what changed. */
 int spatimesh_damage(Engine *e, uint64_t id, int *x, int *y, int *w, int *h) {
-    Tab *t = find(e, id);
+    Tab *t = find_shown(e, id);
     if (!t || !t->wpe->damaged || !t->wpe->pixels)
         return 0;
     MeshView *v = t->wpe;
@@ -1346,7 +1494,7 @@ int spatimesh_damage(Engine *e, uint64_t id, int *x, int *y, int *w, int *h) {
  * window holds it, until spatimesh_release_surface. (A Mac's; elsewhere there are none.) */
 int spatimesh_surface(Engine *e, uint64_t id, uint32_t *surface, int *width, int *height) {
 #ifdef WPE_PLATFORM_BUFFER_IOSURFACE
-    Tab *t = find(e, id);
+    Tab *t = find_shown(e, id);
     if (!t || !t->wpe->fresh_surface)
         return 0;
     WPEBuffer *buffer = t->wpe->fresh_surface;
@@ -1365,7 +1513,7 @@ int spatimesh_surface(Engine *e, uint64_t id, uint32_t *surface, int *width, int
 /* The window let go of a picture: WPE may draw into it again. */
 void spatimesh_release_surface(Engine *e, uint64_t id, uint32_t surface) {
 #ifdef WPE_PLATFORM_BUFFER_IOSURFACE
-    Tab *t = find(e, id);
+    Tab *t = find_shown(e, id);
     if (!t)
         return;
     GPtrArray *held = t->wpe->held_surfaces;
@@ -1385,7 +1533,7 @@ void spatimesh_release_surface(Engine *e, uint64_t id, uint32_t surface) {
 /* The tab's picture, where it changed, into `pixels` (`width` by `height`, four bytes a pixel,
  * cairo's order -- which is WPE's ARGB8888 in memory), and the change forgotten. */
 int spatimesh_copy(Engine *e, uint64_t id, unsigned char *pixels, int width, int height) {
-    Tab *t = find(e, id);
+    Tab *t = find_shown(e, id);
     if (!t || !t->wpe->damaged || !t->wpe->pixels)
         return 0;
     MeshView *v = t->wpe;
@@ -1404,7 +1552,7 @@ int spatimesh_copy(Engine *e, uint64_t id, unsigned char *pixels, int width, int
 
 /* For tests: a script run in the tab's page. */
 void spatimesh_run(Engine *e, uint64_t id, const char *script) {
-    Tab *t = find(e, id);
+    Tab *t = find_page(e, id);
     if (t)
         webkit_web_view_evaluate_javascript(t->view, script, -1, NULL, NULL, NULL, NULL, NULL);
 }

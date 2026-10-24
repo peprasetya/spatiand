@@ -516,6 +516,33 @@ and its title says only that it is locked; its pages' sound is hushed (they play
 Five wrong tries in a row and the next waits half a minute. The lock keeps a window from being
 looked at; it does not encrypt the profile's website data on disk.
 
+## WPE WebKit, SpatiMesh's own engine (from 2026-10-22)
+
+The platform engines (WKWebView, Android's WebView, Steam's Chromium) each draw into their own
+system and are reached around it. WPE WebKit draws into what it is given, so it is to be
+SpatiMesh's engine everywhere, carried by Spatiand at one version (`third_party/wpe`), with
+media through Spatiand's own FFmpeg. The Mac is first; WPE does not build on macOS upstream,
+so it is ported here.
+
+**Where it is.** `third_party/wpe/build.sh mac` builds WebKit at the `wpewebkit-2.54.1` tag with
+our patch series (`patches/webkit/`) and every library it needs from source (no Homebrew), into
+`~/Developer/spatiand-wpe` (outside iCloud). `crates/spatimesh-wpe` is the engine program: the
+shim's C interface on WPE's 2.0 API, and SpatiMesh's own WPE platform (`MeshDisplay`, `MeshView`,
+`MeshToplevel`). `mac/make-app.sh` puts it all in the app (`Contents/Frameworks/wpe`, laid out
+as the build's prefix; the developer tools' pages in `Contents/Resources/wpe`); WebKit finds its
+processes from where its library was loaded. SpatiMesh on a Mac takes it over WKWebView when the
+app carries it (`SPATIMESH_ENGINE=webkit` for the old one).
+
+| | State |
+|---|---|
+| Pictures | On the GPU, nothing copied: each frame an IOSurface ANGLE drew into, handed to the window and given back when it lets go (`ToHost::ReleaseSurface`). |
+| WebGL | WebKit's own ANGLE, its EGL back end running on the ANGLE the rest of WPE draws with, as on Linux it runs on Mesa (the shape upstream WPE has). Not yet: WebKit's ANGLE on Metal handing its pictures over as IOSurfaces, which would skip a layer. |
+| Fonts | fontconfig with Spatiand's own `fonts.conf`: each script's macOS font by language; WOFF2 web fonts (Google's woff2, on brotli); the interface font reported by SpatiMesh's display (WPE had none for form controls: patched). |
+| Developer tools | WebKit's Web Inspector, as a tab after its page (`ToHost::Inspect`; the menu's "Developer tools", Ctrl-Alt-I or Command-Option-I). It closes with its page. Not on WebKitGTK or WKWebView, whose inspector is a window of its own. |
+| Files | `file://` pages load (GIO's type identifiers taken as MIME types, patched). |
+| Extensions | The shared end-to-end test passes. |
+| Not yet | Media (Spatiand's FFmpeg as WebKit's player, or the page's own player as on the other engines: undecided); Linux and Android builds of WPE; the developer tools' text size in the glasses. |
+
 ## Built, checked, and not checked (2026-10-16)
 
 | | Built | Checked by CI or here | Not checked: to try by hand |

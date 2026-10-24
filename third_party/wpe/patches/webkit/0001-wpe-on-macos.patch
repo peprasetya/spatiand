@@ -1062,6 +1062,44 @@ index 8ace95c1b..674fcc442 100644
      DidDestroyBuffer(uint64_t id)
      Frame(uint64_t id, Vector<WebCore::IntRect, 1> damage, UnixFileDescriptor syncFD)
  
+diff --git a/Source/WebKit/UIProcess/glib/SystemSettingsManagerProxy.cpp b/Source/WebKit/UIProcess/glib/SystemSettingsManagerProxy.cpp
+index c29d8a9f7..cfb1b7808 100644
+--- a/Source/WebKit/UIProcess/glib/SystemSettingsManagerProxy.cpp
++++ b/Source/WebKit/UIProcess/glib/SystemSettingsManagerProxy.cpp
+@@ -30,8 +30,10 @@
+ #include "SystemSettingsManager.h"
+ #include "SystemSettingsManagerMessages.h"
+ #include "WebProcessPool.h"
++#include <WebCore/PlatformScreen.h>
+ #include <WebCore/SystemSettings.h>
+ #include <WebCore/Theme.h>
++#include <wtf/text/StringToIntegerConversion.h>
+ 
+ namespace WebKit {
+ using namespace WebCore;
+@@ -121,6 +123,22 @@ WebCore::InterfaceContrastPreference SystemSettingsManagerProxy::interfaceContra
+ void SystemSettingsManagerProxy::updateFontProperties(const String& fontName, WebCore::SystemSettingsState& changedState)
+ {
+     changedState.fontName = fontName;
++    changedState.fontFamily = std::nullopt;
++    changedState.fontSize = std::nullopt;
++
++    // A font name as Pango writes it, "Family Name 10": the family, and the size in points last.
++    // Without the family form controls take the page's standard font (WPE has no Pango).
++    auto name = fontName.trim(isASCIIWhitespace<char16_t>);
++    if (name.isEmpty())
++        return;
++    auto space = name.reverseFind(' ');
++    if (space != notFound) {
++        if (auto points = parseInteger<int>(StringView(name).substring(space + 1)); points && *points > 0) {
++            changedState.fontSize = static_cast<float>(*points * (WebCore::fontDPI() / 72.0));
++            name = name.left(space);
++        }
++    }
++    changedState.fontFamily = WTF::move(name);
+ }
+ #endif
+ 
 diff --git a/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.cpp b/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.cpp
 index 22c44ab7d..7a4c320d0 100644
 --- a/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.cpp

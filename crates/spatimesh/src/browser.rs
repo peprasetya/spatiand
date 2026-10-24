@@ -105,6 +105,7 @@ enum Action {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    DeveloperTools,
     SearchWith(String),
     OpenProfile(String),
     NewProfile,
@@ -269,6 +270,9 @@ pub struct Browser {
     /// Each running profile's cookies and history, the same on every machine (`kept`).
     kept: HashMap<String, kept::Kept>,
 }
+
+/// The I key, where it is on the keyboard (Linux's number for it).
+const KEY_I: u32 = 23;
 
 fn command(m: Modifiers) -> bool {
     m.control || m.logo
@@ -872,6 +876,33 @@ impl Browser {
         self.after_tab_change(key);
     }
 
+    /// The developer tools (the engine's Web Inspector) of the tab in front, as a tab after it:
+    /// the one they have already, or new ones. Asked of the developer tools' own tab, it is
+    /// itself.
+    fn developer_tools(&mut self, w: usize) {
+        let key = self.wins[w].key;
+        let Some(front) = self.tabs.active(key) else { return };
+        let page = self.tabs.tab(front).and_then(|t| t.inspects).unwrap_or(front);
+        let open = self.tabs.tabs().find(|t| t.inspects == Some(page)).map(|t| t.id);
+        if let Some(open) = open {
+            if let Some(window) = self.tabs.activate_tab(open) {
+                self.after_tab_change(window);
+            }
+            return;
+        }
+        let url = self.tabs.tab(page).map(|t| t.url.clone()).unwrap_or_default();
+        let Some(tools) = self.tabs.new_tab(key, &url, Place::AfterActive, true, Some(page)) else { return };
+        if let Some(t) = self.tabs.tab_mut(tools) {
+            t.inspects = Some(page);
+            t.title = "Developer tools".to_string();
+            t.loading = false;
+        }
+        let view = self.view_of(w);
+        self.tell(page, ToHost::Inspect { tab: page, inspector: tools, view });
+        self.views.entry(tools).or_default().told = Some(view);
+        self.after_tab_change(key);
+    }
+
     /// The tab in front of a window changed: the bar shows its address, the keyboard goes to it.
     fn after_tab_change(&mut self, key: WindowKey) {
         let Some(w) = self.win_of_key(key) else { return };
@@ -889,7 +920,7 @@ impl Browser {
         win.dirty = true;
         win.popup = None;
         match active {
-            Some(tab) if is_start(&tab.url) => {
+            Some(tab) if is_start(&tab.url) && tab.inspects.is_none() => {
                 // A new tab: the bar takes the keyboard, as in every browser.
                 win.address.set("");
                 win.editing = true;
@@ -1197,12 +1228,21 @@ impl Browser {
     /// A tab whose page stopped, loaded again; its engine started again if that is what went.
     fn reopen(&mut self, tab: TabId) {
         let Some(t) = self.tabs.tab(tab) else { return };
+        // The developer tools have no page to load again: they are opened anew from theirs.
+        if t.inspects.is_some() {
+            self.close_tab(tab);
+            return;
+        }
         let profile = t.profile.clone();
         let engine_was_gone = !self.hosts.contains_key(&profile);
         if engine_was_gone || self.views.get(&tab).map_or(true, |v| v.told.is_none()) {
             if engine_was_gone {
                 // Every tab of the profile goes back to its engine, not only this one.
-                let all: Vec<TabId> = self.tabs.tabs().filter(|t| t.profile == profile).map(|t| t.id).collect();
+                let all: Vec<TabId> = self.tabs.tabs().filter(|t| t.profile == profile && t.inspects.is_none()).map(|t| t.id).collect();
+                let tools: Vec<TabId> = self.tabs.tabs().filter(|t| t.profile == profile && t.inspects.is_some()).map(|t| t.id).collect();
+                for gone in tools {
+                    self.close_tab(gone);
+                }
                 for other in all {
                     if let Some(t) = self.tabs.tab_mut(other) {
                         t.crashed = None;
@@ -1269,6 +1309,7 @@ impl Browser {
             Action::ZoomIn => self.zoom(Some(1.1)),
             Action::ZoomOut => self.zoom(Some(1.0 / 1.1)),
             Action::ZoomReset => self.zoom(None),
+            Action::DeveloperTools => self.developer_tools(w),
             Action::SearchWith(name) => {
                 self.settings.search = name;
                 let _ = self.settings.save(&self.store);
@@ -1494,6 +1535,8 @@ impl Browser {
         actions.push(Action::ZoomOut);
         rows.push(Row::with("Usual size", format!("{:.0} %", self.settings.zoom() * 80.0)));
         actions.push(Action::ZoomReset);
+        rows.push(Row::with("Developer tools", "Ctrl-Alt-I"));
+        actions.push(Action::DeveloperTools);
         rows.push(Row::heading("Search with"));
         actions.push(Action::Nothing);
         let current = self.settings.search_engine().name;
@@ -2100,6 +2143,11 @@ impl Browser {
                 (Some('n'), _) => {
                     let profile = self.tabs.window(window).map(|x| x.profile.clone()).unwrap_or_default();
                     self.new_window(&profile, None);
+                    true
+                }
+                // By the key, not the letter: with Option held a Mac types another one.
+                _ if m.alt && code == KEY_I => {
+                    self.developer_tools(w);
                     true
                 }
                 (Some('l'), _) => {
