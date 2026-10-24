@@ -984,6 +984,10 @@ impl SharedCanvas {
 
 impl Canvas for SharedCanvas {
     fn surface(&mut self, tab: TabId, id: u32, width: u32, height: u32) {
+        // The picture itself goes to the window in private, before its number does.
+        if !spatiand_surfaces::post_own(id) {
+            log::warn!("tab {tab}'s picture could not be handed to the window");
+        }
         self.outbox.push((FromHost::Surface { tab, id, width, height }, Vec::new()));
     }
 

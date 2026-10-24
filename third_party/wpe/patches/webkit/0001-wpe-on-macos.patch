@@ -1024,10 +1024,32 @@ index 4c9b9d6cc..c59a60571 100644
  #include <mach/mach_traps.h>
  #endif
 diff --git a/Source/WebKit/UIProcess/Launcher/glib/ProcessLauncherGLib.cpp b/Source/WebKit/UIProcess/Launcher/glib/ProcessLauncherGLib.cpp
-index b20208abf..1024c4f71 100644
+index b20208abf..b35891279 100644
 --- a/Source/WebKit/UIProcess/Launcher/glib/ProcessLauncherGLib.cpp
 +++ b/Source/WebKit/UIProcess/Launcher/glib/ProcessLauncherGLib.cpp
-@@ -109,7 +109,7 @@ void ProcessLauncher::launchProcess()
+@@ -58,6 +58,10 @@
+ #include <wtf/unix/UnixFileDescriptor.h>
+ #endif
+ 
++#if OS(DARWIN) && ENABLE(WPE_PLATFORM)
++#include "../../../WPEPlatform/wpe/WPESurfaces.h"
++#endif
++
+ namespace WebKit {
+ 
+ #if OS(LINUX)
+@@ -103,13 +107,18 @@ static int connectionOptions()
+ 
+ void ProcessLauncher::launchProcess()
+ {
++#if OS(DARWIN) && ENABLE(WPE_PLATFORM)
++    // Before any of WebKit's processes is started: they hand their pictures to this one in
++    // private (WPESurfaces.h), and are told where.
++    wpe_surfaces_listen();
++#endif
+ #if ENABLE(BUBBLEWRAP_SANDBOX)
+     RELEASE_ASSERT(m_launchOptions.processType != ProcessLauncher::ProcessType::DBusProxy);
+ #endif
  
      GUniquePtr<gchar> processIdentifier(g_strdup_printf("%" PRIu64, m_launchOptions.processIdentifier.toUInt64()));
  
@@ -1199,7 +1221,7 @@ index dcb02699a..29367644c 100644
      void didChangeBufferConfiguration(uint32_t bufferCount);
      void didDestroyBuffer(uint64_t id);
 diff --git a/Source/WebKit/WPEPlatform/CMakeLists.txt b/Source/WebKit/WPEPlatform/CMakeLists.txt
-index d996a7ba5..35047f192 100644
+index d996a7ba5..b7306b167 100644
 --- a/Source/WebKit/WPEPlatform/CMakeLists.txt
 +++ b/Source/WebKit/WPEPlatform/CMakeLists.txt
 @@ -2,6 +2,7 @@ set_property(DIRECTORY . PROPERTY FOLDER "WPEPlatform")
@@ -1210,7 +1232,7 @@ index d996a7ba5..35047f192 100644
  
  file(MAKE_DIRECTORY ${WPEPlatform_DERIVED_SOURCES_DIR}/wpe)
  
-@@ -125,6 +126,15 @@ if (USE_LIBDRM)
+@@ -125,6 +126,24 @@ if (USE_LIBDRM)
      )
  endif ()
  
@@ -1221,6 +1243,15 @@ index d996a7ba5..35047f192 100644
 +    list(APPEND WPEPlatform_LIBRARIES ${IOSURFACE_LIBRARY} ${COREFOUNDATION_LIBRARY})
 +    list(APPEND WPEPlatform_SOURCES ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferIOSurface.cpp)
 +    list(APPEND WPEPlatform_INSTALLED_HEADERS ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferIOSurface.h)
++    # Handed over in private (WPESurfaces.h): Spatiand's code, under WebKit's own names.
++    set(spatiand_surfaces ${WEBKIT_DIR}/WPEPlatform/wpe/spatiand/surfaces.c)
++    list(APPEND WPEPlatform_SOURCES ${spatiand_surfaces})
++    set_source_files_properties(${spatiand_surfaces} PROPERTIES
++        COMPILE_DEFINITIONS "SURFACES_PREFIX=wpe_;SURFACES_ENV=\"WPE_SURFACES\""
++        COMPILE_OPTIONS "-Wno-deprecated-declarations"
++        SKIP_PRECOMPILE_HEADERS ON)
++    find_library(BSM_LIBRARY bsm)
++    list(APPEND WPEPlatform_LIBRARIES ${BSM_LIBRARY})
 +endif ()
 +
  if (ANDROID)
@@ -1228,16 +1259,18 @@ index d996a7ba5..35047f192 100644
      list(APPEND WPEPlatform_SOURCES ${WEBKIT_DIR}/WPEPlatform/wpe/WPEProcessManager.cpp)
 diff --git a/Source/WebKit/WPEPlatform/wpe/WPEBufferIOSurface.cpp b/Source/WebKit/WPEPlatform/wpe/WPEBufferIOSurface.cpp
 new file mode 100644
-index 000000000..cc1168425
+index 000000000..edd1f6c37
 --- /dev/null
 +++ b/Source/WebKit/WPEPlatform/wpe/WPEBufferIOSurface.cpp
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,130 @@
 +/*
 + * Copyright (C) 2026 Spatiand. See WPEBufferIOSurface.h for the licence.
 + */
 +
 +#include "config.h"
 +#include "WPEBufferIOSurface.h"
++
++#include "WPESurfaces.h"
 +
 +#include <IOSurface/IOSurfaceRef.h>
 +#include <wtf/glib/WTFGType.h>
@@ -1268,7 +1301,8 @@ index 000000000..cc1168425
 +    switch (propId) {
 +    case PROP_SURFACE_ID:
 +        buffer->priv->surfaceID = g_value_get_uint(value);
-+        buffer->priv->surface = IOSurfaceLookup(buffer->priv->surfaceID);
++        // Handed over by the web process in private, as its ID (WPESurfaces.h).
++        buffer->priv->surface = wpe_surfaces_open(buffer->priv->surfaceID);
 +        break;
 +    default:
 +        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propId, paramSpec);
@@ -1447,6 +1481,26 @@ index bd355a0ca..6a797ddb9 100644
          g_io_module_scope_free(scope);
  
          // Initialize types of builtin extensions.
+diff --git a/Source/WebKit/WPEPlatform/wpe/WPESurfaces.h b/Source/WebKit/WPEPlatform/wpe/WPESurfaces.h
+new file mode 100644
+index 000000000..96152e2fd
+--- /dev/null
++++ b/Source/WebKit/WPEPlatform/wpe/WPESurfaces.h
+@@ -0,0 +1,14 @@
++/*
++ * Spatiand: WPE on macOS hands its pictures (IOSurfaces) from the web process to the process
++ * that started it in private, not as global surfaces any process could open by their number.
++ * The code is Spatiand's (crates/spatiand-surfaces/native, copied into spatiand/ by
++ * third_party/wpe/build.sh), built here with names and a variable of WebKit's own, apart from
++ * Spatiand's copy in the same process.
++ */
++
++#pragma once
++
++#if defined(__APPLE__)
++#define SURFACES_PREFIX wpe_
++#include "spatiand/surfaces.h"
++#endif
 diff --git a/Source/WebKit/WPEPlatform/wpe/wpe-platform.h b/Source/WebKit/WPEPlatform/wpe/wpe-platform.h
 index 012c653ae..1ba9f84d1 100644
 --- a/Source/WebKit/WPEPlatform/wpe/wpe-platform.h
@@ -1463,14 +1517,15 @@ index 012c653ae..1ba9f84d1 100644
  #include <wpe/WPEProcessManager.h>
  #endif
 diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
-index f3daaef29..2035cd472 100644
+index f3daaef29..8e5685d4e 100644
 --- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
 +++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
-@@ -78,6 +78,11 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+@@ -78,6 +78,12 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
  #include <wtf/UniStdExtras.h>
  #endif
  
 +#if OS(DARWIN) && ENABLE(WPE_PLATFORM)
++#include "../../../WPEPlatform/wpe/WPESurfaces.h"
 +#include <CoreFoundation/CoreFoundation.h>
 +#include <IOSurface/IOSurfaceRef.h>
 +#endif
@@ -1478,7 +1533,7 @@ index f3daaef29..2035cd472 100644
  #if OS(ANDROID)
  #include <WebCore/BufferFormatAndroid.h>
  #include <android/hardware_buffer.h>
-@@ -456,6 +461,135 @@ void AcceleratedSurface::RenderTargetSHMImage::didRenderFrame()
+@@ -456,6 +462,138 @@ void AcceleratedSurface::RenderTargetSHMImage::didRenderFrame()
      glReadPixels(0, 0, m_bitmap->size().width(), m_bitmap->size().height(), GL_BGRA, GL_UNSIGNED_BYTE, m_bitmap->mutableSpan().data());
  }
  
@@ -1494,16 +1549,17 @@ index f3daaef29..2035cd472 100644
 +
 +std::unique_ptr<AcceleratedSurface::RenderTarget> AcceleratedSurface::RenderTargetIOSurface::create(AcceleratedSurface& surface, const IntSize& size)
 +{
-+    // Global, so that another process finds it by its ID (what the embedder's own IOSurfaces are).
++    // Not global (which any process could open by its ID): the UI process is handed it in
++    // private, as its ID (WPESurfaces.h).
 +    int width = size.width(), height = size.height(), bytesPerElement = 4;
 +    uint32_t format = 'BGRA';
 +    CFNumberRef w = CFNumberCreate(nullptr, kCFNumberIntType, &width);
 +    CFNumberRef h = CFNumberCreate(nullptr, kCFNumberIntType, &height);
 +    CFNumberRef bpe = CFNumberCreate(nullptr, kCFNumberIntType, &bytesPerElement);
 +    CFNumberRef pf = CFNumberCreate(nullptr, kCFNumberSInt32Type, &format);
-+    const void* keys[] = { kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement, kIOSurfacePixelFormat, kIOSurfaceIsGlobal };
-+    const void* values[] = { w, h, bpe, pf, kCFBooleanTrue };
-+    CFDictionaryRef properties = CFDictionaryCreate(nullptr, keys, values, 5, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
++    const void* keys[] = { kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement, kIOSurfacePixelFormat };
++    const void* values[] = { w, h, bpe, pf };
++    CFDictionaryRef properties = CFDictionaryCreate(nullptr, keys, values, 4, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 +    IOSurfaceRef ioSurface = IOSurfaceCreate(properties);
 +    CFRelease(properties);
 +    CFRelease(w);
@@ -1578,6 +1634,8 @@ index f3daaef29..2035cd472 100644
 +        createSkiaSurfaceForFramebuffer(m_fbo);
 +
 +    uint32_t surfaceID = IOSurfaceGetID(static_cast<IOSurfaceRef>(m_ioSurface));
++    if (!wpe_surfaces_post(static_cast<IOSurfaceRef>(m_ioSurface), surfaceID))
++        WTFLogAlways("The UI process could not be handed a picture (IOSurface %u)", surfaceID);
 +    WebProcess::singleton().parentProcessConnection()->send(Messages::AcceleratedBackingStore::DidCreateIOSurfaceBuffer(m_id, surfaceID, size), m_surface->surfaceID());
 +}
 +
@@ -1614,7 +1672,7 @@ index f3daaef29..2035cd472 100644
  std::unique_ptr<AcceleratedSurface::RenderTarget> AcceleratedSurface::RenderTargetTexture::create(AcceleratedSurface& surface, const IntSize& size)
  {
      auto texture = BitmapTexture::create(size);
-@@ -622,6 +756,16 @@ AcceleratedSurface::SwapChain::SwapChain(AcceleratedSurface& surface)
+@@ -622,6 +760,16 @@ AcceleratedSurface::SwapChain::SwapChain(AcceleratedSurface& surface)
          setupBufferFormat();
          break;
  #endif
@@ -1631,7 +1689,7 @@ index f3daaef29..2035cd472 100644
  #else
      case PlatformDisplay::Type::Surfaceless:
  #if USE(GBM)
-@@ -773,6 +917,10 @@ std::unique_ptr<AcceleratedSurface::RenderTarget> AcceleratedSurface::SwapChain:
+@@ -773,6 +921,10 @@ std::unique_ptr<AcceleratedSurface::RenderTarget> AcceleratedSurface::SwapChain:
      case Type::SharedMemory:
          return RenderTargetSHMImage::create(m_surface.get(), m_size);
  #endif
@@ -1642,7 +1700,7 @@ index f3daaef29..2035cd472 100644
  #if USE(WPE_RENDERER)
      case Type::WPEBackend:
          ASSERT_NOT_REACHED();
-@@ -938,6 +1086,11 @@ bool AcceleratedSurface::shouldPaintMirrored() const
+@@ -938,6 +1090,11 @@ bool AcceleratedSurface::shouldPaintMirrored() const
      case SwapChain::Type::SharedMemory:
          return false;
  #endif

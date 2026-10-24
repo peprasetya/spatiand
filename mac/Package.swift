@@ -34,6 +34,8 @@ let package = Package(
                 .linkedFramework("IOSurface"),
                 .linkedFramework("QuartzCore"),
                 .linkedFramework("Metal"),
+                // Who sent an application's picture (crates/spatiand-surfaces): the kernel's word.
+                .linkedLibrary("bsm"),
             ]
         ),
     ]

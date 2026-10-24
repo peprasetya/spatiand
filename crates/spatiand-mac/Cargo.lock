@@ -2373,6 +2373,7 @@ dependencies = [
  "spatiand-render",
  "spatiand-shell",
  "spatiand-stream",
+ "spatiand-surfaces",
  "spatiand-sync",
  "spatiand-track",
  "spatiand-video",
@@ -2474,6 +2475,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatiand-surfaces"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "spatiand-sync"
 version = "0.1.0"
 dependencies = [
@@ -2504,6 +2512,7 @@ dependencies = [
  "ndk-sys",
  "rsmpeg",
  "spatiand-stream",
+ "spatiand-surfaces",
 ]
 
 [[package]]

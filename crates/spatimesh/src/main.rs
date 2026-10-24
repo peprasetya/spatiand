@@ -30,6 +30,9 @@ fn socket_path() -> PathBuf {
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // Pages' pictures come from the engines in private: before any is started (and after
+    // what Spatiand itself said was read, for this window's own pictures).
+    spatiand_surfaces::listen();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut private = false;
     let mut url = None;

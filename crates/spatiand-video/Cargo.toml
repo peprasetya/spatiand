@@ -14,6 +14,8 @@ license.workspace = true
 # ffmpeg headers either, and the two ends do not have to agree on a library, only on a codec.
 [dependencies]
 spatiand-stream = { path = "../spatiand-stream" }
+# Applications' pictures, handed over in private on a Mac.
+spatiand-surfaces = { path = "../spatiand-surfaces" }
 log.workspace = true
 libc = "0.2"
 

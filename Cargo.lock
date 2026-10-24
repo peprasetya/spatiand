@@ -4591,6 +4591,7 @@ dependencies = [
  "resvg",
  "spatiand-proto",
  "spatiand-render",
+ "spatiand-surfaces",
  "wayland-client",
  "wayland-protocols",
  "xkbcommon",
@@ -4813,6 +4814,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatiand-surfaces"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "spatiand-sync"
 version = "0.1.0"
 dependencies = [
@@ -4845,6 +4853,7 @@ dependencies = [
  "ndk-sys 0.6.0+11769913",
  "rsmpeg",
  "spatiand-stream",
+ "spatiand-surfaces",
 ]
 
 [[package]]
@@ -4883,6 +4892,7 @@ dependencies = [
  "sha2",
  "spatiand-app",
  "spatiand-media",
+ "spatiand-surfaces",
  "spatiand-sync",
  "url",
 ]
@@ -4942,6 +4952,7 @@ dependencies = [
  "pkg-config",
  "serde_json",
  "spatiand-app",
+ "spatiand-surfaces",
  "spatimesh",
  "spatimesh-shim",
 ]

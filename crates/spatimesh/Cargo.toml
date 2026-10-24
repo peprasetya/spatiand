@@ -19,6 +19,7 @@ media = ["dep:spatiand-media", "dep:jpeg-encoder"]
 
 [dependencies]
 spatiand-app = { path = "../spatiand-app" }
+spatiand-surfaces = { path = "../spatiand-surfaces" }
 log.workspace = true
 env_logger.workspace = true
 serde.workspace = true

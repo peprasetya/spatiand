@@ -56,7 +56,6 @@ extern "C" {
     fn IOSurfaceGetHeight(surface: *const c_void) -> usize;
     fn IOSurfaceGetID(surface: *const c_void) -> u32;
     fn IOSurfaceGetPixelFormat(surface: *const c_void) -> u32;
-    fn IOSurfaceLookup(id: u32) -> *const c_void;
 }
 
 /// An `IOSurface`, held: kept alive, and marked as in use so that whoever made it -- a screen
@@ -78,11 +77,12 @@ impl Surface {
         Surface(surface)
     }
 
-    /// Hold the global surface with this number: one another process made for anybody to
-    /// open, which is how a Spatiand application's pictures arrive. `None` if there is none.
+    /// Hold the picture a Spatiand application handed over as this number (in private: see
+    /// `spatiand-surfaces`, which Spatiand listens with before it starts any). `None` if there is
+    /// none.
     pub fn open(id: u32) -> Option<Surface> {
         unsafe {
-            let found = IOSurfaceLookup(id);
+            let found = spatiand_surfaces::open(id);
             if found.is_null() {
                 return None;
             }

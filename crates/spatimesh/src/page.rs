@@ -16,11 +16,6 @@ pub struct PageTexture {
 }
 
 #[cfg(target_os = "macos")]
-#[link(name = "IOSurface", kind = "framework")]
-extern "C" {
-    fn IOSurfaceLookup(id: u32) -> *const std::ffi::c_void;
-}
-#[cfg(target_os = "macos")]
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFRelease(object: *const std::ffi::c_void);
@@ -57,11 +52,12 @@ impl PageTexture {
         }
     }
 
-    /// The engine host's picture on the GPU, found by its number, sampled where it is.
+    /// The engine host's picture on the GPU, handed over in private as this number (the window
+    /// listens before it starts an engine: spatiand-surfaces), sampled where it is.
     #[cfg(target_os = "macos")]
     pub fn borrow(gl: &Gl, id: u32, width: u32, height: u32) -> Result<PageTexture, String> {
         unsafe {
-            let surface = IOSurfaceLookup(id);
+            let surface = spatiand_surfaces::open(id);
             if surface.is_null() {
                 return Err(format!("no picture numbered {id}"));
             }

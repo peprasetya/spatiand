@@ -48,7 +48,8 @@ final class DeskView: NSView {
     /// The application's newest picture. Held in use (the count the application reads to know
     /// which of its pictures it may draw into) until the one after it is on screen.
     func show(surface number: UInt32) {
-        guard let surface = IOSurfaceLookup(number) else { return }
+        // Handed over in private by the application (not a global surface anyone could open).
+        guard let surface = spatiand_surfaces_open(number) else { return }
         if let shown, IOSurfaceGetID(shown) == number {
             layer?.setNeedsDisplay()
             layer?.contents = nil

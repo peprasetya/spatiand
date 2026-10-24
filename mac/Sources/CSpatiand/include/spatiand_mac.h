@@ -8,6 +8,8 @@
 #ifndef SPATIAND_MAC_H
 #define SPATIAND_MAC_H
 
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOSurface/IOSurfaceRef.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -152,6 +154,9 @@ size_t sp_status(char *into, size_t size);
 // SP_DESK_*; what is done to the Mac window comes back here, in the window's own pixels from its
 // top left. Off, the glasses have the same windows.
 void sp_desk(bool on);
+// The picture an application handed over as `number` (SP_DESK_PICTURE's), in private: see
+// crates/spatiand-surfaces. NULL if there is none.
+IOSurfaceRef _Nullable spatiand_surfaces_open(uint32_t number) CF_RETURNS_RETAINED;
 // Open one of Spatiand's own applications by name ("SpatiMesh").
 void sp_desk_launch(const char *name);
 // The names of Spatiand's own applications that are here, one a line.

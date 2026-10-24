@@ -32,13 +32,14 @@ struct Host {
     seen: Vec<Happened>,
 }
 
-/// An IOSurface's picture, by its number (BGRA): what the window would show.
+/// An IOSurface's picture, handed over by the engine as this number (BGRA): what the window
+/// would show. Not global: only this process, which listened before it started the engine,
+/// can open it.
 #[cfg(target_os = "macos")]
 fn read_surface(id: u32) -> Option<(u32, u32, Format, Vec<u8>)> {
     use std::ffi::c_void;
     #[link(name = "IOSurface", kind = "framework")]
     extern "C" {
-        fn IOSurfaceLookup(id: u32) -> *mut c_void;
         fn IOSurfaceLock(surface: *mut c_void, options: u32, seed: *mut u32) -> i32;
         fn IOSurfaceUnlock(surface: *mut c_void, options: u32, seed: *mut u32) -> i32;
         fn IOSurfaceGetWidth(surface: *mut c_void) -> usize;
@@ -51,7 +52,7 @@ fn read_surface(id: u32) -> Option<(u32, u32, Format, Vec<u8>)> {
         fn CFRelease(object: *mut c_void);
     }
     unsafe {
-        let surface = IOSurfaceLookup(id);
+        let surface = spatiand_surfaces::open(id) as *mut c_void;
         if surface.is_null() {
             return None;
         }
@@ -91,6 +92,8 @@ impl Host {
         if !can_run() {
             return None;
         }
+        // As SpatiMesh's window does: the engine hands its pictures to whoever started it.
+        spatiand_surfaces::listen();
         let (child, link) = spatimesh::host::start(&program(), setup).expect("the engine program starts");
         let mut host = Host { child, link, pictures: HashMap::new(), latest: HashMap::new(), seen: Vec::new() };
         // The first thing a host says is what it is; "failed" if WebKitGTK could not start.

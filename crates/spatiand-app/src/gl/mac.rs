@@ -30,7 +30,6 @@ type CFTypeRef = *const c_void;
 extern "C" {
     static kCFTypeDictionaryKeyCallBacks: c_void;
     static kCFTypeDictionaryValueCallBacks: c_void;
-    static kCFBooleanTrue: CFTypeRef;
     fn CFDictionaryCreateMutable(allocator: CFTypeRef, capacity: isize, keys: *const c_void, values: *const c_void) -> CFTypeRef;
     fn CFDictionarySetValue(dictionary: CFTypeRef, key: CFTypeRef, value: CFTypeRef);
     fn CFNumberCreate(allocator: CFTypeRef, kind: isize, value: *const c_void) -> CFTypeRef;
@@ -45,7 +44,6 @@ extern "C" {
     static kIOSurfacePixelFormat: CFTypeRef;
     // Deprecated since 10.11 and still what it says: the only way one process's surface is
     // opened by another without a Mach port passed between them. Checked on macOS 26.
-    static kIOSurfaceIsGlobal: CFTypeRef;
     fn IOSurfaceCreate(properties: CFTypeRef) -> CFTypeRef;
     fn IOSurfaceGetID(surface: CFTypeRef) -> u32;
     fn IOSurfaceIsInUse(surface: CFTypeRef) -> u8;
@@ -81,7 +79,8 @@ impl Shared {
                 CFDictionarySetValue(properties, key, value);
                 CFRelease(value);
             }
-            CFDictionarySetValue(properties, kIOSurfaceIsGlobal, kCFBooleanTrue);
+            // Not global, which any process could open by its number: Spatiand is handed it in
+            // private each time it is shown (spatiand-surfaces).
             let surface = IOSurfaceCreate(properties);
             CFRelease(properties);
             if surface.is_null() {
@@ -125,8 +124,11 @@ impl Shared {
         unsafe { IOSurfaceIsInUse(self.surface) != 0 }
     }
 
-    /// What the window's placeholder says to name this picture.
+    /// What the window's placeholder says to name this picture, the picture itself handed to
+    /// Spatiand by that number just before.
     pub(super) fn name(&self, stream: u64) -> [u8; 16] {
+        // SAFETY: the surface is this picture's, alive while it is.
+        unsafe { spatiand_surfaces::post(self.surface, IOSurfaceGetID(self.surface)) };
         let mut name = [0u8; 16];
         name[..4].copy_from_slice(&MAC_SURFACE_MAGIC.to_le_bytes());
         name[4..8].copy_from_slice(&unsafe { IOSurfaceGetID(self.surface) }.to_le_bytes());

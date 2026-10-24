@@ -1,0 +1,11 @@
+[package]
+name = "spatiand-surfaces"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Pictures on the GPU handed from a process to its parent in private (macOS): see
+# native/surfaces.h. Elsewhere there is nothing here.
+[target.'cfg(target_os = "macos")'.build-dependencies]
+cc = "1"

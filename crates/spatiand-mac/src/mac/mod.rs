@@ -279,6 +279,11 @@ pub fn take_glasses(
 /// anything else, since a compositor with no keymap has no keyboard.
 pub fn prepare() {
     logging::init();
+    // Applications' pictures come in private, from Spatiand's own children (spatiand-surfaces):
+    // before any is started, so that each is told where.
+    if !spatiand_surfaces::listen() {
+        log::warn!("applications' pictures cannot be handed over in private: none will show");
+    }
     // Where the compositor's socket goes. macOS has no runtime directory; the user's own
     // temporary one is as private.
     if std::env::var_os("XDG_RUNTIME_DIR").is_none() {

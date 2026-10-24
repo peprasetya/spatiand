@@ -250,6 +250,16 @@ esac
 # WPE's GStreamer player (above), without GStreamer's GL; the inspector is on (developer tools). WebGL is WebKit's
 # own ANGLE, which on a Mac draws through the ANGLE the rest of WPE uses (as on Linux it draws
 # through Mesa); web fonts in WOFF2 are read with Google's woff2.
+# Spatiand's private hand-over of pictures (crates/spatiand-surfaces), which WPE on a Mac builds
+# in under names of its own (Source/WebKit/WPEPlatform/wpe/WPESurfaces.h): copied in, not
+# patched, so there is one source of it.
+if [ "$platform" = mac ]; then
+    mkdir -p "$webkit/Source/WebKit/WPEPlatform/wpe/spatiand"
+    for f in surfaces.c surfaces.h; do
+        cmp -s "$here/../../crates/spatiand-surfaces/native/$f" "$webkit/Source/WebKit/WPEPlatform/wpe/spatiand/$f" \
+            || cp "$here/../../crates/spatiand-surfaces/native/$f" "$webkit/Source/WebKit/WPEPlatform/wpe/spatiand/$f"
+    done
+fi
 mkdir -p "$build/webkit"
 (cd "$build/webkit" && cmake -G Ninja "$webkit" -DPORT=WPE -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$out" \
     -DCMAKE_PREFIX_PATH="$out" -DCMAKE_IGNORE_PREFIX_PATH="/usr/local;/opt/homebrew" \

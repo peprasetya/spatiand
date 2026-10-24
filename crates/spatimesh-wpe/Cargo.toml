@@ -19,6 +19,7 @@ libc = "0.2"
 
 [dev-dependencies]
 spatiand-app = { path = "../spatiand-app" }
+spatiand-surfaces = { path = "../spatiand-surfaces" }
 serde_json.workspace = true
 
 [build-dependencies]
