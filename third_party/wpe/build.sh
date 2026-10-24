@@ -90,6 +90,10 @@ mac)
     [ -f "$build/zstd-$ZSTD_VERSION/.installed" ] || { cmake -S "$src/zstd-$ZSTD_VERSION/build/cmake" -B "$build/zstd-$ZSTD_VERSION" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$out" -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_NAME_DIR="$out/lib" \
         -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_STATIC=OFF -DZSTD_BUILD_TESTS=OFF && ninja -C "$build/zstd-$ZSTD_VERSION" install && touch "$build/zstd-$ZSTD_VERSION/.installed"; }
+    fetch "brotli-$BROTLI_VERSION" "https://github.com/google/brotli/archive/refs/tags/v$BROTLI_VERSION.tar.gz"
+    cmake_lib "brotli-$BROTLI_VERSION" -DBROTLI_DISABLE_TESTS=ON -DBROTLI_BUILD_TOOLS=OFF
+    fetch "woff2-$WOFF2_VERSION" "https://github.com/google/woff2/archive/refs/tags/v$WOFF2_VERSION.tar.gz"
+    cmake_lib "woff2-$WOFF2_VERSION" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
     fetch "pcre2-$PCRE2_VERSION" "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-$PCRE2_VERSION/pcre2-$PCRE2_VERSION.tar.bz2"
     cmake_lib "pcre2-$PCRE2_VERSION" -DPCRE2_BUILD_PCRE2GREP=OFF -DPCRE2_BUILD_TESTS=OFF -DPCRE2_SUPPORT_JIT=ON
     # gettext's libintl, which WebKit calls; GLib itself is built without it.
@@ -156,7 +160,7 @@ PC
     export GIO_EXTRA_MODULES="$out/lib/gio/modules"
     fetch "libsoup-$LIBSOUP_VERSION" "https://download.gnome.org/sources/libsoup/${LIBSOUP_VERSION%.*}/libsoup-$LIBSOUP_VERSION.tar.xz"
     meson_lib "libsoup-$LIBSOUP_VERSION" -Dtests=false -Dintrospection=disabled -Dvapi=disabled -Ddocs=disabled \
-        -Dgssapi=disabled -Dntlm=disabled -Dbrotli=disabled -Dsysprof=disabled -Dpkcs11_tests=disabled -Dautobahn=disabled
+        -Dgssapi=disabled -Dntlm=disabled -Dbrotli=enabled -Dsysprof=disabled -Dpkcs11_tests=disabled -Dautobahn=disabled
     # ICU is the system's (libicucore, as Apple's WebKit uses), with the headers WebKit carries
     # for it: nothing to ship. Said to pkg-config so HarfBuzz uses the same one.
     mkdir -p "$out/lib/pkgconfig"
@@ -202,8 +206,9 @@ esac
 
 # WebKit, the WPE port, with only what SpatiMesh draws through: the headless platform (pictures
 # handed to Spatiand), no Wayland or DRM, no GObject introspection or documentation. Media is off
-# until it is SpatiMesh's own (FFmpeg); the inspector is on (developer tools). WebGL is off for
-# now: WebKit's own ANGLE would sit on the Mac's ANGLE, which is not done yet.
+# until it is SpatiMesh's own (FFmpeg); the inspector is on (developer tools). WebGL is WebKit's
+# own ANGLE, which on a Mac draws through the ANGLE the rest of WPE uses (as on Linux it draws
+# through Mesa); web fonts in WOFF2 are read with Google's woff2.
 mkdir -p "$build/webkit"
 (cd "$build/webkit" && cmake -G Ninja "$webkit" -DPORT=WPE -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$out" \
     -DCMAKE_PREFIX_PATH="$out" -DCMAKE_IGNORE_PREFIX_PATH="/usr/local;/opt/homebrew" \
@@ -212,9 +217,9 @@ mkdir -p "$build/webkit"
     -DENABLE_WPE_LEGACY_API=OFF -DENABLE_WPE_QT_API=OFF -DUSE_GBM=OFF -DUSE_LIBDRM=OFF \
     -DENABLE_INTROSPECTION=OFF -DENABLE_DOCUMENTATION=OFF -DENABLE_JOURNALD_LOG=OFF -DUSE_ATK=OFF -DUSE_FLITE=OFF \
     -DUSE_LIBBACKTRACE=OFF -DUSE_LIBHYPHEN=OFF -DUSE_SYSPROF_CAPTURE=OFF -DENABLE_BUBBLEWRAP_SANDBOX=OFF \
-    -DENABLE_SPEECH_SYNTHESIS=OFF -DENABLE_GAMEPAD=OFF -DUSE_JPEGXL=OFF -DUSE_AVIF=OFF -DUSE_WOFF2=OFF -DUSE_LCMS=OFF \
+    -DENABLE_SPEECH_SYNTHESIS=OFF -DENABLE_GAMEPAD=OFF -DUSE_JPEGXL=OFF -DUSE_AVIF=OFF -DUSE_WOFF2=ON -DUSE_LCMS=OFF \
     -DENABLE_WEBDRIVER=OFF -DENABLE_MINIBROWSER=OFF -DENABLE_API_TESTS=OFF -DENABLE_VIDEO=OFF -DENABLE_WEB_AUDIO=OFF \
-    -DENABLE_MEDIA_STREAM=OFF -DENABLE_WEB_RTC=OFF -DUSE_GSTREAMER=OFF -DENABLE_SPELLCHECK=OFF -DENABLE_XSLT=OFF -DENABLE_WEBGL=OFF)
+    -DENABLE_MEDIA_STREAM=OFF -DENABLE_WEB_RTC=OFF -DUSE_GSTREAMER=OFF -DENABLE_SPELLCHECK=OFF -DENABLE_XSLT=OFF -DENABLE_WEBGL=ON)
 ninja -C "$build/webkit" -j"$jobs"
 ninja -C "$build/webkit" install
 if [ "$platform" = mac ]; then

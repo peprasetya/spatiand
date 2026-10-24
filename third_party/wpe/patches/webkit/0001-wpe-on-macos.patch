@@ -1,3 +1,155 @@
+diff --git a/Source/ThirdParty/ANGLE/CMakeLists.txt b/Source/ThirdParty/ANGLE/CMakeLists.txt
+index 07dad3797..c79412bb5 100644
+--- a/Source/ThirdParty/ANGLE/CMakeLists.txt
++++ b/Source/ThirdParty/ANGLE/CMakeLists.txt
+@@ -210,6 +210,20 @@ else ()
+ endif ()
+ 
+ WEBKIT_ADD_PREFIX_HEADER(ANGLE ANGLEPrefix.h PREFIX_LANGUAGES CXX OBJCXX)
++if (APPLE AND PORT STREQUAL "WPE")
++    # WPE does not enable Objective-C++ as a language, so .mm files are built as C++ with -x
++    # objective-c++, and cannot use the C++ precompiled header.
++    foreach (target ANGLE GLESv2)
++        if (TARGET ${target})
++            get_target_property(sources ${target} SOURCES)
++            foreach (source ${sources})
++                if (source MATCHES "\\.mm$")
++                    set_source_files_properties(${source} TARGET_DIRECTORY ${target} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
++                endif ()
++            endforeach ()
++        endif ()
++    endforeach ()
++endif ()
+ 
+ if (ENABLE_WEBGL)
+     set(libglesv2_entry_points_headers
+diff --git a/Source/ThirdParty/ANGLE/GL.cmake b/Source/ThirdParty/ANGLE/GL.cmake
+index 4034fab6d..69cbf401e 100644
+--- a/Source/ThirdParty/ANGLE/GL.cmake
++++ b/Source/ThirdParty/ANGLE/GL.cmake
+@@ -124,7 +124,8 @@ if(angle_use_x11)
+     )
+ endif()
+ 
+-if(is_android OR is_linux OR is_chromeos)
++# WPE on a Mac too: its EGL is the ANGLE libepoxy loads.
++if(is_android OR is_linux OR is_chromeos OR (is_mac AND PORT STREQUAL "WPE"))
+     list(APPEND gl_backend_sources
+         "src/libANGLE/renderer/gl/egl/ContextEGL.cpp"
+         "src/libANGLE/renderer/gl/egl/ContextEGL.h"
+diff --git a/Source/ThirdParty/ANGLE/PlatformWPE.cmake b/Source/ThirdParty/ANGLE/PlatformWPE.cmake
+index d5792550b..2498c8773 100644
+--- a/Source/ThirdParty/ANGLE/PlatformWPE.cmake
++++ b/Source/ThirdParty/ANGLE/PlatformWPE.cmake
+@@ -1,9 +1,25 @@
+-if (is_android)
++if (APPLE)
++    # WPE on a Mac: WebGL's ANGLE runs on the EGL the rest of WPE draws with (ANGLE again, loaded
++    # by libepoxy), as on Linux it runs on Mesa's.
++    list(APPEND ANGLE_DEFINITIONS ANGLE_USE_EGL_ON_APPLE EGL_NO_PLATFORM_SPECIFIC_TYPES)
++    list(APPEND ANGLE_SOURCES
++        "src/common/linux/dma_buf_utils.cpp"
++        ${libangle_mac_sources}
++        ${libangle_gpu_info_util_mac_sources}
++    )
++    find_library(IOKIT_LIBRARY IOKit)
++    find_library(COREFOUNDATION_LIBRARY CoreFoundation)
++    find_library(COREGRAPHICS_LIBRARY CoreGraphics)
++    find_library(FOUNDATION_LIBRARY Foundation)
++    find_library(METAL_LIBRARY Metal)
++    list(APPEND ANGLEGLESv2_LIBRARIES ${IOKIT_LIBRARY} ${COREFOUNDATION_LIBRARY} ${COREGRAPHICS_LIBRARY} ${FOUNDATION_LIBRARY} ${METAL_LIBRARY})
++elseif (is_android)
+     list(APPEND ANGLE_DEFINITIONS ANGLE_PLATFORM_ANDROID)
++    include(linux.cmake)
+ else ()
+     list(APPEND ANGLE_DEFINITIONS ANGLE_PLATFORM_LINUX EGL_NO_PLATFORM_SPECIFIC_TYPES)
++    include(linux.cmake)
+ endif ()
+-include(linux.cmake)
+ 
+ if (USE_OPENGL)
+     # Enable GLSL compiler output.
+@@ -14,9 +30,6 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
+     list(APPEND ANGLE_SOURCES
+         ${gl_backend_sources}
+ 
+-        ${angle_system_utils_sources_linux}
+-        ${angle_system_utils_sources_posix}
+-
+         ${angle_dma_buf_sources}
+ 
+         ${libangle_gl_egl_dl_sources}
+@@ -24,8 +37,14 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
+         ${libangle_gl_sources}
+ 
+         ${libangle_gpu_info_util_sources}
+-        ${libangle_gpu_info_util_linux_sources}
+     )
++    if (NOT APPLE)
++        list(APPEND ANGLE_SOURCES
++            ${angle_system_utils_sources_linux}
++            ${angle_system_utils_sources_posix}
++            ${libangle_gpu_info_util_linux_sources}
++        )
++    endif ()
+ 
+     list(APPEND ANGLE_DEFINITIONS
+         ANGLE_ENABLE_OPENGL
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/Display.cpp b/Source/ThirdParty/ANGLE/src/libANGLE/Display.cpp
+index ae46ee10d..6cc53478a 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/Display.cpp
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/Display.cpp
+@@ -67,6 +67,8 @@
+ #if defined(ANGLE_ENABLE_OPENGL)
+ #    if defined(ANGLE_PLATFORM_WINDOWS)
+ #        include "libANGLE/renderer/gl/wgl/DisplayWGL.h"
++#    elif defined(ANGLE_USE_EGL_ON_APPLE)
++#        include "libANGLE/renderer/gl/egl/DisplayEGL.h"
+ #    elif ANGLE_ENABLE_CGL
+ #        include "libANGLE/renderer/gl/cgl/DisplayCGL.h"
+ #    elif defined(ANGLE_PLATFORM_LINUX)
+@@ -547,6 +549,10 @@ rx::DisplayImpl *CreateDisplayFromAttribs(EGLAttrib displayType,
+             impl = new rx::DisplayWGL(state);
+             break;
+ 
++#    elif defined(ANGLE_USE_EGL_ON_APPLE)
++            impl = new rx::DisplayEGL(state);
++            break;
++
+ #    elif ANGLE_ENABLE_CGL
+             impl = new rx::DisplayCGL(state);
+             break;
+@@ -609,6 +615,8 @@ rx::DisplayImpl *CreateDisplayFromAttribs(EGLAttrib displayType,
+ #if defined(ANGLE_ENABLE_OPENGL)
+ #    if defined(ANGLE_PLATFORM_WINDOWS)
+             impl = new rx::DisplayWGL(state);
++#    elif defined(ANGLE_USE_EGL_ON_APPLE)
++            impl = new rx::DisplayEGL(state);
+ #    elif defined(ANGLE_PLATFORM_LINUX)
+ #        if defined(ANGLE_USE_GBM) || defined(ANGLE_USE_WAYLAND)
+             if (platformType == 0)
+@@ -2259,7 +2267,7 @@ static ClientExtensions GenerateClientExtensions()
+     extensions.x11Visual = true;
+ #endif
+ 
+-#if defined(ANGLE_PLATFORM_LINUX)
++#if defined(ANGLE_PLATFORM_LINUX) || defined(ANGLE_USE_EGL_ON_APPLE)
+     extensions.platformANGLEDeviceTypeEGLANGLE = true;
+ #endif
+ 
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/gl/egl/DisplayEGL.cpp b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/gl/egl/DisplayEGL.cpp
+index 63fc4659c..07d6f8d78 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/gl/egl/DisplayEGL.cpp
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/gl/egl/DisplayEGL.cpp
+@@ -116,6 +116,8 @@ const char *DisplayEGL::getEGLPath() const
+ #    else
+     return "/system/lib/libEGL.so";
+ #    endif
++#elif defined(ANGLE_USE_EGL_ON_APPLE)
++    return "@rpath/libEGL.dylib";
+ #else
+     return "libEGL.so.1";
+ #endif
 diff --git a/Source/ThirdParty/skia/CMakeLists.txt b/Source/ThirdParty/skia/CMakeLists.txt
 index 49b926228..69078d0d2 100644
 --- a/Source/ThirdParty/skia/CMakeLists.txt
@@ -185,6 +337,29 @@ index e790f78f5..aae156f79 100644
          Default,
  #endif
      };
+diff --git a/Source/WebCore/platform/graphics/angle/PlatformDisplayANGLE.cpp b/Source/WebCore/platform/graphics/angle/PlatformDisplayANGLE.cpp
+index 100e61c99..2fb49ced2 100644
+--- a/Source/WebCore/platform/graphics/angle/PlatformDisplayANGLE.cpp
++++ b/Source/WebCore/platform/graphics/angle/PlatformDisplayANGLE.cpp
+@@ -46,10 +46,16 @@ EGLDisplay PlatformDisplay::angleEGLDisplay() const
+         EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE,
+ #if !OS(ANDROID)
+         EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_DEVICE_TYPE_EGL_ANGLE,
+-        EGL_PLATFORM_ANGLE_NATIVE_PLATFORM_TYPE_ANGLE, m_anglePlatform.value(),
+ #endif
+-        EGL_NONE,
+     };
++#if !OS(ANDROID)
++    // No native platform (the default display, as on a Mac): ANGLE takes none given, not 0.
++    if (m_anglePlatform.value()) {
++        displayAttributes.append(EGL_PLATFORM_ANGLE_NATIVE_PLATFORM_TYPE_ANGLE);
++        displayAttributes.append(m_anglePlatform.value());
++    }
++#endif
++    displayAttributes.append(EGL_NONE);
+ 
+     auto angleDisplay = EGL_GetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE, m_angleNativeDisplay ? m_angleNativeDisplay : EGL_DEFAULT_DISPLAY, displayAttributes.span().data());
+     if (angleDisplay == EGL_NO_DISPLAY)
 diff --git a/Source/WebCore/platform/graphics/egl/GLDisplay.cpp b/Source/WebCore/platform/graphics/egl/GLDisplay.cpp
 index d122b5a3d..daf1538c9 100644
 --- a/Source/WebCore/platform/graphics/egl/GLDisplay.cpp

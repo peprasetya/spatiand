@@ -518,3 +518,29 @@ fn a_password_is_typed() {
     host.title(1, "typed:s3cret");
     host.quit();
 }
+
+/// WebGL: WebKit's own ANGLE, drawing through the one the rest of WPE uses.
+#[test]
+fn webgl_draws() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    let url = page(concat!(
+        "<body style='margin:0'><canvas id=c width=100 height=100></canvas><script>",
+        "const gl=document.getElementById('c').getContext('webgl2')||document.getElementById('c').getContext('webgl');",
+        "if(!gl){document.title='webgl:none'}else{gl.clearColor(0,0,1,1);gl.clear(gl.COLOR_BUFFER_BIT);",
+        "const p=new Uint8Array(4);gl.readPixels(50,50,1,1,gl.RGBA,gl.UNSIGNED_BYTE,p);",
+        "document.title='webgl:'+p[0]+','+p[1]+','+p[2]}</script></body>"
+    ));
+    host.send(ToHost::Open { tab: 1, url, view: View::new(200, 200, 1.0) });
+    let title = host.title(1, "webgl:");
+    assert_eq!(title, "webgl:0,0,255");
+    // And it is on the page: WebGL's picture is composited into the one SpatiMesh is given.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        host.wait_for("a picture", 20, |h| matches!(h, Happened::Picture { tab: 1 }));
+        if near(host.pixel(1, 50, 50), [0, 0, 255]) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the canvas never showed: {:?}", host.pixel(1, 50, 50));
+    }
+    host.quit();
+}
