@@ -652,6 +652,11 @@ impl Link {
         unsafe {
             let raw = fd.as_raw_fd();
             libc::fcntl(raw, libc::F_SETFL, libc::fcntl(raw, libc::F_GETFL) | libc::O_NONBLOCK);
+            // This process's alone: an engine host's arrives inheritable (it was handed over at
+            // a fixed number), and the processes the engine starts (WebKit's network and web
+            // processes) took a copy of it, and could read the window's messages before the
+            // engine did -- a page that never opened.
+            libc::fcntl(raw, libc::F_SETFD, libc::fcntl(raw, libc::F_GETFD) | libc::FD_CLOEXEC);
         }
         // A window that has gone must not kill its host with SIGPIPE: the write fails instead.
         #[cfg(target_os = "macos")]
@@ -670,16 +675,34 @@ impl Link {
         self.closed
     }
 
-    /// Send one message whole, with descriptors if any. Waits while the other end is behind.
+    /// Send one message whole, with descriptors if any. Waits while the other end is behind --
+    /// an engine host still starting WebKit reads nothing for a second or more -- and never
+    /// leaves a message half sent on a link that goes on: the other end would take what follows
+    /// for the rest of it, and every message after would be lost. If the other end reads nothing
+    /// for half a minute the link is given up as closed (the engine is started again).
     pub fn send(&mut self, bytes: &[u8], fds: &[RawFd]) -> io::Result<()> {
+        if self.closed {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "the link is closed"));
+        }
         let mut sent = 0;
         let mut first = true;
         while sent < bytes.len() {
-            let n = self.send_some(&bytes[sent..], if first { fds } else { &[] })?;
+            let n = match self.send_some(&bytes[sent..], if first { fds } else { &[] }) {
+                Ok(n) => n,
+                Err(e) => {
+                    self.closed = true;
+                    return Err(e);
+                }
+            };
             first = false;
             match n {
                 Some(n) => sent += n,
-                None => self.wait(libc::POLLOUT, 1000)?,
+                None => {
+                    if let Err(e) = self.wait(libc::POLLOUT, 30_000) {
+                        self.closed = true;
+                        return Err(e);
+                    }
+                }
             }
         }
         Ok(())
@@ -1078,6 +1101,31 @@ mod tests {
 
     /// Memory for pictures, as every platform makes it (the Mac's shared memory objects take no
     /// name past 31 bytes), many times over, written and read back through a second mapping.
+    /// A message larger than the socket holds, sent while the other end is not yet reading (an
+    /// engine host starting WebKit), arrives whole, and so does the one after it.
+    #[test]
+    fn a_large_message_waits_for_a_late_reader() {
+        let (mut window, theirs) = Link::pair().unwrap();
+        let mut host = Link::from_fd(theirs);
+        let reader = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            let mut got = Vec::new();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while got.len() < 2 && std::time::Instant::now() < deadline {
+                host.wait_readable(100);
+                got.extend(host.receive_to_host());
+            }
+            got
+        });
+        let code = "x".repeat(4 << 20);
+        window.send(&ToHost::PageScript { code: code.clone() }.encode(), &[]).unwrap();
+        window.send(&ToHost::Load { tab: 1, url: "https://example.com/".into() }.encode(), &[]).unwrap();
+        let got = reader.join().unwrap();
+        assert_eq!(got.len(), 2, "both messages, whole");
+        assert_eq!(got[0], ToHost::PageScript { code });
+        assert_eq!(got[1], ToHost::Load { tab: 1, url: "https://example.com/".into() });
+    }
+
     #[test]
     fn memory_for_pictures_is_made() {
         for _ in 0..32 {

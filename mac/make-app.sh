@@ -46,18 +46,9 @@ for own in $OWN; do
     echo "warning: $own did not build; the app is made without it"
   fi
 done
-# SpatiMesh's web engine: WebKit, in a program of its own beside SpatiMesh, which starts one for
-# each profile in use (docs/spatimesh.md).
-if [ -f "$app/Contents/MacOS/spatimesh" ]; then
-  if (cd .. && MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release -p spatimesh-webkit); then
-    cp ../target/release/spatimesh-webkit "$app/Contents/MacOS/spatimesh-webkit"
-    OWN="$OWN spatimesh-webkit"
-  else
-    echo "warning: spatimesh-webkit did not build; SpatiMesh will show no pages"
-  fi
-fi
-# SpatiMesh's engine on WPE WebKit, where third_party/wpe/build.sh mac has made one: SpatiMesh
-# takes it over Apple's WebKit when it is here. WPE and every library it was built on go into
+# SpatiMesh's engine: WPE WebKit, which third_party/wpe/build.sh mac makes (SpatiMesh has no
+# other on a Mac), in a program of its own beside SpatiMesh, which starts one for each profile in
+# use (docs/spatimesh.md). WPE and every library it was built on go into
 # Contents/Frameworks/wpe, laid out as the build's prefix (lib, libexec) so WebKit, which
 # finds its processes and modules from where its library was loaded, finds them in the app (its
 # data, the developer tools' pages, is in Resources: data may not be among code); the
@@ -118,7 +109,7 @@ if [ -f "$WPE_OUT/lib/pkgconfig/wpe-webkit-2.0.pc" ] && [ -f "$app/Contents/MacO
     [ -z "$leftover" ] || { echo "warning: WPE in the app still names the build folder or Homebrew:"; echo "$leftover"; }
     OWN="$OWN spatimesh-wpe"
   else
-    echo "warning: spatimesh-wpe did not build; SpatiMesh uses Apple's WebKit"
+    echo "warning: spatimesh-wpe did not build; SpatiMesh will show no pages"
   fi
 fi
 # The storage service the applications reach remotes through: Go, with rclone linked in.

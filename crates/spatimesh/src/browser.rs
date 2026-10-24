@@ -1565,9 +1565,6 @@ impl Browser {
                 actions.push(action);
             }
         }
-        let engine = self.hosts.get(&profile).and_then(|h| h.engine.clone()).unwrap_or_else(|| "starting".into());
-        rows.push(Row::with("Pages by", engine));
-        actions.push(Action::Nothing);
         let win = &self.wins[w];
         let width = 560.0;
         let height = (rows.len() as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 24.0).min(win.page.h);
