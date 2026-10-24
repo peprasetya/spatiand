@@ -6,7 +6,7 @@
 //! docs/spatimesh.md.
 
 /// What WPE reads from the environment and is to find in Spatiand's own copy: GIO's TLS module
-/// (glib-networking, on OpenSSL), the developer tools' pages and, on a Mac, the font configuration that gives every script
+/// (glib-networking, on OpenSSL), GStreamer's plugins, the developer tools' pages and, on a Mac, the font configuration that gives every script
 /// its font (third_party/wpe/mac/fonts.conf). In the app beside this program; while developing,
 /// where third_party/wpe/build.sh put them. Set before any thread is.
 #[cfg(wpe)]
@@ -20,6 +20,28 @@ fn find_own() {
             std::env::set_var("GIO_EXTRA_MODULES", found);
         }
     }
+    // GStreamer's plugins and the program that looks into them, beside WPE's libraries; its
+    // list of them where caches go (made again when it is missing or stale).
+    if std::env::var_os("GST_PLUGIN_SYSTEM_PATH").is_none() {
+        // In the app the folder is gstreamer-1_0 (no dot: codesign takes a dotted folder for a
+        // bundle, mac/make-app.sh).
+        let found = [beside.clone(), Some(built.clone())].into_iter().flatten().find_map(|lib| {
+            ["gstreamer-1_0", "gstreamer-1.0"].into_iter().find(|name| lib.join(name).is_dir()).map(|name| (lib, name))
+        });
+        if let Some((lib, name)) = found {
+            std::env::set_var("GST_PLUGIN_SYSTEM_PATH", lib.join(name));
+            std::env::set_var("GST_PLUGIN_PATH", "");
+            let scanner = lib.join("../libexec").join(name).join("gst-plugin-scanner");
+            if scanner.is_file() {
+                std::env::set_var("GST_PLUGIN_SCANNER", scanner);
+            }
+            let cache = std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache/spatiand/gstreamer-1.0"));
+            if let Some(cache) = cache {
+                let _ = std::fs::create_dir_all(&cache);
+                std::env::set_var("GST_REGISTRY", cache.join("registry.bin"));
+            }
+        }
+    }
     // The developer tools' own pages (WebKit's inspector.gresource): in the app's Resources,
     // or where the build put them.
     if std::env::var_os("WEBKIT_INSPECTOR_RESOURCES_PATH").is_none() {
@@ -28,6 +50,12 @@ fn find_own() {
         if let Some(found) = [resources, Some(built)].into_iter().flatten().find(|d| d.join("inspector.gresource").is_file()) {
             std::env::set_var("WEBKIT_INSPECTOR_RESOURCES_PATH", found);
         }
+    }
+    // ANGLE on Metal, as the compositor's own: on its OpenGL back end, macOS's OpenGL (old, and
+    // AMD's driver with it) crashed drawing YouTube's page.
+    #[cfg(target_os = "macos")]
+    if std::env::var_os("ANGLE_DEFAULT_PLATFORM").is_none() {
+        std::env::set_var("ANGLE_DEFAULT_PLATFORM", "metal");
     }
     #[cfg(target_os = "macos")]
     if std::env::var_os("FONTCONFIG_FILE").is_none() {

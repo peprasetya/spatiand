@@ -183,20 +183,61 @@ PC
     mkdir -p "$out/lib"
     cp "$here/../../mac/vendor/angle/libEGL.dylib" "$here/../../mac/vendor/angle/libGLESv2.dylib" "$out/lib/"
     mkdir -p "$out/lib/pkgconfig"
+    # libepoxy loads it at run time; GStreamer's GL links it (@rpath, as in the app).
     cat > "$out/lib/pkgconfig/egl.pc" <<PC
 Name: egl
-Description: ANGLE's EGL headers (the library is loaded at run time)
+Description: ANGLE's EGL
 Version: 1.5
 Cflags: -I$webkit/Source/ThirdParty/ANGLE/include
+Libs: -L$out/lib -lEGL
+PC
+    cat > "$out/lib/pkgconfig/glesv2.pc" <<PC
+Name: glesv2
+Description: ANGLE's OpenGL ES
+Version: 3.0
+Cflags: -I$webkit/Source/ThirdParty/ANGLE/include
+Libs: -L$out/lib -lGLESv2
 PC
     fetch "libepoxy-$LIBEPOXY_VERSION" "https://github.com/anholt/libepoxy/archive/refs/tags/$LIBEPOXY_VERSION.tar.gz"
     meson_lib "libepoxy-$LIBEPOXY_VERSION" -Degl=yes -Dglx=no -Dx11=false -Dtests=false -Ddocs=false
-    # epoxy/egl.h includes EGL's own headers: ANGLE's, beside it.
-    cp -R "$webkit/Source/ThirdParty/ANGLE/include/EGL" "$webkit/Source/ThirdParty/ANGLE/include/KHR" "$out/include/"
+    # epoxy/egl.h includes EGL's own headers: ANGLE's, beside it; GStreamer's GL includes GLES's.
+    for headers in EGL KHR GLES2 GLES3; do cp -R "$webkit/Source/ThirdParty/ANGLE/include/$headers" "$out/include/"; done
     # The keyboard: macOS has no xkbcommon. Its grammar needs a newer bison than macOS's 2.3.
     fetch "libxkbcommon-$XKBCOMMON_VERSION" "https://xkbcommon.org/download/libxkbcommon-$XKBCOMMON_VERSION.tar.xz"
     PATH=/usr/local/opt/bison/bin:/opt/homebrew/opt/bison/bin:$PATH meson_lib "libxkbcommon-$XKBCOMMON_VERSION" \
         -Denable-x11=false -Denable-wayland=false -Denable-docs=false -Denable-tools=false -Denable-xkbregistry=false
+    # Media: WPE's own GStreamer player (video, Media Source Extensions, WebAudio), with only
+    # the plugins pages need. Decoding is gst-libav on Spatiand's FFmpeg (third_party/ffmpeg, in
+    # PKG_CONFIG_PATH above), so the app carries one copy of the codecs; VideoToolbox decodes in
+    # hardware (applemedia). GStreamer's GL is macOS's own (CGL), which applemedia needs; WebKit
+    # does not draw video through it, but takes VideoToolbox's frames as IOSurfaces into ANGLE.
+    gst=https://gstreamer.freedesktop.org/src
+    gst_off="-Dauto_features=disabled -Dtests=disabled -Dexamples=disabled -Ddoc=disabled -Dnls=disabled -Dintrospection=disabled"
+    fetch "gstreamer-$GSTREAMER_VERSION" "$gst/gstreamer/gstreamer-$GSTREAMER_VERSION.tar.xz"
+    meson_lib "gstreamer-$GSTREAMER_VERSION" $gst_off -Dtools=enabled -Dcheck=enabled -Dcoretracers=disabled
+    fetch "gst-plugins-base-$GSTREAMER_VERSION" "$gst/gst-plugins-base/gst-plugins-base-$GSTREAMER_VERSION.tar.xz"
+    meson_lib "gst-plugins-base-$GSTREAMER_VERSION" $gst_off -Dtools=disabled \
+        -Dapp=enabled -Daudioconvert=enabled -Daudioresample=enabled -Dplayback=enabled -Dtypefind=enabled \
+        -Dvideoconvertscale=enabled -Dvolume=enabled -Dsubparse=enabled -Dgio=enabled -Doverlaycomposition=enabled -Drawparse=enabled \
+        -Dgl=enabled -Dgl_api=opengl -Dgl_platform=cgl -Dgl_winsys=cocoa
+    fetch "gst-plugins-good-$GSTREAMER_VERSION" "$gst/gst-plugins-good/gst-plugins-good-$GSTREAMER_VERSION.tar.xz"
+    meson_lib "gst-plugins-good-$GSTREAMER_VERSION" ${gst_off% -Dintrospection=disabled} \
+        -Disomp4=enabled -Dmatroska=enabled -Daudioparsers=enabled -Dautodetect=enabled -Dosxaudio=enabled \
+        -Dwavparse=enabled -Did3demux=enabled -Dapetag=enabled -Dicydemux=enabled \
+        -Ddeinterlace=enabled -Dvideofilter=enabled -Daudiofx=enabled
+    fetch "gst-plugins-bad-$GSTREAMER_VERSION" "$gst/gst-plugins-bad/gst-plugins-bad-$GSTREAMER_VERSION.tar.xz"
+    meson_lib "gst-plugins-bad-$GSTREAMER_VERSION" $gst_off -Dtools=disabled \
+        -Dapplemedia=enabled -Dgl=enabled -Dvideoparsers=enabled -Dsubenc=enabled -Dmpegtsdemux=enabled -Dcodecalpha=enabled
+    fetch "gst-libav-$GSTREAMER_VERSION" "$gst/gst-libav/gst-libav-$GSTREAMER_VERSION.tar.xz"
+    meson_lib "gst-libav-$GSTREAMER_VERSION" -Dtests=disabled -Ddoc=disabled
+    # It finds FFmpeg where FFmpeg's build put it, and in the app in Contents/Frameworks, three
+    # folders up from the plugin (Frameworks/wpe/lib/gstreamer-1.0).
+    libav="$out/lib/gstreamer-1.0/libgstlibav.dylib"
+    for path in "$ssl/lib" @loader_path/../../..; do
+        otool -l "$libav" | grep -q "path $path " || install_name_tool -add_rpath "$path" "$libav"
+    done
+    codesign -f -s - "$libav"
+    [ -n "${DEPS_ONLY:-}" ] && { echo "libraries for $platform in $out (DEPS_ONLY: WebKit not built)"; exit 0; }
     sdk=$(xcrun --show-sdk-path)
     platform_options="-DCMAKE_OSX_SYSROOT=$sdk -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
         -DEpoxy_INCLUDE_DIR=$out/include -DEpoxy_LIBRARY=$out/lib/libepoxy.dylib"
@@ -205,8 +246,8 @@ PC
 esac
 
 # WebKit, the WPE port, with only what SpatiMesh draws through: the headless platform (pictures
-# handed to Spatiand), no Wayland or DRM, no GObject introspection or documentation. Media is off
-# until it is SpatiMesh's own (FFmpeg); the inspector is on (developer tools). WebGL is WebKit's
+# handed to Spatiand), no Wayland or DRM, no GObject introspection or documentation. Media is
+# WPE's GStreamer player (above), without GStreamer's GL; the inspector is on (developer tools). WebGL is WebKit's
 # own ANGLE, which on a Mac draws through the ANGLE the rest of WPE uses (as on Linux it draws
 # through Mesa); web fonts in WOFF2 are read with Google's woff2.
 mkdir -p "$build/webkit"
@@ -218,8 +259,10 @@ mkdir -p "$build/webkit"
     -DENABLE_INTROSPECTION=OFF -DENABLE_DOCUMENTATION=OFF -DENABLE_JOURNALD_LOG=OFF -DUSE_ATK=OFF -DUSE_FLITE=OFF \
     -DUSE_LIBBACKTRACE=OFF -DUSE_LIBHYPHEN=OFF -DUSE_SYSPROF_CAPTURE=OFF -DENABLE_BUBBLEWRAP_SANDBOX=OFF \
     -DENABLE_SPEECH_SYNTHESIS=OFF -DENABLE_GAMEPAD=OFF -DUSE_JPEGXL=OFF -DUSE_AVIF=OFF -DUSE_WOFF2=ON -DUSE_LCMS=OFF \
-    -DENABLE_WEBDRIVER=OFF -DENABLE_MINIBROWSER=OFF -DENABLE_API_TESTS=OFF -DENABLE_VIDEO=OFF -DENABLE_WEB_AUDIO=OFF \
-    -DENABLE_MEDIA_STREAM=OFF -DENABLE_WEB_RTC=OFF -DUSE_GSTREAMER=OFF -DENABLE_SPELLCHECK=OFF -DENABLE_XSLT=OFF -DENABLE_WEBGL=ON)
+    -DENABLE_WEBDRIVER=OFF -DENABLE_MINIBROWSER=OFF -DENABLE_API_TESTS=OFF -DENABLE_VIDEO=ON -DENABLE_WEB_AUDIO=ON \
+    -DUSE_GSTREAMER=ON -DUSE_GSTREAMER_GL=OFF -DUSE_GSTREAMER_MPEGTS=OFF -DUSE_GSTREAMER_TRANSCODER=OFF \
+    -DENABLE_MEDIA_SOURCE=ON -DENABLE_ENCRYPTED_MEDIA=OFF -DENABLE_THUNDER=OFF -DUSE_EXTERNAL_HOLEPUNCH=OFF \
+    -DENABLE_MEDIA_RECORDER=OFF -DENABLE_MEDIA_STREAM=OFF -DENABLE_WEB_RTC=OFF -DENABLE_SPELLCHECK=OFF -DENABLE_XSLT=OFF -DENABLE_WEBGL=ON)
 ninja -C "$build/webkit" -j"$jobs"
 ninja -C "$build/webkit" install
 if [ "$platform" = mac ]; then

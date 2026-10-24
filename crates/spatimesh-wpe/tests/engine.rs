@@ -603,3 +603,38 @@ fn developer_tools_are_a_tab() {
     host.wait_for("the developer tools to close", 20, |h| matches!(h, Happened::CloseTab { tab: 2 }));
     host.quit();
 }
+
+/// Video, through WPE's GStreamer player (decoding by gst-libav on Spatiand's FFmpeg, or
+/// VideoToolbox): it plays, and its picture is on the page.
+#[test]
+fn a_video_plays() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    let media = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/media/red.mp4");
+    let folder = std::env::temp_dir().join(format!("spatimesh-wpe-video-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::copy(&media, folder.join("red.mp4")).unwrap();
+    let file = folder.join("page.html");
+    std::fs::write(&file, concat!(
+        "<body style='margin:0;background:#000'><video id=v src=red.mp4 muted autoplay loop ",
+        "style='width:320px;height:240px' onplaying=\"document.title='playing'\" ",
+        "onerror=\"document.title='error:'+(this.error&&this.error.code)\"></video></body>"
+    )).unwrap();
+    host.send(ToHost::Open { tab: 1, url: format!("file://{}", file.display()), view: View::new(400, 300, 1.0) });
+    let title = host.title(1, "");
+    let title = if title == "playing" || title.starts_with("error") { title } else { host.title(1, "p") };
+    assert_eq!(title, "playing");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        host.wait_for("a picture", 20, |h| matches!(h, Happened::Picture { tab: 1 }));
+        let p = host.pixel(1, 160, 120);
+        if p[0] > 200 && p[1] < 60 && p[2] < 60 {
+            break;
+        }
+        if Instant::now() >= deadline {
+            host.shot(1, "video");
+        }
+        assert!(Instant::now() < deadline, "the video's picture never showed: {p:?}");
+    }
+    host.quit();
+    let _ = std::fs::remove_dir_all(folder);
+}

@@ -414,6 +414,43 @@ index d49cc0e37..d3ebea820 100644
  
  #include "PlatformDisplay.h"
  
+diff --git a/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp b/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp
+index 9fee5e03f..cb8a88257 100644
+--- a/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp
++++ b/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp
+@@ -54,7 +54,9 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN // GLib/Win port
+ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+ #endif
+ 
+-#if OS(DARWIN)
++// Apple's own port draws with desktop OpenGL; WPE on a Mac with OpenGL ES (ANGLE), which has not
++// got this type.
++#if PLATFORM(COCOA)
+ #define GL_UNSIGNED_INT_8_8_8_8_REV 0x8367
+ static const GLenum s_pixelDataType = GL_UNSIGNED_INT_8_8_8_8_REV;
+ #else
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferVideo.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferVideo.cpp
+index 53c81ac0f..ad56deda2 100644
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferVideo.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferVideo.cpp
+@@ -283,6 +283,9 @@ void CoordinatedPlatformLayerBufferVideo::createBufferFromMappedFrameIfNeeded()
+         textureFlags.add(BitmapTexture::Flags::SupportsAlpha);
+     auto texture = BitmapTexturePool::singleton().acquireTexture(m_size, textureFlags);
+ 
++#if USE(GSTREAMER_GL)
++    // Only where GStreamer's GL is WebKit's: a decoder's upload meta uploads in its own GL (on a
++    // Mac VideoToolbox's is macOS's OpenGL, not ANGLE), where WebKit's texture is not.
+     auto* meta = gst_buffer_get_video_gl_texture_upload_meta(m_mappedVideoFrame->get()->buffer);
+     if (meta && meta->n_textures == 1) {
+         guint ids[4] = { texture->id(), 0, 0, 0 };
+@@ -291,6 +294,7 @@ void CoordinatedPlatformLayerBufferVideo::createBufferFromMappedFrameIfNeeded()
+             return;
+         }
+     }
++#endif
+ 
+     int stride = m_mappedVideoFrame->planeStride(0);
+     auto srcData = m_mappedVideoFrame->planeData(0);
 diff --git a/Source/WebKit/CMakeLists.txt b/Source/WebKit/CMakeLists.txt
 index fd21e35f0..0f174b703 100644
 --- a/Source/WebKit/CMakeLists.txt

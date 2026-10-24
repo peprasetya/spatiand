@@ -1023,8 +1023,12 @@ static void on_script_done(GObject *source, GAsyncResult *result, gpointer data)
 /* SpatiMesh's own script for every frame's every document (its media), from the next document
  * on in every tab. */
 void spatimesh_set_page_script(Engine *e, const char *code) {
+    /* SpatiMesh's own player, put into pages by this script, is for engines that cannot play
+     * pages' media themselves. WPE plays it with its own GStreamer player (decoding with
+     * Spatiand's FFmpeg and the platform's hardware), so pages are left as they are. */
+    (void)code;
     g_free(e->page_script);
-    e->page_script = code && *code ? g_strdup(code) : NULL;
+    e->page_script = NULL;
     GHashTableIter it;
     gpointer key, value;
     g_hash_table_iter_init(&it, e->tabs);

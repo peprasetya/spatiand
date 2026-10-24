@@ -71,8 +71,12 @@ if [ -f "$WPE_OUT/lib/pkgconfig/wpe-webkit-2.0.pc" ] && [ -f "$app/Contents/MacO
     wpe="$app/Contents/Frameworks/wpe"
     mkdir -p "$wpe/lib" "$wpe/libexec"
     cp -a "$WPE_OUT"/lib/*.dylib "$wpe/lib/"
-    for dir in gio wpe-webkit-2.0 wpe-platform-2.0; do if [ -d "$WPE_OUT/lib/$dir" ]; then cp -a "$WPE_OUT/lib/$dir" "$wpe/lib/$(echo $dir | tr . _)"; fi; done
+    for dir in gio wpe-webkit-2.0 wpe-platform-2.0 gstreamer-1.0; do if [ -d "$WPE_OUT/lib/$dir" ]; then cp -a "$WPE_OUT/lib/$dir" "$wpe/lib/$(echo $dir | tr . _)"; fi; done
     cp -a "$WPE_OUT/libexec/wpe-webkit-2.0" "$wpe/libexec/wpe-webkit-2_0"
+    rm -rf "$wpe/lib/gstreamer-1_0/include"   # GStreamer GL's headers: data, not for the app
+    # GStreamer's program that looks into its plugins (the engine program tells GStreamer where).
+    mkdir -p "$wpe/libexec/gstreamer-1_0"
+    cp "$WPE_OUT/libexec/gstreamer-1.0/gst-plugin-scanner" "$wpe/libexec/gstreamer-1_0/"
     # What the app carries already (OpenSSL from FFmpeg's build, ANGLE, put in further down) is
     # carried once.
     for lib in "$wpe"/lib/*.dylib; do
@@ -92,7 +96,7 @@ if [ -f "$WPE_OUT/lib/pkgconfig/wpe-webkit-2.0.pc" ] && [ -f "$app/Contents/MacO
       for dep in $(otool -L "$f" | tail -n +2 | awk '{print $1}' | grep "^$WPE_OUT/lib/"); do
         install_name_tool -change "$dep" "@rpath/${dep#"$WPE_OUT/lib/"}" "$f" 2>/dev/null
       done
-      otool -l "$f" | grep -A2 LC_RPATH | awk '/path /{print $2}' | grep "^$WPE_OUT" | while read -r old; do
+      otool -l "$f" | grep -A2 LC_RPATH | awk '/path /{print $2}' | grep -e "^$WPE_OUT" -e "/third_party/ffmpeg/" | while read -r old; do
         install_name_tool -delete_rpath "$old" "$f" 2>/dev/null
       done
       WPE_CODE="$WPE_CODE $f"
@@ -100,6 +104,11 @@ if [ -f "$WPE_OUT/lib/pkgconfig/wpe-webkit-2.0.pc" ] && [ -f "$app/Contents/MacO
     for lib in "$wpe"/lib/*.dylib; do
       [ -L "$lib" ] || otool -l "$lib" | grep -q '@loader_path$' || install_name_tool -add_rpath @loader_path "$lib" 2>/dev/null || true
     done
+    # GStreamer's plugins, one folder below lib, and its scanner.
+    for plugin in "$wpe"/lib/gstreamer-1_0/*.dylib; do
+      otool -l "$plugin" | grep -q 'path @loader_path/.. ' || install_name_tool -add_rpath @loader_path/.. "$plugin" 2>/dev/null || true
+    done
+    install_name_tool -add_rpath @loader_path/../../lib "$wpe/libexec/gstreamer-1_0/gst-plugin-scanner" 2>/dev/null || true
     # Plug-ins two folders below lib: GIO's TLS module, WebKit's injected bundle.
     for so in $(find "$wpe/lib" -name '*.so'); do
       otool -l "$so" | grep -q '@loader_path/../..' || install_name_tool -add_rpath @loader_path/../.. "$so" 2>/dev/null || true

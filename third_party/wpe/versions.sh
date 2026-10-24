@@ -6,6 +6,7 @@ GLIB_NETWORKING_VERSION=2.90.0
 XKBCOMMON_VERSION=1.7.0   # the compositor's own (mac/xkbcommon/build.sh)
 HARFBUZZ_VERSION=14.3.0   # with ICU, which WebKit asks of it
 LIBEPOXY_VERSION=1.5.10
+GSTREAMER_VERSION=1.28.8   # WPE's media player; decoding by gst-libav on Spatiand's own FFmpeg
 # What WPE needs that macOS has not got, built here so the app carries its own (pinned, for
 # macOS 14): before these were Homebrew's, and the app ran only on the Mac it was built on.
 GLIB_VERSION=2.88.4
