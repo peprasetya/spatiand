@@ -32,9 +32,7 @@ members = [
     "crates/spatiand-sync",
     "crates/spatimesh",
     "crates/spatimesh-webkitgtk",
-    "crates/spatimesh-cef",
     "crates/spatimesh-shim",
-    "crates/spatimesh-webkit",
     "crates/spatimesh-wpe",
 ]
 

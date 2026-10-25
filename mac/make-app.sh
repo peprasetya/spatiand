@@ -170,6 +170,16 @@ PLIST
 # permission is then bound to the bundle's name and that certificate, which do not change. See
 # HoloFrame's Tools/make-app.sh for how such a certificate is made, and why it is searched for
 # without `-v` (a self-signed root is never "valid" to the trust policy, and signs fine).
+# Another checkout building its own app sets this, so as not to replace this one.
+dest="${SPATIAND_APP_DEST:-$HOME/Applications/Spatiand.app}"
+mkdir -p "$(dirname "$dest")"
+rm -rf "$dest"
+ditto --noextattr --norsrc "$app" "$dest"
+rm -rf "$stage"
+# Signed where it is installed: a signed bundle copied elsewhere lost its signature (2026-10-25).
+stage_app="$app"
+app="$dest"
+WPE_CODE=$(for f in $WPE_CODE; do echo "$dest${f#"$stage_app"}"; done)
 # A signature refuses a bundle with extended attributes on it (a copied binary carries some).
 xattr -cr "$app" 2>/dev/null || true
 IDENTITY_NAME="${SPATIAND_SIGN_NAME:-HoloFrame Dev}"
@@ -189,12 +199,6 @@ else
   echo "note: signed ad hoc, so each rebuild asks for Screen Recording and Accessibility again;"
   echo "      create the \"$IDENTITY_NAME\" certificate (see HoloFrame) to stop that"
 fi
-# Another checkout building its own app sets this, so as not to replace this one.
-dest="${SPATIAND_APP_DEST:-$HOME/Applications/Spatiand.app}"
-mkdir -p "$(dirname "$dest")"
-rm -rf "$dest"
-ditto --noextattr --norsrc "$app" "$dest"
-rm -rf "$stage"
 codesign --verify --deep --strict "$dest" 2>/dev/null && echo "signature verified" || echo "warning: the installed app's signature does not verify"
 echo "built $dest"
 echo "run:  open -a $dest"

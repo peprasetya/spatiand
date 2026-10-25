@@ -51,12 +51,6 @@ fn find_own() {
             std::env::set_var("WEBKIT_INSPECTOR_RESOURCES_PATH", found);
         }
     }
-    // ANGLE on Metal, as the compositor's own: on its OpenGL back end, macOS's OpenGL (old, and
-    // AMD's driver with it) crashed drawing YouTube's page.
-    #[cfg(target_os = "macos")]
-    if std::env::var_os("ANGLE_DEFAULT_PLATFORM").is_none() {
-        std::env::set_var("ANGLE_DEFAULT_PLATFORM", "metal");
-    }
     #[cfg(target_os = "macos")]
     if std::env::var_os("FONTCONFIG_FILE").is_none() {
         let resources = exe.as_ref().and_then(|e| e.parent()).map(|d| d.join("../Resources/fonts.conf"));

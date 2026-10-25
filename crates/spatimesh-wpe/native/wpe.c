@@ -25,6 +25,12 @@
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
+#include <fontconfig/fontconfig.h>
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#include <CoreText/CoreText.h>
+#include <limits.h>
+#endif
 
 enum {
     EV_TITLE = 1,
@@ -264,7 +270,14 @@ static WPEToplevel *mesh_display_create_toplevel(WPEDisplay *display, guint max_
 }
 
 static gpointer mesh_display_get_egl_display(WPEDisplay *display, GError **error) {
+#ifdef __APPLE__
+    /* ANGLE on Metal, asked for by name, with the attributes WebKit asks with (its
+     * PlatformDisplayDefault), so that it is the same display. */
+    const EGLint metal[] = { 0x3203 /* EGL_PLATFORM_ANGLE_TYPE_ANGLE */, 0x3489 /* ..._METAL_ANGLE */, EGL_NONE };
+    EGLDisplay egl = eglGetPlatformDisplayEXT(0x3202 /* EGL_PLATFORM_ANGLE_ANGLE */, NULL /* the default */, metal);
+#else
     EGLDisplay egl = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+#endif
     if (egl == EGL_NO_DISPLAY) {
         g_set_error_literal(error, WPE_EGL_ERROR, WPE_EGL_ERROR_NOT_AVAILABLE, "no EGL display");
         return NULL;
@@ -284,6 +297,100 @@ static void mesh_display_init(MeshDisplay *d) {
     (void)d;
 }
 
+/* ---- the platform's look: its interface font, light or dark -------------------------------- */
+
+#ifdef __APPLE__
+/* The Mac's interface font, by the name fontconfig knows its file by (CoreText's own name for it,
+ * .AppleSystemUIFont, is hidden from fontconfig), at its size: "System Font 13px". */
+static char *platform_font_name(void) {
+    char *name = NULL;
+    CTFontRef font = CTFontCreateUIFontForLanguage(kCTFontUIFontSystem, 0, NULL);
+    if (!font)
+        return g_strdup("sans-serif 13px");
+    double size = CTFontGetSize(font);
+    CFURLRef url = CTFontCopyAttribute(font, kCTFontURLAttribute);
+    char path[PATH_MAX];
+    if (url && CFURLGetFileSystemRepresentation(url, true, (UInt8 *)path, sizeof path)) {
+        FcPattern *query = FcPatternCreate();
+        FcPatternAddString(query, FC_FILE, (const FcChar8 *)path);
+        FcObjectSet *wanted = FcObjectSetBuild(FC_FAMILY, NULL);
+        FcFontSet *found = FcFontList(NULL, query, wanted);
+        FcChar8 *family = NULL;
+        if (found && found->nfont && FcPatternGetString(found->fonts[0], FC_FAMILY, 0, &family) == FcResultMatch)
+            name = g_strdup_printf("%s %dpx", (const char *)family, (int)(size + 0.5));
+        if (found)
+            FcFontSetDestroy(found);
+        FcObjectSetDestroy(wanted);
+        FcPatternDestroy(query);
+    }
+    if (url)
+        CFRelease(url);
+    CFRelease(font);
+    return name ? name : g_strdup_printf("sans-serif %dpx", (int)(size + 0.5));
+}
+
+/* Whether the Mac is in Dark Mode (System Settings, Appearance). */
+static gboolean platform_dark(void) {
+    CFPreferencesAppSynchronize(kCFPreferencesAnyApplication);
+    CFStringRef style = CFPreferencesCopyAppValue(CFSTR("AppleInterfaceStyle"), kCFPreferencesAnyApplication);
+    gboolean dark = style && CFStringCompare(style, CFSTR("Dark"), kCFCompareCaseInsensitive) == kCFCompareEqualTo;
+    if (style)
+        CFRelease(style);
+    return dark;
+}
+#else
+/* A Linux desktop's interface font and colour scheme, from GNOME's settings where they are. */
+static GSettings *desktop_settings(void) {
+    static GSettings *settings;
+    static gboolean looked;
+    if (!looked) {
+        looked = TRUE;
+        GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+        GSettingsSchema *schema = source ? g_settings_schema_source_lookup(source, "org.gnome.desktop.interface", TRUE) : NULL;
+        if (schema) {
+            settings = g_settings_new("org.gnome.desktop.interface");
+            g_settings_schema_unref(schema);
+        }
+    }
+    return settings;
+}
+
+static char *platform_font_name(void) {
+    GSettings *settings = desktop_settings();
+    char *name = settings ? g_settings_get_string(settings, "font-name") : NULL;
+    if (name && *name)
+        return name;
+    g_free(name);
+    return g_strdup("Sans 10");
+}
+
+static gboolean platform_dark(void) {
+    GSettings *settings = desktop_settings();
+    if (!settings)
+        return FALSE;
+    char *scheme = g_settings_get_string(settings, "color-scheme");
+    gboolean dark = scheme && strcmp(scheme, "prefer-dark") == 0;
+    g_free(scheme);
+    return dark;
+}
+#endif
+
+/* Pages are told light or dark as the platform is, and again whenever it changes. */
+static gboolean check_dark_mode(gpointer data) {
+    WPEDisplay *display = data;
+    gboolean dark = platform_dark();
+    GError *error = NULL;
+    if (wpe_settings_get_boolean(wpe_display_get_settings(display), WPE_SETTING_DARK_MODE, NULL) != dark)
+        wpe_settings_set_boolean(wpe_display_get_settings(display), WPE_SETTING_DARK_MODE, dark, WPE_SETTINGS_SOURCE_PLATFORM, &error);
+    g_clear_error(&error);
+    return G_SOURCE_CONTINUE;
+}
+
+static void follow_dark_mode(WPEDisplay *display) {
+    check_dark_mode(display);
+    g_timeout_add_seconds(1, check_dark_mode, display);
+}
+
 static WPEDisplay *mesh_display(void) {
     static WPEDisplay *display;
     if (!display) {
@@ -293,10 +400,13 @@ static WPEDisplay *mesh_display(void) {
             g_warning("SpatiMesh's WPE display: %s", error ? error->message : "?");
             g_clear_error(&error);
         }
-        /* The interface's font, as a desktop would say it: form controls and the developer
-         * tools are drawn with it (unsaid, they take the page's standard font, a serif). The
-         * generic family, which fonts.conf gives every script's font for. */
-        wpe_settings_set_string(wpe_display_get_settings(display), WPE_SETTING_FONT_NAME, "sans-serif 13", WPE_SETTINGS_SOURCE_PLATFORM, NULL);
+        /* The platform's own interface font and light or dark, as its desktop says them: form
+         * controls and the developer tools are drawn with the font (unsaid, they take the page's
+         * standard font, a serif), and pages are told the colour scheme (prefers-color-scheme). */
+        char *font = platform_font_name();
+        wpe_settings_set_string(wpe_display_get_settings(display), WPE_SETTING_FONT_NAME, font, WPE_SETTINGS_SOURCE_PLATFORM, NULL);
+        g_free(font);
+        follow_dark_mode(display);
     }
     return display;
 }

@@ -641,3 +641,132 @@ fn a_video_plays() {
     host.quit();
     let _ = std::fs::remove_dir_all(folder);
 }
+
+/// Emoji in colour, and a reflection (-webkit-box-reflect), as Safari draws them: looked at by
+/// eye (SPATIMESH_TEST_SHOTS), and the emoji found not blank.
+#[test]
+fn emoji_and_reflections() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    let url = page(concat!(
+        "<body style='margin:0;background:#fff;font-size:48px'>",
+        "<div style='position:absolute;left:10px;top:10px'>\u{1F600}\u{1F3AC}\u{2764}\u{FE0F}\u{1F44D}</div>",
+        "<div style='position:absolute;left:10px;top:90px;width:120px;height:60px;background:linear-gradient(red,blue);",
+        "-webkit-box-reflect:below 4px linear-gradient(transparent,rgba(0,0,0,0.6))'></div>",
+        // As Vibrefy has them: on a layer of their own (translateZ), and emoji in an SVG image.
+        "<div style='position:absolute;left:200px;top:90px;width:120px;height:60px;background:linear-gradient(green,orange);",
+        "transform:translateZ(0);-webkit-box-reflect:below 4px linear-gradient(transparent,rgba(0,0,0,0.6))'></div>",
+        "<div style=\"position:absolute;left:200px;top:10px;width:160px;height:70px;background-size:contain;background-repeat:no-repeat;",
+        "background-image:url(&quot;data:image/svg+xml,%3Csvg viewBox='0 0 160 90' xmlns='http://www.w3.org/2000/svg'%3E%3Ctext x='50%' y='90%' font-size='80' text-anchor='middle'%3E\u{1F3AC}%3C/text%3E%3C/svg%3E&quot;)\"></div></body>"
+    ));
+    host.send(ToHost::Open { tab: 1, url, view: View::new(400, 260, 1.0) });
+    host.loaded(1);
+    host.settle(Duration::from_secs(2));
+    host.wait_for("a picture", 20, |h| matches!(h, Happened::Picture { tab: 1 }));
+    host.shot(1, "emoji-reflection");
+    // The smiling face's yellow, somewhere in its box.
+    let yellow = (10..60).flat_map(|x| (12..62).map(move |y| (x, y))).any(|(x, y)| {
+        let p = host.pixel(1, x, y);
+        p[0] > 200 && p[1] > 150 && p[2] < 100
+    });
+    assert!(yellow, "the emoji is not drawn in colour");
+    host.quit();
+}
+
+/// Emoji larger than the colour font's biggest picture (160 pixels), as a poster's placeholder
+/// is on a large window: scaled from it, not a missing glyph.
+#[test]
+fn large_emoji() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    let url = page("<body style='margin:0;background:#fff;font-size:240px;line-height:1'>\u{1F600}</body>");
+    host.send(ToHost::Open { tab: 1, url, view: View::new(400, 300, 1.0) });
+    host.loaded(1);
+    host.settle(Duration::from_secs(2));
+    host.wait_for("a picture", 20, |h| matches!(h, Happened::Picture { tab: 1 }));
+    host.shot(1, "large-emoji");
+    let yellow = (20..200).step_by(4).flat_map(|x| (20..200).step_by(4).map(move |y| (x, y))).filter(|&(x, y)| {
+        let p = host.pixel(1, x, y);
+        p[0] > 200 && p[1] > 150 && p[2] < 100
+    }).count();
+    assert!(yellow > 50, "a large emoji is not drawn in colour ({yellow} yellow points)");
+    host.quit();
+}
+
+/// Pages are told light or dark as the platform is (prefers-color-scheme): on a Mac, its
+/// Appearance setting; and form controls are in the platform's interface font.
+#[test]
+fn the_platform_look() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    let url = page(concat!(
+        "<button id=b>OK</button><script>",
+        "document.title='scheme:'+(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')",
+        "+' font:'+getComputedStyle(document.getElementById('b')).fontFamily</script>"
+    ));
+    host.send(ToHost::Open { tab: 1, url, view: View::new(300, 200, 1.0) });
+    let title = host.title(1, "scheme:");
+    #[cfg(target_os = "macos")]
+    {
+        let dark = std::process::Command::new("defaults").args(["read", "-g", "AppleInterfaceStyle"]).output()
+            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim().eq_ignore_ascii_case("dark"));
+        assert!(title.starts_with(if dark { "scheme:dark" } else { "scheme:light" }), "{title}");
+    }
+    eprintln!("{title}");
+    host.quit();
+}
+
+/// A page's sound goes to the Spatiand session (its `spatiand-sound` socket, under the window's
+/// application id), to be placed in the room through the HRTF: here, an audio element's tone.
+#[test]
+fn sound_goes_to_the_session() {
+    use std::os::unix::net::UnixListener;
+    let dir = std::env::temp_dir().join(format!("spatimesh-wpe-sound-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = UnixListener::bind(dir.join("spatiand-sound")).unwrap();
+    // The engine inherits these, as from SpatiMesh's window in a session.
+    std::env::set_var("XDG_RUNTIME_DIR", &dir);
+    std::env::set_var("SPATIAND_APP_ID", "id.prasetya.spatiand.spatimesh");
+    let Some(mut host) = Host::start(&private()) else { return };
+    // A second of a tone, as a WAV beside the page.
+    let mut wav = Vec::new();
+    let samples: Vec<i16> = (0..48000).map(|i| ((i as f32 / 10.0).sin() * 9000.0) as i16).collect();
+    let data = (samples.len() * 2) as u32;
+    for part in [&b"RIFF"[..], &(36 + data).to_le_bytes(), b"WAVEfmt ", &16u32.to_le_bytes(), &1u16.to_le_bytes(),
+        &1u16.to_le_bytes(), &48000u32.to_le_bytes(), &96000u32.to_le_bytes(), &2u16.to_le_bytes(), &16u16.to_le_bytes(),
+        b"data", &data.to_le_bytes()] { wav.extend_from_slice(part); }
+    for s in &samples { wav.extend_from_slice(&s.to_le_bytes()); }
+    std::fs::write(dir.join("tone.wav"), wav).unwrap();
+    let file = dir.join("page.html");
+    std::fs::write(&file, "<body style='margin:0;height:100vh' onclick='a.play()'>\
+        <audio id=a src=tone.wav loop onplaying=\"document.title='tone:playing'\" \
+        onerror=\"document.title='tone:error'\"></audio></body>").unwrap();
+    host.send(ToHost::Open { tab: 1, url: format!("file://{}", file.display()), view: View::new(200, 100, 1.0) });
+    host.settle(Duration::from_secs(1));
+    // Sound plays after a click on the page, as WebKit's autoplay rule has it.
+    host.click(1, 50.0, 50.0);
+    eprintln!("{}", host.title(1, "tone:"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut head = [0u8; 12];
+        s.read_exact(&mut head).unwrap();
+        let mut app = vec![0u8; u16::from_le_bytes([head[10], head[11]]) as usize];
+        s.read_exact(&mut app).unwrap();
+        let mut sound = vec![0u8; 48000];
+        s.read_exact(&mut sound).unwrap();
+        let loudest = sound.chunks(2).map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs()).max().unwrap();
+        tx.send((head, String::from_utf8(app).unwrap(), loudest)).unwrap();
+    });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let (head, app, loudest) = loop {
+        if let Ok(got) = rx.try_recv() { break got; }
+        assert!(Instant::now() < deadline, "no sound reached the session");
+        host.link.wait_readable(100);
+        host.receive();
+    };
+    assert_eq!(&head[..4], b"SPSN");
+    assert_eq!(u32::from_le_bytes(head[6..10].try_into().unwrap()), 48000);
+    assert_eq!(app, "id.prasetya.spatiand.spatimesh");
+    assert!(loudest > 1000, "silence: {loudest}");
+    eprintln!("channels {} loudest {loudest}", u16::from_le_bytes([head[4], head[5]]));
+    host.quit();
+    let _ = std::fs::remove_dir_all(dir);
+}

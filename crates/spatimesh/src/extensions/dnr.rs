@@ -566,8 +566,8 @@ pub fn decide(all: &[Rules], r: &Request) -> Option<Decision> {
 
 // ---- for an engine that matches them itself ---------------------------------------------------
 
-/// An extension's rules as an engine matching them itself is given them (Android's WebView,
-/// MeshEngine.java's Dnr): each rule's conditions already read, its urlFilter as a regular
+/// An extension's rules as an engine matching them itself is given them (Android's WebView did;
+/// no engine now does): each rule's conditions already read, its urlFilter as a regular
 /// expression, its resource types as the list it is for, a redirect to a fixed address as that
 /// address. Left out, as that engine cannot apply them: header changes, rules about tabs, and
 /// redirects by `transform`.

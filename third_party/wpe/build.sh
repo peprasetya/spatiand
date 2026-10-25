@@ -237,6 +237,13 @@ PC
         otool -l "$libav" | grep -q "path $path " || install_name_tool -add_rpath "$path" "$libav"
     done
     codesign -f -s - "$libav"
+    # Pages' sound into the Spatiand room, at SpatiMesh's window, through its HRTF (gst/).
+    sink="$out/lib/gstreamer-1.0/libgstspatiand.dylib"
+    if [ ! -f "$sink" ] || [ "$here/gst/spatiandaudiosink.c" -nt "$sink" ]; then
+        cc -dynamiclib -O2 -o "$sink" "$here/gst/spatiandaudiosink.c" $(pkg-config --cflags --libs gstreamer-audio-1.0) \
+            -install_name "$out/lib/gstreamer-1.0/libgstspatiand.dylib" -Wl,-rpath,"$out/lib"
+        codesign -f -s - "$sink"
+    fi
     [ -n "${DEPS_ONLY:-}" ] && { echo "libraries for $platform in $out (DEPS_ONLY: WebKit not built)"; exit 0; }
     sdk=$(xcrun --show-sdk-path)
     platform_options="-DCMAKE_OSX_SYSROOT=$sdk -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0

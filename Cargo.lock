@@ -4898,35 +4898,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "spatimesh-cef"
-version = "0.1.0"
-dependencies = [
- "cc",
- "libc",
- "serde_json",
- "spatiand-app",
- "spatimesh",
- "spatimesh-shim",
-]
-
-[[package]]
 name = "spatimesh-shim"
 version = "0.1.0"
 dependencies = [
  "serde_json",
  "spatiand-app",
  "spatimesh",
-]
-
-[[package]]
-name = "spatimesh-webkit"
-version = "0.1.0"
-dependencies = [
- "cc",
- "libc",
- "serde_json",
- "spatimesh",
- "spatimesh-shim",
 ]
 
 [[package]]

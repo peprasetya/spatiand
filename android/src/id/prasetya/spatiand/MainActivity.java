@@ -101,8 +101,6 @@ public class MainActivity extends Activity implements SensorEventListener {
         unpackAsset("default.sofa", new File(getFilesDir(), "default.sofa"));
         File movies = getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES);
         if (movies != null) Native.recordingsDir(movies.getPath());
-        // SpatiMesh's window asks here for its pages' engines, which must be this app's services.
-        id.prasetya.spatiand.mesh.MeshLauncher.start(this);
         Native.begin();
 
         LinearLayout column = new LinearLayout(this);

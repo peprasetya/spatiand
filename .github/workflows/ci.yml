@@ -73,27 +73,6 @@ jobs:
           name: spatimesh-e2e
           path: target/spatimesh-e2e
           if-no-files-found: ignore
-      # SpatiMesh on SteamOS uses Steam's own Chromium (CEF); here, CEF's own build of the same
-      # version stands in for it, laid out as Steam lays out its own.
-      - name: CEF of the version Steam's Chromium is, if an earlier run fetched it
-        id: cef
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/cef
-          key: cef-chromium-126.0.6478.183-linux64-minimal-1
-      - if: steps.cef.outputs.cache-hit != 'true'
-        run: tools/fetch-cef.sh ~/cef
-      - if: steps.cef.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ~/cef
-          key: cef-chromium-126.0.6478.183-linux64-minimal-1
-      - name: SpatiMesh's SteamOS engine, against that CEF, on a virtual display
-        run: |
-          . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null
-          # No sandbox for the pages' processes here: the runner does not allow Chromium's.
-          CEF_ROOT=$HOME/cef SPATIMESH_CEF_DIR=$HOME/cef/steam SPATIMESH_CEF_NO_SANDBOX=1 SPATIMESH_CEF_REQUIRED=1 \
-            xvfb-run -a cargo test -p spatimesh-cef --locked
 
   android:
     runs-on: ubuntu-24.04
@@ -117,7 +96,7 @@ jobs:
           . "$HOME/.cargo/env" 2>/dev/null || true
           RUSTFLAGS="-L native=$GITHUB_WORKSPACE/android/xkbcommon/out" \
             cargo ndk -t arm64-v8a -P 34 build --release -p spatimesh --no-default-features --locked
-      - name: The app's Java, and SpatiMesh's Android engine speaking SpatiMesh's wire
+      - name: The app's Java
         run: |
           . ~/.spatiand-ci-env
           android/libs/fetch.sh
@@ -125,10 +104,6 @@ jobs:
           javac --release 17 -Xlint:-options -Xlint:-deprecation \
             -classpath "$ANDROID_HOME/platforms/android-34/android.jar:$(ls android/libs/*.jar | tr '\n' ':')" \
             -d "$out/app" $(find android/src -name '*.java')
-          javac --release 17 -d "$out/test" android/src/id/prasetya/spatiand/mesh/Wire.java android/test/WireTest.java
-          java -cp "$out/test" WireTest
-          javac --release 17 -d "$out/dnr" android/src/id/prasetya/spatiand/mesh/Dnr.java android/test/DnrTest.java
-          java -cp "$out/dnr" id.prasetya.spatiand.mesh.DnrTest
       - name: The APK
         # android/build.sh was written on a Mac; this is its first run anywhere else, so it
         # reports and does not fail the build until it has been seen to work.
@@ -164,12 +139,8 @@ jobs:
         run: cd mac && swift build
       # Without its own media, which needs an FFmpeg this runner has not got (Homebrew's is newer
       # than the one the bindings are made for); the media is built and tested by the linux job.
-      - name: SpatiMesh, and its WebKit engine
-        run: MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p spatimesh --no-default-features -p spatimesh-webkit --locked
-      # Real pages in WebKit's own processes (the runner's session has a window server): a Chrome
-      # extension and a Firefox one, end to end (crates/spatimesh/tests/common).
-      - name: SpatiMesh's WebKit engine, in the runner's own session
-        run: SPATIMESH_WEBKIT_REQUIRED=1 MACOSX_DEPLOYMENT_TARGET=14.0 cargo test -p spatimesh-webkit --locked
+      - name: SpatiMesh
+        run: MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p spatimesh --no-default-features --locked
       # What SpatiMesh's window does without an engine (the wire, its memory for pictures, the
       # extension runtime, the store) on the Mac's own system calls.
       - name: SpatiMesh's own tests, on the Mac

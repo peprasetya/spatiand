@@ -1,8 +1,8 @@
 //! SpatiMesh's engine interface over a native engine's C half.
 //!
-//! Each engine program (`spatimesh-webkitgtk`, `spatimesh-webkit`, `spatimesh-cef`) compiles a
-//! small native shim -- C against WebKitGTK's headers, Objective-C against WebKit's, C against
-//! CEF's -- that provides the same few `spatimesh_*` functions, and links it with this crate,
+//! Each engine program (`spatimesh-wpe`, `spatimesh-webkitgtk`) compiles a small native shim --
+//! C against WPE's headers, or WebKitGTK's -- that provides the same few `spatimesh_*`
+//! functions, and links it with this crate,
 //! which is the [`Engine`] over them. The engine's own structures are only ever written in its
 //! own language, against its own headers.
 

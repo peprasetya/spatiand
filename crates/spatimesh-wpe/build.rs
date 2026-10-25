@@ -31,6 +31,13 @@ fn main() {
             // libepoxy, whose EGL this calls for SpatiMesh's WPE display.
             println!("cargo:rustc-link-search=native={wpe}/lib");
             println!("cargo:rustc-link-lib=dylib=epoxy");
+            // The platform's interface font, by fontconfig's name for it (and on a Mac,
+            // CoreText's choice of it, and the Mac's Dark Mode).
+            println!("cargo:rustc-link-lib=dylib=fontconfig");
+            if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+                println!("cargo:rustc-link-lib=framework=CoreText");
+                println!("cargo:rustc-link-lib=framework=CoreFoundation");
+            }
             // Where WPE is, for this program to find it: in the app, its libraries are beside it.
             println!("cargo:rustc-link-arg=-Wl,-rpath,{wpe}/lib");
             println!("cargo:rustc-cfg=wpe");
