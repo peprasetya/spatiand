@@ -25,8 +25,10 @@
 /* How long a picture is kept after it was last handed over or opened. */
 #define KEPT_SECONDS 5.0
 /* How long surfaces_open waits for a picture it has not got: the child sends it before it
- * names it, but this process's receiving thread may not have taken it in yet. */
-#define OPEN_WAIT_SECONDS 0.25
+ * names it, but this process's receiving thread may not have taken it in yet. Short, since
+ * the room draws while it waits; and a number waited for in vain is not waited for again. */
+#define OPEN_WAIT_SECONDS 0.004
+#define MOST_MISSED 64
 #define MOST_KEPT 256
 
 typedef struct {
@@ -73,12 +75,28 @@ static void read_parent(void) {
         strcpy(parent_name, name);
 }
 
-/* Whether `pid` is a child of this process. */
+/* Whether `pid` was started by this process, directly or by one it started (an application
+ * another opened: a film SpatiShelf opened in SpatiReel). */
 static int is_child(pid_t pid) {
-    struct proc_bsdinfo info;
-    if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof info) != (int)sizeof info)
-        return 0;
-    return (pid_t)info.pbi_ppid == getpid();
+    for (int depth = 0; depth < 16 && pid > 1; depth++) {
+        struct proc_bsdinfo info;
+        if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof info) != (int)sizeof info)
+            return 0;
+        if ((pid_t)info.pbi_ppid == getpid())
+            return 1;
+        pid = (pid_t)info.pbi_ppid;
+    }
+    return 0;
+}
+
+static uint32_t missed[MOST_MISSED];
+static int missed_next;
+
+static int was_missed(uint32_t number) {
+    for (int i = 0; i < MOST_MISSED; i++)
+        if (missed[i] == number && number)
+            return 1;
+    return 0;
 }
 
 /* Keep `surface` (adopted) as `number`, in place of what was kept as it, and let go of what
@@ -129,6 +147,9 @@ static void *receive(void *unused) {
             if (surface) {
                 pthread_mutex_lock(&lock);
                 keep(message.post.number, surface);
+                for (int i = 0; i < MOST_MISSED; i++)
+                    if (missed[i] == message.post.number)
+                        missed[i] = 0;
                 pthread_cond_broadcast(&arrived);
                 pthread_mutex_unlock(&lock);
             }
@@ -223,8 +244,13 @@ IOSurfaceRef SURFACES_NAME(surfaces_open)(uint32_t number) {
             }
         }
         double left = until - now();
-        if (found || left <= 0)
+        if (found || was_missed(number))
             break;
+        if (left <= 0) {
+            missed[missed_next] = number;
+            missed_next = (missed_next + 1) % MOST_MISSED;
+            break;
+        }
         struct timeval tv;
         gettimeofday(&tv, NULL);
         double at = tv.tv_sec + tv.tv_usec / 1e6 + left;
