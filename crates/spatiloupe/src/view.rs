@@ -557,7 +557,7 @@ impl View {
             if let Some(renderer) = object.renderer.as_mut() {
                 let canvas = (part.w.round() as u32, part.h.round() as u32);
                 let texture = renderer.draw(gl, canvas, &object.orbit, eye, |gl| {
-                    p.begin(gl, canvas, canvas.0 as f32 / logical.0, theme::GROUND);
+                    p.begin(gl, canvas, canvas.0 as f32 / logical.0, theme::ground());
                     look::backdrop(p, gl);
                     p.end(gl);
                 });
@@ -572,7 +572,7 @@ impl View {
         let all = p.bounds();
         match drawn_object {
             // Drawn by GL, foot first: turned the right way up here.
-            Some(texture) => p.image(gl, texture, all, [0.0, 1.0, 1.0, 0.0], 0.0, theme::INK, true),
+            Some(texture) => p.image(gl, texture, all, [0.0, 1.0, 1.0, 0.0], 0.0, [1.0, 1.0, 1.0, 1.0], true),
             // A picture is on nothing: where it does not fill the window, the room shows through.
             None if self.see_through() => {}
             None => look::backdrop(p, gl),
@@ -580,7 +580,7 @@ impl View {
         let chrome = self.chrome();
         match &mut self.doc {
             Doc::Loading(since) => look::waiting(p, gl, all, *since),
-            Doc::Failed(why) => look::message(p, gl, all.inset(120.0), why, look::TROUBLE),
+            Doc::Failed(why) => look::message(p, gl, all.inset(120.0), why, look::trouble()),
             Doc::Picture(shown) => {
                 if shown.texture.is_none() {
                     shown.texture = upload(gl, &shown.picture.rgba, shown.picture.width, shown.picture.height).ok();
@@ -603,7 +603,7 @@ impl View {
                     p.clip(gl, all);
                     // A picture with see-through parts is shown on a checkerboard-free dark
                     // ground: the backdrop already is one.
-                    p.image(gl, which, at, uv, if shown.zoom.is_none() { 6.0 } else { 0.0 }, theme::INK, false);
+                    p.image(gl, which, at, uv, if shown.zoom.is_none() { 6.0 } else { 0.0 }, [1.0, 1.0, 1.0, 1.0], false);
                     p.unclip(gl);
                 }
             }
@@ -674,11 +674,11 @@ impl View {
             self.layout.draw_icon(p, gl, right, if shown.eyes().is_stereo() { Icon::Cube } else { Icon::Eye }, &label);
         }
         let place_rect = Rect { x: right.x - place_w - 22.0, w: place_w, ..inner };
-        p.label(gl, &place, place_rect, theme::DETAIL_EM, ink(theme::INK_HINT), 1.0);
+        p.label(gl, &place, place_rect, theme::DETAIL_EM, ink(theme::ink_hint()), 1.0);
         let words = Rect { w: (place_rect.x - inner.x - 20.0).max(0.0), ..inner };
-        let taken = p.label(gl, &name, words, theme::ROW_EM, ink(theme::INK), 0.0);
+        let taken = p.label(gl, &name, words, theme::ROW_EM, ink(theme::ink()), 0.0);
         let after = Rect { x: words.x + taken + 22.0, w: (words.w - taken - 22.0).max(0.0), y: words.y + 2.0, ..words };
-        p.label(gl, &detail, after, theme::DETAIL_EM * 0.95, ink(theme::INK_HINT), 0.0);
+        p.label(gl, &detail, after, theme::DETAIL_EM * 0.95, ink(theme::ink_hint()), 0.0);
         look::rule(p, gl, Rect::new(bar.x + 22.0, bar.bottom() - 2.0, bar.w - 44.0, 2.0));
 
         // The folder's other files, along the foot.
@@ -710,15 +710,15 @@ impl View {
                     break;
                 }
                 let line = inner.take_top(24.0);
-                p.label(gl, &what.to_uppercase(), line, theme::FOOTER_EM * 0.82, theme::INK_HINT, 0.0);
+                p.label(gl, &what.to_uppercase(), line, theme::FOOTER_EM * 0.82, theme::ink_hint(), 0.0);
                 let line = inner.take_top(34.0);
-                p.label(gl, &value, line, theme::DETAIL_EM, theme::INK_DETAIL, 0.0);
+                p.label(gl, &value, line, theme::DETAIL_EM, theme::ink_detail(), 0.0);
                 inner.take_top(6.0);
             }
         }
         if let Some(trouble) = &self.trouble {
             let line = Rect::new(all.x + 40.0, all.bottom() - 60.0, all.w - 80.0, 40.0);
-            p.label(gl, trouble, line, theme::FOOTER_EM, look::TROUBLE, 0.5);
+            p.label(gl, trouble, line, theme::FOOTER_EM, look::trouble(), 0.5);
         }
     }
 
@@ -1220,7 +1220,7 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect) {
         }
         p.glow(gl, rect, 4.0, [0.0, 0.0, 0.0, 0.5], 28.0);
         match paper.drawn.get(&index) {
-            Some((texture, _)) => p.image(gl, *texture, rect, [0.0, 0.0, 1.0, 1.0], 4.0, theme::INK, true),
+            Some((texture, _)) => p.image(gl, *texture, rect, [0.0, 0.0, 1.0, 1.0], 4.0, [1.0, 1.0, 1.0, 1.0], true),
             None => p.fill(gl, rect, 4.0, [0.92, 0.92, 0.94, 1.0]),
         }
         // What a search found on this page, washed in the room's teal.
@@ -1268,7 +1268,7 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect) {
         };
         let count_w = p.measure(gl, &count_text, theme::DETAIL_EM, 8192.0).0;
         field.draw(p, gl, Rect { w: inner.w - count_w - 20.0, ..inner });
-        p.label(gl, &count_text, Rect { x: inner.right() - count_w, w: count_w, ..inner }, theme::DETAIL_EM, theme::INK_HINT, 1.0);
+        p.label(gl, &count_text, Rect { x: inner.right() - count_w, w: count_w, ..inner }, theme::DETAIL_EM, theme::ink_hint(), 1.0);
     }
     if let Some(field) = paper.page_field.as_mut() {
         let rect = Rect::new(all.x + (all.w - 420.0) * 0.5, all.y + 24.0 + theme::ROW_HEIGHT + 40.0, 420.0, Field::HEIGHT + 24.0);
@@ -1277,7 +1277,7 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect) {
         let of = format!("of {}", paper.pages.len());
         let of_w = p.measure(gl, &of, theme::DETAIL_EM, 8192.0).0;
         field.draw(p, gl, Rect { w: inner.w - of_w - 20.0, ..inner });
-        p.label(gl, &of, Rect { x: inner.right() - of_w, w: of_w, ..inner }, theme::DETAIL_EM, theme::INK_HINT, 1.0);
+        p.label(gl, &of, Rect { x: inner.right() - of_w, w: of_w, ..inner }, theme::DETAIL_EM, theme::ink_hint(), 1.0);
     }
     if let Some(list) = paper.contents.as_mut() {
         let rect = Rect::new(all.x + 28.0, all.y + 24.0 + theme::ROW_HEIGHT + 42.0, 560.0, all.h - theme::ROW_HEIGHT - 110.0);

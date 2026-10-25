@@ -141,6 +141,9 @@ pub struct Modifiers {
 pub enum Event {
     /// The wearer went between one picture and two.
     Mode(Mode),
+    /// The platform went between dark and light ([`ui::theme::dark`] already says which):
+    /// whatever is drawn in the theme's colours is to be drawn again.
+    Look { dark: bool },
     /// The wearer's hands did something -- a pad, a mouse, a button, a key -- and not the head:
     /// what controls an application fades itself are to wake on. Pointer motion over a window
     /// is not this, since the pointer sweeps with the head.
@@ -177,7 +180,7 @@ impl Event {
     /// The window an event is about, if it is about one.
     pub fn window(&self) -> Option<WindowId> {
         match self {
-            Event::Mode(_) | Event::Hands => None,
+            Event::Mode(_) | Event::Hands | Event::Look { .. } => None,
             Event::Ready { window, .. }
             | Event::Resized { window, .. }
             | Event::CloseRequested { window }
@@ -205,6 +208,8 @@ pub struct App {
     windows: HashMap<WindowId, ((u32, u32), Option<gl::Target>)>,
     /// Files whose being readable is a reason to wake: see [`App::watch`].
     watched: Vec<i32>,
+    /// When the platform's dark or light was last looked at.
+    look_checked: Instant,
 }
 
 impl App {
@@ -223,7 +228,8 @@ impl App {
             app_id.to_string()
         };
         std::env::set_var("SPATIAND_APP_ID", &app_id);
-        let mut app = App { app_id, wire, queue, gl: None, windows: HashMap::new(), watched: Vec::new() };
+        let mut app = App { app_id, wire, queue, gl: None, windows: HashMap::new(), watched: Vec::new(), look_checked: Instant::now() };
+        ui::theme::set_dark(look::platform_dark());
         // Once round, so the mode is the compositor's word and not this crate's guess by the
         // time anything is decided on it.
         app.queue.roundtrip(&mut app.wire).map_err(|e| format!("lost Spatiand: {e}"))?;
@@ -432,9 +438,90 @@ impl App {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
+        // The platform's dark or light is looked at each second, as a page's is.
+        let look_due = self.look_checked + look::EVERY;
+        let wake = Some(wake.map_or(look_due, |at| at.min(look_due)));
         wire::pump(&mut self.wire, &mut self.queue, wake.map(|at| at.saturating_duration_since(now)), &self.watched)?;
         self.wire.repeat(Instant::now());
-        Ok(std::mem::take(&mut self.wire.events))
+        let mut events = std::mem::take(&mut self.wire.events);
+        if self.look_checked.elapsed() >= look::EVERY {
+            self.look_checked = Instant::now();
+            let dark = look::platform_dark();
+            if ui::theme::set_dark(dark) {
+                events.push(Event::Look { dark });
+            }
+        }
+        Ok(events)
+    }
+}
+
+/// Whether the platform is set to dark: a Mac's Appearance; on Linux, the desktop's colour
+/// scheme where there is one (KDE's, as on the Deck's desktop); dark where there is none, as in
+/// the Deck's game mode and on the Beam Pro, which is the room's own look.
+mod look {
+    pub const EVERY: std::time::Duration = std::time::Duration::from_secs(1);
+
+    /// `SPATIAND_LOOK=light` or `dark` holds it so, whatever the platform says.
+    pub fn platform_dark() -> bool {
+        match std::env::var("SPATIAND_LOOK").as_deref() {
+            Ok("light") => false,
+            Ok("dark") => true,
+            _ => platform::dark(),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    mod platform {
+        use std::ffi::{c_char, c_void, CStr};
+
+        #[link(name = "CoreFoundation", kind = "framework")]
+        extern "C" {
+            static kCFPreferencesAnyApplication: *const c_void;
+            fn CFStringCreateWithCString(alloc: *const c_void, s: *const c_char, encoding: u32) -> *const c_void;
+            fn CFPreferencesAppSynchronize(app: *const c_void) -> u8;
+            fn CFPreferencesCopyAppValue(key: *const c_void, app: *const c_void) -> *const c_void;
+            fn CFStringGetCString(s: *const c_void, buffer: *mut c_char, size: isize, encoding: u32) -> u8;
+            fn CFGetTypeID(cf: *const c_void) -> usize;
+            fn CFStringGetTypeID() -> usize;
+            fn CFRelease(cf: *const c_void);
+        }
+        const UTF8: u32 = 0x0800_0100;
+
+        pub fn dark() -> bool {
+            unsafe {
+                let key = CFStringCreateWithCString(std::ptr::null(), c"AppleInterfaceStyle".as_ptr(), UTF8);
+                if key.is_null() {
+                    return true;
+                }
+                // Another process (System Settings) changes it: read again, not this one's copy.
+                CFPreferencesAppSynchronize(kCFPreferencesAnyApplication);
+                let value = CFPreferencesCopyAppValue(key, kCFPreferencesAnyApplication);
+                CFRelease(key);
+                // No value is light: a Mac says only "Dark".
+                if value.is_null() {
+                    return false;
+                }
+                let mut text = [0 as c_char; 16];
+                let dark = CFGetTypeID(value) == CFStringGetTypeID()
+                    && CFStringGetCString(value, text.as_mut_ptr(), text.len() as isize, UTF8) != 0
+                    && CStr::from_ptr(text.as_ptr()).to_bytes().eq_ignore_ascii_case(b"dark");
+                CFRelease(value);
+                dark
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    mod platform {
+        pub fn dark() -> bool {
+            let config = std::env::var_os("XDG_CONFIG_HOME")
+                .map(std::path::PathBuf::from)
+                .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
+            let Some(text) = config.and_then(|c| std::fs::read_to_string(c.join("kdeglobals")).ok()) else { return true };
+            // KDE's scheme by its name (BreezeDark, BreezeLight, ...): dark unless it says light.
+            let scheme = text.lines().find_map(|l| l.trim().strip_prefix("ColorScheme=")).unwrap_or("");
+            !scheme.to_ascii_lowercase().contains("light")
+        }
     }
 }
 

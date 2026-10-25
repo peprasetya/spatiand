@@ -286,7 +286,7 @@ impl Folder {
             top.take_left(22.0);
         }
         let name = crate::place::name(&self.path);
-        let taken = p.label(gl, &name, top, theme::TITLE_EM * 0.9, theme::INK, 0.0);
+        let taken = p.label(gl, &name, top, theme::TITLE_EM * 0.9, theme::ink(), 0.0);
         let count = match self.state {
             State::Ready => {
                 let files = self.entries.iter().filter(|e| e.kind != Kind::Folder).count();
@@ -295,15 +295,15 @@ impl Folder {
             _ => String::new(),
         };
         let beside = Rect { x: top.x + taken + 20.0, w: (top.w - taken - 20.0).max(0.0), y: top.y + 5.0, ..top };
-        p.label(gl, &format!("SpatiLoupe   {count}"), beside, theme::DETAIL_EM, theme::INK_HINT, 0.0);
+        p.label(gl, &format!("SpatiLoupe   {count}"), beside, theme::DETAIL_EM, theme::ink_hint(), 0.0);
         all.take_top(12.0);
         look::rule(p, gl, all.take_top(2.0));
         all.take_top(16.0);
         look::foot(p, gl, &mut all, &self.path.display().to_string(), None);
         match &self.state {
             State::Loading(since) => look::waiting(p, gl, all, *since),
-            State::Failed(why) => look::message(p, gl, all, why, look::TROUBLE),
-            State::Ready if self.tiles.is_empty() => look::message(p, gl, all, "No pictures, documents or objects here.", theme::INK_DETAIL),
+            State::Failed(why) => look::message(p, gl, all, why, look::trouble()),
+            State::Ready if self.tiles.is_empty() => look::message(p, gl, all, "No pictures, documents or objects here.", theme::ink_detail()),
             State::Ready => self.grid.draw(p, gl, all, &self.tiles),
         }
     }

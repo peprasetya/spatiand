@@ -234,6 +234,8 @@ impl Loupe {
                 return true;
             }
             Event::Mode(mode) => log::info!("the wearer now sees {mode:?}"),
+            // Dark or light: drawn again in the theme's new colours.
+            Event::Look { .. } => self.dirty = true,
             Event::Hands => {
                 if let Some(view) = self.view.as_mut() {
                     view.hands();
@@ -330,7 +332,7 @@ impl Loupe {
                     view::TILES.with(|t| *t.borrow_mut() = folder.file_tiles());
                     view.settle_turns(gl);
                     // A picture is shown on nothing; the room is its ground.
-                    let ground = if view.see_through() { [0.0, 0.0, 0.0, 0.0] } else { theme::GROUND };
+                    let ground = if view.see_through() { [0.0, 0.0, 0.0, 0.0] } else { theme::ground() };
                     p.begin(gl, size, 1.0, ground);
                     if two {
                         let half = size.0 as f32 * 0.5;
@@ -341,7 +343,7 @@ impl Loupe {
                     }
                 }
                 None => {
-                    p.begin(gl, size, 1.0, theme::GROUND);
+                    p.begin(gl, size, 1.0, theme::ground());
                     look::backdrop(p, gl);
                     folder.draw(p, gl);
                     p.end(gl);

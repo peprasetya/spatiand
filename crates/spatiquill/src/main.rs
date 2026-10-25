@@ -461,6 +461,11 @@ impl Quill {
     }
 
     fn handle(&mut self, event: Event) -> bool {
+        // Dark or light: every window drawn again in the theme's new colours.
+        if let Event::Look { .. } = event {
+            self.wins.iter_mut().for_each(|w| w.dirty = true);
+            return true;
+        }
         let Some(id) = event.window() else { return true };
         let Some(w) = self.win_index(id) else { return true };
         self.wins[w].dirty = true;
@@ -836,7 +841,7 @@ impl Quill {
             win.dirty = false;
             self.app.draw(id, |gl, picture| {
                 let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
-                p.begin(gl, picture, picture.1 as f32 / size.1 as f32, theme::GROUND);
+                p.begin(gl, picture, picture.1 as f32 / size.1 as f32, theme::ground());
                 look::backdrop(p, gl);
                 let all = p.bounds();
                 // The terminal's own ground, exactly the colour a cell with no colour of its
@@ -862,23 +867,23 @@ impl Quill {
                         let pane = Rect::new(all.w * 0.5 - 360.0, all.h * 0.5 - 110.0, 720.0, 220.0);
                         look::glass(p, gl, pane, 24.0, 1.0);
                         let mut inner = pane.inset(28.0);
-                        p.label(gl, "This tab stopped", inner.take_top(52.0), theme::TITLE_EM * 0.8, look::TROUBLE, 0.0);
-                        p.label(gl, why, inner.take_top(44.0), theme::DETAIL_EM, theme::INK_DETAIL, 0.0);
+                        p.label(gl, "This tab stopped", inner.take_top(52.0), theme::TITLE_EM * 0.8, look::trouble(), 0.0);
+                        p.label(gl, why, inner.take_top(44.0), theme::DETAIL_EM, theme::ink_detail(), 0.0);
                         inner.take_top(16.0);
-                        p.label(gl, "Enter starts a new shell here.    The other tabs are as they were.", inner.take_top(36.0), theme::FOOTER_EM, theme::INK_HINT, 0.0);
+                        p.label(gl, "Enter starts a new shell here.    The other tabs are as they were.", inner.take_top(36.0), theme::FOOTER_EM, theme::ink_hint(), 0.0);
                     }
                     if tab.screen.scrolled > 0 && tab.screen.history > 0 {
                         let track = Rect::new(all.w - 12.0, area.y, 5.0, area.h);
-                        p.fill(gl, track, 2.5, theme::SCROLL_TRACK);
+                        p.fill(gl, track, 2.5, theme::scroll_track());
                         let total = tab.screen.history as f32 + tab.screen.rows as f32;
                         let h = (track.h * tab.screen.rows as f32 / total).max(30.0);
                         let top = track.y + (track.h - h) * (1.0 - tab.screen.scrolled as f32 / tab.screen.history as f32);
-                        p.fill(gl, Rect { y: top, h, ..track }, 2.5, theme::SCROLL_THUMB);
+                        p.fill(gl, Rect { y: top, h, ..track }, 2.5, theme::scroll_thumb());
                         let note = format!("{} lines up    Shift-End goes to the foot", tab.screen.scrolled);
                         let width = p.measure(gl, &note, theme::FOOTER_EM * 0.85, 8192.0).0 + 36.0;
                         let pill = Rect::new(all.w - width - 30.0, all.h - 64.0, width, 40.0);
                         look::glass(p, gl, pill, 20.0, 1.0);
-                        p.label(gl, &note, pill, theme::FOOTER_EM * 0.85, theme::INK_DETAIL, 0.5);
+                        p.label(gl, &note, pill, theme::FOOTER_EM * 0.85, theme::ink_detail(), 0.5);
                     }
                 }
                 if let Some(drag) = win.drag.as_ref().filter(|d| d.torn) {
@@ -886,12 +891,12 @@ impl Quill {
                     let ghost = Rect::new(drag.at.0 - 140.0, drag.at.1 - 26.0, 280.0, 52.0);
                     p.glow(gl, ghost, 26.0, [0.30, 0.62, 1.0, 0.45], 26.0);
                     look::glass(p, gl, ghost, 26.0, 1.0);
-                    p.label(gl, &label, ghost.inset(16.0), theme::ROW_EM * 0.8, theme::INK, 0.5);
+                    p.label(gl, &label, ghost.inset(16.0), theme::ROW_EM * 0.8, theme::ink(), 0.5);
                     let hint = if win.tabs.len() == 1 && true { "Let go over another SpatiQuill window to move it there" } else { "Let go to open it in a window of its own, or over another SpatiQuill window" };
                     let width = p.measure(gl, hint, theme::FOOTER_EM * 0.85, 8192.0).0 + 36.0;
                     let pill = Rect::new((all.w - width) * 0.5, all.h - 64.0, width, 40.0);
                     look::glass(p, gl, pill, 20.0, 1.0);
-                    p.label(gl, hint, pill, theme::FOOTER_EM * 0.85, theme::INK_DETAIL, 0.5);
+                    p.label(gl, hint, pill, theme::FOOTER_EM * 0.85, theme::ink_detail(), 0.5);
                 }
                 p.end(gl);
             })?;
@@ -988,34 +993,34 @@ fn draw_bar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, tabs: &HashMa
         };
         if active {
             p.glow(gl, rect, 14.0, [0.30, 0.62, 1.0, if win.focused { 0.18 } else { 0.06 }], 16.0);
-            p.gradient(gl, rect, 14.0, [1.0, 1.0, 1.0, 0.11], [1.0, 1.0, 1.0, 0.05]);
+            p.gradient(gl, rect, 14.0, theme::wash(0.11), theme::wash(0.05));
             look::rule(p, gl, Rect::new(rect.x + 16.0, rect.bottom() - 3.0, rect.w - 32.0, 2.5));
         } else if hover {
-            p.fill(gl, rect, 14.0, theme::HOVER);
+            p.fill(gl, rect, 14.0, theme::hover());
         }
         // A mark for how the tab is: running, rung, stopped.
         let colour = match tab.state {
-            TabState::Crashed(_) => look::TROUBLE,
+            TabState::Crashed(_) => look::trouble(),
             TabState::Running if tab.rang.is_some_and(|t| t.elapsed() < Duration::from_secs(3)) => [1.0, 0.85, 0.4, 1.0],
-            TabState::Running => if active { look::TEAL } else { theme::INK_HINT },
+            TabState::Running => if active { look::TEAL } else { theme::ink_hint() },
         };
         p.fill(gl, Rect::new(rect.x + 16.0, rect.y + rect.h * 0.5 - 4.0, 8.0, 8.0), 4.0, colour);
         let close = Rect::new(rect.right() - 38.0, rect.y + rect.h * 0.5 - 13.0, 26.0, 26.0);
         let label = Rect { x: rect.x + 34.0, w: rect.w - 34.0 - if active || hover { 44.0 } else { 14.0 }, ..rect };
-        p.label(gl, &tab.label(), label, theme::ROW_EM * 0.72, if active { theme::INK } else { theme::INK_ROW }, 0.0);
+        p.label(gl, &tab.label(), label, theme::ROW_EM * 0.72, if active { theme::ink() } else { theme::ink_row() }, 0.0);
         if active || hover {
             if win.hover == Hover::Close(id) {
-                p.fill(gl, close, 13.0, [1.0, 1.0, 1.0, 0.14]);
+                p.fill(gl, close, 13.0, theme::wash(0.14));
             }
-            spatiand_app::ui::draw_icon(p, gl, spatiand_app::ui::Icon::Close, close.inset(4.0), theme::INK_DETAIL);
+            spatiand_app::ui::draw_icon(p, gl, spatiand_app::ui::Icon::Close, close.inset(4.0), theme::ink_detail());
         }
         win.placed.push((id, rect, close));
     }
     win.plus = Rect::new(x.min(bar.right() - plus_w), bar.y + (bar.h - 44.0) * 0.5, 44.0, 44.0);
     if win.hover == Hover::Plus {
-        p.fill(gl, win.plus, 22.0, theme::HOVER);
+        p.fill(gl, win.plus, 22.0, theme::hover());
     }
-    spatiand_app::ui::draw_icon(p, gl, spatiand_app::ui::Icon::Plus, win.plus.inset(10.0), theme::INK_DETAIL);
+    spatiand_app::ui::draw_icon(p, gl, spatiand_app::ui::Icon::Plus, win.plus.inset(10.0), theme::ink_detail());
 }
 
 fn main() {

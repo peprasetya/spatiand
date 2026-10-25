@@ -95,7 +95,7 @@ fn main() -> Result<(), String> {
                     tile.picture = p.texture(gl, &rgba, w, h).ok();
                 }
             }
-            p.begin(gl, size, 1.0, theme::GROUND);
+            p.begin(gl, size, 1.0, theme::ground());
             let mut all = p.bounds().inset(theme::PAD);
             let mut top = all.take_top(Tabs::HEIGHT);
             let pressed = top.take_left(top.w - 620.0);
@@ -107,7 +107,7 @@ fn main() -> Result<(), String> {
             all.take_top(18.0);
             let foot = all.take_bottom(theme::FOOTER_EM * 1.6);
             let said = format!("{}   \u{2022}   {} x {}", if mode == Mode::Stereo { "two eyes" } else { "one picture" }, size.0, size.1);
-            p.label(gl, &said, foot, theme::FOOTER_EM, theme::INK_HINT, 0.0);
+            p.label(gl, &said, foot, theme::FOOTER_EM, theme::ink_hint(), 0.0);
             if tabs.active == 0 {
                 list.draw(p, gl, all, &rows);
             } else {

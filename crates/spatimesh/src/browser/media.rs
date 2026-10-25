@@ -822,7 +822,12 @@ impl Media {
     }
 
     /// A film's own controls, for an element that asked for the browser's: SpatiMesh's.
+    /// Over the film, so in the dark colours whatever the platform is set to.
     fn draw_controls(&mut self, p: &mut Painter, gl: &Gl, key: &Key, boxed: Rect, page: Rect, zoom: f32) {
+        theme::always_dark(|| self.draw_controls_over_film(p, gl, key, boxed, page, zoom))
+    }
+
+    fn draw_controls_over_film(&mut self, p: &mut Painter, gl: &Gl, key: &Key, boxed: Rect, page: Rect, zoom: f32) {
         let Some(item) = self.items.get(key) else { return };
         let lingering = item.hovered.is_some_and(|t| t.elapsed() < CONTROLS_LINGER);
         if item.playing && !lingering && item.place.as_ref().is_some_and(|pl| pl.video) {
@@ -836,7 +841,7 @@ impl Media {
         let h = bar.h;
         // Play or pause.
         let button = Rect::new(bar.x + h * 0.15, bar.y + h * 0.15, h * 0.7, h * 0.7);
-        let ink = theme::INK;
+        let ink = theme::ink();
         if item.playing {
             let w = button.w * 0.22;
             p.fill(gl, Rect::new(button.x + button.w * 0.22, button.y + button.h * 0.18, w, button.h * 0.64), 1.0, ink);
@@ -860,7 +865,7 @@ impl Media {
         p.fill(gl, track, track.h * 0.5, [1.0, 1.0, 1.0, 0.3]);
         if duration > 0.0 {
             let done = Rect { w: track.w * (at / duration).clamp(0.0, 1.0) as f32, ..track };
-            p.fill(gl, done, track.h * 0.5, theme::MARK);
+            p.fill(gl, done, track.h * 0.5, theme::mark());
         }
         // Sound on or off.
         let speaker = Rect::new(bar.right() - h * 0.95, bar.y + h * 0.3, h * 0.4, h * 0.4);

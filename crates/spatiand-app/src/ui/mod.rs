@@ -93,25 +93,57 @@ pub mod theme {
     use super::Color;
     pub use spatiand_render::panel::{CARD_RADIUS, DETAIL_EM, FOOTER_EM, ROW_EM, ROW_HEIGHT, ROW_INSET, ROW_RADIUS, TITLE_EM};
 
+    /// Whether the platform is set to dark (the default) or light: told by the application's
+    /// loop (`crate::App::wait`), which looks each second, as a page's look follows it too.
+    static LIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    pub fn dark() -> bool {
+        !LIGHT.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Says whether it changed.
+    pub fn set_dark(dark: bool) -> bool {
+        LIGHT.swap(!dark, std::sync::atomic::Ordering::Relaxed) == dark
+    }
+
+    /// Draws with `draw` in the dark colours, whatever the platform is set to: for what is drawn
+    /// over a film or a picture, on a dark scrim, as a player's controls.
+    pub fn always_dark<R>(draw: impl FnOnce() -> R) -> R {
+        let was = LIGHT.swap(false, std::sync::atomic::Ordering::Relaxed);
+        let drawn = draw();
+        LIGHT.store(was, std::sync::atomic::Ordering::Relaxed);
+        drawn
+    }
+
+    fn pick(dark: Color, light: Color) -> Color {
+        if self::dark() { dark } else { light }
+    }
+
+    /// What lies on the ground at `alpha`: white on dark, black on light. For washes, rims and
+    /// faces that are only a little off the ground.
+    pub fn wash(alpha: f32) -> Color {
+        if dark() { [1.0, 1.0, 1.0, alpha] } else { [0.0, 0.0, 0.0, alpha * 0.75] }
+    }
+
     /// What a window is cleared to: the card's ground, opaque, since a window has no room
     /// behind it to be seen through to.
-    pub const GROUND: Color = [0.043, 0.05, 0.072, 1.0];
+    pub fn ground() -> Color { pick([0.043, 0.05, 0.072, 1.0], [0.955, 0.961, 0.973, 1.0]) }
     /// A surface raised off the ground: a field, a button, a tile with no picture yet.
-    pub const RAISED: Color = [1.0, 1.0, 1.0, 0.06];
-    pub const RIM: Color = [0.55, 0.70, 1.0, 0.16];
-    pub const SELECTED: Color = [0.42, 0.68, 1.0, 0.20];
+    pub fn raised() -> Color { pick([1.0, 1.0, 1.0, 0.06], [0.0, 0.0, 0.0, 0.05]) }
+    pub fn rim() -> Color { pick([0.55, 0.70, 1.0, 0.16], [0.18, 0.32, 0.65, 0.20]) }
+    pub fn selected() -> Color { pick([0.42, 0.68, 1.0, 0.20], [0.16, 0.44, 0.95, 0.16]) }
     /// Selected, in a widget the keys are not going to.
-    pub const SELECTED_AWAY: Color = [1.0, 1.0, 1.0, 0.08];
-    pub const HOVER: Color = [1.0, 1.0, 1.0, 0.05];
-    pub const MARK: Color = [0.45, 0.72, 1.0, 1.0];
-    pub const INK: Color = [1.0, 1.0, 1.0, 1.0];
-    pub const INK_ROW: Color = [0.78, 0.82, 0.90, 1.0];
-    pub const INK_TRAILING: Color = [0.50, 0.70, 1.0, 1.0];
-    pub const INK_DETAIL: Color = [0.70, 0.76, 0.87, 1.0];
-    pub const INK_HINT: Color = [0.50, 0.55, 0.66, 1.0];
-    pub const SEPARATOR: Color = [1.0, 1.0, 1.0, 0.10];
-    pub const SCROLL_TRACK: Color = [1.0, 1.0, 1.0, 0.08];
-    pub const SCROLL_THUMB: Color = [0.42, 0.68, 1.0, 0.70];
+    pub fn selected_away() -> Color { pick([1.0, 1.0, 1.0, 0.08], [0.0, 0.0, 0.0, 0.07]) }
+    pub fn hover() -> Color { pick([1.0, 1.0, 1.0, 0.05], [0.0, 0.0, 0.0, 0.04]) }
+    pub fn mark() -> Color { pick([0.45, 0.72, 1.0, 1.0], [0.10, 0.40, 0.88, 1.0]) }
+    pub fn ink() -> Color { pick([1.0, 1.0, 1.0, 1.0], [0.06, 0.07, 0.10, 1.0]) }
+    pub fn ink_row() -> Color { pick([0.78, 0.82, 0.90, 1.0], [0.16, 0.18, 0.24, 1.0]) }
+    pub fn ink_trailing() -> Color { pick([0.50, 0.70, 1.0, 1.0], [0.10, 0.36, 0.82, 1.0]) }
+    pub fn ink_detail() -> Color { pick([0.70, 0.76, 0.87, 1.0], [0.28, 0.32, 0.40, 1.0]) }
+    pub fn ink_hint() -> Color { pick([0.50, 0.55, 0.66, 1.0], [0.44, 0.48, 0.56, 1.0]) }
+    pub fn separator() -> Color { wash(0.10) }
+    pub fn scroll_track() -> Color { wash(0.08) }
+    pub fn scroll_thumb() -> Color { pick([0.42, 0.68, 1.0, 0.70], [0.16, 0.44, 0.95, 0.70]) }
 
     /// The gap between rows, and between tiles.
     pub const ROW_GAP: f32 = 4.0;

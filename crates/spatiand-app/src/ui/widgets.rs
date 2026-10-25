@@ -88,26 +88,26 @@ impl List {
             if row.heading {
                 // Sitting low in its row, so it reads as belonging to what is under it.
                 let low = Rect { y: at.y + at.h * 0.3, h: at.h * 0.7, ..text };
-                p.label(gl, &row.label, low, theme::FOOTER_EM, theme::INK_HINT, 0.0);
+                p.label(gl, &row.label, low, theme::FOOTER_EM, theme::ink_hint(), 0.0);
                 continue;
             }
             let selected = index == self.cursor;
             if selected {
-                let wash = if self.focused { theme::SELECTED } else { theme::SELECTED_AWAY };
+                let wash = if self.focused { theme::selected() } else { theme::selected_away() };
                 p.fill(gl, at, theme::ROW_RADIUS, wash);
             } else if self.hover == Some(index) {
-                p.fill(gl, at, theme::ROW_RADIUS, theme::HOVER);
+                p.fill(gl, at, theme::ROW_RADIUS, theme::hover());
             }
             let mut label = text;
             if let Some(trailing) = row.trailing.as_deref() {
-                let taken = p.label(gl, trailing, text, theme::ROW_EM * 0.8, theme::INK_TRAILING, 1.0);
+                let taken = p.label(gl, trailing, text, theme::ROW_EM * 0.8, theme::ink_trailing(), 1.0);
                 label.w = (label.w - taken - 24.0).max(0.0);
             }
-            let ink = if selected { theme::INK } else { theme::INK_ROW };
+            let ink = if selected { theme::ink() } else { theme::ink_row() };
             if let Some(icon) = row.icon {
                 let side = theme::ROW_EM * 0.95;
                 let mark = Rect::new(label.x, at.y + (at.h - side) * 0.5, side, side);
-                super::icons::draw(p, gl, icon, mark, if selected { theme::MARK } else { theme::INK_DETAIL });
+                super::icons::draw(p, gl, icon, mark, if selected { theme::mark() } else { theme::ink_detail() });
                 label.x += side + 18.0;
                 label.w = (label.w - side - 18.0).max(0.0);
             }
@@ -115,11 +115,11 @@ impl List {
         }
         if scrolls && visible > 0 {
             let track = Rect::new(rect.right() - theme::SCROLL_WIDTH, rect.y, theme::SCROLL_WIDTH, visible as f32 * per_row - theme::ROW_GAP);
-            p.fill(gl, track, theme::SCROLL_WIDTH * 0.5, theme::SCROLL_TRACK);
+            p.fill(gl, track, theme::SCROLL_WIDTH * 0.5, theme::scroll_track());
             let thumb = (track.h * visible as f32 / rows.len() as f32).max(theme::SCROLL_WIDTH * 4.0).min(track.h);
             let progress = self.first as f32 / (rows.len() - visible) as f32;
             let thumb = Rect { y: track.y + (track.h - thumb) * progress, h: thumb, ..track };
-            p.fill(gl, thumb, theme::SCROLL_WIDTH * 0.5, theme::SCROLL_THUMB);
+            p.fill(gl, thumb, theme::SCROLL_WIDTH * 0.5, theme::scroll_thumb());
         }
     }
 
@@ -320,18 +320,18 @@ fn draw_tile(p: &mut Painter, gl: &Gl, cell: Rect, picture: f32, tile: &Tile, se
     let frame = Rect { h: picture, ..cell };
     if selected && focused {
         p.glow(gl, frame, theme::ROW_RADIUS, [0.30, 0.62, 1.0, 0.42], 22.0);
-        p.fill(gl, frame.inset(-3.0), theme::ROW_RADIUS + 3.0, theme::MARK);
+        p.fill(gl, frame.inset(-3.0), theme::ROW_RADIUS + 3.0, theme::mark());
     } else if selected {
         p.fill(gl, frame.inset(-2.0), theme::ROW_RADIUS + 2.0, [1.0, 1.0, 1.0, 0.28]);
     } else if hover {
         p.fill(gl, frame.inset(-2.0), theme::ROW_RADIUS + 2.0, [1.0, 1.0, 1.0, 0.16]);
     }
     match tile.picture {
-        Some(texture) => p.cover(gl, texture, frame, theme::ROW_RADIUS, theme::INK),
+        Some(texture) => p.cover(gl, texture, frame, theme::ROW_RADIUS, theme::ink()),
         None => {
             // Its name, large, where its picture will be: a tile that is still loading, or
             // has no picture, says what it is rather than being a grey box among grey boxes.
-            p.fill(gl, frame, theme::ROW_RADIUS, theme::GROUND);
+            p.fill(gl, frame, theme::ROW_RADIUS, theme::ground());
             let (top, foot) = tile.tint.unwrap_or(([0.36, 0.48, 0.78, 0.26], [0.16, 0.20, 0.36, 0.14]));
             p.gradient(gl, frame, theme::ROW_RADIUS, top, foot);
             let initial: String = match tile.glyph.as_deref() {
@@ -355,13 +355,13 @@ fn draw_tile(p: &mut Painter, gl: &Gl, cell: Rect, picture: f32, tile: &Tile, se
         p.gradient(gl, Rect { y: frame.bottom() - 46.0, h: 46.0, ..frame }, theme::ROW_RADIUS, [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.6]);
         let bar = Rect::new(frame.x + 12.0, frame.bottom() - 15.0, frame.w - 24.0, 5.0);
         p.fill(gl, bar, 2.5, [1.0, 1.0, 1.0, 0.25]);
-        p.fill(gl, Rect { w: bar.w * progress.min(1.0), ..bar }, 2.5, theme::MARK);
+        p.fill(gl, Rect { w: bar.w * progress.min(1.0), ..bar }, 2.5, theme::mark());
     }
     let name = Rect::new(cell.x + 4.0, frame.bottom() + 10.0, cell.w - 8.0, CAPTION * 1.4);
-    p.label(gl, &tile.title, name, CAPTION, if selected { theme::INK } else { theme::INK_ROW }, 0.0);
+    p.label(gl, &tile.title, name, CAPTION, if selected { theme::ink() } else { theme::ink_row() }, 0.0);
     if let Some(detail) = tile.detail.as_deref() {
         let under = Rect { y: name.bottom(), h: CAPTION_DETAIL * 1.4, ..name };
-        p.label(gl, detail, under, CAPTION_DETAIL, theme::INK_HINT, 0.0);
+        p.label(gl, detail, under, CAPTION_DETAIL, theme::ink_hint(), 0.0);
     }
 }
 
@@ -426,10 +426,10 @@ impl Grid {
         p.unclip(gl);
         if content > rect.h {
             let track = Rect::new(rect.right() - theme::SCROLL_WIDTH, rect.y, theme::SCROLL_WIDTH, rect.h);
-            p.fill(gl, track, theme::SCROLL_WIDTH * 0.5, theme::SCROLL_TRACK);
+            p.fill(gl, track, theme::SCROLL_WIDTH * 0.5, theme::scroll_track());
             let thumb = (track.h * rect.h / content).max(theme::SCROLL_WIDTH * 4.0);
             let progress = self.scroll / (content - rect.h);
-            p.fill(gl, Rect { y: track.y + (track.h - thumb) * progress, h: thumb, ..track }, theme::SCROLL_WIDTH * 0.5, theme::SCROLL_THUMB);
+            p.fill(gl, Rect { y: track.y + (track.h - thumb) * progress, h: thumb, ..track }, theme::SCROLL_WIDTH * 0.5, theme::scroll_thumb());
         }
     }
 
@@ -662,12 +662,12 @@ impl Tabs {
             self.placed.push(at);
             let active = index == self.active;
             if active {
-                let wash = if self.focused { theme::SELECTED } else { theme::SELECTED_AWAY };
+                let wash = if self.focused { theme::selected() } else { theme::selected_away() };
                 p.fill(gl, at, at.h * 0.5, wash);
             } else if self.hover == Some(index) {
-                p.fill(gl, at, at.h * 0.5, theme::HOVER);
+                p.fill(gl, at, at.h * 0.5, theme::hover());
             }
-            let ink = if active { theme::INK } else { theme::INK_ROW };
+            let ink = if active { theme::ink() } else { theme::ink_row() };
             p.label(gl, label, at, em, ink, 0.5);
             x += width + 8.0;
         }
@@ -787,14 +787,14 @@ impl Field {
         self.area = rect;
         let em = self.em.unwrap_or(theme::ROW_EM);
         self.caret = self.caret.min(self.text.chars().count());
-        p.fill(gl, rect, theme::ROW_RADIUS, theme::RAISED);
+        p.fill(gl, rect, theme::ROW_RADIUS, theme::raised());
         if self.focused {
-            p.fill(gl, Rect { y: rect.bottom() - 3.0, h: 3.0, ..rect.inset(theme::ROW_RADIUS * 0.5) }, 1.5, theme::MARK);
+            p.fill(gl, Rect { y: rect.bottom() - 3.0, h: 3.0, ..rect.inset(theme::ROW_RADIUS * 0.5) }, 1.5, theme::mark());
         }
         let text = Rect { x: rect.x + theme::ROW_INSET, w: rect.w - theme::ROW_INSET * 2.0, ..rect };
         let wide = 8192.0 / p.scale();
         if self.text.is_empty() {
-            p.label(gl, &self.hint, text, em, theme::INK_HINT, 0.0);
+            p.label(gl, &self.hint, text, em, theme::ink_hint(), 0.0);
         }
         // What is before the caret decides where the caret is; a field too full to show it
         // all slides left so that the caret is never out of sight.
@@ -813,16 +813,16 @@ impl Field {
             };
             let (a, b) = (width(p, from), width(p, to));
             let wash = Rect::new(text.x + a - slide, rect.y + rect.h * 0.18, (b - a).max(2.0), rect.h * 0.64);
-            p.fill(gl, wash, 2.0, if self.focused { [0.42, 0.68, 1.0, 0.42] } else { theme::SELECTED_AWAY });
+            p.fill(gl, wash, 2.0, if self.focused { [0.42, 0.68, 1.0, 0.42] } else { theme::selected_away() });
         }
         if !self.text.is_empty() {
             let (_, h) = p.measure(gl, &shown, em, wide);
-            p.text(gl, &shown, text.x - slide, text.y + (text.h - h) * 0.5, em, wide, theme::INK);
+            p.text(gl, &shown, text.x - slide, text.y + (text.h - h) * 0.5, em, wide, theme::ink());
         }
         p.unclip(gl);
         if self.focused {
             let bar = Rect::new(text.x + caret - slide + 1.0, rect.y + rect.h * 0.22, 2.0, rect.h * 0.56);
-            p.fill(gl, bar, 1.0, theme::MARK);
+            p.fill(gl, bar, 1.0, theme::mark());
         }
     }
 
@@ -954,16 +954,16 @@ impl Button {
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl, rect: Rect, label: &str) {
         self.area = rect;
         let ground = if self.pressed && self.hover {
-            theme::SELECTED
+            theme::selected()
         } else if self.focused {
-            theme::SELECTED
+            theme::selected()
         } else if self.hover {
-            [1.0, 1.0, 1.0, 0.11]
+            theme::wash(0.11)
         } else {
-            theme::RAISED
+            theme::raised()
         };
         p.fill(gl, rect, theme::ROW_RADIUS, ground);
-        let ink = if self.focused || self.hover { theme::INK } else { theme::INK_ROW };
+        let ink = if self.focused || self.hover { theme::ink() } else { theme::ink_row() };
         p.label(gl, label, rect, theme::ROW_EM * 0.86, ink, 0.5);
     }
 
@@ -981,18 +981,18 @@ impl Button {
         self.area = rect;
         let lit = self.focused || (self.pressed && self.hover);
         let ground = if lit {
-            theme::SELECTED
+            theme::selected()
         } else if self.hover {
-            [1.0, 1.0, 1.0, 0.11]
+            theme::wash(0.11)
         } else {
-            theme::RAISED
+            theme::raised()
         };
         let radius = if label.is_empty() { rect.h.min(rect.w) * 0.5 } else { theme::ROW_RADIUS };
         if self.hover || lit {
             p.glow(gl, rect, radius, [0.30, 0.62, 1.0, 0.18], 12.0);
         }
         p.fill(gl, rect, radius, ground);
-        let ink = if self.focused || self.hover { theme::INK } else { theme::INK_ROW };
+        let ink = if self.focused || self.hover { theme::ink() } else { theme::ink_row() };
         let side = (theme::ROW_EM * 0.9).min(rect.h * 0.6);
         if label.is_empty() {
             super::icons::draw(p, gl, icon, Rect::new(rect.x + (rect.w - side) * 0.5, rect.y + (rect.h - side) * 0.5, side, side), ink);

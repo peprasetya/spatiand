@@ -420,7 +420,12 @@ impl Playing {
     }
 
     /// Draw whatever needs drawing. Returns whether anything was.
+    /// Over the film, so in the dark colours whatever the platform is set to.
     pub fn draw(&mut self, app: &mut App, window: WindowId, painter: &mut Option<Painter>) -> Result<bool, String> {
+        theme::always_dark(|| self.draw_over_film(app, window, painter))
+    }
+
+    fn draw_over_film(&mut self, app: &mut App, window: WindowId, painter: &mut Option<Painter>) -> Result<bool, String> {
         self.arrange(app, window);
         let (picture, new) = self.player.picture();
         let shown = self.controls_shown();
@@ -563,7 +568,7 @@ impl Playing {
     fn controls(&mut self, p: &mut Painter, gl: &Gl, name: &str, position: f64, duration: f64, paused: bool, alone: bool) {
         let all = p.bounds();
         if alone {
-            p.fill(gl, all, 0.0, theme::GROUND);
+            p.fill(gl, all, 0.0, theme::ground());
         }
         let height = 210.0f32.min(all.h);
         let mut panel = Rect::new(all.x, all.bottom() - height, all.w, height);
@@ -574,19 +579,19 @@ impl Playing {
         panel = panel.inset(theme::PAD * 0.6);
         let mut top = panel.take_top(theme::ROW_EM * 1.5);
         let time = format!("{} / {}", clock(position), clock(duration));
-        let taken = p.label(gl, &time, top, theme::ROW_EM * 0.8, theme::INK_DETAIL, 1.0);
+        let taken = p.label(gl, &time, top, theme::ROW_EM * 0.8, theme::ink_detail(), 1.0);
         top.w -= taken + 24.0;
-        p.label(gl, name, top, theme::ROW_EM * 0.9, theme::INK, 0.0);
+        p.label(gl, name, top, theme::ROW_EM * 0.9, theme::ink(), 0.0);
 
         // How far through, as a bar: pressed anywhere along it, the film goes there.
         let mut line = panel.take_top(34.0);
         line = line.inset(0.0);
         self.bar = line;
         let track = Rect::new(line.x, line.y + line.h * 0.5 - 4.0, line.w, 8.0);
-        p.fill(gl, track, 4.0, theme::SCROLL_TRACK);
+        p.fill(gl, track, 4.0, theme::scroll_track());
         let through = if duration > 0.0 { (position / duration).clamp(0.0, 1.0) as f32 } else { 0.0 };
-        p.fill(gl, Rect { w: track.w * through, ..track }, 4.0, theme::MARK);
-        p.fill(gl, Rect::new(track.x + track.w * through - 9.0, track.y - 5.0, 18.0, 18.0), 9.0, theme::INK);
+        p.fill(gl, Rect { w: track.w * through, ..track }, 4.0, theme::mark());
+        p.fill(gl, Rect::new(track.x + track.w * through - 9.0, track.y - 5.0, 18.0, 18.0), 9.0, theme::ink());
 
         panel.take_top(10.0);
         let mut row = panel.take_top(Button::HEIGHT.min(panel.h));
@@ -607,7 +612,7 @@ impl Playing {
             let rows: Vec<Row> = rows.iter().map(|(row, _)| row.clone()).collect();
             let tall = (rows.len() as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP)).min(all.h - height - 40.0).max(theme::ROW_HEIGHT);
             let card = Rect::new(all.x + theme::PAD * 0.6, (all.bottom() - height - tall - 34.0).max(0.0), 640.0f32.min(all.w - theme::PAD), tall + 28.0);
-            p.fill(gl, card.inset(-2.0), theme::CARD_RADIUS * 0.6, theme::RIM);
+            p.fill(gl, card.inset(-2.0), theme::CARD_RADIUS * 0.6, theme::rim());
             p.fill(gl, card, theme::CARD_RADIUS * 0.6, [0.043, 0.05, 0.072, 0.97]);
             list.focused = true;
             list.draw(p, gl, card.inset(14.0), &rows);

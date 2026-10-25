@@ -48,7 +48,7 @@ pub fn face(p: &mut Painter, gl: &Gl, rect: Rect, kind: Kind, picture: Option<Te
             let s = (rect.w / tw).min(rect.h / th);
             let (w, h) = (tw * s, th * s);
             let at = Rect::new(rect.x + (rect.w - w) * 0.5, rect.y + (rect.h - h) * 0.5, w, h);
-            p.image(gl, texture, at, [0.0, 0.0, 1.0, 1.0], radius * 0.6, theme::INK, true);
+            p.image(gl, texture, at, [0.0, 0.0, 1.0, 1.0], radius * 0.6, [1.0, 1.0, 1.0, 1.0], true);
         }
         None => {
             let (top, foot) = tint(kind);
@@ -104,7 +104,7 @@ pub fn when(seconds: Option<i64>, now: i64) -> String {
 
 /// A line at the foot of a pane: what keys do, or what went wrong.
 pub fn status(p: &mut Painter, gl: &Gl, rect: Rect, text: &str, trouble: bool) {
-    p.label(gl, text, rect, theme::FOOTER_EM, if trouble { look::TROUBLE } else { theme::INK_HINT }, 0.0);
+    p.label(gl, text, rect, theme::FOOTER_EM, if trouble { look::trouble() } else { theme::ink_hint() }, 0.0);
 }
 
 #[cfg(test)]

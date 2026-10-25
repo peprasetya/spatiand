@@ -1276,7 +1276,7 @@ impl Shelf {
         let window = self.window;
         let result = app.draw(window, |gl, picture| {
             let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
-            p.begin(gl, picture, picture.1 as f32 / size.1 as f32, theme::GROUND);
+            p.begin(gl, picture, picture.1 as f32 / size.1 as f32, theme::ground());
             room::backdrop(p, gl);
             self.paint(p, gl);
             p.end(gl);
@@ -1353,13 +1353,13 @@ impl Shelf {
             }
             let rect = Rect::new(x, head.y, w + 16.0, head.h);
             if !last && rect.contains(self.pointer.0, self.pointer.1) {
-                p.fill(gl, rect, theme::ROW_RADIUS, theme::HOVER);
+                p.fill(gl, rect, theme::ROW_RADIUS, theme::hover());
             }
-            p.label(gl, &label, rect.inset(8.0), em, if last { theme::INK } else { theme::INK_ROW }, 0.0);
+            p.label(gl, &label, rect.inset(8.0), em, if last { theme::ink() } else { theme::ink_row() }, 0.0);
             self.trail.push((rect, place.clone()));
             x += rect.w;
             if !last {
-                p.label(gl, "\u{203a}", Rect::new(x, head.y, 20.0, head.h), em, theme::INK_HINT, 0.5);
+                p.label(gl, "\u{203a}", Rect::new(x, head.y, 20.0, head.h), em, theme::ink_hint(), 0.5);
                 x += 20.0;
             }
         }
@@ -1386,13 +1386,13 @@ impl Shelf {
             let hover = rect.contains(self.pointer.0, self.pointer.1);
             if active {
                 p.glow(gl, rect, 14.0, [0.30, 0.62, 1.0, 0.14], 16.0);
-                p.gradient(gl, rect, 14.0, [1.0, 1.0, 1.0, 0.11], [1.0, 1.0, 1.0, 0.05]);
+                p.gradient(gl, rect, 14.0, theme::wash(0.11), theme::wash(0.05));
                 room::rule(p, gl, Rect::new(rect.x + 16.0, rect.bottom() - 3.0, rect.w - 32.0, 2.5));
             } else if hover {
-                p.fill(gl, rect, 14.0, theme::HOVER);
+                p.fill(gl, rect, 14.0, theme::hover());
             }
             let dot = if tab.crashed.is_some() {
-                room::TROUBLE
+                room::trouble()
             } else if !tab.doing.is_empty() {
                 [1.0, 0.85, 0.4, 1.0]
             } else if matches!(tab.place, Place::Remote(..)) {
@@ -1400,26 +1400,26 @@ impl Shelf {
             } else if active {
                 room::TEAL
             } else {
-                theme::INK_HINT
+                theme::ink_hint()
             };
             p.fill(gl, Rect::new(rect.x + 16.0, rect.y + rect.h * 0.5 - 4.0, 8.0, 8.0), 4.0, dot);
             let close = Rect::new(rect.right() - 38.0, rect.y + rect.h * 0.5 - 13.0, 26.0, 26.0);
             let show_close = (active || hover) && self.tabs.len() > 1;
             let label = Rect { x: rect.x + 34.0, w: rect.w - 34.0 - if show_close { 44.0 } else { 14.0 }, ..rect };
-            p.label(gl, &tab.label(), label, theme::ROW_EM * 0.72, if active { theme::INK } else { theme::INK_ROW }, 0.0);
+            p.label(gl, &tab.label(), label, theme::ROW_EM * 0.72, if active { theme::ink() } else { theme::ink_row() }, 0.0);
             if show_close {
                 if close.inset(-6.0).contains(self.pointer.0, self.pointer.1) {
-                    p.fill(gl, close, 13.0, [1.0, 1.0, 1.0, 0.14]);
+                    p.fill(gl, close, 13.0, theme::wash(0.14));
                 }
-                draw_icon(p, gl, Icon::Close, close.inset(4.0), theme::INK_DETAIL);
+                draw_icon(p, gl, Icon::Close, close.inset(4.0), theme::ink_detail());
             }
             self.placed_tabs.push((rect, close));
         }
         self.plus = Rect::new(x, bar.y + (bar.h - 44.0) * 0.5, 44.0, 44.0);
         if self.plus.contains(self.pointer.0, self.pointer.1) {
-            p.fill(gl, self.plus, 22.0, theme::HOVER);
+            p.fill(gl, self.plus, 22.0, theme::hover());
         }
-        draw_icon(p, gl, Icon::Plus, self.plus.inset(10.0), theme::INK_DETAIL);
+        draw_icon(p, gl, Icon::Plus, self.plus.inset(10.0), theme::ink_detail());
     }
 
     fn paint_content(&mut self, p: &mut Painter, gl: &spatiand_app::Gl, area: Rect) {
@@ -1441,9 +1441,9 @@ impl Shelf {
             let pane = Rect::new(area.x + area.w * 0.5 - 340.0, area.y + area.h * 0.5 - 100.0, 680.0, 200.0);
             room::glass(p, gl, pane, 24.0, 1.0);
             let mut inner = pane.inset(28.0);
-            p.label(gl, "This tab stopped", inner.take_top(50.0), theme::TITLE_EM * 0.8, room::TROUBLE, 0.0);
-            p.label(gl, why, inner.take_top(40.0), theme::DETAIL_EM, theme::INK_DETAIL, 0.0);
-            p.label(gl, "Close it and open another: the other tabs are as they were.", inner.take_top(40.0), theme::FOOTER_EM, theme::INK_HINT, 0.0);
+            p.label(gl, "This tab stopped", inner.take_top(50.0), theme::TITLE_EM * 0.8, room::trouble(), 0.0);
+            p.label(gl, why, inner.take_top(40.0), theme::DETAIL_EM, theme::ink_detail(), 0.0);
+            p.label(gl, "Close it and open another: the other tabs are as they were.", inner.take_top(40.0), theme::FOOTER_EM, theme::ink_hint(), 0.0);
             return;
         }
         match &tab.state {
@@ -1452,12 +1452,12 @@ impl Shelf {
                 return;
             }
             State::Failed(why) => {
-                room::message(p, gl, area, why, room::TROUBLE);
+                room::message(p, gl, area, why, room::trouble());
                 return;
             }
             State::Ready if tab.shown.is_empty() => {
                 let text = if !tab.filter.is_empty() { "Nothing here by that name." } else if tab.items.is_empty() { "This folder is empty." } else { "Only hidden files here." };
-                room::message(p, gl, area, text, theme::INK_DETAIL);
+                room::message(p, gl, area, text, theme::ink_detail());
                 return;
             }
             State::Ready => {}
@@ -1486,10 +1486,10 @@ impl Shelf {
         if view == View::List {
             let h = Rect::new(area.x, area.y, area.w, header);
             let cols = list_columns(h);
-            p.label(gl, "NAME", cols[0], theme::FOOTER_EM * 0.82, theme::INK_HINT, 0.0);
-            p.label(gl, "KIND", cols[1], theme::FOOTER_EM * 0.82, theme::INK_HINT, 0.0);
-            p.label(gl, "SIZE", cols[2], theme::FOOTER_EM * 0.82, theme::INK_HINT, 1.0);
-            p.label(gl, "MODIFIED", cols[3], theme::FOOTER_EM * 0.82, theme::INK_HINT, 1.0);
+            p.label(gl, "NAME", cols[0], theme::FOOTER_EM * 0.82, theme::ink_hint(), 0.0);
+            p.label(gl, "KIND", cols[1], theme::FOOTER_EM * 0.82, theme::ink_hint(), 0.0);
+            p.label(gl, "SIZE", cols[2], theme::FOOTER_EM * 0.82, theme::ink_hint(), 1.0);
+            p.label(gl, "MODIFIED", cols[3], theme::FOOTER_EM * 0.82, theme::ink_hint(), 1.0);
         }
         for (at, &index) in tab.shown.iter().enumerate() {
             let (row, col) = (at / columns, at % columns);
@@ -1508,48 +1508,48 @@ impl Shelf {
                     let hover = cell.contains(pointer.0, pointer.1);
                     if selected {
                         p.glow(gl, face, 16.0, [0.30, 0.62, 1.0, 0.40], 18.0);
-                        p.fill(gl, face.inset(-4.0), 18.0, theme::MARK);
+                        p.fill(gl, face.inset(-4.0), 18.0, theme::mark());
                     } else if is_cursor {
-                        p.fill(gl, face.inset(-3.0), 17.0, [1.0, 1.0, 1.0, 0.30]);
+                        p.fill(gl, face.inset(-3.0), 17.0, theme::wash(0.30));
                     } else if hover {
-                        p.fill(gl, face.inset(-3.0), 17.0, [1.0, 1.0, 1.0, 0.14]);
+                        p.fill(gl, face.inset(-3.0), 17.0, theme::wash(0.14));
                     }
                     look::face(p, gl, face, item.kind, picture, 14.0);
                     let name = Rect::new(cell.x + 2.0, face.bottom() + 8.0, cell.w - 4.0, 28.0);
-                    p.label(gl, &item.name, name, theme::ROW_EM * 0.62, if selected || is_cursor { theme::INK } else { theme::INK_ROW }, 0.5);
+                    p.label(gl, &item.name, name, theme::ROW_EM * 0.62, if selected || is_cursor { theme::ink() } else { theme::ink_row() }, 0.5);
                     let detail = if item.kind == Kind::Folder { String::new() } else { look::size(item.size) };
-                    p.label(gl, &detail, Rect { y: name.bottom(), h: 24.0, ..name }, theme::FOOTER_EM * 0.8, theme::INK_HINT, 0.5);
+                    p.label(gl, &detail, Rect { y: name.bottom(), h: 24.0, ..name }, theme::FOOTER_EM * 0.8, theme::ink_hint(), 0.5);
                 }
                 View::List => {
                     let rect = Rect::new(area.x, y, area.w, ROW - 4.0);
                     let hover = rect.contains(pointer.0, pointer.1);
                     if selected {
-                        p.fill(gl, rect, theme::ROW_RADIUS, theme::SELECTED);
+                        p.fill(gl, rect, theme::ROW_RADIUS, theme::selected());
                     } else if is_cursor {
-                        p.fill(gl, rect, theme::ROW_RADIUS, theme::SELECTED_AWAY);
+                        p.fill(gl, rect, theme::ROW_RADIUS, theme::selected_away());
                     } else if hover {
-                        p.fill(gl, rect, theme::ROW_RADIUS, theme::HOVER);
+                        p.fill(gl, rect, theme::ROW_RADIUS, theme::hover());
                     }
                     let cols = list_columns(rect);
                     let icon = Rect::new(cols[0].x, rect.y + 7.0, rect.h - 14.0, rect.h - 14.0);
                     look::face(p, gl, icon, item.kind, picture, 8.0);
                     let name = Rect { x: icon.right() + 14.0, w: cols[0].w - icon.w - 14.0, ..cols[0] };
-                    p.label(gl, &item.name, name, theme::ROW_EM * 0.7, if selected || is_cursor { theme::INK } else { theme::INK_ROW }, 0.0);
-                    p.label(gl, item.kind.word(), cols[1], theme::DETAIL_EM * 0.9, theme::INK_HINT, 0.0);
+                    p.label(gl, &item.name, name, theme::ROW_EM * 0.7, if selected || is_cursor { theme::ink() } else { theme::ink_row() }, 0.0);
+                    p.label(gl, item.kind.word(), cols[1], theme::DETAIL_EM * 0.9, theme::ink_hint(), 0.0);
                     if item.kind != Kind::Folder {
-                        p.label(gl, &look::size(item.size), cols[2], theme::DETAIL_EM * 0.9, theme::INK_DETAIL, 1.0);
+                        p.label(gl, &look::size(item.size), cols[2], theme::DETAIL_EM * 0.9, theme::ink_detail(), 1.0);
                     }
-                    p.label(gl, &look::when(item.modified, now), cols[3], theme::DETAIL_EM * 0.9, theme::INK_DETAIL, 1.0);
+                    p.label(gl, &look::when(item.modified, now), cols[3], theme::DETAIL_EM * 0.9, theme::ink_detail(), 1.0);
                 }
             }
         }
         p.unclip(gl);
         if content_h > area.h {
             let track = Rect::new(area.right() - 5.0, area.y + header, 5.0, area.h - header);
-            p.fill(gl, track, 2.5, theme::SCROLL_TRACK);
+            p.fill(gl, track, 2.5, theme::scroll_track());
             let h = (track.h * area.h / content_h).max(30.0);
             let y = track.y + (track.h - h) * (tab.scroll / (content_h - area.h).max(1.0));
-            p.fill(gl, Rect { y, h, ..track }, 2.5, theme::SCROLL_THUMB);
+            p.fill(gl, Rect { y, h, ..track }, 2.5, theme::scroll_thumb());
         }
     }
 
@@ -1558,7 +1558,7 @@ impl Shelf {
         // Something being done, as a bar.
         if let Some((what, done, total)) = tab.doing.values().next() {
             let bar = Rect::new(foot.right() - 360.0, foot.y + foot.h * 0.5 - 4.0, 360.0, 8.0);
-            p.fill(gl, bar, 4.0, theme::SCROLL_TRACK);
+            p.fill(gl, bar, 4.0, theme::scroll_track());
             if *total > 0 {
                 p.fill(gl, Rect { w: bar.w * (*done as f32 / *total as f32).min(1.0), ..bar }, 4.0, room::TEAL);
             }
@@ -1614,7 +1614,7 @@ impl Shelf {
                     Asking::Rename(place) => format!("Rename {}", place.name()),
                     Asking::NewFolder => "A new folder".to_string(),
                 };
-                p.label(gl, &title, inner.take_top(48.0), theme::TITLE_EM * 0.75, theme::INK, 0.0);
+                p.label(gl, &title, inner.take_top(48.0), theme::TITLE_EM * 0.75, theme::ink(), 0.0);
                 inner.take_top(10.0);
                 field.draw(p, gl, inner.take_top(Field::HEIGHT));
                 let mut buttons = inner.take_bottom(Button::HEIGHT);
@@ -1628,7 +1628,7 @@ impl Shelf {
                 p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);
                 room::glass(p, gl, pane, 24.0, 1.0);
                 let mut inner = pane.inset(28.0);
-                p.text(gl, text, inner.x, inner.y, theme::ROW_EM * 0.8, inner.w, theme::INK);
+                p.text(gl, text, inner.x, inner.y, theme::ROW_EM * 0.8, inner.w, theme::ink());
                 let mut buttons = inner.take_bottom(Button::HEIGHT);
                 let w = 200.0;
                 ok.draw(p, gl, Rect { x: buttons.right() - w, w, ..buttons }, "Yes");
@@ -1640,20 +1640,20 @@ impl Shelf {
                 p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);
                 room::glass(p, gl, pane, 24.0, 1.0);
                 let mut inner = pane.inset(30.0);
-                p.label(gl, "Your remotes, for other apps", inner.take_top(50.0), theme::TITLE_EM * 0.75, theme::INK, 0.0);
-                let (_, h) = p.text(gl, "Spatiand's apps reach your remotes by themselves. Other apps reach them as a network folder (WebDAV) on this machine, which only this machine can open:", inner.x, inner.y, theme::DETAIL_EM, inner.w, theme::INK_DETAIL);
+                p.label(gl, "Your remotes, for other apps", inner.take_top(50.0), theme::TITLE_EM * 0.75, theme::ink(), 0.0);
+                let (_, h) = p.text(gl, "Spatiand's apps reach your remotes by themselves. Other apps reach them as a network folder (WebDAV) on this machine, which only this machine can open:", inner.x, inner.y, theme::DETAIL_EM, inner.w, theme::ink_detail());
                 inner.take_top(h + 18.0);
                 match &storage {
                     Some(storage) => {
                         let (url, user, token) = storage.dav_root();
                         for (what, value) in [("Address", url), ("Name", user), ("Password", token)] {
                             let line = inner.take_top(40.0);
-                            p.label(gl, &what.to_uppercase(), Rect { w: 180.0, ..line }, theme::FOOTER_EM * 0.82, theme::INK_HINT, 0.0);
-                            p.label(gl, &value, Rect { x: line.x + 180.0, w: line.w - 180.0, ..line }, theme::ROW_EM * 0.72, theme::INK, 0.0);
+                            p.label(gl, &what.to_uppercase(), Rect { w: 180.0, ..line }, theme::FOOTER_EM * 0.82, theme::ink_hint(), 0.0);
+                            p.label(gl, &value, Rect { x: line.x + 180.0, w: line.w - 180.0, ..line }, theme::ROW_EM * 0.72, theme::ink(), 0.0);
                         }
                     }
                     None => {
-                        p.label(gl, "The storage service is not running.", inner.take_top(40.0), theme::DETAIL_EM, room::TROUBLE, 0.0);
+                        p.label(gl, "The storage service is not running.", inner.take_top(40.0), theme::DETAIL_EM, room::trouble(), 0.0);
                     }
                 }
                 let mut buttons = inner.take_bottom(Button::HEIGHT);
@@ -1669,16 +1669,16 @@ impl Shelf {
                 p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);
                 room::glass(p, gl, pane, 24.0, 1.0);
                 let mut inner = pane.inset(30.0);
-                p.label(gl, "SpatiShelf", inner.take_top(50.0), theme::TITLE_EM * 0.8, theme::INK, 0.0);
+                p.label(gl, "SpatiShelf", inner.take_top(50.0), theme::TITLE_EM * 0.8, theme::ink(), 0.0);
                 let text = "Spatiand's file manager. Remotes are reached through Spatiand's storage service, which is built on rclone (MIT License, copyright Nick Craig-Wood and the rclone contributors). PDF pages are drawn by PDFium (BSD and Apache 2.0, the Chromium authors); films and pictures are read by FFmpeg (LGPL 2.1).";
-                let (_, h) = p.text(gl, text, inner.x, inner.y, theme::DETAIL_EM, inner.w, theme::INK_DETAIL);
+                let (_, h) = p.text(gl, text, inner.x, inner.y, theme::DETAIL_EM, inner.w, theme::ink_detail());
                 inner.take_top(h);
                 let buttons = inner.take_bottom(Button::HEIGHT);
                 close.draw(p, gl, Rect { x: buttons.right() - 180.0, w: 180.0, ..buttons }, "Done");
             }
             Overlay::Setup(setup) => {
                 let pane = Rect::new(SIDE + 8.0, BAR + 6.0, all.w - SIDE - 22.0, all.h - BAR - 20.0);
-                p.fill(gl, pane.inset(-6.0), 22.0, [0.043, 0.05, 0.072, 0.96]);
+                p.fill(gl, pane.inset(-6.0), 22.0, { let mut g = theme::ground(); g[3] = 0.96; g });
                 room::glass(p, gl, pane, 22.0, 0.6);
                 setup.draw(p, gl, pane.inset(24.0));
             }

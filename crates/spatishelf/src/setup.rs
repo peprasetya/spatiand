@@ -325,19 +325,19 @@ impl Setup {
         let w = Button::width(p, gl, back_label);
         self.back.draw(p, gl, head.take_left(w), back_label);
         head.take_left(22.0);
-        p.label(gl, &title, head, theme::TITLE_EM * 0.8, theme::INK, 0.0);
+        p.label(gl, &title, head, theme::TITLE_EM * 0.8, theme::ink(), 0.0);
         all.take_top(12.0);
         look::rule(p, gl, all.take_top(2.0));
         all.take_top(16.0);
         let foot = all.take_bottom(theme::FOOTER_EM * 1.8);
         if let Some(trouble) = &self.trouble {
-            p.label(gl, trouble, foot, theme::FOOTER_EM, look::TROUBLE, 0.0);
+            p.label(gl, trouble, foot, theme::FOOTER_EM, look::trouble(), 0.0);
         }
         match &self.step {
             Step::Loading => look::waiting(p, gl, all, std::time::Instant::now() - std::time::Duration::from_millis(300)),
             Step::Waiting(what) => {
                 look::waiting(p, gl, Rect { h: all.h * 0.6, ..all }, std::time::Instant::now() - std::time::Duration::from_millis(300));
-                look::message(p, gl, Rect { y: all.y + all.h * 0.55, h: 60.0, ..all }, what, theme::INK_DETAIL);
+                look::message(p, gl, Rect { y: all.y + all.h * 0.55, h: 60.0, ..all }, what, theme::ink_detail());
             }
             Step::Choose => {
                 self.filter.draw(p, gl, all.take_top(Field::HEIGHT));
@@ -345,7 +345,7 @@ impl Setup {
                 let rows: Vec<Row> = self.shown.iter().map(|&i| Row::with(self.providers[i].description.clone(), self.providers[i].name.clone())).collect();
                 self.list.draw(p, gl, all, &rows);
                 if self.shown.is_empty() {
-                    look::message(p, gl, all, "No kind of storage by that name.", theme::INK_DETAIL);
+                    look::message(p, gl, all, "No kind of storage by that name.", theme::ink_detail());
                 }
             }
             Step::Form => {
@@ -366,8 +366,8 @@ impl Setup {
                 let mut y = all.y - self.scroll;
                 let width = all.w.min(900.0);
                 let label = |p: &mut Painter, gl: &Gl, y: f32, text: &str, help: &str| {
-                    p.label(gl, &text.to_uppercase(), Rect::new(all.x, y, 300.0, 26.0), theme::FOOTER_EM * 0.82, theme::INK_HINT, 0.0);
-                    p.label(gl, help, Rect::new(all.x + 220.0, y, width - 220.0, 26.0), theme::FOOTER_EM * 0.82, theme::INK_HINT, 0.0);
+                    p.label(gl, &text.to_uppercase(), Rect::new(all.x, y, 300.0, 26.0), theme::FOOTER_EM * 0.82, theme::ink_hint(), 0.0);
+                    p.label(gl, help, Rect::new(all.x + 220.0, y, width - 220.0, 26.0), theme::FOOTER_EM * 0.82, theme::ink_hint(), 0.0);
                 };
                 label(p, gl, y, "Name", "What it is called here, as in Name:folder/file");
                 self.name.draw(p, gl, Rect::new(all.x, y + 30.0, width, Field::HEIGHT));
@@ -379,7 +379,7 @@ impl Setup {
                 }
                 p.unclip(gl);
                 if provider.options.is_empty() {
-                    look::message(p, gl, Rect { y: all.y + 140.0, h: 80.0, ..all }, "Nothing more is needed here: anything else is asked next, one question at a time.", theme::INK_DETAIL);
+                    look::message(p, gl, Rect { y: all.y + 140.0, h: 80.0, ..all }, "Nothing more is needed here: anything else is asked next, one question at a time.", theme::ink_detail());
                 }
             }
             Step::Asked { question, .. } => {
@@ -389,7 +389,7 @@ impl Setup {
                 self.go.draw(p, gl, go, "Continue");
                 let (h, _) = p.measure(gl, &question.help, theme::DETAIL_EM, all.w.min(1000.0));
                 let _ = h;
-                let (_, th) = p.text(gl, &question.help, all.x, all.y, theme::DETAIL_EM, all.w.min(1000.0), theme::INK_DETAIL);
+                let (_, th) = p.text(gl, &question.help, all.x, all.y, theme::DETAIL_EM, all.w.min(1000.0), theme::ink_detail());
                 all.take_top(th + 22.0);
                 let exclusive = question.exclusive && !question.examples.is_empty();
                 if !exclusive {

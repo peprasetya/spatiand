@@ -454,6 +454,8 @@ impl Reel {
                 }
             }
             Event::Mode(mode) => log::info!("the wearer now sees {mode:?}"),
+            // Dark or light: drawn again in the theme's new colours.
+            Event::Look { .. } => self.dirty = true,
             Event::Focus { window, focused } if *window == self.window => {
                 if let Some((playing, _)) = self.playing.as_mut() {
                     playing.focus(*focused);
@@ -527,7 +529,7 @@ impl Reel {
         let (screen, painter, sources) = (&mut self.screen, &mut self.painter, &self.sources);
         self.app.draw(self.window, |gl, size| {
             let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
-            p.begin(gl, size, 1.0, theme::GROUND);
+            p.begin(gl, size, 1.0, theme::ground());
             look::backdrop(p, gl);
             screen.draw(p, gl, sources);
             p.end(gl);

@@ -9,7 +9,10 @@ use crate::Gl;
 pub const TEAL: Color = [0.086, 0.902, 0.753, 1.0];
 pub const BLUE: Color = [0.216, 0.651, 0.969, 1.0];
 pub const VIOLET: Color = [0.561, 0.420, 0.949, 1.0];
-pub const TROUBLE: Color = [1.0, 0.62, 0.55, 1.0];
+/// What went wrong is said in.
+pub fn trouble() -> Color {
+    if theme::dark() { [1.0, 0.62, 0.55, 1.0] } else { [0.78, 0.18, 0.12, 1.0] }
+}
 
 fn faint(color: Color, alpha: f32) -> Color {
     [color[0], color[1], color[2], alpha]
@@ -19,20 +22,26 @@ fn faint(color: Color, alpha: f32) -> Color {
 /// the left and of violet low on the right, as though lit from outside the window.
 pub fn backdrop(p: &mut Painter, gl: &Gl) {
     let all = p.bounds();
-    p.gradient(gl, all, 0.0, [0.070, 0.082, 0.130, 1.0], [0.024, 0.027, 0.043, 1.0]);
+    let dark = theme::dark();
+    if dark {
+        p.gradient(gl, all, 0.0, [0.070, 0.082, 0.130, 1.0], [0.024, 0.027, 0.043, 1.0]);
+    } else {
+        p.gradient(gl, all, 0.0, [0.975, 0.980, 0.990, 1.0], [0.905, 0.915, 0.940, 1.0]);
+    }
     let reach = all.w * 0.42;
-    p.glow(gl, Rect::new(all.x - reach * 0.55, all.y - reach * 0.75, reach, reach), reach * 0.5, faint(TEAL, 0.10), reach * 0.9);
-    p.glow(gl, Rect::new(all.right() - reach * 0.5, all.bottom() - reach * 0.4, reach, reach), reach * 0.5, faint(VIOLET, 0.12), reach * 0.9);
+    let glow = if dark { 1.0 } else { 0.6 };
+    p.glow(gl, Rect::new(all.x - reach * 0.55, all.y - reach * 0.75, reach, reach), reach * 0.5, faint(TEAL, 0.10 * glow), reach * 0.9);
+    p.glow(gl, Rect::new(all.right() - reach * 0.5, all.bottom() - reach * 0.4, reach, reach), reach * 0.5, faint(VIOLET, 0.12 * glow), reach * 0.9);
 }
 
 /// A screen's head: its name, a quieter line beside it, and a hairline in the mark's
 /// colours under both. Returns what is left of `all` below it.
 pub fn header(p: &mut Painter, gl: &Gl, all: &mut Rect, title: &str, beside: &str) {
     let line = all.take_top(theme::TITLE_EM * 1.5);
-    let taken = p.label(gl, title, line, theme::TITLE_EM, theme::INK, 0.0);
+    let taken = p.label(gl, title, line, theme::TITLE_EM, theme::ink(), 0.0);
     if !beside.is_empty() {
         let rest = Rect { x: line.x + taken + 22.0, w: (line.w - taken - 22.0).max(0.0), y: line.y + 6.0, ..line };
-        p.label(gl, beside, rest, theme::DETAIL_EM, theme::INK_HINT, 0.0);
+        p.label(gl, beside, rest, theme::DETAIL_EM, theme::ink_hint(), 0.0);
     }
     all.take_top(10.0);
     rule(p, gl, all.take_top(2.0));
@@ -52,9 +61,9 @@ pub fn rule(p: &mut Painter, gl: &Gl, line: Rect) {
 pub fn shelf(p: &mut Painter, gl: &Gl, all: &mut Rect, name: &str, lit: bool) {
     let line = all.take_top(theme::DETAIL_EM * 1.7);
     let mark = Rect::new(line.x + 14.0, line.y + line.h * 0.5 - 4.0, 8.0, 8.0);
-    p.fill(gl, mark, 4.0, if lit { TEAL } else { theme::INK_HINT });
+    p.fill(gl, mark, 4.0, if lit { TEAL } else { theme::ink_hint() });
     let text = Rect { x: line.x + 34.0, w: line.w - 34.0, ..line };
-    p.label(gl, &name.to_uppercase(), text, theme::FOOTER_EM * 0.92, if lit { theme::INK_DETAIL } else { theme::INK_HINT }, 0.0);
+    p.label(gl, &name.to_uppercase(), text, theme::FOOTER_EM * 0.92, if lit { theme::ink_detail() } else { theme::ink_hint() }, 0.0);
 }
 
 /// Something said in the middle of an empty place.
@@ -86,14 +95,14 @@ pub fn foot(p: &mut Painter, gl: &Gl, all: &mut Rect, hint: &str, trouble: Optio
     let line = all.take_bottom((theme::FOOTER_EM * 1.9).max(wrapped + theme::FOOTER_EM * 0.5));
     match trouble {
         Some(trouble) => {
-            p.text(gl, trouble, line.x, line.y + (line.h - wrapped) * 0.5, theme::FOOTER_EM, line.w, TROUBLE);
+            p.text(gl, trouble, line.x, line.y + (line.h - wrapped) * 0.5, theme::FOOTER_EM, line.w, self::trouble());
         }
         // Keys only where the hint is written as keys: a path may have brackets in it.
         None if hint.starts_with('[') => {
             keys(p, gl, line, hint, 0.0, 1.0);
         }
         None => {
-            p.label(gl, hint, line, theme::FOOTER_EM, theme::INK_HINT, 0.0);
+            p.label(gl, hint, line, theme::FOOTER_EM, theme::ink_hint(), 0.0);
         }
     }
 }
@@ -176,14 +185,14 @@ pub fn keys(p: &mut Painter, gl: &Gl, line: Rect, hint: &str, align: f32, alpha:
                     p.fill(gl, cap, 7.0, faded([1.0, 1.0, 1.0, 0.16]));
                     p.fill(gl, cap.inset(1.0), 6.0, faded([0.10, 0.115, 0.16, 0.95]));
                     p.fill(gl, Rect::new(cap.x + 3.0, cap.bottom() - 3.0, cap.w - 6.0, 2.0), 1.0, faded([0.0, 0.0, 0.0, 0.35]));
-                    p.label(gl, key, Rect { y: cap.y - 1.0, ..cap }, cap_em, faded(theme::INK_DETAIL), 0.5);
+                    p.label(gl, key, Rect { y: cap.y - 1.0, ..cap }, cap_em, faded(theme::ink_detail()), 0.5);
                     x += w;
                 }
                 Said::Words(words) => {
                     if i > 0 {
                         x += word_gap;
                     }
-                    let w = p.label(gl, words, Rect::new(x, line.y, (line.right() - x).max(0.0), line.h), em, faded(theme::INK_HINT), 0.0);
+                    let w = p.label(gl, words, Rect::new(x, line.y, (line.right() - x).max(0.0), line.h), em, faded(theme::ink_hint()), 0.0);
                     x += w;
                 }
             }
@@ -195,9 +204,15 @@ pub fn keys(p: &mut Painter, gl: &Gl, line: Rect, hint: &str, align: f32, alpha:
 /// A pane floating over what is behind it -- a picture, a page -- dark enough to read on
 /// whatever that is, with the room's faint rim.
 pub fn glass(p: &mut Painter, gl: &Gl, rect: Rect, radius: f32, strength: f32) {
-    p.glow(gl, rect, radius, [0.0, 0.0, 0.0, 0.30 * strength], 26.0);
-    p.gradient(gl, rect, radius, [0.075, 0.088, 0.135, 0.86 * strength], [0.040, 0.046, 0.070, 0.90 * strength]);
-    p.fill(gl, Rect { h: 1.5, ..rect.inset(radius * 0.6) }, 0.75, [1.0, 1.0, 1.0, 0.10 * strength]);
+    if theme::dark() {
+        p.glow(gl, rect, radius, [0.0, 0.0, 0.0, 0.30 * strength], 26.0);
+        p.gradient(gl, rect, radius, [0.075, 0.088, 0.135, 0.86 * strength], [0.040, 0.046, 0.070, 0.90 * strength]);
+        p.fill(gl, Rect { h: 1.5, ..rect.inset(radius * 0.6) }, 0.75, [1.0, 1.0, 1.0, 0.10 * strength]);
+    } else {
+        p.glow(gl, rect, radius, [0.10, 0.14, 0.25, 0.12 * strength], 26.0);
+        p.gradient(gl, rect, radius, [1.0, 1.0, 1.0, 0.88 * strength], [0.955, 0.962, 0.978, 0.92 * strength]);
+        p.fill(gl, Rect { h: 1.5, ..rect.inset(radius * 0.6) }, 0.75, [1.0, 1.0, 1.0, 0.6 * strength]);
+    }
 }
 
 /// A small rounded word on a wash of colour: what a thing is, at a glance ("3D", "PDF").
@@ -206,7 +221,7 @@ pub fn chip(p: &mut Painter, gl: &Gl, x: f32, y: f32, text: &str, color: Color) 
     let (w, _) = p.measure(gl, text, em, 8192.0 / p.scale());
     let rect = Rect::new(x, y, w + 24.0, em * 1.9);
     p.fill(gl, rect, rect.h * 0.5, faint(color, 0.22));
-    p.label(gl, text, rect, em, [color[0] * 0.5 + 0.5, color[1] * 0.5 + 0.5, color[2] * 0.5 + 0.5, 1.0], 0.5);
+    p.label(gl, text, rect, em, if theme::dark() { [color[0] * 0.5 + 0.5, color[1] * 0.5 + 0.5, color[2] * 0.5 + 0.5, 1.0] } else { [color[0] * 0.55, color[1] * 0.55, color[2] * 0.55, 1.0] }, 0.5);
     rect.w
 }
 

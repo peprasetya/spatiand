@@ -1691,6 +1691,11 @@ impl Browser {
     }
 
     fn handle(&mut self, event: Event) -> bool {
+        // Dark or light: every window's bars drawn again in the theme's new colours.
+        if let Event::Look { .. } = event {
+            self.wins.iter_mut().for_each(|w| w.dirty = true);
+            return true;
+        }
         if let Event::Mode(_) | Event::Hands = event {
             return true;
         }
@@ -2327,7 +2332,7 @@ impl Browser {
             let marked = active.as_ref().is_some_and(|t| profile.id != PRIVATE && self.bookmarks.get(&profile.id).is_some_and(|b| bookmarks::find(b, &t.url).is_some()));
             self.app.draw(id, |gl, picture| {
                 let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
-                p.begin(gl, picture, picture.1 as f32 / size.1 as f32, theme::GROUND);
+                p.begin(gl, picture, picture.1 as f32 / size.1 as f32, theme::ground());
                 look::backdrop(p, gl);
                 let all = p.bounds();
                 if let Some(pane) = win.lock.as_mut() {
@@ -2359,9 +2364,9 @@ impl Browser {
                             p.image(gl, texture.texture(), shown, uv, 0.0, [1.0, 1.0, 1.0, 1.0], true);
                         }
                     } else {
-                        p.fill(gl, page, 12.0, theme::GROUND);
+                        p.fill(gl, page, 12.0, theme::ground());
                         let note = if starting { "Starting the web engine\u{2026}" } else { "" };
-                        look::message(p, gl, page, note, theme::INK_HINT);
+                        look::message(p, gl, page, note, theme::ink_hint());
                     }
                     if is_start(&tab.url) {
                         draw_start(p, gl, win, &profile, program_note.as_deref());
@@ -2391,14 +2396,14 @@ impl Browser {
                     let page = win.page;
                     let pane = Rect::new(page.x + page.w * 0.5 - 420.0, page.bottom() - 96.0, 840.0, 64.0);
                     look::glass(p, gl, pane, 24.0, 1.0);
-                    p.label(gl, text, pane.inset(18.0), theme::ROW_EM * 0.8, theme::INK, 0.5);
+                    p.label(gl, text, pane.inset(18.0), theme::ROW_EM * 0.8, theme::ink(), 0.5);
                 }
                 if let Some(drag) = win.drag.as_ref().filter(|d| d.torn) {
                     let label = tabs.tab(drag.tab).map(|t| t.label()).unwrap_or_default();
                     let ghost = Rect::new(drag.at.0 - 160.0, drag.at.1 - 26.0, 320.0, 52.0);
                     p.glow(gl, ghost, 26.0, [0.30, 0.62, 1.0, 0.45], 26.0);
                     look::glass(p, gl, ghost, 26.0, 1.0);
-                    p.label(gl, &label, ghost.inset(16.0), theme::ROW_EM * 0.8, theme::INK, 0.5);
+                    p.label(gl, &label, ghost.inset(16.0), theme::ROW_EM * 0.8, theme::ink(), 0.5);
                 }
                 p.end(gl);
             })?;
@@ -2563,15 +2568,15 @@ fn draw_tabs(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, window: &spa
         };
         if active {
             p.glow(gl, rect, 14.0, [0.30, 0.62, 1.0, if win.focused { 0.18 } else { 0.06 }], 16.0);
-            p.gradient(gl, rect, 14.0, [1.0, 1.0, 1.0, 0.11], [1.0, 1.0, 1.0, 0.05]);
+            p.gradient(gl, rect, 14.0, theme::wash(0.11), theme::wash(0.05));
             let c = profile.colour;
             p.fill(gl, Rect::new(rect.x + 16.0, rect.bottom() - 3.0, rect.w - 32.0, 2.5), 1.25, [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 0.9]);
         } else if hover {
-            p.fill(gl, rect, 14.0, theme::HOVER);
+            p.fill(gl, rect, 14.0, theme::hover());
         }
         // How the tab is: loading, sounding, stopped.
         let colour = if tab.crashed.is_some() {
-            look::TROUBLE
+            look::trouble()
         } else if tab.loading {
             look::BLUE
         } else if tab.playing {
@@ -2579,25 +2584,25 @@ fn draw_tabs(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, window: &spa
         } else if active {
             look::TEAL
         } else {
-            theme::INK_HINT
+            theme::ink_hint()
         };
         p.fill(gl, Rect::new(rect.x + 16.0, rect.y + rect.h * 0.5 - 4.0, 8.0, 8.0), 4.0, colour);
         let close = Rect::new(rect.right() - 38.0, rect.y + rect.h * 0.5 - 13.0, 26.0, 26.0);
         let label = Rect { x: rect.x + 34.0, w: rect.w - 34.0 - if active || hover { 44.0 } else { 14.0 }, ..rect };
-        p.label(gl, &tab.label(), label, theme::ROW_EM * 0.72, if active { theme::INK } else { theme::INK_ROW }, 0.0);
+        p.label(gl, &tab.label(), label, theme::ROW_EM * 0.72, if active { theme::ink() } else { theme::ink_row() }, 0.0);
         if active || hover {
             if win.hover == Hover::Close(id) {
-                p.fill(gl, close, 13.0, [1.0, 1.0, 1.0, 0.14]);
+                p.fill(gl, close, 13.0, theme::wash(0.14));
             }
-            draw_icon(p, gl, Icon::Close, close.inset(4.0), theme::INK_DETAIL);
+            draw_icon(p, gl, Icon::Close, close.inset(4.0), theme::ink_detail());
         }
         win.placed.push((id, rect, close));
     }
     win.plus = Rect::new(x.min(bar.right() - plus_w), bar.y + (bar.h - 44.0) * 0.5, 44.0, 44.0);
     if win.hover == Hover::Plus {
-        p.fill(gl, win.plus, 22.0, theme::HOVER);
+        p.fill(gl, win.plus, 22.0, theme::hover());
     }
-    draw_icon(p, gl, Icon::Plus, win.plus.inset(10.0), theme::INK_DETAIL);
+    draw_icon(p, gl, Icon::Plus, win.plus.inset(10.0), theme::ink_detail());
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2622,14 +2627,14 @@ fn draw_toolbar(
     let side = TOOL_H;
     let button = |p: &mut Painter, rect: Rect, which: Hover, icon: Icon, enabled: bool, lit: bool| {
         if win.hover == which && enabled {
-            p.fill(gl, rect, side * 0.5, [1.0, 1.0, 1.0, 0.11]);
+            p.fill(gl, rect, side * 0.5, theme::wash(0.11));
         }
         let ink = if !enabled {
-            [1.0, 1.0, 1.0, 0.25]
+            theme::wash(0.25)
         } else if lit {
             look::BLUE
         } else {
-            theme::INK_DETAIL
+            theme::ink_detail()
         };
         draw_icon(p, gl, icon, rect.inset(12.0), ink);
         rect
@@ -2653,7 +2658,7 @@ fn draw_toolbar(
     let pill = Rect::new(who.x, who.y + (who.h - 40.0) * 0.5, who.w, 40.0);
     p.fill(gl, pill, 20.0, profile_colour(profile, if win.hover == Hover::Profile { 0.55 } else { 0.38 }));
     p.fill(gl, Rect::new(pill.x + 14.0, pill.y + 13.0, 14.0, 14.0), 7.0, colour);
-    p.label(gl, &name, Rect::new(pill.x + 36.0, pill.y, pill.w - 46.0, pill.h), theme::ROW_EM * 0.7, theme::INK, 0.0);
+    p.label(gl, &name, Rect::new(pill.x + 36.0, pill.y, pill.w - 46.0, pill.h), theme::ROW_EM * 0.7, theme::ink(), 0.0);
     bar.take_right(8.0);
     let private = profile.is_private();
     let star = button(p, bar.take_right(side), Hover::Star, Icon::Link, !private && tab.is_some_and(|t| !is_start(&t.url)), marked);
@@ -2664,7 +2669,7 @@ fn draw_toolbar(
         let rect = bar.take_right(side);
         bar.take_right(2.0);
         if win.hover == Hover::Action(win.action_buttons.len()) && view.enabled {
-            p.fill(gl, rect, side * 0.5, [1.0, 1.0, 1.0, 0.11]);
+            p.fill(gl, rect, side * 0.5, theme::wash(0.11));
         }
         let tint = if view.enabled { [1.0, 1.0, 1.0, 1.0] } else { [1.0, 1.0, 1.0, 0.35] };
         match icons.get(i).and_then(|t| t.as_ref()) {
@@ -2672,7 +2677,7 @@ fn draw_toolbar(
             None => {
                 let initial: String = view.name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
                 p.fill(gl, rect.inset(12.0), (side - 24.0) * 0.5, [0.30, 0.62, 1.0, 0.35 * tint[3]]);
-                p.label(gl, &initial, rect.inset(12.0), theme::ROW_EM * 0.7, theme::INK, 0.5);
+                p.label(gl, &initial, rect.inset(12.0), theme::ROW_EM * 0.7, theme::ink(), 0.5);
             }
         }
         if !view.badge.is_empty() {
@@ -2700,17 +2705,17 @@ fn draw_toolbar(
 
 fn draw_start(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, profile: &Profile, note: Option<&str>) {
     let page = win.page;
-    p.fill(gl, page, 12.0, theme::GROUND);
+    p.fill(gl, page, 12.0, theme::ground());
     let mut all = page.inset(theme::PAD);
     let beside = if profile.is_private() { "Private: nothing in this window is kept".to_string() } else { profile.name.clone() };
     look::header(p, gl, &mut all, "SpatiMesh", &beside);
     if let Some(note) = note {
-        p.label(gl, note, all.take_top(44.0), theme::DETAIL_EM, look::TROUBLE, 0.0);
+        p.label(gl, note, all.take_top(44.0), theme::DETAIL_EM, look::trouble(), 0.0);
     }
     let Some(start) = win.start.as_mut() else { return };
     if start.rows.is_empty() {
         let hint = if profile.is_private() { "Type an address or a search above." } else { "Type an address or a search above. Bookmarks (Ctrl-D) are kept here." };
-        look::message(p, gl, all, hint, theme::INK_HINT);
+        look::message(p, gl, all, hint, theme::ink_hint());
         return;
     }
     look::shelf(p, gl, &mut all, "Bookmarks", true);
@@ -2719,12 +2724,12 @@ fn draw_start(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, profile: &P
 }
 
 fn draw_notice(p: &mut Painter, gl: &spatiand_app::Gl, page: Rect, title: &str, why: &str, hint: &str) {
-    p.fill(gl, page, 12.0, theme::GROUND);
+    p.fill(gl, page, 12.0, theme::ground());
     let pane = Rect::new(page.x + page.w * 0.5 - 380.0, page.y + page.h * 0.5 - 120.0, 760.0, 240.0);
     look::glass(p, gl, pane, 24.0, 1.0);
     let mut inner = pane.inset(28.0);
-    p.label(gl, title, inner.take_top(52.0), theme::TITLE_EM * 0.8, look::TROUBLE, 0.0);
-    p.label(gl, why, inner.take_top(44.0), theme::DETAIL_EM, theme::INK_DETAIL, 0.0);
+    p.label(gl, title, inner.take_top(52.0), theme::TITLE_EM * 0.8, look::trouble(), 0.0);
+    p.label(gl, why, inner.take_top(44.0), theme::DETAIL_EM, theme::ink_detail(), 0.0);
     inner.take_top(16.0);
     look::keys(p, gl, inner.take_top(40.0), hint, 0.0, 1.0);
 }
@@ -2748,20 +2753,20 @@ fn draw_lock(p: &mut Painter, gl: &spatiand_app::Gl, all: Rect, profile: &Profil
     let mut inner = card.inset(36.0);
     let icon = inner.take_top(72.0);
     p.fill(gl, Rect::new(icon.x + icon.w * 0.5 - 36.0, icon.y, 72.0, 72.0), 36.0, profile_colour(profile, 0.9));
-    draw_icon(p, gl, Icon::Lock, Rect::new(icon.x + icon.w * 0.5 - 22.0, icon.y + 14.0, 44.0, 44.0), theme::INK);
+    draw_icon(p, gl, Icon::Lock, Rect::new(icon.x + icon.w * 0.5 - 22.0, icon.y + 14.0, 44.0, 44.0), theme::ink());
     inner.take_top(16.0);
-    p.label(gl, &format!("{} is locked", profile.name), inner.take_top(52.0), theme::TITLE_EM * 0.7, theme::INK, 0.5);
+    p.label(gl, &format!("{} is locked", profile.name), inner.take_top(52.0), theme::TITLE_EM * 0.7, theme::ink(), 0.5);
     let kind = profile.lock.as_ref().map_or(LockKind::Pin, |l| l.kind);
     let said = pane.said.clone().unwrap_or_else(|| format!("Its {} opens its windows", kind.name()));
-    let ink = if pane.said.is_some() { [1.0, 0.62, 0.55, 1.0] } else { theme::INK_DETAIL };
+    let ink = if pane.said.is_some() { look::trouble() } else { theme::ink_detail() };
     p.label(gl, &said, inner.take_top(40.0), theme::DETAIL_EM, ink, 0.5);
     inner.take_top(16.0);
     let mut row = inner.take_top(theme::ROW_HEIGHT);
     pane.ok = row.take_right(160.0);
     row.take_right(16.0);
     pane.field.draw(p, gl, row);
-    p.fill(gl, pane.ok, theme::ROW_RADIUS, theme::SELECTED);
-    p.label(gl, "Open", pane.ok, theme::ROW_EM * 0.86, theme::INK, 0.5);
+    p.fill(gl, pane.ok, theme::ROW_RADIUS, theme::selected());
+    p.label(gl, "Open", pane.ok, theme::ROW_EM * 0.86, theme::ink(), 0.5);
 }
 
 fn question_buttons(page: Rect, kind: DialogKind) -> (Rect, Rect) {
@@ -2788,8 +2793,8 @@ fn draw_question(p: &mut Painter, gl: &spatiand_app::Gl, page: Rect, question: &
         (None, DialogKind::Leave) => "Leave this page?",
         (None, _) => "The page asks",
     };
-    p.label(gl, heading, inner.take_top(48.0), theme::TITLE_EM * 0.7, theme::INK, 0.0);
-    p.text(gl, &question.message, inner.x, inner.y, theme::DETAIL_EM, inner.w, theme::INK_DETAIL);
+    p.label(gl, heading, inner.take_top(48.0), theme::TITLE_EM * 0.7, theme::ink(), 0.0);
+    p.text(gl, &question.message, inner.x, inner.y, theme::DETAIL_EM, inner.w, theme::ink_detail());
     inner.take_top(110.0);
     if question.kind == DialogKind::Prompt {
         let mut field = Field::default();
@@ -2799,11 +2804,11 @@ fn draw_question(p: &mut Painter, gl: &spatiand_app::Gl, page: Rect, question: &
         field.draw(p, gl, inner.take_top(theme::ROW_HEIGHT));
     }
     let (ok, cancel) = question_buttons(page, question.kind);
-    p.fill(gl, ok, theme::ROW_RADIUS, theme::SELECTED);
-    p.label(gl, if question.kind == DialogKind::Leave { "Leave" } else { "OK" }, ok, theme::ROW_EM * 0.86, theme::INK, 0.5);
+    p.fill(gl, ok, theme::ROW_RADIUS, theme::selected());
+    p.label(gl, if question.kind == DialogKind::Leave { "Leave" } else { "OK" }, ok, theme::ROW_EM * 0.86, theme::ink(), 0.5);
     if question.kind != DialogKind::Alert {
-        p.fill(gl, cancel, theme::ROW_RADIUS, theme::RAISED);
-        p.label(gl, if question.kind == DialogKind::Leave { "Stay" } else { "Cancel" }, cancel, theme::ROW_EM * 0.86, theme::INK_ROW, 0.5);
+        p.fill(gl, cancel, theme::ROW_RADIUS, theme::raised());
+        p.label(gl, if question.kind == DialogKind::Leave { "Stay" } else { "Cancel" }, cancel, theme::ROW_EM * 0.86, theme::ink_row(), 0.5);
     }
 }
 

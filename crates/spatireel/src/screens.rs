@@ -612,10 +612,10 @@ impl Browse {
         } else {
             self.folder().map_or(self.label.clone(), |item| item.title.clone())
         };
-        let taken = p.label(gl, &title, top, theme::TITLE_EM * 0.9, theme::INK, 0.0);
+        let taken = p.label(gl, &title, top, theme::TITLE_EM * 0.9, theme::ink(), 0.0);
         if title != self.label {
             let beside = Rect { x: top.x + taken + 20.0, w: (top.w - taken - 20.0).max(0.0), y: top.y + 5.0, ..top };
-            p.label(gl, &self.label, beside, theme::DETAIL_EM, theme::INK_HINT, 0.0);
+            p.label(gl, &self.label, beside, theme::DETAIL_EM, theme::ink_hint(), 0.0);
         }
         all.take_top(12.0);
         look::rule(p, gl, all.take_top(2.0));
@@ -624,8 +624,8 @@ impl Browse {
         look::foot(p, gl, &mut all, &hint, self.trouble.as_deref());
         match &self.state {
             State::Loading(since) => look::waiting(p, gl, all, *since),
-            State::Failed(why) => look::message(p, gl, all, why, look::TROUBLE),
-            State::Ready if self.tiles.is_empty() => look::message(p, gl, all, "Nothing here to watch.", theme::INK_DETAIL),
+            State::Failed(why) => look::message(p, gl, all, why, look::trouble()),
+            State::Ready if self.tiles.is_empty() => look::message(p, gl, all, "Nothing here to watch.", theme::ink_detail()),
             State::Ready => self.grid.draw(p, gl, all, &self.tiles),
         }
     }
@@ -801,7 +801,7 @@ impl Add {
             Stage::Form(flavour) => format!("Sign in to {}", flavour.label()),
             Stage::Pair => "Pair with Vibrefy".to_string(),
         };
-        p.label(gl, &title, top, theme::TITLE_EM * 0.9, theme::INK, 0.0);
+        p.label(gl, &title, top, theme::TITLE_EM * 0.9, theme::ink(), 0.0);
         all.take_top(12.0);
         look::rule(p, gl, all.take_top(2.0));
         all.take_top(22.0);
@@ -854,7 +854,7 @@ impl Add {
                         "Type this into Vibrefy on a device that is signed in. This screen goes on by itself.",
                         column.take_top(theme::DETAIL_EM * 2.0),
                         theme::DETAIL_EM,
-                        theme::INK_DETAIL,
+                        theme::ink_detail(),
                         0.0,
                     );
                 }
