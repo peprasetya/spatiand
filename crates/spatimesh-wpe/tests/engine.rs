@@ -714,7 +714,8 @@ fn the_platform_look() {
 }
 
 /// A page's sound goes to the Spatiand session (its `spatiand-sound` socket, under the window's
-/// application id), to be placed in the room through the HRTF: here, an audio element's tone.
+/// application id), to be placed in the room through the HRTF: here, an audio element's tone,
+/// under its tab's own name.
 #[test]
 fn sound_goes_to_the_session() {
     use std::os::unix::net::UnixListener;
@@ -745,9 +746,14 @@ fn sound_goes_to_the_session() {
     eprintln!("{}", host.title(1, "tone:"));
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let (mut s, _) = listener.accept().unwrap();
-        let mut head = [0u8; 12];
-        s.read_exact(&mut head).unwrap();
+        // The sink first only looks whether anyone is there (a connection that says nothing).
+        let (mut s, head) = loop {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut head = [0u8; 12];
+            if s.read_exact(&mut head).is_ok() {
+                break (s, head);
+            }
+        };
         let mut app = vec![0u8; u16::from_le_bytes([head[10], head[11]]) as usize];
         s.read_exact(&mut app).unwrap();
         let mut sound = vec![0u8; 48000];
@@ -764,7 +770,11 @@ fn sound_goes_to_the_session() {
     };
     assert_eq!(&head[..4], b"SPSN");
     assert_eq!(u32::from_le_bytes(head[6..10].try_into().unwrap()), 48000);
-    assert_eq!(app, "id.prasetya.spatiand.spatimesh");
+    // Under the tab's own name, which the engine said, for the window to route to its place.
+    let said = host.wait_for("the tab's sound name", 5, |h| matches!(h, Happened::SoundName { tab: 1, .. }));
+    let Happened::SoundName { name, .. } = said else { unreachable!() };
+    assert!(name.starts_with("id.prasetya.spatiand.spatimesh/page"), "{name}");
+    assert_eq!(app, name);
     assert!(loudest > 1000, "silence: {loudest}");
     eprintln!("channels {} loudest {loudest}", u16::from_le_bytes([head[4], head[5]]));
     host.quit();

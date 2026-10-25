@@ -483,6 +483,77 @@ index 07238927b..4c12782a8 100644
  #else
  #define GST_CAPS_FORMAT "{ xRGB, ARGB }"
  #endif
+diff --git a/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.cpp b/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.cpp
+index ab23ed593..9f5a14f37 100644
+--- a/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.cpp
++++ b/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.cpp
+@@ -1284,8 +1284,13 @@ void SkiaCompositingLayer::paintBackdrop(SkCanvas& canvas, PaintContext& context
+ 
+ void SkiaCompositingLayer::paintWithMaskAndBackdrop(SkCanvas& canvas, PaintContext& context)
+ {
++    // Drawn as its replica, the layer is masked by the replica's mask (the reflection's fade); its
++    // descendants are not.
++    auto* mask = context.replicaMask ? context.replicaMask : m_mask.get();
++    SetForScope scopedReplicaMask(context.replicaMask, nullptr);
++
+     // An empty clip path clips the whole layer away, so skip it in every mode.
+-    if (m_mask && m_mask->m_clipPath && m_mask->m_clipPath->isEmpty())
++    if (mask && mask->m_clipPath && mask->m_clipPath->isEmpty())
+         return;
+ 
+ #if ENABLE(DAMAGE_TRACKING)
+@@ -1304,22 +1309,22 @@ void SkiaCompositingLayer::paintWithMaskAndBackdrop(SkCanvas& canvas, PaintConte
+ 
+     bool shouldClipPath = false;
+     sk_sp<SkImage> maskImage;
+-    if (m_mask) {
+-        shouldClipPath = m_mask->m_clipPath.has_value();
++    if (mask) {
++        shouldClipPath = mask->m_clipPath.has_value();
+         if (!shouldClipPath)
+-            maskImage = m_mask->maskImage();
++            maskImage = mask->maskImage();
+     }
+ 
+     ScopedFlush autoFlush(canvas, context.imageSetBatch, shouldClipPath || maskImage ? ScopedFlush::Mode::FlushBeforeAndAfter : ScopedFlush::Mode::DoNothing);
+     if (shouldClipPath || maskImage) {
+         TransformationMatrix transform(context.accumulatedReplicaTransform);
+-        transform.multiply(m_mask->m_transforms.combined);
++        transform.multiply(mask->m_transforms.combined);
+         if (maskImage)
+-            transform = transform.scale(1 / m_mask->m_backingStore->scale());
++            transform = transform.scale(1 / mask->m_backingStore->scale());
+         auto matrix = SkM44(transform).asM33();
+ 
+         if (shouldClipPath)
+-            canvas.clipPath(m_mask->m_clipPath->makeTransform(matrix), true);
++            canvas.clipPath(mask->m_clipPath->makeTransform(matrix), true);
+         else if (auto maskShader = maskImage->makeShader(SkiaUtilities::samplingOptionsForMatrix(SkMatrix::Concat(canvas.getLocalToDeviceAs3x3(), matrix)), &matrix))
+             canvas.clipShader(maskShader);
+     }
+@@ -1592,6 +1597,8 @@ void SkiaCompositingLayer::paintWithReplica(SkCanvas& canvas, PaintContext& cont
+     if (m_replica) {
+         auto newAccumulatedReplicaTransform = TransformationMatrix(context.accumulatedReplicaTransform).multiply(replicaTransform());
+         SetForScope scopedReplicaTransform(context.accumulatedReplicaTransform, newAccumulatedReplicaTransform);
++        // Spatiand: the replica's mask (-webkit-box-reflect's gradient) fades the reflection.
++        SetForScope scopedReplicaMask(context.replicaMask, m_replica->m_mask.get());
+         paintWithMaskAndBackdrop(canvas, context);
+     }
+ 
+diff --git a/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.h b/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.h
+index 18ab7030d..236bb3769 100644
+--- a/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.h
++++ b/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.h
+@@ -203,6 +203,9 @@ private:
+         std::optional<SkBlendMode> blendMode;
+         sk_sp<SkColorFilter> colorFilter;
+         TransformationMatrix accumulatedReplicaTransform;
++        // While a layer is drawn as its replica (a reflection), the replica's own mask -- the
++        // reflection's fade -- is used in place of the layer's.
++        SkiaCompositingLayer* replicaMask { nullptr };
+         RefPtr<SkiaCompositingLayer> paintingBackdropForLayer;
+         bool skipAfterBackdrop { false };
+         SkiaCompositingLayerImageSetBatch imageSetBatch;
 diff --git a/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp b/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp
 index 9fee5e03f..cb8a88257 100644
 --- a/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp
@@ -715,6 +786,40 @@ index bedc03c5d..79547cde3 100644
  
      Ref<VideoFrameGStreamer> m_videoFrame;
      std::optional<GstMappedFrame> m_mappedVideoFrame;
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
+index 5aa9b03f7..b67720f4f 100644
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
+@@ -1244,8 +1244,13 @@ void GraphicsLayerCoordinated::recursiveCommitChanges(CommitState& commitState,
+ 
+     if (auto maskLayer = downcast<GraphicsLayerCoordinated>(m_maskLayer))
+         maskLayer->commitLayerChanges(childCommitState, pageScaleFactor, baseRelativePosition, affectedByTransformAnimation);
+-    if (auto replicaLayer = downcast<GraphicsLayerCoordinated>(m_replicaLayer))
++    if (auto replicaLayer = downcast<GraphicsLayerCoordinated>(m_replicaLayer)) {
+         replicaLayer->commitLayerChanges(childCommitState, pageScaleFactor, baseRelativePosition, affectedByTransformAnimation);
++        // Spatiand: and the replica's own mask (-webkit-box-reflect's fade), which nothing else
++        // commits: it kept no size, and the reflection was drawn unfaded.
++        if (auto replicaMaskLayer = downcast<GraphicsLayerCoordinated>(replicaLayer->m_maskLayer))
++            replicaMaskLayer->commitLayerChanges(childCommitState, pageScaleFactor, baseRelativePosition, affectedByTransformAnimation);
++    }
+ 
+     bool hasDescendantsWithPendingTilesCreation = false;
+     bool hasDescendantsWithRunningTransformAnimations = false;
+@@ -1269,8 +1274,13 @@ bool GraphicsLayerCoordinated::updateBackingStoresIfNeeded()
+     bool hasPendingTilesCreation = false;
+     if (auto maskLayer = downcast<GraphicsLayerCoordinated>(m_maskLayer))
+         hasPendingTilesCreation |= maskLayer->updateBackingStoreIfNeeded();
+-    if (auto replicaLayer = downcast<GraphicsLayerCoordinated>(m_replicaLayer))
++    if (auto replicaLayer = downcast<GraphicsLayerCoordinated>(m_replicaLayer)) {
+         hasPendingTilesCreation |= replicaLayer->updateBackingStoreIfNeeded();
++        // Spatiand: the replica's own mask too -- -webkit-box-reflect's fade -- or it is never
++        // painted, and the reflection is drawn unfaded.
++        if (auto replicaMaskLayer = downcast<GraphicsLayerCoordinated>(replicaLayer->m_maskLayer))
++            hasPendingTilesCreation |= replicaMaskLayer->updateBackingStoreIfNeeded();
++    }
+ 
+     hasPendingTilesCreation |= updateBackingStoreIfNeeded();
+ 
 diff --git a/Source/WebKit/CMakeLists.txt b/Source/WebKit/CMakeLists.txt
 index fd21e35f0..0f174b703 100644
 --- a/Source/WebKit/CMakeLists.txt
@@ -2021,6 +2126,23 @@ index 8066fc3e4..af9e01572 100644
  #if USE(WPE_RENDERER)
              WPEBackend
  #endif
+diff --git a/Source/WebKit/WebProcess/WebPage/WebPage.cpp b/Source/WebKit/WebProcess/WebPage/WebPage.cpp
+index 32e4e37b9..72ac5a7d0 100644
+--- a/Source/WebKit/WebProcess/WebPage/WebPage.cpp
++++ b/Source/WebKit/WebProcess/WebPage/WebPage.cpp
+@@ -759,6 +759,12 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
+     , m_allowsImmersiveEnvironments(parameters.allowsImmersiveEnvironments)
+ #endif
+ {
++#if PLATFORM(WPE)
++    // Spatiand: which page this web process shows, for its sound's name in the room
++    // (third_party/wpe/gst/spatiandaudiosink.c). WebKit gives each tab its own web process;
++    // a page opened by another shares its opener's, and the last page made names the sound.
++    setenv("SPATIAND_PAGE", String::number(pageID.toUInt64()).utf8().data(), 1);
++#endif
+     WEBPAGE_RELEASE_LOG(Loading, "constructor:");
+ 
+ #if PLATFORM(COCOA)
 diff --git a/Source/WebKit/WebProcess/WebProcess.cpp b/Source/WebKit/WebProcess/WebProcess.cpp
 index 1a40da5d1..8a87747e9 100644
 --- a/Source/WebKit/WebProcess/WebProcess.cpp
