@@ -1,0 +1,72 @@
+--- a/gst/isomp4/qtdemux.h
++++ b/gst/isomp4/qtdemux.h
+@@ -481,6 +481,11 @@
+   guint32 to_sample;
+ 
+   gboolean sent_eos;
++  /* Spatiand: a sparse (subtitle) stream's data read as one block, when it is far from where
++   * the other streams are being read: one range request instead of a seek there and back for
++   * every cue. */
++  GstBuffer *sparse_block;
++  guint64 sparse_block_offset;
+   GstTagList *stream_tags;
+   gboolean send_global_tags;
+ 
+--- a/gst/isomp4/qtdemux.c
++++ b/gst/isomp4/qtdemux.c
+@@ -2585,6 +2585,7 @@
+ static void
+ gst_qtdemux_stream_clear (QtDemuxStream * stream)
+ {
++  gst_clear_buffer (&stream->sparse_block);
+   gint i;
+   if (stream->allocator)
+     gst_object_unref (stream->allocator);
+@@ -7542,10 +7543,43 @@
+     buf = gst_buffer_new_allocate (stream->allocator, size, &stream->params);
+   }
+ 
+-  ret = gst_qtdemux_pull_atom (qtdemux, offset + stream->offset_in_sample,
+-      size, &buf);
+-  if (G_UNLIKELY (ret != GST_FLOW_OK))
+-    goto beach;
++  /* Spatiand: a sparse stream's sample comes out of a block of its own data read in one go
++   * (QTDEMUX_SPARSE_BLOCK), not by a seek of its own: subtitles a muxer stored together at the
++   * end of a large file would otherwise send every read there and back, which over the
++   * network is a film that does not play. */
++  if (CUR_STREAM (stream)->sparse && !stream->use_allocator) {
++#define QTDEMUX_SPARSE_BLOCK (1024 * 1024)
++    guint64 at = offset + stream->offset_in_sample;
++    if (!stream->sparse_block || at < stream->sparse_block_offset
++        || at + size > stream->sparse_block_offset +
++        gst_buffer_get_size (stream->sparse_block)) {
++      GstBuffer *block = NULL;
++      gst_clear_buffer (&stream->sparse_block);
++      ret = gst_pad_pull_range (qtdemux->sinkpad, at,
++          MAX (size, QTDEMUX_SPARSE_BLOCK), &block);
++      if (G_UNLIKELY (ret != GST_FLOW_OK))
++        goto beach;
++      stream->sparse_block = block;
++      stream->sparse_block_offset = at;
++      GST_DEBUG_OBJECT (qtdemux, "read a block of %" G_GSIZE_FORMAT
++          " bytes of a sparse stream at %" G_GUINT64_FORMAT,
++          gst_buffer_get_size (block), at);
++    }
++    if (at + size > stream->sparse_block_offset +
++        gst_buffer_get_size (stream->sparse_block)) {
++      ret = GST_FLOW_EOS;
++      goto beach;
++    }
++    if (buf)
++      gst_buffer_unref (buf);
++    buf = gst_buffer_copy_region (stream->sparse_block, GST_BUFFER_COPY_ALL,
++        at - stream->sparse_block_offset, size);
++  } else {
++    ret = gst_qtdemux_pull_atom (qtdemux, offset + stream->offset_in_sample,
++        size, &buf);
++    if (G_UNLIKELY (ret != GST_FLOW_OK))
++      goto beach;
++  }
+ 
+   /* Update for both splitting and combining of samples */
+   if (size != sample_size) {

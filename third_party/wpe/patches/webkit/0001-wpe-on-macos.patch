@@ -544,7 +544,7 @@ index f083b32c0..def2c4037 100644
          m_decoderCodecMap.add("av1"_s, av1DecoderAvailable);
          m_decoderCodecMap.add("x-av1"_s, av1DecoderAvailable);
 diff --git a/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp b/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
-index c5b860567..2d3332f92 100644
+index c5b860567..c401ed74b 100644
 --- a/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
 +++ b/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
 @@ -1595,6 +1595,17 @@ void MediaPlayerPrivateGStreamer::fillTimerFired()
@@ -590,6 +590,19 @@ index c5b860567..2d3332f92 100644
      updateBufferingStatus(mode, static_cast<double>(percentage));
  }
  
+@@ -3501,6 +3523,12 @@ void MediaPlayerPrivateGStreamer::updateDownloadBufferingFlag()
+     if (shouldDownload) {
+         GST_INFO_OBJECT(pipeline(), "Enabling on-disk buffering");
+         g_object_set(m_pipeline.get(), "flags", flags | flagDownload, nullptr);
++#if PLATFORM(WPE)
++        // Spatiand: read as it is needed, in memory -- the ranges a player asks for, as Safari
++        // reads a film -- and never into a file on disk: queue2 in ring-buffer mode, which
++        // fetches what is wanted by range requests and keeps the latest 256 MB.
++        g_object_set(m_pipeline.get(), "ring-buffer-max-size", static_cast<guint64>(256 * 1024 * 1024), nullptr);
++#endif
+         m_fillTimer.startRepeating(200_ms);
+     } else
+         disableDownloading();
 diff --git a/Source/WebCore/platform/graphics/gstreamer/VideoSinkGStreamer.cpp b/Source/WebCore/platform/graphics/gstreamer/VideoSinkGStreamer.cpp
 index 07238927b..4c12782a8 100644
 --- a/Source/WebCore/platform/graphics/gstreamer/VideoSinkGStreamer.cpp

@@ -22,10 +22,6 @@ fn find_own() {
     }
     // GStreamer's plugins and the program that looks into them, beside WPE's libraries; its
     // list of them where caches go (made again when it is missing or stale).
-    // Films are streamed, as everything of Spatiand's is: nothing is downloaded to disk while it
-    // plays. WebKit's download-while-playing (what a kept profile otherwise gets) stalled films
-    // on a Mac a few seconds in, with the picture frozen and the sound going on.
-    std::env::set_var("WPE_SHELL_DISABLE_MEDIA_DISK_CACHE", "1");
     if std::env::var_os("GST_PLUGIN_SYSTEM_PATH").is_none() {
         // In the app the folder is gstreamer-1_0 (no dot: codesign takes a dotted folder for a
         // bundle, mac/make-app.sh).
