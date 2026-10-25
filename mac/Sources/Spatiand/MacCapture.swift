@@ -109,6 +109,39 @@ enum MacWindows {
         return AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value) == .success
     }
 
+    /// **A window the Mac has put where the room's pointer cannot go.** On the glasses' display, or
+    /// on no display at all (Chrome opened a window left of the glasses, beyond every screen):
+    /// the room aims the real cursor at the window, macOS cannot put it there and puts it on
+    /// the glasses' display instead -- the cursor in the glasses, which it must never be -- and
+    /// what is clicked is not what is pointed at. Such a window is moved onto the Mac's own
+    /// screen before the room takes it.
+    static func stranded(_ frame: CGRect, glasses: CGDirectDisplayID?) -> Bool {
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(16, &ids, &count) == .success else { return false }
+        if let glasses, CGDisplayBounds(glasses).intersects(frame) { return true }
+        var covered = 0.0
+        for id in ids.prefix(Int(count)) where id != glasses {
+            let part = CGDisplayBounds(id).intersection(frame)
+            if !part.isNull { covered += Double(part.width * part.height) }
+        }
+        return covered < Double(frame.width * frame.height) * 0.3
+    }
+
+    /// The window moved onto the main display, if it was stranded; its info with the new frame.
+    static func bringOntoMain(_ info: MacWindowInfo, glasses: CGDirectDisplayID?) -> MacWindowInfo {
+        guard info.display == nil, stranded(info.frame, glasses: glasses), let window = axWindow(info) else { return info }
+        let main = CGDisplayBounds(CGMainDisplayID())
+        let x = main.minX + max(40, min(120, (main.width - info.frame.width) / 2))
+        let y = main.minY + max(40, min(120, (main.height - info.frame.height) / 2))
+        var to = CGPoint(x: x, y: y)
+        guard let value = AXValueCreate(.cgPoint, &to),
+              AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value) == .success else { return info }
+        print("windows: \(info.app) \u{201C}\(info.title)\u{201D} was at \(info.frame.origin), off the Mac's screen; moved to \(to)")
+        return MacWindowInfo(windowID: info.windowID, pid: info.pid, bundle: info.bundle, app: info.app, title: info.title,
+                             frame: CGRect(origin: to, size: info.frame.size), display: info.display, prompt: info.prompt)
+    }
+
     /// A window's size now, in points, for tests.
     static func currentFrame(_ info: MacWindowInfo) -> CGRect? {
         guard let window = axWindow(info) else { return nil }

@@ -259,7 +259,8 @@ final class RoomWindows {
             let all = await MacWindows.list() + MacScreens.list(excluding: glasses)
             queue.async { [self] in
                 var broughtThisScan = 0
-                for info in all where !entries.values.contains(where: { $0.info.windowID == info.windowID }) && !passedOver.contains(info.windowID) {
+                for found in all where !entries.values.contains(where: { $0.info.windowID == found.windowID }) && !passedOver.contains(found.windowID) {
+                    let info = MacWindows.bringOntoMain(found, glasses: glasses)
                     if info.display != nil {
                         _ = announce(info, hidden: true)
                         continue
