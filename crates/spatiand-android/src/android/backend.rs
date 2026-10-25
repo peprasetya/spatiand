@@ -235,6 +235,7 @@ pub fn run(
     shell.offer_audio();
     // Where windows pinned to the view go and how big: the wearer's, from last time.
     crate::pip::adopt(&mut runtime.state, &prefs, &mut shell);
+    shell.set_look(prefs.look_index());
     let mut environments = Environments::discover();
     shell.set_environments(environments.entries(), environments.choice());
     let mut browser = crate::environment::Browser::new();
@@ -850,6 +851,7 @@ pub fn run(
                         HudAction::PipSize => {
                             crate::pip::toggle_size(&mut runtime.state, &mut prefs, &mut shell)
                         }
+                        HudAction::Look => shell.set_look(prefs.next_look()),
                         HudAction::OpenSwitcher => shell.set_windows(crate::remote::with_offered(runtime.state.open_windows())),
                         HudAction::ControllerLayout => controls.open_editor(),
                         HudAction::ToggleKeyboard => {

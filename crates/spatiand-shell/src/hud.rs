@@ -85,6 +85,9 @@ pub enum HudAction {
     PipCorner,
     /// Switch pinned windows between their two sizes.
     PipSize,
+    /// Go to the next look for Spatiand's own windows and pages: following the system, light,
+    /// dark. See [`Hud::set_look`].
+    Look,
     /// Open the controller layout of whatever is in front of the wearer.
     ControllerLayout,
     /// Open the environment picker.
@@ -202,6 +205,17 @@ const PIP_CORNER_ROWS: [&str; 4] = [
     "Pinned windows: top right",
 ];
 
+/// The look row: following the system, light, dark -- in the order the compositor numbers them.
+pub const LOOK_ROWS: [&str; 3] = ["Look: as the system", "Look: light", "Look: dark"];
+
+fn look_row(look: usize) -> HudItem {
+    HudItem {
+        label: LOOK_ROWS[look.min(LOOK_ROWS.len() - 1)],
+        detail: "Light or dark, for Spatiand's own apps and the pages in SpatiMesh. Choose to change",
+        action: HudAction::Look,
+    }
+}
+
 /// The size row, small then large.
 const PIP_SIZE_ROWS: [&str; 2] = ["Pinned size: small", "Pinned size: large"];
 
@@ -300,6 +314,7 @@ impl Hud {
                 detail: "Choose what surrounds you, or add an image",
                 action: HudAction::OpenEnvironments,
             },
+            look_row(0),
             HudItem {
                 label: "Remote computers",
                 detail: "Apps running on your other computers: see which are online, or pair \
@@ -343,6 +358,15 @@ impl Hud {
         for item in &mut self.items {
             if item.action == HudAction::Record {
                 *item = if recording { STOP_RECORDING } else { RECORD };
+            }
+        }
+    }
+
+    /// Show the look chosen, 0 to 2 in the order of [`LOOK_ROWS`], on its row.
+    pub fn set_look(&mut self, look: usize) {
+        for item in &mut self.items {
+            if item.action == HudAction::Look {
+                *item = look_row(look);
             }
         }
     }
@@ -671,6 +695,8 @@ mod tests {
                 // Next to the window list: a pinned window is a way of arranging windows.
                 "Pinned windows",
                 "Environment",
+                // Beside what surrounds you: how Spatiand's own windows look in it.
+                "Look: as the system",
                 // Spatiand's own pages before the desktop's panels: this one is where the
                 // launcher's remote tabs come from, and it is reached for more than Bluetooth.
                 "Remote computers",

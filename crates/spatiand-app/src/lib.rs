@@ -461,13 +461,27 @@ impl App {
 mod look {
     pub const EVERY: std::time::Duration = std::time::Duration::from_secs(1);
 
-    /// `SPATIAND_LOOK=light` or `dark` holds it so, whatever the platform says.
+    /// `SPATIAND_LOOK=light` or `dark` holds it so, whatever the platform says; then the
+    /// wearer's choice in Spatiand's settings (`look` in its prefs.toml); then the platform.
     pub fn platform_dark() -> bool {
-        match std::env::var("SPATIAND_LOOK").as_deref() {
-            Ok("light") => false,
-            Ok("dark") => true,
+        let chosen = std::env::var("SPATIAND_LOOK").ok().or_else(chosen_look);
+        match chosen.as_deref() {
+            Some("light") => false,
+            Some("dark") => true,
             _ => platform::dark(),
         }
+    }
+
+    /// `look = "..."` in Spatiand's prefs.toml (`crates/spatiand/src/prefs.rs`).
+    fn chosen_look() -> Option<String> {
+        let config = std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))?;
+        let text = std::fs::read_to_string(config.join("spatiand/prefs.toml")).ok()?;
+        text.lines().find_map(|l| {
+            let (key, value) = l.split_once('=')?;
+            (key.trim() == "look").then(|| value.trim().trim_matches('"').to_string())
+        })
     }
 
     #[cfg(target_os = "macos")]

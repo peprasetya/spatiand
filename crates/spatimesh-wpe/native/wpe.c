@@ -377,9 +377,40 @@ static gboolean platform_dark(void) {
 #endif
 
 /* Pages are told light or dark as the platform is, and again whenever it changes. */
+/* The wearer's choice in Spatiand's settings -- `look = "light"`, "dark" or "system" in its
+ * prefs.toml (crates/spatiand/src/prefs.rs) -- or SPATIAND_LOOK: 1 dark, 0 light, -1 as the
+ * platform is. */
+static int chosen_look(void) {
+    const char *forced = g_getenv("SPATIAND_LOOK");
+    if (forced && (!strcmp(forced, "light") || !strcmp(forced, "dark")))
+        return !strcmp(forced, "dark");
+    char *path = g_build_filename(g_get_user_config_dir(), "spatiand", "prefs.toml", NULL);
+    char *text = NULL;
+    int chosen = -1;
+    if (g_file_get_contents(path, &text, NULL, NULL)) {
+        char **lines = g_strsplit(text, "\n", -1);
+        for (char **line = lines; *line; line++) {
+            char *key = g_strstrip(g_strdup(*line));
+            if (g_str_has_prefix(key, "look") && strchr(key, '=')) {
+                const char *value = strchr(key, '=') + 1;
+                if (strstr(value, "\"light\""))
+                    chosen = 0;
+                else if (strstr(value, "\"dark\""))
+                    chosen = 1;
+            }
+            g_free(key);
+        }
+        g_strfreev(lines);
+        g_free(text);
+    }
+    g_free(path);
+    return chosen;
+}
+
 static gboolean check_dark_mode(gpointer data) {
     WPEDisplay *display = data;
-    gboolean dark = platform_dark();
+    int chosen = chosen_look();
+    gboolean dark = chosen >= 0 ? chosen : platform_dark();
     GError *error = NULL;
     if (wpe_settings_get_boolean(wpe_display_get_settings(display), WPE_SETTING_DARK_MODE, NULL) != dark)
         wpe_settings_set_boolean(wpe_display_get_settings(display), WPE_SETTING_DARK_MODE, dark, WPE_SETTINGS_SOURCE_PLATFORM, &error);

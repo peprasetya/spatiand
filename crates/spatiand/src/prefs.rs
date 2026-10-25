@@ -66,6 +66,12 @@ pub struct Prefs {
     #[serde(default)]
     pub pip_size: spatiand_render::pip::Size,
 
+    /// Light or dark for Spatiand's own applications and SpatiMesh's pages: "system" (the
+    /// platform's setting, the default), "light" or "dark". Read by each application from this
+    /// file (`spatiand_app`, and SpatiMesh's engine), so a change shows within a second.
+    #[serde(default = "system_look")]
+    pub look: String,
+
     /// Hosts running applications elsewhere, shown here as windows.
     ///
     /// Empty by default, and a session with none behaves exactly as it always has. Each entry
@@ -88,6 +94,29 @@ pub struct RemoteHost {
     pub launch: Vec<String>,
 }
 
+fn system_look() -> String {
+    "system".into()
+}
+
+/// The looks, in the order the settings list shows them.
+const LOOKS: [&str; 3] = ["system", "light", "dark"];
+
+impl Prefs {
+    /// The look chosen, 0 to 2 in the order of [`LOOKS`].
+    pub fn look_index(&self) -> usize {
+        LOOKS.iter().position(|l| *l == self.look).unwrap_or(0)
+    }
+
+    /// Go to the next look, keep it, and say which it now is.
+    pub fn next_look(&mut self) -> usize {
+        let next = (self.look_index() + 1) % LOOKS.len();
+        self.look = LOOKS[next].into();
+        self.save();
+        log::info!("look: {}", self.look);
+        next
+    }
+}
+
 impl Default for Prefs {
     fn default() -> Self {
         // Deliberately the same default the shell's own keyboard carries, so a session with no
@@ -100,6 +129,7 @@ impl Default for Prefs {
             remote_microphone: true,
             pip_corner: Default::default(),
             pip_size: Default::default(),
+            look: system_look(),
             remotes: Vec::new(),
         }
     }

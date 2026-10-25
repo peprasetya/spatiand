@@ -705,8 +705,18 @@ fn the_platform_look() {
     let title = host.title(1, "scheme:");
     #[cfg(target_os = "macos")]
     {
-        let dark = std::process::Command::new("defaults").args(["read", "-g", "AppleInterfaceStyle"]).output()
-            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim().eq_ignore_ascii_case("dark"));
+        // The wearer's choice in Spatiand's settings first, then the Mac's.
+        let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap()).join(".config"));
+        let chosen = std::fs::read_to_string(config.join("spatiand/prefs.toml")).ok().and_then(|t| {
+            t.lines().find(|l| l.trim_start().starts_with("look")).map(|l| l.contains("\"dark\"") as u8 + 2 * l.contains("\"light\"") as u8)
+        });
+        let dark = match chosen {
+            Some(1) => true,
+            Some(2) => false,
+            _ => std::process::Command::new("defaults").args(["read", "-g", "AppleInterfaceStyle"]).output()
+                .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim().eq_ignore_ascii_case("dark")),
+        };
         assert!(title.starts_with(if dark { "scheme:dark" } else { "scheme:light" }), "{title}");
     }
     eprintln!("{title}");

@@ -219,6 +219,11 @@ impl Shell {
         self.hud.set_recording(recording);
     }
 
+    /// Say which look is chosen, 0 to 2 (as the system, light, dark), for the HUD's row.
+    pub fn set_look(&mut self, look: usize) {
+        self.hud.set_look(look);
+    }
+
     /// Say where pinned windows are and how big, so the HUD's two rows show it. `corner` is 0
     /// to 3, bottom right first; see `Hud::set_pip`.
     pub fn set_pip(&mut self, corner: usize, large: bool) {

@@ -449,6 +449,7 @@ pub fn run(
                         HudAction::ToggleKeyboard
                         | HudAction::PipCorner
                         | HudAction::PipSize
+                        | HudAction::Look
                         | HudAction::OpenPinned
                         | HudAction::ReturnToDesktop
                         | HudAction::ControllerLayout
