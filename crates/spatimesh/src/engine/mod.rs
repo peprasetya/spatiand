@@ -155,6 +155,9 @@ pub enum DialogKind {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Happened {
     Title { tab: TabId, title: String },
+    /// The name the tab's sound is handed to the room under (`<app id>/page<n>`), for the window
+    /// to say which window's place it is to be heard at -- and again when the tab moves.
+    SoundName { tab: TabId, name: String },
     /// The address the tab is at now: after a redirect, a link followed, history.
     Url { tab: TabId, url: String },
     /// How much of the page has come, from 0 to 1, and whether it is still coming.
@@ -265,6 +268,7 @@ impl Happened {
     pub fn tab(&self) -> TabId {
         match self {
             Happened::Title { tab, .. }
+            | Happened::SoundName { tab, .. }
             | Happened::Url { tab, .. }
             | Happened::Progress { tab, .. }
             | Happened::History { tab, .. }

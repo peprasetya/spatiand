@@ -234,6 +234,9 @@ pub struct Browser {
     wins: Vec<Win>,
     /// Windows' sounds named so far (`name_sound`).
     sounds_named: u32,
+    /// Each tab's sound's own name, as its engine said (`Happened::SoundName`), and the window
+    /// sound name the room was last told it is heard as.
+    tab_sounds: HashMap<TabId, (String, Option<String>)>,
     views: HashMap<TabId, TabView>,
     hosts: HashMap<String, Host>,
     program: Program,
@@ -297,6 +300,7 @@ impl Browser {
             tabs: Tabs::new(),
             wins: Vec::new(),
             sounds_named: 0,
+            tab_sounds: HashMap::new(),
             views: HashMap::new(),
             hosts: HashMap::new(),
             program: crate::engines::program(),
@@ -346,6 +350,36 @@ impl Browser {
 
     fn win_index(&self, id: WindowId) -> Option<usize> {
         self.wins.iter().position(|w| w.id == id)
+    }
+
+    /// Each tab's sound heard at the window it is in now: the room is told whenever that
+    /// changes (a tab dragged to another window, a window closed), and forgets a closed tab's.
+    fn route_sounds(&mut self) {
+        let Some(path) = spatiand_sound_socket() else { return };
+        let mut tell = Vec::new();
+        self.tab_sounds.retain(|tab, (name, told)| {
+            let Some(key) = self.tabs.window_of(*tab) else {
+                tell.push((name.clone(), String::new()));
+                return false;
+            };
+            let Some(win) = self.wins.iter().find(|w| w.key == key) else { return true };
+            if told.as_deref() != Some(win.sound.as_str()) {
+                *told = Some(win.sound.clone());
+                tell.push((name.clone(), win.sound.clone()));
+            }
+            true
+        });
+        for (feed, to) in tell {
+            let mut said = b"SPRT".to_vec();
+            for part in [&feed, &to] {
+                said.extend_from_slice(&(part.len() as u16).to_le_bytes());
+                said.extend_from_slice(part.as_bytes());
+            }
+            if let Ok(mut socket) = std::os::unix::net::UnixStream::connect(&path) {
+                use std::io::Write;
+                let _ = socket.write_all(&said);
+            }
+        }
     }
 
     /// A new window's sound's name, said to the room.
@@ -712,6 +746,10 @@ impl Browser {
             self.told.extend(told);
         }
         match happened {
+            Happened::SoundName { tab, name } => {
+                self.tab_sounds.insert(tab, (name, None));
+                self.route_sounds();
+            }
             Happened::Title { tab, title } => {
                 let mut loaded = false;
                 if let Some(t) = self.tabs.tab_mut(tab) {
@@ -2475,6 +2513,7 @@ impl Browser {
                 }
             }
             self.hear();
+            self.route_sounds();
             self.media.tick();
             if let Ok(gl) = self.app.gl() {
                 self.media.capture(gl);
@@ -2832,4 +2871,10 @@ mod tests {
         assert!(!is_start("https://example.com/"));
         assert_eq!(host_of("https://example.com:8080/a?b#c"), "example.com:8080");
     }
+}
+
+/// Where the session takes its own applications' sound, and routes for it
+/// (`crates/spatiand/src/own.rs`, `sound`).
+fn spatiand_sound_socket() -> Option<std::path::PathBuf> {
+    std::env::var_os("XDG_RUNTIME_DIR").map(|d| std::path::PathBuf::from(d).join("spatiand-sound"))
 }

@@ -770,3 +770,74 @@ fn sound_goes_to_the_session() {
     host.quit();
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// A sign-in window, as an OpenID login opens one: the page opened by window.open is a tab of
+/// its own that still knows its opener -- it posts a message back and closes itself.
+#[test]
+fn a_window_opened_tells_its_opener_and_closes() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    let dir = std::env::temp_dir().join(format!("spatimesh-wpe-opener-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("login.html"), "<script>window.opener.postMessage('signed in','*');window.close()</script>").unwrap();
+    std::fs::write(dir.join("main.html"), "<body style='margin:0;height:100vh' onclick=\"window.open('login.html','login','width=400,height=300')\">\
+        <script>addEventListener('message',e=>document.title='told:'+e.data)</script></body>").unwrap();
+    host.send(ToHost::Open { tab: 1, url: format!("file://{}", dir.join("main.html").display()), view: View::new(400, 300, 1.0) });
+    host.settle(Duration::from_secs(1));
+    host.click(1, 50.0, 50.0);
+    // As SpatiMesh's window does: a tab of its own for what the page opened.
+    let opened = host.wait_for("the page opening a window", 20, |h| matches!(h, Happened::OpenTab { opener: 1, .. }));
+    let Happened::OpenTab { url, .. } = opened else { unreachable!() };
+    host.send(ToHost::Open { tab: 2, url, view: View::new(400, 300, 1.0) });
+    assert_eq!(host.title(1, "told:"), "told:signed in");
+    host.wait_for("the opened window closing itself", 20, |h| matches!(h, Happened::CloseTab { tab: 2 }));
+    host.quit();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// An emoji drawn as SVG text in a CSS background, as Vibrefy draws every picture it has none
+/// for: in colour, not a box.
+#[test]
+fn an_emoji_in_a_css_background() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    let url = page(concat!(
+        "<div style=\"width:320px;height:180px;background-size:contain;background-repeat:no-repeat;",
+        "background-image:url(&quot;data:image/svg+xml,%3Csvg viewBox='0 0 160 90' xmlns='http://www.w3.org/2000/svg'%3E",
+        "%3Ctext x='50%' y='90%' font-size='80' text-anchor='middle'%3E\u{1F3AC}%3C/text%3E%3C/svg%3E&quot;)\"></div>",
+        "<script>onload=()=>document.title='drawn'</script>"
+    ));
+    host.send(ToHost::Open { tab: 1, url, view: View::new(320, 180, 1.0) });
+    host.title(1, "drawn");
+    host.settle(Duration::from_secs(1));
+    host.shot(1, "css-emoji");
+    // The clapperboard is a large dark shape; a missing glyph is a thin outlined box.
+    let mut dark = 0;
+    for y in (0..180).step_by(4) {
+        for x in (0..320).step_by(4) {
+            if host.pixel(1, x, y).iter().all(|c| *c < 90) {
+                dark += 1;
+            }
+        }
+    }
+    assert!(dark > 150, "no emoji drawn: {dark} dark samples");
+    host.quit();
+}
+
+/// A picture of any page, by hand: SPATIMESH_LOOK_AT (a file or an address),
+/// SPATIMESH_LOOK_WAIT seconds, into SPATIMESH_TEST_SHOTS/look.ppm.
+#[test]
+#[ignore]
+fn look_at_a_file() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    let at = std::env::var("SPATIMESH_LOOK_AT").unwrap();
+    let url = if at.contains("://") { at } else { format!("file://{at}") };
+    host.send(ToHost::Open { tab: 1, url, view: View::new(1100, 700, 1.0) });
+    let wait = std::env::var("SPATIMESH_LOOK_WAIT").ok().and_then(|w| w.parse().ok()).unwrap_or(2);
+    host.settle(Duration::from_secs(wait));
+    // SPATIMESH_LOOK_CLICK=x,y clicks there, then waits as long again.
+    if let Some((x, y)) = std::env::var("SPATIMESH_LOOK_CLICK").ok().and_then(|c| c.split_once(',').map(|(x, y)| (x.parse().unwrap(), y.parse().unwrap()))) {
+        host.click(1, x, y);
+        host.settle(Duration::from_secs(wait));
+    }
+    host.shot(1, "look");
+    host.quit();
+}

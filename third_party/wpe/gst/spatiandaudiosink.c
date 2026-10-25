@@ -62,10 +62,19 @@ static gboolean socket_path(struct sockaddr_un *where) {
 }
 
 /* Opened only to see whether there is a session (autoaudiosink opens each sink it tries, and
- * closes the ones it does not take): the connection is made when sound is to be played. */
+ * closes the ones it does not take): one is there if its socket answers -- the file outlives a
+ * session that has ended (the glasses unplugged), and sound then goes to the next sink. The
+ * connection sound goes over is made when it is to be played. */
 static gboolean spatiand_open(GstAudioSink *base) {
     struct sockaddr_un where;
-    return socket_path(&where);
+    if (!socket_path(&where))
+        return FALSE;
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0)
+        return FALSE;
+    gboolean answers = connect(fd, (struct sockaddr *)&where, sizeof where) == 0;
+    close(fd);
+    return answers;
 }
 
 static gboolean spatiand_connect(SpatiandAudioSink *self) {
@@ -98,7 +107,11 @@ static gboolean spatiand_prepare(GstAudioSink *base, GstAudioRingBufferSpec *spe
     self->rate = GST_AUDIO_INFO_RATE(&spec->info);
     self->bytes_per_frame = GST_AUDIO_INFO_BPF(&spec->info);
     /* SPSN, channels (u16), rate (u32), the application id (u16 length, then its bytes). */
-    const char *app = g_getenv("SPATIAND_APP_ID");
+    /* Each page's sound under a name of its own (its web process says which page it is
+     * showing: WebKit's WebPage sets SPATIAND_PAGE), which SpatiMesh's window routes to the
+     * place of the window the tab is in; or the application's own, where there is none. */
+    const char *page = g_getenv("SPATIAND_PAGE");
+    char *app = page && *page ? g_strdup_printf("%s/page%s", g_getenv("SPATIAND_APP_ID"), page) : g_strdup(g_getenv("SPATIAND_APP_ID"));
     guint16 channels = (guint16)self->channels, length = (guint16)strlen(app);
     guint32 rate = (guint32)self->rate;
     unsigned char head[12];
@@ -106,7 +119,9 @@ static gboolean spatiand_prepare(GstAudioSink *base, GstAudioRingBufferSpec *spe
     memcpy(head + 4, &channels, 2);
     memcpy(head + 6, &rate, 4);
     memcpy(head + 10, &length, 2);
-    if (write(self->fd, head, sizeof head) != sizeof head || write(self->fd, app, length) != length) {
+    gboolean told = write(self->fd, head, sizeof head) == sizeof head && write(self->fd, app, length) == length;
+    g_free(app);
+    if (!told) {
         GST_ELEMENT_ERROR(self, RESOURCE, WRITE, ("The Spatiand session took no sound"), ("%s", g_strerror(errno)));
         return FALSE;
     }

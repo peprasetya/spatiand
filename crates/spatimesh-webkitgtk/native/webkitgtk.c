@@ -105,6 +105,10 @@ typedef struct Engine {
     WebKitWebContext *context;
     WebKitSettings *settings;
     GHashTable *tabs;
+    /* Views WebKit made for window.open, each waiting for the tab SpatiMesh opens for it (its
+     * address is OPENED_PREFIX and the number here). */
+    GHashTable *opened;
+    unsigned opened_next;
     GQueue *events;
     MeshEvent current;
     int woken, timed_out;
@@ -212,11 +216,21 @@ static gboolean on_policy(WebKitWebView *view, WebKitPolicyDecision *decision, W
     return FALSE;
 }
 
+#define OPENED_PREFIX "spatimesh-opened:"
+
+/* window.open: WebKit is given a view related to the opener's -- so the page opened has
+ * window.opener, can post messages back and close itself, as a sign-in window does -- and
+ * SpatiMesh opens a tab of its own for it, which takes this view (spatimesh_open). */
 static GtkWidget *on_create(WebKitWebView *view, WebKitNavigationAction *action, Tab *t) {
-    /* window.open: SpatiMesh opens the address as a tab of its own. */
-    const char *uri = webkit_uri_request_get_uri(webkit_navigation_action_get_request(action));
-    push(t->engine, EV_OPEN_TAB, t->id, 0, 0, 0, uri ? uri : "about:blank", NULL);
-    return NULL;
+    Engine *e = t->engine;
+    GtkWidget *opened = webkit_web_view_new_with_related_view(view);
+    webkit_web_view_set_settings(WEBKIT_WEB_VIEW(opened), e->settings);
+    unsigned number = ++e->opened_next;
+    g_hash_table_insert(e->opened, GUINT_TO_POINTER(number), g_object_ref_sink(opened));
+    char *address = g_strdup_printf(OPENED_PREFIX "%u", number);
+    push(e, EV_OPEN_TAB, t->id, 0, 0, 0, address, NULL);
+    g_free(address);
+    return opened;
 }
 
 static void on_close(WebKitWebView *view, Tab *t) {
@@ -773,6 +787,7 @@ Engine *spatimesh_new(const char *data, const char *cache) {
     webkit_settings_set_enable_back_forward_navigation_gestures(e->settings, FALSE);
     webkit_settings_set_javascript_can_open_windows_automatically(e->settings, FALSE);
     e->tabs = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, (GDestroyNotify)free_tab);
+    e->opened = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_object_unref);
     e->events = g_queue_new();
     /* Extensions' own addresses: their files, secure, and reachable from other origins where
      * they let them be (what the shim's serve says). */
@@ -817,7 +832,18 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
     t->height = MAX(height, 1);
     t->window = gtk_offscreen_window_new();
     gtk_window_set_default_size(GTK_WINDOW(t->window), t->width, t->height);
-    t->view = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "web-context", e->context, "settings", e->settings, NULL));
+    /* A view WebKit already made, for a page's window.open (on_create). */
+    WebKitWebView *opened = NULL;
+    if (uri && g_str_has_prefix(uri, OPENED_PREFIX)) {
+        gpointer number = GUINT_TO_POINTER((unsigned)g_ascii_strtoull(uri + strlen(OPENED_PREFIX), NULL, 10));
+        opened = g_hash_table_lookup(e->opened, number);
+        if (opened) {
+            g_object_ref(opened);
+            g_hash_table_remove(e->opened, number);
+        }
+        uri = opened ? NULL : "about:blank";
+    }
+    t->view = opened ? opened : WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "web-context", e->context, "settings", e->settings, NULL));
     gtk_widget_set_size_request(GTK_WIDGET(t->view), t->width, t->height);
     gtk_container_add(GTK_CONTAINER(t->window), GTK_WIDGET(t->view));
     webkit_web_view_set_zoom_level(t->view, zoom > 0.1 ? zoom : 1.0);
@@ -849,7 +875,14 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
     g_hash_table_insert(e->tabs, key, t);
     apply_extensions(t);
     apply_filters(t);
-    webkit_web_view_load_uri(t->view, uri && *uri ? uri : "about:blank");
+    if (opened) {
+        /* Loading already, as its opener asked: the window is told where it is. */
+        on_uri(t->view, NULL, t);
+        on_title(t->view, NULL, t);
+        /* Ours, now that the window holds it. */
+        g_object_unref(opened);
+    } else
+        webkit_web_view_load_uri(t->view, uri && *uri ? uri : "about:blank");
     return 1;
 }
 

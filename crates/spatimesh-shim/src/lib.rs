@@ -378,6 +378,7 @@ impl Shim {
             13 => Happened::Extension { tab, json: text(e.text) },
             15 => Happened::Media { tab, json: text(e.text) },
             16 => Happened::Cookies { cookies: Cookie::from_lines(&text(e.text)) },
+            17 => Happened::SoundName { tab, name: text(e.text) },
             14 => Happened::ScriptResult { tab, request: e.number as u64, result: if e.a != 0 { Ok(text(e.text)) } else { Err(text(e.text)) } },
             _ => return None,
         })

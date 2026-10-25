@@ -165,6 +165,11 @@ pub fn launch(app: &AppEntry, wayland_display: &str, extra: &[(String, String)])
 /// application's, with the same mute and volume on its bar -- and every channel of a film,
 /// 5.1 or 7.1, is placed in the room through the HRTF.
 ///
+/// A feed may come under a name of its own -- a browser tab's, `<app id>/page<n>` -- which the
+/// application then routes to one of its windows' names: `SPRT`, the feed's name (u16 length,
+/// bytes), the window's (the same; empty to drop the route), on a connection of its own. A
+/// feed follows its route as it changes, so a tab's sound moves with the tab.
+///
 /// Not on the Deck, where an application plays into its window's PipeWire sink.
 #[cfg(any(target_os = "macos", target_os = "android"))]
 pub mod sound {
@@ -193,12 +198,27 @@ pub mod sound {
     struct Feed {
         channels: usize,
         waiting: VecDeque<i16>,
+        /// When it last sent: one that has not for a while is not waited for.
+        heard: std::time::Instant,
     }
 
     fn senders() -> &'static Mutex<HashMap<String, Named>> {
         static SENDERS: OnceLock<Mutex<HashMap<String, Named>>> = OnceLock::new();
         SENDERS.get_or_init(Default::default)
     }
+
+    /// Feeds' own names, to the window names they are heard under.
+    fn routes() -> &'static Mutex<HashMap<String, String>> {
+        static ROUTES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+        ROUTES.get_or_init(Default::default)
+    }
+
+    fn routed(name: &str) -> String {
+        routes().lock().unwrap().get(name).cloned().unwrap_or_else(|| name.to_string())
+    }
+
+    /// How long a feed that has stopped sending is still waited for before the others go on.
+    const STILL_SOUNDING: std::time::Duration = std::time::Duration::from_millis(60);
 
     /// Each channel count the room places, by its channels' names, in order.
     fn names(channels: usize) -> &'static [&'static str] {
@@ -224,12 +244,19 @@ pub mod sound {
 
     /// A hundredth of a second of every feed under a name, added together: its samples and
     /// channel count; `None` until there is that much to give. With more than one feed, it is
-    /// given once any of them is two hundredths ahead -- whichever is sounding sets the pace,
-    /// and one that sends nothing (an engine's tap with nothing playing) holds nothing up --
-    /// and a feed that is still sending gives what it has.
+    /// given once every feed still sounding has its hundredth -- two players at once are each
+    /// heard whole, not one in pieces -- while one that has stopped sending (an engine's tap
+    /// with nothing playing, a paused page) holds nothing up; one that falls a tenth of a second
+    /// behind the others is not waited for either.
     fn mixed(named: &mut Named, frames: usize) -> Option<(Vec<i16>, usize)> {
-        if named.feeds.len() > 1 && !named.feeds.values().any(|f| f.waiting.len() >= 2 * frames * f.channels) {
-            return None;
+        if named.feeds.len() > 1 {
+            let full = |f: &Feed| f.waiting.len() >= frames * f.channels;
+            let anyone = named.feeds.values().any(full);
+            let far_ahead = named.feeds.values().any(|f| f.waiting.len() >= 8 * frames * f.channels);
+            let waited_for = named.feeds.values().all(|f| full(f) || f.heard.elapsed() > STILL_SOUNDING);
+            if !anyone || !(waited_for || far_ahead) {
+                return None;
+            }
         }
         if named.feeds.len() == 1 {
             let feed = named.feeds.values_mut().next()?;
@@ -272,8 +299,34 @@ pub mod sound {
     fn serve(mut stream: UnixStream) {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let mut head = [0u8; 12];
-        if let Err(e) = stream.read_exact(&mut head) {
-            log::warn!("a sound connection said nothing: {e}");
+        // A sink seeing whether the session is there says nothing and goes.
+        if stream.read_exact(&mut head).is_err() {
+            return;
+        }
+        if &head[..4] == b"SPRT" {
+            // A route: the rest of the head is the start of the feed's name.
+            let feed_len = u16::from_le_bytes([head[4], head[5]]) as usize;
+            let mut rest = vec![0u8; feed_len.min(512)];
+            rest[..6.min(feed_len)].copy_from_slice(&head[6..6 + 6.min(feed_len)]);
+            if feed_len > 6 && stream.read_exact(&mut rest[6..]).is_err() {
+                return;
+            }
+            let mut len = [0u8; 2];
+            if stream.read_exact(&mut len).is_err() {
+                return;
+            }
+            let mut to = vec![0u8; (u16::from_le_bytes(len) as usize).min(512)];
+            if stream.read_exact(&mut to).is_err() {
+                return;
+            }
+            let (feed, to) = (String::from_utf8_lossy(&rest).into_owned(), String::from_utf8_lossy(&to).into_owned());
+            log::info!("sound from {feed} is heard at {}", if to.is_empty() { "its own name" } else { &to });
+            let mut routes = routes().lock().unwrap();
+            if to.is_empty() {
+                routes.remove(&feed);
+            } else {
+                routes.insert(feed, to);
+            }
             return;
         }
         if &head[..4] != b"SPSN" {
@@ -285,10 +338,12 @@ pub mod sound {
         if stream.read_exact(&mut id).is_err() {
             return;
         }
-        let app = String::from_utf8_lossy(&id).into_owned();
+        let own = String::from_utf8_lossy(&id).into_owned();
         let me = NEXT.fetch_add(1, Ordering::Relaxed);
-        log::info!("sound from {app}: {channels} channels");
-        senders().lock().unwrap().entry(app.clone()).or_default().feeds.insert(me, Feed { channels, waiting: VecDeque::new() });
+        // Heard under its route, if it has one, and followed as that changes.
+        let mut app = routed(&own);
+        log::info!("sound from {own}: {channels} channels, heard as {app}");
+        senders().lock().unwrap().entry(app.clone()).or_default().feeds.insert(me, Feed { channels, waiting: VecDeque::new(), heard: std::time::Instant::now() });
         // A hundredth of a second at a time, as it comes.
         const FRAMES: usize = 480;
         let mut bytes = vec![0u8; FRAMES * channels * 2];
@@ -310,9 +365,22 @@ pub mod sound {
             }
             // Queued under the name, and as much handed over as there is to give.
             let out = {
+                let now = routed(&own);
                 let mut all = senders().lock().unwrap();
+                if now != app {
+                    // The tab moved to another window: so does its sound.
+                    let moved = all.get_mut(&app).and_then(|named| named.feeds.remove(&me));
+                    if all.get(&app).is_some_and(|named| named.feeds.is_empty()) {
+                        all.remove(&app);
+                    }
+                    let feed = moved.unwrap_or(Feed { channels, waiting: VecDeque::new(), heard: std::time::Instant::now() });
+                    all.entry(now.clone()).or_default().feeds.insert(me, feed);
+                    log::info!("sound from {own} is now heard as {now}");
+                    app = now;
+                }
                 let Some(named) = all.get_mut(&app) else { continue };
                 if let Some(feed) = named.feeds.get_mut(&me) {
+                    feed.heard = std::time::Instant::now();
                     feed.waiting.extend(pcm.iter().copied());
                     // Never more than a tenth of a second behind: a feed that runs ahead of
                     // the one setting the pace loses its oldest.
@@ -341,7 +409,7 @@ pub mod sound {
                 }
             }
         }
-        log::info!("sound from {app} has ended ({ended})");
+        log::info!("sound from {own} has ended ({ended})");
     }
 
     #[cfg(test)]
@@ -349,19 +417,30 @@ pub mod sound {
         use super::*;
 
         fn feed(channels: usize, samples: usize, value: i16) -> Feed {
-            Feed { channels, waiting: std::iter::repeat_n(value, samples * channels).collect() }
+            Feed { channels, waiting: std::iter::repeat_n(value, samples * channels).collect(), heard: std::time::Instant::now() }
         }
 
         #[test]
         fn one_feed_that_sends_nothing_holds_nothing_up() {
             let mut named = Named::default();
-            named.feeds.insert(1, feed(2, 0, 0));
+            let mut quiet = feed(2, 0, 0);
+            quiet.heard -= STILL_SOUNDING * 2;
+            named.feeds.insert(1, quiet);
             named.feeds.insert(2, feed(2, 480, 1000));
-            assert!(mixed(&mut named, 480).is_none(), "one hundredth is not yet two ahead");
-            named.feeds.get_mut(&2).unwrap().waiting.extend(std::iter::repeat_n(1000, 480 * 2));
             let (pcm, channels) = mixed(&mut named, 480).expect("the sounding one sets the pace");
             assert_eq!((pcm.len(), channels), (960, 2));
             assert!(pcm.iter().all(|s| *s == 1000));
+        }
+
+        #[test]
+        fn two_sounding_feeds_are_each_heard_whole() {
+            let mut named = Named::default();
+            named.feeds.insert(1, feed(2, 480, 1000));
+            named.feeds.insert(2, feed(2, 200, 100));
+            assert!(mixed(&mut named, 480).is_none(), "the second, still sending, is waited for");
+            named.feeds.get_mut(&2).unwrap().waiting.extend(std::iter::repeat_n(100, 280 * 2));
+            let (pcm, _) = mixed(&mut named, 480).unwrap();
+            assert!(pcm.iter().all(|s| *s == 1100), "both whole, added together");
         }
 
         #[test]

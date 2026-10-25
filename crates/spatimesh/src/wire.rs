@@ -470,6 +470,10 @@ impl FromHost {
                     b.u64(*tab).str(title);
                     10
                 }
+                Happened::SoundName { tab, name } => {
+                    b.u64(*tab).str(name);
+                    28
+                }
                 Happened::Url { tab, url } => {
                     b.u64(*tab).str(url);
                     11
@@ -574,6 +578,7 @@ impl FromHost {
             }
             4 => FromHost::Surface { tab: i.u64()?, id: i.u32()?, width: i.u32()?, height: i.u32()? },
             10 => FromHost::Happened(Happened::Title { tab: i.u64()?, title: i.str()? }),
+            28 => FromHost::Happened(Happened::SoundName { tab: i.u64()?, name: i.str()? }),
             11 => FromHost::Happened(Happened::Url { tab: i.u64()?, url: i.str()? }),
             12 => FromHost::Happened(Happened::Progress { tab: i.u64()?, progress: i.f32()?, loading: i.bool()? }),
             13 => FromHost::Happened(Happened::History { tab: i.u64()?, back: i.bool()?, forward: i.bool()? }),

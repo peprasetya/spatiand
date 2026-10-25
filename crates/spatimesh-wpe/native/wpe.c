@@ -49,6 +49,7 @@ enum {
     EV_SCRIPT_RESULT,
     EV_MEDIA,
     EV_COOKIES,
+    EV_SOUND_NAME,
 };
 
 typedef struct {
@@ -471,6 +472,10 @@ typedef struct Engine {
     WebKitNetworkSession *session;
     WebKitSettings *settings;
     GHashTable *tabs;
+    /* Views WebKit made for window.open, each waiting for the tab SpatiMesh opens for it (its
+     * address is OPENED_PREFIX and the number here). */
+    GHashTable *opened;
+    unsigned opened_next;
     GQueue *events;
     MeshEvent current;
     int woken, timed_out;
@@ -593,11 +598,34 @@ static gboolean on_policy(WebKitWebView *view, WebKitPolicyDecision *decision, W
     return FALSE;
 }
 
+#define OPENED_PREFIX "spatimesh-opened:"
+
+/* window.open: WebKit is given a view related to the opener's -- so the page opened has
+ * window.opener, can post messages back and close itself, as a sign-in window does -- and
+ * SpatiMesh opens a tab of its own for it, which takes this view (spatimesh_open). */
 static WebKitWebView *on_create(WebKitWebView *view, WebKitNavigationAction *action, Tab *t) {
-    /* window.open: SpatiMesh opens the address as a tab of its own. */
-    const char *uri = webkit_uri_request_get_uri(webkit_navigation_action_get_request(action));
-    push(t->engine, EV_OPEN_TAB, t->id, 0, 0, 0, uri ? uri : "about:blank", NULL);
-    return NULL;
+    Engine *e = t->engine;
+    WebKitWebView *opened = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "display", mesh_display(),
+        "related-view", view, "settings", e->settings, NULL));
+    unsigned number = ++e->opened_next;
+    g_hash_table_insert(e->opened, GUINT_TO_POINTER(number), g_object_ref(opened));
+    char *address = g_strdup_printf(OPENED_PREFIX "%u", number);
+    push(e, EV_OPEN_TAB, t->id, 0, 0, 0, address, NULL);
+    g_free(address);
+    return opened;
+}
+
+/* The name this tab's sound reaches the room under: the sink in its web process says
+ * <application id>/page<page id> (third_party/wpe/gst/spatiandaudiosink.c), the page id being
+ * WebKit's for the view, which a process swap keeps. */
+static void tell_sound_name(WebKitWebView *view, GParamSpec *spec, Tab *t) {
+    const char *app = g_getenv("SPATIAND_APP_ID");
+    guint64 page = webkit_web_view_get_page_id(view);
+    if (!app || !page)
+        return;
+    char *name = g_strdup_printf("%s/page%" G_GUINT64_FORMAT, app, page);
+    push(t->engine, EV_SOUND_NAME, t->id, 0, 0, 0, name, NULL);
+    g_free(name);
 }
 
 static void on_close(WebKitWebView *view, Tab *t) {
@@ -1194,6 +1222,7 @@ Engine *spatimesh_new(const char *data, const char *cache) {
     /* The developer tools (Web Inspector), opened from SpatiMesh's menu. */
     webkit_settings_set_enable_developer_extras(e->settings, TRUE);
     e->tabs = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, (GDestroyNotify)free_tab);
+    e->opened = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_object_unref);
     e->events = g_queue_new();
     /* Extensions' own addresses: their files, secure, and reachable from other origins where
      * they let them be (what the shim's serve says). */
@@ -1237,7 +1266,18 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
     t->engine = e;
     t->width = MAX(width, 1);
     t->height = MAX(height, 1);
-    t->view = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "display", mesh_display(), "web-context", e->context,
+    /* A view WebKit already made, for a page's window.open (on_create). */
+    WebKitWebView *opened = NULL;
+    if (uri && g_str_has_prefix(uri, OPENED_PREFIX)) {
+        gpointer number = GUINT_TO_POINTER((unsigned)g_ascii_strtoull(uri + strlen(OPENED_PREFIX), NULL, 10));
+        opened = g_hash_table_lookup(e->opened, number);
+        if (opened) {
+            g_object_ref(opened);
+            g_hash_table_remove(e->opened, number);
+        }
+        uri = opened ? NULL : "about:blank";
+    }
+    t->view = opened ? opened : WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "display", mesh_display(), "web-context", e->context,
         "network-session", e->session, "settings", e->settings, NULL));
     t->wpe = (MeshView *)webkit_web_view_get_wpe_view(t->view);
     t->wpe->on_picture = on_picture;
@@ -1254,6 +1294,8 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
     g_signal_connect(t->view, "decide-policy", G_CALLBACK(on_policy), t);
     g_signal_connect(t->view, "create", G_CALLBACK(on_create), t);
     g_signal_connect(t->view, "close", G_CALLBACK(on_close), t);
+    g_signal_connect(t->view, "notify::page-id", G_CALLBACK(tell_sound_name), t);
+    tell_sound_name(t->view, NULL, t);
     g_signal_connect(t->view, "web-process-terminated", G_CALLBACK(on_terminated), t);
     g_signal_connect(t->view, "load-failed", G_CALLBACK(on_failed), t);
     g_signal_connect(t->view, "load-failed-with-tls-errors", G_CALLBACK(on_tls), t);
@@ -1268,7 +1310,12 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
     g_hash_table_insert(e->tabs, key, t);
     apply_extensions(t);
     apply_filters(t);
-    webkit_web_view_load_uri(t->view, uri && *uri ? uri : "about:blank");
+    if (opened) {
+        /* Loading already, as its opener asked: the window is told where it is. */
+        on_uri(t->view, NULL, t);
+        on_title(t->view, NULL, t);
+    } else
+        webkit_web_view_load_uri(t->view, uri && *uri ? uri : "about:blank");
     return 1;
 }
 
