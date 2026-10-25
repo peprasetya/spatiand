@@ -8,13 +8,15 @@ and at its end what has been built of it.
 
 | Platform | Engine | Where it comes from |
 |---|---|---|
-| Mac | WebKit (`WKWebView`) | macOS |
-| SteamOS (the Deck) | **Steam's Chromium** (CEF, what `steamwebhelper` runs on) | the Steam client, `~/.local/share/Steam/ubuntu12_64/libcef.so`, loaded at run time |
-| Other Linux | WebKitGTK (`webkit2gtk-4.1`) | the distribution's package |
-| Android (Beam Pro) | the system WebView | Android |
+| Mac | **WPE WebKit 2.54.1**, our own port (`third_party/wpe`, the "WPE" section below) | bundled in Spatiand.app, with GStreamer and our FFmpeg |
+| Linux, the Deck | WebKitGTK (`webkit2gtk-4.1`) until WPE is built for Linux | the distribution's package |
+| Android (Beam Pro) | none until WPE (wpe-android) is built | -- |
 
-**Nothing is bundled and nothing is installed beside Spatiand for it: no Flatpak, no engine of
-our own.** Spatiand stays one thing to install; SpatiMesh uses what each system already has.
+**Changed on 2026-10-25:** the first plan used each platform's own engine and bundled none.
+WKWebView, Steam's CEF and the Android WebView were all built, then removed
+(`spatimesh-webkit`, `spatimesh-cef`, the Android WebView service): one engine, WPE, everywhere,
+with media through GStreamer on our FFmpeg. Where the sections below compare WKWebView, CEF and
+the WebView, they are the record of what those engines did, kept for why WPE was chosen.
 
 ## Three kinds of process
 
