@@ -110,8 +110,20 @@ static gboolean spatiand_prepare(GstAudioSink *base, GstAudioRingBufferSpec *spe
     /* Each page's sound under a name of its own (its web process says which page it is
      * showing: WebKit's WebPage sets SPATIAND_PAGE), which SpatiMesh's window routes to the
      * place of the window the tab is in; or the application's own, where there is none. */
+    /* The page as the player says (WebKit tags the sink it makes with it: a process may show
+     * more than one page, a sign-in window with its opener's), else as the process says. */
+    gsize tagged = 0;
+    for (GstObject *at = gst_object_ref(GST_OBJECT(self)); at && !tagged;) {
+        tagged = GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(at), "spatiand-page"));
+        GstObject *up = gst_object_get_parent(at);
+        gst_object_unref(at);
+        at = up;
+        if (tagged && at)
+            gst_object_unref(at);
+    }
     const char *page = g_getenv("SPATIAND_PAGE");
-    char *app = page && *page ? g_strdup_printf("%s/page%s", g_getenv("SPATIAND_APP_ID"), page) : g_strdup(g_getenv("SPATIAND_APP_ID"));
+    char *app = tagged ? g_strdup_printf("%s/page%" G_GSIZE_FORMAT, g_getenv("SPATIAND_APP_ID"), tagged)
+        : page && *page ? g_strdup_printf("%s/page%s", g_getenv("SPATIAND_APP_ID"), page) : g_strdup(g_getenv("SPATIAND_APP_ID"));
     guint16 channels = (guint16)self->channels, length = (guint16)strlen(app);
     guint32 rate = (guint32)self->rate;
     unsigned char head[12];

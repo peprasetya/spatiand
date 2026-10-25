@@ -79,6 +79,10 @@ fn can_run() -> bool {
     true
 }
 
+/// Held by the tests that set the process's environment for the engines they start (the
+/// session's sound socket), and by those that read what it decides, so they take turns.
+static ENVIRONMENT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn private() -> ProfileSetup {
     ProfileSetup { id: "private".into(), private: true, data: PathBuf::new(), cache: PathBuf::new() }
 }
@@ -194,6 +198,12 @@ impl Host {
 
     /// The tab's newest picture as a PPM file where SPATIMESH_TEST_SHOTS names a folder, to be
     /// looked at.
+    /// The last title the tab said, if any came while waiting.
+    fn latest_title(&mut self, tab: TabId) -> Option<String> {
+        self.receive();
+        self.seen.iter().rev().find_map(|h| match h { Happened::Title { tab: t, title } if *t == tab => Some(title.clone()), _ => None })
+    }
+
     fn shot(&self, tab: TabId, name: &str) {
         let Some(folder) = std::env::var_os("SPATIMESH_TEST_SHOTS") else { return };
         let (width, height, ..) = self.latest[&tab];
@@ -695,6 +705,7 @@ fn large_emoji() {
 /// Appearance setting; and form controls are in the platform's interface font.
 #[test]
 fn the_platform_look() {
+    let _turn = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
     let Some(mut host) = Host::start(&private()) else { return };
     let url = page(concat!(
         "<button id=b>OK</button><script>",
@@ -728,6 +739,7 @@ fn the_platform_look() {
 /// under its tab's own name.
 #[test]
 fn sound_goes_to_the_session() {
+    let _turn = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
     use std::os::unix::net::UnixListener;
     let dir = std::env::temp_dir().join(format!("spatimesh-wpe-sound-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -859,5 +871,68 @@ fn look_at_a_file() {
         host.settle(Duration::from_secs(wait));
     }
     host.shot(1, "look");
+    if let Some(title) = host.latest_title(1) {
+        eprintln!("title: {title}");
+    }
     host.quit();
+}
+
+/// After a sign-in window its page opened has closed (it shared the page's web process), the
+/// page's sound is still handed over under the page's own name, which its window routes.
+#[test]
+fn sound_after_a_sign_in_window_is_still_the_pages() {
+    let _turn = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
+    use std::os::unix::net::UnixListener;
+    let dir = PathBuf::from(format!("/tmp/smw-popup-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = UnixListener::bind(dir.join("spatiand-sound")).unwrap();
+    std::env::set_var("XDG_RUNTIME_DIR", &dir);
+    std::env::set_var("SPATIAND_APP_ID", "id.prasetya.spatiand.spatimesh");
+    let Some(mut host) = Host::start(&private()) else { return };
+    let mut wav = Vec::new();
+    let samples: Vec<i16> = (0..48000).map(|i| ((i as f32 / 10.0).sin() * 9000.0) as i16).collect();
+    let data = (samples.len() * 2) as u32;
+    for part in [&b"RIFF"[..], &(36 + data).to_le_bytes(), b"WAVEfmt ", &16u32.to_le_bytes(), &1u16.to_le_bytes(),
+        &1u16.to_le_bytes(), &48000u32.to_le_bytes(), &96000u32.to_le_bytes(), &2u16.to_le_bytes(), &16u16.to_le_bytes(),
+        b"data", &data.to_le_bytes()] { wav.extend_from_slice(part); }
+    for s in &samples { wav.extend_from_slice(&s.to_le_bytes()); }
+    std::fs::write(dir.join("tone.wav"), wav).unwrap();
+    std::fs::write(dir.join("login.html"), "<script>window.opener.postMessage('in','*');window.close()</script>").unwrap();
+    std::fs::write(dir.join("main.html"), "<body style='margin:0;height:100vh' onclick=\"signed?a.play():window.open('login.html')\">\
+        <audio id=a src=tone.wav loop></audio><script>var signed=false;addEventListener('message',()=>{signed=true;document.title='signed in'})</script></body>").unwrap();
+    host.send(ToHost::Open { tab: 1, url: format!("file://{}", dir.join("main.html").display()), view: View::new(400, 300, 1.0) });
+    let said = host.wait_for("the tab's sound name", 10, |h| matches!(h, Happened::SoundName { tab: 1, .. }));
+    let Happened::SoundName { name, .. } = said else { unreachable!() };
+    host.settle(Duration::from_secs(1));
+    host.click(1, 50.0, 50.0);
+    let opened = host.wait_for("the sign-in window", 20, |h| matches!(h, Happened::OpenTab { opener: 1, .. }));
+    let Happened::OpenTab { url, .. } = opened else { unreachable!() };
+    host.send(ToHost::Open { tab: 2, url, view: View::new(400, 300, 1.0) });
+    host.title(1, "signed in");
+    host.wait_for("the sign-in window closing", 20, |h| matches!(h, Happened::CloseTab { tab: 2 }));
+    host.send(ToHost::Close { tab: 2 });
+    host.settle(Duration::from_secs(1));
+    host.click(1, 50.0, 50.0);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || loop {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut head = [0u8; 12];
+        if s.read_exact(&mut head).is_err() {
+            continue;
+        }
+        let mut app = vec![0u8; u16::from_le_bytes([head[10], head[11]]) as usize];
+        s.read_exact(&mut app).unwrap();
+        let _ = tx.send(String::from_utf8(app).unwrap());
+        return;
+    });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let heard = loop {
+        if let Ok(got) = rx.try_recv() { break got; }
+        assert!(Instant::now() < deadline, "no sound reached the session");
+        host.link.wait_readable(100);
+        host.receive();
+    };
+    assert_eq!(heard, name, "the page's sound under the page's own name");
+    host.quit();
+    let _ = std::fs::remove_dir_all(dir);
 }

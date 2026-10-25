@@ -334,6 +334,23 @@ index e219a0ef8..11d3f5958 100644
  #include "CommonCryptoUtilities.h"
  
  typedef CCRSACryptorRef PlatformRSAKey;
+diff --git a/Source/WebCore/html/HTMLMediaElement.h b/Source/WebCore/html/HTMLMediaElement.h
+index beedcb87d..84b297cb9 100644
+--- a/Source/WebCore/html/HTMLMediaElement.h
++++ b/Source/WebCore/html/HTMLMediaElement.h
+@@ -940,6 +940,12 @@ private:
+     void mediaPlayerVideoLayerSizeDidChange(const FloatSize& size) final { m_videoLayerSize = size; }
+ 
+     MediaPlayerClientIdentifier mediaPlayerClientIdentifier() const final { return identifier(); }
++    std::optional<uint64_t> mediaPlayerSpatiandPage() const final
++    {
++        if (auto page = document().pageID())
++            return page->toUInt64();
++        return std::nullopt;
++    }
+     SoundStageSize mediaPlayerSoundStageSize() const final { return soundStageSize(); }
+ 
+     void pendingActionTimerFired();
 diff --git a/Source/WebCore/loader/soup/ResourceLoaderSoup.cpp b/Source/WebCore/loader/soup/ResourceLoaderSoup.cpp
 index ff4640831..0b4d94e94 100644
 --- a/Source/WebCore/loader/soup/ResourceLoaderSoup.cpp
@@ -349,6 +366,27 @@ index ff4640831..0b4d94e94 100644
          }
          ResourceResponse response { WTF::move(url), extractMIMETypeFromMediaType(*contentTypeString), static_cast<long long>(dataSize), extractCharsetFromMediaType(*contentTypeString).toString() };
          response.setHTTPStatusCode(200);
+diff --git a/Source/WebCore/platform/graphics/MediaPlayer.h b/Source/WebCore/platform/graphics/MediaPlayer.h
+index 91724d1a4..73709f5b8 100644
+--- a/Source/WebCore/platform/graphics/MediaPlayer.h
++++ b/Source/WebCore/platform/graphics/MediaPlayer.h
+@@ -352,6 +352,8 @@ public:
+     virtual PlatformVideoTarget mediaPlayerVideoTarget() const { return nullptr; }
+ 
+     virtual MediaPlayerClientIdentifier mediaPlayerClientIdentifier() const = 0;
++    // Spatiand: the page the player is on, which names its sound in the room.
++    virtual std::optional<uint64_t> mediaPlayerSpatiandPage() const { return std::nullopt; }
+ 
+     virtual MediaPlayerSoundStageSize mediaPlayerSoundStageSize() const { return MediaPlayerSoundStageSize::Auto; }
+ 
+@@ -806,6 +808,7 @@ public:
+ 
+     PlatformVideoTarget videoTarget() const { return protect(client())->mediaPlayerVideoTarget(); }
+     MediaPlayerClientIdentifier clientIdentifier() const { return protect(client())->mediaPlayerClientIdentifier(); }
++    std::optional<uint64_t> spatiandPage() const { return protect(client())->mediaPlayerSpatiandPage(); }
+ 
+ #if ENABLE(LINEAR_MEDIA_PLAYER)
+     bool supportsLinearMediaPlayer() const;
 diff --git a/Source/WebCore/platform/graphics/PlatformDisplay.h b/Source/WebCore/platform/graphics/PlatformDisplay.h
 index e790f78f5..aae156f79 100644
 --- a/Source/WebCore/platform/graphics/PlatformDisplay.h
@@ -466,6 +504,60 @@ index d49cc0e37..d3ebea820 100644
  
  #include "PlatformDisplay.h"
  
+diff --git a/Source/WebCore/platform/graphics/gstreamer/GStreamerRegistryScanner.cpp b/Source/WebCore/platform/graphics/gstreamer/GStreamerRegistryScanner.cpp
+index f083b32c0..def2c4037 100644
+--- a/Source/WebCore/platform/graphics/gstreamer/GStreamerRegistryScanner.cpp
++++ b/Source/WebCore/platform/graphics/gstreamer/GStreamerRegistryScanner.cpp
+@@ -44,6 +44,16 @@
+ #include "VideoEncoderPrivateGStreamer.h"
+ #endif
+ 
++#if OS(DARWIN)
++// Spatiand: VideoToolbox's decoder (vtdec) offers VP9 and AV1 whatever the Mac can do. Offered
++// where they are not decoded in hardware, a page is sent AV1 that nothing here decodes (a black
++// picture) or VP9 decoded on the processor (stutter), when H.264 would play in hardware.
++extern "C" unsigned char VTIsHardwareDecodeSupported(uint32_t codecType);
++static bool spatiandDecodedInHardware(uint32_t codecType) { return VTIsHardwareDecodeSupported(codecType); }
++#else
++static bool spatiandDecodedInHardware(uint32_t) { return true; }
++#endif
++
+ namespace WebCore {
+ 
+ GST_DEBUG_CATEGORY_STATIC(webkit_media_gst_registry_scanner_debug);
+@@ -562,7 +572,7 @@ void GStreamerRegistryScanner::initializeDecoders(const GStreamerRegistryScanner
+             m_decoderCodecMap.add("x-vp8"_s, vp8DecoderAvailable);
+             m_decoderCodecMap.add("vp8.0"_s, vp8DecoderAvailable);
+         }
+-        if (vp9DecoderAvailable) {
++        if (vp9DecoderAvailable && spatiandDecodedInHardware('vp09')) {
+             m_decoderCodecMap.add("vp9"_s, vp9DecoderAvailable);
+             m_decoderCodecMap.add("x-vp9"_s, vp9DecoderAvailable);
+             m_decoderCodecMap.add("vp9.0"_s, vp9DecoderAvailable);
+@@ -608,7 +618,7 @@ void GStreamerRegistryScanner::initializeDecoders(const GStreamerRegistryScanner
+     }
+ 
+     auto av1DecoderAvailable = factories.hasElementForMediaType(ElementFactories::Type::VideoDecoder, "video/x-av1"_s, ElementFactories::CheckHardwareClassifier::Yes);
+-    if ((matroskaSupported || isContainerTypeSupported(Configuration::Decoding, "video/mp4"_s)) && av1DecoderAvailable) {
++    if ((matroskaSupported || isContainerTypeSupported(Configuration::Decoding, "video/mp4"_s)) && av1DecoderAvailable && spatiandDecodedInHardware('av01')) {
+         m_decoderCodecMap.add("av01*"_s, av1DecoderAvailable);
+         m_decoderCodecMap.add("av1"_s, av1DecoderAvailable);
+         m_decoderCodecMap.add("x-av1"_s, av1DecoderAvailable);
+diff --git a/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp b/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
+index c5b860567..a3e39a24d 100644
+--- a/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
++++ b/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
+@@ -1664,6 +1664,10 @@ GstElement* MediaPlayerPrivateGStreamer::createAudioSink()
+     RELEASE_ASSERT(audioSink);
+     if (!audioSink)
+         return nullptr;
++    // Spatiand: which page this sound is from, for its sink (third_party/wpe/gst), which names
++    // the sound after it -- a web process may show more than one page.
++    if (auto page = player->spatiandPage())
++        g_object_set_data(G_OBJECT(audioSink), "spatiand-page", GSIZE_TO_POINTER(static_cast<gsize>(*page)));
+ 
+ #if ENABLE(WEB_AUDIO)
+     GstElement* audioSinkBin = gst_bin_new("audio-sink");
 diff --git a/Source/WebCore/platform/graphics/gstreamer/VideoSinkGStreamer.cpp b/Source/WebCore/platform/graphics/gstreamer/VideoSinkGStreamer.cpp
 index 07238927b..4c12782a8 100644
 --- a/Source/WebCore/platform/graphics/gstreamer/VideoSinkGStreamer.cpp
@@ -2144,10 +2236,23 @@ index 32e4e37b9..72ac5a7d0 100644
  
  #if PLATFORM(COCOA)
 diff --git a/Source/WebKit/WebProcess/WebProcess.cpp b/Source/WebKit/WebProcess/WebProcess.cpp
-index 1a40da5d1..8a87747e9 100644
+index 1a40da5d1..54fd9622f 100644
 --- a/Source/WebKit/WebProcess/WebProcess.cpp
 +++ b/Source/WebKit/WebProcess/WebProcess.cpp
-@@ -1451,7 +1451,7 @@ void WebProcess::logDiagnosticMessageForNetworkProcessCrash()
+@@ -1100,6 +1100,12 @@ void WebProcess::removeWebPage(PageIdentifier pageID)
+ 
+     pageWillLeaveWindow(pageID);
+     m_pageMap.remove(pageID);
++#if PLATFORM(WPE)
++    // Spatiand: a page closed -- a sign-in window its opener's process also shows -- so this
++    // process's sound is named after a page it still shows (see WebPage's constructor).
++    if (!m_pageMap.isEmpty() && String::fromLatin1(getenv("SPATIAND_PAGE") ? getenv("SPATIAND_PAGE") : "") == String::number(pageID.toUInt64()))
++        setenv("SPATIAND_PAGE", String::number(m_pageMap.begin()->key.toUInt64()).utf8().data(), 1);
++#endif
+ 
+     enableTermination();
+     updateCPULimit();
+@@ -1451,7 +1457,7 @@ void WebProcess::logDiagnosticMessageForNetworkProcessCrash()
  
  void WebProcess::networkProcessConnectionClosed(NetworkProcessConnection* connection)
  {
@@ -2223,7 +2328,7 @@ index 000000000..c28c1c322
 +
 +#endif
 diff --git a/Source/cmake/OptionsWPE.cmake b/Source/cmake/OptionsWPE.cmake
-index ecf52b4c5..f0b9d579f 100644
+index ecf52b4c5..afe80a345 100644
 --- a/Source/cmake/OptionsWPE.cmake
 +++ b/Source/cmake/OptionsWPE.cmake
 @@ -9,6 +9,19 @@ set(ENABLE_UNSAFE_BUFFER_USAGE_WARNING ON)
@@ -2238,7 +2343,7 @@ index ecf52b4c5..f0b9d579f 100644
 +    # What glibc has in it and macOS keeps apart: gettext. And Accelerate, which WebKit's own
 +    # code on any Darwin uses for image filters (USE(ACCELERATE)).
 +    find_package(Intl REQUIRED)
-+    link_libraries(${Intl_LIBRARIES} "-framework Accelerate" "-framework IOSurface" "-framework CoreFoundation" "-framework CoreVideo")
++    link_libraries(${Intl_LIBRARIES} "-framework Accelerate" "-framework IOSurface" "-framework CoreFoundation" "-framework CoreVideo" "-framework VideoToolbox")
 +    # Pictures are IOSurfaces (WPEBufferIOSurface), handed over with nothing copied.
 +    set(WPE_PLATFORM_BUFFER_IOSURFACE ON)
 +endif ()
