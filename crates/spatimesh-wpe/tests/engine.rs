@@ -939,3 +939,40 @@ fn sound_after_a_sign_in_window_is_still_the_pages() {
     host.quit();
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// By hand: open SPATIMESH_LOOK_AT, click SPATIMESH_LOOK_CLICK, open what the page opens as a
+/// tab of its own (as SpatiMesh does) and picture it after SPATIMESH_LOOK_WAIT seconds, into
+/// SPATIMESH_TEST_SHOTS/popup.ppm; the opener into opener.ppm.
+#[test]
+#[ignore]
+fn look_at_a_popup() {
+    let setup = std::env::var_os("SPATIMESH_LOOK_PROFILE").map_or_else(private, |root| kept(Path::new(&root)));
+    let Some(mut host) = Host::start(&setup) else { return };
+    let url = std::env::var("SPATIMESH_LOOK_AT").unwrap();
+    host.send(ToHost::Open { tab: 1, url, view: View::new(1100, 700, 1.0) });
+    let wait = std::env::var("SPATIMESH_LOOK_WAIT").ok().and_then(|w| w.parse().ok()).unwrap_or(8);
+    host.settle(Duration::from_secs(4));
+    let (x, y) = std::env::var("SPATIMESH_LOOK_CLICK").ok().and_then(|c| c.split_once(',').map(|(x, y)| (x.parse().unwrap(), y.parse().unwrap()))).unwrap();
+    host.click(1, x, y);
+    let opened = host.wait_for("the page opening a window", 20, |h| matches!(h, Happened::OpenTab { opener: 1, .. }));
+    let Happened::OpenTab { url, .. } = opened else { unreachable!() };
+    eprintln!("opened: {url}");
+    host.send(ToHost::Open { tab: 2, url, view: View::new(1100, 700, 1.0) });
+    host.settle(Duration::from_secs(wait));
+    for h in &host.seen {
+        if let Happened::Url { tab: 2, url } | Happened::Failed { tab: 2, url, .. } = h {
+            eprintln!("tab 2: {h:?}");
+            let _ = url;
+        }
+    }
+    host.receive();
+    eprintln!("popup closed: {}", host.seen.iter().any(|h| matches!(h, Happened::CloseTab { tab: 2 })));
+    eprintln!("main title: {:?}", host.seen.iter().rev().find_map(|h| match h { Happened::Title { tab: 1, title } => Some(title.clone()), _ => None }));
+    host.send(ToHost::RunScript { tab: 2, world: String::new(), all_frames: false, code: "'opener='+(window.opener?'yes':'no')+' referrer='+document.referrer+' closed-by-opener-ok'".into(), request: 9, boot: false });
+    if let Happened::ScriptResult { result, .. } = host.wait_for("the popup's answer", 10, |h| matches!(h, Happened::ScriptResult { request: 9, .. })) {
+        eprintln!("popup says: {result:?}");
+    }
+    if host.latest.contains_key(&2) { host.shot(2, "popup"); }
+    host.shot(1, "opener");
+    host.quit();
+}
