@@ -859,10 +859,13 @@ fn an_emoji_in_a_css_background() {
 #[test]
 #[ignore]
 fn look_at_a_file() {
-    let Some(mut host) = Host::start(&private()) else { return };
+    // SPATIMESH_LOOK_PROFILE: a copy of a profile's data, to look as someone signed in does.
+    let setup = std::env::var_os("SPATIMESH_LOOK_PROFILE").map_or_else(private, |root| kept(Path::new(&root)));
+    let Some(mut host) = Host::start(&setup) else { return };
     let at = std::env::var("SPATIMESH_LOOK_AT").unwrap();
     let url = if at.contains("://") { at } else { format!("file://{at}") };
-    host.send(ToHost::Open { tab: 1, url, view: View::new(1100, 700, 1.0) });
+    let zoom = std::env::var("SPATIMESH_LOOK_ZOOM").ok().and_then(|z| z.parse().ok()).unwrap_or(1.0);
+    host.send(ToHost::Open { tab: 1, url, view: View::new(1100, 700, zoom) });
     let wait = std::env::var("SPATIMESH_LOOK_WAIT").ok().and_then(|w| w.parse().ok()).unwrap_or(2);
     host.settle(Duration::from_secs(wait));
     // SPATIMESH_LOOK_CLICK=x,y clicks there, then waits as long again.

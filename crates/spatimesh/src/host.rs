@@ -119,8 +119,15 @@ pub fn serve(mut engine: Box<dyn Engine>, mut link: Link) {
     if link.send(&FromHost::Hello { engine: engine.name() }.encode(), &[]).is_err() {
         return;
     }
+    // SPATIMESH_TRACE_TO_HOST=<file>: every message from the window, written there, for finding
+    // what a window does that a test does not.
+    let mut trace = std::env::var_os("SPATIMESH_TRACE_TO_HOST").and_then(|p| std::fs::File::create(p).ok());
     loop {
         for message in link.receive_to_host() {
+            if let Some(file) = trace.as_mut().filter(|_| !matches!(message, ToHost::Pointer { .. } | ToHost::ReleaseSurface { .. } | ToHost::Release { .. })) {
+                use std::io::Write;
+                let _ = writeln!(file, "{message:?}");
+            }
             match message {
                 ToHost::Quit => return,
                 ToHost::Open { tab, url, view } => {
