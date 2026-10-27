@@ -380,6 +380,9 @@ pub struct Browser {
     wins: Vec<Win>,
     /// Windows' sounds named so far (`name_sound`).
     sounds_named: u32,
+    /// A pinch not yet turned into zoom: the room tells it a frame at a time, each step too
+    /// small to act on alone.
+    pinched: f32,
     /// Each tab's sound's own name, as its engine said (`Happened::SoundName`), and the window
     /// sound name the room was last told it is heard as.
     tab_sounds: HashMap<TabId, (String, Option<String>)>,
@@ -477,6 +480,7 @@ impl Browser {
             tabs: Tabs::new(),
             wins: Vec::new(),
             sounds_named: 0,
+            pinched: 1.0,
             tab_sounds: HashMap::new(),
             views: HashMap::new(),
             hosts: HashMap::new(),
@@ -1143,6 +1147,9 @@ impl Browser {
         let key = self.tabs.new_window(profile);
         let title = if profile == PRIVATE { "SpatiMesh (Private)" } else { "SpatiMesh" };
         let id = self.app.open(title, WINDOW);
+        // A pinch over the page zooms the page, as on a Mac's trackpad, and not the window: it
+        // was never asked for, so the room moved the window nearer instead.
+        self.app.set_pinch_taken(id, true);
         let sound = self.name_sound(id);
         let mut win = Win {
             key,
@@ -1886,7 +1893,13 @@ impl Browser {
             Event::Scroll { dx, dy, .. } => self.scroll(w, dx, dy),
             Event::Key { key, code, pressed, repeat, text, modifiers, .. } => self.key(w, key, code, pressed, repeat, text, modifiers),
             // Pinching zooms the page, as on a touchpad.
-            Event::Pinch { scale, .. } if (scale - 1.0).abs() > 0.02 => self.zoom(Some(scale)),
+            Event::Pinch { scale, .. } => {
+                self.pinched *= scale;
+                if (self.pinched - 1.0).abs() > 0.03 {
+                    let by = std::mem::replace(&mut self.pinched, 1.0);
+                    self.zoom(Some(by));
+                }
+            }
             Event::DragEntered { x, y, forms, .. } => {
                 let form = DROP_FORMS.iter().copied().find(|f| forms.iter().any(|o| o.eq_ignore_ascii_case(f)));
                 self.wins[w].dropping = form.map(|f| (x, y, f));
