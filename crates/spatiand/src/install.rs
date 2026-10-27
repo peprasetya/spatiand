@@ -54,9 +54,15 @@ pub fn drag_started(mime_types: &[String], ask: impl FnOnce(std::os::fd::OwnedFd
         return;
     }
     let mut fds = [0; 2];
-    // SAFETY: a plain pipe(2) into a two-element array.
-    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
-        return;
+    // SAFETY: a plain pipe(2) into a two-element array, then close-on-exec on each end (pipe2 is
+    // not on the Mac, which builds this file too).
+    unsafe {
+        if libc::pipe(fds.as_mut_ptr()) != 0 {
+            return;
+        }
+        for fd in fds {
+            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+        }
     }
     // SAFETY: both were just made and are owned by nothing else.
     let (read, write) = unsafe {
