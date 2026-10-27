@@ -212,7 +212,15 @@ final class RoomTap {
             // A scroll is the likelier: two fingers moving together always spread a little, and a
             // pinch had to beat that to be taken, which made a scroll a pinch (the chat would not
             // scroll, and the window went further).
-            if t.gone + t.spread > 5 { t.mode = t.spread > t.gone * 1.2 ? 2 : 1; gestureLog("two fingers, %@ (travel %.1f, spread %.1f)", t.mode == 2 ? "pinch" : "scroll", t.gone, t.spread) }
+            // Decided after 12 points (about 4 mm), not 5: at under 2 mm the fingers' wobble was
+            // all there was, and a scroll came out a pinch that moved the window nearer or
+            // further. A pinch has to be twice the travel, and a spread of 9 points.
+            if t.gone + t.spread > 12 { t.mode = t.spread > max(t.gone * 2, 9) ? 2 : 1; gestureLog("two fingers, %@ (travel %.1f, spread %.1f)", t.mode == 2 ? "pinch" : "scroll", t.gone, t.spread) }
+        } else if t.mode == 2, pinchingApp != true {
+            // A pinch of the room's that turns out to be fingers moving together is a scroll after all.
+            t.gone = hypot(cx - t.sx, cy - t.sy)
+            t.spread = abs(d - t.sd)
+            if t.gone > max(t.spread * 2, 20) { t.mode = 1; pinchingApp = nil; gestureLog("two fingers, a scroll after all (travel %.1f, spread %.1f)", t.gone, t.spread) }
         }
         if t.mode == 1 {
             // **Over what a Mac window shows, the scroll is the application's**: made as the

@@ -20,7 +20,7 @@
 //! * **The controller.** The phone, made into the Deck's controller state
 //!   (`super::phone::PhoneController`): the touch area is the left pad, where the phone points
 //!   the right, the orange key STEAM and the button under the touch area `⋯`. Two fingers
-//!   pinching zoom the window being pointed at.
+//!   pinching bring the window being pointed at nearer or further.
 //! * **The glasses.** Opened through the usbfs descriptor the app was given, not hidraw.
 //! * **The sidecar.** None: the phone's touch area is the pad and nothing else
 //!   (`super::panel`); the audio pickers and the buttons are the app's own views around it.
@@ -1427,10 +1427,12 @@ pub fn run(
                             .cloned()
                     });
                 // On the title bar the window is what is taken hold of, and spreading the fingers
-                // brings it closer; anywhere else on it, it is what it shows that is made bigger.
+                // brings it closer. Anywhere else on it the same, unless it has something of its
+                // own to zoom -- a picture, a page -- which is told and stays where it is. It
+                // used to make the window wider instead, which only magnified its pixels: its
+                // size in the room is its size to its application (`window::METRES_PER_POINT`),
+                // and how big it looks is how near it is.
                 let on_title = right_aim.as_ref().is_some_and(|a| a.on_title);
-                // A window with something of its own to zoom -- a picture, a page -- is told,
-                // and stays the size it is.
                 let taken = !on_title
                     && target
                         .as_ref()
@@ -1438,11 +1440,7 @@ pub fn run(
                         .is_some_and(|surface| crate::xr::tell_pinch(&surface, pinch));
                 if let Some(window) = target.filter(|_| !taken) {
                     if let Some(mut placement) = runtime.state.layout.get(&window) {
-                        if on_title {
-                            placement.radius = (placement.radius / pinch as f64).clamp(0.8, 8.0);
-                        } else {
-                            placement.width = (placement.width * pinch as f64).clamp(0.25, 4.0);
-                        }
+                        placement.radius = (placement.radius / pinch as f64).clamp(0.8, 8.0);
                         runtime.state.layout.set(&window, placement);
                     }
                 }

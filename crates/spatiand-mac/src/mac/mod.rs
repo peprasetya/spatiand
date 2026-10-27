@@ -338,9 +338,6 @@ pub static MICROPHONE_ALLOWED: std::sync::atomic::AtomicBool = std::sync::atomic
 pub fn size_new_windows(state: &mut crate::Spatiand, _windows: &mut [crate::scene::WindowQuad]) {
     use smithay::reexports::wayland_server::Resource;
     use smithay::wayland::seat::WaylandFocus;
-    thread_local! {
-        static SIZED: std::cell::RefCell<std::collections::HashSet<usize>> = Default::default();
-    }
     let scale = *DISPLAY_SCALE.lock().unwrap();
     let prefix = format!("remote.{}.", local::HOST);
     let mut on_show = std::collections::HashSet::new();
@@ -368,22 +365,8 @@ pub fn size_new_windows(state: &mut crate::Spatiand, _windows: &mut [crate::scen
         if !state.layout.is_hidden(&window) {
             on_show.insert(mac_id);
         }
-        let Some(id) = state.layout.id_of(&window) else { continue };
-        if SIZED.with(|s| s.borrow().contains(&id)) {
-            continue;
-        }
-        let pixels = smithay::backend::renderer::utils::with_renderer_surface_state(&surface, |s| s.surface_size())
-            .flatten()
-            .map(|size| size.w.max(0) as u32)
-            .unwrap_or(0);
-        if pixels <= 16 {
-            continue;
-        }
-        SIZED.with(|s| s.borrow_mut().insert(id));
-        let Some(mut placement) = state.layout.get(&window) else { continue };
-        let default = crate::window::Placement::default().width;
-        placement.width = (default * pixels as f64 / scale / 1280.0).clamp(0.25, 2.4);
-        state.layout.set(&window, placement);
+        // Its surface is in the display's pixels; the room sizes it by its points.
+        state.layout.set_pixels_per_point(&window, scale);
     }
     local::on_show(on_show);
 }

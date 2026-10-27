@@ -2649,8 +2649,10 @@ pub fn run(
                                         placement.pitch = crate::window::clamp_pitch(
                                             placement.pitch + delta.pan.1 as f64 * 0.6,
                                         );
-                                        placement.width =
-                                            (placement.width * delta.scale as f64).clamp(0.3, 3.0);
+                                        // Spreading brings it nearer: its size is its
+                                        // application's (`window::METRES_PER_POINT`).
+                                        placement.radius =
+                                            (placement.radius / delta.scale as f64).clamp(0.8, 8.0);
                                         runtime.state.layout.set(&window, placement);
                                     }
                                 }

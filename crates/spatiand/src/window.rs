@@ -242,6 +242,24 @@ pub fn brought_here(placement: Placement, head: DQuat) -> Placement {
     }
 }
 
+/// How big a point of a window is in the room, metres: **one size for every window**, so that a
+/// window's size in the room says how big it is to its application, and only its distance makes
+/// it look bigger or smaller. 1280 points are 1.1 m, `Placement::default`'s width (about 28
+/// degrees at its 2.2 m).
+///
+/// It used to be each window's own: every window opened 1.1 m wide whatever it drew, and a pinch
+/// made it wider without telling the application, so two windows of one size to their
+/// applications could be any sizes in the room, and a window's size said nothing of its own.
+pub const METRES_PER_POINT: f64 = 1.1 / 1280.0;
+
+/// Whether two windows overlap as seen from the wearer, whatever their distances.
+fn overlap(a: &Placement, b: &Placement) -> bool {
+    let half = |p: &Placement| (p.width * 0.5 / p.radius.max(0.1)).atan();
+    let dyaw = (a.yaw - b.yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+    let dpitch = a.pitch - b.pitch;
+    dyaw.abs() < half(a) + half(b) && dpitch.abs() < (half(a) + half(b)) * 0.8
+}
+
 /// Per-window spatial state, alongside Smithay's `Space`.
 #[derive(Debug, Default)]
 pub struct WindowLayout {
@@ -275,6 +293,9 @@ pub struct WindowLayout {
     /// put away straight after, they go back there. A Mac's windows all arrive and are put away
     /// at once, only to be listed, and each moved back what was on show.
     moved_back_for: Option<(usize, Vec<(usize, f64)>)>,
+    /// Buffer pixels to a point, for windows whose surface is in pixels of a denser screen: a
+    /// Mac's own windows, captured on a Retina display. Not here is one.
+    pixels_per_point: HashMap<usize, f64>,
 }
 
 impl WindowLayout {
@@ -301,16 +322,45 @@ impl WindowLayout {
         placement
     }
 
-    /// Where a new window goes, looking along `view_yaw`, in front of what it would cover.
+    /// Where a new window goes, looking along `view_yaw`: in the middle of the view, **at the
+    /// standard distance**, and what would be in front of it there moves back behind it.
     fn room_for_new(&mut self, view_yaw: f64) -> Placement {
-        // **In the middle of the view, in front of everything it would cover.** It was fanned
-        // out -- straight ahead, then left, then right, further each time, by how many windows
-        // were already open -- which looked random from where the wearer sat: the window just
-        // asked for was somewhere to be looked for. Now it is where they are looking.
+        // It was fanned out -- straight ahead, then left, then right -- which looked random from
+        // where the wearer sat. Then it went as near as the nearest window it covered, so with
+        // every window pushed far away a new one opened far away too. Now it opens where they
+        // are looking, at the distance a window opens at, and only the windows it would be
+        // hidden by are moved: those overlapping it no further away than it is go a step
+        // behind it; the others stay where they are.
         let d = Placement::default();
         let placement = Placement { pitch: clamp_pitch(self.view_pitch), yaw: view_yaw, ..d };
-        let radius = self.make_room(&placement, None).unwrap_or(d.radius);
-        Placement { radius, ..placement }
+        // What is moved back may in turn be in front of, or level with, another window behind
+        // it that it overlaps, which then goes a step behind it too -- so none lands where
+        // another already was. One pass, nearest first: a window goes a step behind each
+        // window that was moved (or is the new one), overlaps it, and was not behind it to
+        // begin with. Windows nothing moved in front of stay where they are, side by side at
+        // one distance or not.
+        let mut order: Vec<(usize, f64)> = self
+            .placements
+            .iter()
+            .filter(|(id, p)| !self.hidden.contains(id) && !p.pip)
+            .map(|(id, p)| (*id, p.radius))
+            .collect();
+        order.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        let mut fronts = vec![(placement, f64::NEG_INFINITY)];
+        for (id, was) in order {
+            let Some(mut p) = self.placements.get(&id).copied() else { continue };
+            let need = fronts
+                .iter()
+                .filter(|(f, f_was)| *f_was <= was && overlap(f, &p))
+                .map(|(f, _)| f.radius + Self::STEP_BACK)
+                .fold(f64::NEG_INFINITY, f64::max);
+            if need > p.radius + 1e-9 {
+                p.radius = need;
+                self.placements.insert(id, p);
+                fronts.push((p, was));
+            }
+        }
+        placement
     }
 
     /// Bring a window that is already in the room to the front where it now is (its yaw and
@@ -340,19 +390,7 @@ impl WindowLayout {
     /// than it, as it was: each window opened came that much closer than the last, until
     /// they were in the wearer's face.
     fn make_room(&mut self, placement: &Placement, except: Option<usize>) -> Option<f64> {
-        let half = |p: &Placement| (p.width * 0.5 / p.radius.max(0.1)).atan();
-        let new_half = half(placement);
-        let mut covered: Vec<(usize, f64)> = self
-            .placements
-            .iter()
-            .filter(|(id, p)| Some(**id) != except && !self.hidden.contains(id) && !p.pip)
-            .filter(|(_, p)| {
-                let dyaw = (p.yaw - placement.yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
-                let dpitch = p.pitch - placement.pitch;
-                dyaw.abs() < half(p) + new_half && dpitch.abs() < (half(p) + new_half) * 0.8
-            })
-            .map(|(id, p)| (*id, p.radius))
-            .collect();
+        let mut covered = self.overlapping(placement, except);
         if covered.is_empty() {
             return None;
         }
@@ -367,6 +405,25 @@ impl WindowLayout {
             }
         }
         Some(radius)
+    }
+
+    /// The windows on show that overlap one put at `placement`, as seen from the wearer, with
+    /// their distances.
+    fn overlapping(&self, placement: &Placement, except: Option<usize>) -> Vec<(usize, f64)> {
+        self.placements
+            .iter()
+            .filter(|(id, p)| Some(**id) != except && !self.hidden.contains(id) && !p.pip)
+            .filter(|(_, p)| overlap(p, placement))
+            .map(|(id, p)| (*id, p.radius))
+            .collect()
+    }
+
+    /// Say how many buffer pixels make a point of this window's surface (a Mac's own window
+    /// captured on a Retina display: 2).
+    pub fn set_pixels_per_point(&mut self, window: &Window, scale: f64) {
+        if let Some(id) = self.id_of(window) {
+            self.pixels_per_point.insert(id, scale.max(0.1));
+        }
     }
 
     /// How far a window covered by one brought to the front goes back, in metres.
@@ -397,6 +454,7 @@ impl WindowLayout {
             self.hidden.remove(&id);
             self.pinned.retain(|p| *p != id);
             self.recognised.remove(&id);
+            self.pixels_per_point.remove(&id);
             if self.focused == Some(id) {
                 self.focused = self.placements.keys().copied().next();
             }
@@ -580,7 +638,8 @@ impl WindowLayout {
 /// like the head-locked pass: the pointer, a drag and the pixels all have to agree about it.
 ///
 /// Run every frame from the backend, because the only way to notice a shape change is to have
-/// seen the shape before.
+/// seen the shape before. It also gives each window its width in the room from its width in
+/// points, so a window the application makes wider is wider in the room.
 pub fn apply_resize_anchors(state: &mut crate::state::Spatiand) {
     use smithay::backend::renderer::utils::with_renderer_surface_state;
     use smithay::wayland::seat::WaylandFocus;
@@ -599,14 +658,21 @@ pub fn apply_resize_anchors(state: &mut crate::state::Spatiand) {
         let Some(placement) = state.layout.get(window) else {
             continue;
         };
-        let aspect = size.w as f64 / size.h.max(1) as f64;
-        let now = placement.width / aspect.max(0.01);
         let id = match state.layout.id_of(window) {
             Some(id) => id,
             None => continue,
         };
-        let was = state.layout.heights.get(&id).copied();
         let mut placement = placement;
+        // **As big in the room as it is to its application**: its points at one size for every
+        // window ([`METRES_PER_POINT`]). A window pinned to the glass is sized by the pin.
+        if !placement.pip && !state.layout.is_pinned(window) && size.w > 16 {
+            let per_point = state.layout.pixels_per_point.get(&id).copied().unwrap_or(1.0);
+            let width = size.w as f64 / per_point * METRES_PER_POINT;
+            placement.width = width;
+        }
+        let aspect = size.w as f64 / size.h.max(1) as f64;
+        let now = placement.width / aspect.max(0.01);
+        let was = state.layout.heights.get(&id).copied();
         // The first sighting only records. There is no previous shape to hold an edge of, and
         // guessing one would move a window the moment it appeared.
         if let Some(was) = was {
@@ -774,6 +840,28 @@ mod tests {
         let p = layout.room_for_new(0.0);
         assert!(p.radius >= WindowLayout::NEAREST);
         assert!(layout.placements[&0].radius > p.radius, "the old window {} is not behind the new {}", layout.placements[&0].radius, p.radius);
+    }
+
+    #[test]
+    fn a_new_window_opens_at_the_standard_distance_and_far_windows_stay() {
+        // With every window pushed far away, a new one went as far as the nearest of them.
+        let mut layout = WindowLayout::default();
+        for (id, yaw) in [(0, 0.0), (1, 0.3), (2, -0.3)] {
+            layout.placements.insert(id, Placement { yaw, radius: 4.0, ..Default::default() });
+        }
+        let p = layout.room_for_new(0.0);
+        assert_eq!(p.radius, Placement::default().radius);
+        assert!(layout.placements.values().all(|w| w.radius == 4.0), "a window behind it was moved");
+    }
+
+    #[test]
+    fn only_a_window_in_front_of_the_new_one_moves() {
+        let mut layout = WindowLayout::default();
+        layout.placements.insert(0, Placement { yaw: 0.0, radius: 1.5, ..Default::default() });
+        layout.placements.insert(1, Placement { yaw: 1.5, radius: 1.5, ..Default::default() });
+        let p = layout.room_for_new(0.0);
+        assert!(layout.placements[&0].radius >= p.radius + WindowLayout::STEP_BACK - 1e-9);
+        assert_eq!(layout.placements[&1].radius, 1.5, "a window off to the side was moved");
     }
 
     #[test]
