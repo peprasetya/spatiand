@@ -673,7 +673,8 @@ the earlier one, is no longer built into the app; its crate stays for now).
 The patches (`third_party/wpe/patches/webkit/`), applied in order to a checkout that has not had
 them, which `build.sh` writes down in it (`.spatiand-patches`): 0001 the Mac port; 0002 visited
 links shared by a context's views; 0003 relocatable on Linux and Android; 0004 WebGL on Metal onto
-IOSurfaces (Mac); 0005 preconnecting.
+IOSurfaces (Mac); 0005 preconnecting; 0006 a function of 0001's out of the header it was in, which
+not every file including it could compile (Linux's first build found it).
 
 ## Built, checked, and not checked (2026-10-16)
 
