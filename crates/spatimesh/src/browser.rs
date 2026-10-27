@@ -3236,7 +3236,9 @@ fn draw_start(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, profile: &P
             let rect = Rect::new(x, row.y, tile_w - 18.0, 150.0);
             x += tile_w;
             let host = host_of(&url);
-            let hue = host.bytes().fold(7u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32));
+            // By the site's name alone: the same colour whichever port it was reached on.
+            let site = host.split(':').next().unwrap_or(&host);
+            let hue = site.bytes().fold(7u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32));
             let colours = [look::TEAL, look::BLUE, look::VIOLET, [0.95, 0.63, 0.24, 1.0], [0.92, 0.34, 0.47, 1.0], [0.47, 0.78, 0.35, 1.0]];
             let c = colours[(hue as usize) % colours.len()];
             let hover = rect.contains(win.pointer.0, win.pointer.1);

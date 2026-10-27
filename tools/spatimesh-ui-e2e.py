@@ -278,8 +278,9 @@ def main():
     check("downloaded: the file is in ~/Downloads, whole", check_saved)
     if "start" in pictures:
         rows = pictures["start"]
-        # The start page's most visited tiles: colour, where the page is otherwise dark ground.
-        coloured = e2e.count(rows, 60, 300, 1500, 450, lambda p: max(p) - min(p) > 40)
+        # The start page's most visited tiles: colour, where the page is otherwise dark ground
+        # (the tiles' own bodies, above their names; the darkest of their colours is a green).
+        coloured = e2e.count(rows, 60, 300, 1500, 390, lambda p: max(p) - min(p) > 25)
         check(f"start: the most visited sites ({coloured} coloured pixels)", coloured > 3000)
 
     shutil.rmtree(work, ignore_errors=True)
