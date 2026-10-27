@@ -151,6 +151,61 @@ pub enum DialogKind {
     Leave,
 }
 
+/// What is under the pointer where the wearer asked for a menu (a right click): what the
+/// window's own menu offers to do with it.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct Hit {
+    /// A link's address, and the words it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub link_text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// A film's or a sound's address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<String>,
+    /// A field or anything else that can be typed into.
+    #[serde(default)]
+    pub editable: bool,
+    /// Some of the page's text is chosen.
+    #[serde(default)]
+    pub selection: bool,
+}
+
+impl Hit {
+    /// From the lines an engine's native half writes: flags (1 a link, 2 an image, 4 media, 8
+    /// editable, 16 chosen text), and the link, its words, the image and the media, a line each.
+    pub fn from_native(flags: i32, lines: &str) -> Hit {
+        let mut l = lines.split('\n').map(str::to_string);
+        let (link, link_text, image, media) = (l.next().unwrap_or_default(), l.next().unwrap_or_default(), l.next().unwrap_or_default(), l.next().unwrap_or_default());
+        let some = |on: bool, s: String| (on && !s.is_empty()).then_some(s);
+        Hit {
+            link: some(flags & 1 != 0, link),
+            link_text: link_text.trim().to_string(),
+            image: some(flags & 2 != 0, image),
+            media: some(flags & 4 != 0, media),
+            editable: flags & 8 != 0,
+            selection: flags & 16 != 0,
+        }
+    }
+}
+
+/// What became of a download.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum Download {
+    /// It began: from `url`, into the file `file` (where it is being written, finished or not).
+    Started { url: String, file: String },
+    /// So many bytes have come, of `total` (0 if not known).
+    Progress { received: u64, total: u64 },
+    Finished { file: String },
+    Failed { why: String },
+}
+
+/// The first number of the downloads an engine begins by itself (a page's file it cannot show,
+/// a link with `download`): below it are the window's own (`Engine::download`).
+pub const ENGINE_DOWNLOADS: u64 = 1 << 30;
+
 /// Something a page did that the window should know.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Happened {
@@ -192,6 +247,19 @@ pub enum Happened {
     /// What SpatiMesh's media script in the tab's top frame says to the window (JSON): its
     /// films, sounds and MediaSources, played by Spatiand's own player (`crate::media`).
     Media { tab: TabId, json: String },
+    /// The wearer asked for a menu over the page (a right click the page did not take for
+    /// itself): the window shows its own, for what is under the pointer.
+    ContextMenu { tab: TabId, hit: Hit },
+    /// The link under the pointer now, or none (empty): said at the foot of the page.
+    Hovered { tab: TabId, link: String },
+    /// What [`Engine::find`] found: how many times it is in the page (0: not at all).
+    Found { tab: TabId, matches: u32 },
+    /// A page's `<input type=file>` wants files: the window asks the wearer which, and says
+    /// with [`Engine::choose_files`]. `accept` is what the page said it takes (MIME types).
+    ChooseFiles { tab: TabId, multiple: bool, accept: Vec<String> },
+    /// A download's news: the window's own ([`Engine::download`]) by its number, or one the
+    /// engine began (numbered from [`ENGINE_DOWNLOADS`]).
+    Download { tab: TabId, id: u64, event: Download },
     /// The profile's cookies, all of them, as asked for with [`Engine::ask_cookies`].
     Cookies { cookies: Vec<Cookie> },
     /// What an engine that cannot list its cookies (Android's) sends to each address it was
@@ -282,7 +350,12 @@ impl Happened {
             | Happened::Dialog { tab, .. }
             | Happened::Extension { tab, .. }
             | Happened::ScriptResult { tab, .. }
-            | Happened::Media { tab, .. } => *tab,
+            | Happened::Media { tab, .. }
+            | Happened::ContextMenu { tab, .. }
+            | Happened::Hovered { tab, .. }
+            | Happened::Found { tab, .. }
+            | Happened::ChooseFiles { tab, .. }
+            | Happened::Download { tab, .. } => *tab,
             Happened::OpenTab { opener, .. } => *opener,
             // The profile's, not a tab's.
             Happened::Cookies { .. } | Happened::CookiesSent { .. } => 0,
@@ -361,6 +434,17 @@ pub trait Engine {
     fn inspect(&mut self, _tab: TabId, _inspector: TabId, _view: View) -> bool {
         false
     }
+    /// Download `url` as the tab would ask for it (its cookies), into the file `to`, or into the
+    /// wearer's Downloads under the name the server gives it if `to` is empty. Its news comes as
+    /// [`Happened::Download`] with `id`.
+    fn download(&mut self, _tab: TabId, _id: u64, _url: &str, _to: &str) {}
+    fn cancel_download(&mut self, _id: u64) {}
+    /// Find `text` in the tab's page, each match marked, the next one (or the one before)
+    /// brought into view: the same text again goes on to the next. Empty, finding ends.
+    fn find(&mut self, _tab: TabId, _text: &str, _forward: bool) {}
+    /// The files the wearer chose for a [`Happened::ChooseFiles`], by their paths; none if they
+    /// chose none.
+    fn choose_files(&mut self, _tab: TabId, _files: Option<Vec<String>>) {}
 }
 
 /// What a profile is to the engine that holds it.

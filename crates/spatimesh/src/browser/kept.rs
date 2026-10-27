@@ -21,7 +21,7 @@ const EVERY: Duration = Duration::from_secs(60);
 /// One profile's, while its engine runs.
 pub(super) struct Kept {
     cookies: CookieSync,
-    history: History,
+    pub(super) history: History,
     /// When to ask the engine for its cookies next.
     due: Option<Instant>,
     asked: Instant,
@@ -110,7 +110,9 @@ impl Browser {
         for profile in profiles {
             let Some(kept) = self.kept.get_mut(&profile) else { continue };
             kept.due = Some(Instant::now());
-            let new: Vec<String> = kept.history.all_urls(&self.store).into_iter().filter(|u| !kept.visited.contains(u)).collect();
+            kept.history.stale();
+            let all = kept.history.all_urls(&self.store);
+            let new: Vec<String> = all.into_iter().filter(|u| !kept.visited.contains(u)).collect();
             if !new.is_empty() {
                 kept.visited.extend(new.iter().cloned());
                 self.tell_profile(Some(&profile), ToHost::Visited { urls: new });

@@ -72,7 +72,7 @@ impl Typed {
 }
 
 /// Schemes taken as they are typed.
-const SCHEMES: &[&str] = &["http", "https", "file", "about", "data", "view-source", "blob", "ftp", "mailto", "chrome", "chrome-extension", "webkit-extension", "safari-web-extension", "moz-extension", "spatimesh-extension"];
+const SCHEMES: &[&str] = &["http", "https", "file", "about", "data", "view-source", "blob", "ftp", "mailto", "chrome", "chrome-extension", "webkit-extension", "safari-web-extension", "moz-extension", "spatimesh-extension", "spatimesh"];
 
 /// Top-level domains that are not two letters long (two letters are countries, and are all
 /// taken as domains). Not the whole list: the ones a name is likely to end in.
@@ -255,6 +255,7 @@ mod tests {
         assert_eq!(address("printer:631"), "http://printer:631/");
         assert_eq!(address("deepmagpie.local"), "http://deepmagpie.local/");
         assert_eq!(address("about:blank"), "about:blank");
+        assert_eq!(address("spatimesh:history"), "spatimesh:history");
         assert_eq!(address("file:///home/deck/a.html"), "file:///home/deck/a.html");
         assert_eq!(address("github.io"), "https://github.io/");
         assert_eq!(address("example.dev#top"), "https://example.dev#top");

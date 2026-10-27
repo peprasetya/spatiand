@@ -15,6 +15,7 @@ pub enum Icon {
     Back,
     Forward,
     Up,
+    Down,
     Play,
     Pause,
     Options,
@@ -54,6 +55,21 @@ pub enum Icon {
     SortRecent,
     /// Two paths crossing: in no order.
     Shuffle,
+    /// A speaker sounding, and one silenced.
+    Speaker,
+    Muted,
+    /// Kept for later: a bookmark.
+    Star,
+    /// Held in place: a pinned tab.
+    Pin,
+    /// An add-on: an extension.
+    Puzzle,
+    /// Two sheets: copied.
+    Copy,
+    /// The web, and a site.
+    Globe,
+    /// Take care: a triangle with a mark.
+    Warning,
 }
 
 impl Icon {
@@ -63,6 +79,7 @@ impl Icon {
             Icon::Back => r#"<path d="M15 18l-6-6 6-6"/>"#,
             Icon::Forward => r#"<path d="M9 18l6-6-6-6"/>"#,
             Icon::Up => r#"<path d="M12 19V5M5.5 11.5L12 5l6.5 6.5"/>"#,
+            Icon::Down => r#"<path d="M12 5v14M5.5 12.5L12 19l6.5-6.5"/>"#,
             Icon::Play => r##"<path d="M7.5 4.8v14.4a.8.8 0 0 0 1.2.7l11.4-7.2a.8.8 0 0 0 0-1.4L8.7 4.1a.8.8 0 0 0-1.2.7z" fill="#fff"/>"##,
             Icon::Pause => r#"<path d="M8 5v14M16 5v14" stroke-width="3"/>"#,
             Icon::Options => r#"<path d="M4 7h9M18 7h2M4 17h3M12 17h8"/><circle cx="15.5" cy="7" r="2.5"/><circle cx="9.5" cy="17" r="2.5"/>"#,
@@ -94,7 +111,15 @@ impl Icon {
             Icon::SortName => r#"<path d="M4 6.5h16M4 12h11M4 17.5h6"/>"#,
             Icon::SortRecent => r#"<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>"#,
             Icon::Shuffle => r#"<path d="M3.5 7h3.2c4 0 5.6 10 10.6 10H20M3.5 17h3.2c1.6 0 2.8-1 3.8-2.4M13.5 9.4c1-1.4 2.2-2.4 3.8-2.4H20M17.5 4.5L20 7l-2.5 2.5M17.5 14.5L20 17l-2.5 2.5"/>"#,
-            Icon::Eye => r#""<path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>"#,
+            Icon::Eye => r#"<path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>"#,
+            Icon::Speaker => r#"<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>"#,
+            Icon::Muted => r#"<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>"#,
+            Icon::Star => r#"<path d="M12 3.8l2.5 5.2 5.7.8-4.1 4 1 5.7L12 16.8l-5.1 2.7 1-5.7-4.1-4 5.7-.8z"/>"#,
+            Icon::Pin => r#"<path d="M9 4h6M10 4v5.5L7 13h10l-3-3.5V4M12 13v7"/>"#,
+            Icon::Puzzle => r#"<path d="M5 8h3.5a2 2 0 1 1 4 0H16v3.5a2 2 0 1 1 0 4V19H5v-3.5a2 2 0 1 0 0-4z"/>"#,
+            Icon::Copy => r#"<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/>"#,
+            Icon::Globe => r#"<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.3 3.6 5.1 3.6 8.5s-1.2 6.2-3.6 8.5M12 3.5C9.6 5.8 8.4 8.6 8.4 12s1.2 6.2 3.6 8.5"/>"#,
+            Icon::Warning => r#"<path d="M12 4l9 15.5H3z"/><path d="M12 10v4.5M12 17.2v.2"/>"#,
             Icon::Back10 => r#"<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v3.8h3.8"/><path d="M9.3 10.4l1.3-1v6" stroke-width="1.6"/><ellipse cx="14.4" cy="12.4" rx="1.7" ry="2.9" stroke-width="1.6"/>"#,
             Icon::Forward10 => r#"<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v3.8h-3.8"/><path d="M8.8 10.4l1.3-1v6" stroke-width="1.6"/><ellipse cx="13.9" cy="12.4" rx="1.7" ry="2.9" stroke-width="1.6"/>"#,
         }
@@ -136,5 +161,24 @@ pub fn draw(p: &mut Painter, gl: &Gl, icon: Icon, rect: Rect, color: Color) {
     if let Some(texture) = texture {
         let at = Rect::new(rect.x + (rect.w - side) * 0.5, rect.y + (rect.h - side) * 0.5, side, side);
         p.image(gl, texture, at, [0.0, 0.0, 1.0, 1.0], 0.0, color, false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_icon_draws_something() {
+        use Icon::*;
+        let all = [
+            Back, Forward, Up, Down, Play, Pause, Options, Info, Close, Plus, Grid, List, Search, Home, Folder, Desktop, Document, Download, Picture, Film, Music, Drive,
+            Cloud, Trash, Rotate, Cube, Terminal, Link, Import, Server, Refresh, Eye, Back10, Forward10, Lock, SortName, SortRecent, Shuffle, Speaker, Muted,
+            Star, Pin, Puzzle, Copy, Globe, Warning,
+        ];
+        for icon in all {
+            let (_, _, rgba) = render(icon, 48).unwrap_or_else(|| panic!("{icon:?} does not render"));
+            assert!(rgba.chunks_exact(4).filter(|p| p[3] > 128).count() > 40, "{icon:?} is nearly empty");
+        }
     }
 }

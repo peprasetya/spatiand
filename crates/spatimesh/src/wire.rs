@@ -54,6 +54,13 @@ pub enum ToHost {
     Visited { urls: Vec<String> },
     /// Open the developer tools for `tab` as the tab `inspector` ([`crate::engine::Engine::inspect`]).
     Inspect { tab: TabId, inspector: TabId, view: View },
+    /// [`crate::engine::Engine::download`].
+    Download { tab: TabId, id: u64, url: String, to: String },
+    CancelDownload { id: u64 },
+    /// [`crate::engine::Engine::find`].
+    Find { tab: TabId, text: String, forward: bool },
+    /// [`crate::engine::Engine::choose_files`].
+    Files { tab: TabId, files: Option<Vec<String>> },
 }
 
 /// From an engine host to its window.
@@ -382,6 +389,22 @@ impl ToHost {
                 b.u64(*tab).u64(*inspector).view(*view);
                 27
             }
+            ToHost::Download { tab, id, url, to } => {
+                b.u64(*tab).u64(*id).str(url).str(to);
+                28
+            }
+            ToHost::CancelDownload { id } => {
+                b.u64(*id);
+                29
+            }
+            ToHost::Find { tab, text, forward } => {
+                b.u64(*tab).str(text).bool(*forward);
+                30
+            }
+            ToHost::Files { tab, files } => {
+                b.u64(*tab).bool(files.is_some()).str(&serde_json::to_string(files.as_deref().unwrap_or_default()).unwrap_or_default());
+                31
+            }
         };
         frame(tag, b)
     }
@@ -437,6 +460,13 @@ impl ToHost {
             }
             26 => ToHost::Visited { urls: serde_json::from_str(&i.str()?).ok()? },
             27 => ToHost::Inspect { tab: i.u64()?, inspector: i.u64()?, view: i.view()? },
+            28 => ToHost::Download { tab: i.u64()?, id: i.u64()?, url: i.str()?, to: i.str()? },
+            29 => ToHost::CancelDownload { id: i.u64()? },
+            30 => ToHost::Find { tab: i.u64()?, text: i.str()?, forward: i.bool()? },
+            31 => {
+                let (tab, chosen, files) = (i.u64()?, i.bool()?, i.str()?);
+                ToHost::Files { tab, files: if chosen { Some(serde_json::from_str(&files).ok()?) } else { None } }
+            }
             _ => return None,
         })
     }
@@ -555,6 +585,26 @@ impl FromHost {
                     b.str(&serde_json::to_string(sent).unwrap_or_default());
                     27
                 }
+                Happened::ContextMenu { tab, hit } => {
+                    b.u64(*tab).str(&serde_json::to_string(hit).unwrap_or_default());
+                    29
+                }
+                Happened::Hovered { tab, link } => {
+                    b.u64(*tab).str(link);
+                    30
+                }
+                Happened::Found { tab, matches } => {
+                    b.u64(*tab).u32(*matches);
+                    31
+                }
+                Happened::ChooseFiles { tab, multiple, accept } => {
+                    b.u64(*tab).bool(*multiple).str(&serde_json::to_string(accept).unwrap_or_default());
+                    32
+                }
+                Happened::Download { tab, id, event } => {
+                    b.u64(*tab).u64(*id).str(&serde_json::to_string(event).unwrap_or_default());
+                    33
+                }
             },
         };
         frame(tag, b)
@@ -611,6 +661,11 @@ impl FromHost {
             25 => FromHost::Happened(Happened::Media { tab: i.u64()?, json: i.str()? }),
             26 => FromHost::Happened(Happened::Cookies { cookies: serde_json::from_str(&i.str()?).ok()? }),
             27 => FromHost::Happened(Happened::CookiesSent { sent: serde_json::from_str(&i.str()?).ok()? }),
+            29 => FromHost::Happened(Happened::ContextMenu { tab: i.u64()?, hit: serde_json::from_str(&i.str()?).ok()? }),
+            30 => FromHost::Happened(Happened::Hovered { tab: i.u64()?, link: i.str()? }),
+            31 => FromHost::Happened(Happened::Found { tab: i.u64()?, matches: i.u32()? }),
+            32 => FromHost::Happened(Happened::ChooseFiles { tab: i.u64()?, multiple: i.bool()?, accept: serde_json::from_str(&i.str()?).ok()? }),
+            33 => FromHost::Happened(Happened::Download { tab: i.u64()?, id: i.u64()?, event: serde_json::from_str(&i.str()?).ok()? }),
             24 => {
                 let (tab, request, ok, text) = (i.u64()?, i.u64()?, i.bool()?, i.str()?);
                 FromHost::Happened(Happened::ScriptResult { tab, request, result: if ok { Ok(text) } else { Err(text) } })
@@ -1176,6 +1231,11 @@ mod tests {
             ToHost::SetCookies { set: vec![cookie()], remove: vec![Cookie { expires: None, ..cookie() }] },
             ToHost::Visited { urls: vec!["https://a.example/x".into()] },
             ToHost::Inspect { tab: 3, inspector: 9, view: View::new(800, 600, 2.0) },
+            ToHost::Download { tab: 3, id: 7, url: "https://a.example/f.zip".into(), to: "/tmp/f.zip".into() },
+            ToHost::CancelDownload { id: 7 },
+            ToHost::Find { tab: 3, text: "wörd".into(), forward: false },
+            ToHost::Files { tab: 3, files: Some(vec!["/home/a b.png".into()]) },
+            ToHost::Files { tab: 3, files: None },
         ];
         for message in to_host {
             let bytes = message.encode();
@@ -1198,6 +1258,12 @@ mod tests {
             FromHost::Happened(Happened::ScriptResult { tab: 4, request: 43, result: Err("no".into()) }),
             FromHost::Happened(Happened::Cookies { cookies: vec![cookie()] }),
             FromHost::Happened(Happened::CookiesSent { sent: vec![("https://a.example/".into(), "sid=1; b=2".into())] }),
+            FromHost::Happened(Happened::ContextMenu { tab: 5, hit: crate::engine::Hit { link: Some("https://a/".into()), link_text: "A".into(), image: None, media: None, editable: false, selection: true } }),
+            FromHost::Happened(Happened::Hovered { tab: 5, link: "https://a/".into() }),
+            FromHost::Happened(Happened::Found { tab: 5, matches: 12 }),
+            FromHost::Happened(Happened::ChooseFiles { tab: 5, multiple: true, accept: vec!["image/*".into()] }),
+            FromHost::Happened(Happened::Download { tab: 5, id: 1 << 30, event: crate::engine::Download::Progress { received: 10, total: 100 } }),
+            FromHost::Happened(Happened::Download { tab: 0, id: 2, event: crate::engine::Download::Started { url: "https://a/x".into(), file: "/d/x".into() } }),
         ];
         for message in from_host {
             let bytes = message.encode();

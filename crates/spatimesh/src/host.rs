@@ -173,6 +173,10 @@ pub fn serve(mut engine: Box<dyn Engine>, mut link: Link) {
                         log::info!("{} has no developer tools", engine.name());
                     }
                 }
+                ToHost::Download { tab, id, url, to } => engine.download(tab, id, &url, &to),
+                ToHost::CancelDownload { id } => engine.cancel_download(id),
+                ToHost::Find { tab, text, forward } => engine.find(tab, &text, forward),
+                ToHost::Files { tab, files } => engine.choose_files(tab, files),
             }
         }
         if link.is_closed() {

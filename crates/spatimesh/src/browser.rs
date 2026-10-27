@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use spatiand_app::ui::{draw_icon, look, theme, Field, Icon, Input, List, Painter, Rect, Row, Texture};
 use spatiand_app::{App, Button as PointerButton, Event, Key, Modifiers, WindowId};
-use spatimesh::address::{self, shown};
-use spatimesh::bookmarks::{self, At, Bookmark};
+use spatimesh::address::{self, shown, SearchEngine};
+use spatimesh::bookmarks::{self, Bookmark};
 use spatimesh::engine::{self, Choice, DialogKind, Happened, KeyPress, TabId, View};
 use spatimesh::profiles::{self, LockKind, Profile, PRIVATE};
 use spatimesh::settings::Settings;
@@ -20,8 +20,14 @@ use spatimesh::wire::{FromHost, Pictures, ToHost};
 use crate::engines::{Host, Program};
 use crate::page::PageTexture;
 
+mod downloads;
 mod ext;
+mod find;
 mod kept;
+mod menus;
+mod omni;
+mod pages;
+mod session;
 #[cfg(feature = "media")]
 mod media;
 #[cfg(not(feature = "media"))]
@@ -57,6 +63,8 @@ const TOOL_H: f32 = 52.0;
 /// The address bar's text: smaller than a row's, so more of a long address is in view.
 const ADDRESS_EM: f32 = 26.0;
 const PAGE_TOP: f32 = 122.0;
+/// The bookmarks bar, when it is shown: between the toolbar and the page.
+const BAR_H: f32 = 44.0;
 const MARGIN: f32 = 10.0;
 /// How long something said in a toast stays.
 const TOAST: Duration = Duration::from_secs(6);
@@ -83,6 +91,16 @@ enum Hover {
     Action(usize),
     /// An extension's popup.
     ExtPopup,
+    /// A tab's speaker: its sound on or off.
+    Speaker(TabId),
+    /// The padlock or warning before the address: how the page came.
+    Security,
+    /// The downloads' button, while there are any.
+    Downloads,
+    /// "Add to SpatiMesh", on an extension store's page for one.
+    StoreAdd,
+    /// A link of the bookmarks bar, by its place there.
+    BarMark(usize),
 }
 
 /// A tab being dragged by its place on the bar.
@@ -93,6 +111,25 @@ struct Drag {
     moved: bool,
     /// Off the bar far enough that letting go takes it out of this window.
     torn: bool,
+}
+
+/// A menu of its own, opened beside the line that names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sub {
+    SearchEngine,
+    Zoom,
+    History,
+    Bookmarks,
+    Extensions,
+}
+
+/// What a film or sound in the page is to do, from its menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MediaDo {
+    PlayPause,
+    Mute,
+    Loop,
+    Controls,
 }
 
 /// What a menu's lines do.
@@ -107,6 +144,8 @@ enum Action {
     ZoomReset,
     DeveloperTools,
     SearchWith(String),
+    /// A search address of this profile's own, asked for.
+    CustomSearch,
     OpenProfile(String),
     NewProfile,
     /// The colour of this window's profile.
@@ -119,12 +158,82 @@ enum Action {
     ChangeLock,
     RemoveLock,
     LockAll,
+    /// This window's profile, up or down the list of profiles.
+    MoveProfile(isize),
+    /// This window's profile gone, after asking.
+    RemoveProfile,
     Open(String),
     /// An extension turned on or off.
     ToggleExtension(String),
     LoadExtension,
     ReloadExtensions,
     RemoveExtension,
+    /// One extension, by its id: its options page, taken out.
+    ExtensionOptions(String),
+    UninstallExtension(String),
+    /// A folder or package to install, chosen from the files.
+    PickExtensionFolder,
+    PickExtensionFile,
+    /// The extension of the store's page in front, installed.
+    AddFromStore,
+    /// A line that opens a menu of its own.
+    Submenu(Sub),
+    ReopenClosed,
+    /// One of the tabs or windows closed lately, by its place in their list.
+    ReopenAt(usize),
+    /// The menu closes and nothing else happens.
+    Close,
+    FindInPage,
+    SavePage,
+    /// Pages, from a link, an image or a menu.
+    OpenInNewTab(String),
+    OpenInBackground(String),
+    OpenInNewWindow(String),
+    OpenInPrivate(String),
+    /// Text onto the clipboard.
+    Copy(String),
+    /// Something downloaded into the wearer's Downloads.
+    Download(String),
+    /// The page's own editing: `undo`, `redo`, by `document.execCommand`'s name for it.
+    PageCommand(&'static str),
+    /// Copy, cut, paste or choose all, by its letter, as the keys do.
+    PageClipboard(char),
+    /// What is chosen in the page, looked up with this profile's search engine.
+    SearchSelection,
+    /// The film or sound at a point of the page (CSS pixels).
+    Media(MediaDo, f32, f32),
+    Back,
+    Forward,
+    Reload,
+    /// A tab's own: from its menu on the bar.
+    TabNewAfter(TabId),
+    TabReload(TabId),
+    TabDuplicate(TabId),
+    TabPin(TabId, bool),
+    TabMute(TabId, bool),
+    TabClose(TabId),
+    TabCloseOthers(TabId),
+    TabCloseRight(TabId),
+    TabToWindow(TabId),
+    /// A bookmark's own, by its id: renamed, moved up or down among its folder's, removed.
+    RenameBookmark(String),
+    MoveBookmark(String, isize),
+    RemoveBookmark(String),
+    /// A page out of the history on every machine; or everything since a time (0: all of it).
+    ForgetPage(String),
+    ForgetSince(u64),
+    /// A download, by its number.
+    OpenDownload(u64),
+    ShowDownload(u64),
+    CancelDownload(u64),
+    RetryDownload(u64),
+    ForgetDownload(u64),
+    ClearDownloads,
+    /// What a new window of a profile opens: its tabs as they were, or a new tab.
+    SetRestore(bool),
+    /// The home page: the page in front, or the start page.
+    SetHome(bool),
+    ToggleBookmarksBar,
     Nothing,
 }
 
@@ -142,6 +251,18 @@ enum Own {
     ConfirmLock(String, LockKind, String),
     /// The profile's PIN or password as it is, before it is changed (or, `true`, removed).
     OldLock(String, bool),
+    /// A search address of the profile's own, `{}` where the words go.
+    CustomSearch(String),
+    /// A bookmark's new name, by the profile and the bookmark's id.
+    RenameBookmark(String, String),
+    /// The profile's name typed again, to remove it.
+    RemoveProfile(String),
+    /// A downloaded extension package to install in the profile, by its path.
+    InstallPackage(String, String),
+    /// "yes", to clear all of a profile's history.
+    ClearHistory(String),
+    /// "yes", to remove an extension, by the profile and its id.
+    Uninstall(String, String),
 }
 
 /// A locked window: nothing of it is shown, not even its tabs' names, until its profile's PIN
@@ -183,6 +304,8 @@ struct TabView {
     question: Option<Question>,
     choices: Option<(Vec<Choice>, engine::Rect)>,
     focused: bool,
+    /// The link under the pointer, said at the foot of the page.
+    hovered: String,
 }
 
 struct Win {
@@ -206,7 +329,7 @@ struct Win {
     drag: Option<Drag>,
     placed: Vec<(TabId, Rect, Rect)>,
     plus: Rect,
-    buttons: [(Hover, Rect); 7],
+    buttons: [(Hover, Rect); 10],
     page: Rect,
     /// The page has the whole window: something in it is fullscreen (`media/page.js`).
     fullscreen: bool,
@@ -221,6 +344,26 @@ struct Win {
     told_active: Option<TabId>,
     /// Locked: its profile's PIN or password is wanted before anything else.
     lock: Option<LockPane>,
+    /// A menu's submenu, beside the line of it that opened it (`popup`'s line `.0`).
+    flyout: Option<(usize, Popup)>,
+    /// What the address bar suggests while it is typed into.
+    suggest: Option<omni::Suggest>,
+    /// The bar for finding in the page.
+    find: Option<find::FindBar>,
+    /// One of SpatiMesh's own pages, as drawn in front: history, bookmarks, settings...
+    internal: Option<pages::Internal>,
+    /// Files and folders to choose from, over the page.
+    picker: Option<pages::Picker>,
+    /// The bookmarks bar's links, as last drawn.
+    bar_marks: Vec<(String, Rect)>,
+    /// Each sounding tab's speaker on the bar, as last drawn.
+    speakers: Vec<(TabId, Rect)>,
+    /// The start page's most visited sites, as last drawn.
+    top_sites: Vec<(String, Rect)>,
+    /// Where the address bar's field was drawn, for its suggestions to hang under.
+    address_rect: Rect,
+    /// The start page's most visited sites: address and name.
+    top_list: Vec<(String, String)>,
 }
 
 pub struct Browser {
@@ -272,6 +415,18 @@ pub struct Browser {
     media: media::Media,
     /// Each running profile's cookies and history, the same on every machine (`kept`).
     kept: HashMap<String, kept::Kept>,
+    /// Each profile's search engine, as its settings say (`search_for`).
+    searches: HashMap<String, SearchEngine>,
+    /// The tabs and windows closed lately, newest last, to be opened again.
+    closed: Vec<session::Closed>,
+    /// When the open tabs were last written down, and whether anything changed since.
+    session_saved: Instant,
+    session_dirty: bool,
+    downloads: downloads::Downloads,
+    /// The page menu open now: which tab and what was under the pointer, where (CSS pixels).
+    context: Option<menus::Context>,
+    /// Where files were last chosen from.
+    pick_dir: Option<std::path::PathBuf>,
 }
 
 /// The I key, where it is on the keyboard (Linux's number for it).
@@ -320,7 +475,15 @@ impl Browser {
             latest_buffer: HashMap::new(),
             media: media::Media::default(),
             kept: HashMap::new(),
+            searches: HashMap::new(),
+            closed: Vec::new(),
+            session_saved: Instant::now(),
+            session_dirty: false,
+            downloads: downloads::Downloads::default(),
+            context: None,
+            pick_dir: None,
         };
+        browser.downloads.load(&browser.store);
         let mut extensions = Runtime::new(browser.store.clone());
         extensions.set_addresses(crate::engines::extension_addresses(&browser.program));
         browser.extensions = Some(extensions);
@@ -338,6 +501,27 @@ impl Browser {
             return profiles::private();
         }
         self.profiles.iter().find(|p| p.id == id).cloned().unwrap_or_else(|| self.profiles[0].clone())
+    }
+
+    /// A profile's search engine: its own choice, or SpatiMesh's.
+    fn search_for(&mut self, profile: &str) -> SearchEngine {
+        if !self.searches.contains_key(profile) {
+            let engine = if profile == PRIVATE { self.settings.search_engine() } else { self.settings.search_engine_for(&self.store, profile) };
+            self.searches.insert(profile.to_string(), engine);
+        }
+        self.searches[profile].clone()
+    }
+
+    /// The search engine of a window's profile.
+    fn search_of_win(&mut self, w: usize) -> SearchEngine {
+        let profile = self.tabs.window(self.wins[w].key).map(|x| x.profile.clone()).unwrap_or_default();
+        self.search_for(&profile)
+    }
+
+    /// The search engine of a tab's profile.
+    fn search_of_tab(&mut self, tab: TabId) -> SearchEngine {
+        let profile = self.tabs.tab(tab).map(|t| t.profile.clone()).unwrap_or_default();
+        self.search_for(&profile)
     }
 
     fn bookmarks_of(&mut self, profile: &str) -> &Vec<Bookmark> {
@@ -454,7 +638,7 @@ impl Browser {
     /// Ask the engine for a tab's page, in the window it is in.
     fn open_in_engine(&mut self, tab: TabId) {
         let Some(t) = self.tabs.tab(tab) else { return };
-        let (profile, url) = (t.profile.clone(), t.url.clone());
+        let (profile, url, muted) = (t.profile.clone(), pages::engine_url(&t.url), t.muted);
         let Some(w) = self.tabs.window_of(tab).and_then(|k| self.win_of_key(k)) else { return };
         let view = self.view_of(w);
         let window = self.wins[w].key;
@@ -462,6 +646,9 @@ impl Browser {
             log::info!("tab {tab} opens {url} in {profile}'s engine");
             host.send(&ToHost::Open { tab, url, view });
             host.send(&ToHost::Window { tab, window });
+            if muted {
+                host.send(&ToHost::Mute { tab, muted });
+            }
         }
         self.views.entry(tab).or_default().told = Some(view);
     }
@@ -470,7 +657,8 @@ impl Browser {
     /// Where the page is in a window: under the bars, or all of it while fullscreen.
     fn lay_out_page(&mut self, w: usize) {
         let size = self.wins[w].size;
-        self.wins[w].page = if self.wins[w].fullscreen { Rect::new(0.0, 0.0, size.0 as f32, size.1 as f32) } else { page_rect(size) };
+        let private = self.tabs.window(self.wins[w].key).is_some_and(|x| x.profile == PRIVATE);
+        self.wins[w].page = if self.wins[w].fullscreen { Rect::new(0.0, 0.0, size.0 as f32, size.1 as f32) } else { page_rect(size, self.settings.bookmarks_bar && !private) };
         self.size_pages(w);
         self.wins[w].dirty = true;
     }
@@ -522,7 +710,12 @@ impl Browser {
             let ext_popup = self.ext_popups.get(&win.key).map(|p| p.tab);
             for &tab in &window.tabs {
                 let active = window.active_tab() == Some(tab);
-                let overlay = win.popup.is_some() || ext_popup.is_some() || win.lock.is_some() || self.views.get(&tab).is_some_and(|v| v.question.is_some());
+                let overlay = win.popup.is_some()
+                    || ext_popup.is_some()
+                    || win.lock.is_some()
+                    || win.picker.is_some()
+                    || win.find.as_ref().is_some_and(|f| f.field.focused)
+                    || self.views.get(&tab).is_some_and(|v| v.question.is_some());
                 wanted.push((tab, active && win.focused && !win.editing && !overlay));
             }
             // An extension's popup has the keyboard while it is open.
@@ -638,6 +831,12 @@ impl Browser {
                     spatiand_app::clipboard::copy(text);
                 }
             }
+            // What a page said when its menu opened (`menus::PAGE_PROBE`).
+            FromHost::Happened(Happened::ScriptResult { tab, request, result }) if request & menus::PAGE_PROBE != 0 => {
+                if let Some(json) = result.ok().and_then(|json| serde_json::from_str::<String>(&json).ok()) {
+                    self.context_probed(tab, &json);
+                }
+            }
             FromHost::Happened(Happened::ScriptResult { request, result, .. }) => {
                 self.with_extensions(|rt, b| rt.script_result(b, request, result));
             }
@@ -656,6 +855,8 @@ impl Browser {
                 }
                 self.media.said(tab, &json);
             }
+            // A download is the profile's: its engine numbers the ones it begins itself.
+            FromHost::Happened(Happened::Download { tab, id, event }) => self.download_news(profile, tab, id, event),
             FromHost::Happened(Happened::Cookies { cookies }) => self.kept_cookies(profile, Some(cookies), None),
             FromHost::Happened(Happened::CookiesSent { sent }) => self.kept_cookies(profile, None, Some(sent)),
             FromHost::Happened(happened) if self.hidden.contains_key(&happened.tab()) => self.hidden_happened(profile, happened),
@@ -740,7 +941,7 @@ impl Browser {
 
     fn happened(&mut self, happened: Happened) {
         let tab = happened.tab();
-        let engine = self.settings.search_engine();
+        let engine = self.search_of_tab(tab);
         if let Some(t) = self.tabs.tab(tab) {
             let told = ext::told_of(&happened, t.loading, &t.url);
             self.told.extend(told);
@@ -750,6 +951,8 @@ impl Browser {
                 self.tab_sounds.insert(tab, (name, None));
                 self.route_sounds();
             }
+            // SpatiMesh's own page keeps its own name.
+            Happened::Title { tab, .. } if self.tabs.tab(tab).is_some_and(|t| pages::internal(&t.url).is_some()) => {}
             Happened::Title { tab, title } => {
                 let mut loaded = false;
                 if let Some(t) = self.tabs.tab_mut(tab) {
@@ -762,9 +965,17 @@ impl Browser {
                 self.dirty_bar(tab);
             }
             Happened::Url { tab, url } => {
+                // One of SpatiMesh's own pages is a blank page to the engine: it stays itself.
+                if url == "about:blank" && self.tabs.tab(tab).is_some_and(|t| pages::internal(&t.url).is_some()) {
+                    return;
+                }
                 if let Some(t) = self.tabs.tab_mut(tab) {
                     t.url = url.clone();
                     t.failed = None;
+                }
+                self.session_dirty = true;
+                if let Some(view) = self.views.get_mut(&tab) {
+                    view.hovered.clear();
                 }
                 if let Some(w) = self.tabs.window_of(tab).and_then(|k| self.win_of_key(k)) {
                     if self.tabs.active(self.wins[w].key) == Some(tab) && !self.wins[w].editing {
@@ -840,6 +1051,15 @@ impl Browser {
             // Taken by `heard` before they come here.
             Happened::Extension { .. } | Happened::ScriptResult { .. } | Happened::Media { .. } => {}
             Happened::Cookies { .. } | Happened::CookiesSent { .. } => {}
+            Happened::ContextMenu { tab, hit } => self.context_menu(tab, hit),
+            Happened::Hovered { tab, link } => {
+                self.views.entry(tab).or_default().hovered = link;
+                self.dirty_tab(tab);
+            }
+            Happened::Found { tab, matches } => self.found(tab, matches),
+            Happened::ChooseFiles { tab, multiple, accept } => self.pick_files_for_page(tab, multiple, accept),
+            // Taken by `heard`, with the profile it is of.
+            Happened::Download { .. } => {}
         }
         let _ = tab;
     }
@@ -852,7 +1072,32 @@ impl Browser {
 
     // ---- windows and tabs -------------------------------------------------------------------
 
+    /// A window of `profile` at `url`, or at its home page -- or, for a profile none of whose
+    /// windows is open, with the tabs it had open when its last window closed, if it is to.
     pub fn new_window(&mut self, profile: &str, url: Option<&str>) -> WindowKey {
+        if url.is_none() && self.settings.restore && !self.tabs.windows().iter().any(|w| w.profile == profile) {
+            if let Some(saved) = spatimesh::session::load(&self.store, profile) {
+                return self.restore_session(profile, saved);
+            }
+        }
+        let key = self.open_window(profile);
+        let home = self.settings.home.clone();
+        let url = url.unwrap_or(&home).to_string();
+        if let Some(tab) = self.tabs.new_tab(key, &url, Place::End, true, None) {
+            self.open_in_engine(tab);
+            self.told.push(Told::TabCreated(tab));
+        }
+        self.after_tab_change(key);
+        if let Some(w) = self.win_of_key(key) {
+            if self.wins[w].lock.is_some() {
+                self.hush_window(w);
+            }
+        }
+        key
+    }
+
+    /// A window of `profile` with nothing in it yet: locked, if its profile is.
+    fn open_window(&mut self, profile: &str) -> WindowKey {
         let key = self.tabs.new_window(profile);
         let title = if profile == PRIVATE { "SpatiMesh (Private)" } else { "SpatiMesh" };
         let id = self.app.open(title, WINDOW);
@@ -873,8 +1118,8 @@ impl Browser {
             drag: None,
             placed: Vec::new(),
             plus: Rect::default(),
-            buttons: [(Hover::Back, Rect::default()); 7],
-            page: Rect::default(),
+            buttons: [(Hover::Back, Rect::default()); 10],
+            page: page_rect(WINDOW, self.settings.bookmarks_bar && profile != PRIVATE),
             fullscreen: false,
             pressed_in_page: None,
             in_page: false,
@@ -883,32 +1128,34 @@ impl Browser {
             action_buttons: Vec::new(),
             told_active: None,
             lock: None,
+            flyout: None,
+            suggest: None,
+            find: None,
+            internal: None,
+            picker: None,
+            bar_marks: Vec::new(),
+            speakers: Vec::new(),
+            top_sites: Vec::new(),
+            address_rect: Rect::default(),
+            top_list: Vec::new(),
         };
         win.address.hint = "Search or type an address".into();
-        win.page = page_rect(WINDOW);
         // A profile with a lock, none of whose windows is open here: its PIN first.
         if self.profile(profile).lock.is_some() && !self.unlocked.contains(profile) {
             win.lock = Some(lock_pane(self.profile(profile).lock.as_ref().map_or(LockKind::Pin, |l| l.kind)));
         }
         self.wins.push(win);
         self.told.push(Told::WindowCreated(key));
-        let home = self.settings.home.clone();
-        let url = url.unwrap_or(&home).to_string();
-        if let Some(tab) = self.tabs.new_tab(key, &url, Place::End, true, None) {
-            self.open_in_engine(tab);
-            self.told.push(Told::TabCreated(tab));
-        }
-        self.after_tab_change(key);
-        let w = self.wins.len() - 1;
-        if self.wins[w].lock.is_some() {
-            self.hush_window(w);
-        }
+        self.session_dirty = true;
         key
     }
 
     fn new_tab(&mut self, w: usize, url: &str) {
         let key = self.wins[w].key;
         if let Some(tab) = self.tabs.new_tab(key, url, Place::AfterActive, true, None) {
+            if let (Some(page), Some(t)) = (pages::internal(url), self.tabs.tab_mut(tab)) {
+                t.title = page.title().to_string();
+            }
             self.open_in_engine(tab);
             self.told.push(Told::TabCreated(tab));
         }
@@ -953,11 +1200,32 @@ impl Browser {
             }
             self.lay_out_page(w);
         }
-        let engine = self.settings.search_engine();
+        let engine = self.search_of_win(w);
         let active = self.tabs.active(key).and_then(|t| self.tabs.tab(t)).cloned();
+        // A tab opened again with its window but not yet shown: its page now.
+        if let Some(tab) = active.as_ref().filter(|t| t.crashed.is_none() && t.inspects.is_none()) {
+            if self.views.get(&tab.id).map_or(true, |v| v.told.is_none()) {
+                self.open_in_engine(tab.id);
+            }
+        }
+        self.session_dirty = true;
+        let w = match self.win_of_key(key) {
+            Some(w) => w,
+            None => return,
+        };
+        // Another tab: the old one's finding ends.
+        if let Some(bar) = self.wins[w].find.take() {
+            if active.as_ref().is_some_and(|t| t.id == bar.tab) {
+                self.wins[w].find = Some(bar);
+            } else {
+                self.tell(bar.tab, ToHost::Find { tab: bar.tab, text: String::new(), forward: true });
+            }
+        }
         let win = &mut self.wins[w];
         win.dirty = true;
         win.popup = None;
+        win.flyout = None;
+        win.suggest = None;
         match active {
             Some(tab) if is_start(&tab.url) && tab.inspects.is_none() => {
                 // A new tab: the bar takes the keyboard, as in every browser.
@@ -990,6 +1258,7 @@ impl Browser {
     }
 
     fn close_tab(&mut self, tab: TabId) {
+        self.remember_closing_tab(tab);
         self.media.forget(tab);
         self.tell(tab, ToHost::Close { tab });
         let profile = self.tabs.tab(tab).map(|t| t.profile.clone());
@@ -1040,6 +1309,7 @@ impl Browser {
     }
 
     fn close_window(&mut self, w: usize) {
+        self.remember_closing_window(self.wins[w].key);
         let win = self.wins.remove(w);
         let profile = self.tabs.window(win.key).map(|x| x.profile.clone());
         if let Some(popup) = self.ext_popups.remove(&win.key) {
@@ -1081,7 +1351,8 @@ impl Browser {
         let on = self.wins[w].lock.is_some();
         let tabs = self.tabs.window(self.wins[w].key).map(|x| x.tabs.clone()).unwrap_or_default();
         for tab in tabs {
-            self.media.hush(tab, on);
+            let muted = self.tabs.tab(tab).is_some_and(|t| t.muted);
+            self.media.hush(tab, on || muted);
         }
     }
 
@@ -1201,40 +1472,7 @@ impl Browser {
 
     fn tear_off(&mut self, tab: TabId) {
         let Some(profile) = self.tabs.tab(tab).map(|t| t.profile.clone()) else { return };
-        let key = self.tabs.new_window(&profile);
-        let title = if profile == PRIVATE { "SpatiMesh (Private)" } else { "SpatiMesh" };
-        let id = self.app.open(title, WINDOW);
-        let sound = self.name_sound(id);
-        let mut win = Win {
-            key,
-            id,
-            sound,
-            size: WINDOW,
-            ready: false,
-            dirty: true,
-            focused: false,
-            pointer: (0.0, 0.0),
-            hover: Hover::Nothing,
-            address: Field::sized(ADDRESS_EM),
-            editing: false,
-            fresh: false,
-            drag: None,
-            placed: Vec::new(),
-            plus: Rect::default(),
-            buttons: [(Hover::Back, Rect::default()); 7],
-            page: page_rect(WINDOW),
-            fullscreen: false,
-            pressed_in_page: None,
-            in_page: false,
-            popup: None,
-            start: None,
-            action_buttons: Vec::new(),
-            told_active: None,
-            lock: None,
-        };
-        win.address.hint = "Search or type an address".into();
-        self.wins.push(win);
-        self.told.push(Told::WindowCreated(key));
+        let key = self.open_window(&profile);
         self.move_tab(tab, key, None);
     }
 
@@ -1242,7 +1480,8 @@ impl Browser {
 
     fn go(&mut self, w: usize, typed: &str) {
         let Some(understood) = address::understand(typed) else { return };
-        let url = understood.url(&self.settings.search_engine());
+        let engine = self.search_of_win(w);
+        let url = understood.url(&engine);
         let key = self.wins[w].key;
         self.wins[w].editing = false;
         self.wins[w].address.focused = false;
@@ -1252,15 +1491,20 @@ impl Browser {
             t.url = url.clone();
             t.crashed = None;
             t.loading = true;
+            if let Some(page) = pages::internal(&url) {
+                t.title = page.title().to_string();
+            }
         }
         let profile = self.tabs.tab(tab).map(|t| t.profile.clone()).unwrap_or_default();
         if crashed || !self.hosts.contains_key(&profile) || self.views.get(&tab).map_or(true, |v| v.told.is_none()) {
             self.reopen(tab);
         } else {
             log::info!("tab {tab} loads {url}");
-            self.tell(tab, ToHost::Load { tab, url: url.clone() });
+            self.tell(tab, ToHost::Load { tab, url: pages::engine_url(&url) });
         }
-        self.wins[w].address.set(shown(&url, &self.settings.search_engine()));
+        self.wins[w].suggest = None;
+        self.session_dirty = true;
+        self.wins[w].address.set(shown(&url, &engine));
         self.wins[w].dirty = true;
         self.focus_pages();
     }
@@ -1301,27 +1545,6 @@ impl Browser {
         self.focus_pages();
     }
 
-    fn toggle_bookmark(&mut self, w: usize) {
-        let key = self.wins[w].key;
-        let Some(tab) = self.tabs.active(key).and_then(|t| self.tabs.tab(t)).cloned() else { return };
-        if tab.profile == PRIVATE || is_start(&tab.url) {
-            return;
-        }
-        let existing = bookmarks::find(self.bookmarks_of(&tab.profile), &tab.url).map(|b| b.id.clone());
-        match existing {
-            Some(id) => bookmarks::remove(&self.store, &tab.profile, &id),
-            None => {
-                let title = if tab.title.trim().is_empty() { tab.label() } else { tab.title.clone() };
-                if let Err(e) = bookmarks::add(&self.store, &tab.profile, "", &title, Some(&tab.url), At::End) {
-                    log::warn!("the bookmark could not be kept: {e}");
-                }
-            }
-        }
-        self.bookmarks.remove(&tab.profile);
-        self.wins[w].dirty = true;
-        self.wins[w].start = None;
-    }
-
     fn zoom(&mut self, by: Option<f32>) {
         self.settings.zoom = match by {
             Some(by) => (self.settings.zoom() * by).clamp(0.5, 3.0),
@@ -1331,138 +1554,6 @@ impl Browser {
         for w in 0..self.wins.len() {
             self.size_pages(w);
         }
-    }
-
-    fn act(&mut self, w: usize, action: Action) {
-        let profile = self.tabs.window(self.wins[w].key).map(|x| x.profile.clone()).unwrap_or_default();
-        self.wins[w].popup = None;
-        self.wins[w].dirty = true;
-        match action {
-            Action::NewTab => self.new_tab(w, "about:blank"),
-            Action::NewWindow => {
-                self.new_window(&profile, None);
-            }
-            Action::NewPrivateWindow => {
-                self.new_window(PRIVATE, None);
-            }
-            Action::Bookmark => self.toggle_bookmark(w),
-            Action::ZoomIn => self.zoom(Some(1.1)),
-            Action::ZoomOut => self.zoom(Some(1.0 / 1.1)),
-            Action::ZoomReset => self.zoom(None),
-            Action::DeveloperTools => self.developer_tools(w),
-            Action::SearchWith(name) => {
-                self.settings.search = name;
-                let _ = self.settings.save(&self.store);
-            }
-            Action::OpenProfile(id) => {
-                self.new_window(&id, None);
-            }
-            Action::ProfileColour(colour) => {
-                match profiles::set_colour(&self.store, &profile, colour) {
-                    Ok(()) => {
-                        self.profiles = profiles::list(&self.store);
-                        for win in self.wins.iter_mut() {
-                            win.dirty = true;
-                        }
-                    }
-                    Err(e) => self.say(format!("Not changed: {e}")),
-                }
-            }
-            Action::ProfileSettings => self.profile_settings(w),
-            Action::RenameProfile => {
-                let name = self.profile(&profile).name;
-                self.ask_own_with(w, Own::RenameProfile(profile), "This profile's new name:", false, &name);
-            }
-            Action::SetLock(kind) => {
-                let message = match kind {
-                    LockKind::Pin => "A PIN for this profile, 4 to 12 digits. A window of it opened when none is open asks for it, and so does every window of it after the lock button:",
-                    LockKind::Password => "A password for this profile, at least 6 characters. A window of it opened when none is open asks for it, and so does every window of it after the lock button:",
-                };
-                self.ask_own_with(w, Own::NewLock(profile, kind), message, true, "");
-            }
-            Action::ChangeLock | Action::RemoveLock => {
-                let kind = self.profile(&profile).lock.map_or(LockKind::Pin, |l| l.kind);
-                let remove = action == Action::RemoveLock;
-                self.ask_own_with(w, Own::OldLock(profile, remove), &format!("This profile's {} as it is now:", kind.name()), true, "");
-            }
-            Action::LockAll => self.lock_all(),
-            Action::NewProfile => {
-                let name = format!("Profile {}", self.profiles.len() + 1);
-                if let Ok(new) = profiles::add(&self.store, &name) {
-                    self.profiles = profiles::list(&self.store);
-                    self.new_window(&new.id, None);
-                }
-            }
-            Action::Open(url) => self.go(w, &url),
-            Action::ToggleExtension(id) => {
-                let now = spatimesh::extensions::install::list(&self.store, &profile).into_iter().find(|i| i.id == id).map(|i| !i.enabled);
-                if let Some(on) = now {
-                    if let Err(e) = spatimesh::extensions::install::set(&self.store, &profile, &id, Some(on), None) {
-                        self.say(format!("Not changed: {e}"));
-                    }
-                    self.with_extensions(|rt, b| rt.refresh(b, &profile, &[]));
-                }
-            }
-            Action::LoadExtension => self.ask_own(
-                w,
-                Own::LoadExtension(profile),
-                "Where is the extension? A folder (loaded where it is, as in developer mode), or a .zip, .crx or .xpi file:",
-            ),
-            Action::ReloadExtensions => {
-                self.with_extensions(|rt, b| rt.reload_all(b, &profile));
-                self.say("The extensions are loaded again from their files".into());
-            }
-            Action::RemoveExtension => self.ask_own(w, Own::RemoveExtension(profile), "Which extension is to go? Its name:"),
-            Action::Nothing => {}
-        }
-        self.focus_pages();
-    }
-
-    /// This window's profile's settings, in a list as the menu is: its name, its PIN or
-    /// password, its colour.
-    fn profile_settings(&mut self, w: usize) {
-        let key = self.wins[w].key;
-        let id = self.tabs.window(key).map(|x| x.profile.clone()).unwrap_or_default();
-        if id == PRIVATE {
-            return;
-        }
-        let mine = self.profile(&id);
-        let mut rows = vec![Row::heading(format!("Settings of {}", mine.name)), Row::with("Name", format!("{}  \u{270E}", mine.name))];
-        let mut actions = vec![Action::Nothing, Action::RenameProfile];
-        rows.push(Row::heading("Asked for when a window opens"));
-        actions.push(Action::Nothing);
-        match mine.lock.as_ref() {
-            None => {
-                rows.push(Row::with("Nothing", "\u{2713}"));
-                actions.push(Action::Nothing);
-                rows.push(Row::new("A PIN\u{2026}").icon(Icon::Lock));
-                actions.push(Action::SetLock(LockKind::Pin));
-                rows.push(Row::new("A password\u{2026}").icon(Icon::Lock));
-                actions.push(Action::SetLock(LockKind::Password));
-            }
-            Some(lock) => {
-                rows.push(Row::with(format!("Its {}", lock.kind.name()), "\u{2713}").icon(Icon::Lock));
-                actions.push(Action::Nothing);
-                rows.push(Row::new(format!("Change the {}\u{2026}", lock.kind.name())));
-                actions.push(Action::ChangeLock);
-                rows.push(Row::new(format!("Ask for nothing\u{2026}")));
-                actions.push(Action::RemoveLock);
-            }
-        }
-        rows.push(Row::heading("Colour of its windows"));
-        actions.push(Action::Nothing);
-        for (name, colour) in profiles::COLOUR_CHOICES {
-            rows.push(Row::with(*name, if *colour == mine.colour { "\u{2713}" } else { "" }));
-            actions.push(Action::ProfileColour(*colour));
-        }
-        let win = &self.wins[w];
-        let width = 520.0;
-        let height = (rows.len() as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 24.0).min(win.page.h);
-        let rect = Rect::new(win.page.right() - width - 8.0 - TOOL_H, win.page.y + 4.0, width, height);
-        let mut list = List::default();
-        list.focused = true;
-        self.wins[w].popup = Some(Popup { rows, actions, rect, list, choose_for: None });
-        self.focus_pages();
     }
 
     /// A question of SpatiMesh's own, in the question pane over the tab in front.
@@ -1530,6 +1621,70 @@ impl Browser {
                     self.ask_own_with(w, Own::NewLock(profile, kind), &format!("The new {}:", kind.name()), true, "");
                 }
             }
+            Own::CustomSearch(profile) => match spatimesh::settings::set_profile_search(&self.store, &profile, "Custom", Some(&text)) {
+                Ok(()) => {
+                    self.searches.clear();
+                    self.refresh_internal();
+                    self.say("This profile searches with its own address now".into());
+                }
+                Err(e) => self.say(format!("Not set: {e}")),
+            },
+            Own::RenameBookmark(profile, id) => {
+                let mark = self.bookmarks_of(&profile).iter().find(|b| b.id == id).cloned();
+                if let Some(mut mark) = mark.filter(|_| !text.is_empty()) {
+                    mark.title = text;
+                    if let Err(e) = bookmarks::update(&self.store, &profile, &mark) {
+                        self.say(format!("Not renamed: {e}"));
+                    }
+                    self.bookmarks.remove(&profile);
+                    self.refresh_internal();
+                }
+            }
+            Own::RemoveProfile(profile) => {
+                let name = self.profile(&profile).name;
+                if text != name {
+                    self.say(format!("Not removed: that is not {name}"));
+                    return;
+                }
+                let keys: Vec<WindowKey> = self.tabs.windows().iter().filter(|x| x.profile == profile).map(|x| x.key).collect();
+                for key in keys {
+                    if let Some(i) = self.win_of_key(key) {
+                        self.close_window(i);
+                    }
+                }
+                match profiles::remove(&self.store, &profile) {
+                    Ok(()) => {
+                        self.profiles = profiles::list(&self.store);
+                        self.say(format!("{name} is removed"));
+                    }
+                    Err(e) => self.say(format!("Not removed: {e}")),
+                }
+                if self.wins.is_empty() {
+                    let first = self.profiles[0].id.clone();
+                    self.new_window(&first, None);
+                }
+            }
+            Own::InstallPackage(profile, path) => match self.install_extension(&profile, &path) {
+                Ok(name) => {
+                    self.say(format!("{name} is installed"));
+                    self.refresh_internal();
+                }
+                Err(e) => self.say(format!("Not installed: {e}")),
+            },
+            Own::ClearHistory(profile) => {
+                if text.eq_ignore_ascii_case("yes") {
+                    self.act(w, Action::ForgetSince(0));
+                    let _ = profile;
+                } else {
+                    self.say("The history is as it was".into());
+                }
+            }
+            Own::Uninstall(profile, id) => {
+                if text.eq_ignore_ascii_case("yes") {
+                    let _ = profile;
+                    self.act(w, Action::UninstallExtension(id));
+                }
+            }
             Own::LoadExtension(profile) => match self.install_extension(&profile, &text) {
                 Ok(name) => self.say(format!("{name} is installed")),
                 Err(e) => self.say(format!("Not installed: {e}")),
@@ -1552,98 +1707,6 @@ impl Browser {
                 }
             }
         }
-    }
-
-    fn menu(&mut self, w: usize) {
-        let key = self.wins[w].key;
-        let profile = self.tabs.window(key).map(|x| x.profile.clone()).unwrap_or_default();
-        let url = self.tabs.active(key).and_then(|t| self.tabs.tab(t)).map(|t| t.url.clone()).unwrap_or_default();
-        let bookmarked = profile != PRIVATE && bookmarks::find(self.bookmarks_of(&profile), &url).is_some();
-        let mut rows = vec![
-            Row::with("New tab", "Ctrl-T").icon(Icon::Plus),
-            Row::with("New window", "Ctrl-N"),
-            Row::with("New private window", "Ctrl-Shift-N"),
-        ];
-        let mut actions = vec![Action::NewTab, Action::NewWindow, Action::NewPrivateWindow];
-        if profile != PRIVATE && !is_start(&url) {
-            rows.push(Row::with(if bookmarked { "Remove bookmark" } else { "Bookmark this page" }, "Ctrl-D").icon(Icon::Link));
-            actions.push(Action::Bookmark);
-        }
-        rows.push(Row::with("Bigger", "Ctrl-+"));
-        actions.push(Action::ZoomIn);
-        rows.push(Row::with("Smaller", "Ctrl--"));
-        actions.push(Action::ZoomOut);
-        rows.push(Row::with("Usual size", format!("{:.0} %", self.settings.zoom() * 80.0)));
-        actions.push(Action::ZoomReset);
-        rows.push(Row::with("Developer tools", "Ctrl-Alt-I"));
-        actions.push(Action::DeveloperTools);
-        rows.push(Row::heading("Search with"));
-        actions.push(Action::Nothing);
-        let current = self.settings.search_engine().name;
-        for engine in address::search_engines() {
-            let mark = if engine.name == current { "\u{2713}" } else { "" };
-            rows.push(Row::with(engine.name.clone(), mark).icon(Icon::Search));
-            actions.push(Action::SearchWith(engine.name));
-        }
-        rows.push(Row::heading("Profiles"));
-        actions.push(Action::Nothing);
-        for p in self.profiles.clone() {
-            let mark = if p.id == profile { "\u{2713}" } else { "" };
-            rows.push(Row::with(p.name.clone(), mark));
-            actions.push(Action::OpenProfile(p.id));
-        }
-        rows.push(Row::new("New profile").icon(Icon::Plus));
-        actions.push(Action::NewProfile);
-        let extension_rows = ext::menu_rows(&self.store, &profile);
-        if !extension_rows.is_empty() {
-            rows.push(Row::heading("Extensions"));
-            actions.push(Action::Nothing);
-            for (label, detail, action) in extension_rows {
-                rows.push(Row::with(label, detail));
-                actions.push(action);
-            }
-        }
-        let win = &self.wins[w];
-        let width = 560.0;
-        let height = (rows.len() as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 24.0).min(win.page.h);
-        let rect = Rect::new(win.page.right() - width - 8.0, win.page.y + 4.0, width, height);
-        let mut list = List::default();
-        list.focused = true;
-        self.wins[w].popup = Some(Popup { rows, actions, rect, list, choose_for: None });
-        self.focus_pages();
-    }
-
-    /// The profile button's list: which profile this window is, the others to open a window in,
-    /// and the colour this one's windows are.
-    fn profile_menu(&mut self, w: usize) {
-        let key = self.wins[w].key;
-        let profile = self.tabs.window(key).map(|x| x.profile.clone()).unwrap_or_default();
-        let mut rows = vec![Row::heading("This window's profile")];
-        let mut actions = vec![Action::Nothing];
-        for p in self.profiles.clone() {
-            let (label, mark) = if p.id == profile { (p.name.clone(), "\u{2713} this window") } else { (p.name.clone(), "open a window") };
-            rows.push(Row::with(label, mark));
-            actions.push(if p.id == profile { Action::Nothing } else { Action::OpenProfile(p.id) });
-        }
-        rows.push(Row::with("Private", if profile == PRIVATE { "\u{2713} this window" } else { "open a window" }));
-        actions.push(if profile == PRIVATE { Action::Nothing } else { Action::NewPrivateWindow });
-        rows.push(Row::new("New profile").icon(Icon::Plus));
-        actions.push(Action::NewProfile);
-        if profile != PRIVATE {
-            let mine = self.profile(&profile);
-            rows.push(Row::new(format!("Settings of {}\u{2026}", mine.name)).icon(Icon::Options));
-            actions.push(Action::ProfileSettings);
-        }
-        rows.push(Row::new("Lock profiles now").icon(Icon::Lock));
-        actions.push(Action::LockAll);
-        let win = &self.wins[w];
-        let width = 460.0;
-        let height = (rows.len() as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 24.0).min(win.page.h);
-        let rect = Rect::new(win.page.right() - width - 8.0 - TOOL_H, win.page.y + 4.0, width, height);
-        let mut list = List::default();
-        list.focused = true;
-        self.wins[w].popup = Some(Popup { rows, actions, rect, list, choose_for: None });
-        self.focus_pages();
     }
 
     fn show_choices(&mut self, tab: TabId) {
@@ -1671,31 +1734,9 @@ impl Browser {
         self.focus_pages();
     }
 
-    /// The popup's line `index` was picked.
-    fn picked(&mut self, w: usize, index: usize) {
-        let Some(popup) = self.wins[w].popup.take() else { return };
-        if let Some(tab) = popup.choose_for {
-            let usable = self.views.get(&tab).and_then(|v| v.choices.as_ref()).and_then(|(c, _)| c.get(index)).is_some_and(|c| c.enabled && !c.heading);
-            if !usable {
-                self.wins[w].popup = Some(popup);
-                return;
-            }
-            if let Some(view) = self.views.get_mut(&tab) {
-                view.choices = None;
-            }
-            self.tell(tab, ToHost::Choose { tab, index: Some(index) });
-        } else if let Some(action) = popup.actions.get(index).cloned() {
-            if action == Action::Nothing {
-                self.wins[w].popup = Some(popup);
-                return;
-            }
-            self.act(w, action);
-        }
-        self.wins[w].dirty = true;
-        self.focus_pages();
-    }
-
     fn dismiss_popup(&mut self, w: usize) {
+        self.wins[w].flyout = None;
+        self.context = None;
         if let Some(popup) = self.wins[w].popup.take() {
             if let Some(tab) = popup.choose_for {
                 if let Some(view) = self.views.get_mut(&tab) {
@@ -1755,6 +1796,8 @@ impl Browser {
                 self.lay_out_page(w);
                 self.wins[w].dirty = true;
                 self.wins[w].popup = None;
+                self.wins[w].flyout = None;
+                self.wins[w].suggest = None;
             }
             Event::CloseRequested { .. } => {
                 self.close_window(w);
@@ -1823,17 +1866,21 @@ impl Browser {
                 if let Some(from) = self.tabs.window(key).and_then(|x| x.tabs.iter().position(|&t| t == tab)) {
                     if from != target {
                         self.tabs.reorder(key, from, target);
+                        self.session_dirty = true;
                     }
                 }
             }
             return;
         }
-        if let Some(popup) = self.wins[w].popup.as_mut() {
-            popup.list.input(&Input::Pointer { x, y });
-            if popup.rect.contains(x, y) {
-                self.wins[w].hover = Hover::Nothing;
-                return;
-            }
+        // What is over everything has the pointer: files to choose, a menu, the suggestions.
+        if self.wins[w].picker.is_some() {
+            self.wins[w].hover = Hover::Nothing;
+            self.picker_pointer(w, x, y);
+            return;
+        }
+        if self.popup_pointer(w, x, y) || self.suggest_pointer(w, x, y) {
+            self.wins[w].hover = Hover::Nothing;
+            return;
         }
         // An extension's popup: the pointer is its while over it.
         if let Some((tab, rect)) = self.ext_popups.get(&key).map(|p| (p.tab, p.rect)) {
@@ -1851,7 +1898,10 @@ impl Browser {
             start.list.input(&Input::Pointer { x, y });
         }
         let win = &self.wins[w];
-        let hover = if let Some((id, _, close)) = win.placed.iter().find(|(_, r, _)| r.contains(x, y)) {
+        let over_find = win.find.as_ref().is_some_and(|f| f.rect.contains(x, y));
+        let hover = if let Some((id, _)) = win.speakers.iter().find(|(_, r)| r.inset(-4.0).contains(x, y)) {
+            Hover::Speaker(*id)
+        } else if let Some((id, _, close)) = win.placed.iter().find(|(_, r, _)| r.contains(x, y)) {
             if close.inset(-6.0).contains(x, y) { Hover::Close(*id) } else { Hover::Tab(*id) }
         } else if win.plus.contains(x, y) {
             Hover::Plus
@@ -1859,14 +1909,21 @@ impl Browser {
             *which
         } else if let Some(i) = win.action_buttons.iter().position(|(_, r)| r.contains(x, y)) {
             Hover::Action(i)
+        } else if let Some(i) = win.bar_marks.iter().position(|(_, r)| r.contains(x, y)) {
+            Hover::BarMark(i)
         } else if win.address.contains(x, y) {
             Hover::Address
+        } else if over_find {
+            Hover::Nothing
         } else if win.page.contains(x, y) {
             Hover::Page
         } else {
             Hover::Nothing
         };
         self.wins[w].hover = hover;
+        if hover == Hover::Page && self.wins[w].internal.is_some() {
+            self.internal_pointer(w, x, y);
+        }
         let Some(tab) = self.tabs.active(key) else { return };
         let page = self.wins[w].page;
         let over_page = hover == Hover::Page && !self.covered(w, tab);
@@ -1883,11 +1940,13 @@ impl Browser {
         }
     }
 
-    /// Whether something of SpatiMesh's own is over the tab's page: the start page, a question,
-    /// a stopped page.
+    /// Whether something of SpatiMesh's own is over the tab's page: the start page or another
+    /// of its own pages, a question, a stopped page, files to choose.
     fn covered(&self, w: usize, tab: TabId) -> bool {
         let t = self.tabs.tab(tab);
         self.wins[w].start.is_some() && t.is_some_and(|t| is_start(&t.url))
+            || t.is_some_and(|t| pages::internal(&t.url).is_some())
+            || self.wins[w].picker.is_some()
             || self.views.get(&tab).is_some_and(|v| v.question.is_some())
             || t.is_some_and(|t| t.crashed.is_some())
     }
@@ -1915,6 +1974,12 @@ impl Browser {
                 return;
             }
         }
+        if self.wins[w].picker.is_some() {
+            if button == PointerButton::Left {
+                self.picker_press(w, x, y, pressed);
+            }
+            return;
+        }
         if let Some((tab, rect)) = self.ext_popups.get(&key).map(|p| (p.tab, p.rect)) {
             if rect.contains(x, y) {
                 let m = modifiers(self.app.modifiers());
@@ -1927,23 +1992,66 @@ impl Browser {
                 return;
             }
         }
-        if let Some(popup) = self.wins[w].popup.as_mut() {
+        if self.wins[w].popup.is_some() {
             if button == PointerButton::Left {
-                if popup.rect.contains(x, y) {
-                    if let Some(index) = popup.list.input(&Input::Press { pressed }) {
-                        self.picked(w, index);
+                if self.popup_press(w, x, y, pressed) {
+                    return;
+                }
+            } else if pressed {
+                let inside = self.wins[w].popup.as_ref().is_some_and(|p| p.rect.contains(x, y)) || self.wins[w].flyout.as_ref().is_some_and(|(_, f)| f.rect.contains(x, y));
+                self.dismiss_popup(w);
+                if inside {
+                    return;
+                }
+            } else {
+                return;
+            }
+        }
+        if button == PointerButton::Left && self.suggest_press(w, x, y, pressed) {
+            return;
+        }
+        if button == PointerButton::Left && (pressed && self.find_press(w, x, y) || !pressed && self.wins[w].find.as_ref().is_some_and(|f| f.rect.contains(x, y))) {
+            return;
+        }
+        let Some(tab) = self.tabs.active(key) else { return };
+        let hover = self.wins[w].hover;
+        // A menu of its own, for what the right button was pressed on.
+        if button == PointerButton::Right {
+            match hover {
+                Hover::Tab(t) | Hover::Close(t) | Hover::Speaker(t) => {
+                    if pressed {
+                        self.tab_menu(w, t);
                     }
                     return;
                 }
-                if pressed {
-                    self.dismiss_popup(w);
+                Hover::BarMark(i) => {
+                    if pressed {
+                        self.bar_mark_menu(w, i);
+                    }
                     return;
                 }
+                Hover::Page if self.wins[w].internal.is_some() => {
+                    if pressed {
+                        self.internal_menu(w);
+                    }
+                    return;
+                }
+                Hover::Page if self.tabs.tab(tab).is_some_and(|t| is_start(&t.url)) => {
+                    if pressed {
+                        self.start_menu(w);
+                    }
+                    return;
+                }
+                Hover::Page => {}
+                _ => return,
             }
         }
-        let Some(tab) = self.tabs.active(key) else { return };
         // SpatiMesh's own things over the page.
-        if button == PointerButton::Left && self.wins[w].hover == Hover::Page {
+        if button == PointerButton::Left && hover == Hover::Page {
+            if self.wins[w].internal.is_some() {
+                self.internal_press(w, x, y, pressed);
+                return;
+            }
             if let Some(question) = self.views.get(&tab).and_then(|v| v.question.as_ref()) {
                 if !pressed {
                     if question.ok.contains(x, y) {
@@ -1961,6 +2069,12 @@ impl Browser {
                 return;
             }
             if self.tabs.tab(tab).is_some_and(|t| is_start(&t.url)) {
+                if !pressed {
+                    if let Some(url) = self.wins[w].top_sites.iter().find(|(_, r)| r.contains(x, y)).map(|(u, _)| u.clone()) {
+                        self.go(w, &url);
+                        return;
+                    }
+                }
                 if let Some(start) = self.wins[w].start.as_mut() {
                     if let Some(index) = start.list.input(&Input::Press { pressed }) {
                         if let Some(Action::Open(url)) = start.actions.get(index).cloned() {
@@ -1971,17 +2085,16 @@ impl Browser {
                 }
             }
         }
-        if self.wins[w].hover == Hover::Page && !self.covered(w, tab) {
+        if hover == Hover::Page && !self.covered(w, tab) {
             if pressed {
                 // The page has the keyboard once it is clicked.
                 if self.wins[w].editing {
-                    self.wins[w].editing = false;
-                    self.wins[w].address.focused = false;
-                    let url = self.tabs.tab(tab).map(|t| t.url.clone()).unwrap_or_default();
-                    let shown = shown(&url, &self.settings.search_engine());
-                    self.wins[w].address.set(shown);
-                    self.focus_pages();
+                    self.stop_editing(w);
                 }
+                if let Some(find) = self.wins[w].find.as_mut() {
+                    find.field.focused = false;
+                }
+                self.focus_pages();
                 self.wins[w].pressed_in_page = Some(engine_button);
             }
             let page = self.wins[w].page;
@@ -1997,9 +2110,15 @@ impl Browser {
             return;
         }
         if button == PointerButton::Middle && pressed {
-            // A middle click on a tab closes it.
-            if let Hover::Tab(t) | Hover::Close(t) = self.wins[w].hover {
-                self.close_tab(t);
+            match hover {
+                // A middle click on a tab closes it; on a bookmark, opens it behind.
+                Hover::Tab(t) | Hover::Close(t) => self.close_tab(t),
+                Hover::BarMark(i) => {
+                    if let Some(url) = self.wins[w].bar_marks.get(i).map(|(u, _)| u.clone()) {
+                        self.act(w, Action::OpenInBackground(url));
+                    }
+                }
+                _ => {}
             }
             return;
         }
@@ -2007,7 +2126,7 @@ impl Browser {
             return;
         }
         if pressed {
-            match self.wins[w].hover {
+            match hover {
                 Hover::Tab(t) => {
                     if let Some(at) = self.tabs.window(key).and_then(|x| x.tabs.iter().position(|&id| id == t)) {
                         self.tabs.activate(key, at);
@@ -2022,6 +2141,12 @@ impl Browser {
                         win.address.focused = true;
                         win.fresh = true;
                         win.address.select_all();
+                        if let Some(find) = win.find.as_mut() {
+                            find.field.focused = false;
+                        }
+                        if let Some(i) = win.internal.as_mut() {
+                            i.field.focused = false;
+                        }
                         self.focus_pages();
                     }
                 }
@@ -2055,8 +2180,12 @@ impl Browser {
             }
             return;
         }
-        match self.wins[w].hover {
+        match hover {
             Hover::Close(t) => self.close_tab(t),
+            Hover::Speaker(t) => {
+                let muted = self.tabs.tab(t).is_some_and(|t| t.muted);
+                self.mute_tab(t, !muted);
+            }
             Hover::Plus => self.new_tab(w, "about:blank"),
             Hover::Back => self.tell(tab, ToHost::Back { tab }),
             Hover::Forward => self.tell(tab, ToHost::Forward { tab }),
@@ -2067,7 +2196,7 @@ impl Browser {
                     self.reopen(tab);
                 }
             }
-            Hover::Star => self.toggle_bookmark(w),
+            Hover::Star => self.bookmark_page(w),
             Hover::Menu => {
                 if self.wins[w].popup.is_some() {
                     self.dismiss_popup(w);
@@ -2075,25 +2204,52 @@ impl Browser {
                     self.menu(w);
                 }
             }
-            Hover::Profile => {
-                if self.wins[w].popup.is_some() {
-                    self.dismiss_popup(w);
-                } else {
-                    self.profile_menu(w);
+            Hover::Profile => self.profile_menu(w),
+            Hover::Lock => self.lock_all(),
+            Hover::Security => self.site_menu(w),
+            Hover::Downloads => self.downloads_menu(w),
+            Hover::StoreAdd => self.add_from_store(w),
+            Hover::BarMark(i) => {
+                if let Some(url) = self.wins[w].bar_marks.get(i).map(|(u, _)| u.clone()) {
+                    self.go(w, &url);
                 }
             }
-            Hover::Lock => self.lock_all(),
             _ => {}
         }
+    }
+
+    /// The address bar let go of: it says the page's address again.
+    fn stop_editing(&mut self, w: usize) {
+        let key = self.wins[w].key;
+        let url = self.tabs.active(key).and_then(|t| self.tabs.tab(t)).map(|t| t.url.clone()).unwrap_or_default();
+        let engine = self.search_of_win(w);
+        let win = &mut self.wins[w];
+        win.editing = false;
+        win.address.focused = false;
+        win.suggest = None;
+        if !is_start(&url) {
+            win.address.set(shown(&url, &engine));
+        }
+        self.focus_pages();
     }
 
     fn scroll(&mut self, w: usize, dx: f32, dy: f32) {
         self.wins[w].dirty = true;
         let (x, y) = self.wins[w].pointer;
+        if self.wins[w].picker.is_some() {
+            self.picker_scroll(w, dx, dy);
+            return;
+        }
         if let Some((tab, rect)) = self.ext_popups.get(&self.wins[w].key).map(|p| (p.tab, p.rect)) {
             if rect.contains(x, y) {
                 let m = modifiers(self.app.modifiers());
                 self.tell(tab, ToHost::Scroll { tab, x: x - rect.x, y: y - rect.y, dx, dy, modifiers: m });
+                return;
+            }
+        }
+        if let Some((_, flyout)) = self.wins[w].flyout.as_mut() {
+            if flyout.rect.contains(x, y) {
+                flyout.list.input(&Input::Scroll { dx, dy });
                 return;
             }
         }
@@ -2103,8 +2259,18 @@ impl Browser {
                 return;
             }
         }
+        if let Some(sg) = self.wins[w].suggest.as_mut() {
+            if sg.rect.contains(x, y) {
+                sg.list.input(&Input::Scroll { dx, dy });
+                return;
+            }
+        }
         let key = self.wins[w].key;
         let Some(tab) = self.tabs.active(key) else { return };
+        if self.wins[w].internal.is_some() {
+            self.internal_scroll(w, dx, dy);
+            return;
+        }
         if self.tabs.tab(tab).is_some_and(|t| is_start(&t.url)) {
             if let Some(start) = self.wins[w].start.as_mut() {
                 start.list.input(&Input::Scroll { dx, dy });
@@ -2116,6 +2282,81 @@ impl Browser {
             let m = modifiers(self.app.modifiers());
             self.tell(tab, ToHost::Scroll { tab, x: x - page.x, y: y - page.y, dx, dy, modifiers: m });
         }
+    }
+
+    /// SpatiMesh's own keys, with Control (Command on a Mac) held. Whether it was one.
+    fn command_key(&mut self, w: usize, key: Key, code: u32, m: Modifiers) -> bool {
+        let window = self.wins[w].key;
+        let Some(tab) = self.tabs.active(window) else { return false };
+        let letter = match key {
+            Key::Char(c) => Some(c.to_ascii_lowercase()),
+            _ => None,
+        };
+        let count = self.tabs.window(window).map_or(0, |x| x.tabs.len());
+        let active = self.tabs.window(window).map_or(0, |x| x.active);
+        match (letter, key) {
+            (Some('t'), _) if m.shift => self.reopen_closed(w, None),
+            (Some('t'), _) => self.new_tab(w, "about:blank"),
+            (Some('w'), _) => self.close_tab(tab),
+            (Some('n'), _) if m.shift => {
+                self.new_window(PRIVATE, None);
+            }
+            (Some('n'), _) => {
+                let profile = self.tabs.window(window).map(|x| x.profile.clone()).unwrap_or_default();
+                self.new_window(&profile, None);
+            }
+            // By the key, not the letter: with Option held a Mac types another one.
+            _ if (m.alt || m.shift) && code == KEY_I => self.developer_tools(w),
+            (Some('l' | 'e' | 'k'), _) => self.focus_address(w),
+            (Some('r'), _) => self.reopen(tab),
+            (Some('d'), _) => self.bookmark_page(w),
+            (Some('f'), _) => self.open_find(w),
+            (Some('g'), _) => self.find_next(w, !m.shift),
+            (Some('h'), _) => self.open_page(w, pages::HISTORY),
+            (Some('j'), _) => self.open_page(w, pages::DOWNLOADS),
+            (Some('o'), _) if m.shift => self.open_page(w, pages::BOOKMARKS),
+            (Some('b'), _) if m.shift => self.act(w, Action::ToggleBookmarksBar),
+            (Some('s'), _) => self.act(w, Action::SavePage),
+            (Some('+' | '='), _) => self.zoom(Some(1.1)),
+            (Some('-'), _) => self.zoom(Some(1.0 / 1.1)),
+            (Some('0'), _) => self.zoom(None),
+            (Some(d @ '1'..='9'), _) => {
+                let index = if d == '9' { count.saturating_sub(1) } else { (d as usize - '1' as usize).min(count.saturating_sub(1)) };
+                self.tabs.activate(window, index);
+                self.after_tab_change(window);
+            }
+            (_, Key::Tab) | (_, Key::PageUp) | (_, Key::PageDown) if count > 0 => {
+                let back = key == Key::PageUp || (key == Key::Tab && m.shift);
+                let next = if back { (active + count - 1) % count } else { (active + 1) % count };
+                if m.shift && key != Key::Tab {
+                    // Control-Shift-PageUp or -PageDown: the tab moves along the bar.
+                    self.tabs.reorder(window, active, next);
+                    self.session_dirty = true;
+                    self.wins[w].dirty = true;
+                } else {
+                    self.tabs.activate(window, next);
+                    self.after_tab_change(window);
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Control-L: the address bar has the keyboard, its address chosen to be typed over.
+    fn focus_address(&mut self, w: usize) {
+        let win = &mut self.wins[w];
+        win.editing = true;
+        win.address.focused = true;
+        win.fresh = true;
+        win.address.select_all();
+        if let Some(find) = win.find.as_mut() {
+            find.field.focused = false;
+        }
+        if let Some(i) = win.internal.as_mut() {
+            i.field.focused = false;
+        }
+        self.focus_pages();
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2130,6 +2371,12 @@ impl Browser {
             } else {
                 let key = KeyPress { code, key, text, pressed, repeat, modifiers: modifiers(m) };
                 self.tell(popup_tab, ToHost::Key { tab: popup_tab, key });
+            }
+            return;
+        }
+        if self.wins[w].picker.is_some() {
+            if pressed {
+                self.picker_key(w, key, text, m);
             }
             return;
         }
@@ -2150,97 +2397,27 @@ impl Browser {
             }
             return;
         }
-        if let Some(popup) = self.wins[w].popup.as_mut() {
-            if !pressed {
-                return;
-            }
-            if key == Key::Escape {
-                self.dismiss_popup(w);
-                return;
-            }
-            if let Some(index) = popup.list.input(&input) {
-                self.picked(w, index);
+        if self.wins[w].popup.is_some() {
+            if pressed {
+                self.popup_key(w, &input, key);
             }
             return;
         }
-        // SpatiMesh's own keys: Control, or the Command key on a Mac.
-        if pressed && command(m) {
-            let letter = match key {
-                Key::Char(c) => Some(c.to_ascii_lowercase()),
-                _ => None,
-            };
-            let handled = match (letter, key) {
-                (Some('t'), _) => {
-                    self.new_tab(w, "about:blank");
-                    true
-                }
-                (Some('w'), _) => {
-                    self.close_tab(tab);
-                    true
-                }
-                (Some('n'), _) if m.shift => {
-                    self.new_window(PRIVATE, None);
-                    true
-                }
-                (Some('n'), _) => {
-                    let profile = self.tabs.window(window).map(|x| x.profile.clone()).unwrap_or_default();
-                    self.new_window(&profile, None);
-                    true
-                }
-                // By the key, not the letter: with Option held a Mac types another one.
-                _ if m.alt && code == KEY_I => {
-                    self.developer_tools(w);
-                    true
-                }
-                (Some('l'), _) => {
-                    let win = &mut self.wins[w];
-                    win.editing = true;
-                    win.address.focused = true;
-                    win.fresh = true;
-                    win.address.select_all();
-                    self.focus_pages();
-                    true
-                }
-                (Some('r'), _) => {
-                    self.reopen(tab);
-                    true
-                }
-                (Some('d'), _) => {
-                    self.toggle_bookmark(w);
-                    true
-                }
-                (Some('+' | '='), _) => {
-                    self.zoom(Some(1.1));
-                    true
-                }
-                (Some('-'), _) => {
-                    self.zoom(Some(1.0 / 1.1));
-                    true
-                }
-                (Some('0'), _) => {
-                    self.zoom(None);
-                    true
-                }
-                (Some(d @ '1'..='9'), _) => {
-                    let count = self.tabs.window(window).map_or(0, |x| x.tabs.len());
-                    let index = if d == '9' { count.saturating_sub(1) } else { (d as usize - '1' as usize).min(count.saturating_sub(1)) };
-                    self.tabs.activate(window, index);
-                    self.after_tab_change(window);
-                    true
-                }
-                (_, Key::Tab) => {
-                    let (count, active) = self.tabs.window(window).map_or((0, 0), |x| (x.tabs.len(), x.active));
-                    if count > 0 {
-                        let next = if m.shift { (active + count - 1) % count } else { (active + 1) % count };
-                        self.tabs.activate(window, next);
-                        self.after_tab_change(window);
-                    }
-                    true
-                }
-                _ => false,
-            };
-            if handled {
-                return;
+        if pressed && command(m) && self.command_key(w, key, code, m) {
+            return;
+        }
+        // The function keys, by where they are.
+        if pressed && !command(m) {
+            match code {
+                // F3: the next match, with Shift the one before.
+                61 => return self.find_next(w, !m.shift),
+                // F5: load again.
+                63 => return self.reopen(tab),
+                // F6: the address bar.
+                64 => return self.focus_address(w),
+                // F12: the developer tools.
+                88 => return self.developer_tools(w),
+                _ => {}
             }
         }
         if pressed && m.alt && !self.wins[w].editing {
@@ -2253,12 +2430,15 @@ impl Browser {
                     self.tell(tab, ToHost::Forward { tab });
                     return;
                 }
+                Key::Home => {
+                    let home = self.settings.home.clone();
+                    self.go(w, &home);
+                    return;
+                }
                 _ => {}
             }
         }
-        if pressed && code == 63 {
-            // F5.
-            self.reopen(tab);
+        if pressed && self.find_key(w, key, text.clone(), m) {
             return;
         }
         // The address bar.
@@ -2266,31 +2446,36 @@ impl Browser {
             if !pressed {
                 return;
             }
-            let win = &mut self.wins[w];
             match key {
-                Key::Escape => {
-                    win.editing = false;
-                    win.address.focused = false;
-                    let url = self.tabs.tab(tab).map(|t| t.url.clone()).unwrap_or_default();
-                    if !is_start(&url) {
-                        self.wins[w].address.set(shown(&url, &self.settings.search_engine()));
-                    }
-                    self.focus_pages();
+                Key::Escape if self.wins[w].suggest.is_some() => {
+                    // First the suggestions go, and what was typed is as it was typed.
+                    let typed = self.wins[w].suggest.take().map(|s| s.typed).unwrap_or_default();
+                    self.wins[w].address.set(typed);
                 }
+                Key::Escape => self.stop_editing(w),
                 Key::Enter => {
-                    let typed = win.address.text.clone();
-                    self.go(w, &typed);
+                    if !self.suggest_enter(w) {
+                        let typed = self.wins[w].address.text.clone();
+                        self.go(w, &typed);
+                    }
                 }
+                _ if self.suggest_key(w, key, m) => {}
                 _ => {
+                    let win = &mut self.wins[w];
                     // A freshly chosen bar has its whole address chosen (`select_all`), so the
                     // first thing typed or pasted replaces it, as in any browser.
                     let types = text.as_deref().is_some_and(|t| !t.is_empty()) && !command(m);
                     if !matches!(key, Key::Left | Key::Right | Key::Home | Key::End) || types {
                         win.fresh = false;
                     }
+                    let before = win.address.text.clone();
                     win.address.input(&input);
+                    self.bar_typed(w, &before, key, text.as_deref(), m);
                 }
             }
+            return;
+        }
+        if pressed && self.internal_key(w, key, text.clone(), m) {
             return;
         }
         // The clipboard's keys over a page: done in the page itself, the same on every engine,
@@ -2304,6 +2489,10 @@ impl Browser {
         }
         if pressed && key == Key::Escape && self.wins[w].fullscreen {
             self.set_fullscreen(tab, false, true);
+            return;
+        }
+        if pressed && key == Key::Escape && self.wins[w].find.is_some() {
+            self.close_find(w);
             return;
         }
         if pressed && key == Key::Escape && self.tabs.tab(tab).is_some_and(|t| t.loading) {
@@ -2332,12 +2521,14 @@ impl Browser {
             let Some(window) = self.tabs.window(key).cloned() else { continue };
             let profile = self.profile(&window.profile);
             let active = window.active_tab().and_then(|t| self.tabs.tab(t)).cloned();
-            // The start page's list: the profile's bookmarks.
+            self.prepare_internal(w);
+            // The start page: the profile's bookmarks, and the sites it visits most.
             if active.as_ref().is_some_and(|t| is_start(&t.url)) && self.wins[w].start.is_none() {
                 let marks: Vec<Bookmark> = bookmarks::children(self.bookmarks_of(&profile.id), "").into_iter().filter(|b| !b.is_folder()).cloned().collect();
-                let rows = marks.iter().map(|b| Row::with(b.title.clone(), host_of(b.url.as_deref().unwrap_or(""))).icon(Icon::Link)).collect();
+                let rows = marks.iter().map(|b| Row::with(b.title.clone(), host_of(b.url.as_deref().unwrap_or(""))).icon(Icon::Star)).collect();
                 let actions = marks.iter().map(|b| Action::Open(b.url.clone().unwrap_or_default())).collect();
                 self.wins[w].start = Some(Popup { rows, actions, rect: Rect::default(), list: List::default(), choose_for: None });
+                self.wins[w].top_list = self.most_visited(&profile.id, 8);
             }
             let title = match &active {
                 Some(t) if profile.is_private() => format!("{} \u{2014} SpatiMesh (Private)", t.label()),
@@ -2347,7 +2538,7 @@ impl Browser {
             // A speaker before it while any of the window's tabs is playing: the room places
             // SpatiMesh's sound -- one stream for all its windows, as the engine plays it -- at
             // the window that says it plays (`audio::says_it_plays`).
-            let playing = window.tabs.iter().any(|t| self.tabs.tab(*t).is_some_and(|t| t.playing) || self.media.playing_in(*t));
+            let playing = window.tabs.iter().any(|t| self.tabs.tab(*t).is_some_and(|t| t.playing && !t.muted) || self.media.playing_in(*t));
             let title = if playing { format!("\u{1F50A} {title}") } else { title };
             // A locked window says nothing of what is in it.
             let title = if self.wins[w].lock.is_some() { format!("{} is locked \u{2014} SpatiMesh", profile.name) } else { title };
@@ -2364,10 +2555,19 @@ impl Browser {
             let ext_popup = self.ext_popups.get(&key).map(|p| (p.rect, p.tab));
             let toast = self.toast.as_ref().filter(|(_, at)| at.elapsed() < TOAST).map(|(t, _)| t.clone());
             let zoom = self.settings.zoom();
+            let marked = active.as_ref().is_some_and(|t| profile.id != PRIVATE && bookmarks::find(self.bookmarks_of(&profile.id), &t.url).is_some());
+            let store_add = !profile.is_private() && active.as_ref().is_some_and(|t| spatimesh::extensions::store::listing(&t.url).is_some());
+            let downloads = (!self.downloads.of(&profile.id).is_empty()).then(|| self.downloads.progress());
+            let bar_marks: Vec<(String, String)> = if self.settings.bookmarks_bar && !profile.is_private() {
+                bookmarks::children(self.bookmarks_of(&profile.id), "").into_iter().filter(|b| !b.is_folder()).take(40).map(|b| (b.title.clone(), b.url.clone().unwrap_or_default())).collect()
+            } else {
+                Vec::new()
+            };
+            let bar = self.settings.bookmarks_bar && !profile.is_private();
+            let hovered = active.as_ref().and_then(|t| self.views.get(&t.id)).map(|v| v.hovered.clone()).unwrap_or_default();
             let (painter, wins, views, tabs, media) = (&mut self.painter, &mut self.wins, &self.views, &self.tabs, &mut self.media);
             let win = &mut wins[w];
             let size = win.size;
-            let marked = active.as_ref().is_some_and(|t| profile.id != PRIVATE && self.bookmarks.get(&profile.id).is_some_and(|b| bookmarks::find(b, &t.url).is_some()));
             self.app.draw(id, |gl, picture| {
                 let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
                 p.begin(gl, picture, picture.1 as f32 / size.1 as f32, theme::ground());
@@ -2383,7 +2583,13 @@ impl Browser {
                     p.fill(gl, Rect::new(all.x, all.y, all.w, win.page.y - all.y), 0.0, profile_colour(&profile, 0.22));
                     p.fill(gl, win.page.inset(-4.0), 15.0, profile_colour(&profile, 0.9));
                     draw_tabs(p, gl, win, &window, tabs, &profile, all);
-                    draw_toolbar(p, gl, win, active.as_ref(), marked, &profile, all, &actions, &icons);
+                    let state = Toolbar { tab: active.as_ref(), marked, profile: &profile, actions: &actions, icons: &icons, store_add, downloads };
+                    draw_toolbar(p, gl, win, all, &state);
+                    if bar {
+                        draw_bookmarks_bar(p, gl, win, all, &bar_marks);
+                    } else {
+                        win.bar_marks.clear();
+                    }
                 }
                 // The page.
                 let page = win.page;
@@ -2408,11 +2614,19 @@ impl Browser {
                     }
                     if is_start(&tab.url) {
                         draw_start(p, gl, win, &profile, program_note.as_deref());
+                    } else if let Some(internal) = win.internal.as_mut() {
+                        pages::draw_internal(p, gl, page, internal, &profile.name);
                     } else if let Some(why) = &tab.crashed {
                         draw_notice(p, gl, page, "This page stopped", why, "[Enter] Load it again    The other tabs are as they were.");
                     }
                     if let Some(question) = view.and_then(|v| v.question.as_ref()) {
                         draw_question(p, gl, page, question);
+                    }
+                    if let Some(bar) = win.find.as_mut().filter(|b| b.tab == tab.id) {
+                        find::draw_find(p, gl, page, bar, win.pointer);
+                    }
+                    if !hovered.is_empty() && !win.editing {
+                        draw_status(p, gl, page, &hovered);
                     }
                 }
                 if let Some((rect, tab)) = ext_popup {
@@ -2426,9 +2640,24 @@ impl Browser {
                         None => p.fill(gl, rect, 12.0, [1.0, 1.0, 1.0, 1.0]),
                     }
                 }
+                if let Some(picker) = win.picker.as_mut() {
+                    pages::draw_picker(p, gl, win.page, picker, win.pointer);
+                }
+                if win.editing {
+                    if let Some(sg) = win.suggest.as_mut() {
+                        omni::draw_suggestions(p, gl, win.address_rect, size.1 as f32, sg);
+                    }
+                }
+                // Menus are solid: words of the page under them would be read through them.
                 if let Some(popup) = win.popup.as_mut() {
+                    p.fill(gl, popup.rect, 18.0, theme::ground());
                     look::glass(p, gl, popup.rect, 18.0, 1.0);
                     popup.list.draw(p, gl, popup.rect.inset(12.0), &popup.rows);
+                }
+                if let Some((_, flyout)) = win.flyout.as_mut() {
+                    p.fill(gl, flyout.rect, 18.0, theme::ground());
+                    look::glass(p, gl, flyout.rect, 18.0, 1.0);
+                    flyout.list.draw(p, gl, flyout.rect.inset(12.0), &flyout.rows);
                 }
                 if let Some(text) = toast.as_deref() {
                     let page = win.page;
@@ -2455,6 +2684,27 @@ impl Browser {
             }
         }
         Ok(())
+    }
+
+    /// The sites a profile visits most, lately: one page each, by how often and how lately.
+    fn most_visited(&mut self, profile: &str, count: usize) -> Vec<(String, String)> {
+        let Some(kept) = self.kept.get_mut(profile) else { return Vec::new() };
+        let mut entries = kept.history.entries(&self.store);
+        let now = spatimesh::store::now_ms();
+        let weight = |e: &spatimesh::history::Entry| (e.visits as f32).ln_1p() + 2.0 * (-(now.saturating_sub(e.last) as f32 / 86_400_000.0) / 14.0).exp();
+        entries.sort_by(|a, b| weight(b).total_cmp(&weight(a)));
+        let mut sites: Vec<(String, String)> = Vec::new();
+        for e in entries {
+            let host = host_of(&e.url);
+            if host.is_empty() || sites.iter().any(|(u, _)| host_of(u) == host) {
+                continue;
+            }
+            sites.push((e.url.clone(), if e.title.trim().is_empty() { host.clone() } else { e.title.clone() }));
+            if sites.len() == count {
+                break;
+            }
+        }
+        sites
     }
 
     fn accept_other_starts(&mut self) {
@@ -2489,6 +2739,8 @@ impl Browser {
                 self.settings = Settings::load(&self.store);
                 self.profiles = profiles::list(&self.store);
                 self.bookmarks.clear();
+                self.searches.clear();
+                self.refresh_internal();
                 for win in &mut self.wins {
                     win.start = None;
                     win.dirty = true;
@@ -2544,6 +2796,7 @@ impl Browser {
             self.accept_other_starts();
             self.notice_sync();
             self.kept_tick();
+            self.session_tick();
             if self.wins.is_empty() {
                 return Ok(());
             }
@@ -2552,9 +2805,10 @@ impl Browser {
     }
 }
 
-/// The page's place in a window of `size`.
-pub fn page_rect(size: (u32, u32)) -> Rect {
-    Rect::new(MARGIN, PAGE_TOP, size.0 as f32 - MARGIN * 2.0, size.1 as f32 - PAGE_TOP - MARGIN)
+/// The page's place in a window of `size`: below the bookmarks bar too, if it is shown.
+pub fn page_rect(size: (u32, u32), bookmarks_bar: bool) -> Rect {
+    let top = if bookmarks_bar { PAGE_TOP + BAR_H } else { PAGE_TOP };
+    Rect::new(MARGIN, top, size.0 as f32 - MARGIN * 2.0, size.1 as f32 - top - MARGIN)
 }
 
 /// A tab with no page in it: SpatiMesh's start page is drawn instead.
@@ -2588,19 +2842,23 @@ fn newest_change(dir: &std::path::Path) -> Option<std::time::SystemTime> {
 fn draw_tabs(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, window: &spatimesh::tabs::Window, tabs: &Tabs, profile: &Profile, all: Rect) {
     let bar = Rect::new(all.x + 12.0, TAB_TOP, all.w - 24.0, TAB_H);
     let plus_w = 50.0;
-    let n = window.tabs.len().max(1);
-    let width = ((bar.w - plus_w - 16.0) / n as f32).clamp(150.0, 330.0);
+    let pinned_w = 68.0;
+    let pinned = window.tabs.iter().filter(|t| tabs.tab(**t).is_some_and(|t| t.pinned)).count();
+    let others = (window.tabs.len() - pinned).max(1);
+    let width = ((bar.w - plus_w - 16.0 - pinned as f32 * pinned_w) / others as f32).clamp(120.0, 330.0);
     win.placed.clear();
+    win.speakers.clear();
     let mut x = bar.x;
     for (index, &id) in window.tabs.iter().enumerate() {
         let Some(tab) = tabs.tab(id) else { continue };
-        let rect = Rect::new(x, bar.y, width - 8.0, bar.h);
-        x += width;
+        let w = if tab.pinned { pinned_w } else { width };
+        let rect = Rect::new(x, bar.y, w - 8.0, bar.h);
+        x += w;
         if rect.right() > bar.right() - plus_w {
             break;
         }
         let active = index == window.active;
-        let hover = matches!(win.hover, Hover::Tab(t) | Hover::Close(t) if t == id);
+        let hover = matches!(win.hover, Hover::Tab(t) | Hover::Close(t) | Hover::Speaker(t) if t == id);
         let rect = match win.drag.as_ref() {
             Some(d) if d.tab == id && d.moved && !d.torn => Rect { x: (d.at.0 - rect.w * 0.5).clamp(bar.x, bar.right() - plus_w - rect.w), ..rect },
             _ => rect,
@@ -2625,9 +2883,28 @@ fn draw_tabs(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, window: &spa
         } else {
             theme::ink_hint()
         };
-        p.fill(gl, Rect::new(rect.x + 16.0, rect.y + rect.h * 0.5 - 4.0, 8.0, 8.0), 4.0, colour);
         let close = Rect::new(rect.right() - 38.0, rect.y + rect.h * 0.5 - 13.0, 26.0, 26.0);
-        let label = Rect { x: rect.x + 34.0, w: rect.w - 34.0 - if active || hover { 44.0 } else { 14.0 }, ..rect };
+        if tab.pinned {
+            // A pinned tab: its first letter, and how it is under it.
+            let initial: String = tab.label().chars().find(|c| c.is_alphanumeric()).map(|c| c.to_uppercase().collect()).unwrap_or_default();
+            p.label(gl, &initial, Rect { h: rect.h - 6.0, ..rect }, theme::ROW_EM * 0.72, if active { theme::ink() } else { theme::ink_row() }, 0.5);
+            p.fill(gl, Rect::new(rect.x + rect.w * 0.5 - 4.0, rect.bottom() - 10.0, 8.0, 4.0), 2.0, colour);
+            win.placed.push((id, rect, Rect::default()));
+            continue;
+        }
+        p.fill(gl, Rect::new(rect.x + 16.0, rect.y + rect.h * 0.5 - 4.0, 8.0, 8.0), 4.0, colour);
+        let mut label = Rect { x: rect.x + 34.0, w: rect.w - 34.0 - if active || hover { 44.0 } else { 14.0 }, ..rect };
+        // A tab that sounds, or was silenced: its speaker, pressed to silence it or not.
+        if tab.playing || tab.muted {
+            let speaker = Rect::new(label.x, rect.y + rect.h * 0.5 - 13.0, 26.0, 26.0);
+            if win.hover == Hover::Speaker(id) {
+                p.fill(gl, speaker.inset(-3.0), 15.0, theme::wash(0.14));
+            }
+            draw_icon(p, gl, if tab.muted { Icon::Muted } else { Icon::Speaker }, speaker.inset(2.0), if tab.muted { theme::ink_hint() } else { look::VIOLET });
+            win.speakers.push((id, speaker));
+            label.x += 34.0;
+            label.w -= 34.0;
+        }
         p.label(gl, &tab.label(), label, theme::ROW_EM * 0.72, if active { theme::ink() } else { theme::ink_row() }, 0.0);
         if active || hover {
             if win.hover == Hover::Close(id) {
@@ -2644,26 +2921,29 @@ fn draw_tabs(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, window: &spa
     draw_icon(p, gl, Icon::Plus, win.plus.inset(10.0), theme::ink_detail());
 }
 
-#[allow(clippy::too_many_arguments)]
 /// A profile's colour, as the painter takes it.
 fn profile_colour(profile: &Profile, alpha: f32) -> [f32; 4] {
     let c = profile.colour;
     [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, alpha]
 }
 
-fn draw_toolbar(
-    p: &mut Painter,
-    gl: &spatiand_app::Gl,
-    win: &mut Win,
-    tab: Option<&spatimesh::tabs::Tab>,
+/// What the toolbar shows of the window's tab in front.
+struct Toolbar<'a> {
+    tab: Option<&'a spatimesh::tabs::Tab>,
     marked: bool,
-    profile: &Profile,
-    all: Rect,
-    actions: &[spatimesh::extensions::runtime::ActionView],
-    icons: &[Option<spatiand_app::ui::Texture>],
-) {
+    profile: &'a Profile,
+    actions: &'a [spatimesh::extensions::runtime::ActionView],
+    icons: &'a [Option<spatiand_app::ui::Texture>],
+    /// The page is an extension's in its store: "Add to SpatiMesh".
+    store_add: bool,
+    /// The downloads' button, with how far those going have come, when there are any.
+    downloads: Option<Option<f32>>,
+}
+
+fn draw_toolbar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, all: Rect, state: &Toolbar) {
     let mut bar = Rect::new(all.x + 12.0, TOOL_TOP, all.w - 24.0, TOOL_H);
     let side = TOOL_H;
+    let tab = state.tab;
     let button = |p: &mut Painter, rect: Rect, which: Hover, icon: Icon, enabled: bool, lit: bool| {
         if win.hover == which && enabled {
             p.fill(gl, rect, side * 0.5, theme::wash(0.11));
@@ -2690,6 +2970,7 @@ fn draw_toolbar(
     let lock = button(p, bar.take_right(side), Hover::Lock, Icon::Lock, true, false);
     bar.take_right(4.0);
     // Whose window this is, plainly: the profile's colour and name, next to the menu.
+    let profile = state.profile;
     let colour = profile_colour(profile, 1.0);
     let name: String = profile.name.chars().take(14).collect();
     let pill_w = (p.measure(gl, &name, theme::ROW_EM * 0.7, 400.0).0 + 54.0).min(220.0);
@@ -2699,19 +2980,27 @@ fn draw_toolbar(
     p.fill(gl, Rect::new(pill.x + 14.0, pill.y + 13.0, 14.0, 14.0), 7.0, colour);
     p.label(gl, &name, Rect::new(pill.x + 36.0, pill.y, pill.w - 46.0, pill.h), theme::ROW_EM * 0.7, theme::ink(), 0.0);
     bar.take_right(8.0);
-    let private = profile.is_private();
-    let star = button(p, bar.take_right(side), Hover::Star, Icon::Link, !private && tab.is_some_and(|t| !is_start(&t.url)), marked);
-    bar.take_right(12.0);
+    // The downloads, while there are any: how far those going have come, under the arrow.
+    let mut downloads = Rect::default();
+    if let Some(progress) = state.downloads {
+        downloads = button(p, bar.take_right(side), Hover::Downloads, Icon::Download, true, progress.is_some());
+        if let Some(progress) = progress {
+            let track = Rect::new(downloads.x + 12.0, downloads.bottom() - 9.0, downloads.w - 24.0, 4.0);
+            p.fill(gl, track, 2.0, theme::wash(0.18));
+            p.fill(gl, Rect { w: track.w * progress.clamp(0.04, 1.0), ..track }, 2.0, look::BLUE);
+        }
+        bar.take_right(4.0);
+    }
     // The extensions' buttons, in the order they were installed, with their badges.
     win.action_buttons.clear();
-    for (i, view) in actions.iter().enumerate().rev() {
+    for (i, view) in state.actions.iter().enumerate().rev() {
         let rect = bar.take_right(side);
         bar.take_right(2.0);
         if win.hover == Hover::Action(win.action_buttons.len()) && view.enabled {
             p.fill(gl, rect, side * 0.5, theme::wash(0.11));
         }
         let tint = if view.enabled { [1.0, 1.0, 1.0, 1.0] } else { [1.0, 1.0, 1.0, 0.35] };
-        match icons.get(i).and_then(|t| t.as_ref()) {
+        match state.icons.get(i).and_then(|t| t.as_ref()) {
             Some(texture) => p.image(gl, Texture::from_raw(texture.raw(), texture.width, texture.height), rect.inset(13.0), [0.0, 0.0, 1.0, 1.0], 0.0, tint, false),
             None => {
                 let initial: String = view.name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
@@ -2729,17 +3018,102 @@ fn draw_toolbar(
         }
         win.action_buttons.push((view.extension.clone(), rect));
     }
-    if !actions.is_empty() {
+    if !state.actions.is_empty() {
         bar.take_right(8.0);
     }
+    // An extension's page in its store: added from here, as Chrome and Firefox add from there.
+    let mut store_add = Rect::default();
+    if state.store_add {
+        let label = "Add to SpatiMesh";
+        let w = p.measure(gl, label, theme::ROW_EM * 0.66, 600.0).0 + 70.0;
+        let slot = bar.take_right(w);
+        store_add = Rect::new(slot.x, slot.y + (slot.h - 40.0) * 0.5, slot.w, 40.0);
+        let lit = win.hover == Hover::StoreAdd;
+        p.fill(gl, store_add, 20.0, if lit { theme::mark() } else { theme::selected() });
+        draw_icon(p, gl, Icon::Puzzle, Rect::new(store_add.x + 12.0, store_add.y + 8.0, 24.0, 24.0), theme::ink());
+        p.label(gl, label, Rect::new(store_add.x + 44.0, store_add.y, store_add.w - 52.0, store_add.h), theme::ROW_EM * 0.66, theme::ink(), 0.0);
+        bar.take_right(8.0);
+    }
+    let private = profile.is_private();
+    let on_page = tab.is_some_and(|t| !is_start(&t.url) && pages::internal(&t.url).is_none());
+    let star = button(p, bar.take_right(side), Hover::Star, Icon::Star, !private && on_page, state.marked);
+    bar.take_right(8.0);
+    // How the page came: a padlock over HTTPS, a warning over plain HTTP.
+    let security = bar.take_left(side);
+    let url = tab.map(|t| t.url.as_str()).unwrap_or("");
+    let (icon, ink) = if url.starts_with("https://") {
+        (Icon::Lock, theme::ink_detail())
+    } else if url.starts_with("http://") {
+        (Icon::Warning, look::trouble())
+    } else if is_start(url) {
+        (Icon::Search, theme::ink_hint())
+    } else if pages::internal(url).is_some() {
+        (Icon::Options, theme::ink_hint())
+    } else {
+        (Icon::Document, theme::ink_hint())
+    };
+    if win.hover == Hover::Security {
+        p.fill(gl, security, side * 0.5, theme::wash(0.11));
+    }
+    draw_icon(p, gl, icon, security.inset(14.0), ink);
+    bar.take_left(4.0);
     win.address.draw(p, gl, bar);
+    win.address_rect = bar;
     if loading {
         // How much of the page has come, along the foot of the bar.
         let progress = tab.map_or(0.0, |t| t.progress).clamp(0.05, 1.0);
         let line = Rect::new(bar.x + 8.0, bar.bottom() - 3.0, (bar.w - 16.0) * progress, 3.0);
         p.fill(gl, line, 1.5, look::BLUE);
     }
-    win.buttons = [(Hover::Back, back), (Hover::Forward, forward), (Hover::Reload, reload), (Hover::Star, star), (Hover::Menu, menu), (Hover::Profile, pill), (Hover::Lock, lock)];
+    win.buttons = [
+        (Hover::Back, back),
+        (Hover::Forward, forward),
+        (Hover::Reload, reload),
+        (Hover::Star, star),
+        (Hover::Menu, menu),
+        (Hover::Profile, pill),
+        (Hover::Lock, lock),
+        (Hover::Security, security),
+        (Hover::Downloads, downloads),
+        (Hover::StoreAdd, store_add),
+    ];
+}
+
+/// The bookmarks bar: the profile's bookmarks, under the toolbar.
+fn draw_bookmarks_bar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, all: Rect, marks: &[(String, String)]) {
+    let mut bar = Rect::new(all.x + 18.0, PAGE_TOP - 2.0, all.w - 36.0, BAR_H - 6.0);
+    win.bar_marks.clear();
+    if marks.is_empty() {
+        p.label(gl, "Bookmarks are shown here: the star keeps the page in front (Ctrl-D)", bar, theme::FOOTER_EM, theme::ink_hint(), 0.0);
+        return;
+    }
+    let em = theme::ROW_EM * 0.64;
+    for (title, url) in marks {
+        let text: String = if title.chars().count() > 24 { format!("{}\u{2026}", title.chars().take(23).collect::<String>()) } else { title.clone() };
+        let w = p.measure(gl, &text, em, 600.0).0 + 52.0;
+        if w > bar.w {
+            break;
+        }
+        let rect = bar.take_left(w);
+        let index = win.bar_marks.len();
+        if win.hover == Hover::BarMark(index) {
+            p.fill(gl, rect, rect.h * 0.5, theme::wash(0.11));
+        }
+        draw_icon(p, gl, Icon::Star, Rect::new(rect.x + 12.0, rect.y + (rect.h - 18.0) * 0.5, 18.0, 18.0), theme::ink_hint());
+        p.label(gl, &text, Rect::new(rect.x + 36.0, rect.y, rect.w - 40.0, rect.h), em, theme::ink_row(), 0.0);
+        win.bar_marks.push((url.clone(), rect));
+        bar.take_left(4.0);
+    }
+}
+
+/// Where the link under the pointer goes, at the foot of the page.
+fn draw_status(p: &mut Painter, gl: &spatiand_app::Gl, page: Rect, link: &str) {
+    let em = theme::FOOTER_EM * 0.95;
+    let text: String = if link.chars().count() > 110 { format!("{}\u{2026}", link.chars().take(109).collect::<String>()) } else { link.to_string() };
+    let w = (p.measure(gl, &text, em, page.w).0 + 32.0).min(page.w * 0.7);
+    let rect = Rect::new(page.x + 6.0, page.bottom() - 46.0, w, 40.0);
+    look::glass(p, gl, rect, 12.0, 1.0);
+    p.label(gl, &text, rect.inset(12.0), em, theme::ink_detail(), 0.0);
 }
 
 fn draw_start(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, profile: &Profile, note: Option<&str>) {
@@ -2751,9 +3125,46 @@ fn draw_start(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, profile: &P
     if let Some(note) = note {
         p.label(gl, note, all.take_top(44.0), theme::DETAIL_EM, look::trouble(), 0.0);
     }
+    // The sites visited most: a tile each, its first letter on a colour of its own.
+    win.top_sites.clear();
+    if !win.top_list.is_empty() {
+        look::shelf(p, gl, &mut all, "Most visited", true);
+        let row = all.take_top(170.0);
+        let tile_w = 230.0;
+        let mut x = row.x + 12.0;
+        for (url, title) in win.top_list.clone() {
+            if x + tile_w > row.right() {
+                break;
+            }
+            let rect = Rect::new(x, row.y, tile_w - 18.0, 150.0);
+            x += tile_w;
+            let host = host_of(&url);
+            let hue = host.bytes().fold(7u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32));
+            let colours = [look::TEAL, look::BLUE, look::VIOLET, [0.95, 0.63, 0.24, 1.0], [0.92, 0.34, 0.47, 1.0], [0.47, 0.78, 0.35, 1.0]];
+            let c = colours[(hue as usize) % colours.len()];
+            let hover = rect.contains(win.pointer.0, win.pointer.1);
+            if hover {
+                p.fill(gl, rect.inset(-3.0), 20.0, theme::wash(0.12));
+            }
+            let face = Rect::new(rect.x, rect.y, rect.w, 96.0);
+            p.gradient(gl, face, 16.0, [c[0], c[1], c[2], 0.42], [c[0] * 0.6, c[1] * 0.6, c[2] * 0.6, 0.30]);
+            let initial: String = host.trim_start_matches("www.").chars().next().map(|ch| ch.to_uppercase().collect()).unwrap_or_default();
+            p.label(gl, &initial, face, 46.0, [1.0, 1.0, 1.0, 0.9], 0.5);
+            p.label(gl, &title, Rect::new(rect.x + 4.0, face.bottom() + 8.0, rect.w - 8.0, 28.0), theme::ROW_EM * 0.6, theme::ink_row(), 0.0);
+            p.label(gl, host.trim_start_matches("www."), Rect::new(rect.x + 4.0, face.bottom() + 34.0, rect.w - 8.0, 22.0), theme::FOOTER_EM * 0.85, theme::ink_hint(), 0.0);
+            win.top_sites.push((url, rect));
+        }
+        all.take_top(12.0);
+    }
     let Some(start) = win.start.as_mut() else { return };
     if start.rows.is_empty() {
-        let hint = if profile.is_private() { "Type an address or a search above." } else { "Type an address or a search above. Bookmarks (Ctrl-D) are kept here." };
+        let hint = if profile.is_private() {
+            "Type an address or a search above."
+        } else if win.top_list.is_empty() {
+            "Type an address or a search above. Bookmarks (Ctrl-D) are kept here, and the sites you visit most."
+        } else {
+            "Bookmarks (Ctrl-D) are kept here."
+        };
         look::message(p, gl, all, hint, theme::ink_hint());
         return;
     }
@@ -2857,7 +3268,7 @@ mod tests {
 
     #[test]
     fn the_page_fills_the_window_below_the_bars() {
-        let page = page_rect(WINDOW);
+        let page = page_rect(WINDOW, false);
         assert_eq!(page.y, PAGE_TOP);
         assert_eq!(page.x, MARGIN);
         assert_eq!(page.right(), WINDOW.0 as f32 - MARGIN);

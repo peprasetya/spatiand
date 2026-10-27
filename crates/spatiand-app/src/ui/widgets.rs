@@ -69,6 +69,17 @@ impl List {
         self.area.contains(x, y)
     }
 
+    /// The row under the pointer, as last told.
+    pub fn hovered(&self) -> Option<usize> {
+        self.hover
+    }
+
+    /// Where a row was drawn last, if it was on show: for what is drawn beside it (a menu's
+    /// submenu) or over its end (a button of its own).
+    pub fn row_rect(&self, index: usize) -> Option<Rect> {
+        self.placed.iter().find(|(i, _)| *i == index).map(|(_, r)| *r)
+    }
+
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl, rect: Rect, rows: &[Row]) {
         self.area = rect;
         self.headings = rows.iter().map(|r| r.heading).collect();
@@ -739,6 +750,19 @@ impl Field {
         self.text = text.into();
         self.caret = self.text.chars().count();
         self.anchor = None;
+    }
+
+    /// The text from character `from` to the end chosen, the caret at the end: what a browser's
+    /// address bar does with the rest of an address it finished for the wearer, so that what
+    /// they type next replaces it.
+    pub fn select_from(&mut self, from: usize) {
+        self.caret = self.text.chars().count();
+        self.anchor = Some(from.min(self.caret));
+    }
+
+    /// Whether the caret is at the end with nothing chosen: where typing adds to the text.
+    pub fn caret_at_end(&self) -> bool {
+        self.selection().is_none() && self.caret >= self.text.chars().count()
     }
 
     /// Everything chosen, as Control-A (Command-A) does: what is typed next replaces it.

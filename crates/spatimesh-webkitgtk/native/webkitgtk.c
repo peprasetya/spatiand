@@ -37,6 +37,12 @@ enum {
     EV_SCRIPT_RESULT,
     EV_MEDIA,
     EV_COOKIES,
+    /* 17 is WPE's sound name, which WebKitGTK has none of. */
+    EV_CONTEXT_MENU = 18,
+    EV_HOVERED,
+    EV_FOUND,
+    EV_CHOOSE_FILES,
+    EV_DOWNLOAD,
 };
 
 typedef struct {
@@ -72,6 +78,11 @@ typedef struct {
     int main_handler;
     /* The media script's way out is registered once a tab has one. */
     int media_handler;
+    /* A page's <input type=file>, waiting for the window's answer (spatimesh_files). */
+    WebKitFileChooserRequest *files;
+    /* What is being found in the page, and the link under the pointer as last said. */
+    char *finding;
+    char *hovered;
 } Tab;
 
 /* One extension, as the window gave it (crates/spatimesh-shim): its scheme, its content
@@ -124,7 +135,25 @@ typedef struct Engine {
     char *page_script;
     GHashTable *filters;
     WebKitCookieManager *cookies;
+    /* Downloads by their number (Fetch), and the number the next one the engine begins by
+     * itself gets: from 1 << 30, below which are the window's own (spatimesh_download). */
+    GHashTable *downloads;
+    int download_next;
+    struct Fetch *asking;
 } Engine;
+
+/* A download, as the window knows it. */
+typedef struct Fetch {
+    Engine *engine;
+    int id;
+    uint64_t tab;
+    /* The file the window asked for it to be written to, or NULL for the wearer's Downloads. */
+    char *to;
+    char *file;
+    WebKitDownload *download;
+    gint64 told_at;
+    int done;
+} Fetch;
 
 static guint32 now_ms(void) {
     return (guint32)(g_get_monotonic_time() / 1000);
@@ -188,6 +217,13 @@ static void on_target(WebKitWebView *view, WebKitHitTestResult *hit, guint modif
     if (cursor != t->cursor) {
         t->cursor = cursor;
         push(t->engine, EV_CURSOR, t->id, 0, cursor, 0, NULL, NULL);
+    }
+    /* The link under the pointer, said at the foot of the page. */
+    const char *link = webkit_hit_test_result_context_is_link(hit) ? webkit_hit_test_result_get_link_uri(hit) : NULL;
+    if (g_strcmp0(link ? link : "", t->hovered ? t->hovered : "") != 0) {
+        g_free(t->hovered);
+        t->hovered = g_strdup(link ? link : "");
+        push(t->engine, EV_HOVERED, t->id, 0, 0, 0, t->hovered, NULL);
     }
 }
 
@@ -292,10 +328,50 @@ static gboolean on_dialog(WebKitWebView *view, WebKitScriptDialog *dialog, Tab *
     return TRUE;
 }
 
-/* What would otherwise be a window of WebKitGTK's own. */
+/* A page's <input type=file>: the window asks the wearer, with a list of its own, and answers
+ * with spatimesh_files. */
 static gboolean on_file_chooser(WebKitWebView *view, WebKitFileChooserRequest *request, Tab *t) {
-    webkit_file_chooser_request_cancel(request);
+    if (t->files) {
+        webkit_file_chooser_request_cancel(t->files);
+        g_object_unref(t->files);
+    }
+    t->files = g_object_ref(request);
+    const gchar *const *types = webkit_file_chooser_request_get_mime_types(request);
+    char *accept = types ? g_strjoinv("\n", (gchar **)types) : g_strdup("");
+    push(t->engine, EV_CHOOSE_FILES, t->id, 0, webkit_file_chooser_request_get_select_multiple(request), 0, accept, NULL);
+    g_free(accept);
     return TRUE;
+}
+
+/* One line of a hit's description, with nothing in it that would end the line. */
+static void append_line(GString *lines, const char *text) {
+    for (const char *c = text ? text : ""; *c; c++)
+        g_string_append_c(lines, *c == '\n' || *c == '\r' ? ' ' : *c);
+    g_string_append_c(lines, '\n');
+}
+
+/* What is under the pointer, for the window's own menu: flags, and the link, its words, the
+ * image and the media, a line each (spatimesh::engine::Hit::from_native). */
+static void push_hit(Tab *t, WebKitHitTestResult *hit) {
+    int flags = 0;
+    if (webkit_hit_test_result_context_is_link(hit))
+        flags |= 1;
+    if (webkit_hit_test_result_context_is_image(hit))
+        flags |= 2;
+    if (webkit_hit_test_result_context_is_media(hit))
+        flags |= 4;
+    if (webkit_hit_test_result_context_is_editable(hit))
+        flags |= 8;
+    if (webkit_hit_test_result_context_is_selection(hit))
+        flags |= 16;
+    GString *lines = g_string_new(NULL);
+    append_line(lines, webkit_hit_test_result_get_link_uri(hit));
+    const char *label = webkit_hit_test_result_get_link_label(hit);
+    append_line(lines, label ? label : webkit_hit_test_result_get_link_title(hit));
+    append_line(lines, webkit_hit_test_result_get_image_uri(hit));
+    append_line(lines, webkit_hit_test_result_get_media_uri(hit));
+    push(t->engine, EV_CONTEXT_MENU, t->id, 0, flags, 0, lines->str, NULL);
+    g_string_free(lines, TRUE);
 }
 
 static gboolean on_colour_chooser(WebKitWebView *view, WebKitColorChooserRequest *request, Tab *t) {
@@ -303,8 +379,18 @@ static gboolean on_colour_chooser(WebKitWebView *view, WebKitColorChooserRequest
     return TRUE;
 }
 
+/* The page's menu is the window's to draw: WebKitGTK's own would be a window of its own. */
 static gboolean on_context_menu(WebKitWebView *view, WebKitContextMenu *menu, GdkEvent *event, WebKitHitTestResult *hit, Tab *t) {
+    push_hit(t, hit);
     return TRUE;
+}
+
+static void on_found(WebKitFindController *finder, guint matches, Tab *t) {
+    push(t->engine, EV_FOUND, t->id, 0, (int)MIN(matches, G_MAXINT), 0, NULL, NULL);
+}
+
+static void on_not_found(WebKitFindController *finder, Tab *t) {
+    push(t->engine, EV_FOUND, t->id, 0, 0, 0, NULL, NULL);
 }
 
 static gboolean on_permission(WebKitWebView *view, WebKitPermissionRequest *request, Tab *t) {
@@ -345,6 +431,12 @@ static void free_tab(Tab *t) {
         webkit_script_dialog_close(t->dialog);
         webkit_script_dialog_unref(t->dialog);
     }
+    if (t->files) {
+        webkit_file_chooser_request_cancel(t->files);
+        g_object_unref(t->files);
+    }
+    g_free(t->finding);
+    g_free(t->hovered);
     gtk_widget_destroy(t->window);
     if (t->worlds)
         g_ptr_array_unref(t->worlds);
@@ -759,6 +851,208 @@ void spatimesh_run_script(Engine *e, uint64_t id, const char *world, int all_fra
     g_free(full);
 }
 
+/* ---- downloads ---------------------------------------------------------------------------- */
+
+static uint64_t tab_of_view(Engine *e, WebKitWebView *view) {
+    GHashTableIter it;
+    gpointer key, value;
+    g_hash_table_iter_init(&it, e->tabs);
+    while (g_hash_table_iter_next(&it, &key, &value))
+        if (((Tab *)value)->view == view)
+            return ((Tab *)value)->id;
+    return 0;
+}
+
+/* The wearer's Downloads folder, and a name in it nothing has yet: "name (2).ext". */
+static char *free_name_in_downloads(const char *suggested) {
+    const char *dir = g_get_user_special_dir(G_USER_DIRECTORY_DOWNLOAD);
+    char *fallback = g_build_filename(g_get_home_dir(), "Downloads", NULL);
+    if (!dir || !*dir)
+        dir = fallback;
+    g_mkdir_with_parents(dir, 0755);
+    char *base = g_path_get_basename(suggested && *suggested ? suggested : "download");
+    if (!*base || strcmp(base, ".") == 0 || strcmp(base, "/") == 0) {
+        g_free(base);
+        base = g_strdup("download");
+    }
+    char *path = g_build_filename(dir, base, NULL);
+    const char *dot = strrchr(base, '.');
+    size_t stem = dot && dot != base ? (size_t)(dot - base) : strlen(base);
+    for (int n = 2; g_file_test(path, G_FILE_TEST_EXISTS) && n < 10000; n++) {
+        g_free(path);
+        char *name = g_strdup_printf("%.*s (%d)%s", (int)stem, base, n, base + stem);
+        path = g_build_filename(dir, name, NULL);
+        g_free(name);
+    }
+    g_free(base);
+    g_free(fallback);
+    return path;
+}
+
+static gboolean on_download_destination(WebKitDownload *download, const char *suggested, Fetch *f) {
+    char *path = f->to && *f->to ? g_strdup(f->to) : free_name_in_downloads(suggested);
+    char *folder = g_path_get_dirname(path);
+    g_mkdir_with_parents(folder, 0755);
+    g_free(folder);
+    g_free(f->file);
+    f->file = path;
+    char *uri = g_filename_to_uri(path, NULL, NULL);
+    webkit_download_set_allow_overwrite(download, f->to && *f->to);
+    webkit_download_set_destination(download, uri);
+    g_free(uri);
+    WebKitURIRequest *request = webkit_download_get_request(download);
+    const char *from = request ? webkit_uri_request_get_uri(request) : "";
+    MeshEvent *ev = g_new0(MeshEvent, 1);
+    ev->kind = EV_DOWNLOAD;
+    ev->tab = f->tab;
+    ev->x = f->id;
+    ev->a = 0;
+    ev->text = g_strdup(from ? from : "");
+    ev->text2 = g_strdup(f->file);
+    g_queue_push_tail(f->engine->events, ev);
+    return TRUE;
+}
+
+static void push_download(Fetch *f, int stage, double number, const char *text) {
+    MeshEvent *ev = g_new0(MeshEvent, 1);
+    ev->kind = EV_DOWNLOAD;
+    ev->tab = f->tab;
+    ev->x = f->id;
+    ev->a = stage;
+    ev->number = number;
+    ev->text = g_strdup(text ? text : "");
+    ev->text2 = g_strdup(f->file ? f->file : "");
+    g_queue_push_tail(f->engine->events, ev);
+}
+
+static void on_download_data(WebKitDownload *download, guint64 length, Fetch *f) {
+    /* Four times a second is enough to draw it by. */
+    gint64 now = g_get_monotonic_time();
+    if (now - f->told_at < 250000)
+        return;
+    f->told_at = now;
+    WebKitURIResponse *response = webkit_download_get_response(download);
+    char *total = g_strdup_printf("%" G_GUINT64_FORMAT, response ? webkit_uri_response_get_content_length(response) : 0);
+    push_download(f, 1, (double)webkit_download_get_received_data_length(download), total);
+    g_free(total);
+}
+
+static void forget_download(Fetch *f) {
+    g_hash_table_remove(f->engine->downloads, GINT_TO_POINTER(f->id));
+    g_signal_handlers_disconnect_by_data(f->download, f);
+    g_object_unref(f->download);
+    g_free(f->to);
+    g_free(f->file);
+    g_free(f);
+}
+
+static void on_download_failed(WebKitDownload *download, GError *error, Fetch *f) {
+    if (f->done)
+        return;
+    f->done = 1;
+    gboolean cancelled = g_error_matches(error, WEBKIT_DOWNLOAD_ERROR, WEBKIT_DOWNLOAD_ERROR_CANCELLED_BY_USER);
+    push_download(f, 3, 0, cancelled ? "Cancelled" : error ? error->message : "it could not be downloaded");
+}
+
+/* After "failed" too, which said so already. */
+static void on_download_finished(WebKitDownload *download, Fetch *f) {
+    if (!f->done) {
+        f->done = 1;
+        push_download(f, 2, 0, NULL);
+    }
+    forget_download(f);
+}
+
+static void watch_download(Fetch *f, WebKitDownload *download) {
+    f->download = g_object_ref(download);
+    g_hash_table_insert(f->engine->downloads, GINT_TO_POINTER(f->id), f);
+    g_signal_connect(download, "decide-destination", G_CALLBACK(on_download_destination), f);
+    g_signal_connect(download, "received-data", G_CALLBACK(on_download_data), f);
+    g_signal_connect(download, "failed", G_CALLBACK(on_download_failed), f);
+    g_signal_connect(download, "finished", G_CALLBACK(on_download_finished), f);
+}
+
+/* Every download, the window's own (being asked for: e->asking) and those a page began. */
+static void on_download_started(WebKitWebContext *context, WebKitDownload *download, Engine *e) {
+    if (g_object_get_data(G_OBJECT(download), "spatimesh"))
+        return;
+    g_object_set_data(G_OBJECT(download), "spatimesh", GINT_TO_POINTER(1));
+    Fetch *f = e->asking;
+    e->asking = NULL;
+    if (!f) {
+        f = g_new0(Fetch, 1);
+        f->engine = e;
+        f->id = e->download_next++;
+        WebKitWebView *view = webkit_download_get_web_view(download);
+        f->tab = view ? tab_of_view(e, view) : 0;
+    }
+    watch_download(f, download);
+}
+
+/* Download `uri` as the tab would ask for it, into `to` (empty: the wearer's Downloads). */
+void spatimesh_download(Engine *e, uint64_t id, int download, const char *uri, const char *to) {
+    Tab *t = find(e, id);
+    Fetch *f = g_new0(Fetch, 1);
+    f->engine = e;
+    f->id = download;
+    f->tab = id;
+    f->to = to && *to ? g_strdup(to) : NULL;
+    e->asking = f;
+    WebKitDownload *d = t ? webkit_web_view_download_uri(t->view, uri) : webkit_web_context_download_uri(e->context, uri);
+    if (e->asking == f) {
+        /* Not said to have started yet: it is this one. */
+        e->asking = NULL;
+        g_object_set_data(G_OBJECT(d), "spatimesh", GINT_TO_POINTER(1));
+        watch_download(f, d);
+    }
+    g_object_unref(d);
+}
+
+void spatimesh_download_cancel(Engine *e, int download) {
+    Fetch *f = g_hash_table_lookup(e->downloads, GINT_TO_POINTER(download));
+    if (f)
+        webkit_download_cancel(f->download);
+}
+
+/* ---- finding in a page, and files for it ------------------------------------------------ */
+
+void spatimesh_find(Engine *e, uint64_t id, const char *text, int forward) {
+    Tab *t = find(e, id);
+    if (!t)
+        return;
+    WebKitFindController *finder = webkit_web_view_get_find_controller(t->view);
+    if (!text || !*text) {
+        webkit_find_controller_search_finish(finder);
+        g_clear_pointer(&t->finding, g_free);
+        return;
+    }
+    if (t->finding && strcmp(t->finding, text) == 0) {
+        if (forward)
+            webkit_find_controller_search_next(finder);
+        else
+            webkit_find_controller_search_previous(finder);
+        return;
+    }
+    g_free(t->finding);
+    t->finding = g_strdup(text);
+    guint32 options = WEBKIT_FIND_OPTIONS_CASE_INSENSITIVE | WEBKIT_FIND_OPTIONS_WRAP_AROUND | (forward ? 0 : WEBKIT_FIND_OPTIONS_BACKWARDS);
+    webkit_find_controller_search(finder, text, options, G_MAXUINT);
+}
+
+/* The files the wearer chose for the page's <input type=file>, a path a line; NULL for none. */
+void spatimesh_files(Engine *e, uint64_t id, const char *paths) {
+    Tab *t = find(e, id);
+    if (!t || !t->files)
+        return;
+    if (paths && *paths) {
+        char **files = g_strsplit(paths, "\n", -1);
+        webkit_file_chooser_request_select_files(t->files, (const gchar *const *)files);
+        g_strfreev(files);
+    } else
+        webkit_file_chooser_request_cancel(t->files);
+    g_clear_object(&t->files);
+}
+
 /* A profile's engine: `data` and `cache` are its folders, or NULL for the private profile,
  * which keeps everything in memory. NULL if GTK cannot start (no display at all). */
 Engine *spatimesh_new(const char *data, const char *cache) {
@@ -807,6 +1101,9 @@ Engine *spatimesh_new(const char *data, const char *cache) {
         e->filter_store = webkit_user_content_filter_store_new(filters);
         g_free(filters);
     }
+    e->downloads = g_hash_table_new(g_direct_hash, g_direct_equal);
+    e->download_next = 1 << 30;
+    g_signal_connect(e->context, "download-started", G_CALLBACK(on_download_started), e);
     return e;
 }
 
@@ -868,6 +1165,9 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
     g_signal_connect(t->view, "permission-request", G_CALLBACK(on_permission), t);
     g_signal_connect(t->view, "show-notification", G_CALLBACK(on_swallow), t);
     g_signal_connect(t->view, "print", G_CALLBACK(on_swallow), t);
+    WebKitFindController *finder = webkit_web_view_get_find_controller(t->view);
+    g_signal_connect(finder, "found-text", G_CALLBACK(on_found), t);
+    g_signal_connect(finder, "failed-to-find-text", G_CALLBACK(on_not_found), t);
     gtk_widget_show_all(t->window);
     gtk_widget_grab_focus(GTK_WIDGET(t->view));
     uint64_t *key = g_new(uint64_t, 1);
@@ -1417,8 +1717,9 @@ void spatimesh_cookies_remove(Engine *e, const char *lines) {
     each_cookie(e, lines, 0);
 }
 
-/* WebKitGTK has no way to be told of links visited elsewhere: they look visited once visited
- * here. */
+/* WebKit's GLib API has no way to be told of links visited elsewhere, and keeps each web view's
+ * visited links to itself: a link looks visited only in the tab that followed it, and the views
+ * its pages opened (docs/spatimesh.md, "Visited links"). */
 void spatimesh_visited(Engine *e, const char *urls) {
     (void)e;
     (void)urls;
