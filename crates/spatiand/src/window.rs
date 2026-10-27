@@ -666,7 +666,13 @@ pub fn apply_resize_anchors(state: &mut crate::state::Spatiand) {
         // **As big in the room as it is to its application**: its points at one size for every
         // window ([`METRES_PER_POINT`]). A window pinned to the glass is sized by the pin.
         if !placement.pip && !state.layout.is_pinned(window) && size.w > 16 {
-            let per_point = state.layout.pixels_per_point.get(&id).copied().unwrap_or(1.0);
+            let per_point = state
+                .layout
+                .pixels_per_point
+                .get(&id)
+                .copied()
+                .or_else(|| state.app_id_of(window).and_then(|app| crate::remote::pixels_per_point(&app)))
+                .unwrap_or(1.0);
             let width = size.w as f64 / per_point * METRES_PER_POINT;
             placement.width = width;
         }

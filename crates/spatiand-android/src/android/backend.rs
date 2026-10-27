@@ -20,7 +20,7 @@
 //! * **The controller.** The phone, made into the Deck's controller state
 //!   (`super::phone::PhoneController`): the touch area is the left pad, where the phone points
 //!   the right, the orange key STEAM and the button under the touch area `⋯`. Two fingers
-//!   pinching bring the window being pointed at nearer or further.
+//!   pinching on a title bar bring that window nearer or further.
 //! * **The glasses.** Opened through the usbfs descriptor the app was given, not hidraw.
 //! * **The sidecar.** None: the phone's touch area is the pad and nothing else
 //!   (`super::panel`); the audio pickers and the buttons are the app's own views around it.
@@ -1410,7 +1410,8 @@ pub fn run(
                 left_scroll.forget();
             }
 
-            // Two fingers pinching zoom the window being pointed at, or the focused one.
+            // Two fingers pinching: on a title bar the window nearer or further; over a window,
+            // its application's zoom if it has one.
             let pinch = controller.take_pinch();
             if (pinch - 1.0).abs() > 1e-4 && !shell.menu_is_open() {
                 let target = right_aim
@@ -1426,19 +1427,18 @@ pub fn run(
                             .find(|w| runtime.state.layout.is_focused(w))
                             .cloned()
                     });
-                // On the title bar the window is what is taken hold of, and spreading the fingers
-                // brings it closer. Anywhere else on it the same, unless it has something of its
-                // own to zoom -- a picture, a page -- which is told and stays where it is. It
-                // used to make the window wider instead, which only magnified its pixels: its
-                // size in the room is its size to its application (`window::METRES_PER_POINT`),
-                // and how big it looks is how near it is.
+                // **Only on the title bar is the window what is taken hold of**: spreading the
+                // fingers brings it closer. Over what it shows the pinch is the application's --
+                // a picture, a page -- and one with nothing to zoom is left as it is: a scroll
+                // taken for a pinch must not move the window. (It used to move it, and before
+                // that made it wider, which only magnified its pixels.)
                 let on_title = right_aim.as_ref().is_some_and(|a| a.on_title);
                 let taken = !on_title
                     && target
                         .as_ref()
                         .and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()))
                         .is_some_and(|surface| crate::xr::tell_pinch(&surface, pinch));
-                if let Some(window) = target.filter(|_| !taken) {
+                if let Some(window) = target.filter(|_| on_title && !taken) {
                     if let Some(mut placement) = runtime.state.layout.get(&window) {
                         placement.radius = (placement.radius / pinch as f64).clamp(0.8, 8.0);
                         runtime.state.layout.set(&window, placement);

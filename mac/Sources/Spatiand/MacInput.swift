@@ -98,16 +98,25 @@ enum MacInput {
     /// finger leaves. `dx`/`dy` in points, positive moving the content up and left.
     static let pad = PadScroll()
 
+    /// What rounding to whole points has kept back of a gesture so far, carried into its next event.
+    private static var scrollCarry = (x: 0.0, y: 0.0)
+
     /// The wheel, where the real pointer is put, as one event of a gesture.
     static func realScroll(dx: Double, dy: Double, at point: CGPoint, phase: Int64, momentum: Int64) {
         CGWarpMouseCursorPosition(point)
-        guard let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: Int32(dy.rounded()), wheel2: Int32(dx.rounded()), wheel3: 0) else { return }
+        // Whole points, the remainder carried: a slow swipe on a Deck's pad is under half a point
+        // an event, and rounded on its own each came to nothing -- the page hardly moved.
+        if phase == 1 || momentum == 1 { scrollCarry = (0, 0) }
+        let x = dx + scrollCarry.x, y = dy + scrollCarry.y
+        let px = x.rounded(), py = y.rounded()
+        scrollCarry = (x - px, y - py)
+        guard let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: Int32(py), wheel2: Int32(px), wheel3: 0) else { return }
         event.location = point
         event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
-        event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(dy.rounded()))
-        event.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(dx.rounded()))
-        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: dy)
-        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: dx)
+        event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(py))
+        event.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(px))
+        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: py)
+        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: px)
         event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
         event.setIntegerValueField(.scrollWheelEventMomentumPhase, value: momentum)
         event.setIntegerValueField(.eventSourceUserData, value: spatiandEventMark)

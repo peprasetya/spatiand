@@ -100,6 +100,26 @@ fn app_id_prefix(host: &str) -> String {
     format!("remote.{host}.")
 }
 
+/// How many pixels of each host's pictures make one of its points, as it last said
+/// (`HostMessage::Density`). One for the host, not each window: it is the host's screen's, and
+/// a host with screens of two densities is not one this has met.
+static DENSITY: std::sync::Mutex<Option<std::collections::HashMap<String, f64>>> = std::sync::Mutex::new(None);
+
+fn density_said(host: &str, pixels_per_point: f64) {
+    if pixels_per_point.is_finite() && pixels_per_point > 0.1 {
+        if let Ok(mut d) = DENSITY.lock() {
+            d.get_or_insert_with(std::collections::HashMap::new).insert(host.to_string(), pixels_per_point);
+        }
+    }
+}
+
+/// Pixels to a point of a window whose application is `app_id`, when it is a host's and the
+/// host has said.
+pub fn pixels_per_point(app_id: &str) -> Option<f64> {
+    let d = DENSITY.lock().ok()?;
+    d.as_ref()?.iter().find(|(host, _)| app_id.starts_with(&app_id_prefix(host))).map(|(_, p)| *p)
+}
+
 /// How wide each remote application's sound is, by app id, as its host's catalogue said.
 fn sound_widths() -> &'static std::sync::Mutex<std::collections::HashMap<String, u16>> {
     static WIDTHS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u16>>> =

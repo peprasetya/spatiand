@@ -542,6 +542,9 @@ async fn serve(
                                     }
                                 }
                                 HostMessage::Notice { text } => super::host_notice_said(text),
+                                HostMessage::Density { pixels_per_point, .. } => {
+                                    super::density_said(&config.host, pixels_per_point);
+                                }
                                 HostMessage::Offered { window, title } => {
                                     super::offered_said(&config.host, window.0, title, false);
                                 }

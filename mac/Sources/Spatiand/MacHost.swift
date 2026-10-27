@@ -405,6 +405,9 @@ final class MacHost {
             if s.encoder == nil { print("host: the encoder would not start at \(w)x\(h)") }
             s.wantsKey = true
             link.say(["Stream": ["window": Int(id), "codec": "H265", "width": w, "height": h, "eyes": "mono"]])
+            // Its pixels are the Retina screen's: the session sizes it by its points.
+            let points = s.capture.pointsPerPixel()
+            if points > 0 { link.say(["Density": ["window": Int(id), "pixels_per_point": 1 / points]]) }
         }
         s.encoder?.encode(pixels, microseconds: micros, key: s.wantsKey)
         s.wantsKey = false
@@ -612,10 +615,11 @@ final class MacHost {
                 MacInput.realScroll(dx: pixels(h), dy: pixels(v), at: point)
             }
         case "FingerScroll":
-            // A pad's: exact, in the picture's pixels, and the Mac's points are fewer.
-            let scale = s.capture.pointsPerPixel()
-            let h = -((fields["horizontal"] as? NSNumber)?.doubleValue ?? 0) * scale
-            let v = -((fields["vertical"] as? NSNumber)?.doubleValue ?? 0) * scale
+            // A pad's, exact. Taken as points, not the picture's pixels: the room's swipe is
+            // measured for a window's points (it says the window's density, `Density`), and in
+            // pixels a Retina window scrolled half as far as any other for the same swipe.
+            let h = -((fields["horizontal"] as? NSNumber)?.doubleValue ?? 0)
+            let v = -((fields["vertical"] as? NSNumber)?.doubleValue ?? 0)
             let point = s.capture.screenPoint(x: lastPoint.0, y: lastPoint.1)
             let others = Set(shared.values.map(\.info.windowID)).union(offered.values.map(\.windowID))
             let again = Date().timeIntervalSince(scrolledAt) > 0.5

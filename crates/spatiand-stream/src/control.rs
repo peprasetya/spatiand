@@ -211,6 +211,13 @@ pub enum HostMessage {
     /// Only ever said to a session that has said one first, so that a session that predates
     /// it is never sent a message it cannot read.
     ConfigSync(ConfigSync),
+    /// How many of a window's picture's pixels make one of the host's points: 2 for a Mac's
+    /// window on a Retina screen. The session sizes the window in the room by its points, as it
+    /// does its own (`window::METRES_PER_POINT`), so a window is as big as it is to its
+    /// application wherever it runs. Said after `Stream`; one not said is 1.
+    ///
+    /// Last, and must stay so: a session built before it reports it as unknown.
+    Density { window: WindowId, pixels_per_point: f64 },
 }
 
 /// A window the host has.
@@ -475,6 +482,15 @@ pub const CLIPBOARD_EAGER_BYTES: u32 = 256 * 1024;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn density_crosses_as_the_mac_host_writes_it() {
+        let json = r#"{"Density":{"window":7,"pixels_per_point":2.0}}"#;
+        assert_eq!(
+            serde_json::from_str::<HostMessage>(json).unwrap(),
+            HostMessage::Density { window: WindowId(7), pixels_per_point: 2.0 }
+        );
+    }
 
     #[test]
     fn settings_cross_as_the_mac_host_writes_them() {
