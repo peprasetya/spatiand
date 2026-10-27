@@ -1,0 +1,52 @@
+diff --git a/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp b/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
+index 230eb69..bb9f4a7 100644
+--- a/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
++++ b/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
+@@ -5770,6 +5770,29 @@ gboolean webkit_web_view_get_is_web_process_responsive(WebKitWebView* webView)
+  *
+  * Since: 2.34
+  */
++/**
++ * webkit_web_view_preconnect:
++ * @web_view: a #WebKitWebView
++ * @uri: the address about to be loaded
++ *
++ * Start a connection to the server of @uri -- its name looked up, TCP, TLS -- for a load the
++ * user is about to start in @web_view: a link pointed at, an address being typed. As
++ * `<link rel=preconnect>` does for a page; the load that follows uses the connection, if it
++ * comes while the connection is kept. Only http and https addresses are preconnected to.
++ *
++ * Since: 2.54 (Spatiand)
++ */
++void webkit_web_view_preconnect(WebKitWebView* webView, const char* uri)
++{
++    g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
++    g_return_if_fail(uri);
++
++    URL url { String::fromUTF8(uri) };
++    if (!url.isValid() || !url.protocolIsInHTTPFamily())
++        return;
++    getPage(webView).preconnectTo(WebCore::ResourceRequest { WTF::move(url) });
++}
++
+ void webkit_web_view_terminate_web_process(WebKitWebView* webView)
+ {
+     g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
+diff --git a/Source/WebKit/UIProcess/API/glib/WebKitWebView.h.in b/Source/WebKit/UIProcess/API/glib/WebKitWebView.h.in
+index 1d638ee..0adb689 100644
+--- a/Source/WebKit/UIProcess/API/glib/WebKitWebView.h.in
++++ b/Source/WebKit/UIProcess/API/glib/WebKitWebView.h.in
+@@ -904,6 +904,13 @@ webkit_web_view_get_is_web_process_responsive        (WebKitWebView
+ WEBKIT_API void
+ webkit_web_view_terminate_web_process                (WebKitWebView             *web_view);
+ 
++/* Spatiand: a connection made ahead of a load the user is about to start. */
++#define WEBKIT_WEB_VIEW_HAS_PRECONNECT 1
++
++WEBKIT_API void
++webkit_web_view_preconnect                           (WebKitWebView             *web_view,
++                                                      const gchar               *uri);
++
+ WEBKIT_API WebKitMediaCaptureState
+ webkit_web_view_get_camera_capture_state             (WebKitWebView             *web_view);
+ 

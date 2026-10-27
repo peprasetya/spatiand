@@ -81,6 +81,18 @@ impl Browser {
         }
     }
 
+    /// Pages were taken out of the profile's history: its engine forgets every visited link and
+    /// is told again what is left.
+    pub(super) fn kept_forgot(&mut self, profile: &str) {
+        let Some(kept) = self.kept.get_mut(profile) else { return };
+        let urls: Vec<String> = kept.history.all_urls(&self.store).into_iter().collect();
+        kept.visited = urls.iter().cloned().collect();
+        self.tell_profile(Some(profile), ToHost::ForgetVisited);
+        if !urls.is_empty() {
+            self.tell_profile(Some(profile), ToHost::Visited { urls });
+        }
+    }
+
     /// The engine's cookies, or what Android's sends to each address it was asked about.
     pub(super) fn kept_cookies(&mut self, profile: &str, jar: Option<Vec<Cookie>>, sent: Option<Vec<(String, String)>>) {
         let Some(kept) = self.kept.get_mut(profile) else { return };
@@ -112,6 +124,11 @@ impl Browser {
             kept.due = Some(Instant::now());
             kept.history.stale();
             let all = kept.history.all_urls(&self.store);
+            // Pages another machine took out of the history: forgotten here too.
+            if kept.visited.iter().any(|u| !all.contains(u)) {
+                self.kept_forgot(&profile);
+                continue;
+            }
             let new: Vec<String> = all.into_iter().filter(|u| !kept.visited.contains(u)).collect();
             if !new.is_empty() {
                 kept.visited.extend(new.iter().cloned());

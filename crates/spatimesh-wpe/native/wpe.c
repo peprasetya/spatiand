@@ -2139,10 +2139,50 @@ void spatimesh_files(Engine *e, uint64_t id, const char *paths) {
     g_clear_object(&t->files);
 }
 
-/* WebKit's GLib API has no way to be told of links visited elsewhere, and keeps each web view's
- * visited links to itself: a link looks visited only in the tab that followed it, and the views
- * its pages opened (docs/spatimesh.md, "Visited links"). */
+/* Pages visited, from SpatiMesh's history (this machine's and the others'): links to them look
+ * visited in every tab. With Spatiand's WebKit (third_party/wpe/patches/webkit/0002) the
+ * profile's tabs share one store of visited links, which WebKit adds to as any of them
+ * navigates and which is told these; WebKit without it keeps each web view's visited links to
+ * itself, and is told nothing (docs/spatimesh.md, "Visited links"). */
 void spatimesh_visited(Engine *e, const char *urls) {
+#ifdef WEBKIT_WEB_CONTEXT_HAS_VISITED_LINKS
+    char **each = g_strsplit(urls, "\n", -1);
+    webkit_web_context_add_visited_links(e->context, (const gchar *const *)each);
+    g_strfreev(each);
+#else
     (void)e;
     (void)urls;
+#endif
+}
+
+/* Every visited link forgotten: pages were taken out of the history, and what is left of it is
+ * told again (spatimesh_visited). */
+void spatimesh_visited_forget(Engine *e) {
+#ifdef WEBKIT_WEB_CONTEXT_HAS_VISITED_LINKS
+    webkit_web_context_clear_visited_links(e->context);
+#else
+    (void)e;
+#endif
+}
+
+/* The wearer is about to load `url` in the tab: with Spatiand's WebKit (patches/webkit/0005) a
+ * connection made to its server ahead of it -- name, TCP, TLS -- as <link rel=preconnect> does;
+ * otherwise its name looked up. */
+void spatimesh_preconnect(Engine *e, uint64_t id, const char *url) {
+#ifdef WEBKIT_WEB_VIEW_HAS_PRECONNECT
+    Tab *t = find(e, id);
+    if (t) {
+        webkit_web_view_preconnect(t->view, url);
+        return;
+    }
+#else
+    (void)id;
+#endif
+    GUri *uri = g_uri_parse(url, G_URI_FLAGS_NONE, NULL);
+    if (!uri)
+        return;
+    const char *host = g_uri_get_host(uri);
+    if (host && *host)
+        webkit_network_session_prefetch_dns(e->session, host);
+    g_uri_unref(uri);
 }

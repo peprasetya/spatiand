@@ -38,8 +38,14 @@ fn main() {
                 println!("cargo:rustc-link-lib=framework=CoreText");
                 println!("cargo:rustc-link-lib=framework=CoreFoundation");
             }
-            // Where WPE is, for this program to find it: in the app, its libraries are beside it.
+            // Where WPE is, for this program to find it: where it was built, and in the app --
+            // on Linux, the wpe/ folder beside this program (as DT_RPATH, which also serves the
+            // libraries it loads; on a Mac the app's own path is added by mac/make-app.sh).
             println!("cargo:rustc-link-arg=-Wl,-rpath,{wpe}/lib");
+            if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+                println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/wpe/lib");
+                println!("cargo:rustc-link-arg=-Wl,--disable-new-dtags");
+            }
             println!("cargo:rustc-cfg=wpe");
             println!("cargo:rustc-env=SPATIMESH_WPE_DIR={wpe}");
         }

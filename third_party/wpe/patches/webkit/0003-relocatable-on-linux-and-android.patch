@@ -1,0 +1,131 @@
+diff --git a/Source/WebKit/Shared/glib/ProcessExecutablePathGLib.cpp b/Source/WebKit/Shared/glib/ProcessExecutablePathGLib.cpp
+index 2cee21aea..1072b48fb 100644
+--- a/Source/WebKit/Shared/glib/ProcessExecutablePathGLib.cpp
++++ b/Source/WebKit/Shared/glib/ProcessExecutablePathGLib.cpp
+@@ -30,6 +30,7 @@
+ 
+ #include <glib.h>
+ #include <wtf/FileSystem.h>
++#include <wtf/text/MakeString.h>
+ 
+ namespace WebKit {
+ 
+@@ -61,6 +62,17 @@ static String findWebKitProcess(const ASCIILiteral processName)
+     }
+ #endif
+ 
++#if OS(ANDROID)
++    // Spatiand: the programs an Android app may start are in its library folder, named as
++    // libraries are (lib<name>.so), beside this library: WebKit's processes are carried so.
++    std::string directory = relocatedLibraryDirectory();
++    if (!directory.empty()) {
++        String processPath = FileSystem::pathByAppendingComponent(FileSystem::stringFromFileSystemRepresentation(directory.c_str()), makeString("lib"_s, processName, ".so"_s));
++        if (FileSystem::fileExists(processPath))
++            return processPath;
++    }
++#endif
++
+     return FileSystem::pathByAppendingComponent(FileSystem::stringFromFileSystemRepresentation(relocatedInstallPath(PKGLIBEXECDIR).c_str()), processName);
+ }
+ 
+diff --git a/Source/WebKit/Shared/glib/RelocatedInstallPath.h b/Source/WebKit/Shared/glib/RelocatedInstallPath.h
+index 1b70228e3..2091acaf6 100644
+--- a/Source/WebKit/Shared/glib/RelocatedInstallPath.h
++++ b/Source/WebKit/Shared/glib/RelocatedInstallPath.h
+@@ -1,9 +1,11 @@
+ /*
+- * A path WPE was installed to, moved along with the library: on macOS an app carries WPE in its
+- * bundle, so the prefix it was built for is swapped for the one this library was loaded from
+- * (the parent of the folder the library is in). Paths outside the prefix are kept as they are.
+- * Every path asked for is a folder; moved, the dots in its names below the prefix are underscores (wpe-webkit-2_0): codesign
+- * takes a folder with a dot in an app's code for a bundle, and refuses to sign the app.
++ * A path WPE was installed to, moved along with the library: an app carries WPE in its own folder
++ * (on macOS in its bundle, on Linux beside its program, on Android in the APK's library folder),
++ * so the prefix it was built for is swapped for the one this library was loaded from (the parent
++ * of the folder the library is in). Paths outside the prefix are kept as they are.
++ * Every path asked for is a folder. On macOS, moved, the dots in its names below the prefix are
++ * underscores (wpe-webkit-2_0): codesign takes a folder with a dot in an app's code for a
++ * bundle, and refuses to sign the app.
+  */
+ 
+ #pragma once
+@@ -11,32 +13,45 @@
+ #include <string>
+ #include <string.h>
+ 
+-#if defined(__APPLE__)
++#if defined(__APPLE__) || defined(__linux__)
+ #include "WPEInstallPrefix.h"
+ #endif
+ 
+-#if defined(__APPLE__) && defined(INSTALL_PREFIX)
++#if (defined(__APPLE__) || defined(__linux__)) && defined(INSTALL_PREFIX)
+ #include <dlfcn.h>
++#define WPE_RELOCATABLE 1
+ #endif
+ 
+-static inline std::string relocatedInstallPath(const char* builtPath)
++/* The folder this library was loaded from; empty if it cannot be said. */
++static inline std::string relocatedLibraryDirectory()
+ {
+-#if defined(__APPLE__) && defined(INSTALL_PREFIX)
+-    size_t prefixLength = strlen(INSTALL_PREFIX);
++#if defined(WPE_RELOCATABLE)
+     Dl_info info;
+-    if (!strncmp(builtPath, INSTALL_PREFIX, prefixLength)
+-        && dladdr(reinterpret_cast<void*>(&relocatedInstallPath), &info) && info.dli_fname) {
++    if (dladdr(reinterpret_cast<void*>(&relocatedLibraryDirectory), &info) && info.dli_fname) {
+         std::string library(info.dli_fname);
+-        size_t libraryDirectory = library.rfind('/');
+-        size_t prefix = libraryDirectory == std::string::npos ? libraryDirectory : library.rfind('/', libraryDirectory - 1);
+-        if (prefix != std::string::npos && library.compare(0, prefix, INSTALL_PREFIX)) {
+-            std::string below(builtPath + prefixLength);
+-            for (auto& character : below) {
+-                if (character == '.')
+-                    character = '_';
+-            }
+-            return library.substr(0, prefix) + below;
++        size_t slash = library.rfind('/');
++        if (slash != std::string::npos)
++            return library.substr(0, slash);
++    }
++#endif
++    return { };
++}
++
++static inline std::string relocatedInstallPath(const char* builtPath)
++{
++#if defined(WPE_RELOCATABLE)
++    size_t prefixLength = strlen(INSTALL_PREFIX);
++    std::string directory = relocatedLibraryDirectory();
++    size_t prefix = directory.empty() ? std::string::npos : directory.rfind('/');
++    if (!strncmp(builtPath, INSTALL_PREFIX, prefixLength) && prefix != std::string::npos && directory.compare(0, prefix, INSTALL_PREFIX)) {
++        std::string below(builtPath + prefixLength);
++#if defined(__APPLE__)
++        for (auto& character : below) {
++            if (character == '.')
++                character = '_';
+         }
++#endif
++        return directory.substr(0, prefix) + below;
+     }
+ #endif
+     return builtPath;
+diff --git a/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp b/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp
+index 4fe4cf635..571227a80 100644
+--- a/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp
++++ b/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp
+@@ -353,6 +353,13 @@ static const char* injectedBundleDirectory()
+     if (bundleDirectory && g_file_test(bundleDirectory, G_FILE_TEST_IS_DIR))
+         return bundleDirectory;
+ 
++#if OS(ANDROID)
++    // Spatiand: on Android the injected bundle is in the APK's library folder, beside this one.
++    static const std::string libraryDirectory = relocatedLibraryDirectory() + G_DIR_SEPARATOR_S;
++    GUniquePtr<char> besideThis(g_build_filename(libraryDirectory.c_str(), INJECTED_BUNDLE_FILENAME, nullptr));
++    if (libraryDirectory.size() > 1 && g_file_test(besideThis.get(), G_FILE_TEST_EXISTS))
++        return libraryDirectory.c_str();
++#endif
+     static const std::string injectedBundlePath = relocatedInstallPath(PKGLIBDIR G_DIR_SEPARATOR_S "injected-bundle" G_DIR_SEPARATOR_S);
+     return injectedBundlePath.c_str();
+ }

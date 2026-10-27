@@ -990,6 +990,7 @@ impl Browser {
                 if let Some(kept) = self.kept.get_mut(&profile) {
                     kept.history.forget(&self.store, Some(&url), 0);
                 }
+                self.kept_forgot(&profile);
                 self.refresh_internal();
             }
             Action::ForgetSince(from) => {
@@ -997,6 +998,7 @@ impl Browser {
                     Some(kept) => kept.history.forget(&self.store, None, from),
                     None => spatimesh::history::History::load(&self.store, &profile).forget(&self.store, None, from),
                 }
+                self.kept_forgot(&profile);
                 self.refresh_internal();
                 self.say("The history is cleared, on every machine".into());
             }

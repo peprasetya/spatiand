@@ -99,6 +99,8 @@ extern "C" {
     fn spatimesh_cookies_set(e: *mut Raw, lines: *const c_char);
     fn spatimesh_cookies_remove(e: *mut Raw, lines: *const c_char);
     fn spatimesh_visited(e: *mut Raw, urls: *const c_char);
+    fn spatimesh_visited_forget(e: *mut Raw);
+    fn spatimesh_preconnect(e: *mut Raw, id: u64, url: *const c_char);
     fn spatimesh_inspect(e: *mut Raw, id: u64, inspector: u64, width: c_int, height: c_int) -> c_int;
     fn spatimesh_download(e: *mut Raw, id: u64, download: c_int, url: *const c_char, to: *const c_char);
     fn spatimesh_download_cancel(e: *mut Raw, download: c_int);
@@ -605,6 +607,14 @@ impl Engine for Shim {
     fn add_visited(&mut self, urls: &[String]) {
         let urls = c(&urls.iter().filter(|u| !u.contains('\n')).cloned().collect::<Vec<_>>().join("\n"));
         unsafe { spatimesh_visited(self.raw, urls.as_ptr()) };
+    }
+
+    fn forget_visited(&mut self) {
+        unsafe { spatimesh_visited_forget(self.raw) };
+    }
+
+    fn preconnect(&mut self, tab: TabId, url: &str) {
+        unsafe { spatimesh_preconnect(self.raw, tab, c(url).as_ptr()) };
     }
 
     fn inspect(&mut self, tab: TabId, inspector: TabId, view: View) -> bool {

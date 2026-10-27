@@ -426,6 +426,13 @@ pub trait Engine {
     fn set_cookies(&mut self, _set: &[Cookie], _remove: &[Cookie]) {}
     /// Pages visited on another machine, for links to them to look visited.
     fn add_visited(&mut self, _urls: &[String]) {}
+    /// Every visited link forgotten (pages taken out of the history): what is left in it is
+    /// told again after, with [`Engine::add_visited`].
+    fn forget_visited(&mut self) {}
+    /// The wearer is about to load `url` in `tab` (a link pointed at, an address being typed):
+    /// its server's name looked up and, where the engine can, a connection made to it, so that
+    /// the load does not wait for them.
+    fn preconnect(&mut self, _tab: TabId, _url: &str) {}
     /// Open the developer tools (Web Inspector) for `tab`, as the tab `inspector`: from then on
     /// it is a tab like the others (pictures, input, [`Engine::resize`], [`Engine::close`]),
     /// except that it has no address to load. It ends with [`Happened::CloseTab`] when the

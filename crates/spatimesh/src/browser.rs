@@ -427,7 +427,12 @@ pub struct Browser {
     context: Option<menus::Context>,
     /// Where files were last chosen from.
     pick_dir: Option<std::path::PathBuf>,
+    /// The servers connected to ahead of a load (`preconnect`), and when.
+    preconnected: HashMap<String, Instant>,
 }
+
+/// How long a server connected to ahead of a load is not connected to again for that.
+const PRECONNECT_EVERY: Duration = Duration::from_secs(30);
 
 /// The I key, where it is on the keyboard (Linux's number for it).
 const KEY_I: u32 = 23;
@@ -482,6 +487,7 @@ impl Browser {
             downloads: downloads::Downloads::default(),
             context: None,
             pick_dir: None,
+            preconnected: HashMap::new(),
         };
         browser.downloads.load(&browser.store);
         let mut extensions = Runtime::new(browser.store.clone());
@@ -619,6 +625,24 @@ impl Browser {
         };
         self.tell(tab, ToHost::RunScript { tab, world: String::new(), all_frames: false, code, request, boot: false });
         true
+    }
+
+    /// A load the wearer is about to start in `tab` -- a link pointed at, the address the bar
+    /// would go to: the engine connects to its server ahead of it (`Engine::preconnect`), so that
+    /// the click does not wait for the name, TCP and TLS. Once in a while a server.
+    pub(super) fn preconnect(&mut self, tab: TabId, url: &str) {
+        let Some(rest) = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")) else { return };
+        let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        if host.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        self.preconnected.retain(|_, at| now.duration_since(*at) < PRECONNECT_EVERY);
+        if self.preconnected.contains_key(host) {
+            return;
+        }
+        self.preconnected.insert(host.to_string(), now);
+        self.tell(tab, ToHost::Preconnect { tab, url: url.to_string() });
     }
 
     fn tell(&mut self, tab: TabId, message: ToHost) {
@@ -1053,6 +1077,7 @@ impl Browser {
             Happened::Cookies { .. } | Happened::CookiesSent { .. } => {}
             Happened::ContextMenu { tab, hit } => self.context_menu(tab, hit),
             Happened::Hovered { tab, link } => {
+                self.preconnect(tab, &link);
                 self.views.entry(tab).or_default().hovered = link;
                 self.dirty_tab(tab);
             }

@@ -52,6 +52,11 @@ pub enum ToHost {
     SetCookies { set: Vec<Cookie>, remove: Vec<Cookie> },
     /// Pages visited on another machine ([`crate::engine::Engine::add_visited`]).
     Visited { urls: Vec<String> },
+    /// Every visited link forgotten, before what is still in the history is told again
+    /// ([`crate::engine::Engine::forget_visited`]).
+    ForgetVisited,
+    /// A connection made ahead of a load the wearer is about to start ([`crate::engine::Engine::preconnect`]).
+    Preconnect { tab: TabId, url: String },
     /// Open the developer tools for `tab` as the tab `inspector` ([`crate::engine::Engine::inspect`]).
     Inspect { tab: TabId, inspector: TabId, view: View },
     /// [`crate::engine::Engine::download`].
@@ -405,6 +410,11 @@ impl ToHost {
                 b.u64(*tab).bool(files.is_some()).str(&serde_json::to_string(files.as_deref().unwrap_or_default()).unwrap_or_default());
                 31
             }
+            ToHost::ForgetVisited => 32,
+            ToHost::Preconnect { tab, url } => {
+                b.u64(*tab).str(url);
+                33
+            }
         };
         frame(tag, b)
     }
@@ -467,6 +477,8 @@ impl ToHost {
                 let (tab, chosen, files) = (i.u64()?, i.bool()?, i.str()?);
                 ToHost::Files { tab, files: if chosen { Some(serde_json::from_str(&files).ok()?) } else { None } }
             }
+            32 => ToHost::ForgetVisited,
+            33 => ToHost::Preconnect { tab: i.u64()?, url: i.str()? },
             _ => return None,
         })
     }
@@ -1230,6 +1242,8 @@ mod tests {
             ToHost::AskCookies { addresses: vec!["https://a.example/".into()] },
             ToHost::SetCookies { set: vec![cookie()], remove: vec![Cookie { expires: None, ..cookie() }] },
             ToHost::Visited { urls: vec!["https://a.example/x".into()] },
+            ToHost::ForgetVisited,
+            ToHost::Preconnect { tab: 3, url: "https://a.example/next".into() },
             ToHost::Inspect { tab: 3, inspector: 9, view: View::new(800, 600, 2.0) },
             ToHost::Download { tab: 3, id: 7, url: "https://a.example/f.zip".into(), to: "/tmp/f.zip".into() },
             ToHost::CancelDownload { id: 7 },

@@ -28,16 +28,29 @@ fn beside(name: &str) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+/// Whether Spatiand's own WPE is installed beside SpatiMesh: on Linux the bundle
+/// third_party/wpe/build.sh makes, in `wpe/` (a `spatimesh-wpe` built without it is in every
+/// build folder); on Android its processes, among the app's libraries.
+fn wpe_beside() -> bool {
+    let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())) else { return false };
+    if cfg!(target_os = "android") {
+        dir.join("libWPEWebProcess.so").is_file()
+    } else {
+        dir.join("wpe/lib").is_dir()
+    }
+}
+
 /// The engine program for this platform: WPE WebKit, which Spatiand carries (third_party/wpe),
-/// and WebKitGTK on a Linux desktop until WPE is built there. Android has none until WPE is
-/// (Android's WebView and Steam's Chromium are no longer engines). `SPATIMESH_ENGINE` names
-/// another (`fake`, `webkitgtk`, `wpe`, or a path).
+/// where it is installed; on a Linux desktop without it, the distro's WebKitGTK. Android has
+/// none without WPE (Android's WebView and Steam's Chromium are no longer engines).
+/// `SPATIMESH_ENGINE` names another (`fake`, `webkitgtk`, `wpe`, or a path).
 pub fn program() -> Program {
     let wanted = std::env::var("SPATIMESH_ENGINE").unwrap_or_default();
     let name = match wanted.as_str() {
         "fake" => return Program::Fake("asked for with SPATIMESH_ENGINE".into()),
-        "" if cfg!(target_os = "android") => return Program::Fake("no engine on Android until WPE is built for it".into()),
         "" if cfg!(target_os = "macos") => "spatimesh-wpe",
+        "" if wpe_beside() => "spatimesh-wpe",
+        "" if cfg!(target_os = "android") => return Program::Fake("no engine on Android: WPE is not in the app".into()),
         "" => "spatimesh-webkitgtk",
         "webkitgtk" => "spatimesh-webkitgtk",
         "wpe" => "spatimesh-wpe",

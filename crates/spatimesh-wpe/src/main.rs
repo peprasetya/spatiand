@@ -6,13 +6,16 @@
 //! docs/spatimesh.md.
 
 /// What WPE reads from the environment and is to find in Spatiand's own copy: GIO's TLS module
-/// (glib-networking, on OpenSSL), GStreamer's plugins, the developer tools' pages and, on a Mac, the font configuration that gives every script
-/// its font (third_party/wpe/mac/fonts.conf). In the app beside this program; while developing,
-/// where third_party/wpe/build.sh put them. Set before any thread is.
+/// (glib-networking, on OpenSSL), GStreamer's plugins, the developer tools' pages and the font
+/// configuration: on a Mac the one that gives every script its font (third_party/wpe/mac/
+/// fonts.conf), on Linux the system's. In the app beside this program (in a Mac's
+/// Contents/Frameworks/wpe, Linux's wpe/ folder); while developing, where
+/// third_party/wpe/build.sh put them. Set before any thread is.
 #[cfg(wpe)]
 fn find_own() {
     let exe = std::env::current_exe().ok();
-    let beside = exe.as_ref().and_then(|e| e.parent()).map(|d| d.join("../Frameworks/wpe/lib"));
+    let own = if cfg!(target_os = "macos") { "../Frameworks/wpe/lib" } else { "wpe/lib" };
+    let beside = exe.as_ref().and_then(|e| e.parent()).map(|d| d.join(own)).filter(|d| d.is_dir());
     let built = std::path::PathBuf::from(env!("SPATIMESH_WPE_DIR")).join("lib");
     if std::env::var_os("GIO_EXTRA_MODULES").is_none() {
         let modules = [beside.as_ref().map(|d| d.join("gio/modules")), Some(built.join("gio/modules"))];
@@ -45,11 +48,18 @@ fn find_own() {
     // The developer tools' own pages (WebKit's inspector.gresource): in the app's Resources,
     // or where the build put them.
     if std::env::var_os("WEBKIT_INSPECTOR_RESOURCES_PATH").is_none() {
-        let resources = exe.as_ref().and_then(|e| e.parent()).map(|d| d.join("../Resources/wpe"));
+        let own = if cfg!(target_os = "macos") { "../Resources/wpe" } else { "wpe/share/wpe-webkit-2.0" };
+        let resources = exe.as_ref().and_then(|e| e.parent()).map(|d| d.join(own));
         let built = std::path::PathBuf::from(env!("SPATIMESH_WPE_DIR")).join("share/wpe-webkit-2.0");
         if let Some(found) = [resources, Some(built)].into_iter().flatten().find(|d| d.join("inspector.gresource").is_file()) {
             std::env::set_var("WEBKIT_INSPECTOR_RESOURCES_PATH", found);
         }
+    }
+    // The bundle's fontconfig is told of the system's fonts and their configuration, which it
+    // was not built to look for (it was built for its own folder).
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("FONTCONFIG_FILE").is_none() && beside.is_some() && std::path::Path::new("/etc/fonts/fonts.conf").is_file() {
+        std::env::set_var("FONTCONFIG_FILE", "/etc/fonts/fonts.conf");
     }
     #[cfg(target_os = "macos")]
     if std::env::var_os("FONTCONFIG_FILE").is_none() {

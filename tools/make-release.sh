@@ -30,6 +30,20 @@ install -d "$OUT"
 install -m 755 target/release/spatiand "$OUT/spatiand"
 install -m 644 assets/icons/spatiand.svg "$OUT/spatiand.svg"
 install -m 755 tools/install-release.sh "$OUT/install.sh"
+# SpatiMesh on Spatiand's own WPE, where third_party/wpe/build.sh linux made the bundle (built
+# in the Ubuntu 22.04 root, as this is): the programs, and WPE in wpe/ beside them.
+WPE_OUT="${SPATIAND_WPE:-$HOME/Developer/spatiand-wpe/out/linux}"
+if ls "$WPE_OUT"/lib/libWPEWebKit-2.0.so* >/dev/null 2>&1; then
+    SPATIAND_WPE="$WPE_OUT" "$CARGO" build --release -p spatimesh -p spatimesh-wpe
+    install -m 755 target/release/spatimesh target/release/spatimesh-wpe "$OUT/"
+    install -d "$OUT/wpe"
+    cp -a "$WPE_OUT/lib" "$WPE_OUT/libexec" "$OUT/wpe/"
+    install -d "$OUT/wpe/share"
+    cp -a "$WPE_OUT/share/wpe-webkit-2.0" "$OUT/wpe/share/"
+    rm -rf "$OUT/wpe/lib/pkgconfig" "$OUT/wpe/lib/cmake" "$OUT/wpe/lib"/*.a "$OUT/wpe/lib"/*.la
+else
+    echo "(no WPE bundle at $WPE_OUT: SpatiMesh not in this release; third_party/wpe/build.sh linux)"
+fi
 
 # The clickable half. `Terminal=true` on purpose: the install says what it is doing and what it
 # could not do, and a graphical launcher that fails silently is worse than no launcher.

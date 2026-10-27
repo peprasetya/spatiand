@@ -56,6 +56,12 @@ impl Browser {
         let tabs: Vec<(u64, String, String)> = self.tabs.tabs().filter(|t| t.profile == profile && Some(t.id) != active && t.inspects.is_none()).map(|t| (t.id, t.url.clone(), t.title.clone())).collect();
         let found = omnibox::suggest(&typed, &history, &marks, &tabs, &engine, now_ms(), MOST);
         let rows: Vec<Row> = found.list.iter().map(|s| row_of(s, &engine.name)).collect();
+        // Where Enter would go (the address finished, or the likeliest suggestion; a search's
+        // engine too): connected to while the rest is typed.
+        let likeliest = found.inline.as_ref().map(|i| i.url.clone()).or_else(|| found.list.first().filter(|s| !matches!(s.kind, Kind::Tab(_))).map(|s| s.url.clone()));
+        if let (Some(url), Some(tab)) = (likeliest, active) {
+            self.preconnect(tab, &url);
+        }
         if let Some(i) = found.inline.as_ref().filter(|_| finish) {
             let field = &mut self.wins[w].address;
             field.set(i.text.clone());
@@ -98,6 +104,7 @@ impl Browser {
                 if let Some(kept) = self.kept.get_mut(&profile) {
                     kept.history.forget(&self.store, Some(&s.url), 0);
                 }
+                self.kept_forgot(&profile);
                 self.wins[w].address.set(typed);
                 self.suggest(w, false);
                 true

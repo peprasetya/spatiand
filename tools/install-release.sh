@@ -30,6 +30,12 @@ say "installing to $DEST"
 install -d "$DEST"
 install -m 755 "$HERE/spatiand" "$BIN"
 install -m 644 "$HERE/spatiand.svg" "$DEST/spatiand.svg"
+# The web browser and its engine, Spatiand's own WPE beside them, where the release has them.
+if [ -x "$HERE/spatimesh" ] && [ -d "$HERE/wpe" ]; then
+    install -m 755 "$HERE/spatimesh" "$HERE/spatimesh-wpe" "$DEST/"
+    rm -rf "$DEST/wpe"
+    cp -a "$HERE/wpe" "$DEST/wpe"
+fi
 
 say "registering the session (this needs your password once)"
 # On /usr, so it needs root, and it is the only part that does. pkexec asks graphically, which
