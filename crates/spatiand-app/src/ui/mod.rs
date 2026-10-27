@@ -17,7 +17,7 @@ pub mod look;
 mod paint;
 mod widgets;
 
-pub use icons::{draw as draw_icon, Icon};
+pub use icons::{coverage as icon_coverage, draw as draw_icon, Icon};
 pub use paint::{Painter, Texture};
 pub use widgets::{Button, Field, Grid, List, Row, Shape, Strip, Tabs, Tile, Typed};
 

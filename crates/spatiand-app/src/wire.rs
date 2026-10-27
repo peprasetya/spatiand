@@ -36,6 +36,32 @@ struct ShmBuffer {
     busy: bool,
 }
 
+/// What a drag this application started carries: each form it can be had in, and its bytes.
+pub(crate) struct DragData {
+    pub(crate) forms: Vec<(String, Vec<u8>)>,
+}
+
+/// A drag this application started, while it goes on.
+struct Dragging {
+    source: wl_data_source::WlDataSource,
+    data: std::sync::Arc<DragData>,
+    /// The picture that goes with it, as the compositor draws it at the pointer.
+    icon: Option<(wl_surface::WlSurface, wl_buffer::WlBuffer, memmap2::MmapMut)>,
+    /// What the window it is over would do with it: move it rather than copy it.
+    moving: bool,
+}
+
+/// Something dragged over one of this application's windows, from here or anywhere.
+struct Over {
+    offer: Option<wl_data_offer::WlDataOffer>,
+    window: WindowId,
+    serial: u32,
+    x: f32,
+    y: f32,
+    /// Let go of: kept until the window has had what it wanted of it ([`Wire::finish_drop`]).
+    dropped: bool,
+}
+
 /// What stands in for a picture that is not in shared memory: see `gl::mac`.
 pub(crate) struct Placeholder {
     buffer: wl_buffer::WlBuffer,
@@ -93,6 +119,10 @@ pub(crate) struct Wire {
     source: Option<wl_data_source::WlDataSource>,
     /// The newest input event's serial: a copy is made "in answer to" one.
     serial: u32,
+    /// The last press of a button's serial: a drag is started in answer to it, while it is held.
+    press_serial: u32,
+    dragging: Option<Dragging>,
+    over: Option<Over>,
 }
 
 /// Text's names, the best first.
@@ -160,6 +190,9 @@ impl Wire {
             selection: None,
             source: None,
             serial: 0,
+            press_serial: 0,
+            dragging: None,
+            over: None,
         };
         Ok((wire, queue))
     }
@@ -544,6 +577,105 @@ impl Wire {
         }
     }
 
+    /// Start dragging something out of `window`, while the button pressed in it is held: it can
+    /// be had in each of `forms`; `icon` (width, height, and pixels as [`Wire::show_pixels`]
+    /// takes them) is drawn at the pointer, by the compositor, wherever it goes in the room.
+    /// Whether the compositor took it.
+    pub(crate) fn start_drag(&mut self, window: WindowId, data: DragData, icon: Option<(u32, u32, Vec<u8>)>, can_move: bool) -> bool {
+        let (Some(manager), Some(device)) = (self.data_devices.as_ref(), self.data_device.as_ref()) else { return false };
+        let Some(origin) = self.windows.get(&window).map(|w| w.surface.clone()) else { return false };
+        if let Some(old) = self.dragging.take() {
+            old.source.destroy();
+        }
+        let data = std::sync::Arc::new(data);
+        let source = manager.create_data_source(&self.handle, data.clone());
+        for (form, _) in &data.forms {
+            source.offer(form.clone());
+        }
+        if source.version() >= 3 {
+            let mut actions = wl_data_device_manager::DndAction::Copy;
+            if can_move {
+                actions |= wl_data_device_manager::DndAction::Move;
+            }
+            source.set_actions(actions);
+        }
+        let icon = icon.and_then(|(width, height, pixels)| {
+            let bytes = (width * height * 4) as usize;
+            if width == 0 || height == 0 || pixels.len() < bytes {
+                return None;
+            }
+            let file = memory(bytes).ok()?;
+            let mut map = unsafe { memmap2::MmapMut::map_mut(&file) }.ok()?;
+            map.copy_from_slice(&pixels[..bytes]);
+            let pool = self.shm.create_pool(file.as_fd(), bytes as i32, &self.handle, ());
+            let buffer = pool.create_buffer(0, width as i32, height as i32, width as i32 * 4, wl_shm::Format::Argb8888, &self.handle, (window, Held::Placeholder));
+            pool.destroy();
+            Some((self.compositor.create_surface(&self.handle, ()), buffer, map, (width, height)))
+        });
+        log::info!("dragging, in {} forms, from the press {}", data.forms.len(), self.press_serial);
+        device.start_drag(Some(&source), &origin, icon.as_ref().map(|i| &i.0), self.press_serial);
+        // Its picture is the icon's once it has the role, which starting the drag gives it.
+        let icon = icon.map(|(surface, buffer, map, (width, height))| {
+            surface.attach(Some(&buffer), 0, 0);
+            surface.damage_buffer(0, 0, width as i32, height as i32);
+            surface.commit();
+            (surface, buffer, map)
+        });
+        self.dragging = Some(Dragging { source, data, icon, moving: false });
+        true
+    }
+
+    pub(crate) fn dragging(&self) -> bool {
+        self.dragging.is_some()
+    }
+
+    /// What the window under a drag would do with it: take it in `form` (none: not at all),
+    /// moving it rather than copying it.
+    pub(crate) fn accept_drag(&mut self, form: Option<&str>, moving: bool) {
+        let Some(over) = self.over.as_ref() else { return };
+        let Some(offer) = over.offer.as_ref() else { return };
+        offer.accept(over.serial, form.map(str::to_string));
+        if offer.version() >= 3 {
+            use wl_data_device_manager::DndAction;
+            match form {
+                Some(_) => offer.set_actions(DndAction::Copy | DndAction::Move, if moving { DndAction::Move } else { DndAction::Copy }),
+                None => offer.set_actions(DndAction::empty(), DndAction::empty()),
+            }
+        }
+    }
+
+    /// What is dragged over (or was let go of over) a window, in `form`: this application's
+    /// own, at once; another's, to be read from what it writes.
+    pub(crate) fn drop_data(&mut self, form: &str) -> DropRead {
+        if let Some(dragging) = &self.dragging {
+            if let Some((_, bytes)) = dragging.data.forms.iter().find(|(f, _)| f == form) {
+                return DropRead::Here(bytes.clone());
+            }
+        }
+        let Some(offer) = self.over.as_ref().and_then(|o| o.offer.as_ref()) else { return DropRead::Nothing };
+        let mut fds = [0i32; 2];
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            return DropRead::Nothing;
+        }
+        // SAFETY: both ends are new and ours alone.
+        let (read, write) = unsafe { (std::fs::File::from_raw_fd(fds[0]), std::os::fd::OwnedFd::from_raw_fd(fds[1])) };
+        offer.receive(form.to_string(), write.as_fd());
+        drop(write);
+        DropRead::Pipe(read)
+    }
+
+    /// The window has had what it wanted of what was let go of over it.
+    pub(crate) fn finish_drop(&mut self) {
+        let Some(over) = self.over.take() else { return };
+        if let Some(offer) = over.offer {
+            if over.dropped && offer.version() >= 3 {
+                offer.finish();
+            }
+            self.offers.remove(&offer);
+            offer.destroy();
+        }
+    }
+
     /// When a held key is next to repeat, if one is held.
     pub(crate) fn next_repeat(&self) -> Option<Instant> {
         self.keyboard.next_repeat()
@@ -814,6 +946,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for Wire {
             }
             wl_pointer::Event::Button { button, state: pressed, serial, .. } => {
                 state.serial = serial;
+                if matches!(pressed, WEnum::Value(wl_pointer::ButtonState::Pressed)) {
+                    state.press_serial = serial;
+                }
                 if let Some(window) = state.pointer_on {
                     let pressed = matches!(pressed, WEnum::Value(wl_pointer::ButtonState::Pressed));
                     // Linux's own numbers for a mouse's buttons, which is what the wire carries.
@@ -887,6 +1022,45 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for Wire {
             wl_data_device::Event::DataOffer { id } => {
                 state.offers.insert(id, Vec::new());
             }
+            // Something dragged: from this application or another, over one of its windows.
+            wl_data_device::Event::Enter { serial, surface, x, y, id } => {
+                if let Some(old) = state.over.take() {
+                    if let Some(offer) = old.offer.filter(|o| Some(o) != id.as_ref()) {
+                        state.offers.remove(&offer);
+                        offer.destroy();
+                    }
+                }
+                let Some(window) = state.ids.get(&surface).copied() else { return };
+                let forms = id.as_ref().and_then(|o| state.offers.get(o)).cloned().unwrap_or_default();
+                let (x, y) = (x as f32, y as f32);
+                state.over = Some(Over { offer: id, window, serial, x, y, dropped: false });
+                let own = state.dragging.is_some();
+                state.events.push(Event::DragEntered { window, x, y, forms, own });
+            }
+            wl_data_device::Event::Motion { x, y, .. } => {
+                if let Some(over) = state.over.as_mut() {
+                    over.x = x as f32;
+                    over.y = y as f32;
+                    state.events.push(Event::DragMoved { window: over.window, x: over.x, y: over.y });
+                }
+            }
+            wl_data_device::Event::Leave => {
+                if let Some(over) = state.over.take_if(|o| !o.dropped) {
+                    if let Some(offer) = over.offer {
+                        state.offers.remove(&offer);
+                        offer.destroy();
+                    }
+                    state.events.push(Event::DragLeft { window: over.window });
+                }
+            }
+            wl_data_device::Event::Drop => {
+                if let Some(over) = state.over.as_mut() {
+                    over.dropped = true;
+                    let forms = over.offer.as_ref().and_then(|o| state.offers.get(o)).cloned().unwrap_or_default();
+                    let own = state.dragging.is_some();
+                    state.events.push(Event::Dropped { window: over.window, x: over.x, y: over.y, forms, own });
+                }
+            }
             wl_data_device::Event::Selection { id } => {
                 if let Some(old) = state.selection.take() {
                     if Some(&old) != id.as_ref() {
@@ -932,6 +1106,58 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for Wire {
     fn event(state: &mut Self, offer: &wl_data_offer::WlDataOffer, event: wl_data_offer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         if let wl_data_offer::Event::Offer { mime_type } = event {
             state.offers.entry(offer.clone()).or_default().push(mime_type);
+        }
+    }
+}
+
+/// What was let go of over a window, to be read: here at once, or from another application.
+pub(crate) enum DropRead {
+    Here(Vec<u8>),
+    Pipe(std::fs::File),
+    Nothing,
+}
+
+impl Dispatch<wl_data_source::WlDataSource, std::sync::Arc<DragData>> for Wire {
+    fn event(
+        state: &mut Self,
+        source: &wl_data_source::WlDataSource,
+        event: wl_data_source::Event,
+        data: &std::sync::Arc<DragData>,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let ours = state.dragging.as_ref().is_some_and(|d| d.source == *source);
+        match event {
+            wl_data_source::Event::Send { mime_type, fd } => {
+                let Some(bytes) = data.forms.iter().find(|(form, _)| *form == mime_type).map(|(_, b)| b.clone()) else { return };
+                std::thread::Builder::new()
+                    .name("drag-write".into())
+                    .spawn(move || {
+                        use std::io::Write;
+                        let mut file = std::fs::File::from(fd);
+                        let _ = file.write_all(&bytes);
+                    })
+                    .ok();
+            }
+            wl_data_source::Event::Action { dnd_action } => {
+                if let Some(dragging) = state.dragging.as_mut().filter(|_| ours) {
+                    dragging.moving = matches!(dnd_action, WEnum::Value(a) if a.contains(wl_data_device_manager::DndAction::Move));
+                }
+            }
+            wl_data_source::Event::DndFinished | wl_data_source::Event::Cancelled => {
+                let taken = matches!(event, wl_data_source::Event::DndFinished);
+                if ours {
+                    if let Some(dragging) = state.dragging.take() {
+                        if let Some((surface, buffer, _)) = dragging.icon {
+                            surface.destroy();
+                            buffer.destroy();
+                        }
+                        state.events.push(Event::DragEnded { taken, moved: taken && dragging.moving });
+                    }
+                }
+                source.destroy();
+            }
+            _ => {}
         }
     }
 }

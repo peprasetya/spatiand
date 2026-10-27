@@ -49,6 +49,124 @@ pub struct Drag {
     pub over_tab: Option<(usize, Instant)>,
     /// The keys held, as of the pointer's last move: Alt copies, Shift moves.
     pub held: Modifiers,
+    /// Handed to the room, which from then on says where it is (over this window or any
+    /// other) instead of the pointer's own events.
+    pub in_room: bool,
+}
+
+/// Something dragged from elsewhere -- another SpatiShelf, another application -- over this
+/// window.
+pub struct Incoming {
+    /// What it is, as places, once read.
+    pub items: Vec<Place>,
+    pub target: Option<Target>,
+    /// The form it was read in, which is the one taken.
+    pub form: &'static str,
+}
+
+/// How places are handed between SpatiShelfs, remotes and all: as themselves.
+pub const PLACES_FORM: &str = "application/x-spatiand-places";
+const URI_FORM: &str = "text/uri-list";
+const TEXT_FORM: &str = "text/plain;charset=utf-8";
+
+/// A path as a `file:` address, every byte but the plain ones written as `%XX`.
+fn file_uri(path: &str) -> String {
+    let mut out = String::from("file://");
+    for b in path.bytes() {
+        if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// The paths of a `text/uri-list`'s `file:` addresses.
+fn uri_paths(list: &str) -> Vec<String> {
+    list.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| l.strip_prefix("file://"))
+        // A host before the path (file://host/path) is this machine's, or no use here.
+        .map(|rest| if rest.starts_with('/') { rest } else { rest.find('/').map_or("", |i| &rest[i..]) })
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            let bytes = p.as_bytes();
+            let mut out = Vec::with_capacity(bytes.len());
+            let mut i = 0;
+            while i < bytes.len() {
+                if bytes[i] == b'%' && i + 2 < bytes.len() {
+                    if let Ok(b) = u8::from_str_radix(&p[i + 1..i + 3], 16) {
+                        out.push(b);
+                        i += 3;
+                        continue;
+                    }
+                }
+                out.push(bytes[i]);
+                i += 1;
+            }
+            String::from_utf8_lossy(&out).into_owned()
+        })
+        .collect()
+}
+
+/// The forms dragged places can be had in: as places, for another SpatiShelf; as `file:`
+/// addresses, for any application (a remote's by its WebDAV address); as text.
+fn drag_forms(items: &[Place], dav: impl Fn(&str, &str) -> Option<String>) -> Vec<(String, Vec<u8>)> {
+    let places = serde_json::to_vec(items).unwrap_or_default();
+    let uris: Vec<String> = items
+        .iter()
+        .filter_map(|p| match p {
+            Place::Local(path) => Some(file_uri(path)),
+            Place::Remote(r, path) => dav(r, path),
+        })
+        .collect();
+    let text = items.iter().map(|p| p.text()).collect::<Vec<_>>().join("\n");
+    vec![(PLACES_FORM.into(), places), (URI_FORM.into(), (uris.join("\r\n") + "\r\n").into_bytes()), (TEXT_FORM.into(), text.into_bytes())]
+}
+
+/// The picture the room shows at the pointer while things are dragged: their kind's mark on
+/// its colour, in memory (blue, green, red, alpha, alpha multiplied in).
+fn drag_picture(kind: Kind) -> (u32, u32, Vec<u8>) {
+    const SIDE: u32 = 112;
+    const GLYPH: u32 = 56;
+    let (top, foot) = look::tint(kind);
+    let glyph = spatiand_app::ui::icon_coverage(look::icon(kind), GLYPH).unwrap_or_default();
+    let mut out = vec![0u8; (SIDE * SIDE * 4) as usize];
+    let radius = 20.0f32;
+    let start = (SIDE - GLYPH) / 2;
+    for y in 0..SIDE {
+        for x in 0..SIDE {
+            // A rounded square: covered inside its corners' arcs, softened at their edge.
+            let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+            let cx = fx.clamp(radius, SIDE as f32 - radius);
+            let cy = fy.clamp(radius, SIDE as f32 - radius);
+            let d = ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt();
+            let inside = (radius + 0.5 - d).clamp(0.0, 1.0);
+            if inside <= 0.0 {
+                continue;
+            }
+            // Its colour from top to foot as a tile's is, over the window's dark ground.
+            let t = y as f32 / SIDE as f32;
+            let ground = [0.05f32, 0.06, 0.09];
+            let over = |c: [f32; 4], i: usize| ground[i] * (1.0 - c[3]) + c[i] * c[3];
+            let mut rgb = [0, 1, 2].map(|i| (over(top, i) * (1.0 - t) + over(foot, i) * t) * 1.6);
+            if (start..start + GLYPH).contains(&x) && (start..start + GLYPH).contains(&y) {
+                let g = glyph.get(((y - start) * GLYPH + (x - start)) as usize).copied().unwrap_or(0) as f32 / 255.0;
+                for c in &mut rgb {
+                    *c = *c * (1.0 - g) + g;
+                }
+            }
+            let a = 0.94 * inside;
+            let at = ((y * SIDE + x) * 4) as usize;
+            out[at] = (rgb[2] * a * 255.0) as u8;
+            out[at + 1] = (rgb[1] * a * 255.0) as u8;
+            out[at + 2] = (rgb[0] * a * 255.0) as u8;
+            out[at + 3] = (a * 255.0) as u8;
+        }
+    }
+    (SIDE, SIDE, out)
 }
 
 /// Where dragged things would go if let go of here.
@@ -200,7 +318,8 @@ impl Shelf {
             }
         }
         if self.drag.is_some() {
-            let target = self.drop_target(x, y);
+            let items = self.drag.as_ref().map(|d| d.items.clone()).unwrap_or_default();
+            let target = self.drop_target(x, y, &items);
             let now = Instant::now();
             let held = self.app().modifiers();
             let drag = self.drag.as_mut().unwrap();
@@ -222,8 +341,108 @@ impl Shelf {
         let items = tab.chosen();
         let Some(first) = tab.selected.iter().next().copied().or_else(|| tab.item_at_cursor().map(|(i, _)| i)) else { return };
         let Some(item) = tab.items.get(first) else { return };
-        self.drag = Some(Drag { items, from: tab.place.clone(), kind: item.kind, picture: tab.pictures.get(&first).copied(), target: None, over_tab: None, held: self.modifiers });
+        let kind = item.kind;
+        let storage = self.storage.clone();
+        let forms = drag_forms(&items, |r, p| storage.as_ref().map(|s| s.url(r, p)));
+        self.drag = Some(Drag { items, from: tab.place.clone(), kind, picture: tab.pictures.get(&first).copied(), target: None, over_tab: None, held: self.modifiers, in_room: false });
         self.rename_due = None;
+        // Handed to the room, so that it can go to another window -- or to anything that takes
+        // files -- as well as within this one.
+        let window = self.window;
+        let picture = drag_picture(kind);
+        let in_room = self.app().start_drag(window, forms, Some(picture), true);
+        if let Some(drag) = self.drag.as_mut() {
+            drag.in_room = in_room;
+        }
+    }
+
+    /// The room says where something dragged is, over this window: this window's own drag,
+    /// or something from elsewhere.
+    pub(crate) fn room_drag(&mut self, event: spatiand_app::Event) {
+        use spatiand_app::Event;
+        self.dirty = true;
+        match event {
+            Event::DragEntered { x, y, own: true, .. } | Event::DragMoved { x, y, .. } if self.drag.is_some() => {
+                self.pointer = (x, y);
+                self.pointer_moved(x, y);
+                let answer = self.drag.as_ref().map(|d| (d.from.clone(), d.target.clone(), d.held, d.items.clone()));
+                if let Some((from, target, held, items)) = answer {
+                    match target.filter(|t| t.place != from && !items.contains(&t.place)) {
+                        Some(t) => {
+                            let copy = Self::copying(held, &from, &t.place);
+                            self.app().accept_drag(Some(PLACES_FORM), !copy);
+                        }
+                        None => self.app().accept_drag(None, false),
+                    }
+                }
+            }
+            Event::DragEntered { x, y, forms, .. } => {
+                let (items, form): (Vec<Place>, &'static str) = if forms.iter().any(|f| f == PLACES_FORM) {
+                    (self.app().drop_data(PLACES_FORM).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default(), PLACES_FORM)
+                } else if forms.iter().any(|f| f == URI_FORM) {
+                    (self.app().drop_data(URI_FORM).map(|b| uri_paths(&String::from_utf8_lossy(&b)).into_iter().map(Place::Local).collect()).unwrap_or_default(), URI_FORM)
+                } else {
+                    (Vec::new(), URI_FORM)
+                };
+                self.incoming = Some(Incoming { items, target: None, form });
+                self.incoming_moved(x, y);
+            }
+            Event::DragMoved { x, y, .. } => self.incoming_moved(x, y),
+            Event::DragLeft { .. } => {
+                if let Some(drag) = self.drag.as_mut() {
+                    drag.target = None;
+                }
+                self.incoming = None;
+            }
+            Event::Dropped { x, y, own: true, .. } if self.drag.is_some() => {
+                self.pointer = (x, y);
+                self.pointer_moved(x, y);
+                self.release();
+                self.app().finish_drop();
+            }
+            Event::Dropped { x, y, .. } => {
+                self.incoming_moved(x, y);
+                if let Some(Incoming { items, target: Some(target), .. }) = self.incoming.take() {
+                    let from = items.first().and_then(|i| i.parent());
+                    let copy = from.as_ref().is_none_or(|f| Self::copying(self.app().modifiers(), f, &target.place));
+                    self.send(items, target.place, copy);
+                }
+                self.app().finish_drop();
+            }
+            Event::DragEnded { taken, moved } => {
+                self.drag = None;
+                self.press = None;
+                // Moved by whichever window took it: what was here is listed again.
+                if taken && moved {
+                    for tab in &mut self.tabs {
+                        tab.tell(&ToTab::Refresh);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Something from elsewhere moved over this window: what it would go into, said to the room.
+    fn incoming_moved(&mut self, x: f32, y: f32) {
+        self.pointer = (x, y);
+        let Some((items, form)) = self.incoming.as_ref().map(|i| (i.items.clone(), i.form)) else { return };
+        let target = self.drop_target(x, y, &items).filter(|t| !items.is_empty() && items.iter().all(|i| i.parent().as_ref() != Some(&t.place) && *i != t.place));
+        let answer = target.as_ref().map(|t| {
+            let from = items.first().and_then(|i| i.parent());
+            from.as_ref().is_none_or(|f| Self::copying(self.app_modifiers(), f, &t.place))
+        });
+        if let Some(incoming) = self.incoming.as_mut() {
+            incoming.target = target;
+        }
+        match answer {
+            Some(copy) => self.app().accept_drag(Some(form), !copy),
+            None => self.app().accept_drag(None, false),
+        }
+    }
+
+    fn app_modifiers(&mut self) -> Modifiers {
+        self.app().modifiers()
     }
 
     pub(crate) fn release(&mut self) {
@@ -252,14 +471,13 @@ impl Shelf {
     }
 
     /// What is under the pointer that dragged things could go into.
-    fn drop_target(&self, x: f32, y: f32) -> Option<Target> {
-        let drag = self.drag.as_ref()?;
+    fn drop_target(&self, x: f32, y: f32, items: &[Place]) -> Option<Target> {
         let tab = &self.tabs[self.active];
         if self.content.contains(x, y) {
             if let Some(at) = self.hit(x, y) {
                 let item = &tab.items[tab.shown[at]];
                 let place = tab.place.join(&item.name);
-                if item.kind == Kind::Folder && !drag.items.contains(&place) {
+                if item.kind == Kind::Folder && !items.contains(&place) {
                     return Some(Target { place, rect: self.cell(at).1, tab: None });
                 }
             }
@@ -281,7 +499,7 @@ impl Shelf {
     /// Whether things going from `from` to `to` are copied rather than moved: when they go to
     /// another disk or remote, as Finder has it, or with Alt (Option) held; Shift (Command on a
     /// Mac) moves them whatever.
-    fn copying(m: Modifiers, from: &Place, to: &Place) -> bool {
+    pub(crate) fn copying(m: Modifiers, from: &Place, to: &Place) -> bool {
         if m.alt {
             return true;
         }
@@ -629,6 +847,14 @@ impl Shelf {
             }
             p.unclip(gl);
         }
+        if let Some(target) = self.incoming.as_ref().and_then(|i| i.target.as_ref()) {
+            if target.rect != self.content {
+                p.glow(gl, target.rect, 16.0, [0.30, 0.62, 1.0, 0.45], 18.0);
+                p.fill(gl, target.rect.inset(-3.0), 16.0, [0.42, 0.68, 1.0, 0.22]);
+            } else {
+                p.glow(gl, self.content.inset(4.0), 18.0, [0.30, 0.62, 1.0, 0.25], 18.0);
+            }
+        }
         let Some(drag) = self.drag.as_ref() else { return };
         let copy = match &drag.target {
             Some(t) if t.place != drag.from => Self::copying(drag.held, &drag.from, &t.place),
@@ -643,8 +869,11 @@ impl Shelf {
         }
         let (x, y) = self.pointer;
         let ghost = Rect::new(x + 16.0, y + 12.0, 96.0, 96.0);
-        p.glow(gl, ghost, 18.0, [0.0, 0.0, 0.0, 0.5], 18.0);
-        look::face(p, gl, ghost, drag.kind, drag.picture, 16.0);
+        // Handed to the room, the room shows it, over this window as over any.
+        if !drag.in_room {
+            p.glow(gl, ghost, 18.0, [0.0, 0.0, 0.0, 0.5], 18.0);
+            look::face(p, gl, ghost, drag.kind, drag.picture, 16.0);
+        }
         let n = drag.items.len();
         if n > 1 || copy {
             let badge = Rect::new(ghost.right() - 26.0, ghost.y - 12.0, 40.0, 40.0);
@@ -699,5 +928,37 @@ mod tests {
         let a = Rect::new(0.0, 0.0, 10.0, 10.0);
         assert!(overlaps(a, Rect::new(5.0, 5.0, 10.0, 10.0)));
         assert!(!overlaps(a, Rect::new(10.0, 0.0, 5.0, 5.0)));
+    }
+}
+
+#[cfg(test)]
+mod uri_tests {
+    use super::*;
+
+    #[test]
+    fn paths_go_out_as_file_addresses_and_come_back() {
+        let path = "/home/a b/café #1.txt";
+        let uri = file_uri(path);
+        assert_eq!(uri, "file:///home/a%20b/caf%C3%A9%20%231.txt");
+        assert_eq!(uri_paths(&format!("# a comment\r\n{uri}\r\nfile://localhost/etc/hosts\r\nhttps://example.org/\r\n")), vec![path.to_string(), "/etc/hosts".into()]);
+    }
+
+    #[test]
+    fn a_drag_offers_places_addresses_and_text() {
+        let items = vec![Place::Local("/x/y.png".into()), Place::Remote("drive".into(), "a/b".into())];
+        let forms = drag_forms(&items, |r, p| Some(format!("http://127.0.0.1:1/{r}/{p}")));
+        let names: Vec<&str> = forms.iter().map(|(f, _)| f.as_str()).collect();
+        assert_eq!(names, [PLACES_FORM, URI_FORM, TEXT_FORM]);
+        let back: Vec<Place> = serde_json::from_slice(&forms[0].1).unwrap();
+        assert_eq!(back, items);
+        assert_eq!(String::from_utf8_lossy(&forms[1].1), "file:///x/y.png\r\nhttp://127.0.0.1:1/drive/a/b\r\n");
+    }
+
+    #[test]
+    fn the_picture_is_its_size_and_not_empty() {
+        let (w, h, pixels) = drag_picture(Kind::Folder);
+        assert_eq!(pixels.len(), (w * h * 4) as usize);
+        assert!(pixels.chunks_exact(4).filter(|p| p[3] > 200).count() > (w * h / 2) as usize);
+        assert_eq!(pixels[3], 0, "the corner is outside the rounding");
     }
 }

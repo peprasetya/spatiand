@@ -401,6 +401,8 @@ struct Shelf {
     sort: (SortBy, bool),
     /// Where the last menu opened: where the one it leads to opens.
     menu_at: (f32, f32),
+    /// Something dragged here from elsewhere in the room.
+    incoming: Option<hand::Incoming>,
 }
 
 #[derive(Clone)]
@@ -960,6 +962,11 @@ impl Shelf {
                 }
             }
             _ => {}
+        }
+        // Something dragged, as the room says: this window's own, or from elsewhere.
+        if matches!(event, Event::DragEntered { .. } | Event::DragMoved { .. } | Event::DragLeft { .. } | Event::Dropped { .. } | Event::DragEnded { .. }) {
+            self.room_drag(event);
+            return true;
         }
         // The right button opens a menu for what it is over.
         if let Event::Button { button: PointerButton::Right, pressed: true, .. } = event {
@@ -1999,6 +2006,7 @@ fn main() {
             rename_due: None,
             sort: (SortBy::Name, false),
             menu_at: (0.0, 0.0),
+            incoming: None,
         };
         shelf.rebuild_side();
         let tab = ShelfTab::spawn(start)?;

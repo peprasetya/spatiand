@@ -2165,6 +2165,8 @@ pub fn run(
             // Where pinned windows go is worked out from this frame's head, inside the collect.
             runtime.state.pip_head = Some((orientation, crate::pip::view_of(&stereo)));
             let mut windows = crate::scene::collect_windows(&mut renderer, &runtime.state);
+            // What is being dragged between windows, and the picture it came with.
+            let dragged = runtime.state.dragging.then(|| crate::scene::dragged_picture(&mut renderer, &runtime.state));
             for quad in windows.iter_mut() {
                 let title = runtime.state.display_title(&quad.window);
                 quad.title = scene.title_texture(&mut renderer, &mut text, &title, ppd);
@@ -3395,6 +3397,10 @@ pub fn run(
                                 cursor,
                                 fade,
                             );
+                        }
+                        // What is dragged, at the pointer that is dragging it.
+                        if let (Some(picture), Some((ray, distance))) = (dragged, pointers.last_aim) {
+                            scene.draw_dragged(gl, &eye, &ray, distance, picture);
                         }
 
                         // The head-locked panel: the waiting prompt, the calibration flow, or

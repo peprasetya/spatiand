@@ -327,6 +327,9 @@ struct Win {
     /// The bar's text is the page's address, to be replaced whole by the first thing typed.
     fresh: bool,
     drag: Option<Drag>,
+    /// Something dragged over the window from elsewhere in the room -- files, links -- and the
+    /// form it would be taken in: dropped on the tabs, it opens in a new one; on the page, there.
+    dropping: Option<(f32, f32, &'static str)>,
     placed: Vec<(TabId, Rect, Rect)>,
     plus: Rect,
     buttons: [(Hover, Rect); 10],
@@ -433,6 +436,20 @@ pub struct Browser {
 
 /// How long a server connected to ahead of a load is not connected to again for that.
 const PRECONNECT_EVERY: Duration = Duration::from_secs(30);
+
+/// What SpatiMesh takes when something is dropped on it, the best first: addresses (a file
+/// manager's files among them), or text that is one.
+const DROP_FORMS: &[&str] = &["text/uri-list", "text/x-moz-url", "text/plain;charset=utf-8", "text/plain"];
+
+/// The addresses in what was dropped: a `text/uri-list`'s lines, or text that is an address.
+fn dropped_addresses(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter(|l| l.contains("://") || l.starts_with('/') || l.contains('.'))
+        .map(|l| if l.starts_with('/') { format!("file://{l}") } else { l.to_string() })
+        .collect()
+}
 
 /// The I key, where it is on the keyboard (Linux's number for it).
 const KEY_I: u32 = 23;
@@ -1148,6 +1165,7 @@ impl Browser {
             fullscreen: false,
             pressed_in_page: None,
             in_page: false,
+            dropping: None,
             popup: None,
             start: None,
             action_buttons: Vec::new(),
@@ -1173,6 +1191,22 @@ impl Browser {
         self.told.push(Told::WindowCreated(key));
         self.session_dirty = true;
         key
+    }
+
+    /// Addresses let go of over a window: on its tabs (and anywhere above the page), each in a
+    /// new tab; on the page, the first there.
+    fn dropped(&mut self, w: usize, _x: f32, y: f32, text: &str) {
+        let addresses = dropped_addresses(text);
+        if addresses.is_empty() {
+            return;
+        }
+        if y < self.wins[w].page.y {
+            for address in &addresses {
+                self.new_tab(w, address);
+            }
+        } else {
+            self.go(w, &addresses[0]);
+        }
     }
 
     fn new_tab(&mut self, w: usize, url: &str) {
@@ -1853,6 +1887,30 @@ impl Browser {
             Event::Key { key, code, pressed, repeat, text, modifiers, .. } => self.key(w, key, code, pressed, repeat, text, modifiers),
             // Pinching zooms the page, as on a touchpad.
             Event::Pinch { scale, .. } if (scale - 1.0).abs() > 0.02 => self.zoom(Some(scale)),
+            Event::DragEntered { x, y, forms, .. } => {
+                let form = DROP_FORMS.iter().copied().find(|f| forms.iter().any(|o| o.eq_ignore_ascii_case(f)));
+                self.wins[w].dropping = form.map(|f| (x, y, f));
+                self.app.accept_drag(form, false);
+                self.wins[w].dirty = true;
+            }
+            Event::DragMoved { x, y, .. } => {
+                if let Some(drop) = self.wins[w].dropping.as_mut() {
+                    (drop.0, drop.1) = (x, y);
+                    self.wins[w].dirty = true;
+                }
+            }
+            Event::DragLeft { .. } => {
+                self.wins[w].dropping = None;
+                self.wins[w].dirty = true;
+            }
+            Event::Dropped { x, y, .. } => {
+                if let Some((_, _, form)) = self.wins[w].dropping.take() {
+                    let text = self.app.drop_data(form).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+                    self.dropped(w, x, y, &text);
+                }
+                self.app.finish_drop();
+                self.wins[w].dirty = true;
+            }
             _ => {}
         }
         true
@@ -2690,6 +2748,20 @@ impl Browser {
                     look::glass(p, gl, pane, 24.0, 1.0);
                     p.label(gl, text, pane.inset(18.0), theme::ROW_EM * 0.8, theme::ink(), 0.5);
                 }
+                // Something from elsewhere over the window: where it would open.
+                if let Some((_, y, _)) = win.dropping {
+                    let (area, words) = if y < win.page.y {
+                        (Rect::new(0.0, 0.0, win.size.0 as f32, win.page.y), "Open in a new tab")
+                    } else {
+                        (win.page, "Open here")
+                    };
+                    p.fill(gl, area.inset(6.0), 18.0, [0.42, 0.68, 1.0, 0.16]);
+                    p.glow(gl, area.inset(6.0), 18.0, [0.30, 0.62, 1.0, 0.35], 20.0);
+                    let pill = Rect::new(area.x + area.w * 0.5 - 200.0, area.y + area.h * 0.5 - 30.0, 400.0, 60.0);
+                    p.fill(gl, pill, 30.0, theme::ground());
+                    look::glass(p, gl, pill, 30.0, 1.0);
+                    p.label(gl, words, pill.inset(16.0), theme::ROW_EM * 0.8, theme::ink(), 0.5);
+                }
                 if let Some(drag) = win.drag.as_ref().filter(|d| d.torn) {
                     let label = tabs.tab(drag.tab).map(|t| t.label()).unwrap_or_default();
                     let ghost = Rect::new(drag.at.0 - 160.0, drag.at.1 - 26.0, 320.0, 52.0);
@@ -3289,6 +3361,15 @@ fn draw_question(p: &mut Painter, gl: &spatiand_app::Gl, page: Rect, question: &
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn what_is_dropped_is_opened_as_addresses() {
+        let list = "# from a file manager\r\nfile:///home/a/b.html\r\nhttps://example.org/x\r\n";
+        assert_eq!(super::dropped_addresses(list), ["file:///home/a/b.html", "https://example.org/x"]);
+        assert_eq!(super::dropped_addresses("/tmp/page.html"), ["file:///tmp/page.html"]);
+        assert_eq!(super::dropped_addresses("example.org"), ["example.org"]);
+        assert!(super::dropped_addresses("just some words").is_empty());
+    }
+
     use super::*;
 
     #[test]

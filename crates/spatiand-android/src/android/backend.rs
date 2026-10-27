@@ -1135,6 +1135,9 @@ pub fn run(
             // Where pinned windows go is worked out from this frame's head, inside the collect.
             runtime.state.pip_head = Some((orientation, crate::pip::view_of(&stereo)));
             let mut windows = crate::scene::collect_windows(&mut renderer, &runtime.state);
+            // What is being dragged between windows, and the picture it came with.
+            let dragged = runtime.state.dragging.then(|| crate::scene::dragged_picture(&mut renderer, &runtime.state));
+            let dragged_at = pointers.last_aim;
             // A window that has just shown its first picture is given its size in the room,
             // where the platform has a view on that: a Mac's own windows.
             super::size_new_windows(&mut runtime.state, &mut windows);
@@ -1925,6 +1928,9 @@ pub fn run(
                                     1.0,
                                 );
                             }
+                        }
+                        if let (Some(picture), Some((ray, distance))) = (dragged, dragged_at) {
+                            scene.draw_dragged(gl, &eye, &ray, distance, picture);
                         }
                         if let Some((tex, aspect)) = snapshot {
                             let (pw, ph) = fit_panel(aspect, stereo.h_fov_deg, stereo.v_fov_deg());

@@ -125,6 +125,10 @@ pub struct Spatiand {
     pub output_manager_state: OutputManagerState,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
+    /// Something an application is dragging -- between its windows, to another's, anywhere in
+    /// the room -- and the picture it gave to go with it, drawn at the pointer.
+    pub dragging: bool,
+    pub drag_icon: Option<WlSurface>,
     pub seat: Seat<Self>,
 
     /// Smithay's 2D window bookkeeping. We do not use its 2D *rendering*, but its mapping,
@@ -367,6 +371,8 @@ impl Spatiand {
             output_manager_state,
             seat_state,
             data_device_state,
+            dragging: false,
+            drag_icon: None,
             seat,
             space: {
                 let mut space = Space::default();
@@ -1936,7 +1942,31 @@ impl DataDeviceHandler for Spatiand {
         &self.data_device_state
     }
 }
-impl ClientDndGrabHandler for Spatiand {}
+/// A drag is the client's from start to drop: smithay sends enter, motion and drop to whichever
+/// surface the pointer's focus is on as it moves -- in the room, the window the ray is on, at
+/// the point of it the ray meets -- and the compositor's part is to show what is dragged.
+impl ClientDndGrabHandler for Spatiand {
+    fn started(
+        &mut self,
+        _source: Option<smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource>,
+        icon: Option<WlSurface>,
+        _seat: Seat<Self>,
+    ) {
+        log::info!("a drag began{}", if icon.is_some() { ", with a picture" } else { "" });
+        self.dragging = true;
+        self.drag_icon = icon;
+    }
+
+    fn dropped(&mut self, target: Option<WlSurface>, validated: bool, _seat: Seat<Self>) {
+        log::info!("a drag ended: {}", match (target.is_some(), validated) {
+            (true, true) => "taken",
+            (true, false) => "not taken where it was let go",
+            _ => "let go over nothing",
+        });
+        self.dragging = false;
+        self.drag_icon = None;
+    }
+}
 impl ServerDndGrabHandler for Spatiand {}
 
 delegate_compositor!(Spatiand);

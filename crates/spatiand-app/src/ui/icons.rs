@@ -154,6 +154,13 @@ fn render(icon: Icon, px: u32) -> Option<(u32, u32, Vec<u8>)> {
     Some((px, px, rgba))
 }
 
+/// `icon` drawn `px` across in memory, as how much of each pixel it covers (0 to 255, top row
+/// first): for a picture made without a GPU, such as one handed to the room with a drag.
+pub fn coverage(icon: Icon, px: u32) -> Option<Vec<u8>> {
+    let (_, _, rgba) = render(icon, px)?;
+    Some(rgba.chunks_exact(4).map(|p| p[3]).collect())
+}
+
 /// Draw `icon` filling the square `rect` (centred in it if it is not square), in `color`.
 pub fn draw(p: &mut Painter, gl: &Gl, icon: Icon, rect: Rect, color: Color) {
     let side = rect.w.min(rect.h);
