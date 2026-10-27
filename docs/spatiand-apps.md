@@ -215,11 +215,36 @@ SpatiLoupe with a GLB in both eyes, HEIC and a PDF, SpatiShelf with pictures.
 **Not done yet**
 * Clipboard on the Deck and the Beam Pro beyond `wl-copy` if present: the SDK has no
   `wl_data_device` yet.
-* SpatiShelf: dragging files between tabs or onto remotes (copy and paste only); opening in
-  Android's own applications.
+* SpatiShelf: opening in Android's own applications.
 * SpatiLoupe: Apple's spatial HEIC (two images in one file) shows its first eye only; glTF
   animation and skinning are not played.
 * SpatiReel's own browsing of remotes (it opens what SpatiShelf hands it).
+
+## 2026-10-27: SpatiShelf as a file manager; dragging between windows
+
+**SpatiShelf.** Things are dragged onto a folder, a place along the side, a tab (which comes
+forward when held over) or a step of the path: moved within a disk, copied to another disk or a
+remote, Alt copying and Shift moving whatever. A band drawn from an empty part chooses what it
+touches. A name is renamed where it is, as in Finder: a click on the name of the one thing
+chosen, F2, or the menu; the name but its ending is chosen to be typed over. The right button's
+menu is for what it is on (open in a new tab, paste into this folder, move to..., copy to...,
+duplicate, rename, the trash, the path) or for the folder itself (new folder, paste, list or
+tiles, sort, hidden files, SpatiQuill here), with icons and each one's keys; Control-click on a
+Mac, the menu key, Shift-F10 and a press held still open it too. Sorting by name (numbers by
+their value), kind, size or date, folders first; the list's heads sort.
+
+**Dragging between windows, anywhere in the room.** An application starts a drag with what it
+carries in as many forms as it likes and a picture (`App::start_drag`); the room draws the
+picture on a card hanging from the pointer, a little in front of whatever window it is over, and
+the window the ray is on hears it come, move and be let go of at the very point of it the ray
+meets (`Event::DragEntered`, `DragMoved`, `Dropped`), says what it would do there
+(`App::accept_drag`) and reads it (`App::drop_data`). SpatiShelf offers places (to another
+SpatiShelf), `file:` addresses (to anything; a remote's by its WebDAV address) and text, and takes
+them onto the folder under the point they are let go of; SpatiMesh takes files and links, opening
+them in a new tab when let go of over its tabs and in the page when over the page. Checked in the
+snapshot compositor: a file dragged from one SpatiShelf's window onto a folder in another's, and
+from SpatiShelf onto SpatiMesh's tabs. Not yet: dragging out of a page (WebKit's own drags), and
+into or out of a Mac's or a host's own windows.
 
 ## 2026-10-15: from the owner's first look
 

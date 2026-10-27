@@ -626,11 +626,18 @@ fresh tab showing the same page shows the link unvisited. Nothing in the public 
 `related-view` does (a view related to one view of the engine's), but puts every tab in that
 view's web process, and one tab's crash then takes the others; tried and taken out.
 
-The fix is WebKit's, a patch for `third_party/wpe/patches/webkit/`: one `VisitedLinkStore` per
-`WebKitWebContext` (or network session), set on every page configuration it makes -- and, with
-it, a call to add visited links, which would also make `Engine::add_visited` (pages visited on
-other machines, and before SpatiMesh last started) work on WPE and WebKitGTK, as it did on
-WKWebView. Not made yet: SpatiMesh's WebKit is not to be changed for now.
+**Fixed in Spatiand's WebKit** (`third_party/wpe/patches/webkit/0002-visited-links-per-context.patch`):
+one `VisitedLinkStore` per `WebKitWebContext`, set on every page configuration the context makes,
+so every tab of a profile shares one -- WebKit adds to it as any of them navigates, and tells
+every web process using it -- with two calls of its own: `webkit_web_context_add_visited_links`
+(addresses visited elsewhere: other machines' history, and before SpatiMesh last started) and
+`webkit_web_context_clear_visited_links` (a history cleared). The engines use them where the
+header says they are there (`WEBKIT_WEB_CONTEXT_HAS_VISITED_LINKS`); the window tells them
+(`ToHost::Visited`) and, when pages are taken out of the history here or on another machine,
+has them forget every visited link and tells them again what is left (`ToHost::ForgetVisited`).
+`spatimesh-wpe`'s `a_link_visited_in_another_tab_looks_visited` and
+`visited_links_are_told_and_forgotten` are the tests. The distro's WebKitGTK has not got the
+patch, and keeps its links per tab.
 
 ## WPE WebKit, SpatiMesh's own engine (from 2026-10-22)
 
@@ -653,12 +660,20 @@ the earlier one, is no longer built into the app; its crate stays for now).
 |---|---|
 | Pictures | On the GPU, nothing copied: each frame an IOSurface ANGLE (on Metal) drew into, handed to the window and given back when it lets go (`ToHost::ReleaseSurface`). Not global surfaces any process could open by number: handed over in private, Mach port by Mach port, from the web process to the engine and from the engine to the window (`crates/spatiand-surfaces`, as every Spatiand application's pictures reach the room). |
 | Media | WPE's own GStreamer player (1.28.8, built with the plugins pages need): video, Media Source Extensions (YouTube), WebAudio. Decoding by gst-libav on Spatiand's FFmpeg 9.0.2, VideoToolbox in hardware, no software AV1. SpatiMesh's own player script is not put into pages on WPE. Not yet: video frames on the GPU (they are copied into a texture now). |
-| WebGL | WebKit's own ANGLE, its EGL back end running on the ANGLE the rest of WPE draws with, as on Linux it runs on Mesa (the shape upstream WPE has). Not yet: WebKit's ANGLE on Metal handing its pictures over as IOSurfaces, which would skip a layer. |
+| WebGL | **Every frame already reaches the window as an IOSurface** (the compositor's, with WebGL's canvas in it), nothing copied; what WebGL itself draws is a texture of the ANGLE the compositor draws with, shared with it, also not copied. What is in between is WebKit's own ANGLE running on its GL back end over that other ANGLE: every call and every shader translated twice. `patches/webkit/0004` puts WebGL on WebKit's ANGLE's own Metal back end instead, drawing onto IOSurfaces (three, in turn) that the compositor's ANGLE takes as textures of the same memory, with a fence the compositor waits on (`GraphicsContextGLTextureMapperIOSurface`; `WEBKIT_WEBGL_DISABLE_IOSURFACE=1` goes back to the old way, as does anything missing). **Written, not yet compiled**: it is Mac-only code and there is no Mac here. |
 | Fonts | fontconfig with Spatiand's own `fonts.conf`: each script's macOS font by language; WOFF2 web fonts (Google's woff2, on brotli); the interface font reported by SpatiMesh's display (WPE had none for form controls: patched). |
 | Developer tools | WebKit's Web Inspector, as a tab after its page (`ToHost::Inspect`; the menu's "Developer tools", Ctrl-Alt-I or Command-Option-I). It closes with its page. Not on WebKitGTK or WKWebView, whose inspector is a window of its own. |
 | Files | `file://` pages load (GIO's type identifiers taken as MIME types, patched). |
 | Extensions | The shared end-to-end test passes. |
-| Not yet | Video frames as IOSurfaces into ANGLE; WebGL on WebKit's ANGLE on Metal; Linux and Android builds of WPE; the developer tools' text size in the glasses; the interface font from each platform's own. |
+| Linux | `third_party/wpe/build.sh linux`: a bundle for SteamOS, built in the Ubuntu 22.04 root and carrying every library but glibc, libstdc++, Mesa, OpenSSL 3 and a few every desktop has, found by `$ORIGIN` (`patches/webkit/0003` makes WebKit's own paths relative too); `SYSTEM_DEPS=1` builds it on the distro's libraries, for working on it. The release carries it in `wpe/` beside `spatimesh-wpe`, which SpatiMesh then prefers to WebKitGTK. Pictures are copied (shared memory). |
+| Android | `third_party/wpe/build.sh android`: an NDK cross build; every library an unversioned `lib*.so`, WebKit's processes as `lib<process>.so` (found there by `patches/webkit/0003`), all in the APK's library folder (`android/build.sh`). The engine reads WPE's AHardwareBuffer pictures back (by the CPU, or through GL). **Written, not yet built**: there is no NDK here. |
+| Networking | Already as parallel as a browser's: each profile's engine has its own network process (one profile's stalled requests cannot hold up another's), whose libsoup keeps up to 256 connections, 6 to a server, with HTTP/2 multiplexing where the server speaks it; TLS runs on a thread of each connection's (glib-networking), and the disk cache on its own threads. What SpatiMesh adds is not waiting: a link pointed at, and where the address bar would go as it is typed, are connected to before the click -- name, TCP and TLS (`ToHost::Preconnect`, `patches/webkit/0005`'s `webkit_web_view_preconnect`; a name looked up only, where the engine has not got it). |
+| Not yet | Video frames as IOSurfaces into ANGLE; pictures handed over without copying on Linux (DMA-BUF) and Android (AHardwareBuffer); the developer tools on Android (their pages are not in the APK); the developer tools' text size in the glasses; the interface font from each platform's own. |
+
+The patches (`third_party/wpe/patches/webkit/`), applied in order to a checkout that has not had
+them, which `build.sh` writes down in it (`.spatiand-patches`): 0001 the Mac port; 0002 visited
+links shared by a context's views; 0003 relocatable on Linux and Android; 0004 WebGL on Metal onto
+IOSurfaces (Mac); 0005 preconnecting.
 
 ## Built, checked, and not checked (2026-10-16)
 
