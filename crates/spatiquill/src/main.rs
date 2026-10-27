@@ -103,6 +103,8 @@ struct Drag {
 
 struct Win {
     id: WindowId,
+    /// Something dragged over the window from elsewhere, and the form it would be taken in.
+    dropping: Option<&'static str>,
     tabs: Vec<u64>,
     active: usize,
     size: (u32, u32),
@@ -246,6 +248,7 @@ impl Quill {
             focused: false,
             pointer: (0.0, 0.0),
             hover: Hover::Nothing,
+            dropping: None,
             drag: None,
             selecting: None,
             pressed_in_text: false,
@@ -499,6 +502,25 @@ impl Quill {
             Event::Key { key, code, pressed: true, text, modifiers, .. } => {
                 self.typed_at = Instant::now();
                 self.key(w, key, code, text.unwrap_or_default(), modifiers);
+            }
+            // Files dragged here from anywhere in the room: their paths typed at the prompt, as
+            // a terminal does (a folder's too); text, as it is.
+            Event::DragEntered { forms, .. } => {
+                let form = DROP_FORMS.iter().copied().find(|f| forms.iter().any(|o| o.eq_ignore_ascii_case(f)));
+                self.wins[w].dropping = form;
+                self.app.accept_drag(form, false);
+            }
+            Event::DragLeft { .. } => self.wins[w].dropping = None,
+            Event::Dropped { .. } => {
+                if let Some(form) = self.wins[w].dropping.take() {
+                    let bytes = self.app.drop_data(form).unwrap_or_default();
+                    let text = String::from_utf8_lossy(&bytes);
+                    let typed = if form == "text/uri-list" { paths_typed(&text) } else { text.into_owned() };
+                    if let Some(t) = self.active_tab(w).and_then(|t| self.tabs.get_mut(&t)).filter(|_| !typed.is_empty()) {
+                        t.tell(&ToTab::Paste(typed));
+                    }
+                }
+                self.app.finish_drop();
             }
             _ => {}
         }
@@ -1084,5 +1106,68 @@ fn main() {
     if let Err(e) = ended {
         log::error!("{e}");
         std::process::exit(1);
+    }
+}
+
+/// What SpatiQuill takes when something is dropped on it, the best first.
+const DROP_FORMS: &[&str] = &["text/uri-list", "text/plain;charset=utf-8", "text/plain"];
+
+/// A `text/uri-list` as a shell is to be given it: each `file:` address's path, quoted where it
+/// needs to be, a space between and after.
+fn paths_typed(list: &str) -> String {
+    let paths: Vec<String> = list
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| match l.strip_prefix("file://") {
+            Some(rest) => {
+                let path = if rest.starts_with('/') { rest } else { rest.find('/').map_or("", |i| &rest[i..]) };
+                decode(path)
+            }
+            None => l.to_string(),
+        })
+        .filter(|p| !p.is_empty())
+        .map(|p| quoted(&p))
+        .collect();
+    if paths.is_empty() { String::new() } else { paths.join(" ") + " " }
+}
+
+/// `%XX` back to its byte.
+fn decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) = u8::from_str_radix(&text[i + 1..i + 3], 16) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A path as a shell reads it back as the same path: in single quotes unless it has nothing a
+/// shell would take for something else.
+fn quoted(path: &str) -> String {
+    if !path.is_empty() && path.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+,:@%".contains(c)) {
+        return path.to_string();
+    }
+    format!("'{}'", path.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod drop_tests {
+    use super::*;
+
+    #[test]
+    fn dropped_files_are_typed_as_paths() {
+        let list = "file:///home/me/notes.txt\r\nfile:///home/me/My%20Files/it's.png\r\n";
+        assert_eq!(paths_typed(list), "/home/me/notes.txt '/home/me/My Files/it'\\''s.png' ");
+        assert_eq!(paths_typed("# nothing\r\n"), "");
     }
 }
