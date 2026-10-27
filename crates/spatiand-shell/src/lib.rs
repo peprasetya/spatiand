@@ -387,6 +387,11 @@ impl Shell {
         self.launcher.set_own(own, icon);
     }
 
+    /// What [`Shell::set_own_apps`] was last given.
+    pub fn own_apps(&self) -> &[AppEntry] {
+        self.launcher.own()
+    }
+
     /// Hand the picker the current list. The compositor calls this on startup and again
     /// whenever the HUD asks to open the picker, so a file dropped into the folder mid-session
     /// shows up without a restart.

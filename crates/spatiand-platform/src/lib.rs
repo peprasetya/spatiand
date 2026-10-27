@@ -10,10 +10,11 @@
 
 pub mod desktop_entry;
 pub mod icons;
+pub mod installed;
 pub mod launch;
 pub mod settings;
 
 pub use desktop_entry::{icon_for_app, scan, DesktopEntry};
 pub use icons::resolve as resolve_icon;
-pub use launch::{launch, publish_session_environment, withdraw_session_environment};
+pub use launch::{launch, publish_session_environment, split_command, withdraw_session_environment};
 pub use settings::{has_desktop_settings, panel_available, settings_command};

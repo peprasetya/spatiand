@@ -7,6 +7,10 @@
 //!
 //! An application is listed only if its program is there to run, so a build that carries two
 //! of the four shows two.
+//!
+//! After them come the applications installed into Spatiand (`spatiand_platform::installed`:
+//! folders in `~/.local/share/spatiand/apps`, put there from a `.spatiapp` dropped into the room),
+//! read again each time the launcher opens.
 
 use std::path::PathBuf;
 
@@ -105,8 +109,36 @@ fn icon_file(name: &str, svg: &str) -> Option<String> {
     Some(path.to_string_lossy().into_owned())
 }
 
-/// The applications that are here to run, in the launcher's order.
+/// The applications that are here to run, in the launcher's order: Spatiand's own, then the
+/// installed ones by name.
 pub fn list() -> Vec<AppEntry> {
+    let mut apps = carried();
+    apps.extend(spatiand_platform::installed::list().iter().map(installed_entry));
+    apps
+}
+
+fn installed_entry(app: &spatiand_platform::installed::Installed) -> AppEntry {
+    let mut categories = app.manifest.categories.clone();
+    if app.manifest.kind == spatiand_platform::installed::Kind::Vr && !categories.iter().any(|c| c == "Game") {
+        categories.push("Game".into());
+    }
+    AppEntry {
+        name: app.manifest.name.clone(),
+        exec: app.command(),
+        icon: app.icon().map(|p| p.to_string_lossy().into_owned()),
+        categories,
+    }
+}
+
+/// Whether an entry is an installed application rather than one Spatiand carries: such a one is
+/// started as any other program is (the X server named, the virtual pad the only controller).
+pub fn is_installed(app: &AppEntry) -> bool {
+    spatiand_platform::installed::apps_dir()
+        .is_some_and(|dir| spatiand_platform::split_command(&app.exec).first().is_some_and(|p| std::path::Path::new(p).starts_with(&dir)))
+}
+
+/// The programs Spatiand carries.
+fn carried() -> Vec<AppEntry> {
     OWN.iter()
         .filter_map(|own| {
             let program = program(own)?;
@@ -128,19 +160,26 @@ pub fn group_icon() -> Option<String> {
 }
 
 /// Tell the shell what there is. Nothing, where nothing is installed: the launcher is then
-/// exactly what it was before these existed.
+/// exactly what it was before these existed. Called again whenever the launcher opens, so an
+/// application installed or removed meanwhile is there (the shell keeps its place when nothing
+/// changed).
 pub fn adopt(shell: &mut spatiand_shell::Shell) {
     let own = list();
     if own.is_empty() {
+        shell.set_own_apps(Vec::new(), None);
         return;
     }
-    log::info!("Spatiand's own applications: {}", own.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", "));
+    let names = own.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ");
+    if shell.own_apps() != own.as_slice() {
+        log::info!("Spatiand's applications: {names}");
+    }
     shell.set_own_apps(own, group_icon());
 }
 
 /// Start one, as a client of this compositor.
 pub fn launch(app: &AppEntry, wayland_display: &str, extra: &[(String, String)]) {
     let mut extra = extra.to_vec();
+    extra.extend(xr_runtime_environment());
     // On Android the programs and the libraries they need (FFmpeg, PDFium) are all in the
     // APK's library folder, and nothing tells the dynamic linker so but this.
     if let Some(native) = native_library_dir() {
@@ -150,6 +189,24 @@ pub fn launch(app: &AppEntry, wayland_display: &str, extra: &[(String, String)])
     }
     if let Err(e) = spatiand_platform::launch(&app.exec, wayland_display, &extra) {
         log::warn!("could not start {}: {e}", app.name);
+    }
+}
+
+/// Where Spatiand's OpenXR runtime is, for an application that takes the view, when the session
+/// has not said already (`tools/install-openxr.sh` puts it in the session's environment, and
+/// this is the same file).
+pub fn xr_runtime_environment() -> Vec<(String, String)> {
+    if std::env::var_os("XR_RUNTIME_JSON").is_some() {
+        return Vec::new();
+    }
+    let Some(home) = std::env::var_os("HOME") else {
+        return Vec::new();
+    };
+    let manifest = std::path::Path::new(&home).join(".local/share/spatiand-openxr/spatiand_openxr.json");
+    if manifest.is_file() {
+        vec![("XR_RUNTIME_JSON".into(), manifest.to_string_lossy().into_owned())]
+    } else {
+        Vec::new()
     }
 }
 

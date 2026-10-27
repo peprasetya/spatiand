@@ -1401,6 +1401,10 @@ pub fn run(
                     ShellEvent::ForgetHost(address) => remotes.forget(&address, &mut prefs),
                     ShellEvent::Bluetooth(action) => bluetooth.act(action),
                     ShellEvent::ModeChanged(mode) => {
+                        if mode == Mode::Launcher {
+                            // An application installed or removed since is there.
+                            crate::own::adopt(&mut shell);
+                        }
                         if mode == Mode::World {
                             scene.forget_anchor();
                         } else {
@@ -1441,8 +1445,15 @@ pub fn run(
                         // where its window is from its first note.
                         let claim =
                             spatial_audio.prepare_launch(crate::audio::width_for(&app.categories));
-                        let env: Vec<(String, String)> =
+                        let mut env: Vec<(String, String)> =
                             claim.as_ref().map(|(_, e)| e.clone()).unwrap_or_default();
+                        env.extend(crate::own::xr_runtime_environment());
+                        if crate::own::is_installed(&app) {
+                            // Not one of Spatiand's own: started as any program is, with the X
+                            // server named and the virtual pad as the only controller.
+                            env.extend(crate::xwayland::client_environment(x_display));
+                            env.extend(crate::controls::Controls::launch_environment());
+                        }
                         match spatiand_platform::launch(&app.exec, &runtime.state.socket_name, &env) {
                             Ok(pid) => {
                                 if let Some((slot, _)) = claim {
@@ -2070,8 +2081,14 @@ pub fn run(
                 last_status_update = std::time::Instant::now();
             }
             scene.sync_status(&mut renderer, &mut text, &status_text, ppd)?;
-            // A notification from a host's own screen, which the wearer cannot see.
-            scene.sync_notice(&mut renderer, &mut text, &crate::remote::host_notice(), ppd)?;
+            // An application dropped into the room, offered for installing, comes first; then a
+            // notification from a host's own screen, which the wearer cannot see.
+            let install_notice = crate::install::notice();
+            let notice = if install_notice.is_empty() { crate::remote::host_notice() } else { install_notice };
+            scene.sync_notice(&mut renderer, &mut text, &notice, ppd)?;
+            if crate::install::take_changed() {
+                crate::own::adopt(&mut shell);
+            }
             if keyboard.open {
                 scene.sync_keyboard(&mut renderer, &mut text, &keyboard, ppd)?;
                 // A picture of each raised key. Built here rather than in the draw closure,
@@ -3012,6 +3029,14 @@ pub fn run(
                             pointers.dismiss_popups(&mut runtime.state);
                         }
                         match right_aim.as_ref() {
+                            // The card asking whether to install what was dropped into the room:
+                            // pressing it is "yes". It floats in front of everything.
+                            Some(a)
+                                if crate::install::asking()
+                                    && scene.notice_hit(&a.ray, tracker.recentred_orientation()) =>
+                            {
+                                crate::install::accept();
+                            }
                             // Before the title bar: the button sits inside the bar, so testing
                             // the bar first would start a drag and never reach this.
                             Some(a) if a.zone == Some(Zone::Mute) => {

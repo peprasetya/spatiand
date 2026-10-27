@@ -1944,17 +1944,31 @@ impl DataDeviceHandler for Spatiand {
 }
 /// A drag is the client's from start to drop: smithay sends enter, motion and drop to whichever
 /// surface the pointer's focus is on as it moves -- in the room, the window the ray is on, at
-/// the point of it the ray meets -- and the compositor's part is to show what is dragged.
+/// the point of it the ray meets -- and the compositor's part is to show what is dragged. Spatiand
+/// itself takes one thing from drags: a `.spatiapp` let go of over the room, which it offers to
+/// install (`crate::install`).
 impl ClientDndGrabHandler for Spatiand {
     fn started(
         &mut self,
-        _source: Option<smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource>,
+        source: Option<smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource>,
         icon: Option<WlSurface>,
         _seat: Seat<Self>,
     ) {
         log::info!("a drag began{}", if icon.is_some() { ", with a picture" } else { "" });
         self.dragging = true;
         self.drag_icon = icon;
+        match source {
+            Some(source) => {
+                let mime_types =
+                    smithay::wayland::selection::data_device::with_source_metadata(&source, |m| m.mime_types.clone())
+                        .unwrap_or_default();
+                crate::install::drag_started(&mime_types, |fd| {
+                    use std::os::fd::AsFd;
+                    source.send("text/uri-list".into(), fd.as_fd());
+                });
+            }
+            None => crate::install::drag_started(&[], |_| {}),
+        }
     }
 
     fn dropped(&mut self, target: Option<WlSurface>, validated: bool, _seat: Seat<Self>) {
@@ -1965,6 +1979,7 @@ impl ClientDndGrabHandler for Spatiand {
         });
         self.dragging = false;
         self.drag_icon = None;
+        crate::install::drag_ended(target.is_none());
     }
 }
 impl ServerDndGrabHandler for Spatiand {}

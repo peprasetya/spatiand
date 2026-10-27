@@ -58,6 +58,8 @@ mod input_map;
 mod keyboard_face;
 #[path = "../../spatiand/src/menu.rs"]
 mod menu;
+#[path = "../../spatiand/src/install.rs"]
+mod install;
 #[path = "../../spatiand/src/own.rs"]
 mod own;
 #[path = "../../spatiand/src/pip.rs"]

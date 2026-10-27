@@ -323,6 +323,9 @@ pub fn run(
                         log::info!("remote computers are only served on the headset")
                     }
                     ShellEvent::ModeChanged(mode) => {
+                        if mode == spatiand_shell::Mode::Launcher {
+                            crate::own::adopt(&mut shell);
+                        }
                         if mode == spatiand_shell::Mode::World {
                             scene.forget_anchor();
                         } else {
