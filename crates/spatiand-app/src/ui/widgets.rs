@@ -760,6 +760,14 @@ impl Field {
         self.anchor = Some(from.min(self.caret));
     }
 
+    /// Characters `from` to `to` chosen, the caret at `to`: a file's name but its ending, as
+    /// a file manager chooses it to be renamed.
+    pub fn select(&mut self, from: usize, to: usize) {
+        let length = self.text.chars().count();
+        self.caret = to.min(length);
+        self.anchor = Some(from.min(self.caret));
+    }
+
     /// Whether the caret is at the end with nothing chosen: where typing adds to the text.
     pub fn caret_at_end(&self) -> bool {
         self.selection().is_none() && self.caret >= self.text.chars().count()

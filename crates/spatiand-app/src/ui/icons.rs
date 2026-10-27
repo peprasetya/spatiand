@@ -70,6 +70,12 @@ pub enum Icon {
     Globe,
     /// Take care: a triangle with a mark.
     Warning,
+    /// Cutting, to move what is cut.
+    Cut,
+    /// Writing: renaming.
+    Pencil,
+    /// What was copied, to put somewhere.
+    Paste,
 }
 
 impl Icon {
@@ -120,6 +126,9 @@ impl Icon {
             Icon::Copy => r#"<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/>"#,
             Icon::Globe => r#"<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.3 3.6 5.1 3.6 8.5s-1.2 6.2-3.6 8.5M12 3.5C9.6 5.8 8.4 8.6 8.4 12s1.2 6.2 3.6 8.5"/>"#,
             Icon::Warning => r#"<path d="M12 4l9 15.5H3z"/><path d="M12 10v4.5M12 17.2v.2"/>"#,
+            Icon::Cut => r#"<circle cx="6.5" cy="17.5" r="2.8"/><circle cx="17.5" cy="17.5" r="2.8"/><path d="M8.6 15.6L18 4M15.4 15.6L6 4"/>"#,
+            Icon::Pencil => r#"<path d="M15 5l4 4L8.5 19.5H4.5v-4z"/><path d="M12.5 7.5l4 4"/>"#,
+            Icon::Paste => r#"<rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3.5h6V5M9 11h6M9 15h4"/>"#,
             Icon::Back10 => r#"<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v3.8h3.8"/><path d="M9.3 10.4l1.3-1v6" stroke-width="1.6"/><ellipse cx="14.4" cy="12.4" rx="1.7" ry="2.9" stroke-width="1.6"/>"#,
             Icon::Forward10 => r#"<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v3.8h-3.8"/><path d="M8.8 10.4l1.3-1v6" stroke-width="1.6"/><ellipse cx="13.9" cy="12.4" rx="1.7" ry="2.9" stroke-width="1.6"/>"#,
         }
@@ -174,7 +183,7 @@ mod tests {
         let all = [
             Back, Forward, Up, Down, Play, Pause, Options, Info, Close, Plus, Grid, List, Search, Home, Folder, Desktop, Document, Download, Picture, Film, Music, Drive,
             Cloud, Trash, Rotate, Cube, Terminal, Link, Import, Server, Refresh, Eye, Back10, Forward10, Lock, SortName, SortRecent, Shuffle, Speaker, Muted,
-            Star, Pin, Puzzle, Copy, Globe, Warning,
+            Star, Pin, Puzzle, Copy, Globe, Warning, Cut, Pencil, Paste,
         ];
         for icon in all {
             let (_, _, rgba) = render(icon, 48).unwrap_or_else(|| panic!("{icon:?} does not render"));
