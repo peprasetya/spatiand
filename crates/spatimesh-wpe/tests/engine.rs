@@ -1035,7 +1035,17 @@ fn a_link_visited_in_another_tab_looks_visited() {
     // A link followed in a third tab shows visited in the first, and in a fourth opened after.
     host.send(ToHost::Open { tab: 3, url: format!("{address}/other"), view: View::new(400, 300, 1.0) });
     host.loaded(3);
-    host.click(3, 50.0, 40.0);
+    // Its link drawn (not yet visited) before it is clicked: a click before the page is laid
+    // out lands on nothing.
+    link_turns(&mut host, 3, 40, [0, 0, 255]);
+    // Clicked again if a click came too early for a tab just opened to take it.
+    for _ in 0..3 {
+        host.click(3, 50.0, 40.0);
+        host.settle(Duration::from_secs(3));
+        if host.latest_title(3).is_some_and(|t| t.starts_with("clicked")) {
+            break;
+        }
+    }
     host.title(3, "clicked");
     link_turns(&mut host, 1, 120, [255, 0, 0]);
     host.send(ToHost::Open { tab: 4, url: format!("{address}/first"), view: View::new(400, 300, 1.0) });

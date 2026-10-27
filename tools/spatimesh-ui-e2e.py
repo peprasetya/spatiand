@@ -210,7 +210,8 @@ def main():
             "XDG_RUNTIME_DIR": runtime,
             "HOME": work,
             "SPATIMESH_HOME": os.path.join(work, "spatimesh"),
-            "SPATIMESH_ENGINE": "webkitgtk",
+            # WebKitGTK unless SPATIMESH_E2E_ENGINE names another (`wpe`, with a WPE built).
+            "SPATIMESH_ENGINE": os.environ.get("SPATIMESH_E2E_ENGINE", "webkitgtk"),
             "EGL_PLATFORM": "surfaceless",
             "SPATIAND_BACKEND": "snapshot",
             "SPATIAND_SNAPSHOT": os.path.join(out, f"room-{name}.png"),

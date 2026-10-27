@@ -636,7 +636,8 @@ header says they are there (`WEBKIT_WEB_CONTEXT_HAS_VISITED_LINKS`); the window 
 (`ToHost::Visited`) and, when pages are taken out of the history here or on another machine,
 has them forget every visited link and tells them again what is left (`ToHost::ForgetVisited`).
 `spatimesh-wpe`'s `a_link_visited_in_another_tab_looks_visited` and
-`visited_links_are_told_and_forgotten` are the tests. The distro's WebKitGTK has not got the
+`visited_links_are_told_and_forgotten` are the tests; both pass on Linux against WPE built with
+the patches (2026-10-27). The distro's WebKitGTK has not got the
 patch, and keeps its links per tab.
 
 ## WPE WebKit, SpatiMesh's own engine (from 2026-10-22)
@@ -665,7 +666,10 @@ the earlier one, is no longer built into the app; its crate stays for now).
 | Developer tools | WebKit's Web Inspector, as a tab after its page (`ToHost::Inspect`; the menu's "Developer tools", Ctrl-Alt-I or Command-Option-I). It closes with its page. Not on WebKitGTK or WKWebView, whose inspector is a window of its own. |
 | Files | `file://` pages load (GIO's type identifiers taken as MIME types, patched). |
 | Extensions | The shared end-to-end test passes. |
-| Linux | `third_party/wpe/build.sh linux`: a bundle for SteamOS, built in the Ubuntu 22.04 root and carrying every library but glibc, libstdc++, Mesa, OpenSSL 3 and a few every desktop has, found by `$ORIGIN` (`patches/webkit/0003` makes WebKit's own paths relative too); `SYSTEM_DEPS=1` builds it on the distro's libraries, for working on it. The release carries it in `wpe/` beside `spatimesh-wpe`, which SpatiMesh then prefers to WebKitGTK. Pictures are copied (shared memory). |
+| Linux | `third_party/wpe/build.sh linux`: a bundle for SteamOS, built in the Ubuntu 22.04 root and carrying every library but glibc, libstdc++, Mesa, OpenSSL 3 and a few every desktop has, found by `$ORIGIN` (`patches/webkit/0003` makes WebKit's own paths relative too); `SYSTEM_DEPS=1` builds it on the distro's libraries, for working on it: built so on Ubuntu 24.04
+with all six patches, and there `spatimesh-wpe`'s 21 engine tests pass (four runs in a row), its
+extensions test too, and SpatiMesh's own end-to-end run in the compositor (`SPATIMESH_E2E_ENGINE=wpe
+tools/spatimesh-ui-e2e.py`, every check). The release carries it in `wpe/` beside `spatimesh-wpe`, which SpatiMesh then prefers to WebKitGTK. Pictures are copied (shared memory). |
 | Android | `third_party/wpe/build.sh android`: an NDK cross build; every library an unversioned `lib*.so`, WebKit's processes as `lib<process>.so` (found there by `patches/webkit/0003`), all in the APK's library folder (`android/build.sh`). The engine reads WPE's AHardwareBuffer pictures back (by the CPU, or through GL). **Written, not yet built**: there is no NDK here. |
 | Networking | Already as parallel as a browser's: each profile's engine has its own network process (one profile's stalled requests cannot hold up another's), whose libsoup keeps up to 256 connections, 6 to a server, with HTTP/2 multiplexing where the server speaks it; TLS runs on a thread of each connection's (glib-networking), and the disk cache on its own threads. What SpatiMesh adds is not waiting: a link pointed at, and where the address bar would go as it is typed, are connected to before the click -- name, TCP and TLS (`ToHost::Preconnect`, `patches/webkit/0005`'s `webkit_web_view_preconnect`; a name looked up only, where the engine has not got it). |
 | Not yet | Video frames as IOSurfaces into ANGLE; pictures handed over without copying on Linux (DMA-BUF) and Android (AHardwareBuffer); the developer tools on Android (their pages are not in the APK); the developer tools' text size in the glasses; the interface font from each platform's own. |

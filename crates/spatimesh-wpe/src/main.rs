@@ -33,7 +33,13 @@ fn find_own() {
         let found = [beside.clone(), Some(built.clone())].into_iter().flatten().find_map(|lib| {
             ["gstreamer-1_0", "gstreamer-1.0"].into_iter().find(|name| lib.join(name).is_dir()).map(|name| (lib, name))
         });
-        if let Some((lib, name)) = found {
+        // GStreamer's own plugins there (WPE built with its own GStreamer): those, and none of
+        // the system's. Only Spatiand's sink there (WPE built on the system's): the system's
+        // plugins, and it besides.
+        let own = |dir: &std::path::Path| ["libgstcoreelements.so", "libgstcoreelements.dylib"].iter().any(|f| dir.join(f).is_file());
+        if let Some((lib, name)) = found.as_ref().filter(|(lib, name)| !own(&lib.join(name))) {
+            std::env::set_var("GST_PLUGIN_PATH", lib.join(name));
+        } else if let Some((lib, name)) = found {
             std::env::set_var("GST_PLUGIN_SYSTEM_PATH", lib.join(name));
             std::env::set_var("GST_PLUGIN_PATH", "");
             let scanner = lib.join("../libexec").join(name).join("gst-plugin-scanner");

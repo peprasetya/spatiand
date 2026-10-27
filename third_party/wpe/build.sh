@@ -302,7 +302,8 @@ linux)
             pkg-config --exists "$m" || { echo "SYSTEM_DEPS: $m missing (its -dev package)" >&2; exit 1; }
         done
         gst_cflags=$(pkg-config --cflags --libs gstreamer-audio-1.0)
-        platform_options=
+        # WebKit's processes find its library where it was installed (no bundle to move).
+        platform_options="-DCMAKE_INSTALL_RPATH=$out/lib"
     else
         export PKG_CONFIG_PATH="$out/lib/pkgconfig:$ffmpeg/lib/pkgconfig"
         export CPPFLAGS="-I$out/include" LDFLAGS="-L$out/lib -Wl,-rpath-link,$out/lib"
