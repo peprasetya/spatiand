@@ -37,6 +37,7 @@ mod imu_record;
 mod input_map;
 mod keyboard_face;
 mod menu;
+mod install;
 mod own;
 mod pip;
 mod pointer;
@@ -78,6 +79,36 @@ const LOG: &str = "info,smithay::input::keyboard=warn";
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(LOG)).init();
+
+    // Installing applications from a terminal, without a session: what dropping a `.spatiapp`
+    // into the room does (see `spatiand_platform::installed`).
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        ["--install", path] => {
+            match spatiand_platform::installed::install(std::path::Path::new(path)) {
+                Ok(app) => println!("installed {} in {}", app.manifest.name, app.dir.display()),
+                Err(e) => {
+                    eprintln!("could not install {path}: {e}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        ["--uninstall", id] => {
+            if let Err(e) = spatiand_platform::installed::uninstall(id) {
+                eprintln!("could not uninstall {id}: {e}");
+                std::process::exit(1);
+            }
+            return;
+        }
+        ["--list-apps"] => {
+            for app in own::list() {
+                println!("{}\t{}", app.name, app.exec);
+            }
+            return;
+        }
+        _ => {}
+    }
 
     // Before any backend, and so before anything claims the controller. The window between
     // claiming hardware and being able to hand it back is exactly the window this closes, so

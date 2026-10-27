@@ -305,3 +305,51 @@ outages: open, seek and steady play no worse than FFmpeg's own, few large reques
 left stalled; and SpatiReel playing from `tools/fake-vibrefy.py`. **Not checked**: the real
 Vibrefy over the internet -- the owner's ears and pfSense. A server-side improvement worth
 having regardless: `pipeRange` could ask Drive for the next 8 MB while relaying this one.
+
+## 2026-10-27: applications installed into Spatiand, by dropping them into the room
+
+Asked for by the owner for SpatiQuake (Quake in the room, peprasetya/SpatiQuake): an application
+that is not one Spatiand carries is listed with Spatiand's own, behind the Spatiand bubble, and is
+installed by dragging its package into the room -- not by an AppImage or a terminal.
+
+* **An installed application** is a folder `~/.local/share/spatiand/apps/<id>/` with
+  `spatiand-app.toml` at its top: `id`, `name`, `exec` (the program, inside the folder), `args`,
+  `icon` (PNG or SVG, inside the folder), `categories`, `kind` (`window` or `vr`), `version`.
+  `spatiand-platform::installed` reads, lists, installs and removes them; a folder whose manifest
+  does not read, whose program is missing, or whose name is not its id is left out (and logged).
+* **A package** is that folder as a gzipped tar, `.spatiapp`, the manifest at the top or inside one
+  top folder. Installing unpacks it beside the others, checks the manifest and the program, makes
+  the program executable, and puts it in place with one rename -- an earlier version of the same id
+  is moved aside first and removed after, so the launcher never sees half of one. The unpacking is
+  the `tar` crate's (`..` and absolute paths refused).
+* **The launcher** (`own.rs`): Spatiand's own, then the installed ones by name. Read again each time
+  the launcher opens and after an install, so one installed or removed meanwhile is there. An
+  installed one is started as any program is (the X server named, the virtual pad the only
+  controller); a `vr` one is told where Spatiand's OpenXR runtime is if the session has not said.
+* **Dropping into the room** (`install.rs`, `ClientDndGrabHandler` in `state.rs`): when a window
+  starts a drag that offers `text/uri-list`, Spatiand asks the source for it at once -- a drop on
+  nothing cancels the source before the compositor hears of the drop, and a cancelled source
+  answers nothing. A drag let go of over the room (no window under the pointer) with a
+  `.spatiapp` in it: the package is read on a thread, and the notice card under the status bar
+  asks "Install SpatiQuake 1.2? Press here to install it." Pressing the card (the right trigger's
+  ray, as any press) installs it on a thread, and the card says it is installed and where to find
+  it. An offer not taken goes after half a minute.
+* **From a terminal**: `spatiand --install FILE` (a package or a folder), `--uninstall ID`,
+  `--list-apps`.
+* **The snapshot harness** draws the notice card, and has two more steps: `roomup` (the pointer
+  off every window and the left button let go there: a drop onto the room) and `notice` (press
+  the card).
+
+**Checked**, in a container with no GPU (the snapshot backend in software): a GTK window as the
+drag source (`gtk_drag_source_add_uri_targets`, one `file://` address), dragged out past its edge
+and let go on the room -- GTK began the drag, was asked for the data, and Spatiand offered
+"Install SpatiQuake test?" on the card; with `notice` after it, SpatiQuake was installed and the
+card said so; `SPATIAND_VIEW=launcher SPATIAND_VIEW_PAGE=own` then showed it behind the Spatiand
+bubble with its icon. Unit tests for the package rules (good package, one top folder, a second
+install replacing the first, seven kinds of wrong package refused leaving nothing behind) and the
+`text/uri-list` reading.
+
+**Not done**: SpatiShelf cannot start a drag yet, so in the room the drag has to come from another
+file manager that is a Wayland client (Dolphin, Nautilus); a drag from an X11 application
+(Xwayland) is not bridged. There is no way to remove an installed application in the room yet
+(`spatiand --uninstall`). Not tried on the Deck.

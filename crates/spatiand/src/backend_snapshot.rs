@@ -906,6 +906,11 @@ pub fn run(
         &crate::status::line(),
         ppd,
     )?;
+    // What a drop into the room offered for installing, or what became of it.
+    scene.sync_notice(&mut renderer, &mut text, &crate::install::notice(), ppd)?;
+    if crate::install::take_changed() {
+        crate::own::adopt(&mut shell);
+    }
     let editor_view = editor.as_mut().map(|e| e.view());
     // The editor shares the view with its controller picture, so its card is smaller.
     scene.set_compact_card(editor_view.is_some());
@@ -1076,6 +1081,7 @@ pub fn run(
             scene_ref.draw_windows(gl, &eye, &windows);
             if !shell_ref.menu_is_open() {
                 scene_ref.draw_status(gl, &eye, orientation);
+                scene_ref.draw_notice(gl, &eye, orientation);
             }
         }
         if keyboard_open {
@@ -1503,7 +1509,12 @@ fn click_on_the_window(
 /// ```text
 /// click:u,v  rclick:u,v  move:u,v  down:u,v  up:u,v  drag:u,v,u,v  scroll:dx,dy  pinch:1.5
 /// key:28  key:ctrl+shift+20  keydown:42  keyup:42  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
+/// roomup  notice
 /// ```
+///
+/// `roomup` takes the pointer off every window and lets go of the left button there, on the room:
+/// how a drag is dropped onto nothing (an application's `.spatiapp` is offered for installing so).
+/// `notice` presses the notice card under the status bar.
 ///
 /// Positions are fractions across the chosen window; `scroll` is in pixels where the pointer
 /// last was; `key` is an evdev code with modifiers held; `type` is US-keyboard text; `dump`
@@ -1530,6 +1541,8 @@ enum Scripted {
     Wait(f32),
     Dump(String),
     Window(String),
+    RoomUp,
+    Notice,
 }
 
 fn scripted_steps() -> Vec<Scripted> {
@@ -1568,6 +1581,8 @@ fn scripted_steps() -> Vec<Scripted> {
                 ("keyup", [code]) => Scripted::Hold(*code as u32, false),
                 ("type", _) => Scripted::Type(rest.to_string()),
                 ("dump", _) => Scripted::Dump(rest.to_string()),
+                ("roomup", _) => Scripted::RoomUp,
+                ("notice", _) => Scripted::Notice,
                 ("window", _) => Scripted::Window(rest.to_string()),
                 _ => {
                     log::warn!("SPATIAND_STEPS: not understood: {step:?}");
@@ -1635,6 +1650,17 @@ fn key_event(state: &mut Spatiand, code: u32, pressed: bool) {
 }
 
 fn pointer_event(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], at: (f64, f64), button: Option<(u32, bool)>) {
+    pointer_event_on(state, windows, at, button, false)
+}
+
+/// As [`pointer_event`]; `on_room` puts the pointer over no window at all.
+fn pointer_event_on(
+    state: &mut Spatiand,
+    windows: &[crate::scene::WindowQuad],
+    at: (f64, f64),
+    button: Option<(u32, bool)>,
+    on_room: bool,
+) {
     use smithay::input::pointer::{ButtonEvent, MotionEvent};
     use smithay::utils::{Point, SERIAL_COUNTER};
     let Some(window) = chosen_window(state, windows) else {
@@ -1649,7 +1675,8 @@ fn pointer_event(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], at:
         let w = window.window.clone();
         state.focus_window(&w);
     }
-    pointer.motion(state, Some((surface, Point::from((0.0, 0.0)))), &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time: 100 });
+    let focus = (!on_room).then(|| (surface, Point::from((0.0, 0.0))));
+    pointer.motion(state, focus, &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time: 100 });
     pointer.frame(state);
     if let Some((button, pressed)) = button {
         let button_state = if pressed { smithay::backend::input::ButtonState::Pressed } else { smithay::backend::input::ButtonState::Released };
@@ -1663,6 +1690,18 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
     use smithay::input::pointer::AxisFrame;
     log::info!("step: {step:?}");
     match step {
+        Scripted::RoomUp => {
+            *at = (2.0, 0.5);
+            pointer_event_on(state, windows, *at, None, true);
+            pointer_event_on(state, windows, *at, Some((crate::pointer::BTN_LEFT, false)), true);
+        }
+        Scripted::Notice => {
+            if crate::install::asking() {
+                crate::install::accept();
+            } else {
+                log::warn!("notice: the card is not asking anything");
+            }
+        }
         Scripted::Click(u, v, button) => {
             *at = (*u, *v);
             pointer_event(state, windows, *at, Some((*button, true)));

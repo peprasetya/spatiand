@@ -1936,7 +1936,32 @@ impl DataDeviceHandler for Spatiand {
         &self.data_device_state
     }
 }
-impl ClientDndGrabHandler for Spatiand {}
+/// A drag a window started. Spatiand itself takes one thing from drags: a `.spatiapp` let go of
+/// over the room, which it offers to install (`crate::install`).
+impl ClientDndGrabHandler for Spatiand {
+    fn started(
+        &mut self,
+        source: Option<smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource>,
+        _icon: Option<WlSurface>,
+        _seat: smithay::input::Seat<Self>,
+    ) {
+        let Some(source) = source else {
+            crate::install::drag_started(&[], |_| {});
+            return;
+        };
+        let mime_types =
+            smithay::wayland::selection::data_device::with_source_metadata(&source, |m| m.mime_types.clone())
+                .unwrap_or_default();
+        crate::install::drag_started(&mime_types, |fd| {
+            use std::os::fd::AsFd;
+            source.send("text/uri-list".into(), fd.as_fd());
+        });
+    }
+
+    fn dropped(&mut self, target: Option<WlSurface>, _validated: bool, _seat: smithay::input::Seat<Self>) {
+        crate::install::drag_ended(target.is_none());
+    }
+}
 impl ServerDndGrabHandler for Spatiand {}
 
 delegate_compositor!(Spatiand);
