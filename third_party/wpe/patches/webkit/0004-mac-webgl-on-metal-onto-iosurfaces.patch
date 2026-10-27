@@ -35,7 +35,7 @@ index 39f5f71..50357f0 100644
  platform/graphics/gbm/PlatformDisplayGBM.cpp @no-unify
  platform/graphics/gbm/VivanteSuperTiledTexture.cpp
 diff --git a/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.cpp b/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.cpp
-index 3d2261d..34b41f4 100644
+index 3d2261d..52a9df2 100644
 --- a/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.cpp
 @@ -63,6 +63,10 @@
@@ -76,7 +76,25 @@ index 3d2261d..34b41f4 100644
      if (m_displayObj == EGL_NO_DISPLAY)
          return false;
  
-@@ -317,13 +333,21 @@ bool GraphicsContextGLTextureMapperANGLE::platformInitializeContext()
+@@ -302,8 +318,15 @@ bool GraphicsContextGLTextureMapperANGLE::platformInitializeContext()
+     eglContextAttributes.append(EGL_CONTEXT_BIND_GENERATES_RESOURCE_CHROMIUM);
+     eglContextAttributes.append(EGL_FALSE);
+ #if USE(COORDINATED_GRAPHICS)
+-    eglContextAttributes.append(EGL_CONTEXT_VIRTUALIZATION_GROUP_ANGLE);
+-    eglContextAttributes.append(0);
++#if OS(DARWIN) && PLATFORM(WPE)
++    // Virtualising contexts is the GL back end's way of sharing with the compositor's; on a
++    // display of WebGL's own there is nothing to share.
++    if (!m_ownDisplay)
++#endif
++    {
++        eglContextAttributes.append(EGL_CONTEXT_VIRTUALIZATION_GROUP_ANGLE);
++        eglContextAttributes.append(0);
++    }
+ #endif
+ 
+     if (WTF::contains(unsafeSpan(displayExtensions), "EGL_ANGLE_power_preference"_span)) {
+@@ -317,13 +340,21 @@ bool GraphicsContextGLTextureMapperANGLE::platformInitializeContext()
  #if PLATFORM(WIN)
      m_contextObj = EGL_CreateContext(m_displayObj, m_configObj, sharedDisplay.angleSharingGLContext(), eglContextAttributes.span().data());
  #else
@@ -124,7 +142,7 @@ index 24fdaf7..3615c31 100644
      bool platformInitialize() override;
 diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperIOSurface.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperIOSurface.cpp
 new file mode 100644
-index 0000000..61822c0
+index 0000000..fc3ae62
 --- /dev/null
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperIOSurface.cpp
 @@ -0,0 +1,323 @@
@@ -183,7 +201,7 @@ index 0000000..61822c0
 +        auto* surface = createIOSurface(size);
 +        if (!surface)
 +            return nullptr;
-+        RefPtr buffer = adoptRef(*new IOSurfaceDrawingBuffer(display, surface, size));
++        RefPtr<IOSurfaceDrawingBuffer> buffer = adoptRef(*new IOSurfaceDrawingBuffer(display, surface, size));
 +        CFRelease(surface);
 +
 +        const EGLint attributes[] = {
@@ -424,7 +442,7 @@ index 0000000..61822c0
 +    // The frame is done when Metal has drawn it: said by a fence, flushed so that it comes.
 +    auto sync = EGL_CreateSyncKHR(m_displayObj, EGL_SYNC_FENCE_KHR, nullptr);
 +    GL_Flush();
-+    RefPtr shown = m_bound;
++    RefPtr<IOSurfaceDrawingBuffer> shown = m_bound;
 +
 +    if (!bindNextDrawingBuffer()) {
 +        if (sync != EGL_NO_SYNC_KHR)
