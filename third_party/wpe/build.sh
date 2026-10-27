@@ -35,6 +35,9 @@ jobs=${JOBS:-$( (sysctl -n hw.ncpu || nproc) 2>/dev/null )}
 PATH=$work/.venv/bin:$PATH
 export PKG_CONFIG_PATH="$out/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 
+# Cross-building (Android): what each kind of build is told of the machine it builds for.
+CROSS_CMAKE= CROSS_MESON= CROSS_AUTO=
+
 fetch() { # name url
     [ -d "$src/$1" ] && return
     case $2 in *.gz) unpack=-xz ;; *.bz2) unpack=-xj ;; *) unpack=-xJ ;; esac
@@ -49,7 +52,7 @@ cmake_lib() { # name [cmake options]
     [ -f "$build/$name/.installed" ] && return
     cmake -S "$src/$name" -B "$build/$name" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$out" \
         -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_NAME_DIR="$out/lib" -DCMAKE_PREFIX_PATH="$out" \
-        -DCMAKE_IGNORE_PREFIX_PATH="/usr/local;/opt/homebrew" -DBUILD_SHARED_LIBS=ON "$@"
+        -DCMAKE_IGNORE_PREFIX_PATH="/usr/local;/opt/homebrew" -DBUILD_SHARED_LIBS=ON $CROSS_CMAKE "$@"
     ninja -C "$build/$name" install
     touch "$build/$name/.installed"
 }
@@ -57,14 +60,14 @@ auto_lib() { # name [configure options]
     name=$1; shift
     [ -f "$build/$name/.installed" ] && return
     mkdir -p "$build/$name"
-    (cd "$build/$name" && "$src/$name/configure" --prefix="$out" --disable-static --enable-shared "$@" && make -j"$jobs" && make install)
+    (cd "$build/$name" && "$src/$name/configure" --prefix="$out" --disable-static --enable-shared $CROSS_AUTO "$@" && make -j"$jobs" && make install)
     touch "$build/$name/.installed"
 }
 meson_lib() { # name [meson options]
     name=$1; shift
     [ -f "$build/$name/.installed" ] && return
-    meson setup --wipe "$build/$name" "$src/$name" --prefix="$out" --libdir=lib --buildtype=release "$@" \
-        || meson setup "$build/$name" "$src/$name" --prefix="$out" --libdir=lib --buildtype=release "$@"
+    meson setup --wipe "$build/$name" "$src/$name" --prefix="$out" --libdir=lib --buildtype=release $CROSS_MESON "$@" \
+        || meson setup "$build/$name" "$src/$name" --prefix="$out" --libdir=lib --buildtype=release $CROSS_MESON "$@"
     ninja -C "$build/$name" install
     touch "$build/$name/.installed"
 }
@@ -410,6 +413,165 @@ linux)
     fi
     [ -n "${DEPS_ONLY:-}" ] && { echo "libraries for $platform in $out (DEPS_ONLY: WebKit not built)"; exit 0; }
     ;;
+android)
+    # The Beam Pro: arm64, Android 14, with the NDK the rest of the APK is built with
+    # (android/build.sh). Everything WPE needs that Android has not got is built here for it,
+    # shared, each library named lib<name>.so (see the end of this script).
+    SDK=${ANDROID_HOME:-$HOME/Library/Android/sdk}
+    NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
+    [ -d "$NDK" ] || { echo "no NDK at $NDK (ANDROID_NDK_HOME)" >&2; exit 1; }
+    API=34
+    HOST_TAG=$(case "$(uname -s)" in (Darwin) echo darwin-x86_64 ;; (*) echo linux-x86_64 ;; esac)
+    TOOLS=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin
+    HOST_CC=${HOST_CC:-cc} HOST_CXX=${HOST_CXX:-c++}
+    # FFmpeg with MediaCodec, and inside it OpenSSL, as the APK has them.
+    "$here/../ffmpeg/build.sh" android
+    ffmpeg=$(cd "$here/../ffmpeg/out/android" && pwd)
+    export PKG_CONFIG_LIBDIR="$out/lib/pkgconfig:$ffmpeg/lib/pkgconfig"
+    unset PKG_CONFIG_PATH
+    # Pages of 16 KB, which Android 15's devices will want of every library.
+    pages="-Wl,-z,max-page-size=16384"
+    toolchain="-DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$API -DANDROID_STL=c++_shared"
+    CROSS_CMAKE="$toolchain -DCMAKE_FIND_ROOT_PATH=$out -DCMAKE_SHARED_LINKER_FLAGS=$pages"
+    cross=$build/android.ini
+    mkdir -p "$build"
+    cat > "$cross" <<INI
+[binaries]
+c = '$TOOLS/aarch64-linux-android$API-clang'
+cpp = '$TOOLS/aarch64-linux-android$API-clang++'
+ar = '$TOOLS/llvm-ar'
+strip = '$TOOLS/llvm-strip'
+ranlib = '$TOOLS/llvm-ranlib'
+pkg-config = 'pkg-config'
+[properties]
+needs_exe_wrapper = true
+[built-in options]
+c_link_args = ['$pages']
+cpp_link_args = ['$pages']
+[host_machine]
+system = 'android'
+cpu_family = 'aarch64'
+cpu = 'armv8-a'
+endian = 'little'
+INI
+    CROSS_MESON="--cross-file $cross"
+    CROSS_AUTO="--host=aarch64-linux-android"
+    export CC="$TOOLS/aarch64-linux-android$API-clang" CXX="$TOOLS/aarch64-linux-android$API-clang++"
+    export AR="$TOOLS/llvm-ar" RANLIB="$TOOLS/llvm-ranlib" STRIP="$TOOLS/llvm-strip"
+    export CPPFLAGS="-I$out/include" LDFLAGS="-L$out/lib $pages"
+    gnu=https://ftp.gnu.org/gnu
+    fetch "zstd-$ZSTD_VERSION" "https://github.com/facebook/zstd/releases/download/v$ZSTD_VERSION/zstd-$ZSTD_VERSION.tar.gz"
+    [ -f "$build/zstd-$ZSTD_VERSION/.installed" ] || { cmake -S "$src/zstd-$ZSTD_VERSION/build/cmake" -B "$build/zstd-$ZSTD_VERSION" -G Ninja $CROSS_CMAKE \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$out" -DCMAKE_INSTALL_LIBDIR=lib \
+        -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_STATIC=OFF -DZSTD_BUILD_TESTS=OFF && ninja -C "$build/zstd-$ZSTD_VERSION" install && touch "$build/zstd-$ZSTD_VERSION/.installed"; }
+    fetch "brotli-$BROTLI_VERSION" "https://github.com/google/brotli/archive/refs/tags/v$BROTLI_VERSION.tar.gz"
+    cmake_lib "brotli-$BROTLI_VERSION" -DBROTLI_DISABLE_TESTS=ON -DBROTLI_BUILD_TOOLS=OFF
+    fetch "woff2-$WOFF2_VERSION" "https://github.com/google/woff2/archive/refs/tags/v$WOFF2_VERSION.tar.gz"
+    cmake_lib "woff2-$WOFF2_VERSION" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+    fetch "pcre2-$PCRE2_VERSION" "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-$PCRE2_VERSION/pcre2-$PCRE2_VERSION.tar.bz2"
+    cmake_lib "pcre2-$PCRE2_VERSION" -DPCRE2_BUILD_PCRE2GREP=OFF -DPCRE2_BUILD_TESTS=OFF -DPCRE2_SUPPORT_JIT=ON
+    # What Bionic has not got that GLib and fontconfig want: libffi, expat, and gettext's libintl.
+    fetch "libffi-$LIBFFI_VERSION" "https://github.com/libffi/libffi/releases/download/v$LIBFFI_VERSION/libffi-$LIBFFI_VERSION.tar.gz"
+    auto_lib "libffi-$LIBFFI_VERSION" --disable-docs --disable-multi-os-directory
+    fetch "expat-$EXPAT_VERSION" "https://github.com/libexpat/libexpat/releases/download/R_$(echo "$EXPAT_VERSION" | tr . _)/expat-$EXPAT_VERSION.tar.xz"
+    cmake_lib "expat-$EXPAT_VERSION" -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_DOCS=OFF
+    fetch "gettext-$GETTEXT_VERSION" "$gnu/gettext/gettext-$GETTEXT_VERSION.tar.xz"
+    [ -f "$build/gettext-$GETTEXT_VERSION/.installed" ] || { mkdir -p "$build/gettext-$GETTEXT_VERSION" && (cd "$build/gettext-$GETTEXT_VERSION" \
+        && "$src/gettext-$GETTEXT_VERSION/gettext-runtime/configure" --prefix="$out" --disable-static --enable-shared $CROSS_AUTO --disable-java \
+            --disable-csharp --disable-libasprintf --without-emacs --with-included-gettext \
+        && make -j"$jobs" -C intl && make -C intl install) && touch "$build/gettext-$GETTEXT_VERSION/.installed"; }
+    # ICU, cross-built from a build of it for this machine, which makes its data.
+    icu=icu-$ICU_VERSION
+    fetch "$icu" "https://github.com/unicode-org/icu/releases/download/release-$(echo "$ICU_VERSION" | tr . -)/icu4c-$(echo "$ICU_VERSION" | tr . _)-src.tgz"
+    [ -d "$src/icu" ] && [ ! -d "$src/$icu" ] && mv "$src/icu" "$src/$icu"
+    [ -f "$build/$icu-host/.built" ] || { mkdir -p "$build/$icu-host" && (cd "$build/$icu-host" \
+        && env -u CC -u CXX -u AR -u RANLIB -u CPPFLAGS -u LDFLAGS CC="$HOST_CC" CXX="$HOST_CXX" "$src/$icu/source/configure" --disable-tests --disable-samples \
+        && make -j"$jobs") && touch "$build/$icu-host/.built"; }
+    [ -f "$build/$icu/.installed" ] || { mkdir -p "$build/$icu" && (cd "$build/$icu" \
+        && "$src/$icu/source/configure" --prefix="$out" $CROSS_AUTO --with-cross-build="$build/$icu-host" --disable-static --enable-shared \
+            --disable-tests --disable-samples --disable-extras --disable-icuio --disable-layoutex --disable-tools \
+        && make -j"$jobs" && make install) && touch "$build/$icu/.installed"; }
+    fetch "libxml2-$LIBXML2_VERSION" "https://download.gnome.org/sources/libxml2/${LIBXML2_VERSION%.*}/libxml2-$LIBXML2_VERSION.tar.xz"
+    cmake_lib "libxml2-$LIBXML2_VERSION" -DLIBXML2_WITH_PYTHON=OFF -DLIBXML2_WITH_LZMA=OFF -DLIBXML2_WITH_ICU=OFF \
+        -DLIBXML2_WITH_TESTS=OFF -DLIBXML2_WITH_PROGRAMS=OFF
+    sqlite=sqlite-autoconf-$SQLITE_VERSION
+    fetch "$sqlite" "https://sqlite.org/$SQLITE_YEAR/$sqlite.tar.gz"
+    auto_lib "$sqlite" --disable-readline --enable-threadsafe
+    fetch "glib-$GLIB_VERSION" "https://download.gnome.org/sources/glib/${GLIB_VERSION%.*}/glib-$GLIB_VERSION.tar.xz"
+    meson_lib "glib-$GLIB_VERSION" -Dnls=disabled -Dtests=false -Dintrospection=disabled -Ddocumentation=false -Dman-pages=disabled \
+        -Dsysprof=disabled -Dlibelf=disabled -Dglib_debug=disabled -Dselinux=disabled -Dlibmount=disabled -Dxattr=false
+    fetch "libpng-$LIBPNG_VERSION" "https://download.sourceforge.net/libpng/libpng-$LIBPNG_VERSION.tar.xz"
+    cmake_lib "libpng-$LIBPNG_VERSION" -DPNG_TESTS=OFF -DPNG_TOOLS=OFF -DPNG_STATIC=OFF
+    fetch "freetype-$FREETYPE_VERSION" "https://download.savannah.gnu.org/releases/freetype/freetype-$FREETYPE_VERSION.tar.xz"
+    meson_lib "freetype-$FREETYPE_VERSION" -Dharfbuzz=disabled -Dbrotli=disabled -Dpng=enabled -Dzlib=system -Dbzip2=disabled -Dtests=disabled
+    # Android's fonts are given to it when the engine starts (third_party/wpe/android/fonts.conf).
+    fetch "fontconfig-$FONTCONFIG_VERSION" "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/$FONTCONFIG_VERSION/fontconfig-$FONTCONFIG_VERSION.tar.xz"
+    meson_lib "fontconfig-$FONTCONFIG_VERSION" -Ddoc=disabled -Dtests=disabled -Dtools=disabled -Dcache-build=disabled -Dnls=disabled
+    fetch "libjpeg-turbo-$LIBJPEG_TURBO_VERSION" "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/$LIBJPEG_TURBO_VERSION/libjpeg-turbo-$LIBJPEG_TURBO_VERSION.tar.gz"
+    cmake_lib "libjpeg-turbo-$LIBJPEG_TURBO_VERSION" -DENABLE_STATIC=OFF -DWITH_TURBOJPEG=OFF
+    fetch "libwebp-$LIBWEBP_VERSION" "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-$LIBWEBP_VERSION.tar.gz"
+    cmake_lib "libwebp-$LIBWEBP_VERSION" -DWEBP_BUILD_ANIM_UTILS=OFF -DWEBP_BUILD_CWEBP=OFF -DWEBP_BUILD_DWEBP=OFF -DWEBP_BUILD_GIF2WEBP=OFF \
+        -DWEBP_BUILD_IMG2WEBP=OFF -DWEBP_BUILD_VWEBP=OFF -DWEBP_BUILD_WEBPINFO=OFF -DWEBP_BUILD_WEBPMUX=OFF -DWEBP_BUILD_EXTRAS=OFF
+    fetch "nghttp2-$NGHTTP2_VERSION" "https://github.com/nghttp2/nghttp2/releases/download/v$NGHTTP2_VERSION/nghttp2-$NGHTTP2_VERSION.tar.xz"
+    cmake_lib "nghttp2-$NGHTTP2_VERSION" -DENABLE_LIB_ONLY=ON -DBUILD_STATIC_LIBS=OFF -DENABLE_DOC=OFF -DBUILD_TESTING=OFF
+    fetch "libpsl-$LIBPSL_VERSION" "https://github.com/rockdaboot/libpsl/releases/download/$LIBPSL_VERSION/libpsl-$LIBPSL_VERSION.tar.gz"
+    meson_lib "libpsl-$LIBPSL_VERSION" -Druntime=no -Dtests=false -Ddocs=false
+    fetch "libtasn1-$LIBTASN1_VERSION" "$gnu/libtasn1/libtasn1-$LIBTASN1_VERSION.tar.gz"
+    auto_lib "libtasn1-$LIBTASN1_VERSION" --disable-doc
+    # libgpg-error describes each system's lock to libgcrypt; Bionic's arm64 lock is as glibc's
+    # in layout for what it reads, and is said to it as that where it has no word of Android.
+    fetch "libgpg-error-$LIBGPG_ERROR_VERSION" "https://gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-$LIBGPG_ERROR_VERSION.tar.bz2"
+    syscfg="$src/libgpg-error-$LIBGPG_ERROR_VERSION/src/syscfg"
+    [ -f "$syscfg/lock-obj-pub.aarch64-unknown-linux-android.h" ] || cp "$syscfg/lock-obj-pub.aarch64-unknown-linux-gnu.h" "$syscfg/lock-obj-pub.aarch64-unknown-linux-android.h"
+    auto_lib "libgpg-error-$LIBGPG_ERROR_VERSION" --disable-doc --disable-tests --disable-nls
+    fetch "libgcrypt-$LIBGCRYPT_VERSION" "https://gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-$LIBGCRYPT_VERSION.tar.bz2"
+    auto_lib "libgcrypt-$LIBGCRYPT_VERSION" --disable-doc --with-libgpg-error-prefix="$out"
+    fetch "glib-networking-$GLIB_NETWORKING_VERSION" "https://download.gnome.org/sources/glib-networking/${GLIB_NETWORKING_VERSION%.*}/glib-networking-$GLIB_NETWORKING_VERSION.tar.xz"
+    meson_lib "glib-networking-$GLIB_NETWORKING_VERSION" -Dgnutls=disabled -Dopenssl=enabled -Dlibproxy=disabled -Dgnome_proxy=disabled -Dtests=false
+    fetch "libsoup-$LIBSOUP_VERSION" "https://download.gnome.org/sources/libsoup/${LIBSOUP_VERSION%.*}/libsoup-$LIBSOUP_VERSION.tar.xz"
+    meson_lib "libsoup-$LIBSOUP_VERSION" -Dtests=false -Dintrospection=disabled -Dvapi=disabled -Ddocs=disabled \
+        -Dgssapi=disabled -Dntlm=disabled -Dbrotli=enabled -Dsysprof=disabled -Dpkcs11_tests=disabled -Dautobahn=disabled
+    fetch "harfbuzz-$HARFBUZZ_VERSION" "https://github.com/harfbuzz/harfbuzz/releases/download/$HARFBUZZ_VERSION/harfbuzz-$HARFBUZZ_VERSION.tar.xz"
+    meson_lib "harfbuzz-$HARFBUZZ_VERSION" -Dicu=enabled -Dfreetype=enabled -Dglib=enabled -Dgobject=disabled \
+        -Dcairo=disabled -Dchafa=disabled -Dtests=disabled -Ddocs=disabled -Dintrospection=disabled -Dutilities=disabled
+    # GL is Android's own EGL and GLES, which libepoxy opens.
+    fetch "libepoxy-$LIBEPOXY_VERSION" "https://github.com/anholt/libepoxy/archive/refs/tags/$LIBEPOXY_VERSION.tar.gz"
+    meson_lib "libepoxy-$LIBEPOXY_VERSION" -Degl=yes -Dglx=no -Dx11=false -Dtests=false -Ddocs=false
+    # The keyboard: the app's own layouts (android/xkbcommon/build.sh), named by XKB_CONFIG_ROOT.
+    fetch "libxkbcommon-$XKBCOMMON_VERSION" "https://xkbcommon.org/download/libxkbcommon-$XKBCOMMON_VERSION.tar.xz"
+    meson_lib "libxkbcommon-$XKBCOMMON_VERSION" -Denable-x11=false -Denable-wayland=false -Denable-docs=false -Denable-tools=false \
+        -Denable-xkbregistry=false -Denable-bash-completion=false
+    # Media: GStreamer with only what pages need, decoding by gst-libav on Spatiand's FFmpeg
+    # (MediaCodec in it); the sound is the room's, through Spatiand's sink (gst/).
+    gst=https://gstreamer.freedesktop.org/src
+    gst_off="-Dauto_features=disabled -Dtests=disabled -Dexamples=disabled -Ddoc=disabled -Dnls=disabled -Dintrospection=disabled"
+    fetch "gstreamer-$GSTREAMER_VERSION" "$gst/gstreamer/gstreamer-$GSTREAMER_VERSION.tar.xz"
+    meson_lib "gstreamer-$GSTREAMER_VERSION" $gst_off -Dtools=disabled -Dcheck=enabled -Dcoretracers=disabled
+    fetch "gst-plugins-base-$GSTREAMER_VERSION" "$gst/gst-plugins-base/gst-plugins-base-$GSTREAMER_VERSION.tar.xz"
+    meson_lib "gst-plugins-base-$GSTREAMER_VERSION" $gst_off -Dtools=disabled \
+        -Dapp=enabled -Daudioconvert=enabled -Daudioresample=enabled -Dplayback=enabled -Dtypefind=enabled \
+        -Dvideoconvertscale=enabled -Dvolume=enabled -Dsubparse=enabled -Dgio=enabled -Doverlaycomposition=enabled -Drawparse=enabled -Dgl=disabled
+    fetch "gst-plugins-good-$GSTREAMER_VERSION" "$gst/gst-plugins-good/gst-plugins-good-$GSTREAMER_VERSION.tar.xz"
+    meson_lib "gst-plugins-good-$GSTREAMER_VERSION" ${gst_off% -Dintrospection=disabled} \
+        -Disomp4=enabled -Dmatroska=enabled -Daudioparsers=enabled -Dautodetect=enabled \
+        -Dwavparse=enabled -Did3demux=enabled -Dapetag=enabled -Dicydemux=enabled \
+        -Ddeinterlace=enabled -Dvideofilter=enabled -Daudiofx=enabled
+    fetch "gst-plugins-bad-$GSTREAMER_VERSION" "$gst/gst-plugins-bad/gst-plugins-bad-$GSTREAMER_VERSION.tar.xz"
+    meson_lib "gst-plugins-bad-$GSTREAMER_VERSION" $gst_off -Dtools=disabled \
+        -Dvideoparsers=enabled -Dsubenc=enabled -Dmpegtsdemux=enabled -Dcodecalpha=enabled
+    fetch "gst-libav-$GSTREAMER_VERSION" "$gst/gst-libav/gst-libav-$GSTREAMER_VERSION.tar.xz"
+    meson_lib "gst-libav-$GSTREAMER_VERSION" -Dtests=disabled -Ddoc=disabled
+    sink="$out/lib/gstreamer-1.0/libgstspatiand.so"
+    mkdir -p "$out/lib/gstreamer-1.0"
+    if [ ! -f "$sink" ] || [ "$here/gst/spatiandaudiosink.c" -nt "$sink" ]; then
+        "$CC" -shared -fPIC -O2 $pages -o "$sink" "$here/gst/spatiandaudiosink.c" $(pkg-config --cflags --libs gstreamer-audio-1.0)
+    fi
+    [ -n "${DEPS_ONLY:-}" ] && { echo "libraries for $platform in $out (DEPS_ONLY: WebKit not built)"; exit 0; }
+    # WebKit itself for Android: its processes are found as lib<name>.so beside its library
+    # (patches/webkit/0003), as the APK carries them.
+    platform_options="$toolchain -DCMAKE_FIND_ROOT_PATH=$out -DCMAKE_SHARED_LINKER_FLAGS=$pages -DCMAKE_EXE_LINKER_FLAGS=$pages
+        -DUSE_SYSTEM_MALLOC=ON -DENABLE_WPE_PLATFORM_DRM=OFF -DUSE_SKIA_OPENTYPE_SVG=OFF"
+    ;;
 *) echo "no such platform yet: $platform" >&2; exit 1 ;;
 esac
 
@@ -463,5 +625,37 @@ if [ "$platform" = linux ] && [ -z "${SYSTEM_DEPS:-}" ]; then
     for f in "$out"/libexec/*/* ; do
         [ -f "$f" ] && [ -x "$f" ] && file -b "$f" | grep -q ELF && patchelf --set-rpath '$ORIGIN/../../lib' "$f"
     done
+fi
+if [ "$platform" = android ]; then
+    # An APK carries only files named lib*.so in its library folder: each library is given
+    # that name (no version after it) and everything that needs it is told so; WebKit's
+    # processes go beside them as lib<process>.so.
+    renamed=
+    for f in "$out"/lib/lib*.so.*; do
+        [ -f "$f" ] && [ ! -L "$f" ] || continue
+        old=$(patchelf --print-soname "$f" 2>/dev/null || basename "$f")
+        new=$(echo "$old" | sed 's/\.so\..*$/.so/')
+        [ "$old" = "$new" ] && continue
+        cp "$f" "$out/lib/$new"
+        patchelf --set-soname "$new" "$out/lib/$new"
+        renamed="$renamed $old:$new"
+    done
+    for p in "$out"/libexec/wpe-webkit-2.0/WPE*Process "$out"/lib/wpe-webkit-2.0/injected-bundle/*.so; do
+        [ -f "$p" ] || continue
+        case $p in
+            *.so) cp "$p" "$out/lib/libWPEInjectedBundle.so" ;;
+            *) cp "$p" "$out/lib/lib$(basename "$p").so" ;;
+        esac
+    done
+    for f in "$out"/lib/*.so "$out"/lib/gstreamer-1.0/*.so "$out"/lib/gio/modules/*.so; do
+        [ -f "$f" ] && [ ! -L "$f" ] || continue
+        for pair in $renamed; do
+            patchelf --replace-needed "${pair%%:*}" "${pair##*:}" "$f" 2>/dev/null || true
+        done
+    done
+    # Plugins and modules among the libraries, as the APK has them (crates/spatimesh-wpe finds
+    # them there).
+    cp "$out"/lib/gstreamer-1.0/*.so "$out"/lib/gio/modules/*.so "$out/lib/" 2>/dev/null || true
+    cp "$NDK/toolchains/llvm/prebuilt/$HOST_TAG/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$out/lib/"
 fi
 echo "WPE $WPE_VERSION for $platform in $out"

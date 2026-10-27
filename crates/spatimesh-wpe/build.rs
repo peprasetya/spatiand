@@ -42,6 +42,10 @@ fn main() {
             // on Linux, the wpe/ folder beside this program (as DT_RPATH, which also serves the
             // libraries it loads; on a Mac the app's own path is added by mac/make-app.sh).
             println!("cargo:rustc-link-arg=-Wl,-rpath,{wpe}/lib");
+            // Android's pictures are AHardwareBuffers, read back here (native/wpe.c).
+            if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
+                println!("cargo:rustc-link-lib=dylib=nativewindow");
+            }
             if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
                 println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/wpe/lib");
                 println!("cargo:rustc-link-arg=-Wl,--disable-new-dtags");

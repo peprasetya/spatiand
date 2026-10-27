@@ -26,6 +26,10 @@
 #include <stdint.h>
 #include <string.h>
 #include <fontconfig/fontconfig.h>
+#ifdef __ANDROID__
+#include <android/hardware_buffer.h>
+#include <epoxy/gl.h>
+#endif
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreText/CoreText.h>
@@ -106,6 +110,82 @@ static void add_damage(MeshView *v, int x, int y, int w, int h) {
     v->damaged = 1;
 }
 
+#ifdef WPE_PLATFORM_BUFFER_ANDROID
+/* A picture in an AHardwareBuffer, as WPE draws on Android, into memory in the order the
+ * window reads (blue, green, red, alpha): read by the CPU where the buffer was made to be,
+ * otherwise drawn into a framebuffer of this process's own and read back from there. (WPE
+ * itself cannot yet: its Android buffer has no import_to_pixels.) Handing the buffer itself
+ * to the window, as a Mac's IOSurfaces are, is the step after. */
+static GBytes *android_pixels(WPEBuffer *buffer, int *stride, GError **error) {
+    AHardwareBuffer *ahb = wpe_buffer_android_get_hardware_buffer(WPE_BUFFER_ANDROID(buffer));
+    AHardwareBuffer_Desc d;
+    AHardwareBuffer_describe(ahb, &d);
+    int width = (int)d.width, height = (int)d.height;
+    guint8 *out = g_malloc((gsize)width * height * 4);
+    *stride = width * 4;
+    void *mapped = NULL;
+    if ((d.usage & AHARDWAREBUFFER_USAGE_CPU_READ_MASK) && AHardwareBuffer_lock(ahb, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, -1, NULL, &mapped) == 0) {
+        for (int y = 0; y < height; y++) {
+            const guint8 *row = (const guint8 *)mapped + (gsize)y * d.stride * 4;
+            guint8 *to = out + (gsize)y * width * 4;
+            for (int x = 0; x < width; x++) {
+                to[x * 4] = row[x * 4 + 2];
+                to[x * 4 + 1] = row[x * 4 + 1];
+                to[x * 4 + 2] = row[x * 4];
+                to[x * 4 + 3] = row[x * 4 + 3];
+            }
+        }
+        AHardwareBuffer_unlock(ahb, NULL);
+        return g_bytes_new_take(out, (gsize)width * height * 4);
+    }
+    /* Through GL: a context of this process's, made once, on the display WPE draws with. */
+    static EGLContext context = EGL_NO_CONTEXT;
+    static GLuint texture, framebuffer;
+    EGLDisplay egl = wpe_display_get_egl_display(wpe_buffer_get_display(buffer), error);
+    if (egl == EGL_NO_DISPLAY) {
+        g_free(out);
+        return NULL;
+    }
+    if (context == EGL_NO_CONTEXT) {
+        EGLint major, minor, found = 0;
+        eglInitialize(egl, &major, &minor);
+        const EGLint attributes[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_NONE };
+        EGLConfig config;
+        eglBindAPI(EGL_OPENGL_ES_API);
+        const EGLint version[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
+        if (eglChooseConfig(egl, attributes, &config, 1, &found) && found)
+            context = eglCreateContext(egl, config, EGL_NO_CONTEXT, version);
+        if (context == EGL_NO_CONTEXT) {
+            g_free(out);
+            g_set_error_literal(error, WPE_BUFFER_ERROR, WPE_BUFFER_ERROR_IMPORT_FAILED, "no GL context to read the page's picture with");
+            return NULL;
+        }
+        eglMakeCurrent(egl, EGL_NO_SURFACE, EGL_NO_SURFACE, context);
+        glGenTextures(1, &texture);
+        glGenFramebuffers(1, &framebuffer);
+    } else {
+        eglMakeCurrent(egl, EGL_NO_SURFACE, EGL_NO_SURFACE, context);
+    }
+    EGLImage image = wpe_buffer_import_to_egl_image(buffer, error);
+    if (!image) {
+        g_free(out);
+        return NULL;
+    }
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, image);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, out);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    for (gsize i = 0; i < (gsize)width * height * 4; i += 4) {
+        guint8 r = out[i];
+        out[i] = out[i + 2];
+        out[i + 2] = r;
+    }
+    return g_bytes_new_take(out, (gsize)width * height * 4);
+}
+#endif
+
 static gboolean mesh_view_render_buffer(WPEView *view, WPEBuffer *buffer, const WPERectangle *damage, guint n_damage, GError **error) {
     MeshView *v = (MeshView *)view;
     int width = wpe_buffer_get_width(buffer), height = wpe_buffer_get_height(buffer);
@@ -128,6 +208,12 @@ static gboolean mesh_view_render_buffer(WPEView *view, WPEBuffer *buffer, const 
     if (WPE_IS_BUFFER_SHM(buffer)) {
         pixels = g_bytes_ref(wpe_buffer_shm_get_data(WPE_BUFFER_SHM(buffer)));
         stride = (int)wpe_buffer_shm_get_stride(WPE_BUFFER_SHM(buffer));
+#ifdef WPE_PLATFORM_BUFFER_ANDROID
+    } else if (WPE_IS_BUFFER_ANDROID(buffer)) {
+        pixels = android_pixels(buffer, &stride, error);
+        if (!pixels)
+            return FALSE;
+#endif
     } else {
         pixels = wpe_buffer_import_to_pixels(buffer, error);
         if (!pixels)

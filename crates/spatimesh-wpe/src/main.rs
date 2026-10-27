@@ -13,6 +13,8 @@
 /// third_party/wpe/build.sh put them. Set before any thread is.
 #[cfg(wpe)]
 fn find_own() {
+    #[cfg(target_os = "android")]
+    android_own();
     let exe = std::env::current_exe().ok();
     let own = if cfg!(target_os = "macos") { "../Frameworks/wpe/lib" } else { "wpe/lib" };
     let beside = exe.as_ref().and_then(|e| e.parent()).map(|d| d.join(own)).filter(|d| d.is_dir());
@@ -67,6 +69,52 @@ fn find_own() {
         let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../third_party/wpe/mac/fonts.conf");
         if let Some(found) = [resources, Some(repo)].into_iter().flatten().find(|f| f.is_file()) {
             std::env::set_var("FONTCONFIG_FILE", found);
+        }
+    }
+}
+
+/// On Android everything of WPE's is in the app's library folder, flat, each named lib*.so (the
+/// only files an APK's libraries may be): its processes, its libraries, GIO's TLS module and
+/// GStreamer's plugins together. GIO and GStreamer load every library in the folder they are
+/// pointed at, so each is pointed at a folder of its own in the app's cache, of links to its
+/// own files among them; fontconfig is given Android's fonts (there is no configuration of
+/// them on Android) and GStreamer's registry is made in this process, there being no scanner.
+#[cfg(all(wpe, target_os = "android"))]
+fn android_own() {
+    use std::path::{Path, PathBuf};
+    let Some(lib) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) else { return };
+    let cache = std::env::var_os("TMPDIR").or_else(|| std::env::var_os("HOME")).map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("spatimesh-wpe");
+    let linked = |name: &str, wanted: &dyn Fn(&str) -> bool| -> Option<PathBuf> {
+        let dir = cache.join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).ok()?;
+        for entry in std::fs::read_dir(&lib).ok()?.flatten() {
+            let file = entry.file_name().to_string_lossy().into_owned();
+            if wanted(&file) {
+                let _ = std::os::unix::fs::symlink(entry.path(), dir.join(&file));
+            }
+        }
+        Some(dir)
+    };
+    if std::env::var_os("GIO_MODULE_DIR").is_none() {
+        if let Some(dir) = linked("gio-modules", &|f| f == "libgioopenssl.so") {
+            std::env::set_var("GIO_MODULE_DIR", dir);
+        }
+    }
+    // Plugins are libgst<name>.so; GStreamer's own libraries are libgst<name>-1.0.so.
+    if std::env::var_os("GST_PLUGIN_SYSTEM_PATH").is_none() {
+        if let Some(dir) = linked("gstreamer-1.0", &|f| f.starts_with("libgst") && !f.contains("-1.0")) {
+            std::env::set_var("GST_PLUGIN_SYSTEM_PATH", dir);
+            std::env::set_var("GST_PLUGIN_PATH", "");
+            std::env::set_var("GST_REGISTRY_FORK", "no");
+            std::env::set_var("GST_REGISTRY", cache.join("gstreamer-registry.bin"));
+        }
+    }
+    if std::env::var_os("FONTCONFIG_FILE").is_none() {
+        let fonts = cache.join("fonts.conf");
+        let text = include_str!("../../../third_party/wpe/android/fonts.conf").replace("CACHE", &cache.join("fontconfig").to_string_lossy());
+        if std::fs::write(&fonts, text).is_ok() {
+            std::env::set_var("FONTCONFIG_FILE", fonts);
         }
     }
 }
