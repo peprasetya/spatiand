@@ -174,13 +174,25 @@ pub enum Event {
     /// Two fingers pinched over a window that takes pinches ([`App::set_pinch_taken`]): how
     /// much they spread since the last, as a factor -- above one is zooming in.
     Pinch { window: WindowId, scale: f32 },
+    /// Something dragged came over a window -- from this application (`own`) or another, from
+    /// anywhere in the room -- at this point of it; `forms` are what it can be had as. While it
+    /// is over the window, [`App::accept_drag`] says what the window would do with it there.
+    DragEntered { window: WindowId, x: f32, y: f32, forms: Vec<String>, own: bool },
+    DragMoved { window: WindowId, x: f32, y: f32 },
+    DragLeft { window: WindowId },
+    /// It was let go of here: [`App::drop_data`] has it, and [`App::finish_drop`] says the
+    /// window is done with it.
+    Dropped { window: WindowId, x: f32, y: f32, forms: Vec<String>, own: bool },
+    /// A drag this application started ([`App::start_drag`]) is over: taken by where it went,
+    /// and moved there rather than copied, or not taken at all.
+    DragEnded { taken: bool, moved: bool },
 }
 
 impl Event {
     /// The window an event is about, if it is about one.
     pub fn window(&self) -> Option<WindowId> {
         match self {
-            Event::Mode(_) | Event::Hands | Event::Look { .. } => None,
+            Event::Mode(_) | Event::Hands | Event::Look { .. } | Event::DragEnded { .. } => None,
             Event::Ready { window, .. }
             | Event::Resized { window, .. }
             | Event::CloseRequested { window }
@@ -193,7 +205,11 @@ impl Event {
             | Event::Focus { window, .. }
             | Event::LayerRefused { window, .. }
             | Event::LayerLost { window, .. }
-            | Event::Pinch { window, .. } => Some(*window),
+            | Event::Pinch { window, .. }
+            | Event::DragEntered { window, .. }
+            | Event::DragMoved { window, .. }
+            | Event::DragLeft { window }
+            | Event::Dropped { window, .. } => Some(*window),
         }
     }
 }
@@ -410,6 +426,77 @@ impl App {
     /// What is on the clipboard, if it is text. The same as [`clipboard::text`].
     pub fn clipboard_text(&self) -> Option<String> {
         clipboard::text()
+    }
+
+    /// Start dragging something out of `window`, in answer to the button pressed in it and
+    /// still held: to another of this application's windows, another application's, anywhere
+    /// in the room. It can be had in each of `forms` (a form's name, such as `text/uri-list`,
+    /// and its bytes); `icon` -- width, height and pixels as [`App::show_pixels`] fills them --
+    /// is what the room shows at the pointer while it goes. `can_move`: where it goes may move
+    /// it rather than copy it. Whether the room took it; [`Event::DragEnded`] says how it ended.
+    ///
+    /// While it goes, the pointer's own events stop: where it is comes as
+    /// [`Event::DragMoved`], over this application's windows as over any.
+    pub fn start_drag(&mut self, window: WindowId, forms: Vec<(String, Vec<u8>)>, icon: Option<(u32, u32, Vec<u8>)>, can_move: bool) -> bool {
+        let started = self.wire.start_drag(window, wire::DragData { forms }, icon, can_move);
+        let _ = self.queue.flush();
+        started
+    }
+
+    /// Whether a drag this application started is going on.
+    pub fn dragging(&self) -> bool {
+        self.wire.dragging()
+    }
+
+    /// What the window something is dragged over would do with it at the point it is at: take
+    /// it in `form` (`None`: not here), moving it rather than copying it. Said again as it
+    /// moves over the window, as what is under it changes.
+    pub fn accept_drag(&mut self, form: Option<&str>, moving: bool) {
+        self.wire.accept_drag(form, moving);
+        let _ = self.queue.flush();
+    }
+
+    /// What is dragged over a window, or was let go of over it, in `form`: waited for, up to a
+    /// few seconds, from the application it comes from.
+    pub fn drop_data(&mut self, form: &str) -> Option<Vec<u8>> {
+        match self.wire.drop_data(form) {
+            wire::DropRead::Here(bytes) => Some(bytes),
+            wire::DropRead::Nothing => None,
+            wire::DropRead::Pipe(file) => {
+                use std::io::Read;
+                use std::os::fd::AsRawFd;
+                if self.queue.flush().is_err() {
+                    return None;
+                }
+                let mut bytes = Vec::new();
+                let mut file = file;
+                let until = Instant::now() + Duration::from_secs(3);
+                let mut chunk = [0u8; 65536];
+                loop {
+                    let left = until.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        return None;
+                    }
+                    let mut fd = libc::pollfd { fd: file.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+                    if unsafe { libc::poll(&mut fd, 1, left.as_millis() as i32) } <= 0 {
+                        return None;
+                    }
+                    match file.read(&mut chunk) {
+                        Ok(0) => return Some(bytes),
+                        Ok(n) if bytes.len() < 64 << 20 => bytes.extend_from_slice(&chunk[..n]),
+                        Ok(_) => return Some(bytes),
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                        Err(_) => return None,
+                    }
+                }
+            }
+        }
+    }
+
+    /// The window has done what it does with what was let go of over it (or will do nothing).
+    pub fn finish_drop(&mut self) {
+        self.wire.finish_drop();
+        let _ = self.queue.flush();
     }
 
     /// Wake [`App::wait`] when `fd` has something to read -- a child process's output, a

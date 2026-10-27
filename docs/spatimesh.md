@@ -435,9 +435,11 @@ linked Spatiand and spatiand-host by `spatiand-sync`, newest file winning, delet
 
 ```text
 apps/spatimesh/settings/<name>.json                one file per setting: search, custom_search,
-                                                   home, zoom, developer
-apps/spatimesh/profiles/<id>/profile.json          name, colour, lock (a PIN's or password's
-                                                   salted hash, 100 000 rounds of SHA-256)
+                                                   home, zoom, developer, restore, bookmarks_bar
+apps/spatimesh/profiles/<id>/profile.json          name, colour, place in the list, lock (a PIN's
+                                                   or password's salted hash, 100 000 rounds of
+                                                   SHA-256)
+apps/spatimesh/profiles/<id>/settings/<name>.json  the profile's own: search, custom_search
 apps/spatimesh/profiles/<id>/bookmarks/<id>.json   one file per bookmark or folder
 ```
 
@@ -452,7 +454,9 @@ synchroniser brought (the folder's newest change) and reloads it. Cookies and hi
 too (below). Never in it, never synced, thrown away freely: the engine's own website data
 (storage, its cookie database), `~/.local/share/spatiand/spatimesh/<profile>`; cache,
 `~/.cache/spatiand/spatimesh/<profile>`; downloads in progress, in the cache until finished;
-extensions, in `local/`. The private profile writes nothing at all.
+extensions, in `local/`; what each profile had open (`local/spatimesh/profiles/<id>/session.json`)
+and the list of downloads (`local/spatimesh/downloads.json`). The private profile writes nothing
+at all.
 
 ## Logins and history on every machine (2026-10-19)
 
@@ -518,6 +522,124 @@ and its title says only that it is locked; its pages' sound is hushed (they play
 Five wrong tries in a row and the next waits half a minute. The lock keeps a window from being
 looked at; it does not encrypt the profile's website data on disk.
 
+## The browser around the page (2026-10-27)
+
+What a browser has around its pages, all of it SpatiMesh's own (the window process, drawn with
+the room's widgets): nothing here is the engine's but the few hooks listed last, so it is the same
+on the Mac, Linux and the Beam Pro.
+
+* **Menus.** The menu button's list has submenus, opened beside the line that names them (by the
+  pointer over it, or Right): History (closed lately, visited lately), Bookmarks, Zoom, Search
+  engine, Extensions. Twelve lines at most: a room's line is tall.
+* **A right click** shows what can be done with what is under it, as the engine says
+  (`Happened::ContextMenu`, from its own hit test, only when the page did not take the click): a
+  link (open in a new tab, window or private window, copy its address or words, save it), an
+  image (open, save, copy its address), a film or sound (play or pause, mute, loop, its controls,
+  open, save, copy -- its state asked of the page when the menu opens), chosen text (copy, search
+  for it, go to it if it is an address), a field (undo, redo, cut, copy, paste, choose all), the
+  page itself (back, forward, reload, bookmark, save, find, choose all), and Inspect. On a tab:
+  new tab after it, reload, duplicate, pin, mute, to a new window, close, close the others or
+  those after it, reopen closed. On a bookmark, a line of SpatiMesh's own pages, a most visited
+  site: their own.
+* **The address bar** suggests, as it is typed into, pages of the history (on every machine),
+  the bookmarks and the open tabs (`crate::omnibox`: every word typed must be in a page; the
+  start of its address counts most, then the start of a word of its title or of a part of its
+  address; often and lately visited first), and finishes the likeliest address inline (to the
+  site while the typing is within its name), the rest chosen so that typing on replaces it. Up
+  and Down go through them, Enter takes one, Shift-Delete takes a page out of the history. A
+  padlock before it over HTTPS, a warning over plain HTTP; pressed, what that means.
+* **Search engine per profile**, chosen in its submenu or the settings page, or an address of the
+  profile's own; kept with the profile (`profiles/<id>/settings/`), so on every machine.
+* **Profiles in an order of their own**: a profile's settings move it up or down the list (each
+  profile is given its place, `profile.json`'s `position`), and remove it (its name typed again).
+* **Tabs**: pinned tabs at the start of the bar, small; a sounding tab's speaker, pressed to
+  silence it; Control-Shift-T opens the last closed tab or window again, History's submenu the
+  others (25 kept, this run only). Control-PageUp and PageDown go between tabs, with Shift move
+  the tab along.
+* **What was open, opened again.** Each profile's windows are written down while they change
+  (every ten seconds at most) and when its last window closes; a profile opened with none of its
+  windows open -- at start, from the profile button, another start of SpatiMesh -- opens them as
+  they were, each tab on its bar but only the one in front loaded (the others when first shown).
+  Not for the private profile. Settings, "When a profile opens", can make it its home page instead.
+* **Bookmarks**: the star bookmarks the page and opens its bookmark's menu (rename, remove, all
+  bookmarks); the bookmarks bar under the toolbar (Control-Shift-B); the Bookmarks page.
+* **Find in the page** (Control-F, F3, Control-G): a bar over the page's top right; the engine
+  marks every match (`Engine::find`), and counts them.
+* **Downloads**: a link's, an image's, a film's, the page's own ("Save page as", Control-S), and
+  what a page downloads itself; into `~/Downloads` under a free name. A button on the toolbar
+  while there are any, with their progress; the Downloads page (Control-J) opens, shows, stops,
+  tries again. A downloaded extension package (`.crx`, `.xpi`) is offered for installing.
+* **Extensions from their stores.** The Chrome Web Store and Firefox Add-ons offer a browser that
+  is neither no button: on a store's page for one extension the toolbar has "Add to SpatiMesh",
+  which downloads its package (`crate::extensions::store`: Chrome's from Google's update service,
+  Firefox's as its latest version) into the profile's cache and installs it as a file would be.
+  The Extensions page (and submenu) link to both stores, load an unpacked folder or a package
+  from the files, and turn each extension on or off, open its options, remove it.
+* **Choosing files.** The room has no file chooser, so SpatiMesh has one: places (home,
+  Downloads, Documents, Desktop, Pictures, the whole machine), the folder's own, a field to find
+  in it or to type a path into; for loading an extension, and for a page's `<input type=file>`
+  (`Happened::ChooseFiles`, answered with `Engine::choose_files`), one file or several, of the
+  kinds the page asked for (or every kind, asked).
+* **SpatiMesh's own pages**, at `spatimesh:` addresses the engine is never given (it shows a blank
+  page under them): History (searched, by day, a page's menu, Delete to take it out, clearing the
+  last hour, today or all of it), Bookmarks, Downloads, Settings, Extensions. Lines that take
+  something away are at the end, where Enter on the first line cannot reach them by chance.
+  Taking a page out of the history reaches every machine: each machine keeps a list of what it
+  was told to forget (`history/forgotten-<machine>.json`), which every machine leaves out of what
+  it shows, and rewrites its own files without it.
+* **The start page**: the sites visited most (a tile each), and the bookmarks.
+* **The link under the pointer** at the foot of the page (`Happened::Hovered`).
+* Keys: Control-T, -W, -N, -Shift-N, -Shift-T, -L (-E, -K, F6), -R (F5), -D, -F, -G (F3), -H, -J,
+  -Shift-O, -Shift-B, -S, -+, --, -0, -1 to -9, -Tab, -PageUp, -PageDown; Alt-Left, -Right, -Home;
+  Control-Shift-I, Control-Alt-I and F12 for the developer tools.
+
+**The engines' part** (`Engine` and the wire, in both C engines, `spatimesh-webkitgtk` and
+`spatimesh-wpe`, on WebKit's public API): the context menu's hit test (`context-menu`), the link
+under the pointer (`mouse-target-changed`), `WebKitFindController`, the file chooser request, and
+downloads (`webkit_web_view_download_uri`, every download the network session starts, a free name
+in Downloads; WebKitGTK 4.1's destination is a URI, WPE's a path). WebKit itself is not changed.
+The flat-colour engine answers a right click and finding too, so the window can be tried without
+one.
+
+**Checked**: unit tests (suggestions and inline finishing, history entries and forgetting across
+two machines, sessions, profile order, a profile's search engine, store pages, downloads' sizes,
+pinned tabs, the wire); the WebKitGTK engine on Xvfb (`menus_links_under_the_pointer_and_finding`,
+`downloads_and_files_for_a_page`: a menu over a link and a field, the link under the pointer,
+three matches found and none, a file downloaded whole into the file named, a page's file field
+answered); in the room's compositor with WebKitGTK, photographed (`tools/spatimesh-ui-e2e.py`:
+every menu and page above, a link saved into Downloads whole, SpatiMesh killed and started again
+with its tabs back); `spatimesh` built for Android (`cargo check --target aarch64-linux-android
+--no-default-features`). **Not checked here**: the WPE engine's half (no WPE build on Linux yet:
+written to WPE 2.54.1's API, checked against its source, to be built on the Mac); installing from
+the stores themselves (their addresses are tested, not fetched); in the glasses; the Beam Pro.
+
+## Visited links (found 2026-10-27)
+
+A link followed in one tab, or opened in a new one, did not look visited in another tab of the
+same profile; going back in the tab that followed it, it did. The cause is WebKit's GLib API, the
+same in WebKitGTK and WPE (2.54.1): `webkitWebViewCreatePageConfiguration`
+(`UIProcess/API/glib/WebKitWebView.cpp`) never gives a page configuration a visited-link store,
+so every web view makes its own -- shared only with the views its pages open with
+`window.open`. Not the processes: two views in one web process do not share them either. Shown by
+`spatimesh-webkitgtk`'s `a_link_visited_in_another_tab_looks_visited` (ignored until fixed): a
+fresh tab showing the same page shows the link unvisited. Nothing in the public API shares one:
+`related-view` does (a view related to one view of the engine's), but puts every tab in that
+view's web process, and one tab's crash then takes the others; tried and taken out.
+
+**Fixed in Spatiand's WebKit** (`third_party/wpe/patches/webkit/0002-visited-links-per-context.patch`):
+one `VisitedLinkStore` per `WebKitWebContext`, set on every page configuration the context makes,
+so every tab of a profile shares one -- WebKit adds to it as any of them navigates, and tells
+every web process using it -- with two calls of its own: `webkit_web_context_add_visited_links`
+(addresses visited elsewhere: other machines' history, and before SpatiMesh last started) and
+`webkit_web_context_clear_visited_links` (a history cleared). The engines use them where the
+header says they are there (`WEBKIT_WEB_CONTEXT_HAS_VISITED_LINKS`); the window tells them
+(`ToHost::Visited`) and, when pages are taken out of the history here or on another machine,
+has them forget every visited link and tells them again what is left (`ToHost::ForgetVisited`).
+`spatimesh-wpe`'s `a_link_visited_in_another_tab_looks_visited` and
+`visited_links_are_told_and_forgotten` are the tests; both pass on Linux against WPE built with
+the patches (2026-10-27). The distro's WebKitGTK has not got the
+patch, and keeps its links per tab.
+
 ## WPE WebKit, SpatiMesh's own engine (from 2026-10-22)
 
 The platform engines (WKWebView, Android's WebView, Steam's Chromium) each draw into their own
@@ -539,12 +661,24 @@ the earlier one, is no longer built into the app; its crate stays for now).
 |---|---|
 | Pictures | On the GPU, nothing copied: each frame an IOSurface ANGLE (on Metal) drew into, handed to the window and given back when it lets go (`ToHost::ReleaseSurface`). Not global surfaces any process could open by number: handed over in private, Mach port by Mach port, from the web process to the engine and from the engine to the window (`crates/spatiand-surfaces`, as every Spatiand application's pictures reach the room). |
 | Media | WPE's own GStreamer player (1.28.8, built with the plugins pages need): video, Media Source Extensions (YouTube), WebAudio. Decoding by gst-libav on Spatiand's FFmpeg 9.0.2, VideoToolbox in hardware, no software AV1. SpatiMesh's own player script is not put into pages on WPE. Not yet: video frames on the GPU (they are copied into a texture now). |
-| WebGL | WebKit's own ANGLE, its EGL back end running on the ANGLE the rest of WPE draws with, as on Linux it runs on Mesa (the shape upstream WPE has). Not yet: WebKit's ANGLE on Metal handing its pictures over as IOSurfaces, which would skip a layer. |
+| WebGL | **Every frame already reaches the window as an IOSurface** (the compositor's, with WebGL's canvas in it), nothing copied; what WebGL itself draws is a texture of the ANGLE the compositor draws with, shared with it, also not copied. What is in between is WebKit's own ANGLE running on its GL back end over that other ANGLE: every call and every shader translated twice. `patches/webkit/0004` puts WebGL on WebKit's ANGLE's own Metal back end instead, drawing onto IOSurfaces (three, in turn) that the compositor's ANGLE takes as textures of the same memory, with a fence the compositor waits on (`GraphicsContextGLTextureMapperIOSurface`; `WEBKIT_WEBGL_DISABLE_IOSURFACE=1` goes back to the old way, as does anything missing). **Written, not yet compiled**: it is Mac-only code and there is no Mac here. |
 | Fonts | fontconfig with Spatiand's own `fonts.conf`: each script's macOS font by language; WOFF2 web fonts (Google's woff2, on brotli); the interface font reported by SpatiMesh's display (WPE had none for form controls: patched). |
 | Developer tools | WebKit's Web Inspector, as a tab after its page (`ToHost::Inspect`; the menu's "Developer tools", Ctrl-Alt-I or Command-Option-I). It closes with its page. Not on WebKitGTK or WKWebView, whose inspector is a window of its own. |
 | Files | `file://` pages load (GIO's type identifiers taken as MIME types, patched). |
 | Extensions | The shared end-to-end test passes. |
-| Not yet | Video frames as IOSurfaces into ANGLE; WebGL on WebKit's ANGLE on Metal; Linux and Android builds of WPE; the developer tools' text size in the glasses; the interface font from each platform's own. |
+| Linux | `third_party/wpe/build.sh linux`: a bundle for SteamOS, built in the Ubuntu 22.04 root and carrying every library but glibc, libstdc++, Mesa, OpenSSL 3 and a few every desktop has, found by `$ORIGIN` (`patches/webkit/0003` makes WebKit's own paths relative too); `SYSTEM_DEPS=1` builds it on the distro's libraries, for working on it: built so on Ubuntu 24.04
+with all six patches, and there `spatimesh-wpe`'s 21 engine tests pass (four runs in a row), its
+extensions test too, and SpatiMesh's own end-to-end run in the compositor (`SPATIMESH_E2E_ENGINE=wpe
+tools/spatimesh-ui-e2e.py`, every check). The release carries it in `wpe/` beside `spatimesh-wpe`, which SpatiMesh then prefers to WebKitGTK. Pictures are copied (shared memory). |
+| Android | `third_party/wpe/build.sh android`: an NDK cross build; every library an unversioned `lib*.so`, WebKit's processes as `lib<process>.so` (found there by `patches/webkit/0003`), all in the APK's library folder (`android/build.sh`). The engine reads WPE's AHardwareBuffer pictures back (by the CPU, or through GL). **Written, not yet built**: there is no NDK here. |
+| Networking | Already as parallel as a browser's: each profile's engine has its own network process (one profile's stalled requests cannot hold up another's), whose libsoup keeps up to 256 connections, 6 to a server, with HTTP/2 multiplexing where the server speaks it; TLS runs on a thread of each connection's (glib-networking), and the disk cache on its own threads. What SpatiMesh adds is not waiting: a link pointed at, and where the address bar would go as it is typed, are connected to before the click -- name, TCP and TLS (`ToHost::Preconnect`, `patches/webkit/0005`'s `webkit_web_view_preconnect`; a name looked up only, where the engine has not got it). |
+| Not yet | Video frames as IOSurfaces into ANGLE; pictures handed over without copying on Linux (DMA-BUF) and Android (AHardwareBuffer); the developer tools on Android (their pages are not in the APK); the developer tools' text size in the glasses; the interface font from each platform's own. |
+
+The patches (`third_party/wpe/patches/webkit/`), applied in order to a checkout that has not had
+them, which `build.sh` writes down in it (`.spatiand-patches`): 0001 the Mac port; 0002 visited
+links shared by a context's views; 0003 relocatable on Linux and Android; 0004 WebGL on Metal onto
+IOSurfaces (Mac); 0005 preconnecting; 0006 a function of 0001's out of the header it was in, which
+not every file including it could compile (Linux's first build found it).
 
 ## Built, checked, and not checked (2026-10-16)
 

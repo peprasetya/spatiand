@@ -976,3 +976,101 @@ fn look_at_a_popup() {
     host.shot(1, "opener");
     host.quit();
 }
+
+/// A web server on this machine answering each path with its own headers and body.
+fn server(answers: Vec<(&'static str, &'static str, Vec<u8>)>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut stream = stream;
+            let mut request = [0u8; 4096];
+            let n = stream.read(&mut request).unwrap_or(0);
+            let request = String::from_utf8_lossy(&request[..n]);
+            let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
+            let (headers, body) = answers.iter().find(|(p, ..)| *p == path).map(|(_, h, b)| (*h, b.clone())).unwrap_or(("Content-Type: text/html\r\n", b"<title>none</title>".to_vec()));
+            let _ = write!(stream, "HTTP/1.1 200 OK\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+            let _ = stream.write_all(&body);
+        }
+    });
+    address
+}
+
+/// The colour of a tab's link at `y`, once a picture shows `want`.
+fn link_turns(host: &mut Host, tab: TabId, y: u32, want: [u8; 3]) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let p = if host.latest.contains_key(&tab) { host.pixel(tab, 50, y) } else { [0, 0, 0] };
+        if near(p, want) {
+            return;
+        }
+        assert!(Instant::now() < deadline, "tab {tab}'s link at {y} is {p:?}, not {want:?}");
+        host.settle(Duration::from_millis(200));
+    }
+}
+
+const VISITED_STYLE: &str = "<style>body{margin:0}a{display:block;width:300px;height:80px;background-color:rgb(0,0,255)}a:visited{background-color:rgb(255,0,0)}</style>";
+
+/// A link looks visited in every tab of the profile, whichever tab visited it: Spatiand's
+/// WebKit gives a context's views one store of visited links (patches/webkit/0002).
+#[test]
+fn a_link_visited_in_another_tab_looks_visited() {
+    let root = std::env::temp_dir().join(format!("spatimesh-wpe-visited-{}", std::process::id()));
+    let Some(mut host) = Host::start(&kept(&root)) else { return };
+    let first = format!("<title>first</title>{VISITED_STYLE}<a href='/target'>x</a><a href='/clicked'>y</a>");
+    let address = server(vec![
+        ("/first", "Content-Type: text/html\r\n", first.into_bytes()),
+        ("/target", "Content-Type: text/html\r\n", b"<title>target</title>".to_vec()),
+        ("/clicked", "Content-Type: text/html\r\n", b"<title>clicked</title>".to_vec()),
+        ("/other", "Content-Type: text/html\r\n", format!("<title>other</title>{VISITED_STYLE}<a href='/clicked'>y</a>").into_bytes()),
+    ]);
+    host.send(ToHost::Open { tab: 1, url: format!("{address}/first"), view: View::new(400, 300, 1.0) });
+    host.loaded(1);
+    link_turns(&mut host, 1, 40, [0, 0, 255]);
+    // Another tab is given the link's address: the first tab's link turns visited.
+    host.send(ToHost::Open { tab: 2, url: format!("{address}/target"), view: View::new(400, 300, 1.0) });
+    host.title(2, "target");
+    host.loaded(2);
+    link_turns(&mut host, 1, 40, [255, 0, 0]);
+    // A link followed in a third tab shows visited in the first, and in a fourth opened after.
+    host.send(ToHost::Open { tab: 3, url: format!("{address}/other"), view: View::new(400, 300, 1.0) });
+    host.loaded(3);
+    // Its link drawn (not yet visited) before it is clicked: a click before the page is laid
+    // out lands on nothing.
+    link_turns(&mut host, 3, 40, [0, 0, 255]);
+    // Clicked again if a click came too early for a tab just opened to take it.
+    for _ in 0..3 {
+        host.click(3, 50.0, 40.0);
+        host.settle(Duration::from_secs(3));
+        if host.latest_title(3).is_some_and(|t| t.starts_with("clicked")) {
+            break;
+        }
+    }
+    host.title(3, "clicked");
+    link_turns(&mut host, 1, 120, [255, 0, 0]);
+    host.send(ToHost::Open { tab: 4, url: format!("{address}/first"), view: View::new(400, 300, 1.0) });
+    host.loaded(4);
+    link_turns(&mut host, 4, 120, [255, 0, 0]);
+    host.quit();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Pages visited elsewhere (another machine's history) are told, and look visited; a history
+/// cleared is forgotten, and what is left of it told again.
+#[test]
+fn visited_links_are_told_and_forgotten() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    let first = format!("<title>first</title>{VISITED_STYLE}<a href='/one'>x</a><a href='/two'>y</a>");
+    let address = server(vec![("/first", "Content-Type: text/html\r\n", first.into_bytes())]);
+    host.send(ToHost::Open { tab: 1, url: format!("{address}/first"), view: View::new(400, 300, 1.0) });
+    host.loaded(1);
+    link_turns(&mut host, 1, 40, [0, 0, 255]);
+    host.send(ToHost::Visited { urls: vec![format!("{address}/one"), format!("{address}/two"), "not an address".into()] });
+    link_turns(&mut host, 1, 40, [255, 0, 0]);
+    link_turns(&mut host, 1, 120, [255, 0, 0]);
+    host.send(ToHost::ForgetVisited);
+    host.send(ToHost::Visited { urls: vec![format!("{address}/two")] });
+    link_turns(&mut host, 1, 40, [0, 0, 255]);
+    link_turns(&mut host, 1, 120, [255, 0, 0]);
+    host.quit();
+}

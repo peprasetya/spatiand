@@ -168,11 +168,17 @@ pub fn serve(mut engine: Box<dyn Engine>, mut link: Link) {
                 ToHost::AskCookies { addresses } => engine.ask_cookies(&addresses),
                 ToHost::SetCookies { set, remove } => engine.set_cookies(&set, &remove),
                 ToHost::Visited { urls } => engine.add_visited(&urls),
+                ToHost::ForgetVisited => engine.forget_visited(),
+                ToHost::Preconnect { tab, url } => engine.preconnect(tab, &url),
                 ToHost::Inspect { tab, inspector, view } => {
                     if !engine.inspect(tab, inspector, view) {
                         log::info!("{} has no developer tools", engine.name());
                     }
                 }
+                ToHost::Download { tab, id, url, to } => engine.download(tab, id, &url, &to),
+                ToHost::CancelDownload { id } => engine.cancel_download(id),
+                ToHost::Find { tab, text, forward } => engine.find(tab, &text, forward),
+                ToHost::Files { tab, files } => engine.choose_files(tab, files),
             }
         }
         if link.is_closed() {

@@ -1,0 +1,685 @@
+diff --git a/Source/ThirdParty/ANGLE/PlatformWPE.cmake b/Source/ThirdParty/ANGLE/PlatformWPE.cmake
+index 2498c87..271e747 100644
+--- a/Source/ThirdParty/ANGLE/PlatformWPE.cmake
++++ b/Source/ThirdParty/ANGLE/PlatformWPE.cmake
+@@ -13,6 +13,18 @@ if (APPLE)
+     find_library(FOUNDATION_LIBRARY Foundation)
+     find_library(METAL_LIBRARY Metal)
+     list(APPEND ANGLEGLESv2_LIBRARIES ${IOKIT_LIBRARY} ${COREFOUNDATION_LIBRARY} ${COREGRAPHICS_LIBRARY} ${FOUNDATION_LIBRARY} ${METAL_LIBRARY})
++    # Spatiand: and ANGLE's own Metal back end, which WebGL draws with straight onto IOSurfaces
++    # the compositor takes as they are (GraphicsContextGLTextureMapperIOSurface): one ANGLE between
++    # a page's WebGL and the GPU, not two. Its internal shaders are compiled when it starts (from
++    # mtl_internal_shaders_src_autogen.h), Xcode not building them here.
++    list(APPEND ANGLE_DEFINITIONS ANGLE_ENABLE_METAL)
++    list(APPEND ANGLE_SOURCES
++        ${metal_backend_sources}
++        ${angle_translator_lib_msl_sources}
++    )
++    find_library(QUARTZCORE_LIBRARY QuartzCore)
++    find_library(IOSURFACE_LIBRARY IOSurface)
++    list(APPEND ANGLEGLESv2_LIBRARIES ${QUARTZCORE_LIBRARY} ${IOSURFACE_LIBRARY})
+ elseif (is_android)
+     list(APPEND ANGLE_DEFINITIONS ANGLE_PLATFORM_ANDROID)
+     include(linux.cmake)
+diff --git a/Source/WebCore/SourcesWPE.txt b/Source/WebCore/SourcesWPE.txt
+index 39f5f71..50357f0 100644
+--- a/Source/WebCore/SourcesWPE.txt
++++ b/Source/WebCore/SourcesWPE.txt
+@@ -89,6 +89,8 @@ platform/graphics/egl/PlatformDisplaySurfaceless.cpp @no-unify
+ platform/graphics/gbm/DRMDeviceManager.cpp
+ platform/graphics/gbm/GBMDevice.cpp
+ platform/graphics/gbm/GraphicsContextGLTextureMapperGBM.cpp @no-unify
++platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperIOSurface.cpp @no-unify
++platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperIOSurfaceImport.cpp @no-unify
+ platform/graphics/gbm/MemoryMappedGPUBuffer.cpp
+ platform/graphics/gbm/PlatformDisplayGBM.cpp @no-unify
+ platform/graphics/gbm/VivanteSuperTiledTexture.cpp
+diff --git a/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.cpp b/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.cpp
+index 3d2261d..52a9df2 100644
+--- a/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.cpp
++++ b/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.cpp
+@@ -63,6 +63,10 @@
+ #include "GraphicsContextGLTextureMapperGBM.h"
+ #endif
+ 
++#if OS(DARWIN) && PLATFORM(WPE) && USE(COORDINATED_GRAPHICS)
++#include "GraphicsContextGLTextureMapperIOSurface.h"
++#endif
++
+ #if PLATFORM(GTK) || PLATFORM(WPE)
+ #include "GLFence.h"
+ #endif
+@@ -175,6 +179,14 @@ RefPtr<GraphicsContextGL> createWebProcessGraphicsContextGL(const GraphicsContex
+             return context;
+         WTFLogAlways("Failed to create a graphics context for WebGL using GBM, falling back to textures");
+     }
++#elif OS(DARWIN) && PLATFORM(WPE) && USE(COORDINATED_GRAPHICS)
++    // Spatiand: on a Mac, WebGL on ANGLE's Metal, onto IOSurfaces; else on ANGLE's GL back end,
++    // over the EGL the rest of WPE draws with (ANGLE's Metal again), in textures shared with it.
++    if (GraphicsContextGLTextureMapperIOSurface::checkRequirements()) {
++        if (auto context = GraphicsContextGLTextureMapperIOSurface::create(GraphicsContextGLAttributes { attributes }))
++            return context;
++        WTFLogAlways("Failed to create a graphics context for WebGL on Metal, falling back to textures");
++    }
+ #endif
+     return GraphicsContextGLTextureMapperANGLE::create(GraphicsContextGLAttributes { attributes });
+ }
+@@ -234,7 +246,11 @@ bool GraphicsContextGLTextureMapperANGLE::platformInitializeContext()
+     m_isForWebGL2 = contextAttributes().isWebGL2;
+ 
+     auto& sharedDisplay = PlatformDisplay::sharedDisplay();
++#if OS(DARWIN) && PLATFORM(WPE)
++    m_displayObj = m_ownDisplay ? m_ownDisplay : sharedDisplay.angleEGLDisplay();
++#else
+     m_displayObj = sharedDisplay.angleEGLDisplay();
++#endif
+     if (m_displayObj == EGL_NO_DISPLAY)
+         return false;
+ 
+@@ -302,8 +318,15 @@ bool GraphicsContextGLTextureMapperANGLE::platformInitializeContext()
+     eglContextAttributes.append(EGL_CONTEXT_BIND_GENERATES_RESOURCE_CHROMIUM);
+     eglContextAttributes.append(EGL_FALSE);
+ #if USE(COORDINATED_GRAPHICS)
+-    eglContextAttributes.append(EGL_CONTEXT_VIRTUALIZATION_GROUP_ANGLE);
+-    eglContextAttributes.append(0);
++#if OS(DARWIN) && PLATFORM(WPE)
++    // Virtualising contexts is the GL back end's way of sharing with the compositor's; on a
++    // display of WebGL's own there is nothing to share.
++    if (!m_ownDisplay)
++#endif
++    {
++        eglContextAttributes.append(EGL_CONTEXT_VIRTUALIZATION_GROUP_ANGLE);
++        eglContextAttributes.append(0);
++    }
+ #endif
+ 
+     if (WTF::contains(unsafeSpan(displayExtensions), "EGL_ANGLE_power_preference"_span)) {
+@@ -317,13 +340,21 @@ bool GraphicsContextGLTextureMapperANGLE::platformInitializeContext()
+ #if PLATFORM(WIN)
+     m_contextObj = EGL_CreateContext(m_displayObj, m_configObj, sharedDisplay.angleSharingGLContext(), eglContextAttributes.span().data());
+ #else
+-    m_angleSharingContextObj = sharedDisplay.angleSharingGLContext();
+-    if (m_angleSharingContextObj == EGL_NO_CONTEXT) {
+-        LOG(WebGL, "ANGLE sharing EGLContext Initialization failed.");
+-        return false;
+-    }
++#if OS(DARWIN) && PLATFORM(WPE)
++    // On its own display it shares nothing: what it draws reaches the compositor as IOSurfaces.
++    if (m_ownDisplay)
++        m_contextObj = EGL_CreateContext(m_displayObj, m_configObj, EGL_NO_CONTEXT, eglContextAttributes.span().data());
++    else
++#endif
++    {
++        m_angleSharingContextObj = sharedDisplay.angleSharingGLContext();
++        if (m_angleSharingContextObj == EGL_NO_CONTEXT) {
++            LOG(WebGL, "ANGLE sharing EGLContext Initialization failed.");
++            return false;
++        }
+ 
+-    m_contextObj = EGL_CreateContext(m_displayObj, m_configObj, m_angleSharingContextObj, eglContextAttributes.span().data());
++        m_contextObj = EGL_CreateContext(m_displayObj, m_configObj, m_angleSharingContextObj, eglContextAttributes.span().data());
++    }
+ #endif
+     if (m_contextObj == EGL_NO_CONTEXT) {
+         LOG(WebGL, "EGLContext Initialization failed.");
+diff --git a/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h b/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h
+index 24fdaf7..3615c31 100644
+--- a/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h
++++ b/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h
+@@ -75,6 +75,13 @@ protected:
+ 
+     RefPtr<GraphicsLayerContentsDisplayDelegate> m_layerContentsDisplayDelegate;
+ 
++#if OS(DARWIN) && PLATFORM(WPE)
++    // Spatiand: WebGL on ANGLE's own Metal back end, drawing onto IOSurfaces
++    // (GraphicsContextGLTextureMapperIOSurface): its own display, sharing nothing with the
++    // compositor's GL but the IOSurfaces. Set before initialize().
++    GCGLDisplay m_ownDisplay { nullptr };
++#endif
++
+ private:
+     bool platformInitializeContext() final;
+     bool platformInitialize() override;
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperIOSurface.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperIOSurface.cpp
+new file mode 100644
+index 0000000..fc3ae62
+--- /dev/null
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperIOSurface.cpp
+@@ -0,0 +1,323 @@
++/*
++ * Copyright (C) 2026 Spatiand
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY
++ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
++ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR
++ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
++ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
++ * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "config.h"
++#include "GraphicsContextGLTextureMapperIOSurface.h"
++
++#if ENABLE(WEBGL) && USE(COORDINATED_GRAPHICS) && OS(DARWIN) && PLATFORM(WPE)
++#include "ANGLEHeaders.h"
++#include "ANGLEUtilities.h"
++#include "CoordinatedPlatformLayerBufferRGB.h"
++#include "GLFence.h"
++#include "GraphicsLayerContentsDisplayDelegateCoordinated.h"
++#include "Logging.h"
++#include "PlatformDisplay.h"
++#include "TextureMapperFlags.h"
++#include <IOSurface/IOSurfaceRef.h>
++#include <array>
++#include <wtf/StdLibExtras.h>
++#include <wtf/TZoneMallocInlines.h>
++#include <wtf/ThreadSafeRefCounted.h>
++
++namespace WebCore {
++
++// One IOSurface WebGL draws into: its pbuffer on WebGL's ANGLE (Metal), and the same memory as a
++// texture of the compositor's GL. Kept by the context while it is one of its three, and by each
++// frame of it the compositor has, so that it outlives both.
++class IOSurfaceDrawingBuffer final : public ThreadSafeRefCounted<IOSurfaceDrawingBuffer> {
++public:
++    static RefPtr<IOSurfaceDrawingBuffer> create(GCGLDisplay display, GCGLConfig config, const IntSize& size, bool hasAlpha)
++    {
++        auto* surface = createIOSurface(size);
++        if (!surface)
++            return nullptr;
++        RefPtr<IOSurfaceDrawingBuffer> buffer = adoptRef(*new IOSurfaceDrawingBuffer(display, surface, size));
++        CFRelease(surface);
++
++        const EGLint attributes[] = {
++            EGL_WIDTH, size.width(),
++            EGL_HEIGHT, size.height(),
++            EGL_IOSURFACE_PLANE_ANGLE, 0,
++            EGL_TEXTURE_TARGET, EGL_TEXTURE_2D,
++            EGL_TEXTURE_INTERNAL_FORMAT_ANGLE, hasAlpha ? GL_BGRA_EXT : GL_RGB,
++            EGL_TEXTURE_FORMAT, EGL_TEXTURE_RGBA,
++            EGL_TEXTURE_TYPE_ANGLE, GL_UNSIGNED_BYTE,
++            EGL_NONE
++        };
++        buffer->m_pbuffer = EGL_CreatePbufferFromClientBuffer(display, EGL_IOSURFACE_ANGLE, buffer->m_surface, config, attributes);
++        if (buffer->m_pbuffer == EGL_NO_SURFACE) {
++            buffer->m_pbuffer = nullptr;
++            LOG(WebGL, "IOSurface pbuffer on Metal failed: %x", EGL_GetError());
++            return nullptr;
++        }
++        buffer->m_compositorTexture = importIOSurfaceForCompositor(buffer->m_surface, size.width(), size.height(), hasAlpha, &buffer->m_compositorPbuffer);
++        if (!buffer->m_compositorTexture)
++            return nullptr;
++        return buffer;
++    }
++
++    ~IOSurfaceDrawingBuffer()
++    {
++        if (m_pbuffer)
++            EGL_DestroySurface(m_display, m_pbuffer);
++        if (m_compositorTexture)
++            releaseIOSurfaceForCompositor(m_compositorTexture, m_compositorPbuffer);
++        CFRelease(m_surface);
++    }
++
++    GCEGLSurface pbuffer() const { return m_pbuffer; }
++    unsigned compositorTexture() const { return m_compositorTexture; }
++    const IntSize& size() const LIFETIME_BOUND { return m_size; }
++
++private:
++    IOSurfaceDrawingBuffer(GCGLDisplay display, IOSurfaceRef surface, const IntSize& size)
++        : m_display(display)
++        , m_surface(static_cast<IOSurfaceRef>(const_cast<void*>(CFRetain(surface))))
++        , m_size(size)
++    {
++    }
++
++    // BGRA, as Metal and the compositor's textures both take it.
++    static IOSurfaceRef createIOSurface(const IntSize& size)
++    {
++        int32_t width = size.width(), height = size.height(), bytesPerElement = 4, pixelFormat = 0x42475241 /* 'BGRA' */;
++        int32_t bytesPerRow = static_cast<int32_t>(IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, width * bytesPerElement));
++        int32_t allocSize = static_cast<int32_t>(IOSurfaceAlignProperty(kIOSurfaceAllocSize, bytesPerRow * height));
++        std::array<const void*, 6> keys { kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement, kIOSurfacePixelFormat, kIOSurfaceBytesPerRow, kIOSurfaceAllocSize };
++        std::array<int32_t, 6> numbers { width, height, bytesPerElement, pixelFormat, bytesPerRow, allocSize };
++        std::array<const void*, 6> values { };
++        for (size_t i = 0; i < keys.size(); ++i)
++            values[i] = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &numbers[i]);
++        auto properties = CFDictionaryCreate(kCFAllocatorDefault, keys.data(), values.data(), keys.size(), &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
++        for (auto* value : values)
++            CFRelease(value);
++        auto* surface = IOSurfaceCreate(properties);
++        CFRelease(properties);
++        return surface;
++    }
++
++    GCGLDisplay m_display;
++    IOSurfaceRef m_surface;
++    IntSize m_size;
++    GCEGLSurface m_pbuffer { nullptr };
++    unsigned m_compositorTexture { 0 };
++    void* m_compositorPbuffer { nullptr };
++};
++
++// The end of a frame's drawing on Metal, which the compositor waits for before drawing it -- on
++// its own thread, so that WebGL does not wait for the GPU -- and the frame's IOSurface, kept
++// while the compositor has the frame.
++class IOSurfaceFrameFence final : public GLFence {
++    WTF_MAKE_TZONE_ALLOCATED(IOSurfaceFrameFence);
++public:
++    IOSurfaceFrameFence(GCGLDisplay display, EGLSyncKHR sync, RefPtr<IOSurfaceDrawingBuffer>&& buffer)
++        : m_display(display)
++        , m_sync(sync)
++        , m_buffer(WTF::move(buffer))
++    {
++    }
++
++    ~IOSurfaceFrameFence()
++    {
++        if (m_sync)
++            EGL_DestroySyncKHR(m_display, m_sync);
++    }
++
++    void clientWait() final { wait(); }
++    void serverWait() final { wait(); }
++
++private:
++    void wait()
++    {
++        if (!m_sync)
++            return;
++        EGL_ClientWaitSyncKHR(m_display, m_sync, 0, EGL_FOREVER_KHR);
++        EGL_DestroySyncKHR(m_display, m_sync);
++        m_sync = nullptr;
++    }
++
++    GCGLDisplay m_display;
++    EGLSyncKHR m_sync;
++    RefPtr<IOSurfaceDrawingBuffer> m_buffer;
++};
++
++WTF_MAKE_TZONE_ALLOCATED_IMPL(IOSurfaceFrameFence);
++
++// WebGL's own ANGLE on Metal: a display of its own, made once.
++static GCGLDisplay metalDisplay()
++{
++    static GCGLDisplay display = [] () -> GCGLDisplay {
++        const EGLint attributes[] = { EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE, EGL_NONE };
++        auto display = EGL_GetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, attributes);
++        if (display == EGL_NO_DISPLAY)
++            return nullptr;
++        EGLint major, minor;
++        if (!EGL_Initialize(display, &major, &minor)) {
++            LOG(WebGL, "ANGLE on Metal: EGL_Initialize failed");
++            return nullptr;
++        }
++        return display;
++    }();
++    return display;
++}
++
++bool GraphicsContextGLTextureMapperIOSurface::checkRequirements()
++{
++    static const char* disabled = getenv("WEBKIT_WEBGL_DISABLE_IOSURFACE");
++    if (disabled && *disabled != '0')
++        return false;
++    if (!PlatformDisplay::sharedDisplay().eglExtensions().ANGLE_iosurface_client_buffer)
++        return false;
++    auto display = metalDisplay();
++    if (!display)
++        return false;
++    const char* extensions = EGL_QueryString(display, EGL_EXTENSIONS);
++    return extensions && WTF::contains(unsafeSpan(extensions), "EGL_ANGLE_iosurface_client_buffer"_span);
++}
++
++RefPtr<GraphicsContextGLTextureMapperIOSurface> GraphicsContextGLTextureMapperIOSurface::create(GraphicsContextGLAttributes&& attributes)
++{
++    auto context = adoptRef(new GraphicsContextGLTextureMapperIOSurface(WTF::move(attributes)));
++    if (!context->initialize())
++        return nullptr;
++    return context;
++}
++
++GraphicsContextGLTextureMapperIOSurface::GraphicsContextGLTextureMapperIOSurface(GraphicsContextGLAttributes&& attributes)
++    : GraphicsContextGLTextureMapperANGLE(WTF::move(attributes))
++{
++    m_ownDisplay = metalDisplay();
++}
++
++GraphicsContextGLTextureMapperIOSurface::~GraphicsContextGLTextureMapperIOSurface()
++{
++    if (makeContextCurrent())
++        freeDrawingBuffers();
++}
++
++bool GraphicsContextGLTextureMapperIOSurface::platformInitialize()
++{
++    m_layerContentsDisplayDelegate = GraphicsLayerContentsDisplayDelegateCoordinated::create();
++
++    // IOSurfaces are taken as pbuffers, bound to WebGL's texture as Metal textures of the same
++    // memory: 2D ones on Metal (on macOS's OpenGL they would be rectangles).
++    const EGLint attributes[] = {
++        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
++        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
++        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
++        EGL_NONE
++    };
++    EGLint found = 0;
++    if (!EGL_ChooseConfig(m_displayObj, attributes, &m_pbufferConfig, 1, &found) || found != 1)
++        return false;
++    EGLint target = 0;
++    EGL_GetConfigAttrib(m_displayObj, m_pbufferConfig, EGL_BIND_TO_TEXTURE_TARGET_ANGLE, &target);
++    if (target != EGL_TEXTURE_2D) {
++        LOG(WebGL, "ANGLE on Metal binds IOSurfaces to %x, not 2D textures", target);
++        return false;
++    }
++    return true;
++}
++
++RefPtr<IOSurfaceDrawingBuffer> GraphicsContextGLTextureMapperIOSurface::createDrawingBuffer() const
++{
++    return IOSurfaceDrawingBuffer::create(m_displayObj, m_pbufferConfig, getInternalFramebufferSize(), contextAttributes().alpha);
++}
++
++void GraphicsContextGLTextureMapperIOSurface::freeDrawingBuffers()
++{
++    if (m_bound) {
++        EGL_ReleaseTexImage(m_displayObj, m_bound->pbuffer(), EGL_BACK_BUFFER);
++        m_bound = nullptr;
++    }
++    // Those the compositor still shows are let go of when it is done with them.
++    for (auto& buffer : m_drawingBuffers)
++        buffer = nullptr;
++}
++
++bool GraphicsContextGLTextureMapperIOSurface::bindNextDrawingBuffer()
++{
++    m_current = (m_current + 1) % m_drawingBuffers.size();
++    auto& next = m_drawingBuffers[m_current];
++    if (!next || next->size() != getInternalFramebufferSize()) {
++        next = createDrawingBuffer();
++        if (!next)
++            return false;
++    }
++
++    ScopedRestoreTextureBinding restoreBinding(TEXTURE_BINDING_2D, TEXTURE_2D);
++    GL_BindTexture(GL_TEXTURE_2D, m_texture);
++    if (m_bound)
++        EGL_ReleaseTexImage(m_displayObj, m_bound->pbuffer(), EGL_BACK_BUFFER);
++    m_bound = next;
++    if (!EGL_BindTexImage(m_displayObj, m_bound->pbuffer(), EGL_BACK_BUFFER)) {
++        m_bound = nullptr;
++        return false;
++    }
++    return true;
++}
++
++bool GraphicsContextGLTextureMapperIOSurface::reshapeDrawingBuffer()
++{
++    freeDrawingBuffers();
++    return bindNextDrawingBuffer();
++}
++
++void GraphicsContextGLTextureMapperIOSurface::prepareForDisplay()
++{
++    if (!makeContextCurrent() || !m_bound)
++        return;
++
++    prepareTexture();
++    // The frame is done when Metal has drawn it: said by a fence, flushed so that it comes.
++    auto sync = EGL_CreateSyncKHR(m_displayObj, EGL_SYNC_FENCE_KHR, nullptr);
++    GL_Flush();
++    RefPtr<IOSurfaceDrawingBuffer> shown = m_bound;
++
++    if (!bindNextDrawingBuffer()) {
++        if (sync != EGL_NO_SYNC_KHR)
++            EGL_DestroySyncKHR(m_displayObj, sync);
++        forceContextLost();
++        return;
++    }
++
++    OptionSet<TextureMapperFlags> flags = TextureMapperFlags::ShouldFlipTexture;
++    if (contextAttributes().alpha)
++        flags.add(TextureMapperFlags::ShouldBlend);
++    auto texture = shown->compositorTexture();
++    auto size = shown->size();
++    std::unique_ptr<GLFence> fence;
++    if (sync != EGL_NO_SYNC_KHR)
++        fence = makeUnique<IOSurfaceFrameFence>(m_displayObj, sync, WTF::move(shown));
++    else {
++        // No fence: the frame is waited for here.
++        GL_Finish();
++    }
++    m_layerContentsDisplayDelegate->setDisplayBuffer(CoordinatedPlatformLayerBufferRGB::create(texture, size, flags, WTF::move(fence)));
++}
++
++} // namespace WebCore
++
++#endif // ENABLE(WEBGL) && USE(COORDINATED_GRAPHICS) && OS(DARWIN) && PLATFORM(WPE)
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperIOSurface.h b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperIOSurface.h
+new file mode 100644
+index 0000000..437156e
+--- /dev/null
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperIOSurface.h
+@@ -0,0 +1,79 @@
++/*
++ * Copyright (C) 2026 Spatiand
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY
++ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
++ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR
++ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
++ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
++ * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#pragma once
++
++#if ENABLE(WEBGL) && USE(COORDINATED_GRAPHICS) && OS(DARWIN) && PLATFORM(WPE)
++#include "GraphicsContextGLTextureMapperANGLE.h"
++#include <array>
++
++namespace WebCore {
++
++class IOSurfaceDrawingBuffer;
++
++// WPE on a Mac (Spatiand): WebGL on ANGLE's own Metal back end, drawing straight onto
++// IOSurfaces, which the compositor (Skia and the texture mapper, on the ANGLE the rest of WPE
++// draws with) takes as they are, a texture of the same memory. Without it WebGL runs on ANGLE's
++// GL back end over that other ANGLE: two translations of every call and shader between a page
++// and Metal.
++//
++// As GraphicsContextGLTextureMapperGBM does with DMA-BUFs: each frame is drawn into one of three
++// IOSurfaces in turn, and handed to the compositor with a fence it waits on before it draws it.
++class GraphicsContextGLTextureMapperIOSurface final : public GraphicsContextGLTextureMapperANGLE {
++public:
++    static RefPtr<GraphicsContextGLTextureMapperIOSurface> create(GraphicsContextGLAttributes&&);
++    virtual ~GraphicsContextGLTextureMapperIOSurface();
++
++    // ANGLE's Metal display, and both ANGLEs able to take IOSurfaces: WebGL can be drawn so.
++    // WEBKIT_WEBGL_DISABLE_IOSURFACE=1 says not to.
++    static bool checkRequirements();
++
++private:
++    explicit GraphicsContextGLTextureMapperIOSurface(GraphicsContextGLAttributes&&);
++
++    bool platformInitialize() override;
++    bool reshapeDrawingBuffer() override;
++    void prepareForDisplay() override;
++
++    RefPtr<IOSurfaceDrawingBuffer> createDrawingBuffer() const;
++    bool bindNextDrawingBuffer();
++    void freeDrawingBuffers();
++
++    GCGLConfig m_pbufferConfig { nullptr };
++    std::array<RefPtr<IOSurfaceDrawingBuffer>, 3> m_drawingBuffers;
++    unsigned m_current { 0 };
++    // The one bound to m_texture, drawn into now.
++    RefPtr<IOSurfaceDrawingBuffer> m_bound;
++};
++
++// The compositor's half (GraphicsContextGLTextureMapperIOSurfaceImport.cpp, on libepoxy's EGL,
++// which cannot share a file with ANGLE's): an IOSurface as a texture of the compositor's GL,
++// made in the context it shares textures with, and let go of.
++unsigned importIOSurfaceForCompositor(void* ioSurface, int width, int height, bool hasAlpha, void** pbuffer);
++void releaseIOSurfaceForCompositor(unsigned texture, void* pbuffer);
++
++} // namespace WebCore
++
++#endif // ENABLE(WEBGL) && USE(COORDINATED_GRAPHICS) && OS(DARWIN) && PLATFORM(WPE)
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperIOSurfaceImport.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperIOSurfaceImport.cpp
+new file mode 100644
+index 0000000..d37f6e3
+--- /dev/null
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsContextGLTextureMapperIOSurfaceImport.cpp
+@@ -0,0 +1,123 @@
++/*
++ * Copyright (C) 2026 Spatiand
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY
++ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
++ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR
++ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
++ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
++ * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "config.h"
++#include "GraphicsContextGLTextureMapperIOSurface.h"
++
++#if ENABLE(WEBGL) && USE(COORDINATED_GRAPHICS) && OS(DARWIN) && PLATFORM(WPE)
++#include "GLContext.h"
++#include "PlatformDisplay.h"
++#include <epoxy/egl.h>
++#include <epoxy/gl.h>
++
++namespace WebCore {
++
++// EGL_ANGLE_iosurface_client_buffer's, which libepoxy's headers have not got.
++static constexpr EGLenum eglIOSurfaceANGLE = 0x3454;
++static constexpr EGLint eglIOSurfacePlaneANGLE = 0x345A;
++static constexpr EGLint eglTextureTypeANGLE = 0x345C;
++static constexpr EGLint eglTextureInternalFormatANGLE = 0x345D;
++static constexpr GLenum glBGRAExt = 0x80E1;
++
++// Made in the context the compositor shares textures with (PlatformDisplay's sharing context),
++// where WebGL's own textures were shared before: the compositor draws it as any of them.
++unsigned importIOSurfaceForCompositor(void* ioSurface, int width, int height, bool hasAlpha, void** pbuffer)
++{
++    auto& platformDisplay = PlatformDisplay::sharedDisplay();
++    auto* sharingContext = platformDisplay.sharingGLContext();
++    if (!sharingContext)
++        return 0;
++    GLContext::ScopedGLContextCurrent scopedCurrent(*sharingContext);
++
++    EGLDisplay display = platformDisplay.eglDisplay();
++    const EGLint configAttributes[] = {
++        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
++        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
++        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
++        EGL_NONE
++    };
++    EGLConfig config = nullptr;
++    EGLint found = 0;
++    if (!eglChooseConfig(display, configAttributes, &config, 1, &found) || !found)
++        return 0;
++    const EGLint attributes[] = {
++        EGL_WIDTH, width,
++        EGL_HEIGHT, height,
++        eglIOSurfacePlaneANGLE, 0,
++        EGL_TEXTURE_TARGET, EGL_TEXTURE_2D,
++        eglTextureInternalFormatANGLE, static_cast<EGLint>(hasAlpha ? glBGRAExt : GL_RGB),
++        EGL_TEXTURE_FORMAT, EGL_TEXTURE_RGBA,
++        eglTextureTypeANGLE, GL_UNSIGNED_BYTE,
++        EGL_NONE
++    };
++    EGLSurface surface = eglCreatePbufferFromClientBuffer(display, eglIOSurfaceANGLE, ioSurface, config, attributes);
++    if (surface == EGL_NO_SURFACE)
++        return 0;
++
++    GLint previous = 0;
++    glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
++    GLuint texture = 0;
++    glGenTextures(1, &texture);
++    glBindTexture(GL_TEXTURE_2D, texture);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    bool bound = eglBindTexImage(display, surface, EGL_BACK_BUFFER);
++    glBindTexture(GL_TEXTURE_2D, previous);
++    if (!bound) {
++        glDeleteTextures(1, &texture);
++        eglDestroySurface(display, surface);
++        return 0;
++    }
++    *pbuffer = surface;
++    return texture;
++}
++
++// Where the frame was let go of: the compositor's thread, its context current (of the same
++// share group), or WebGL's, where the sharing context is made current for it.
++void releaseIOSurfaceForCompositor(unsigned texture, void* pbuffer)
++{
++    auto& platformDisplay = PlatformDisplay::sharedDisplay();
++    EGLDisplay display = platformDisplay.eglDisplay();
++    auto release = [&] {
++        eglReleaseTexImage(display, pbuffer, EGL_BACK_BUFFER);
++        eglDestroySurface(display, pbuffer);
++        GLuint name = texture;
++        glDeleteTextures(1, &name);
++    };
++    if (eglGetCurrentContext() != EGL_NO_CONTEXT) {
++        release();
++        return;
++    }
++    if (auto* sharingContext = platformDisplay.sharingGLContext()) {
++        GLContext::ScopedGLContextCurrent scopedCurrent(*sharingContext);
++        release();
++    }
++}
++
++} // namespace WebCore
++
++#endif // ENABLE(WEBGL) && USE(COORDINATED_GRAPHICS) && OS(DARWIN) && PLATFORM(WPE)

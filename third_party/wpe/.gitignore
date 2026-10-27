@@ -1,0 +1,2 @@
+# The copy of build.sh a running build reads, so that build.sh can be edited meanwhile.
+.build-run.sh

@@ -1,0 +1,151 @@
+diff --git a/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp b/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp
+index 6ae5d1bae..4fe4cf635 100644
+--- a/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp
++++ b/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp
+@@ -47,6 +47,7 @@
+ #include "WebKitUserMessagePrivate.h"
+ #include "WebKitWebContextPrivate.h"
+ #include "RelocatedInstallPath.h"
++#include "VisitedLinkStore.h"
+ #include "WebKitWebViewPrivate.h"
+ #include "WebKitWebsiteDataManagerPrivate.h"
+ #include "WebKitWebsitePoliciesPrivate.h"
+@@ -58,6 +59,7 @@
+ #include <JavaScriptCore/RemoteInspector.h>
+ #include <WebCore/ContentSecurityPolicy.h>
+ #include <WebCore/ResourceLoaderIdentifier.h>
++#include <WebCore/SharedStringHash.h>
+ #include <cstdlib>
+ #include <glib/gi18n-lib.h>
+ #include <libintl.h>
+@@ -248,6 +250,10 @@ struct _WebKitWebContextPrivate {
+ #endif
+ 
+     RefPtr<WebProcessPool> processPool;
++    // Spatiand: one set of visited links for every view of the context, as a browser's tabs
++    // share them (each view had its own, and a link followed in one tab looked visited in no
++    // other), told of links visited elsewhere with webkit_web_context_add_visited_links().
++    RefPtr<VisitedLinkStore> visitedLinkStore;
+     bool clientsDetached;
+ #if PLATFORM(GTK) && !USE(GTK4)
+     bool psonEnabled;
+@@ -457,6 +463,7 @@ static void webkitWebContextConstructed(GObject* object)
+ #endif
+ 
+     priv->processPool = WebProcessPool::create(configuration);
++    priv->visitedLinkStore = VisitedLinkStore::create();
+     priv->processPool->setUserMessageHandler([webContext](UserMessage&& message, CompletionHandler<void(UserMessage&&)>&& completionHandler) {
+         // Sink the floating ref.
+         GRefPtr<WebKitUserMessage> userMessage = webkitUserMessageCreate(WTF::move(message), WTF::move(completionHandler));
+@@ -2003,6 +2010,54 @@ const gchar* webkit_web_context_get_time_zone_override(WebKitWebContext* context
+     return context->priv->timeZoneOverride.data();
+ }
+ 
++VisitedLinkStore& webkitWebContextGetVisitedLinkStore(WebKitWebContext* context)
++{
++    return *context->priv->visitedLinkStore;
++}
++
++/**
++ * webkit_web_context_add_visited_links:
++ * @context: a #WebKitWebContext
++ * @uris: (array zero-terminated=1): the addresses visited, %NULL-terminated
++ *
++ * Make links to @uris look visited (`:visited`) in every page of every #WebKitWebView of
++ * @context, as links followed in them do: for pages visited before the context was made, or
++ * somewhere else. Every view of a context shares one set of visited links. Links are added
++ * to pages already shown, which are restyled.
++ *
++ * Since: 2.54 (Spatiand)
++ */
++void webkit_web_context_add_visited_links(WebKitWebContext* context, const gchar* const* uris)
++{
++    g_return_if_fail(WEBKIT_IS_WEB_CONTEXT(context));
++    if (!uris)
++        return;
++
++    for (auto* uri = uris; *uri; ++uri) {
++        // Hashed as the address of a visit is: parsed, in its canonical form.
++        URL url { String::fromUTF8(*uri) };
++        if (!url.isValid())
++            continue;
++        context->priv->visitedLinkStore->addVisitedLinkHash(WebCore::computeSharedStringHash(url.string()));
++    }
++}
++
++/**
++ * webkit_web_context_clear_visited_links:
++ * @context: a #WebKitWebContext
++ *
++ * Make every link in the views of @context look unvisited again: for a history cleared.
++ * Links followed from then on look visited, as before.
++ *
++ * Since: 2.54 (Spatiand)
++ */
++void webkit_web_context_clear_visited_links(WebKitWebContext* context)
++{
++    g_return_if_fail(WEBKIT_IS_WEB_CONTEXT(context));
++
++    context->priv->visitedLinkStore->removeAll();
++}
++
+ void webkitWebContextInitializeNotificationPermissions(WebKitWebContext* context)
+ {
+     g_signal_emit(context, signals[INITIALIZE_NOTIFICATION_PERMISSIONS], 0);
+diff --git a/Source/WebKit/UIProcess/API/glib/WebKitWebContext.h.in b/Source/WebKit/UIProcess/API/glib/WebKitWebContext.h.in
+index a34d05a6f..f3e407a68 100644
+--- a/Source/WebKit/UIProcess/API/glib/WebKitWebContext.h.in
++++ b/Source/WebKit/UIProcess/API/glib/WebKitWebContext.h.in
+@@ -425,6 +425,16 @@ webkit_web_context_get_use_system_appearance_for_scrollbars (WebKitWebContext
+ WEBKIT_API const gchar*
+ webkit_web_context_get_time_zone_override           (WebKitWebContext              *context);
+ 
++/* Spatiand: one set of visited links for a context's views, told of links visited elsewhere. */
++#define WEBKIT_WEB_CONTEXT_HAS_VISITED_LINKS 1
++
++WEBKIT_API void
++webkit_web_context_add_visited_links                (WebKitWebContext              *context,
++                                                     const gchar * const           *uris);
++
++WEBKIT_API void
++webkit_web_context_clear_visited_links              (WebKitWebContext              *context);
++
+ G_END_DECLS
+ 
+ #endif
+diff --git a/Source/WebKit/UIProcess/API/glib/WebKitWebContextPrivate.h b/Source/WebKit/UIProcess/API/glib/WebKitWebContextPrivate.h
+index c1945fbe7..79dd17109 100644
+--- a/Source/WebKit/UIProcess/API/glib/WebKitWebContextPrivate.h
++++ b/Source/WebKit/UIProcess/API/glib/WebKitWebContextPrivate.h
+@@ -32,6 +32,10 @@
+ #include <WebCore/ResourceRequest.h>
+ 
+ WebKit::WebProcessPool& webkitWebContextGetProcessPool(WebKitWebContext*);
++namespace WebKit {
++class VisitedLinkStore;
++}
++WebKit::VisitedLinkStore& webkitWebContextGetVisitedLinkStore(WebKitWebContext*);
+ #if !ENABLE(2022_GLIB_API)
+ void webkitWebContextDownloadStarted(WebKitWebContext*, WebKitDownload*);
+ #endif
+diff --git a/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp b/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
+index e988d2a70..230eb692f 100644
+--- a/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
++++ b/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
+@@ -71,6 +71,7 @@
+ #include "WebKitWebResourcePrivate.h"
+ #include "WebKitWebViewInternal.h"
+ #include "WebKitWebViewPrivate.h"
++#include "VisitedLinkStore.h"
+ #include "WebKitWebViewSessionStatePrivate.h"
+ #include "WebKitWebsiteDataManagerPrivate.h"
+ #include "WebKitWebsitePoliciesPrivate.h"
+@@ -875,6 +876,8 @@ static Ref<API::PageConfiguration> webkitWebViewCreatePageConfiguration(WebKitWe
+     pageConfiguration->preferences().setAllowTestOnlyIPC(pageConfiguration->allowTestOnlyIPC());
+     pageConfiguration->preferences().setUsesSingleWebProcess(pageConfiguration->processPool().usesSingleWebProcess());
+     pageConfiguration->setRelatedPage(priv->relatedView ? &webkitWebViewGetPage(priv->relatedView) : nullptr);
++    // Spatiand: the context's one set of visited links, which every view of it shares.
++    pageConfiguration->setVisitedLinkStore(&webkitWebContextGetVisitedLinkStore(priv->context.get()));
+     pageConfiguration->setUserContentController(priv->userContentManager ? webkitUserContentManagerGetUserContentControllerProxy(priv->userContentManager.get()) : nullptr);
+     pageConfiguration->setControlledByAutomation(priv->isControlledByAutomation);
+ 

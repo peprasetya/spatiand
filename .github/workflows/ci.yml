@@ -61,6 +61,19 @@ jobs:
           . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null
           cargo build -p spatiand -p spatimesh -p spatimesh-webkitgtk --locked
           python3 -I tools/spatimesh-e2e.py target/debug target/spatimesh-e2e
+      # SpatiMesh's own menus, address bar, pages and file chooser, the same way; then started
+      # again on the same profile, its tabs back.
+      - name: SpatiMesh's menus and pages in the compositor, end to end
+        run: |
+          . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null
+          python3 -I tools/spatimesh-ui-e2e.py target/debug target/spatimesh-e2e/ui
+      # Dragging between windows: SpatiShelf to SpatiShelf, and to SpatiMesh's tabs, the button
+      # held from one window to the next; the dragged thing's card in the room.
+      - name: Drag and drop between windows in the compositor, end to end
+        run: |
+          . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null
+          cargo build -p spatishelf --locked
+          python3 -I tools/spatiand-dnd-e2e.py target/debug target/spatimesh-e2e/dnd
       # Two machines' SpatiMesh sharing one synchronised folder: a login and a visit on one are
       # there on the other.
       - name: SpatiMesh's logins and history on two machines, end to end

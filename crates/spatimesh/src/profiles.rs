@@ -26,6 +26,10 @@ pub struct Profile {
     /// password, kept only as a salted hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lock: Option<Lock>,
+    /// Where it is in the list of profiles, as the wearer put it; none, after those that have
+    /// one, in the order they were made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<u32>,
 }
 
 /// A profile's PIN or password, as it is kept: never the thing itself.
@@ -94,7 +98,7 @@ impl Profile {
 const COLOURS: &[[u8; 3]] = &[[55, 166, 247], [22, 230, 192], [143, 107, 242], [242, 160, 61], [235, 87, 120], [120, 200, 90]];
 
 pub fn private() -> Profile {
-    Profile { id: PRIVATE.to_string(), name: "Private".to_string(), colour: [96, 96, 112], created: 0, lock: None }
+    Profile { id: PRIVATE.to_string(), name: "Private".to_string(), colour: [96, 96, 112], created: 0, lock: None, position: None }
 }
 
 fn file(id: &str) -> String {
@@ -110,15 +114,32 @@ pub fn list(store: &Store) -> Vec<Profile> {
         .filter_map(|id| store.read::<Profile>(&file(&id)).map(|p| Profile { id, ..p }))
         .collect();
     if found.is_empty() {
-        let first = Profile { id: FIRST.to_string(), name: "Personal".to_string(), colour: COLOURS[0], created: 0, lock: None };
+        let first = Profile { id: FIRST.to_string(), name: "Personal".to_string(), colour: COLOURS[0], created: 0, lock: None, position: None };
         // Every machine makes this one on its own: another's, renamed perhaps, wins over it.
         if let Err(e) = store.write_default(&file(FIRST), &first) {
             log::warn!("the first profile could not be written: {e}");
         }
         found.push(first);
     }
-    found.sort_by(|a, b| (a.created, &a.id).cmp(&(b.created, &b.id)));
+    found.sort_by(|a, b| (a.position.unwrap_or(u32::MAX), a.created, &a.id).cmp(&(b.position.unwrap_or(u32::MAX), b.created, &b.id)));
     found
+}
+
+/// A profile moved `by` places up (negative) or down the list, on every machine: every profile
+/// is given its place, so that the order is the same wherever it is read.
+pub fn move_by(store: &Store, id: &str, by: isize) -> Result<(), String> {
+    let mut all = list(store);
+    let from = all.iter().position(|p| p.id == id).ok_or("no such profile")?;
+    let to = (from as isize + by).clamp(0, all.len() as isize - 1) as usize;
+    let moved = all.remove(from);
+    all.insert(to, moved);
+    for (place, profile) in all.iter_mut().enumerate() {
+        if profile.position != Some(place as u32) {
+            profile.position = Some(place as u32);
+            store.write(&file(&profile.id), &*profile)?;
+        }
+    }
+    Ok(())
 }
 
 fn folders(store: &Store) -> Vec<String> {
@@ -142,7 +163,7 @@ pub fn get(store: &Store, id: &str) -> Option<Profile> {
 
 pub fn add(store: &Store, name: &str) -> Result<Profile, String> {
     let count = list(store).len();
-    let profile = Profile { id: new_id(), name: name.trim().to_string(), colour: COLOURS[count % COLOURS.len()], created: now_ms(), lock: None };
+    let profile = Profile { id: new_id(), name: name.trim().to_string(), colour: COLOURS[count % COLOURS.len()], created: now_ms(), lock: None, position: None };
     if profile.name.is_empty() {
         return Err("a profile needs a name".into());
     }
@@ -240,6 +261,25 @@ mod tests {
         assert!(get(&store, &work.id).is_none());
         assert!(!store.data_dir(&work.id).exists(), "its website data went with it");
         assert!(add(&store, "  ").is_err());
+    }
+
+    #[test]
+    fn profiles_keep_the_order_they_are_put_in() {
+        let scratch = Scratch::new("profiles-order");
+        let store = scratch.store();
+        list(&store);
+        let work = add(&store, "Work").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        add(&store, "Games").unwrap();
+        let names = |store: &Store| list(store).iter().map(|p| p.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&store), vec!["Personal", "Work", "Games"]);
+        move_by(&store, &work.id, -1).unwrap();
+        assert_eq!(names(&store), vec!["Work", "Personal", "Games"]);
+        move_by(&store, &work.id, 10).unwrap();
+        assert_eq!(names(&store), vec!["Personal", "Games", "Work"]);
+        // One made after the order was set goes at the end.
+        add(&store, "New").unwrap();
+        assert_eq!(names(&store).last().unwrap(), "New");
     }
 
     #[test]

@@ -424,3 +424,151 @@ fn cookies_are_said_made_and_removed() {
     host.quit();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A server of fixed answers by path, each with headers of its own: its address.
+fn server(answers: Vec<(&'static str, &'static str, Vec<u8>)>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut stream = stream;
+            let mut request = [0u8; 4096];
+            let n = stream.read(&mut request).unwrap_or(0);
+            let request = String::from_utf8_lossy(&request[..n]);
+            let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
+            let (headers, body) = answers.iter().find(|(p, ..)| *p == path).map(|(_, h, b)| (*h, b.clone())).unwrap_or(("Content-Type: text/html\r\n", b"<title>none</title>".to_vec()));
+            let _ = write!(stream, "HTTP/1.1 200 OK\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+            let _ = stream.write_all(&body);
+        }
+    });
+    address
+}
+
+/// A right click is the window's menu to show, with what is under it; the link under the
+/// pointer is said; finding in the page counts what it found.
+#[test]
+fn menus_links_under_the_pointer_and_finding() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    let url = page(concat!(
+        "<title>menus</title><body style='margin:0'>",
+        "<a href='https://example.invalid/linked' style='position:absolute;left:10px;top:10px;width:200px;height:40px;display:block'>A link</a>",
+        "<input style='position:absolute;left:10px;top:80px;width:200px;height:30px'>",
+        "<p style='position:absolute;left:10px;top:150px'>needle and needle and NEEDLE</p></body>"
+    ));
+    host.send(ToHost::Open { tab: 1, url, view: View::new(400, 300, 1.0) });
+    host.loaded(1);
+    let m = Modifiers::default();
+    host.send(ToHost::Pointer { tab: 1, x: 50.0, y: 25.0, button: None, modifiers: m });
+    let hovered = host.wait_for("the link under the pointer", 20, |h| matches!(h, Happened::Hovered { tab: 1, link } if !link.is_empty()));
+    assert!(matches!(hovered, Happened::Hovered { ref link, .. } if link == "https://example.invalid/linked"), "{hovered:?}");
+    for pressed in [true, false] {
+        host.send(ToHost::Pointer { tab: 1, x: 50.0, y: 25.0, button: Some((Button::Right, pressed)), modifiers: m });
+    }
+    let menu = host.wait_for("the menu over the link", 20, |h| matches!(h, Happened::ContextMenu { tab: 1, .. }));
+    let Happened::ContextMenu { hit, .. } = menu else { unreachable!() };
+    assert_eq!(hit.link.as_deref(), Some("https://example.invalid/linked"));
+    assert_eq!(hit.link_text, "A link");
+    assert!(!hit.editable);
+    for pressed in [true, false] {
+        host.send(ToHost::Pointer { tab: 1, x: 50.0, y: 95.0, button: Some((Button::Right, pressed)), modifiers: m });
+    }
+    let menu = host.wait_for("the menu over the field", 20, |h| matches!(h, Happened::ContextMenu { tab: 1, .. }));
+    let Happened::ContextMenu { hit, .. } = menu else { unreachable!() };
+    assert!(hit.editable && hit.link.is_none(), "{hit:?}");
+    host.send(ToHost::Find { tab: 1, text: "needle".into(), forward: true });
+    let found = host.wait_for("what was found", 20, |h| matches!(h, Happened::Found { tab: 1, .. }));
+    assert_eq!(found, Happened::Found { tab: 1, matches: 3 });
+    host.send(ToHost::Find { tab: 1, text: "haystack".into(), forward: true });
+    let found = host.wait_for("nothing found", 20, |h| matches!(h, Happened::Found { tab: 1, .. }));
+    assert_eq!(found, Happened::Found { tab: 1, matches: 0 });
+    host.send(ToHost::Find { tab: 1, text: String::new(), forward: true });
+    host.quit();
+}
+
+/// A file the window asked for comes down into the file it named, its news told; and a page's
+/// <input type=file> is answered with the files the window gives.
+#[test]
+fn downloads_and_files_for_a_page() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    let body: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+    let address = server(vec![("/file.bin", "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"file.bin\"\r\n", body.clone())]);
+    let folder = std::env::temp_dir().join(format!("spatimesh-download-{}", std::process::id()));
+    let target = folder.join("here.bin");
+    let url = page(concat!(
+        "<title>files</title><body style='margin:0'>",
+        "<input type=file multiple accept='image/png' style='position:absolute;left:10px;top:10px;width:300px;height:40px' ",
+        "onchange=\"document.title='chosen:'+this.files.length+':'+this.files[0].name\"></body>"
+    ));
+    host.send(ToHost::Open { tab: 1, url, view: View::new(400, 300, 1.0) });
+    host.loaded(1);
+    host.send(ToHost::Download { tab: 1, id: 5, url: format!("{address}/file.bin"), to: target.to_string_lossy().into() });
+    let started = host.wait_for("the download to begin", 20, |h| matches!(h, Happened::Download { id: 5, event: spatimesh::engine::Download::Started { .. }, .. }));
+    assert!(matches!(started, Happened::Download { tab: 1, event: spatimesh::engine::Download::Started { ref file, .. }, .. } if Path::new(file) == target), "{started:?}");
+    let finished = host.wait_for("the download to end", 30, |h| matches!(h, Happened::Download { id: 5, event: spatimesh::engine::Download::Finished { .. } | spatimesh::engine::Download::Failed { .. }, .. }));
+    assert!(matches!(finished, Happened::Download { event: spatimesh::engine::Download::Finished { .. }, .. }), "{finished:?}");
+    assert_eq!(std::fs::read(&target).unwrap(), body);
+    // The page's own file field.
+    let picked = folder.join("picked.png");
+    std::fs::write(&picked, b"not really a picture").unwrap();
+    host.send(ToHost::Focus { tab: 1, focused: true });
+    host.click(1, 60.0, 30.0);
+    let asked = host.wait_for("the page to ask for files", 20, |h| matches!(h, Happened::ChooseFiles { tab: 1, .. }));
+    assert!(matches!(asked, Happened::ChooseFiles { multiple: true, ref accept, .. } if accept.iter().any(|a| a == "image/png")), "{asked:?}");
+    host.send(ToHost::Files { tab: 1, files: Some(vec![picked.to_string_lossy().into()]) });
+    assert_eq!(host.title(1, "chosen:"), "chosen:1:picked.png");
+    let _ = std::fs::remove_dir_all(&folder);
+    host.quit();
+}
+
+/// A link shown in one tab and visited in another should look visited in the first, by itself,
+/// as browsers' tabs do -- and does not yet: WebKit's GLib API (WebKitGTK and WPE alike, 2.54)
+/// gives every web view a visited-link store of its own (`webkitWebViewCreatePageConfiguration`
+/// never sets one), shared only with the views a page opens with `window.open`. A link looks
+/// visited only in the tab that followed it. `related-view` would share it, and the web process
+/// with it: one tab's crash would take the others. The fix is WebKit's: one store for a web
+/// context's views (docs/spatimesh.md, "Visited links"). This is the test for it.
+#[test]
+#[ignore = "WebKit keeps visited links per web view: needs the WebKit change in docs/spatimesh.md, \"Visited links\""]
+fn a_link_visited_in_another_tab_looks_visited() {
+    let root = std::env::temp_dir().join(format!("spatimesh-visited-{}", std::process::id()));
+    let Some(mut host) = Host::start(&kept(&root)) else { return };
+    let style = "<style>body{margin:0}a{display:block;width:300px;height:80px;background-color:rgb(0,0,255)}a:visited{background-color:rgb(255,0,0)}</style>";
+    let first = format!("<title>first</title>{style}<a href='/target'>x</a><a href='/clicked'>y</a>");
+    let address = server(vec![
+        ("/first", "Content-Type: text/html\r\n", first.into_bytes()),
+        ("/target", "Content-Type: text/html\r\n", b"<title>target</title>".to_vec()),
+        ("/clicked", "Content-Type: text/html\r\n", b"<title>clicked</title>".to_vec()),
+        ("/other", "Content-Type: text/html\r\n", format!("<title>other</title>{style}<a href='/clicked'>y</a>").into_bytes()),
+    ]);
+    // The colour of a tab's link at `y` once a picture shows one of the two.
+    let colour = |host: &mut Host, tab: TabId, y: u32, want: [u8; 3]| {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            host.wait_for("a picture", 15, |h| matches!(h, Happened::Picture { tab: t } if *t == tab));
+            let p = host.pixel(tab, 50, y);
+            if near(p, want) {
+                return;
+            }
+            assert!(Instant::now() < deadline, "tab {tab}'s link at {y} is {p:?}, not {want:?}");
+        }
+    };
+    host.send(ToHost::Open { tab: 1, url: format!("{address}/first"), view: View::new(400, 300, 1.0) });
+    host.loaded(1);
+    colour(&mut host, 1, 40, [0, 0, 255]);
+    // Another tab is given the link's address: the first tab's link turns visited.
+    host.send(ToHost::Open { tab: 2, url: format!("{address}/target"), view: View::new(400, 300, 1.0) });
+    host.title(2, "target");
+    host.loaded(2);
+    colour(&mut host, 1, 40, [255, 0, 0]);
+    // A link followed in a third tab shows visited in the first, and in a fourth opened after.
+    host.send(ToHost::Open { tab: 3, url: format!("{address}/other"), view: View::new(400, 300, 1.0) });
+    host.loaded(3);
+    host.click(3, 50.0, 40.0);
+    host.title(3, "clicked");
+    colour(&mut host, 1, 120, [255, 0, 0]);
+    host.send(ToHost::Open { tab: 4, url: format!("{address}/first"), view: View::new(400, 300, 1.0) });
+    host.loaded(4);
+    colour(&mut host, 4, 120, [255, 0, 0]);
+    host.quit();
+    let _ = std::fs::remove_dir_all(&root);
+}

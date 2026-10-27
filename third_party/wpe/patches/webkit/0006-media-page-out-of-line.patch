@@ -1,0 +1,38 @@
+diff --git a/Source/WebCore/html/HTMLMediaElement.cpp b/Source/WebCore/html/HTMLMediaElement.cpp
+index 7f67355..4b27fa1 100644
+--- a/Source/WebCore/html/HTMLMediaElement.cpp
++++ b/Source/WebCore/html/HTMLMediaElement.cpp
+@@ -8674,6 +8674,15 @@ bool HTMLMediaElement::mediaPlayerIsFullscreenPermitted() const
+     return protect(mediaSession())->fullscreenPermitted();
+ }
+ 
++// Spatiand: which page a player plays for, out of line, where Document is whole (the header
++// has only its name in some of the files that include it).
++std::optional<uint64_t> HTMLMediaElement::mediaPlayerSpatiandPage() const
++{
++    if (auto page = document().pageID())
++        return page->toUInt64();
++    return std::nullopt;
++}
++
+ bool HTMLMediaElement::mediaPlayerIsVideo() const
+ {
+     return isVideo();
+diff --git a/Source/WebCore/html/HTMLMediaElement.h b/Source/WebCore/html/HTMLMediaElement.h
+index 84b297c..cd2b30c 100644
+--- a/Source/WebCore/html/HTMLMediaElement.h
++++ b/Source/WebCore/html/HTMLMediaElement.h
+@@ -940,12 +940,7 @@ private:
+     void mediaPlayerVideoLayerSizeDidChange(const FloatSize& size) final { m_videoLayerSize = size; }
+ 
+     MediaPlayerClientIdentifier mediaPlayerClientIdentifier() const final { return identifier(); }
+-    std::optional<uint64_t> mediaPlayerSpatiandPage() const final
+-    {
+-        if (auto page = document().pageID())
+-            return page->toUInt64();
+-        return std::nullopt;
+-    }
++    std::optional<uint64_t> mediaPlayerSpatiandPage() const final;
+     SoundStageSize mediaPlayerSoundStageSize() const final { return soundStageSize(); }
+ 
+     void pendingActionTimerFired();

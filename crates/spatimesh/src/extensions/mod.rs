@@ -13,6 +13,7 @@ pub mod pattern;
 pub mod runtime;
 pub mod set;
 pub mod storage;
+pub mod store;
 pub mod zip;
 
 /// Sixteen bytes as an extension's id: hex digits written with the letters a to p, as Chrome

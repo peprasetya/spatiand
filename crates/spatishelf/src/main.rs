@@ -13,6 +13,7 @@
 //! spatishelf --tab         a tab, spoken to over its standard input and output
 //! ```
 
+mod hand;
 mod look;
 mod proto;
 mod setup;
@@ -40,10 +41,88 @@ const SIDE: f32 = 350.0;
 const TILE: f32 = 176.0;
 const ROW: f32 = 54.0;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum View {
     Grid,
     List,
+}
+
+/// What a folder's things are put in order by; folders first, whatever it is.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum SortBy {
+    Name,
+    Kind,
+    Size,
+    Modified,
+}
+
+impl SortBy {
+    fn word(self) -> &'static str {
+        match self {
+            SortBy::Name => "Name",
+            SortBy::Kind => "Kind",
+            SortBy::Size => "Size",
+            SortBy::Modified => "Modified",
+        }
+    }
+
+    fn icon(self) -> Icon {
+        match self {
+            SortBy::Name => Icon::SortName,
+            SortBy::Kind => Icon::Grid,
+            SortBy::Size => Icon::Drive,
+            SortBy::Modified => Icon::SortRecent,
+        }
+    }
+
+    /// `a` against `b`, the first of a kind (the default direction: names A to Z, the biggest
+    /// and the newest first).
+    fn order(self, a: &Item, b: &Item) -> std::cmp::Ordering {
+        let folders = (b.kind == Kind::Folder).cmp(&(a.kind == Kind::Folder));
+        let by = match self {
+            SortBy::Name => std::cmp::Ordering::Equal,
+            SortBy::Kind => a.kind.word().cmp(b.kind.word()),
+            SortBy::Size => b.size.cmp(&a.size),
+            SortBy::Modified => b.modified.cmp(&a.modified),
+        };
+        folders.then(by).then_with(|| natural(&a.name, &b.name))
+    }
+}
+
+/// Names as a person orders them: case aside, and numbers by their value ("2" before "10").
+fn natural(a: &str, b: &str) -> std::cmp::Ordering {
+    let (mut a, mut b) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        match (a.peek().copied(), b.peek().copied()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
+                let number = |c: &mut std::iter::Peekable<std::str::Chars>| {
+                    let mut digits = String::new();
+                    while let Some(d) = c.peek().copied().filter(char::is_ascii_digit) {
+                        digits.push(d);
+                        c.next();
+                    }
+                    digits
+                };
+                let (n, m) = (number(&mut a), number(&mut b));
+                let (n, m) = (n.trim_start_matches('0'), m.trim_start_matches('0'));
+                let order = n.len().cmp(&m.len()).then_with(|| n.cmp(m));
+                if order != std::cmp::Ordering::Equal {
+                    return order;
+                }
+            }
+            (Some(x), Some(y)) => {
+                let order = x.to_lowercase().cmp(y.to_lowercase());
+                if order != std::cmp::Ordering::Equal {
+                    return order;
+                }
+                a.next();
+                b.next();
+            }
+        }
+    }
 }
 
 enum State {
@@ -143,9 +222,17 @@ impl ShelfTab {
         self.tell(&ToTab::Go(place));
     }
 
-    fn refilter(&mut self, hidden: bool) {
+    fn refilter(&mut self, hidden: bool, sort: (SortBy, bool)) {
         let words = self.filter.to_lowercase();
+        let at_cursor = self.shown.get(self.cursor).copied();
         self.shown = self.items.iter().enumerate().filter(|(_, i)| (hidden || !i.hidden) && (words.is_empty() || i.name.to_lowercase().contains(&words))).map(|(n, _)| n).collect();
+        let items = &self.items;
+        self.shown.sort_by(|&a, &b| {
+            let order = sort.0.order(&items[a], &items[b]);
+            if sort.1 { order.reverse() } else { order }
+        });
+        // The cursor stays on what it was on.
+        self.cursor = at_cursor.and_then(|i| self.shown.iter().position(|&s| s == i)).unwrap_or(self.cursor);
         self.cursor = self.cursor.min(self.shown.len().saturating_sub(1));
         self.selected.retain(|s| self.shown.contains(s));
     }
@@ -217,7 +304,7 @@ enum Done {
 
 enum Overlay {
     None,
-    Menu { at: (f32, f32), list: List, entries: Vec<(String, Action)> },
+    Menu { at: (f32, f32), list: List, entries: Vec<(Row, Action)> },
     Ask { what: Asking, field: Field, ok: Button, cancel: Button },
     Confirm { text: String, action: Action, ok: Button, cancel: Button },
     Network { connect: Button, close: Button },
@@ -227,7 +314,6 @@ enum Overlay {
 
 #[derive(Clone, PartialEq)]
 enum Asking {
-    Rename(Place),
     NewFolder,
 }
 
@@ -248,6 +334,17 @@ enum Action {
     ToggleHidden,
     Forget(String),
     About,
+    OpenInTab(Place),
+    PasteInto(Place),
+    Duplicate,
+    /// Where the chosen things can be moved (or copied) to, as a menu.
+    MoveToMenu,
+    CopyToMenu,
+    Send { to: Place, copy: bool },
+    SortMenu,
+    Sort(SortBy),
+    SetView(View),
+    TerminalHere,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -294,6 +391,18 @@ struct Shelf {
     trail: Vec<(Rect, Place)>,
     content: Rect,
     typed: (String, Instant),
+    press: Option<hand::Press>,
+    drag: Option<hand::Drag>,
+    band: Option<hand::Band>,
+    renaming: Option<hand::Renaming>,
+    /// A rename to start, of this thing (in `items`), at this time: after a click on its name.
+    rename_due: Option<(Instant, usize)>,
+    /// What the folders' things are in order by, and whether the other way round.
+    sort: (SortBy, bool),
+    /// Where the last menu opened: where the one it leads to opens.
+    menu_at: (f32, f32),
+    /// Something dragged here from elsewhere in the room.
+    incoming: Option<hand::Incoming>,
 }
 
 #[derive(Clone)]
@@ -434,8 +543,9 @@ impl Shelf {
     }
 
     fn hear(&mut self) {
-        let hidden = self.hidden;
+        let (hidden, sort) = (self.hidden, self.sort);
         let mut finished = Vec::new();
+        let mut listed = Vec::new();
         for (t, tab) in self.tabs.iter_mut().enumerate() {
             if tab.crashed.is_some() {
                 continue;
@@ -468,7 +578,9 @@ impl Shelf {
                         tab.items = items;
                         tab.free = free;
                         tab.selected.clear();
-                        tab.refilter(hidden);
+                        tab.shown.clear();
+                        tab.refilter(hidden, sort);
+                        listed.push(t);
                         let land = tab.land_on.take();
                         tab.cursor = land.and_then(|name| tab.shown.iter().position(|&i| tab.items[i].name == name)).unwrap_or(0);
                         tab.anchor = tab.cursor;
@@ -498,6 +610,9 @@ impl Shelf {
                 };
                 tab.crashed = Some(why);
             }
+        }
+        for t in listed {
+            self.relisted(t);
         }
         for (t, error) in finished {
             if let Some(e) = error {
@@ -575,7 +690,7 @@ impl Shelf {
     }
 
     fn act(&mut self, action: Action) {
-        let hidden = self.hidden;
+        let (hidden, sort) = (self.hidden, self.sort);
         match action {
             Action::Open => self.open(None),
             Action::OpenWith(opener) => self.open(Some(opener)),
@@ -599,13 +714,8 @@ impl Shelf {
                 }
             }
             Action::Rename => {
-                let Some((_, item)) = self.tab().item_at_cursor() else { return };
-                let name = item.name.clone();
-                let place = self.tab().place.join(&name);
-                let mut field = Field::default();
-                field.focused = true;
-                field.set(name);
-                self.overlay = Overlay::Ask { what: Asking::Rename(place), field, ok: Button::default(), cancel: Button::default() };
+                let Some((index, _)) = self.tab().item_at_cursor() else { return };
+                self.start_rename(index);
             }
             Action::NewFolder => {
                 let mut field = Field::default();
@@ -645,7 +755,52 @@ impl Shelf {
             Action::ToggleHidden => {
                 self.hidden = !self.hidden;
                 for tab in &mut self.tabs {
-                    tab.refilter(!hidden);
+                    tab.refilter(!hidden, sort);
+                }
+            }
+            Action::OpenInTab(place) => self.new_tab(place),
+            Action::PasteInto(place) => {
+                let Some((from, moving)) = self.clipboard.clone() else { return };
+                self.send(from, place, !moving);
+                if moving {
+                    self.clipboard = None;
+                }
+            }
+            Action::Duplicate => {
+                let chosen = self.tab().chosen();
+                let here = self.tab().place.clone();
+                if matches!(here, Place::Local(_)) {
+                    self.send(chosen, here, true);
+                }
+            }
+            Action::MoveToMenu | Action::CopyToMenu => {
+                let at = self.menu_at;
+                self.destinations_menu(at, action == Action::CopyToMenu);
+            }
+            Action::Send { to, copy } => {
+                let chosen = self.tab().chosen();
+                self.send(chosen, to, copy);
+            }
+            Action::SortMenu => {
+                let at = self.menu_at;
+                self.sort_menu(at);
+            }
+            Action::Sort(by) => {
+                // The same again turns it round.
+                self.sort = if self.sort.0 == by { (by, !self.sort.1) } else { (by, false) };
+                let sort = self.sort;
+                for tab in &mut self.tabs {
+                    tab.refilter(hidden, sort);
+                }
+            }
+            Action::SetView(view) => self.view = view,
+            Action::TerminalHere => {
+                if let (Place::Local(folder), Some(program)) = (self.tab().place.clone(), own_program("spatiquill")) {
+                    let mut command = Command::new(program);
+                    command.env("SPATIQUILL_FOLDER", &folder).arg(&folder);
+                    if let Err(e) = detached(command) {
+                        self.fail(format!("SpatiQuill would not start: {e}"));
+                    }
                 }
             }
             Action::About => self.overlay = Overlay::About { close: Button::default() },
@@ -729,54 +884,6 @@ impl Shelf {
         }
     }
 
-    fn menu(&mut self) {
-        let mut entries: Vec<(String, Action)> = Vec::new();
-        let item = self.tab().item_at_cursor().map(|(_, i)| i.clone());
-        if let Some(item) = &item {
-            entries.push(("Open".into(), Action::Open));
-            if item.kind == Kind::Folder {
-                if matches!(self.tab().place, Place::Local(_)) && own_program("spatiquill").is_some() {
-                    entries.push(("Open in SpatiQuill".into(), Action::OpenWith(Opener::Own("spatiquill"))));
-                }
-            } else {
-                for (name, program) in [("SpatiLoupe", "spatiloupe"), ("SpatiReel", "spatireel")] {
-                    if own_program(program).is_some() && opener_for(item.kind) != Some(program) {
-                        entries.push((format!("Open with {name}"), Action::OpenWith(Opener::Own(program))));
-                    }
-                }
-                if !cfg!(target_os = "android") {
-                    entries.push((format!("Open with {}", if cfg!(target_os = "macos") { "the Mac's app" } else { "another app" }), Action::OpenWith(Opener::Native)));
-                }
-            }
-            entries.push(("Copy".into(), Action::Copy));
-            entries.push(("Cut".into(), Action::Cut));
-        }
-        if self.clipboard.is_some() {
-            entries.push(("Paste here".into(), Action::Paste));
-        }
-        if item.is_some() {
-            entries.push(("Rename\u{2026}".into(), Action::Rename));
-            let remote = matches!(self.tab().place, Place::Remote(..));
-            entries.push((if remote || cfg!(target_os = "android") { "Delete\u{2026}".into() } else { "Move to the trash".into() }, Action::Trash));
-            entries.push(("Copy the path".into(), Action::CopyPath));
-        }
-        entries.push(("New folder\u{2026}".into(), Action::NewFolder));
-        entries.push((if self.hidden { "Hide hidden files" } else { "Show hidden files" }.into(), Action::ToggleHidden));
-        entries.push(("Refresh".into(), Action::Refresh));
-        entries.push(("About SpatiShelf".into(), Action::About));
-        let mut list = List::default();
-        list.focused = true;
-        self.overlay = Overlay::Menu { at: self.pointer, list, entries };
-    }
-
-    fn side_menu(&mut self, row: usize) {
-        if let Some(SideRow::Go(Place::Remote(name, _))) = self.side_rows.get(row).cloned() {
-            let mut list = List::default();
-            list.focused = true;
-            self.overlay = Overlay::Menu { at: self.pointer, list, entries: vec![("Open in a new tab".into(), Action::Refresh), (format!("Forget {name}\u{2026}"), Action::Forget(name))] };
-        }
-    }
-
     fn side_chosen(&mut self, row: usize) {
         match self.side_rows.get(row).cloned() {
             Some(SideRow::Go(place)) => {
@@ -850,29 +957,41 @@ impl Shelf {
             Event::PointerMoved { x, y, .. } => {
                 self.pointer = (*x, *y);
                 setup::POINTER.with(|p| p.set((*x, *y)));
+                if matches!(self.overlay, Overlay::None) {
+                    self.pointer_moved(*x, *y);
+                }
             }
             _ => {}
+        }
+        // Something dragged, as the room says: this window's own, or from elsewhere.
+        if matches!(event, Event::DragEntered { .. } | Event::DragMoved { .. } | Event::DragLeft { .. } | Event::Dropped { .. } | Event::DragEnded { .. }) {
+            self.room_drag(event);
+            return true;
         }
         // The right button opens a menu for what it is over.
         if let Event::Button { button: PointerButton::Right, pressed: true, .. } = event {
             let (x, y) = self.pointer;
-            if matches!(self.overlay, Overlay::None) {
-                if self.content.contains(x, y) {
-                    if let Some(at) = self.hit(x, y) {
-                        let tab = self.tab();
-                        tab.cursor = at;
-                        if !tab.selected.contains(&tab.shown[at]) {
-                            tab.selected.clear();
-                        }
-                    }
-                    self.menu();
-                } else if self.side.contains(x, y) {
-                    if let Some(row) = side_row_at(&self.side, x, y) {
-                        self.side_menu(row);
-                    }
-                }
+            if matches!(self.overlay, Overlay::None) && self.drag.is_none() {
+                self.context_menu(x, y);
             }
             return true;
+        }
+        // Keys the toolkit has no name for, by their number: F2 renames, the menu key (and
+        // Shift-F10) opens the menu.
+        if let Event::Key { code, pressed: true, modifiers, .. } = &event {
+            if matches!(self.overlay, Overlay::None) && self.renaming.is_none() && !self.filtering {
+                match (*code, modifiers.shift) {
+                    (60, _) => {
+                        self.act(Action::Rename);
+                        return true;
+                    }
+                    (127, _) | (68, true) => {
+                        self.menu_at_cursor();
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
         }
         let Some(input) = Input::of(&event, 1.0) else { return true };
         self.input(input);
@@ -892,16 +1011,7 @@ impl Shelf {
                 }
                 if let Some(row) = list.input(&input) {
                     let action = entries[row].1.clone();
-                    let label = entries[row].0.clone();
-                    let at = *at;
                     self.overlay = Overlay::None;
-                    // "Open in a new tab" from a remote's own menu.
-                    if label == "Open in a new tab" {
-                        if let Some(SideRow::Go(place)) = side_row_at(&self.side, at_x(&at), at_y(&at)).and_then(|r| self.side_rows.get(r).cloned()) {
-                            self.new_tab(place);
-                        }
-                        return;
-                    }
                     self.act(action);
                 }
                 return;
@@ -922,7 +1032,6 @@ impl Shelf {
                     let id = self.next_op;
                     self.next_op += 1;
                     let op = match what {
-                        Asking::Rename(item) => Op::Rename { item, name: name.clone() },
                         Asking::NewFolder => Op::Mkdir { inside: self.tab().place.clone(), name: name.clone() },
                     };
                     self.tab().land_on = Some(name);
@@ -970,22 +1079,57 @@ impl Shelf {
                 return;
             }
         }
+        // A name being typed over has the keys; a press anywhere else is the end of it.
+        if let Some(r) = &mut self.renaming {
+            match &input {
+                Input::Key { key: Key::Escape, .. } => {
+                    self.renaming = None;
+                    return;
+                }
+                Input::Key { key: Key::Tab, .. } => {
+                    self.finish_rename();
+                    return;
+                }
+                Input::Key { .. } => {
+                    if r.field.input(&input) == Some(Typed::Entered) {
+                        self.finish_rename();
+                    }
+                    return;
+                }
+                Input::Press { pressed: true } if r.field.contains(self.pointer.0, self.pointer.1) => return,
+                Input::Press { pressed: true } => self.finish_rename(),
+                _ => {}
+            }
+        }
+        // Letting go: the end of a press, a drag or a band, wherever the pointer is.
+        if let Input::Press { pressed: false } = input {
+            if self.press.is_some() || self.drag.is_some() || self.band.is_some() {
+                self.release();
+                return;
+            }
+        }
+        if let Input::Key { key: Key::Escape, .. } = input {
+            if self.drag.take().is_some() || self.band.take().is_some() {
+                self.press = None;
+                return;
+            }
+        }
         // The filter field, while it is open.
         if self.filtering {
             if let Input::Key { key: Key::Escape, .. } = input {
                 self.filtering = false;
                 self.filter_field.set("");
                 self.tab().filter.clear();
-                let h = self.hidden;
-                self.tab().refilter(h);
+                let (h, sort) = (self.hidden, self.sort);
+                self.tab().refilter(h, sort);
                 return;
             }
             if let Some(typed) = self.filter_field.input(&input) {
                 let text = self.filter_field.text.clone();
-                let h = self.hidden;
+                let (h, sort) = (self.hidden, self.sort);
                 let tab = self.tab();
                 tab.filter = text;
-                tab.refilter(h);
+                tab.refilter(h, sort);
                 if typed == Typed::Entered {
                     self.filtering = false;
                     self.filter_field.focused = false;
@@ -1039,37 +1183,7 @@ impl Shelf {
             return;
         }
         match input {
-            Input::Press { pressed: true } if self.content.contains(x, y) => {
-                let hit = self.hit(x, y);
-                let m = self.modifiers;
-                let tab = &mut self.tabs[self.active];
-                match hit {
-                    Some(at) => {
-                        let index = tab.shown[at];
-                        if m.control || m.logo {
-                            if !tab.selected.remove(&index) {
-                                tab.selected.insert(index);
-                            }
-                        } else if m.shift {
-                            let (a, b) = (tab.anchor.min(at), tab.anchor.max(at));
-                            tab.selected = tab.shown[a..=b].iter().copied().collect();
-                        } else {
-                            tab.selected.clear();
-                            tab.selected.insert(index);
-                            tab.anchor = at;
-                        }
-                        tab.cursor = at;
-                        // Twice quickly on the same thing: open it.
-                        let double = self.last_click.is_some_and(|(t, i)| t.elapsed() < Duration::from_millis(450) && i == at);
-                        self.last_click = Some((Instant::now(), at));
-                        if double {
-                            self.last_click = None;
-                            self.open(None);
-                        }
-                    }
-                    None => tab.selected.clear(),
-                }
-            }
+            Input::Press { pressed: true } if self.content.contains(x, y) => self.content_press(x, y),
             Input::Scroll { dy, .. } if self.content.contains(x, y) => {
                 let tab = self.tab();
                 tab.scroll = (tab.scroll + dy).max(0.0);
@@ -1129,8 +1243,11 @@ impl Shelf {
                     self.filter_field.focused = true;
                 }
                 Some('n') if m.shift => self.act(Action::NewFolder),
+                Some('d') => self.act(Action::Duplicate),
                 Some('r') => self.act(Action::Refresh),
-                Some('h') if m.shift || m.logo => self.act(Action::ToggleHidden),
+                // Control-H on Linux, as its file managers have it; Shift-Command-. on a Mac.
+                Some('h') if m.shift || m.logo || !cfg!(target_os = "macos") => self.act(Action::ToggleHidden),
+                Some('.') if m.shift && m.logo => self.act(Action::ToggleHidden),
                 Some('1') => self.view = View::Grid,
                 Some('2') => self.view = View::List,
                 Some('l') => {
@@ -1200,7 +1317,6 @@ impl Shelf {
                     }
                 }
             }
-            Key::Other if self_code_is_f2(text) => self.act(Action::Rename),
             Key::Char(_) if !text.is_empty() && !text.chars().any(char::is_control) => {
                 // Typing a name goes to it.
                 let (typed, at) = &mut self.typed;
@@ -1370,6 +1486,7 @@ impl Shelf {
         self.content = main;
         self.paint_content(p, gl, main);
         self.paint_foot(p, gl, foot);
+        self.paint_hand(p, gl);
         self.paint_overlay(p, gl, all);
     }
 
@@ -1426,6 +1543,9 @@ impl Shelf {
         let view = self.view;
         let columns = self.columns();
         let pointer = self.pointer;
+        let sort = self.sort;
+        // The name being renamed is typed over where it is, not written.
+        let renaming = self.renaming.as_ref().filter(|r| r.tab == self.active).map(|r| r.name.clone());
         let tab = &mut self.tabs[self.active];
         for t in tab.stale.drain(..) {
             p.forget(gl, t);
@@ -1486,10 +1606,15 @@ impl Shelf {
         if view == View::List {
             let h = Rect::new(area.x, area.y, area.w, header);
             let cols = list_columns(h);
-            p.label(gl, "NAME", cols[0], theme::FOOTER_EM * 0.82, theme::ink_hint(), 0.0);
-            p.label(gl, "KIND", cols[1], theme::FOOTER_EM * 0.82, theme::ink_hint(), 0.0);
-            p.label(gl, "SIZE", cols[2], theme::FOOTER_EM * 0.82, theme::ink_hint(), 1.0);
-            p.label(gl, "MODIFIED", cols[3], theme::FOOTER_EM * 0.82, theme::ink_hint(), 1.0);
+            // Each head sorts by itself, the one sorted by marked with which way.
+            for (i, (word, by, align)) in [("NAME", SortBy::Name, 0.0), ("KIND", SortBy::Kind, 0.0), ("SIZE", SortBy::Size, 1.0), ("MODIFIED", SortBy::Modified, 1.0)].into_iter().enumerate() {
+                let on = sort.0 == by;
+                let word = if on { format!("{word} {}", if sort.1 { "\u{25bc}" } else { "\u{25b2}" }) } else { word.to_string() };
+                if cols[i].contains(pointer.0, pointer.1) {
+                    p.fill(gl, cols[i].inset(-4.0), theme::ROW_RADIUS, theme::hover());
+                }
+                p.label(gl, &word, cols[i], theme::FOOTER_EM * 0.82, if on { theme::ink_detail() } else { theme::ink_hint() }, align);
+            }
         }
         for (at, &index) in tab.shown.iter().enumerate() {
             let (row, col) = (at / columns, at % columns);
@@ -1516,7 +1641,9 @@ impl Shelf {
                     }
                     look::face(p, gl, face, item.kind, picture, 14.0);
                     let name = Rect::new(cell.x + 2.0, face.bottom() + 8.0, cell.w - 4.0, 28.0);
-                    p.label(gl, &item.name, name, theme::ROW_EM * 0.62, if selected || is_cursor { theme::ink() } else { theme::ink_row() }, 0.5);
+                    if renaming.as_deref() != Some(item.name.as_str()) {
+                        p.label(gl, &item.name, name, theme::ROW_EM * 0.62, if selected || is_cursor { theme::ink() } else { theme::ink_row() }, 0.5);
+                    }
                     let detail = if item.kind == Kind::Folder { String::new() } else { look::size(item.size) };
                     p.label(gl, &detail, Rect { y: name.bottom(), h: 24.0, ..name }, theme::FOOTER_EM * 0.8, theme::ink_hint(), 0.5);
                 }
@@ -1534,7 +1661,9 @@ impl Shelf {
                     let icon = Rect::new(cols[0].x, rect.y + 7.0, rect.h - 14.0, rect.h - 14.0);
                     look::face(p, gl, icon, item.kind, picture, 8.0);
                     let name = Rect { x: icon.right() + 14.0, w: cols[0].w - icon.w - 14.0, ..cols[0] };
-                    p.label(gl, &item.name, name, theme::ROW_EM * 0.7, if selected || is_cursor { theme::ink() } else { theme::ink_row() }, 0.0);
+                    if renaming.as_deref() != Some(item.name.as_str()) {
+                        p.label(gl, &item.name, name, theme::ROW_EM * 0.7, if selected || is_cursor { theme::ink() } else { theme::ink_row() }, 0.0);
+                    }
                     p.label(gl, item.kind.word(), cols[1], theme::DETAIL_EM * 0.9, theme::ink_hint(), 0.0);
                     if item.kind != Kind::Folder {
                         p.label(gl, &look::size(item.size), cols[2], theme::DETAIL_EM * 0.9, theme::ink_detail(), 1.0);
@@ -1550,6 +1679,13 @@ impl Shelf {
             let h = (track.h * area.h / content_h).max(30.0);
             let y = track.y + (track.h - h) * (tab.scroll / (content_h - area.h).max(1.0));
             p.fill(gl, Rect { y, h, ..track }, 2.5, theme::scroll_thumb());
+        }
+        if let Some(at) = self.renaming_at() {
+            let rect = self.rename_rect(at);
+            if let Some(r) = self.renaming.as_mut() {
+                p.fill(gl, rect.inset(-2.0), theme::ROW_RADIUS, theme::ground());
+                r.field.draw(p, gl, rect);
+            }
         }
     }
 
@@ -1601,8 +1737,12 @@ impl Shelf {
             Overlay::None => {}
             Overlay::Menu { at, list, entries } => {
                 let rect = menu_rect(*at, entries.len(), size);
+                // On the ground's own colour under the glass: a menu over pictures is read, not
+                // seen through.
+                p.glow(gl, rect, 20.0, [0.0, 0.0, 0.0, 0.45], 24.0);
+                p.fill(gl, rect, 20.0, theme::ground());
                 room::glass(p, gl, rect, 20.0, 1.0);
-                let rows: Vec<Row> = entries.iter().map(|(l, _)| Row::new(l.clone())).collect();
+                let rows: Vec<Row> = entries.iter().map(|(r, _)| r.clone()).collect();
                 list.draw(p, gl, rect.inset(10.0), &rows);
             }
             Overlay::Ask { what, field, ok, cancel } => {
@@ -1611,7 +1751,6 @@ impl Shelf {
                 room::glass(p, gl, pane, 24.0, 1.0);
                 let mut inner = pane.inset(28.0);
                 let title = match what {
-                    Asking::Rename(place) => format!("Rename {}", place.name()),
                     Asking::NewFolder => "A new folder".to_string(),
                 };
                 p.label(gl, &title, inner.take_top(48.0), theme::TITLE_EM * 0.75, theme::ink(), 0.0);
@@ -1687,7 +1826,7 @@ impl Shelf {
 
     fn run(&mut self) -> Result<(), String> {
         loop {
-            let animating = self.tabs.iter().any(|t| matches!(t.state, State::Loading(_)) || !t.doing.is_empty());
+            let animating = self.tabs.iter().any(|t| matches!(t.state, State::Loading(_)) || !t.doing.is_empty()) || self.waiting();
             let wait = if animating { 33 } else { 250 };
             for event in self.app().wait(Some(Duration::from_millis(wait)))? {
                 if !self.handle(event) {
@@ -1696,20 +1835,10 @@ impl Shelf {
             }
             self.hear();
             self.answers();
+            self.tick();
             self.draw()?;
         }
     }
-}
-
-fn at_x(at: &(f32, f32)) -> f32 {
-    at.0
-}
-fn at_y(at: &(f32, f32)) -> f32 {
-    at.1
-}
-
-fn self_code_is_f2(_text: &str) -> bool {
-    false
 }
 
 fn side_row_at(list: &List, x: f32, y: f32) -> Option<usize> {
@@ -1738,7 +1867,7 @@ fn list_columns(rect: Rect) -> [Rect; 4] {
 
 fn menu_rect(at: (f32, f32), rows: usize, size: (u32, u32)) -> Rect {
     let h = rows as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 16.0;
-    let w = 420.0;
+    let w = 620.0;
     let x = at.0.min(size.0 as f32 - w - 12.0).max(12.0);
     let y = at.1.min(size.1 as f32 - h - 12.0).max(12.0);
     Rect::new(x, y, w, h)
@@ -1870,6 +1999,14 @@ fn main() {
             trail: Vec::new(),
             content: Rect::default(),
             typed: (String::new(), Instant::now()),
+            press: None,
+            drag: None,
+            band: None,
+            renaming: None,
+            rename_due: None,
+            sort: (SortBy::Name, false),
+            menu_at: (0.0, 0.0),
+            incoming: None,
         };
         shelf.rebuild_side();
         let tab = ShelfTab::spawn(start)?;
@@ -1887,5 +2024,34 @@ fn main() {
     if let Err(e) = run() {
         log::error!("{e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(name: &str, kind: Kind, size: u64, modified: i64) -> Item {
+        Item { name: name.into(), kind, size, modified: Some(modified), hidden: false }
+    }
+
+    #[test]
+    fn names_in_a_persons_order() {
+        let mut names = vec!["chapter 10", "Chapter 2", "chapter 1", "b", "A", "x09", "x9", "x10"];
+        names.sort_by(|a, b| natural(a, b));
+        assert_eq!(names, ["A", "b", "chapter 1", "Chapter 2", "chapter 10", "x09", "x9", "x10"]);
+    }
+
+    #[test]
+    fn folders_first_however_sorted() {
+        let items = [item("z", Kind::Folder, 0, 1), item("big", Kind::Film, 900, 5), item("a", Kind::Document, 10, 9)];
+        let order = |by: SortBy| {
+            let mut shown: Vec<usize> = (0..items.len()).collect();
+            shown.sort_by(|&a, &b| by.order(&items[a], &items[b]));
+            shown.into_iter().map(|i| items[i].name.as_str()).collect::<Vec<_>>()
+        };
+        assert_eq!(order(SortBy::Name), ["z", "a", "big"]);
+        assert_eq!(order(SortBy::Size), ["z", "big", "a"]);
+        assert_eq!(order(SortBy::Modified), ["z", "a", "big"]);
     }
 }

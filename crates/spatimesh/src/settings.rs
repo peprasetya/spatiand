@@ -27,11 +27,15 @@ pub struct Settings {
     pub zoom: f32,
     /// Extensions may be installed from a folder or a file.
     pub developer: bool,
+    /// A profile opened when none of its windows is open opens the tabs it had open.
+    pub restore: bool,
+    /// The bookmarks bar, under the address bar.
+    pub bookmarks_bar: bool,
 }
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { search: search_engines()[0].name.clone(), custom_search: None, home: "about:blank".to_string(), zoom: 1.25, developer: false }
+        Settings { search: search_engines()[0].name.clone(), custom_search: None, home: "about:blank".to_string(), zoom: 1.25, developer: false, restore: true, bookmarks_bar: false }
     }
 }
 
@@ -55,6 +59,8 @@ impl Settings {
         read(store, "home", &mut s.home);
         read(store, "zoom", &mut s.zoom);
         read(store, "developer", &mut s.developer);
+        read(store, "restore", &mut s.restore);
+        read(store, "bookmarks_bar", &mut s.bookmarks_bar);
         s
     }
 
@@ -65,7 +71,9 @@ impl Settings {
         write(store, "custom_search", &self.custom_search, &stored.custom_search)?;
         write(store, "home", &self.home, &stored.home)?;
         write(store, "zoom", &self.zoom, &stored.zoom)?;
-        write(store, "developer", &self.developer, &stored.developer)
+        write(store, "developer", &self.developer, &stored.developer)?;
+        write(store, "restore", &self.restore, &stored.restore)?;
+        write(store, "bookmarks_bar", &self.bookmarks_bar, &stored.bookmarks_bar)
     }
 
     pub fn search_engine(&self) -> SearchEngine {
@@ -78,6 +86,46 @@ impl Settings {
     /// The page zoom, kept to what is sensible.
     pub fn zoom(&self) -> f32 {
         if self.zoom.is_finite() { self.zoom.clamp(0.5, 3.0) } else { 1.0 }
+    }
+}
+
+/// A profile's own search engine, by name ("Custom" for its own address), if it chose one:
+/// `profiles/<profile>/settings/search.json`, synchronised like the rest of the profile.
+pub fn profile_search(store: &Store, profile: &str) -> Option<String> {
+    store.read(&format!("profiles/{profile}/settings/search.json"))
+}
+
+/// A profile's own search address, `{}` where the words go.
+pub fn profile_custom_search(store: &Store, profile: &str) -> Option<String> {
+    store.read(&format!("profiles/{profile}/settings/custom_search.json"))
+}
+
+/// A profile's search engine from now on, on every machine: one of [`search_engines`]' names,
+/// or "Custom" with its address.
+pub fn set_profile_search(store: &Store, profile: &str, name: &str, custom: Option<&str>) -> Result<(), String> {
+    if let Some(template) = custom {
+        if !template.contains("{}") || !template.starts_with("http") {
+            return Err("a search address starts with http and has {} where the words go".into());
+        }
+        store.write(&format!("profiles/{profile}/settings/custom_search.json"), &template)?;
+    }
+    if profile_search(store, profile).as_deref() != Some(name) {
+        store.write(&format!("profiles/{profile}/settings/search.json"), &name)?;
+    }
+    Ok(())
+}
+
+impl Settings {
+    /// The search engine of a profile's windows: its own choice, or SpatiMesh's.
+    pub fn search_engine_for(&self, store: &Store, profile: &str) -> SearchEngine {
+        match profile_search(store, profile).as_deref() {
+            Some("Custom") => match profile_custom_search(store, profile).filter(|t| t.contains("{}") && t.starts_with("http")) {
+                Some(template) => SearchEngine::new("Custom", &template),
+                None => self.search_engine(),
+            },
+            Some(name) => search_engines().into_iter().find(|e| e.name == name).unwrap_or_else(|| self.search_engine()),
+            None => self.search_engine(),
+        }
     }
 }
 
@@ -113,6 +161,20 @@ mod tests {
         assert!(store.shared_dir().join("settings/zoom.json").exists());
         assert!(!store.shared_dir().join("settings/search.json").exists());
         assert_eq!(Settings::load(&store).zoom, 1.5);
+    }
+
+    #[test]
+    fn each_profile_its_own_search() {
+        let scratch = Scratch::new("settings-profile");
+        let store = scratch.store();
+        let settings = Settings::load(&store);
+        assert_eq!(settings.search_engine_for(&store, "work").name, "DuckDuckGo");
+        set_profile_search(&store, "work", "Kagi", None).unwrap();
+        assert_eq!(settings.search_engine_for(&store, "work").name, "Kagi");
+        assert_eq!(settings.search_engine_for(&store, "home").name, "DuckDuckGo", "another profile keeps its own");
+        assert!(set_profile_search(&store, "home", "Custom", Some("nowhere")).is_err());
+        set_profile_search(&store, "home", "Custom", Some("https://s.example/?q={}")).unwrap();
+        assert_eq!(settings.search_engine_for(&store, "home").url_for("a"), "https://s.example/?q=a");
     }
 
     #[test]

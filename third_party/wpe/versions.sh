@@ -25,3 +25,11 @@ LIBPSL_VERSION=0.23.3
 LIBTASN1_VERSION=4.21.0
 LIBGPG_ERROR_VERSION=1.61
 LIBGCRYPT_VERSION=1.12.4
+# On Linux the bundle carries these too (the distros' differ, and SteamOS's are not Ubuntu's).
+ICU_VERSION=76.1
+LIBXML2_VERSION=2.13.8
+SQLITE_VERSION=3500400
+SQLITE_YEAR=2025
+# On Android, what Bionic has not got besides.
+LIBFFI_VERSION=3.4.8
+EXPAT_VERSION=2.7.1

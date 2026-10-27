@@ -25,6 +25,8 @@ pub struct Tab {
     pub can_forward: bool,
     pub playing: bool,
     pub muted: bool,
+    /// Kept at the start of its window's bar, small, and opened again with it.
+    pub pinned: bool,
     /// What the page ran in stopped, and why.
     pub crashed: Option<String>,
     /// The page could not be loaded, and why.
@@ -172,6 +174,7 @@ impl Tabs {
                 can_forward: false,
                 playing: false,
                 muted: false,
+                pinned: false,
                 crashed: None,
                 failed: None,
                 opener,
@@ -257,6 +260,19 @@ impl Tabs {
         if let Some(active) = active {
             w.active = w.tabs.iter().position(|&t| t == active).unwrap_or(0);
         }
+    }
+
+    /// Pin a tab, or let it go: pinned, it goes after the window's other pinned tabs; let go,
+    /// after the last of them.
+    pub fn set_pinned(&mut self, tab: TabId, pinned: bool) {
+        let Some(window) = self.window_of(tab) else { return };
+        if let Some(t) = self.tabs.get_mut(&tab) {
+            t.pinned = pinned;
+        }
+        let Some(w) = self.window(window) else { return };
+        let from = w.tabs.iter().position(|&t| t == tab).unwrap_or(0);
+        let others_pinned = w.tabs.iter().filter(|&&t| t != tab && self.tabs.get(&t).is_some_and(|t| t.pinned)).count();
+        self.reorder(window, from, others_pinned);
     }
 
     /// Move a tab to another window of its profile, at `index` (the end if none), in front
@@ -418,6 +434,21 @@ mod tests {
         gone.sort();
         assert_eq!(gone, vec![a, b]);
         assert!(tabs.tab(a).is_none() && tabs.windows().is_empty());
+    }
+
+    #[test]
+    fn pinned_tabs_go_first() {
+        let mut tabs = Tabs::new();
+        let w = tabs.new_window("default");
+        let a = tabs.new_tab(w, "a", Place::End, true, None).unwrap();
+        let b = tabs.new_tab(w, "b", Place::End, false, None).unwrap();
+        let c = tabs.new_tab(w, "c", Place::End, false, None).unwrap();
+        tabs.set_pinned(c, true);
+        tabs.set_pinned(b, true);
+        assert_eq!(titles(&tabs, w), vec![c, b, a]);
+        assert_eq!(tabs.active(w), Some(a));
+        tabs.set_pinned(c, false);
+        assert_eq!(titles(&tabs, w), vec![b, c, a]);
     }
 
     #[test]

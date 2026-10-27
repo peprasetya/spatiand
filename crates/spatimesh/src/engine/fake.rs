@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use super::{Button, Canvas, Engine, Format, Happened, KeyPress, Modifiers, Rect, TabId, View};
+use super::{Button, Canvas, Download, Engine, Format, Happened, Hit, KeyPress, Modifiers, Rect, TabId, View};
 
 struct Page {
     history: Vec<String>,
@@ -139,6 +139,10 @@ impl Engine for Fake {
         if let (Some(page), Some((Button::Left, true))) = (self.pages.get_mut(&tab), button) {
             page.clicks += 1;
         }
+        // A right click on a flat colour: the page's own menu, with nothing under it.
+        if self.pages.contains_key(&tab) && button == Some((Button::Right, true)) {
+            self.happened.push(Happened::ContextMenu { tab, hit: Hit::default() });
+        }
     }
 
     fn pointer_left(&mut self, _tab: TabId) {}
@@ -173,6 +177,17 @@ impl Engine for Fake {
         if request != 0 && self.pages.contains_key(&tab) {
             self.happened.push(Happened::ScriptResult { tab, request, result: Err("pages here run no scripts".into()) });
         }
+    }
+
+    fn find(&mut self, tab: TabId, text: &str, _forward: bool) {
+        if self.pages.contains_key(&tab) && !text.is_empty() {
+            self.happened.push(Happened::Found { tab, matches: 0 });
+        }
+    }
+
+    fn download(&mut self, tab: TabId, id: u64, url: &str, _to: &str) {
+        self.happened.push(Happened::Download { tab, id, event: Download::Started { url: url.to_string(), file: String::new() } });
+        self.happened.push(Happened::Download { tab, id, event: Download::Failed { why: "pages here are flat colours, with nothing to download".into() } });
     }
 
     fn pump(&mut self, wait: Duration, canvas: &mut dyn Canvas) -> Vec<Happened> {

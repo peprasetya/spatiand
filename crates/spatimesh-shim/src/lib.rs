@@ -99,7 +99,13 @@ extern "C" {
     fn spatimesh_cookies_set(e: *mut Raw, lines: *const c_char);
     fn spatimesh_cookies_remove(e: *mut Raw, lines: *const c_char);
     fn spatimesh_visited(e: *mut Raw, urls: *const c_char);
+    fn spatimesh_visited_forget(e: *mut Raw);
+    fn spatimesh_preconnect(e: *mut Raw, id: u64, url: *const c_char);
     fn spatimesh_inspect(e: *mut Raw, id: u64, inspector: u64, width: c_int, height: c_int) -> c_int;
+    fn spatimesh_download(e: *mut Raw, id: u64, download: c_int, url: *const c_char, to: *const c_char);
+    fn spatimesh_download_cancel(e: *mut Raw, download: c_int);
+    fn spatimesh_find(e: *mut Raw, id: u64, text: *const c_char, forward: c_int);
+    fn spatimesh_files(e: *mut Raw, id: u64, paths: *const c_char);
 }
 
 type ServeFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut *const c_char, *mut *mut u8, *mut usize) -> c_int;
@@ -379,6 +385,23 @@ impl Shim {
             15 => Happened::Media { tab, json: text(e.text) },
             16 => Happened::Cookies { cookies: Cookie::from_lines(&text(e.text)) },
             17 => Happened::SoundName { tab, name: text(e.text) },
+            // What is under the pointer: flags in `a`, its addresses a line each (`Hit::from_native`).
+            18 => Happened::ContextMenu { tab, hit: spatimesh::engine::Hit::from_native(e.a, &text(e.text)) },
+            19 => Happened::Hovered { tab, link: text(e.text) },
+            20 => Happened::Found { tab, matches: e.a.max(0) as u32 },
+            21 => Happened::ChooseFiles { tab, multiple: e.a != 0, accept: text(e.text).lines().filter(|l| !l.is_empty()).map(str::to_string).collect() },
+            // A download, numbered in `x`, its stage in `a`: begun (from `text` into `text2`),
+            // so much come (`number` bytes, of `text`'s), finished (into `text2`), failed (`text`).
+            22 => {
+                use spatimesh::engine::Download;
+                let event = match e.a {
+                    0 => Download::Started { url: text(e.text), file: text(e.text2) },
+                    1 => Download::Progress { received: e.number.max(0.0) as u64, total: text(e.text).trim().parse().unwrap_or(0) },
+                    2 => Download::Finished { file: text(e.text2) },
+                    _ => Download::Failed { why: text(e.text) },
+                };
+                Happened::Download { tab, id: e.x.max(0) as u64, event }
+            }
             14 => Happened::ScriptResult { tab, request: e.number as u64, result: if e.a != 0 { Ok(text(e.text)) } else { Err(text(e.text)) } },
             _ => return None,
         })
@@ -586,12 +609,44 @@ impl Engine for Shim {
         unsafe { spatimesh_visited(self.raw, urls.as_ptr()) };
     }
 
+    fn forget_visited(&mut self) {
+        unsafe { spatimesh_visited_forget(self.raw) };
+    }
+
+    fn preconnect(&mut self, tab: TabId, url: &str) {
+        unsafe { spatimesh_preconnect(self.raw, tab, c(url).as_ptr()) };
+    }
+
     fn inspect(&mut self, tab: TabId, inspector: TabId, view: View) -> bool {
         if unsafe { spatimesh_inspect(self.raw, tab, inspector, view.width as c_int, view.height as c_int) } == 0 {
             return false;
         }
         self.views.insert(inspector, view);
         true
+    }
+
+    fn download(&mut self, tab: TabId, id: u64, url: &str, to: &str) {
+        let (url, to) = (c(url), c(to));
+        unsafe { spatimesh_download(self.raw, tab, id.min(c_int::MAX as u64) as c_int, url.as_ptr(), to.as_ptr()) };
+    }
+
+    fn cancel_download(&mut self, id: u64) {
+        unsafe { spatimesh_download_cancel(self.raw, id.min(c_int::MAX as u64) as c_int) };
+    }
+
+    fn find(&mut self, tab: TabId, text: &str, forward: bool) {
+        let text = c(text);
+        unsafe { spatimesh_find(self.raw, tab, text.as_ptr(), forward as c_int) };
+    }
+
+    fn choose_files(&mut self, tab: TabId, files: Option<Vec<String>>) {
+        match files {
+            Some(files) => {
+                let paths = c(&files.iter().filter(|f| !f.contains('\n')).cloned().collect::<Vec<_>>().join("\n"));
+                unsafe { spatimesh_files(self.raw, tab, paths.as_ptr()) };
+            }
+            None => unsafe { spatimesh_files(self.raw, tab, std::ptr::null()) },
+        }
     }
 
     fn pump(&mut self, wait: Duration, canvas: &mut dyn Canvas) -> Vec<Happened> {

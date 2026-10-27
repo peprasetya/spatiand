@@ -1053,6 +1053,9 @@ pub fn run(
     }
     let shell_ref = &shell;
     let scene_ref = &scene;
+    // A drag still held when the picture is taken: what is dragged, straight ahead, as it
+    // would hang from the pointer there.
+    let dragged = runtime.state.dragging.then(|| crate::scene::dragged_picture(&mut renderer, &runtime.state));
     let keyboard_open = keyboard.open;
     let keyboard_state = &keyboard;
     let mut pixels = vec![0u8; (width * height * 4) as usize];
@@ -1100,6 +1103,10 @@ pub fn run(
             );
         }
         scene_ref.draw_menu(gl, &eye, shell_ref, (stereo.h_fov_deg, stereo.v_fov_deg()));
+        if let Some(picture) = dragged {
+            let ray = spatiand_render::Ray { origin: eye.position, direction: (orientation * DVec3::X).normalize() };
+            scene_ref.draw_dragged(gl, &eye, &ray, Some(1.6), picture);
+        }
         if let Some((tex, aspect)) = panel {
             let (pw, ph) = crate::backend_drm::fit_panel(
                 aspect,

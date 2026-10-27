@@ -37,6 +37,17 @@ PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
     BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/sysroot" \
     RUSTFLAGS="-L native=$(pwd)/xkbcommon/out -L native=$FF/lib -C link-arg=-lc++abi" \
     cargo ndk -t arm64-v8a -P 34 build --release -p spatireel -p spatiloupe -p spatiquill -p spatishelf -p spatimesh
+# SpatiMesh's engine, on WPE WebKit built for Android (third_party/wpe/build.sh android), when
+# it has been: without it SpatiMesh shows no pages here.
+WPE_OUT=${SPATIAND_WPE:-$HOME/Developer/spatiand-wpe/out/android}
+if [ -f "$WPE_OUT/lib/libWPEWebProcess.so" ]; then
+    PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK SPATIAND_WPE=$WPE_OUT PKG_CONFIG_ALLOW_CROSS=1 \
+        PKG_CONFIG_LIBDIR=$WPE_OUT/lib/pkgconfig \
+        RUSTFLAGS="-L native=$(pwd)/xkbcommon/out -L native=$FF/lib -L native=$WPE_OUT/lib -C link-arg=-lc++abi" \
+        cargo ndk -t arm64-v8a -P 34 build --release -p spatimesh-wpe
+else
+    echo "warning: no WPE for Android at $WPE_OUT; SpatiMesh is made without an engine (third_party/wpe/build.sh android)"
+fi
 ../tools/fetch-pdfium.sh android-arm64
 STORAGE=$(pwd)/$OUT-storage
 mkdir -p "$STORAGE"
@@ -79,6 +90,12 @@ for lib in avcodec avdevice avfilter avformat avutil swresample swscale; do
     cp "$FF/lib/lib$lib.so" $OUT/apk/lib/arm64-v8a/
 done
 cp ../third_party/pdfium/android-arm64/lib/libpdfium.so $OUT/apk/lib/arm64-v8a/
+if [ -f "$WPE_OUT/lib/libWPEWebProcess.so" ]; then
+    cp ../target/aarch64-linux-android/release/spatimesh-wpe $OUT/apk/lib/arm64-v8a/libspatimesh-wpe.so
+    # Its libraries, processes, GIO's TLS module and GStreamer's plugins, flat, as they were
+    # made to be (each a lib*.so); the links between versions of a name are left behind.
+    find "$WPE_OUT/lib" -maxdepth 1 -name 'lib*.so' -type f -exec cp {} $OUT/apk/lib/arm64-v8a/ \;
+fi
 [ -f "$STORAGE/libspatiand-storage.so" ] && cp "$STORAGE/libspatiand-storage.so" $OUT/apk/lib/arm64-v8a/
 cp $OUT/dex/classes.dex $OUT/apk/
 (cd $OUT/apk && zip -qr ../base.apk classes.dex lib)

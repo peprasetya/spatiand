@@ -3131,6 +3131,49 @@ impl Scene {
         );
     }
 
+    /// Draw what an application is dragging, hanging from the pointer where its ray lands: the
+    /// picture the application gave with it, on a card, or the card alone. A little nearer than
+    /// what it is over, so that it is never behind the window it is going into; the size its
+    /// picture would be in a window (48 pixels a degree), within reason.
+    ///
+    /// # Safety
+    /// Context must be current.
+    pub unsafe fn draw_dragged(&self, gl: &ffi::Gles2, eye: &Eye, ray: &Ray, distance: Option<f64>, picture: Option<(u32, (u32, u32))>) {
+        let distance = (distance.unwrap_or(2.5) as f32 - 0.04).max(0.3);
+        let point = (ray.origin + ray.direction * distance as f64).as_vec3();
+        let to_eye = (eye.position.as_vec3() - point).normalize_or_zero();
+        let right = Vec3::Z.cross(to_eye).normalize_or(Vec3::Y);
+        let up = to_eye.cross(right).normalize_or(Vec3::Z);
+        let (w_px, h_px) = picture.map(|(_, size)| size).unwrap_or((96, 96));
+        let across = |degrees: f32| 2.0 * distance * (degrees * 0.5).to_radians().tan();
+        let w = across((w_px.max(1) as f32 / 48.0).clamp(1.2, 6.0));
+        let h = w * h_px.max(1) as f32 / w_px.max(1) as f32;
+        // Below and to the right of the reticle, as a dragged thing hangs from a desktop's
+        // pointer, so that what it is over can still be seen.
+        let gap = across(RETICLE_DEG);
+        let centre = point + right * (w * 0.5 + gap) - up * (h * 0.5 + gap);
+        let model = |grow: f32| {
+            Mat4::from_cols(
+                (right * (w + grow)).extend(0.0),
+                (up * (h + grow)).extend(0.0),
+                to_eye.extend(0.0),
+                centre.extend(1.0),
+            )
+        };
+        let px = w / w_px.max(1) as f32;
+        // The card: glass under a picture, or the placeholder itself.
+        let card = 14.0 * px;
+        let (tint, size) = match picture {
+            Some(_) => ([0.06, 0.08, 0.12, 0.82], (w_px as f32 + 28.0, h_px as f32 + 28.0)),
+            None => ([0.30, 0.62, 1.0, 0.55], (w_px as f32 + 28.0, h_px as f32 + 28.0)),
+        };
+        self.rounded.draw(gl, &(eye.view_projection() * model(card * 2.0)), tint, size, 22.0);
+        match picture {
+            Some((texture, _)) => self.quads.draw_rect(gl, texture, &(eye.view_projection() * model(0.0)), [1.0, 1.0, 1.0, 0.96], [0.0, 1.0, 0.0, 1.0]),
+            None => self.rounded.draw(gl, &(eye.view_projection() * model(-card * 2.0)), [1.0, 1.0, 1.0, 0.85], (w_px as f32 - 28.0, h_px as f32 - 28.0), 14.0),
+        }
+    }
+
     /// Draw a pointer complete with its beam.
     ///
     /// # Safety
@@ -4183,6 +4226,37 @@ pub fn projection_surface(
         });
     }
     None
+}
+
+/// The picture an application gave with what it is dragging ([`Scene::draw_dragged`]), on the
+/// GPU, and its size in pixels. Imported each frame, as a window's is.
+pub fn dragged_picture(
+    renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
+    state: &crate::state::Spatiand,
+) -> Option<(u32, (u32, u32))> {
+    use smithay::backend::renderer::utils::{import_surface_tree, with_renderer_surface_state};
+    use smithay::backend::renderer::{Renderer, Texture};
+    use smithay::reexports::wayland_server::Resource;
+    let surface = state.drag_icon.as_ref().filter(|s| s.is_alive())?.clone();
+    import_surface_tree(renderer, &surface).ok()?;
+    let context = renderer.context_id();
+    let (texture, size) = with_renderer_surface_state(&surface, |st| {
+        let texture = st.texture::<smithay::backend::renderer::gles::GlesTexture>(context)?;
+        let size = texture.size();
+        Some((texture.tex_id(), (size.w.max(1) as u32, size.h.max(1) as u32)))
+    })
+    .flatten()?;
+    // A client's texture comes with GL's default sampler, which samples as black without
+    // mipmaps; see `sky_surface`.
+    let _ = renderer.with_context(|gl| unsafe {
+        gl.BindTexture(ffi::TEXTURE_2D, texture);
+        gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MIN_FILTER, ffi::LINEAR as i32);
+        gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MAG_FILTER, ffi::LINEAR as i32);
+        gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_WRAP_S, ffi::CLAMP_TO_EDGE as i32);
+        gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_WRAP_T, ffi::CLAMP_TO_EDGE as i32);
+        gl.BindTexture(ffi::TEXTURE_2D, 0);
+    });
+    Some((texture, size))
 }
 
 /// A client's surface standing in for the environment.

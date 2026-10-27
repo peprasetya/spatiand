@@ -688,6 +688,9 @@ pub struct PointerState {
     mapped_cursor: Option<(f64, f64)>,
     /// The room, when an application is drawing it; set each frame. See [`Room`].
     room: Option<Room>,
+    /// The ray that last moved the pointer, and how far along it the pointer landed: where
+    /// something dragged between windows is drawn ([`crate::scene::Scene::draw_dragged`]).
+    pub last_aim: Option<(Ray, Option<f64>)>,
 }
 
 /// A ray plus what it currently hits.
@@ -971,6 +974,8 @@ impl PointerState {
         if focus.is_some() {
             state.cadence.pointed();
         }
+        let distance = aim.popup.map(|(_, _, h)| h.distance).or(aim.hit.map(|(_, h)| h.distance));
+        self.last_aim = Some((aim.ray, distance));
         let location = local.unwrap_or_else(|| Point::from((0.0, 0.0)));
         pointer.motion(
             state,
