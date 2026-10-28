@@ -141,6 +141,30 @@ windows, pressing Enter in a terminal and anything that sends or deletes ask fir
 - Checked on the Mac in the snapshot room: a spoken `ls /etc/httpd` typed into SpatiQuill after
   pressing the card; SpatiQuill's description reached dictation (14 names, 2 commands).
 
-Not yet: SpatiMesh's description (the page's words, through its `RunScript`), Mac windows'
-through Accessibility, a settings page for languages, words and models, the Deck build (it was
-offline) and the Beam Pro's, and the whole of the assistant.
+Later the same day:
+
+- **Descriptions** from SpatiMesh (a script in the page: title, address, headings, name-like words,
+  the field being typed in, last) and from Mac windows (`MacDescribe.swift`, Accessibility, off
+  the main thread, through `SP_DESCRIBE`).
+- **SpatiPal** (`crates/spatipal`), the assistant, with its chat window and settings (dictation's
+  among them). Chats, reminders and settings in the shared folder (`assistant/`,
+  `assistant.json`, `voice.json`). The small model decides in one word whether the larger one
+  answers (`brain.rs`, `wants_larger`); a `hand_over` tool remains as well. Tools in `tools.rs`.
+  **Closing a window and Enter in a terminal are held by the app until the wearer says yes**:
+  the model, given a `confirmed` flag, was seen to set it itself and press Enter. Speech a
+  sentence at a time, paced into the room (`voice.rs`); never code. Ears (`ears.rs`): the room's
+  microphone, name or follow-up.
+- **`spatiand_assist_v1`** (`crates/spatiand/src/assist.rs`): offered to all, answered for the one
+  process given the session's key. Windows, apps, describe, picture, click/scroll/drag/type/key,
+  the room's controls, notice, the figure, the microphone. A request with no window acts on the
+  focused one -- never the assistant's own. Started with the room when switched on, through the
+  shell (`--background`).
+- **The figure** (`avatar.rs`): a robot drawn from shapes by default; the wearer's VRM/GLB from
+  `assistant/characters/` (`figure.rs`); per-eye pictures with depth, laid in as quads; moods from
+  SpatiPal. Its voice is placed at it (`audio::VOICE`; on the Deck through the sink its launch
+  names).
+- Checked in the Mac's snapshot room: reading a terminal, typing into it, the held Enter released
+  by "ya", the hand-over to `Qwen3.8:27b-q3` with its thinking shown, the robot in view.
+
+Not yet checked: any of it in the glasses or with a real voice; the Deck and Beam Pro builds of
+the assistant; a real VRM file (the reader is tested on a GLB made in the test).
