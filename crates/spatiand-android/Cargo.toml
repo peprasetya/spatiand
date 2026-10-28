@@ -19,6 +19,7 @@ crate-type = ["cdylib"]
 [target.'cfg(target_os = "android")'.dependencies]
 spatiand-stream = { path = "../spatiand-stream" }
 spatiand-sync = { path = "../spatiand-sync" }
+spatiand-voice = { path = "../spatiand-voice" }
 spatiand-video = { path = "../spatiand-video" }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }

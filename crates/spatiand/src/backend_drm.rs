@@ -254,6 +254,8 @@ pub fn run(
         click: prefs.keyboard_click,
         ..Default::default()
     };
+    // The keyboard's mic key: what is said is typed (`crate::dictate`).
+    let mut dictation = crate::dictate::Dictation::default();
     // The sound a key makes. Nothing is started here: the first press opens the stream, so a
     // session that never types -- or one where the wearer has turned the click off -- never
     // touches the sound device at all.
@@ -2081,11 +2083,15 @@ pub fn run(
                 last_status_update = std::time::Instant::now();
             }
             scene.sync_status(&mut renderer, &mut text, &status_text, ppd)?;
-            // An application dropped into the room, offered for installing, comes first; then a
-            // notification from a host's own screen, which the wearer cannot see.
-            let install_notice = crate::install::notice();
-            let notice = if install_notice.is_empty() { crate::remote::host_notice() } else { install_notice };
+            // Dictation's card comes first (a terminal's text waiting to be typed, or that the
+            // room is listening); then an application dropped into the room, offered for
+            // installing; then a notification from a host's own screen, which the wearer cannot
+            // see.
+            let notice = dictation.notice();
+            let notice = if notice.is_empty() { crate::install::notice() } else { notice };
+            let notice = if notice.is_empty() { crate::remote::host_notice() } else { notice };
             scene.sync_notice(&mut renderer, &mut text, &notice, ppd)?;
+            keyboard.dictating = dictation.look();
             if crate::install::take_changed() {
                 crate::own::adopt(&mut shell);
             }
@@ -2982,7 +2988,10 @@ pub fn run(
                                     if keyboard.click {
                                         clicks.play();
                                     }
-                                    if let Some(stroke) = keyboard.press(key) {
+                                    if key.role == spatiand_shell::keyboard::Role::Dictate {
+                                        let (focus, id) = crate::dictate::describe_focus(&runtime.state);
+                                        dictation.toggle(focus, id);
+                                    } else if let Some(stroke) = keyboard.press(key) {
                                         if shell.wants_text() {
                                             typed_event = typed_event
                                                 .or(type_into_shell(&mut shell, key, &stroke));
@@ -3018,6 +3027,15 @@ pub fn run(
                         }
                     }
 
+                    // Dictation follows the focus, and types what was said into it.
+                    if keyboard.dictating == spatiand_shell::keyboard::Dictating::Listening {
+                        let (focus, id) = crate::dictate::describe_focus(&runtime.state);
+                        dictation.focus_changed(focus, id);
+                    }
+                    if let Some(said) = dictation.tick() {
+                        type_text(&mut runtime.state, &mut shell, &said, time_ms);
+                    }
+
                     if !typed
                         && !shell.wants_text()
                         && right_click
@@ -3031,6 +3049,16 @@ pub fn run(
                             pointers.dismiss_popups(&mut runtime.state);
                         }
                         match right_aim.as_ref() {
+                            // Dictation's card: a terminal's text waiting there is typed by
+                            // pressing it (without Enter). It floats in front of everything.
+                            Some(a)
+                                if dictation.owns_notice()
+                                    && scene.notice_hit(&a.ray, tracker.recentred_orientation()) =>
+                            {
+                                if let Some(said) = dictation.take_review() {
+                                    type_text(&mut runtime.state, &mut shell, &said, time_ms);
+                                }
+                            }
                             // The card asking whether to install what was dropped into the room:
                             // pressing it is "yes". It floats in front of everything.
                             Some(a)
@@ -3554,7 +3582,10 @@ pub fn run(
                                     if keyboard.click {
                                         clicks.play();
                                     }
-                                    if let Some(stroke) = keyboard.press(key) {
+                                    if key.role == spatiand_shell::keyboard::Role::Dictate {
+                                        let (focus, id) = crate::dictate::describe_focus(&runtime.state);
+                                        dictation.toggle(focus, id);
+                                    } else if let Some(stroke) = keyboard.press(key) {
                                         if shell.wants_text() {
                                             typed_event = typed_event
                                                 .or(type_into_shell(&mut shell, key, &stroke));
@@ -4476,6 +4507,22 @@ fn type_into_shell(
         }
     }
     None
+}
+
+/// Dictation's text, typed: into the shell's own field when it has one open, else as keystrokes
+/// into what has focus.
+fn type_text(state: &mut Spatiand, shell: &mut Shell, text: &str, time_ms: u32) {
+    let text = crate::dictate::typeable(text);
+    if shell.wants_text() {
+        shell.type_text(&text);
+        return;
+    }
+    for c in text.chars() {
+        match spatiand_shell::keyboard::stroke_for(c) {
+            Some(stroke) => send_stroke(state, stroke, time_ms),
+            None => log::debug!("dictation: {c:?} is not on the keyboard"),
+        }
+    }
 }
 
 fn send_stroke(state: &mut Spatiand, stroke: spatiand_shell::keyboard::Stroke, time_ms: u32) {

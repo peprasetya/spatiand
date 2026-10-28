@@ -460,7 +460,7 @@ pub struct Scene {
     /// What the face was drawn for, as `(shift, ctrl, alt, click)`. A modifier that is on and
     /// drawn as off types the wrong character and reads as a broken keymap; a sound toggle
     /// drawn the wrong way round reads as a control that does not work.
-    keys_latches: (bool, bool, bool, bool),
+    keys_latches: (bool, bool, bool, bool, spatiand_shell::keyboard::Dictating),
     keys_built: bool,
 
     /// The status bar, rebuilt when its text changes.
@@ -646,7 +646,7 @@ impl Scene {
             titles: std::collections::HashMap::new(),
             key_caps: std::collections::HashMap::new(),
             keys: None,
-            keys_latches: (false, false, false, false),
+            keys_latches: (false, false, false, false, spatiand_shell::keyboard::Dictating::Off),
             keys_built: false,
             status: None,
             status_text: String::new(),
@@ -1220,7 +1220,7 @@ impl Scene {
         // The sound toggle is drawn on the face too, so it belongs in what the cache is
         // keyed on. Left out, the speaker would keep the picture it had when the face was last
         // rebuilt and only change the next time a modifier happened to be pressed.
-        let latches = (keyboard.shift, keyboard.ctrl, keyboard.alt, keyboard.click);
+        let latches = (keyboard.shift, keyboard.ctrl, keyboard.alt, keyboard.click, keyboard.dictating);
         if self.keys_built && self.keys_latches == latches {
             return Ok(());
         }

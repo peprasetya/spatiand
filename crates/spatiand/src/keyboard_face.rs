@@ -296,8 +296,10 @@ pub fn cap_id(keyboard: &Keyboard, key: &Key, lift: Lift) -> String {
 /// only how high it sits.
 fn appearance(keyboard: &Keyboard, key: &Key) -> ([f32; 4], [u8; 4]) {
     match (keyboard.is_latched(key), key.role) {
+        // Lit like a latched shift while the microphone is open: it is the one thing on the
+        // face that says the room is listening.
         (true, _) => (CAP_LATCHED, INK_LATCHED),
-        (false, Role::Modifier(_)) => (CAP_MODIFIER, INK_MODIFIER),
+        (false, Role::Modifier(_) | Role::Dictate) => (CAP_MODIFIER, INK_MODIFIER),
         (false, Role::Normal) => (
             CAP,
             if key.label.len() > 1 {
@@ -531,6 +533,27 @@ mod tests {
             on.width != off.width || on.rgba != off.rgba,
             "the two speakers draw identically — the font has neither of them"
         );
+    }
+
+    #[test]
+    fn the_microphone_is_really_in_the_font() {
+        // Against a letter of the same size: a tofu box is the same for every missing glyph,
+        // and the mic key has no caption to fall back on.
+        let mut text = TextRenderer::new();
+        let mic = text.render(spatiand_shell::keyboard::MIC, 64.0, 256, [255, 255, 255, 255]);
+        let missing = text.render("\u{10FFFD}", 64.0, 256, [255, 255, 255, 255]);
+        assert!(mic.width > 0 && mic.height > 0, "the microphone rendered nothing");
+        assert!(mic.width != missing.width || mic.rgba != missing.rgba, "the microphone draws as a missing glyph");
+    }
+
+    #[test]
+    fn the_mic_key_lights_while_dictating() {
+        let mut text = TextRenderer::new();
+        let mut keyboard = Keyboard::default();
+        let off = face(&mut text, &keyboard, 900);
+        keyboard.dictating = spatiand_shell::keyboard::Dictating::Listening;
+        let on = face(&mut text, &keyboard, 900);
+        assert_ne!(off.rgba, on.rgba, "the face looks the same while listening");
     }
 
     #[test]

@@ -35,6 +35,20 @@ pub enum Role {
     Normal,
     /// Latches a modifier instead of sending anything.
     Modifier(Modifier),
+    /// Starts and stops dictation: what is said is typed (`docs/ai-integrations.md`). Sends
+    /// nothing itself.
+    Dictate,
+}
+
+/// Where dictation is, for the mic key to show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Dictating {
+    #[default]
+    Off,
+    /// The microphone is open.
+    Listening,
+    /// Stopped, and what was said last is still being written.
+    Finishing,
 }
 
 /// The modifiers this keyboard can hold.
@@ -126,6 +140,13 @@ pub const KEY_RIGHTSHIFT: u32 = 54;
 pub const KEY_LEFTALT: u32 = 56;
 pub const KEY_RIGHTALT: u32 = 100;
 pub const KEY_SPACE: u32 = 57;
+/// The mic key's code: evdev's own "voice command" key. It is never sent -- the key is
+/// dictation's -- but it is what keys are told apart by, here and in the caps' cache.
+pub const KEY_VOICECOMMAND: u32 = 0x246;
+
+/// The microphone on the mic key: U+1F3A4, which the shell's font stack has in monochrome
+/// (`keyboard_face`'s test for it).
+pub const MIC: &str = "\u{1F3A4}";
 
 /// The rows, top to bottom.
 pub const ROWS: &[&[Key]] = &[
@@ -194,7 +215,15 @@ pub const ROWS: &[&[Key]] = &[
         modifier("ctrl", KEY_LEFTCTRL, 6, Modifier::Ctrl),
         modifier("alt", KEY_LEFTALT, 6, Modifier::Alt),
         wide("space", KEY_SPACE, 26),
-        modifier("alt", KEY_RIGHTALT, 6, Modifier::Alt),
+        // Beside the space bar, where a phone has it. In the right alt's place: alt latches,
+        // so one is all a pointer can use, and the left one is still there.
+        Key {
+            label: MIC,
+            shifted: MIC,
+            code: KEY_VOICECOMMAND,
+            width: 6,
+            role: Role::Dictate,
+        },
         wide("←", 105, 4),
         wide("↑", 103, 4),
         wide("↓", 108, 4),
@@ -374,6 +403,8 @@ pub struct Keyboard {
     /// confirming a press is the cap coming up under the pointer — which the panel does not
     /// even draw, and which you are not looking at while typing anyway.
     pub click: bool,
+    /// Dictation, as the mic key shows it. The compositor's to set: the keyboard only draws it.
+    pub dictating: Dictating,
 }
 
 impl Default for Keyboard {
@@ -385,6 +416,7 @@ impl Default for Keyboard {
             alt: false,
             scale: 1.0,
             click: true,
+            dictating: Dictating::Off,
         }
     }
 }
@@ -451,6 +483,7 @@ impl Keyboard {
                 ctrl: self.ctrl,
                 alt: self.alt,
             }),
+            Role::Dictate => None,
         }
     }
 
@@ -469,6 +502,7 @@ impl Keyboard {
             Role::Modifier(Modifier::Shift) => self.shift,
             Role::Modifier(Modifier::Ctrl) => self.ctrl,
             Role::Modifier(Modifier::Alt) => self.alt,
+            Role::Dictate => self.dictating != Dictating::Off,
             Role::Normal => false,
         }
     }
@@ -491,9 +525,57 @@ impl Keyboard {
     }
 }
 
+/// The keystroke that types `c` on this keyboard's US layout: dictation's text is typed as
+/// keys, because every window -- a Mac's and a host's included -- is a surface with the
+/// compositor's keyboard. `None` for what the keyboard cannot type.
+pub fn stroke_for(c: char) -> Option<Stroke> {
+    let plain = |code| Some(Stroke { code, shift: false, ctrl: false, alt: false });
+    match c {
+        ' ' => return plain(KEY_SPACE),
+        '\n' => return plain(KEY_ENTER),
+        '\t' => return plain(KEY_TAB),
+        // The backslash key is drawn wide with one legend, but shifted it is a pipe, as on any
+        // US keyboard.
+        '|' => return Some(Stroke { code: 43, shift: true, ctrl: false, alt: false }),
+        _ => {}
+    }
+    let s = c.to_string();
+    for row in ROWS {
+        for k in row.iter().filter(|k| k.role == Role::Normal) {
+            if k.label == s {
+                return plain(k.code);
+            }
+            if k.shifted == s {
+                return Some(Stroke { code: k.code, shift: true, ctrl: false, alt: false });
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_printable_ascii_character_can_be_typed() {
+        for c in (0x20u8..0x7f).map(char::from) {
+            assert!(stroke_for(c).is_some(), "{c:?}");
+        }
+        assert_eq!(stroke_for('A'), Some(Stroke { code: 30, shift: true, ctrl: false, alt: false }));
+        assert_eq!(stroke_for('/'), Some(Stroke { code: 53, shift: false, ctrl: false, alt: false }));
+        assert_eq!(stroke_for('é'), None);
+    }
+
+    #[test]
+    fn the_mic_key_sends_nothing_and_lights_while_dictating() {
+        let mut kb = Keyboard::default();
+        let (mic, _) = layout().into_iter().find(|(k, _)| k.role == Role::Dictate).expect("a mic key");
+        assert_eq!(kb.press(mic), None);
+        assert!(!kb.is_latched(mic));
+        kb.dictating = Dictating::Listening;
+        assert!(kb.is_latched(mic));
+    }
 
     #[test]
     fn every_row_is_exactly_the_same_width() {

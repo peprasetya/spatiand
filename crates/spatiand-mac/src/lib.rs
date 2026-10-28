@@ -53,6 +53,8 @@ mod control;
 mod controls;
 #[path = "../../spatiand/src/diagram.rs"]
 mod diagram;
+#[path = "../../spatiand/src/dictate.rs"]
+mod dictate;
 #[path = "../../spatiand/src/dmabuf.rs"]
 mod dmabuf;
 #[path = "../../spatiand/src/environment.rs"]
@@ -67,6 +69,8 @@ mod imu_record;
 mod input_map;
 #[path = "../../spatiand/src/keyboard_face.rs"]
 mod keyboard_face;
+#[path = "../../spatiand/src/listen.rs"]
+mod listen;
 #[path = "../../spatiand/src/menu.rs"]
 mod menu;
 #[path = "../../spatiand/src/install.rs"]

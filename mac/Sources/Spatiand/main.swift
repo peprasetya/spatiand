@@ -8,6 +8,7 @@
 //  `Spatiand --selftest` prints what it can see and exits, for checking without a screen.
 
 import AppKit
+import AVFoundation
 import CSpatiand
 
 setvbuf(stdout, nil, _IOLBF, 0)
@@ -217,6 +218,14 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             centre.target = self
             menu.addItem(centre)
         }
+        // Dictation (the keyboard's mic key) and a host's applications listen through it. Asked
+        // for here, where macOS's question can be seen and answered: asked for in the room, it
+        // would appear on a screen the wearer cannot see, with the mouse the room's.
+        if AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
+            let ask = NSMenuItem(title: "Allow the microphone, for dictation\u{2026}", action: #selector(allowMicrophone), keyEquivalent: "")
+            ask.target = self
+            menu.addItem(ask)
+        }
         menu.addItem(.separator())
 
         if room.inGlasses {
@@ -412,6 +421,19 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func allowCapture() { _ = MacWindows.allowed(ask: true) }
+    @objc private func allowMicrophone() {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                DispatchQueue.main.async { sp_microphone_allowed(granted) }
+            }
+        default:
+            // Once refused, macOS does not ask again: only its settings can change it.
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+    }
     @objc private func bringMacWindow(_ sender: NSMenuItem) {
         guard sender.tag < macList.count else { return }
         RoomWindows.shared.bring(macList[sender.tag])

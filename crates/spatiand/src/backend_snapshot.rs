@@ -704,12 +704,38 @@ pub fn run(
                         // `SPATIAND_STEPS`: a script, in order, with mid-run pictures of the
                         // window. See [`Scripted`].
                         let mut pointer_at = (0.5f64, 0.5f64);
+                        let mut dictation = crate::dictate::Dictation::default();
                         for step in scripted_steps() {
                             let mut settle = 0.5f32;
                             match &step {
                                 Scripted::Wait(seconds) => settle = *seconds,
                                 Scripted::Window(_) | Scripted::Dump(_) => settle = 0.0,
                                 _ => {}
+                            }
+                            // The mic key with a file for the microphone: pressed, the file
+                            // played, pressed again.
+                            let mut dictating = false;
+                            if let Scripted::Dictate(path) = &step {
+                                std::env::set_var("SPATIAND_LISTEN_WAV", path);
+                                if let Some(window) = chosen_window(&runtime.state, &windows).map(|w| w.window.clone()) {
+                                    runtime.state.focus_window(&window);
+                                }
+                                let (focus, id) = crate::dictate::describe_focus(&runtime.state);
+                                log::info!("dictate: into {:?} ({})", focus.app, if focus.is_terminal() { "a terminal" } else { "not a terminal" });
+                                dictation.toggle(focus, id);
+                                let seconds = std::fs::read(path)
+                                    .ok()
+                                    .and_then(|b| spatiand_voice::hemera::read_wav(&b))
+                                    .map(|(pcm, rate)| pcm.len() as f32 / rate.max(1) as f32)
+                                    .unwrap_or(3.0);
+                                settle = seconds + 0.8 + 1.2;
+                                dictating = true;
+                            }
+                            let pressed_the_card = matches!(step, Scripted::Notice) && dictation.owns_notice();
+                            if pressed_the_card {
+                                if let Some(said) = dictation.take_review() {
+                                    act_scripted(&mut runtime.state, &windows, &Scripted::Type(crate::dictate::typeable(&said)), &mut pointer_at);
+                                }
                             }
                             if let Scripted::Window(title) = &step {
                                 std::env::set_var("SPATIAND_WINDOW", title);
@@ -723,9 +749,24 @@ pub fn run(
                                     log::warn!("no window to dump to {path}");
                                 }
                             }
-                            act_scripted(&mut runtime.state, &windows, &step, &mut pointer_at);
+                            if !pressed_the_card && !dictating {
+                                act_scripted(&mut runtime.state, &windows, &step, &mut pointer_at);
+                            }
                             let answered = std::time::Instant::now() + std::time::Duration::from_secs_f32(settle);
+                            // The key pressed again once the file has played, and then as long
+                            // as it takes for the last phrase to be written.
+                            let mut stopped = false;
+                            let gave_up = answered + std::time::Duration::from_secs(30);
                             loop {
+                                if let Some(said) = dictation.tick() {
+                                    log::info!("dictate: typing {said:?}");
+                                    act_scripted(&mut runtime.state, &windows, &Scripted::Type(crate::dictate::typeable(&said)), &mut pointer_at);
+                                }
+                                if dictating && !stopped && std::time::Instant::now() >= answered {
+                                    dictation.toggle(spatiand_voice::Description::default(), None);
+                                    stopped = true;
+                                }
+                                let finishing = dictating && dictation.look() != spatiand_shell::keyboard::Dictating::Off;
                                 let screen = runtime.state.screen.clone();
                                 runtime.state.send_frames(&screen, std::time::Duration::ZERO);
                                 runtime.state.space.refresh();
@@ -736,9 +777,12 @@ pub fn run(
                                 crate::window::apply_resize_anchors(&mut runtime.state);
                                 runtime.state.settle_keyboard_focus();
                                 runtime.state.fit_screen_to_windows();
-                                if std::time::Instant::now() >= answered {
+                                if std::time::Instant::now() >= answered && !(finishing && std::time::Instant::now() < gave_up) {
                                     break;
                                 }
+                            }
+                            if dictating {
+                                log::info!("dictate: done; the card says {:?}", dictation.notice());
                             }
                             windows = crate::scene::collect_windows(&mut renderer, &runtime.state);
                         }
@@ -1516,12 +1560,16 @@ fn click_on_the_window(
 /// ```text
 /// click:u,v  rclick:u,v  move:u,v  down:u,v  up:u,v  drag:u,v,u,v  scroll:dx,dy  pinch:1.5
 /// key:28  key:ctrl+shift+20  keydown:42  keyup:42  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
-/// roomup  notice
+/// roomup  notice  dictate:/tmp/said.wav
 /// ```
 ///
 /// `roomup` takes the pointer off every window and lets go of the left button there, on the room:
 /// how a drag is dropped onto nothing (an application's `.spatiapp` is offered for installing so).
 /// `notice` presses the notice card under the status bar.
+///
+/// `dictate` presses the keyboard's mic key with a WAV file as the microphone
+/// (`SPATIAND_LISTEN_WAV`), lets it play, presses the key again and waits for what was said to
+/// be typed into the chosen window -- or, for a terminal, to wait on the card for `notice`.
 ///
 /// Positions are fractions across the chosen window; `scroll` is in pixels where the pointer
 /// last was; `key` is an evdev code with modifiers held; `type` is US-keyboard text; `dump`
@@ -1550,6 +1598,7 @@ enum Scripted {
     Window(String),
     RoomUp,
     Notice,
+    Dictate(String),
 }
 
 fn scripted_steps() -> Vec<Scripted> {
@@ -1590,6 +1639,7 @@ fn scripted_steps() -> Vec<Scripted> {
                 ("dump", _) => Scripted::Dump(rest.to_string()),
                 ("roomup", _) => Scripted::RoomUp,
                 ("notice", _) => Scripted::Notice,
+                ("dictate", _) => Scripted::Dictate(rest.to_string()),
                 ("window", _) => Scripted::Window(rest.to_string()),
                 _ => {
                     log::warn!("SPATIAND_STEPS: not understood: {step:?}");
@@ -1702,6 +1752,8 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
             pointer_event_on(state, windows, *at, None, true);
             pointer_event_on(state, windows, *at, Some((crate::pointer::BTN_LEFT, false)), true);
         }
+        // Done by the steps' loop, which has to keep the room going while the file plays.
+        Scripted::Dictate(_) => {}
         Scripted::Notice => {
             if crate::install::asking() {
                 crate::install::accept();

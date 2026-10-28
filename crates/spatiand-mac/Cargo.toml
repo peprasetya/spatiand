@@ -35,6 +35,7 @@ smithay = { path = "../../mac/vendor/smithay" }
 spatiand-mac-core = { path = "../spatiand-mac-core" }
 spatiand-stream = { path = "../spatiand-stream" }
 spatiand-sync = { path = "../spatiand-sync" }
+spatiand-voice = { path = "../spatiand-voice" }
 spatiand-video = { path = "../spatiand-video" }
 spatiand-surfaces = { path = "../spatiand-surfaces" }
 wayland-client = "0.31"
