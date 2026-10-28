@@ -1232,6 +1232,11 @@ impl Scene {
         }
     }
 
+    /// Where the assistant's figure is, while it is shown.
+    pub fn avatar_position(&self) -> Option<glam::DVec3> {
+        self.avatar.as_ref().and_then(|a| a.position())
+    }
+
     /// Lay the assistant's figure into this eye, after the windows.
     ///
     /// # Safety

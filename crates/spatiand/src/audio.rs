@@ -188,6 +188,32 @@ impl Audio {
         })
     }
 
+    /// The assistant's voice: placed at its figure rather than at a window (`crate::avatar`).
+    /// Bound like a window, under a number no window has, to the sink its process hands its
+    /// voice to (`spatipal-voice`), and aimed each frame by [`Audio::voice_source`].
+    pub const VOICE: usize = usize::MAX - 7;
+
+    /// The figure, as a source: a narrow one, at its place in the room.
+    pub fn voice_source(at: glam::DVec3) -> Source {
+        let radius = at.length().max(0.3);
+        Source {
+            window: Self::VOICE,
+            pixels: (1, 1),
+            kind: Kind::Window(crate::window::Placement {
+                yaw: at.y.atan2(at.x),
+                pitch: (at.z / radius).clamp(-1.0, 1.0).asin(),
+                radius,
+                width: 0.12,
+                facing: None,
+                pip: false,
+            }),
+            focused: false,
+            launcher: false,
+            marked: true,
+            held: false,
+        }
+    }
+
     /// Give a window the sink kept under `key`, opening one if this is the first window with
     /// that key. For remote applications, whose sound is played into it from here.
     pub fn adopt_keyed(&mut self, window: usize, key: &str, width: Width) {

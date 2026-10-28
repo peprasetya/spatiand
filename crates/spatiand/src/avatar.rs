@@ -344,6 +344,12 @@ impl Avatar {
         gl.Enable(ffi::BLEND);
     }
 
+    /// Where the figure is in the room, while it is shown: where its voice comes from.
+    pub fn position(&self) -> Option<DVec3> {
+        let live = self.live.borrow();
+        live.at.filter(|_| live.shown > 0.0)
+    }
+
     /// Lay the figure's picture into this eye, after the windows: it floats nearer than they do.
     ///
     /// # Safety

@@ -1279,6 +1279,11 @@ pub fn run(
                         held: false,
                     });
                 }
+                // The assistant's voice, from its figure.
+                if let Some(at) = scene.avatar_position() {
+                    spatial_audio.adopt_keyed(crate::audio::Audio::VOICE, "own:spatipal-voice", spatiand_audio::server::Width::Stereo);
+                    sources.push(crate::audio::Audio::voice_source(at));
+                }
                 spatial_audio.aim_all(&sources, head);
                 for quad in windows.iter_mut() {
                     let Some(id) = runtime.state.layout.id_of(&quad.window) else {
