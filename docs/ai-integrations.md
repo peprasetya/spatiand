@@ -162,9 +162,17 @@ Later the same day:
 - **The figure** (`avatar.rs`): a robot drawn from shapes by default; the wearer's VRM/GLB from
   `assistant/characters/` (`figure.rs`); per-eye pictures with depth, laid in as quads; moods from
   SpatiPal. Its voice is placed at it (`audio::VOICE`; on the Deck through the sink its launch
-  names).
+  names). A GLB's vertex colours tint it; a VRM's are left alone, as MToon leaves them. Not
+  read: KTX2/Basis pictures (drawn white) and glass (`KHR_materials_transmission`, drawn
+  opaque) -- VRM figures, painted for MToon in PNG or JPEG, use neither. Changing figures frees
+  the last one's GPU memory.
 - Checked in the Mac's snapshot room: reading a terminal, typing into it, the held Enter released
-  by "ya", the hand-over to `Qwen3.8:27b-q3` with its thinking shown, the robot in view.
+  by "ya", the hand-over to `Qwen3.8:27b-q3` with its thinking shown, the robot in view, a wake
+  by name from a phrase played from a file (`SPATIAND_LISTEN_WAV`). Figures: a VRM made in the
+  test, and the Khronos glTF samples the OpenXR conformance suite ships (on the Deck, in
+  `~/OpenXR-CTS/src/conformance/conformance_test/gltf_examples/`): the vertex-colour test
+  passes, alpha cut-offs fall at their marks, an 11 MB file reads.
 
-Not yet checked: any of it in the glasses or with a real voice; the Deck and Beam Pro builds of
-the assistant; a real VRM file (the reader is tested on a GLB made in the test).
+Not yet checked: any of it in the glasses or with a real voice; the assistant running on the
+Deck or the Beam Pro (both build; the Deck's tests pass); a real VRM file -- there is none on any
+of the machines.
