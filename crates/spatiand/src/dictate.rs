@@ -26,6 +26,9 @@ pub struct Dictation {
     typed: bool,
     /// The window the dictation started in.
     window: Option<usize>,
+    /// What the room knows of the focused window by itself, while the window's own account of
+    /// itself is awaited (`xr::ask_description`).
+    asking: Option<(Description, std::sync::mpsc::Receiver<String>, Instant)>,
 }
 
 struct Running {
@@ -42,11 +45,29 @@ const TROUBLE_FOR: Duration = Duration::from_secs(8);
 
 impl Default for Dictation {
     fn default() -> Self {
-        Dictation { running: None, review: None, trouble: None, recent: Vec::new(), typed: false, window: None }
+        Dictation { running: None, review: None, trouble: None, recent: Vec::new(), typed: false, window: None, asking: None }
     }
 }
 
 impl Dictation {
+    /// The mic key was pressed: start listening into what has focus, or stop.
+    pub fn press(&mut self, state: &crate::state::Spatiand) {
+        let (focus, window, answer) = focus_of(state, true);
+        self.toggle(focus.clone(), window);
+        self.asking = answer.filter(|_| self.running.is_some()).map(|rx| (focus, rx, Instant::now()));
+    }
+
+    /// Follow the focus while listening: the window's own account of itself is asked for only
+    /// when the focus has moved.
+    pub fn follow(&mut self, state: &crate::state::Spatiand) {
+        if self.look() != Dictating::Listening || state.layout.focused_id() == self.window {
+            return;
+        }
+        let (focus, window, answer) = focus_of(state, true);
+        self.focus_changed(focus.clone(), window);
+        self.asking = answer.map(|rx| (focus, rx, Instant::now()));
+    }
+
     /// The mic key was pressed: start listening, or stop.
     pub fn toggle(&mut self, focus: Description, window: Option<usize>) {
         if let Some(running) = &mut self.running {
@@ -88,6 +109,28 @@ impl Dictation {
 
     /// Text to type into what has focus now, if a phrase has been written.
     pub fn tick(&mut self) -> Option<String> {
+        // The window's account of itself, when it comes, steers the phrases after it.
+        if let Some((basic, answer, asked)) = &self.asking {
+            match answer.try_recv() {
+                Ok(json) => {
+                    if let Some(running) = &self.running {
+                        let told = told(basic, &json);
+                        log::info!(
+                            "dictation: {} says it is {:?} ({} words of vocabulary, {} commands)",
+                            told.app,
+                            told.kind,
+                            told.vocabulary.len(),
+                            told.commands.len()
+                        );
+                        running.voice.set_focus(told);
+                    }
+                    self.asking = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.asking = None,
+                Err(std::sync::mpsc::TryRecvError::Empty) if asked.elapsed() > Duration::from_secs(2) => self.asking = None,
+                Err(_) => {}
+            }
+        }
         let running = self.running.as_mut()?;
         let mut out = String::new();
         let mut done = false;
@@ -196,16 +239,24 @@ pub fn typeable(text: &str) -> String {
 /// and whether that application is a terminal. (Spatiand's own applications and Mac windows say
 /// more about themselves; see `docs/ai-integrations.md`.)
 pub fn describe_focus(state: &crate::state::Spatiand) -> (Description, Option<usize>) {
+    let (focus, window, _) = focus_of(state, false);
+    (focus, window)
+}
+
+/// The focused window by the room's own lights, and if `ask`, its own account of itself on the
+/// way (see [`crate::xr::ask_description`]).
+fn focus_of(state: &crate::state::Spatiand, ask: bool) -> (Description, Option<usize>, Option<std::sync::mpsc::Receiver<String>>) {
     let Some(id) = state.layout.focused_id() else {
-        return (Description::default(), None);
+        return (Description::default(), None, None);
     };
+    let window = state.space.elements().find(|w| state.layout.id_of(w) == Some(id)).cloned();
     let app = state.app_id_of_id(id).unwrap_or_default();
-    let title = state
-        .space
-        .elements()
-        .find(|w| state.layout.id_of(w) == Some(id))
-        .and_then(|w| state.title_of(w))
-        .unwrap_or_default();
+    let title = window.as_ref().and_then(|w| state.title_of(w)).unwrap_or_default();
+    let answer = if ask {
+        window.as_ref().and_then(|w| w.toplevel()).and_then(|t| crate::xr::ask_description(t.wl_surface()))
+    } else {
+        None
+    };
     let mut description = Description::titled(&app, &title);
     if is_terminal(&app) {
         description.kind = "terminal".into();
@@ -216,7 +267,29 @@ pub fn describe_focus(state: &crate::state::Spatiand) -> (Description, Option<us
             description.directory = place.trim().to_string();
         }
     }
-    (description, Some(id))
+    (description, Some(id), answer)
+}
+
+/// A window's own account of itself, over what the room knew of it: what it says wins, what it
+/// leaves out the room fills in.
+fn told(basic: &Description, json: &str) -> Description {
+    let Some(mut said) = Description::from_json(json) else {
+        log::warn!("dictation: a window described itself in something that is not JSON: {:?}", json.chars().take(80).collect::<String>());
+        return basic.clone();
+    };
+    if said.app.is_empty() {
+        said.app = basic.app.clone();
+    }
+    if said.title.is_empty() {
+        said.title = basic.title.clone();
+    }
+    if said.kind.is_empty() {
+        said.kind = basic.kind.clone();
+    }
+    if said.directory.is_empty() {
+        said.directory = basic.directory.clone();
+    }
+    said
 }
 
 /// Whether an application id is a terminal's: ours, the Mac's own and the usual Linux ones, by
@@ -233,6 +306,17 @@ fn is_terminal(app: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_s_own_account_wins_and_the_room_fills_the_gaps() {
+        let basic = Description { kind: "terminal".into(), app: "id.prasetya.spatiand.spatiquill".into(), title: "~".into(), ..Default::default() };
+        let said = told(&basic, r#"{"directory":"~/Documents","commands":["ls"],"vocabulary":["Cargo.toml"]}"#);
+        assert_eq!(said.kind, "terminal");
+        assert_eq!(said.app, basic.app);
+        assert_eq!(said.directory, "~/Documents");
+        assert_eq!(said.commands, vec!["ls".to_string()]);
+        assert_eq!(told(&basic, "not json"), basic);
+    }
 
     #[test]
     fn what_whisper_writes_is_made_typeable() {

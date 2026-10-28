@@ -82,6 +82,8 @@ pub enum ToTab {
 pub enum FromTab {
     Screen(Screen),
     Title(String),
+    /// The folder the shell, or what runs in front of it, is in: for the room's dictation.
+    Folder(String),
     Copied(String),
     Bell,
     /// The shell has gone, with this status.
@@ -246,6 +248,10 @@ impl FromTab {
                 put_str(&mut b, t);
                 b'T'
             }
+            FromTab::Folder(t) => {
+                put_str(&mut b, t);
+                b'D'
+            }
             FromTab::Copied(t) => {
                 put_str(&mut b, t);
                 b'C'
@@ -286,6 +292,7 @@ impl FromTab {
                 FromTab::Screen(Screen { cols, rows, cursor: (cx, cy), cursor_shape, scrolled, history, mouse: m & 1 != 0, alternate: m & 2 != 0, cells })
             }
             b'T' => FromTab::Title(b.str()?),
+            b'D' => FromTab::Folder(b.str()?),
             b'C' => FromTab::Copied(b.str()?),
             b'B' => FromTab::Bell,
             b'E' => FromTab::Exited(b.u32()? as i32),

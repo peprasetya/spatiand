@@ -258,6 +258,7 @@ pub fn run() -> io::Result<()> {
     // The title the program set, if it set one; the tab is named by what is running otherwise.
     let mut set_title = false;
     let mut named = String::new();
+    let mut folder = String::new();
     let mut looked = Instant::now() - Duration::from_secs(5);
     let mut last_sent = Instant::now() - Duration::from_secs(1);
     let mut last_screen: Option<Screen> = None;
@@ -402,12 +403,22 @@ pub fn run() -> io::Result<()> {
             Err(RecvTimeoutError::Disconnected) => return Ok(()),
         }
         // Once a second, what is running in front and where, for a tab no program has named.
-        if !set_title && looked.elapsed() >= Duration::from_secs(1) {
+        if looked.elapsed() >= Duration::from_secs(1) {
             looked = Instant::now();
-            let name = crate::proc::describe(master, shell_pid);
-            if !name.is_empty() && name != named {
-                named = name.clone();
-                if !send(FromTab::Title(name)) {
+            if !set_title {
+                let name = crate::proc::describe(master, shell_pid);
+                if !name.is_empty() && name != named {
+                    named = name.clone();
+                    if !send(FromTab::Title(name)) {
+                        return Ok(());
+                    }
+                }
+            }
+            // Where it is, for the room's dictation to lean towards the names there.
+            let here = crate::proc::folder(master, shell_pid).map(|f| f.display().to_string()).unwrap_or_default();
+            if here != folder {
+                folder = here.clone();
+                if !send(FromTab::Folder(here)) {
                     return Ok(());
                 }
             }

@@ -34,6 +34,15 @@ impl Description {
     pub fn is_terminal(&self) -> bool {
         self.kind == "terminal"
     }
+
+    /// A window's account of itself, as it writes it (`spatiand_xr_surface_v1.describe`).
+    pub fn from_json(json: &str) -> Option<Description> {
+        serde_json::from_str(json).ok()
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
 }
 
 /// Whisper reads about the last 150 words of its prompt; this keeps a little under that.

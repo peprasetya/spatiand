@@ -2989,8 +2989,7 @@ pub fn run(
                                         clicks.play();
                                     }
                                     if key.role == spatiand_shell::keyboard::Role::Dictate {
-                                        let (focus, id) = crate::dictate::describe_focus(&runtime.state);
-                                        dictation.toggle(focus, id);
+                                        dictation.press(&runtime.state);
                                     } else if let Some(stroke) = keyboard.press(key) {
                                         if shell.wants_text() {
                                             typed_event = typed_event
@@ -3028,10 +3027,7 @@ pub fn run(
                     }
 
                     // Dictation follows the focus, and types what was said into it.
-                    if keyboard.dictating == spatiand_shell::keyboard::Dictating::Listening {
-                        let (focus, id) = crate::dictate::describe_focus(&runtime.state);
-                        dictation.focus_changed(focus, id);
-                    }
+                    dictation.follow(&runtime.state);
                     if let Some(said) = dictation.tick() {
                         type_text(&mut runtime.state, &mut shell, &said, time_ms);
                     }
@@ -3583,8 +3579,7 @@ pub fn run(
                                         clicks.play();
                                     }
                                     if key.role == spatiand_shell::keyboard::Role::Dictate {
-                                        let (focus, id) = crate::dictate::describe_focus(&runtime.state);
-                                        dictation.toggle(focus, id);
+                                        dictation.press(&runtime.state);
                                     } else if let Some(stroke) = keyboard.press(key) {
                                         if shell.wants_text() {
                                             typed_event = typed_event

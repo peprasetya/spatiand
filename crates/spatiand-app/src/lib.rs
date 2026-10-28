@@ -38,11 +38,13 @@ use std::time::{Duration, Instant};
 
 pub mod clipboard;
 pub mod config;
+pub mod describe;
 pub mod gl;
 mod keys;
 pub mod ui;
 mod wire;
 
+pub use describe::Description;
 pub use gl::Gl;
 pub use glow;
 
@@ -174,6 +176,10 @@ pub enum Event {
     /// Two fingers pinched over a window that takes pinches ([`App::set_pinch_taken`]): how
     /// much they spread since the last, as a factor -- above one is zooming in.
     Pinch { window: WindowId, scale: f32 },
+    /// The room asks what the window shows: answer with [`App::describe`], promptly. Dictation
+    /// leans its spelling towards what is said (a terminal's commands, a page's words), and the
+    /// assistant reads a window this way. Not answered, the room makes do with the title.
+    Describe { window: WindowId },
     /// Something dragged came over a window -- from this application (`own`) or another, from
     /// anywhere in the room -- at this point of it; `forms` are what it can be had as. While it
     /// is over the window, [`App::accept_drag`] says what the window would do with it there.
@@ -206,6 +212,7 @@ impl Event {
             | Event::LayerRefused { window, .. }
             | Event::LayerLost { window, .. }
             | Event::Pinch { window, .. }
+            | Event::Describe { window }
             | Event::DragEntered { window, .. }
             | Event::DragMoved { window, .. }
             | Event::DragLeft { window }
@@ -339,6 +346,17 @@ impl App {
     /// only the application knows how far away what is pointed at is.
     pub fn set_cursor_drawn(&mut self, window: WindowId, drawn: bool) {
         self.wire.set_cursor_drawn(window, drawn);
+    }
+
+    /// What a window shows, in answer to [`Event::Describe`]. Nothing happens if it was not
+    /// asked, or has been answered already.
+    pub fn describe(&mut self, window: WindowId, description: &Description) {
+        if let Some(fd) = self.wire.describing.remove(&window) {
+            let mut file = std::fs::File::from(fd);
+            if let Err(e) = std::io::Write::write_all(&mut file, description.to_json().as_bytes()) {
+                log::debug!("the room stopped waiting for a description: {e}");
+            }
+        }
     }
 
     /// Pinching over the window zooms what it shows, told as [`Event::Pinch`], rather than

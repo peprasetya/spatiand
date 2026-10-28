@@ -123,4 +123,21 @@ ask first.
 
 ## Built so far
 
-Nothing yet (2026-10-28): the model is installed in hemera and measured.
+2026-10-28:
+
+- **`crates/spatiand-voice`**: phrases cut on the device, hemera's transcription and chat, the
+  prompt from the focus, the word list, a terminal's spoken symbols and the clean-up pass.
+  `cargo test -p spatiand-voice --test hemera -- --ignored` runs it against hemera end to end.
+- **The mic key** in the right alt's place (room keyboard and the Deck's screen), the microphone
+  (`listen.rs`), typing as keystrokes, a terminal's text on the notice card (`dictate.rs`). The
+  Mac's menu asks for the microphone. `SPATIAND_LISTEN_WAV` makes a WAV file the microphone; the
+  snapshot room's `dictate:` step uses it.
+- **`describe`** (`spatiand_xr_surface_v1`, version 9) and `Event::Describe` / `App::describe` in
+  the SDK; SpatiQuill answers with its screen, the commands at its prompts, its folder and the
+  names in it, SpatiShelf with its folder and names.
+- Checked on the Mac in the snapshot room: a spoken `ls /etc/httpd` typed into SpatiQuill after
+  pressing the card; SpatiQuill's description reached dictation (14 names, 2 commands).
+
+Not yet: SpatiMesh's description (the page's words, through its `RunScript`), Mac windows'
+through Accessibility, a settings page for languages, words and models, the Deck build (it was
+offline) and the Beam Pro's, and the whole of the assistant.

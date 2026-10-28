@@ -268,6 +268,60 @@ pub fn tell_pinch(surface: &WlSurface, scale: f32) -> bool {
     }
 }
 
+/// Ask a surface what it shows (`describe`, since 9): its answer, the JSON it wrote, arrives on
+/// the receiver within a second or not at all. `None` for a surface that cannot be asked.
+///
+/// Read on a thread of its own: a client is under no obligation to answer promptly, and the
+/// room's frame does not wait for one.
+pub fn ask_description(surface: &WlSurface) -> Option<std::sync::mpsc::Receiver<String>> {
+    use std::os::fd::{AsFd, FromRawFd, OwnedFd};
+    let object = with_states(surface, |states| states.data_map.get::<Object>().and_then(|o| o.0.lock().ok()?.clone()));
+    let object = object.filter(|o| o.is_alive() && o.version() >= 9)?;
+    let mut ends = [0i32; 2];
+    if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let (read, write) = unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
+    for fd in [&read, &write] {
+        unsafe { libc::fcntl(std::os::fd::AsRawFd::as_raw_fd(fd), libc::F_SETFD, libc::FD_CLOEXEC) };
+    }
+    object.describe(write.as_fd());
+    drop(write);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("describe".into())
+        .spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            let raw = std::os::fd::AsRawFd::as_raw_fd(&read);
+            let mut said = Vec::new();
+            let mut buffer = [0u8; 16 * 1024];
+            loop {
+                let left = deadline.saturating_duration_since(std::time::Instant::now()).as_millis() as i32;
+                if left <= 0 {
+                    break;
+                }
+                let mut poll = libc::pollfd { fd: raw, events: libc::POLLIN, revents: 0 };
+                if unsafe { libc::poll(&mut poll, 1, left) } <= 0 {
+                    break;
+                }
+                let n = unsafe { libc::read(raw, buffer.as_mut_ptr().cast(), buffer.len()) };
+                if n <= 0 {
+                    break;
+                }
+                said.extend_from_slice(&buffer[..n as usize]);
+                // Far more than a description needs: the rest is not waited for.
+                if said.len() > 256 * 1024 {
+                    break;
+                }
+            }
+            if !said.is_empty() {
+                let _ = tx.send(String::from_utf8_lossy(&said).into_owned());
+            }
+        })
+        .ok()?;
+    Some(rx)
+}
+
 /// How visible this surface should be drawn, 0..1.
 ///
 /// One line, because [`crate::attention`] keeps no per-surface state: the answer is a pure

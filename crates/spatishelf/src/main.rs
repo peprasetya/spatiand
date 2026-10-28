@@ -946,6 +946,11 @@ impl Shelf {
         self.dirty = true;
         match &event {
             Event::CloseRequested { .. } => return false,
+            Event::Describe { window } => {
+                let description = self.description();
+                self.app().describe(*window, &description);
+                return true;
+            }
             Event::Ready { .. } => self.ready = true,
             Event::Resized { width, height, .. } => {
                 self.size = ((*width).max(800), (*height).max(500));
@@ -1192,6 +1197,22 @@ impl Shelf {
                 tab.scroll = (tab.scroll + dy).max(0.0);
             }
             _ => {}
+        }
+    }
+
+    /// What the window shows, for the room's dictation and assistant: the folder and the names
+    /// in it, as listed.
+    fn description(&mut self) -> spatiand_app::Description {
+        let tab = self.tab();
+        let names: Vec<String> = tab.shown.iter().filter_map(|&i| tab.items.get(i)).map(|item| item.name.clone()).collect();
+        spatiand_app::Description {
+            kind: "files".into(),
+            app: "SpatiShelf".into(),
+            title: tab.place.name(),
+            text: names.iter().take(200).cloned().collect::<Vec<_>>().join("\n"),
+            vocabulary: names.into_iter().take(150).collect(),
+            directory: tab.place.text(),
+            commands: Vec::new(),
         }
     }
 

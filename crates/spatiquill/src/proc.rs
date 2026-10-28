@@ -45,6 +45,11 @@ fn folder_of(pid: i32) -> Option<std::path::PathBuf> {
 
 const SHELLS: &[&str] = &["zsh", "bash", "sh", "fish", "dash", "ksh", "tcsh", "nu", "login", "mksh"];
 
+/// The folder of what is in front on the terminal, or of the shell.
+pub fn folder(master: i32, shell: i32) -> Option<std::path::PathBuf> {
+    foreground(master).and_then(folder_of).or_else(|| folder_of(shell))
+}
+
 /// A tab's name: the program in front, or the shell's folder, the home folder as `~`.
 pub fn describe(master: i32, shell: i32) -> String {
     let front = foreground(master).unwrap_or(shell);

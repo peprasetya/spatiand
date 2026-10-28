@@ -722,7 +722,8 @@ pub fn run(
                                 }
                                 let (focus, id) = crate::dictate::describe_focus(&runtime.state);
                                 log::info!("dictate: into {:?} ({})", focus.app, if focus.is_terminal() { "a terminal" } else { "not a terminal" });
-                                dictation.toggle(focus, id);
+                                let _ = id;
+                                dictation.press(&runtime.state);
                                 let seconds = std::fs::read(path)
                                     .ok()
                                     .and_then(|b| spatiand_voice::hemera::read_wav(&b))

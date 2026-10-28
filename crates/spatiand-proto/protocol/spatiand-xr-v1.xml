@@ -52,7 +52,7 @@
     The per-frame values are not on the wire at all -- see the pose channel.
   </description>
 
-  <interface name="spatiand_xr_v1" version="8">
+  <interface name="spatiand_xr_v1" version="9">
     <description summary="stereoscopic and head-tracked surfaces">
       The factory. Binding it says nothing and changes nothing.
     </description>
@@ -129,7 +129,7 @@
     </enum>
   </interface>
 
-  <interface name="spatiand_xr_surface_v1" version="8">
+  <interface name="spatiand_xr_surface_v1" version="9">
     <description summary="how a surface is drawn for two eyes">
       All state here is double-buffered: it takes effect on the next
       wl_surface.commit, like everything else about a surface. Changing layout
@@ -461,6 +461,23 @@
         `set_pinch_taken`, as the fingers move.
       </description>
       <arg name="scale" type="int" summary="factor, in millionths"/>
+    </event>
+
+    <event name="describe" since="9">
+      <description summary="say what this surface shows, for the room's speech">
+        The room asks what this surface is about: dictation leans its spelling
+        towards a terminal's commands and a page's words, and the assistant
+        reads a window through this.
+
+        The client writes one JSON object into the file descriptor and closes
+        it, soon -- the room waits a moment, and then does without. Every field
+        is optional: "kind" (terminal, web, files, video, viewer, chat, text),
+        "app", "title", "text" (what it shows, as text), "vocabulary" (an array
+        of names and words likely to be said: file names, a page's headings),
+        "directory", and "commands" (a terminal's last commands, the last one
+        last). A client with nothing to say closes it at once.
+      </description>
+      <arg name="fd" type="fd" summary="where to write the description"/>
     </event>
   </interface>
 

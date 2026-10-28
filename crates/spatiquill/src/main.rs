@@ -51,6 +51,8 @@ struct Tab {
     gather: Gather,
     screen: Screen,
     title: String,
+    /// The folder its shell is in, as the tab last said.
+    folder: String,
     state: TabState,
     /// The size it was last told, so that it is told only when that changes.
     told: (u16, u16, u16, u16),
@@ -73,7 +75,7 @@ impl Tab {
             let fd = stdout.as_raw_fd();
             libc::fcntl(fd, libc::F_SETFL, libc::fcntl(fd, libc::F_GETFL) | libc::O_NONBLOCK);
         }
-        Ok(Tab { child, stdin, stdout, gather: Gather::default(), screen: Screen::default(), title: String::new(), state: TabState::Running, told: (0, 0, 0, 0), rang: None })
+        Ok(Tab { child, stdin, stdout, gather: Gather::default(), screen: Screen::default(), title: String::new(), folder: String::new(), state: TabState::Running, told: (0, 0, 0, 0), rang: None })
     }
 
     fn tell(&mut self, message: &ToTab) {
@@ -397,6 +399,7 @@ impl Quill {
                 match message {
                     FromTab::Screen(screen) => tab.screen = screen,
                     FromTab::Title(title) => tab.title = title,
+                    FromTab::Folder(folder) => tab.folder = folder,
                     FromTab::Copied(text) => copied = Some(text),
                     FromTab::Bell => tab.rang = Some(Instant::now()),
                     FromTab::Exited(_) => exited = true,
@@ -502,6 +505,10 @@ impl Quill {
             Event::PointerLeft { .. } => self.wins[w].hover = Hover::Nothing,
             Event::Button { button, pressed, .. } => self.button(w, button, pressed),
             Event::Scroll { dy, .. } => self.scroll(w, dy),
+            Event::Describe { .. } => {
+                let description = self.description(w);
+                self.app.describe(id, &description);
+            }
             Event::Key { key, code, pressed: true, text, modifiers, .. } => {
                 self.typed_at = Instant::now();
                 self.key(w, key, code, text.unwrap_or_default(), modifiers);
@@ -686,6 +693,34 @@ impl Quill {
                     t.tell(&ToTab::Copy);
                 }
             }
+        }
+    }
+
+    /// What the window shows, for the room's dictation and assistant: the active tab's screen as
+    /// text, the commands typed at its prompts, its folder and the names in it.
+    fn description(&self, w: usize) -> spatiand_app::Description {
+        let Some(tab) = self.active_tab(w).and_then(|t| self.tabs.get(&t)) else {
+            return spatiand_app::Description { kind: "terminal".into(), app: "SpatiQuill".into(), ..Default::default() };
+        };
+        let lines = screen_lines(&tab.screen);
+        let commands: Vec<String> = lines.iter().filter_map(|l| command_on(l)).collect();
+        let home = std::env::var("HOME").unwrap_or_default();
+        let directory = match tab.folder.strip_prefix(&home) {
+            Some(rest) if !home.is_empty() => format!("~{rest}"),
+            _ => tab.folder.clone(),
+        };
+        let mut vocabulary: Vec<String> = std::fs::read_dir(&tab.folder)
+            .map(|entries| entries.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| !n.starts_with('.')).take(150).collect())
+            .unwrap_or_default();
+        vocabulary.sort();
+        spatiand_app::Description {
+            kind: "terminal".into(),
+            app: "SpatiQuill".into(),
+            title: tab.label(),
+            text: lines.join("\n"),
+            vocabulary,
+            directory,
+            commands,
         }
     }
 
@@ -1183,5 +1218,60 @@ mod drop_tests {
         let list = "file:///home/me/notes.txt\r\nfile:///home/me/My%20Files/it's.png\r\n";
         assert_eq!(paths_typed(list), "/home/me/notes.txt '/home/me/My Files/it'\\''s.png' ");
         assert_eq!(paths_typed("# nothing\r\n"), "");
+    }
+}
+
+/// A screen's rows as text, the empty ones at the end left off.
+fn screen_lines(screen: &Screen) -> Vec<String> {
+    let cols = screen.cols.max(1) as usize;
+    let mut lines: Vec<String> = screen
+        .cells
+        .chunks(cols)
+        .map(|row| {
+            row.iter()
+                .filter(|c| c.flags & wire::flags::SPACER == 0)
+                .map(|c| if c.c == '\0' { ' ' } else { c.c })
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect();
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    lines
+}
+
+/// The command typed at a prompt on this line, if the line is one: what follows the prompt's
+/// mark (`%` for zsh, `$` for bash, `#` for root, `❯` and `>` for the fancier ones) when what
+/// comes before it is short enough to be a prompt.
+fn command_on(line: &str) -> Option<String> {
+    for mark in [" % ", "$ ", "# ", "\u{276F} ", "> "] {
+        if let Some(at) = line.find(mark) {
+            let before = &line[..at];
+            // A prompt says something before its mark: a line that starts with `> ` is a quote
+            // or a diff, not a prompt.
+            if before.trim().is_empty() || before.chars().count() > 80 || before.split_whitespace().count() > 6 {
+                continue;
+            }
+            let command = line[at + mark.len()..].trim();
+            return (!command.is_empty()).then(|| command.to_string());
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod describe_tests {
+    use super::command_on;
+
+    #[test]
+    fn commands_are_read_off_prompts() {
+        assert_eq!(command_on("paulus@darkPhoenix ~ % ls /etc/httpd").as_deref(), Some("ls /etc/httpd"));
+        assert_eq!(command_on("deck@steamdeck:~/spatiand$ cargo build --release").as_deref(), Some("cargo build --release"));
+        assert_eq!(command_on("root@gaharu:/var/www# systemctl status httpd").as_deref(), Some("systemctl status httpd"));
+        assert_eq!(command_on("paulus@darkPhoenix ~ % ").as_deref(), None);
+        assert_eq!(command_on("drwxr-xr-x  5 paulus staff 160 Oct 28 docs"), None);
+        assert_eq!(command_on("> a quoted line"), None);
     }
 }

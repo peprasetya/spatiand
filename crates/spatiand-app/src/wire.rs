@@ -123,6 +123,9 @@ pub(crate) struct Wire {
     press_serial: u32,
     dragging: Option<Dragging>,
     over: Option<Over>,
+    /// Where each window's account of itself is to be written, while the room waits for it
+    /// (`describe`, see [`crate::App::describe`]).
+    pub(crate) describing: HashMap<WindowId, std::os::fd::OwnedFd>,
 }
 
 /// Text's names, the best first.
@@ -159,7 +162,7 @@ impl Wire {
         let data_devices: Option<wl_data_device_manager::WlDataDeviceManager> = globals.bind(&handle, 1..=3, ()).ok();
         let data_device = data_devices.as_ref().map(|m| m.get_data_device(&seat, &handle, ()));
         let dmabuf = globals.bind(&handle, 3..=3, ()).ok();
-        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=8, ()).ok();
+        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=9, ()).ok();
         let viewporter = globals.bind(&handle, 1..=1, ()).ok();
         // A compositor with the room's protocol and no word on the mode is an older Spatiand,
         // which has only ever had two eyes; one without the protocol is somebody's desktop.
@@ -193,6 +196,7 @@ impl Wire {
             press_serial: 0,
             dragging: None,
             over: None,
+            describing: HashMap::new(),
         };
         Ok((wire, queue))
     }
@@ -230,6 +234,12 @@ impl Wire {
                 frame_asked: false,
             },
         );
+        // A room that can ask a window what it shows (`describe`, since 9) can only ask one
+        // that has said something through the protocol: made now, rather than when the
+        // application first needs it, for an application that never otherwise would.
+        if self.xr.as_ref().is_some_and(|xr| xr.version() >= 9) {
+            self.xr_of(id);
+        }
         id
     }
 
@@ -817,6 +827,11 @@ impl Dispatch<spatiand_xr_surface_v1::SpatiandXrSurfaceV1, WindowId> for Wire {
             }
             spatiand_xr_surface_v1::Event::Pinch { scale } => {
                 state.events.push(Event::Pinch { window: *id, scale: (scale as f32 / 1e6).clamp(0.2, 5.0) });
+            }
+            spatiand_xr_surface_v1::Event::Describe { fd } => {
+                // A second asking replaces the first: the room has stopped waiting for it.
+                state.describing.insert(*id, fd);
+                state.events.push(Event::Describe { window: *id });
             }
             _ => {}
         }
