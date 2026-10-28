@@ -23,6 +23,8 @@ pub struct Part {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
+    /// Colours painted on its vertices, which tint the material's; empty when it has none.
+    pub colors: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
     pub material: usize,
     /// Each morph target's moves of the positions, as the file has them.
@@ -70,6 +72,7 @@ pub fn parse(bytes: &[u8]) -> Result<Figure, String> {
 
     // VRM 0.x faces away from where VRM 1.0 and glTF face.
     let old_vrm = root.pointer("/extensions/VRM").is_some();
+    let vrm = old_vrm || root.pointer("/extensions/VRMC_vrm").is_some();
     let turn = if old_vrm { Mat4::from_rotation_z(std::f32::consts::PI) } else { Mat4::IDENTITY };
     let to_room = turn * Mat4::from_cols_array(&[0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]);
 
@@ -122,6 +125,17 @@ pub fn parse(bytes: &[u8]) -> Result<Figure, String> {
                 Some(a) => gltf.floats(a, 2)?,
                 None => vec![0.0; count * 2],
             };
+            // Colours painted on the vertices tint the material's. A VRM's are left alone, as its
+            // own renderer (MToon) leaves them; and a set that does not fit is no colour at all.
+            let colors = attr("COLOR_0")
+                .filter(|_| !vrm)
+                .and_then(|a| {
+                    let width = if gltf.kind(a) == Some("VEC4") { 4 } else { 3 };
+                    let c = gltf.floats(a, width).ok()?;
+                    Some(c.chunks_exact(width).map(|c| [c[0], c[1], c[2], if width == 4 { c[3] } else { 1.0 }]).collect::<Vec<_>>())
+                })
+                .filter(|c| c.len() == count)
+                .unwrap_or_default();
             let indices = match primitive.get("indices").and_then(Value::as_u64) {
                 Some(a) => gltf.indices(a as usize)?,
                 None => (0..count as u32).collect(),
@@ -138,6 +152,7 @@ pub fn parse(bytes: &[u8]) -> Result<Figure, String> {
                 positions: positions.chunks_exact(3).map(|v| m.transform_point3(Vec3::new(v[0], v[1], v[2])).to_array()).collect(),
                 normals: normals.chunks_exact(3).map(|v| (normal_m * Vec3::new(v[0], v[1], v[2])).normalize_or_zero().to_array()).collect(),
                 uvs: uvs.chunks_exact(2).map(|v| [v[0], v[1]]).collect(),
+                colors,
                 indices,
                 material: primitive.get("material").and_then(Value::as_u64).unwrap_or(0) as usize,
                 targets,
@@ -295,6 +310,11 @@ impl Gltf<'_> {
     }
 
     /// An accessor's values as floats, `width` to an element.
+    /// An accessor's shape: `SCALAR`, `VEC3`, ...
+    fn kind(&self, accessor: usize) -> Option<&str> {
+        self.root.pointer(&format!("/accessors/{accessor}/type")).and_then(Value::as_str)
+    }
+
     fn floats(&self, accessor: usize, width: usize) -> Result<Vec<f32>, String> {
         let a = self.root.pointer(&format!("/accessors/{accessor}")).ok_or("an accessor that is not there")?;
         let count = a.get("count").and_then(Value::as_u64).unwrap_or(0) as usize;
@@ -384,7 +404,7 @@ impl Gltf<'_> {
 mod tests {
     use super::*;
 
-    /// A GLB of one triangle with one morph target, made here byte by byte.
+    /// A GLB of one triangle with one morph target and painted colours, made here byte by byte.
     fn triangle(vrm: bool) -> Vec<u8> {
         let positions: [f32; 9] = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 2.0, 0.0];
         let target: [f32; 9] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0];
@@ -394,13 +414,14 @@ mod tests {
         bin.extend(target.iter().flat_map(|f| f.to_le_bytes()));
         bin.extend(indices.iter().flat_map(|i| i.to_le_bytes()));
         bin.extend([0, 0]);
+        bin.extend([255, 255, 255, 255, 255, 0, 0, 255, 0, 0, 255, 128]);
         let extensions = if vrm {
             r#","extensions":{"VRMC_vrm":{"expressions":{"preset":{"aa":{"morphTargetBinds":[{"node":0,"index":0,"weight":1.0}]}}}}}"#
         } else {
             ""
         };
         let json = format!(
-            r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0,"translation":[0,1,0]}}],"meshes":[{{"primitives":[{{"attributes":{{"POSITION":0}},"indices":2,"targets":[{{"POSITION":1}}]}}]}}],"buffers":[{{"byteLength":{}}}],"bufferViews":[{{"buffer":0,"byteOffset":0,"byteLength":36}},{{"buffer":0,"byteOffset":36,"byteLength":36}},{{"buffer":0,"byteOffset":72,"byteLength":6}}],"accessors":[{{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"}},{{"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"}},{{"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"}}]{extensions}}}"#,
+            r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0,"translation":[0,1,0]}}],"meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"COLOR_0":3}},"indices":2,"targets":[{{"POSITION":1}}]}}]}}],"buffers":[{{"byteLength":{}}}],"bufferViews":[{{"buffer":0,"byteOffset":0,"byteLength":36}},{{"buffer":0,"byteOffset":36,"byteLength":36}},{{"buffer":0,"byteOffset":72,"byteLength":6}},{{"buffer":0,"byteOffset":80,"byteLength":12}}],"accessors":[{{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"}},{{"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"}},{{"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"}},{{"bufferView":3,"componentType":5121,"normalized":true,"count":3,"type":"VEC4"}}]{extensions}}}"#,
             bin.len()
         );
         let mut json = json.into_bytes();
@@ -438,6 +459,15 @@ mod tests {
     fn a_vrm_says_which_target_makes_which_face() {
         let f = parse(&triangle(true)).unwrap();
         assert_eq!(f.expressions.get("aa"), Some(&vec![(0, 0, 1.0)]));
+    }
+
+    #[test]
+    fn painted_colours_tint_a_glb_but_not_a_vrm() {
+        let glb = parse(&triangle(false)).unwrap();
+        assert_eq!(glb.parts[0].colors[1], [1.0, 0.0, 0.0, 1.0]);
+        assert!((glb.parts[0].colors[2][3] - 128.0 / 255.0).abs() < 1e-6);
+        // MToon, a VRM's own renderer, paints none.
+        assert!(parse(&triangle(true)).unwrap().parts[0].colors.is_empty());
     }
 
     #[test]

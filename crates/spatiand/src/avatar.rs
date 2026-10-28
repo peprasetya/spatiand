@@ -81,16 +81,19 @@ const MODEL_VERT: &str = r#"
 layout(location = 0) in vec3 a_pos;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_uv;
+layout(location = 3) in vec4 a_color;
 uniform mat4 u_mvp;
 uniform mat4 u_model;
 uniform mat3 u_normal;
 out vec3 v_normal;
 out vec3 v_world;
 out vec2 v_uv;
+out vec4 v_color;
 void main() {
     v_normal = normalize(u_normal * a_normal);
     v_world = (u_model * vec4(a_pos, 1.0)).xyz;
     v_uv = a_uv;
+    v_color = a_color;
     gl_Position = u_mvp * vec4(a_pos, 1.0);
 }
 "#;
@@ -99,6 +102,7 @@ const MODEL_FRAG: &str = r#"
 in vec3 v_normal;
 in vec3 v_world;
 in vec2 v_uv;
+in vec4 v_color;
 uniform sampler2D u_tex;
 uniform vec4 u_base;
 uniform float u_cutoff;
@@ -106,7 +110,7 @@ uniform vec3 u_light;
 uniform vec3 u_eye;
 out vec4 f_color;
 void main() {
-    vec4 base = texture(u_tex, v_uv) * u_base;
+    vec4 base = texture(u_tex, v_uv) * u_base * v_color;
     if (base.a < u_cutoff) {
         discard;
     }
@@ -479,6 +483,11 @@ impl Avatar {
             Chosen::Reading { path, .. } | Chosen::Read { path, .. } | Chosen::Ready { path, .. } | Chosen::Unreadable { path } => Some(path.clone()),
         };
         if current != path {
+            // The figure worn until now gives back what it held: a VRM's pictures are tens of
+            // megabytes.
+            if let Chosen::Ready { gpu, .. } = &*chosen {
+                gpu.free(gl);
+            }
             *chosen = match path {
                 None => Chosen::None,
                 Some(path) => {
@@ -518,6 +527,8 @@ impl Avatar {
 
     unsafe fn draw_model(&self, gl: &ffi::Gles2, gpu: &ModelGpu, vp: Mat4, place: Mat4, light: Vec3, eye: Vec3) {
         gl.UseProgram(self.model_program);
+        // A part with no colours painted on it is white where they would be.
+        gl.VertexAttrib4f(3, 1.0, 1.0, 1.0, 1.0);
         let normal = Mat3::from_mat4(place).inverse().transpose();
         let mvp = vp * place;
         gl.UniformMatrix4fv(self.model_loc[0], 1, ffi::FALSE, mvp.to_cols_array().as_ptr());
@@ -802,7 +813,8 @@ enum Chosen {
 
 struct GpuPart {
     vao: u32,
-    positions: u32,
+    /// Positions, normals, uvs, indices, colours.
+    buffers: [u32; 5],
     count: i32,
     material: usize,
     mesh: usize,
@@ -840,8 +852,8 @@ impl ModelGpu {
             let mut vao = 0;
             gl.GenVertexArrays(1, &mut vao);
             gl.BindVertexArray(vao);
-            let mut buffers = [0u32; 4];
-            gl.GenBuffers(4, buffers.as_mut_ptr());
+            let mut buffers = [0u32; 5];
+            gl.GenBuffers(5, buffers.as_mut_ptr());
             let floats = |gl: &ffi::Gles2, buffer: u32, data: &[f32], usage: u32| {
                 gl.BindBuffer(ffi::ARRAY_BUFFER, buffer);
                 gl.BufferData(ffi::ARRAY_BUFFER, (data.len() * 4) as isize, data.as_ptr() as *const _, usage);
@@ -857,12 +869,17 @@ impl ModelGpu {
             floats(gl, buffers[2], &part.uvs.iter().flatten().copied().collect::<Vec<f32>>(), ffi::STATIC_DRAW);
             gl.EnableVertexAttribArray(2);
             gl.VertexAttribPointer(2, 2, ffi::FLOAT, ffi::FALSE, 8, std::ptr::null());
+            if !part.colors.is_empty() {
+                floats(gl, buffers[4], &part.colors.iter().flatten().copied().collect::<Vec<f32>>(), ffi::STATIC_DRAW);
+                gl.EnableVertexAttribArray(3);
+                gl.VertexAttribPointer(3, 4, ffi::FLOAT, ffi::FALSE, 16, std::ptr::null());
+            }
             gl.BindBuffer(ffi::ELEMENT_ARRAY_BUFFER, buffers[3]);
             gl.BufferData(ffi::ELEMENT_ARRAY_BUFFER, (part.indices.len() * 4) as isize, part.indices.as_ptr() as *const _, ffi::STATIC_DRAW);
             gl.BindVertexArray(0);
             parts.push(GpuPart {
                 vao,
-                positions: buffers[0],
+                buffers,
                 count: part.indices.len() as i32,
                 material: part.material,
                 mesh: part.mesh,
@@ -876,6 +893,15 @@ impl ModelGpu {
         let middle = (figure.low + figure.high) * 0.5;
         let fit = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.044)) * Mat4::from_scale(Vec3::splat(scale)) * Mat4::from_translation(Vec3::new(-middle.x, -middle.y, -figure.low.z));
         ModelGpu { parts, materials: figure.materials, textures, expressions: figure.expressions, fit, weights: Default::default() }
+    }
+
+    /// Give back its buffers and pictures.
+    unsafe fn free(&self, gl: &ffi::Gles2) {
+        for part in &self.parts {
+            gl.DeleteBuffers(part.buffers.len() as i32, part.buffers.as_ptr());
+            gl.DeleteVertexArrays(1, &part.vao);
+        }
+        gl.DeleteTextures(self.textures.len() as i32, self.textures.as_ptr());
     }
 
     /// Its face for the moment: blinking, smiling, the mouth moving while it talks. Only what
@@ -929,7 +955,7 @@ impl ModelGpu {
                 }
             }
             let flat: Vec<f32> = positions.iter().flatten().copied().collect();
-            gl.BindBuffer(ffi::ARRAY_BUFFER, part.positions);
+            gl.BindBuffer(ffi::ARRAY_BUFFER, part.buffers[0]);
             gl.BufferSubData(ffi::ARRAY_BUFFER, 0, (flat.len() * 4) as isize, flat.as_ptr() as *const _);
         }
         self.weights = weights;
