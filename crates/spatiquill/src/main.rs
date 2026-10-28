@@ -112,6 +112,8 @@ struct Win {
     dirty: bool,
     focused: bool,
     pointer: (f32, f32),
+    /// Scrolling not yet a whole line.
+    wheel: f32,
     hover: Hover,
     drag: Option<Drag>,
     /// Selecting text with the pointer: where it started and where it is, in cells.
@@ -247,6 +249,7 @@ impl Quill {
             dirty: true,
             focused: false,
             pointer: (0.0, 0.0),
+            wheel: 0.0,
             hover: Hover::Nothing,
             dropping: None,
             drag: None,
@@ -692,8 +695,19 @@ impl Quill {
         let cell = self.cell_at(w, x, y).unwrap_or((0, 0));
         let ch = self.grid.as_ref().map_or(30.0, |g| g.cell.1);
         let Some(t) = self.tabs.get_mut(&tab) else { return };
-        let lines = (dy / ch).round() as i32;
-        let lines = if lines == 0 { dy.signum() as i32 } else { lines };
+        // **A line for each line's height scrolled**, what is short of one kept for the next.
+        // Each event was a line at least: a slow swipe, in many small steps, went much further
+        // than a quick one in a few big ones.
+        let win = &mut self.wins[w];
+        if win.wheel * dy < 0.0 {
+            win.wheel = 0.0;
+        }
+        win.wheel += dy;
+        let lines = (win.wheel / ch).trunc() as i32;
+        if lines == 0 {
+            return;
+        }
+        win.wheel -= lines as f32 * ch;
         if t.screen.mouse || t.screen.alternate {
             let button = if dy < 0.0 { 64 } else { 65 };
             for _ in 0..lines.unsigned_abs().min(10) {

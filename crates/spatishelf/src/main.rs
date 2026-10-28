@@ -154,6 +154,8 @@ struct ShelfTab {
     cursor: usize,
     anchor: usize,
     scroll: f32,
+    /// The cursor last brought on show: it is again only once it has moved.
+    revealed: Option<usize>,
     filter: String,
     /// What the cursor goes to once the listing comes: a folder come out of, a file made.
     land_on: Option<String>,
@@ -192,6 +194,7 @@ impl ShelfTab {
             cursor: 0,
             anchor: 0,
             scroll: 0.0,
+            revealed: None,
             filter: String::new(),
             land_on: None,
             doing: HashMap::new(),
@@ -1284,6 +1287,8 @@ impl Shelf {
             }
             let to = (tab.cursor as isize + by).clamp(0, tab.shown.len() as isize - 1) as usize;
             tab.cursor = to;
+            // An arrow brings the cursor back on show even where it cannot go further.
+            tab.revealed = None;
             if m.shift {
                 let (a, b) = (tab.anchor.min(to), tab.anchor.max(to));
                 tab.selected = tab.shown[a..=b].iter().copied().collect();
@@ -1589,17 +1594,23 @@ impl Shelf {
         };
         let rows_total = tab.shown.len().div_ceil(columns);
         let content_h = rows_total as f32 * cell_h + header;
-        // Keep the cursor on show; on first showing, start at the top.
+        // Bring the cursor on show when it has moved; on first showing, start at the top.
+        // **Only when it has moved**: kept on show every frame, a scroll could not take it off
+        // the edge, and two fingers on a trackpad hardly moved the folder.
         let cursor_row = (tab.cursor / columns) as f32;
         if tab.scroll.is_nan() {
             tab.scroll = (cursor_row * cell_h - area.h * 0.4).max(0.0);
+            tab.revealed = Some(tab.cursor);
         }
-        let top = cursor_row * cell_h;
-        if top < tab.scroll {
-            tab.scroll = top;
-        }
-        if top + cell_h + header > tab.scroll + area.h {
-            tab.scroll = top + cell_h + header - area.h;
+        if tab.revealed != Some(tab.cursor) {
+            tab.revealed = Some(tab.cursor);
+            let top = cursor_row * cell_h;
+            if top < tab.scroll {
+                tab.scroll = top;
+            }
+            if top + cell_h + header > tab.scroll + area.h {
+                tab.scroll = top + cell_h + header - area.h;
+            }
         }
         tab.scroll = tab.scroll.clamp(0.0, (content_h - area.h).max(0.0));
         p.clip(gl, area);

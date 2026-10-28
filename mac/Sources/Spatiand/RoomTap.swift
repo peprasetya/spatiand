@@ -203,7 +203,7 @@ final class RoomTap {
             stopGlide()
             return
         }
-        let mx = cx - t.cx, my = cy - t.cy, md = d - t.d
+        var mx = cx - t.cx, my = cy - t.cy
         if t.mode == 0 {
             // Net travel from where the fingers landed, not the path: the little shake of two
             // fingers adds up to a good deal of path and to nothing of travel.
@@ -216,6 +216,8 @@ final class RoomTap {
             // all there was, and a scroll came out a pinch that moved the window nearer or
             // further. A pinch has to be twice the travel, and a spread of 9 points.
             if t.gone + t.spread > 12 { t.mode = t.spread > max(t.gone * 2, 9) ? 2 : 1; gestureLog("two fingers, %@ (travel %.1f, spread %.1f)", t.mode == 2 ? "pinch" : "scroll", t.gone, t.spread) }
+            // The way gone while it was being decided is scrolled too: a short swipe lost a good part of itself.
+            if t.mode == 1 { mx = cx - t.sx; my = cy - t.sy }
         } else if t.mode == 2, pinchingApp != true {
             // A pinch of the room's that turns out to be fingers moving together is a scroll after all.
             t.gone = hypot(cx - t.sx, cy - t.sy)
@@ -231,8 +233,10 @@ final class RoomTap {
                 scrollingApp = overMacWindow()
                 if scrollingApp == true { RoomWindows.shared.readyToScroll() }
             }
-            let g = scrollingApp == true ? Self.appScrollGain : 1.5
+            // The same for the room's own windows as for the Mac's: theirs went a third as far.
+            let g = Self.appScrollGain
             if scrollingApp == true { scrollApp(mx * g, my * g, phase: 0); appScrollBegan = true } else { scroll(mx * g, my * g) }
+            scrolled.x += abs(mx * g); scrolled.y += abs(my * g); scrolled.n += 1
             let dt = max(now - lastScroll.at, 0.004)
             lastScroll = (lastScroll.vx * 0.5 + mx * g / dt * 0.5, lastScroll.vy * 0.5 + my * g / dt * 0.5, now)
         } else if t.mode == 2, t.d > 1 {
@@ -259,6 +263,8 @@ final class RoomTap {
     private var appGlide = false
     private var appGlideBegan = false
     private var carry = (x: 0.0, y: 0.0)
+    /// How far the scroll going on has moved, and in how many steps: for the gesture log.
+    private var scrolled = (x: 0.0, y: 0.0, n: 0)
     private static let appScrollGain = 2.2
 
     /// A scroll as the trackpad's own reaches an application, in points: `phase` 1 began, 4 changed,
@@ -298,7 +304,8 @@ final class RoomTap {
         scrollingApp = nil
         appScrollBegan = false
         carry = (0, 0)
-        gestureLog("two fingers lifted, mode %ld app %d speed %.0f last %.3f s ago", two?.mode ?? -1, toApp ? 1 : 0, hypot(lastScroll.vx, lastScroll.vy), now - lastScroll.at)
+        gestureLog("two fingers lifted, mode %ld app %d speed %.0f last %.3f s ago, scrolled %.0f across %.0f up in %ld steps", two?.mode ?? -1, toApp ? 1 : 0, hypot(lastScroll.vx, lastScroll.vy), now - lastScroll.at, scrolled.x, scrolled.y, scrolled.n)
+        scrolled = (0, 0, 0)
         if two?.mode == 1, now - lastScroll.at < 0.12, hypot(lastScroll.vx, lastScroll.vy) > 100 {
             appGlide = toApp
             appGlideBegan = false
@@ -320,7 +327,7 @@ final class RoomTap {
         } else {
             scroll(g.vx / 60, g.vy / 60)
         }
-        let decay = appGlide ? 0.965 : 0.95
+        let decay = 0.965
         g.vx *= decay; g.vy *= decay
         if hypot(g.vx, g.vy) < 30 { stopGlide() } else { glide = g }
     }
