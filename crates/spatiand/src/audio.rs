@@ -193,6 +193,18 @@ impl Audio {
     /// voice to (`spatipal-voice`), and aimed each frame by [`Audio::voice_source`].
     pub const VOICE: usize = usize::MAX - 7;
 
+    /// The environment the assistant is started with, so that everything it plays goes to the
+    /// sink placed at its figure: the Deck's way of saying whose sound is whose is the process's
+    /// environment (`routing_env`), and the assistant's sound is its voice, window or no window.
+    /// (On the Mac and the Beam Pro it hands its voice over by name, `spatipal-voice`.)
+    pub fn voice_env(&mut self) -> Vec<(String, String)> {
+        self.adopt_keyed(Self::VOICE, "own:spatipal-voice", Width::Stereo);
+        match self.bound.get(&Self::VOICE) {
+            Some(slot) => routing_env(*slot),
+            None => Vec::new(),
+        }
+    }
+
     /// The figure, as a source: a narrow one, at its place in the room.
     pub fn voice_source(at: glam::DVec3) -> Source {
         let radius = at.length().max(0.3);

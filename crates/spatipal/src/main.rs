@@ -8,7 +8,7 @@
 //!
 //! ```text
 //! spatipal                    its window: the chats, and its settings
-//! SPATIPAL_BACKGROUND=1       no window: how the room starts it when it is switched on
+//! spatipal --background       no window: how the room starts it when it is switched on
 //! ```
 //!
 //! One process at a time: started again, it asks the one running to show its window, and goes.
@@ -537,7 +537,7 @@ fn socket_path() -> std::path::PathBuf {
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    let background = std::env::var("SPATIPAL_BACKGROUND").as_deref() == Ok("1");
+    let background = std::env::var("SPATIPAL_BACKGROUND").as_deref() == Ok("1") || std::env::args().any(|a| a == "--background");
     // Another start: the one running shows its window, and this one goes.
     let path = socket_path();
     if let Ok(mut other) = UnixStream::connect(&path) {

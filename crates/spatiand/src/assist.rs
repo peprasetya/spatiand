@@ -240,11 +240,11 @@ pub fn serve(
     time_ms: u32,
 ) -> Vec<ShellEvent> {
     tend_ears();
+    let mut events = Vec::new();
     if let Some(shell) = shell {
-        keep_running(state, shell);
+        events.extend(keep_running(state, shell));
     }
     let asked: Vec<Asked> = std::mem::take(&mut *ASKED.lock().unwrap());
-    let mut events = Vec::new();
     for asked in asked {
         let what = asked.str("do").to_string();
         match what.as_str() {
@@ -438,28 +438,33 @@ pub fn serve(
 /// **The assistant runs when it is switched on** (`assistant.json` in the settings every machine
 /// shares, `"on": true`): started with the session, in the background -- its avatar, its ears
 /// and its reminders need no window -- and started again if it goes. Looked at every few seconds.
-fn keep_running(state: &Spatiand, shell: &spatiand_shell::Shell) {
+///
+/// Started as the wearer would start it, through the shell, so that each backend gives it what it
+/// gives the assistant: its key, and on the Deck the sink its voice is placed by.
+fn keep_running(_state: &Spatiand, shell: &spatiand_shell::Shell) -> Option<ShellEvent> {
     static LOOKED: Mutex<Option<std::time::Instant>> = Mutex::new(None);
     static STARTED: Mutex<Option<std::time::Instant>> = Mutex::new(None);
     {
         let mut looked = LOOKED.lock().unwrap();
         if looked.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(5)) {
-            return;
+            return None;
         }
         *looked = Some(std::time::Instant::now());
     }
     if present() || !switched_on() {
-        return;
+        return None;
     }
     // Given time to start and say its key before it is started again.
     let mut started = STARTED.lock().unwrap();
     if started.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(20)) {
-        return;
+        return None;
     }
-    let Some(app) = shell.own_apps().iter().find(|a| crate::own::is_assistant(a)) else { return };
+    let app = shell.own_apps().iter().find(|a| crate::own::is_assistant(a))?;
     log::info!("assist: starting the assistant, which is switched on");
-    crate::own::launch(app, &state.socket_name, &[("SPATIPAL_BACKGROUND".into(), "1".into())]);
     *started = Some(std::time::Instant::now());
+    let mut background = app.clone();
+    background.exec = format!("{} --background", app.exec);
+    Some(ShellEvent::LaunchOwn(background))
 }
 
 /// Whether the wearer has switched the assistant on.

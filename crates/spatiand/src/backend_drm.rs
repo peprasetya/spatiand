@@ -1444,11 +1444,22 @@ pub fn run(
                     }
                     ShellEvent::LaunchOwn(app) => {
                         // A sink of its own, as for anything launched, so a film's sound is
-                        // where its window is from its first note.
-                        let claim =
-                            spatial_audio.prepare_launch(crate::audio::width_for(&app.categories));
+                        // where its window is from its first note -- except the assistant's,
+                        // whose sound is its voice, heard from its figure (`audio::VOICE`).
+                        let assistant = crate::own::is_assistant(&app);
+                        let claim = if assistant {
+                            None
+                        } else {
+                            spatial_audio.prepare_launch(crate::audio::width_for(&app.categories))
+                        };
                         let mut env: Vec<(String, String)> =
                             claim.as_ref().map(|(_, e)| e.clone()).unwrap_or_default();
+                        if assistant && spatial_audio.is_on() {
+                            env.extend(spatial_audio.voice_env());
+                        }
+                        if assistant {
+                            env.push(("SPATIAND_ASSIST_KEY".into(), crate::assist::key().to_string()));
+                        }
                         env.extend(crate::own::xr_runtime_environment());
                         if crate::own::is_installed(&app) {
                             // Not one of Spatiand's own: started as any program is, with the X
@@ -2353,6 +2364,13 @@ pub fn run(
                         marked: crate::audio::says_it_plays(runtime.state.title_of(window).as_deref()),
                         held: false,
                     });
+                }
+                // The assistant's voice, from its figure.
+                if let Some(at) = scene.avatar_position() {
+                    if spatial_audio.is_on() {
+                        let _ = spatial_audio.voice_env();
+                        sources.push(crate::audio::Audio::voice_source(at));
+                    }
                 }
                 spatial_audio.aim_all(&sources, head);
                 for quad in windows.iter_mut() {
