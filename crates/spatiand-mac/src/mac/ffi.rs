@@ -81,6 +81,9 @@ pub enum Asked {
     /// The session's clipboard to the Mac's pasteboard (`pasteboard`): `text` is the 2D link's
     /// JSON for a host's clipboard message, `{"host": {"Clipboard": {...}}}`.
     Clipboard = 35,
+    /// Say what the application with bundle id `text` shows in its focused window, through
+    /// Accessibility, answering with `sp_described(id, json)`.
+    Describe = 36,
 }
 
 pub type Callback =
@@ -411,6 +414,16 @@ pub unsafe extern "C" fn sp_menu_row(label: *const c_char, detail: *const c_char
 pub extern "C" fn sp_menu_end() {
     let (title, rows) = MENU_BEING_SAID.with(|menu| std::mem::take(&mut *menu.borrow_mut()));
     *super::APP_MENU.lock().unwrap() = Some(super::AppMenuSaid::Level { title, rows });
+}
+
+/// What an application of this Mac shows, in answer to [`Asked::Describe`] number `id`.
+///
+/// # Safety
+/// `json` must be a valid C string, or null.
+#[no_mangle]
+pub unsafe extern "C" fn sp_described(id: u32, json: *const c_char) {
+    let json = if json.is_null() { String::new() } else { CStr::from_ptr(json).to_string_lossy().into_owned() };
+    super::described(id, json);
 }
 
 /// The application's menu is done with: something was chosen, or it was backed out of.

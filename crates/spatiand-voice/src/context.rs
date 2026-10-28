@@ -100,6 +100,28 @@ pub fn whisper_prompt(focus: &Description, own_words: &[String], recent: &[Strin
     }
 }
 
+/// The commands typed at the prompts in a terminal's text, in order: what follows a prompt's mark
+/// (`%` for zsh, `$` for bash, `#` for root, `❯` and `>` for the fancier ones) on a line where
+/// what comes before it is short enough to be a prompt. For a terminal that says only its text
+/// (a Mac's, through Accessibility).
+pub fn prompt_commands(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|line| {
+            for mark in [" % ", "$ ", "# ", "\u{276F} ", "> "] {
+                if let Some(at) = line.find(mark) {
+                    let before = &line[..at];
+                    if before.trim().is_empty() || before.chars().count() > 80 || before.split_whitespace().count() > 6 {
+                        continue;
+                    }
+                    let command = line[at + mark.len()..].trim();
+                    return (!command.is_empty()).then(|| command.to_string());
+                }
+            }
+            None
+        })
+        .collect()
+}
+
 /// The last `n` words of `text`.
 pub fn tail_words(text: &str, n: usize) -> String {
     let words: Vec<&str> = text.split_whitespace().collect();
@@ -131,6 +153,17 @@ mod tests {
         let p = whisper_prompt(&focus, &[], &["the end".into()], "");
         assert!(p.chars().count() <= PROMPT_CHARS);
         assert!(p.ends_with("the end."));
+    }
+}
+
+#[cfg(test)]
+mod prompt_tests {
+    use super::prompt_commands;
+
+    #[test]
+    fn a_terminals_commands_are_read_off_its_prompts() {
+        let text = "Last login: Wed\npaulus@darkPhoenix ~ % cd Documents\npaulus@darkPhoenix Documents % ls\nLinux  notes.txt\n> quoted\npaulus@darkPhoenix Documents % ";
+        assert_eq!(prompt_commands(text), vec!["cd Documents".to_string(), "ls".to_string()]);
     }
 }
 

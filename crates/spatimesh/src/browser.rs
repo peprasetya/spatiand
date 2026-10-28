@@ -40,6 +40,20 @@ use spatimesh::extensions::runtime::Runtime;
 /// Script requests of the page clipboard's, told apart from an extension's (which count from 1).
 const PAGE_CLIPBOARD: u64 = 1 << 62;
 
+/// Script requests for the room's `describe` (see `describe_page`).
+const PAGE_DESCRIBE: u64 = 1 << 60;
+
+/// What a page shows, for the room's dictation and assistant: its title and address, its
+/// headings, its words, and the field being typed in (following the focus into frames of the
+/// same origin), the field last because it is what the next words go into.
+const PAGE_DESCRIPTION: &str = "(function(){function go(d){var e=d.activeElement;\
+if(e&&(e.tagName==='IFRAME'||e.tagName==='FRAME')){try{if(e.contentDocument)return go(e.contentDocument)}catch(x){}}\
+var f='',l='';if(e&&(e.tagName==='INPUT'||e.tagName==='TEXTAREA')){f=e.value||'';l=e.getAttribute('aria-label')||e.placeholder||e.name||''}\
+else if(e&&e.isContentEditable){f=e.innerText||'';l=e.getAttribute('aria-label')||''}return{f:f.slice(-2000),l:l}}\
+var a=go(document);var h=[].slice.call(document.querySelectorAll('h1,h2,h3')).slice(0,40).map(function(x){return(x.innerText||'').trim()}).filter(Boolean);\
+var b=document.body?document.body.innerText:'';\
+return JSON.stringify({title:document.title,url:location.href,field:a.f,label:a.l,heads:h,text:b.slice(0,8000)})})()";
+
 /// What is chosen in the page -- in a field, or in the text -- following the focus into frames
 /// of the same origin; taken out of the page too if CUT.
 const PAGE_COPY: &str = "(function(cut){function go(d){var e=d.activeElement;\
@@ -383,6 +397,8 @@ pub struct Browser {
     /// A pinch not yet turned into zoom: the room tells it a frame at a time, each step too
     /// small to act on alone.
     pinched: f32,
+    /// The room's `describe`s waiting on a page's script, by request: which window asked.
+    describing: HashMap<u64, WindowId>,
     /// Each tab's sound's own name, as its engine said (`Happened::SoundName`), and the window
     /// sound name the room was last told it is heard as.
     tab_sounds: HashMap<TabId, (String, Option<String>)>,
@@ -481,6 +497,7 @@ impl Browser {
             wins: Vec::new(),
             sounds_named: 0,
             pinched: 1.0,
+            describing: HashMap::new(),
             tab_sounds: HashMap::new(),
             views: HashMap::new(),
             hosts: HashMap::new(),
@@ -627,6 +644,22 @@ impl Browser {
             }
         }
         self.hosts.get_mut(profile)
+    }
+
+    /// Answer the room's `describe` for window `w`: from its page, by a script whose answer comes
+    /// back as a `ScriptResult`; at once, for a window showing no page.
+    fn describe_page(&mut self, w: usize, id: WindowId) {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        match self.tabs.active(self.wins[w].key) {
+            Some(tab) => {
+                let request = PAGE_DESCRIBE | NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                // Asked again before the page answered: the room has stopped waiting for that one.
+                self.describing.retain(|_, window| *window != id);
+                self.describing.insert(request, id);
+                self.tell(tab, ToHost::RunScript { tab, world: String::new(), all_frames: false, code: PAGE_DESCRIPTION.to_string(), request, boot: false });
+            }
+            None => self.app.describe(id, &spatiand_app::Description { kind: "web".into(), app: "SpatiMesh".into(), ..Default::default() }),
+        }
     }
 
     /// Copy, cut, paste and choose all in a page, by `key`'s letter. Whether it was one of them.
@@ -880,6 +913,13 @@ impl Browser {
             FromHost::Happened(Happened::ScriptResult { tab, request, result }) if request & menus::PAGE_PROBE != 0 => {
                 if let Some(json) = result.ok().and_then(|json| serde_json::from_str::<String>(&json).ok()) {
                     self.context_probed(tab, &json);
+                }
+            }
+            // What a page said about itself, for the room (`describe_page`).
+            FromHost::Happened(Happened::ScriptResult { request, result, .. }) if request & PAGE_DESCRIBE != 0 => {
+                if let Some(window) = self.describing.remove(&request) {
+                    let said = result.ok().and_then(|json| serde_json::from_str::<String>(&json).ok()).unwrap_or_default();
+                    self.app.describe(window, &page_description(&said));
                 }
             }
             FromHost::Happened(Happened::ScriptResult { request, result, .. }) => {
@@ -1892,6 +1932,8 @@ impl Browser {
             Event::Button { button, pressed, .. } => self.button(w, button, pressed),
             Event::Scroll { dx, dy, .. } => self.scroll(w, dx, dy),
             Event::Key { key, code, pressed, repeat, text, modifiers, .. } => self.key(w, key, code, pressed, repeat, text, modifiers),
+            // The room asks what the window shows: the page says, by a script.
+            Event::Describe { .. } => self.describe_page(w, id),
             // Pinching zooms the page, as on a touchpad.
             Event::Pinch { scale, .. } => {
                 self.pinched *= scale;
@@ -3409,4 +3451,60 @@ mod tests {
 /// (`crates/spatiand/src/own.rs`, `sound`).
 fn spatiand_sound_socket() -> Option<std::path::PathBuf> {
     std::env::var_os("XDG_RUNTIME_DIR").map(|d| std::path::PathBuf::from(d).join("spatiand-sound"))
+}
+
+/// A page's account of itself (`PAGE_DESCRIPTION`'s answer) as the room reads it: the field being
+/// typed in at the end of the text, and for vocabulary the headings and the words of the page
+/// that look like names.
+fn page_description(said: &str) -> spatiand_app::Description {
+    let v: serde_json::Value = serde_json::from_str(said).unwrap_or_default();
+    let get = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
+    let heads: Vec<String> = v.get("heads").and_then(|h| h.as_array()).into_iter().flatten().filter_map(|h| h.as_str().map(str::to_string)).collect();
+    let page = get("text");
+    let (field, label) = (get("field"), get("label"));
+    let mut text: String = page.chars().take(3000).collect();
+    if !field.is_empty() || !label.is_empty() {
+        text.push_str(&format!("\n{label}: {field}"));
+    }
+    let mut vocabulary = heads.clone();
+    vocabulary.extend(name_like_words(&format!("{page} {field}"), 60));
+    spatiand_app::Description { kind: "web".into(), app: "SpatiMesh".into(), title: get("title"), text, vocabulary, directory: get("url"), commands: Vec::new() }
+}
+
+/// The words of `text` that look like names -- capitalised, or with a capital or a digit inside
+/// (`SpatiQuill`, `v2.3`, `iPhone`) -- most frequent first, at most `n`.
+fn name_like_words(text: &str, n: usize) -> Vec<String> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for word in text.split(|c: char| !(c.is_alphanumeric() || c == '.' || c == '-' || c == '_')) {
+        let word = word.trim_matches(|c: char| c == '.' || c == '-' || c == '_');
+        let mut chars = word.chars();
+        let Some(first) = chars.next() else { continue };
+        let rest: String = chars.collect();
+        let inner_capital = rest.chars().any(char::is_uppercase);
+        let has_digit = word.chars().any(|c| c.is_ascii_digit()) && word.chars().any(char::is_alphabetic);
+        if word.chars().count() >= 4 && (first.is_uppercase() || inner_capital || has_digit) {
+            *counts.entry(word.to_string()).or_default() += 1;
+        }
+    }
+    let mut words: Vec<(String, usize)> = counts.into_iter().collect();
+    words.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    words.into_iter().take(n).map(|(w, _)| w).collect()
+}
+
+#[cfg(test)]
+mod describe_tests {
+    use super::*;
+
+    #[test]
+    fn a_page_says_its_field_last_and_its_names() {
+        let said = r#"{"title":"Spatiand docs","url":"https://example.org/docs","field":"Hello Wor","label":"Message","heads":["Getting started"],"text":"Install SpatiQuill and SpatiShelf. Spatiand runs on the Steam Deck. SpatiQuill is a terminal."}"#;
+        let d = page_description(said);
+        assert_eq!(d.kind, "web");
+        assert_eq!(d.title, "Spatiand docs");
+        assert!(d.text.ends_with("Message: Hello Wor"), "{}", d.text);
+        assert_eq!(d.vocabulary[0], "Getting started");
+        assert_eq!(d.vocabulary[1], "SpatiQuill", "{:?}", d.vocabulary);
+        assert!(d.vocabulary.contains(&"Spatiand".to_string()));
+        assert_eq!(page_description("not json").kind, "web");
+    }
 }

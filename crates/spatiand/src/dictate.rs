@@ -253,7 +253,11 @@ fn focus_of(state: &crate::state::Spatiand, ask: bool) -> (Description, Option<u
     let app = state.app_id_of_id(id).unwrap_or_default();
     let title = window.as_ref().and_then(|w| state.title_of(w)).unwrap_or_default();
     let answer = if ask {
-        window.as_ref().and_then(|w| w.toplevel()).and_then(|t| crate::xr::ask_description(t.wl_surface()))
+        let own = window.as_ref().and_then(|w| w.toplevel()).and_then(|t| crate::xr::ask_description(t.wl_surface()));
+        // A Mac window says nothing through the protocol: its application is asked instead.
+        #[cfg(target_os = "macos")]
+        let own = own.or_else(|| crate::mac::describe_window(&app));
+        own
     } else {
         None
     };
@@ -288,6 +292,10 @@ fn told(basic: &Description, json: &str) -> Description {
     }
     if said.directory.is_empty() {
         said.directory = basic.directory.clone();
+    }
+    // A terminal that says only its text (a Mac's): its commands are on its prompts.
+    if said.is_terminal() && said.commands.is_empty() {
+        said.commands = spatiand_voice::context::prompt_commands(&said.text);
     }
     said
 }

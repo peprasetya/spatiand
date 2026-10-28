@@ -371,6 +371,37 @@ pub fn size_new_windows(state: &mut crate::Spatiand, _windows: &mut [crate::scen
     local::on_show(on_show);
 }
 
+/// Descriptions asked of the Mac's applications, by number, waiting for `sp_described`.
+static DESCRIBING: Mutex<Vec<(u32, std::sync::mpsc::Sender<String>)>> = Mutex::new(Vec::new());
+
+/// What one of this Mac's windows in the room shows (`app_id` is its room id): its application,
+/// asked through Accessibility by the app's side, answers on the receiver. `None` for a window
+/// that is not one of this Mac's.
+pub fn describe_window(app_id: &str) -> Option<std::sync::mpsc::Receiver<String>> {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+    let bundle = app_id.strip_prefix(&format!("remote.{}.", local::HOST))?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    {
+        let mut waiting = DESCRIBING.lock().unwrap();
+        // Answers that never came: the room stopped waiting for them long ago.
+        while waiting.len() > 16 {
+            waiting.remove(0);
+        }
+        waiting.push((n, tx));
+    }
+    ffi::call_text(ffi::Asked::Describe, n, 0.0, 0.0, 0.0, bundle);
+    Some(rx)
+}
+
+fn described(n: u32, json: String) {
+    let mut waiting = DESCRIBING.lock().unwrap();
+    if let Some(at) = waiting.iter().position(|(m, _)| *m == n) {
+        let (_, tx) = waiting.remove(at);
+        let _ = tx.send(json);
+    }
+}
+
 /// The notification the app wants shown, or nothing.
 pub static NOTICE: Mutex<String> = Mutex::new(String::new());
 

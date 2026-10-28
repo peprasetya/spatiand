@@ -21,7 +21,9 @@ and act.
 | The assistant | A setting, off by default. **Its own process** (a first-party app), with its chat window; Spatiand draws its avatar and plays its voice from where the avatar stands. |
 | Avatar | **VRM** (VRoid and the like: humanoid, expressions, spring bones) and **plain glTF/GLB** (robots, anything). Moods, animations, outfits, a voice of its own. Light: a small skinned mesh, nothing like a game character. In the corner **opposite the pinned windows**; it can be hidden and stay active. |
 | Hearing | Three states: **listening** (continuous), **not listening**, **muted** (answers in text only). In continuous listening, speech counts when it **starts with the character's name**, or comes **within a few seconds of its answer** (a follow-up). |
-| Models | Each role is a **setting**, picked from hemera's list: the assistant's model, dictation clean-up's, and a larger one to **offer** for hard questions (offered, not used without asking). Default small model: **`neohorse-1:4b`** (below). |
+| Models | Each role is a **setting**, picked from hemera's list: the assistant's model, dictation clean-up's, and a **larger one for heavy work**. Default small model: **`neohorse-1:4b`** (below). |
+| Handing over | **The small model decides, quickly and by itself, to hand a request to the larger one** (changed 2026-10-28 from "offered"). While the larger one thinks, the avatar shows it is thinking; a setting has **the thinking read aloud** as it comes. |
+| Working windows | The assistant does what the wearer does with a window: **reads it** (its description, or a picture for the model to look at), **scrolls, clicks and right-clicks at a point, drags, types, presses keys**. Through the room's own pointer and keyboard, so the same for Spatiand's apps, a Mac's windows and a host's. |
 | Chats and reminders | **Shared across devices**: kept in the folder Spatiand already syncs between linked machines (`~/.config/spatiand/apps`). A setting decides whether a conversation continues the last chat or starts a new one. |
 | Order | Dictation first, then the assistant: voice and chat, then its actions, then the avatar. |
 
@@ -107,11 +109,12 @@ windows from the Swift side through Accessibility; everything else by its title 
 ### Its actions (tools)
 
 List apps; open an app (local or a host's); list windows; focus, hide, show, pin, close a window;
-read a window (its description, or a picture for the model to look at); recentre; change a
-setting (look, pinned windows' corner and size, spatial sound, keyboard click, environment, sound
-devices); reminders (set, list, cancel; spoken by the avatar when due, with a card); type for the
-owner (the text shown first); offer the larger model. Closing windows and typing into terminals
-ask first.
+read a window (its description, or a picture for the model to look at, with a grid so it can say
+where); work a window like a hand: scroll, click, right-click, double-click, drag at a point in
+it, type text, press keys and shortcuts; recentre; change a setting (look, pinned windows' corner
+and size, spatial sound, keyboard click, environment, sound devices); reminders (set, list,
+cancel; spoken by the avatar when due, with a card); hand over to the larger model. Closing
+windows, pressing Enter in a terminal and anything that sends or deletes ask first.
 
 ### Hearing and speaking
 

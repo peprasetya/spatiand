@@ -50,6 +50,7 @@ enum {
     SP_DESK_SIZE = 33,        // window id is a by b pixels now
     SP_DESK_CLOSE = 34,       // window id has closed, or the glasses have it now
     SP_CLIPBOARD = 35,        // the session's clipboard to the pasteboard; text is {"host": {"Clipboard": ...}}
+    SP_DESCRIBE = 36,         // say what the application with bundle id text shows, with sp_described(id, json)
 };
 
 typedef void (*sp_asked_fn)(void *user, int32_t what, uint32_t id, double a, double b, double c,
@@ -135,6 +136,9 @@ void sp_menu_row(const char *label, const char *detail);
 void sp_menu_end(void);
 void sp_menu_close(void);
 void sp_window_title(uint32_t id, const char *title);
+/// The answer to SP_DESCRIBE number id: what the application's focused window shows, as the JSON
+/// of spatiand_xr_surface_v1.describe ("kind", "app", "title", "text", "vocabulary", ...).
+void sp_described(uint32_t id, const char *json);
 void sp_window_close(uint32_t id);
 
 // A notification to show under the clock: its sender on the first line and what it says on

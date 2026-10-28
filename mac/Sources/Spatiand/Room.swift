@@ -185,6 +185,8 @@ final class Room {
             }
         case SP_NOTICE_PRESSED:
             DispatchQueue.main.async { Notices.shared.pressed() }
+        case SP_DESCRIBE:
+            MacDescribe.describe(bundle: text, request: id)
         case SP_MENU_OPEN:
             RoomWindows.shared.menu(of: id)
         case SP_MENU_CHOOSE:
