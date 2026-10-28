@@ -75,6 +75,54 @@ void main() {
 }
 "#;
 
+/// A figure from a file: its own colours and pictures, lit softly -- figures made for VRM are
+/// painted to be seen nearly flat, and a strong light makes them look like plastic.
+const MODEL_VERT: &str = r#"
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec2 a_uv;
+uniform mat4 u_mvp;
+uniform mat4 u_model;
+uniform mat3 u_normal;
+out vec3 v_normal;
+out vec3 v_world;
+out vec2 v_uv;
+void main() {
+    v_normal = normalize(u_normal * a_normal);
+    v_world = (u_model * vec4(a_pos, 1.0)).xyz;
+    v_uv = a_uv;
+    gl_Position = u_mvp * vec4(a_pos, 1.0);
+}
+"#;
+
+const MODEL_FRAG: &str = r#"
+in vec3 v_normal;
+in vec3 v_world;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec4 u_base;
+uniform float u_cutoff;
+uniform vec3 u_light;
+uniform vec3 u_eye;
+out vec4 f_color;
+void main() {
+    vec4 base = texture(u_tex, v_uv) * u_base;
+    if (base.a < u_cutoff) {
+        discard;
+    }
+    vec3 n = normalize(v_normal);
+    vec3 v = normalize(u_eye - v_world);
+    // Seen from either side: a figure's skirts and sleeves are one surface thick.
+    if (dot(n, v) < 0.0) {
+        n = -n;
+    }
+    float diffuse = max(dot(n, normalize(u_light)), 0.0);
+    float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+    vec3 c = base.rgb * (0.66 + 0.34 * diffuse) + rim * 0.12 * vec3(0.55, 0.85, 1.0);
+    f_color = vec4(c, 1.0);
+}
+"#;
+
 /// The picture laid into the eye: premultiplied, as it was cleared to nothing and drawn opaque.
 const LAY_VERT: &str = r#"
 layout(location = 0) in vec2 a_pos;
@@ -142,6 +190,11 @@ struct Live {
 pub struct Avatar {
     program: u32,
     loc: [i32; 8],
+    model_program: u32,
+    model_loc: [i32; 9],
+    white: u32,
+    /// The wearer's own figure, when one is chosen: read, being read, or not readable.
+    chosen: RefCell<Chosen>,
     lay_program: u32,
     lay_loc: [i32; 3],
     lay_quad: u32,
@@ -161,6 +214,9 @@ impl Avatar {
         let program = crate::gl::link(gl, VERT, FRAG)?;
         let at = |p: u32, s: &str| gl.GetUniformLocation(p, std::ffi::CString::new(s).unwrap().as_ptr());
         let loc = ["u_mvp", "u_model", "u_normal", "u_color", "u_emissive", "u_light", "u_eye", "u_gloss"].map(|n| at(program, n));
+        let model_program = crate::gl::link(gl, MODEL_VERT, MODEL_FRAG)?;
+        let model_loc = ["u_mvp", "u_model", "u_normal", "u_tex", "u_base", "u_cutoff", "u_light", "u_eye", "u_unused"].map(|n| at(model_program, n));
+        let white = crate::gl::white_texture(gl);
         let lay_program = crate::gl::link(gl, LAY_VERT, LAY_FRAG)?;
         let lay_loc = ["u_mvp", "u_tex", "u_alpha"].map(|n| at(lay_program, n));
         let lay_quad = quad(gl);
@@ -187,6 +243,10 @@ impl Avatar {
         Ok(Avatar {
             program,
             loc,
+            model_program,
+            model_loc,
+            white,
+            chosen: RefCell::new(Chosen::None),
             lay_program,
             lay_loc,
             lay_quad,
@@ -282,7 +342,22 @@ impl Avatar {
         live.at = Some(at);
 
         let t = now.duration_since(self.started).as_secs_f32();
+        let path = figure.get("path").and_then(|p| p.as_str()).map(str::to_string);
+        self.choose(gl, path);
         let parts = self.figure_parts(at, t, &live);
+        // A figure of the wearer's, placed and posed as the robot would be.
+        let mut chosen = self.chosen.borrow_mut();
+        let model = match &mut *chosen {
+            Chosen::Ready { gpu, .. } => {
+                let to_eye = (-at).as_vec3();
+                let face_yaw = to_eye.y.atan2(to_eye.x);
+                let bob = 0.006 * SIZE * (t * 1.6).sin();
+                let place = Mat4::from_translation(at.as_vec3() + Vec3::new(0.0, 0.0, bob)) * Mat4::from_rotation_z(face_yaw) * gpu.fit;
+                gpu.pose(gl, &live, t);
+                Some((place, &*gpu))
+            }
+            _ => None,
+        };
 
         // The room's target, to put back.
         let mut previous_fbo = 0;
@@ -319,6 +394,13 @@ impl Avatar {
             gl.ClearDepthf(1.0);
             gl.Clear(ffi::COLOR_BUFFER_BIT | ffi::DEPTH_BUFFER_BIT);
             let eye_at = eye.position.as_vec3();
+            if let Some((place, gpu)) = &model {
+                self.draw_model(gl, gpu, crop * vp, *place, light, eye_at);
+                gl.BindTexture(ffi::TEXTURE_2D, self.pictures[slot]);
+                gl.GenerateMipmap(ffi::TEXTURE_2D);
+                gl.UseProgram(self.program);
+                continue;
+            }
             gl.Uniform3f(self.loc[6], eye_at.x, eye_at.y, eye_at.z);
             for part in &parts {
                 let mesh = if part.cylinder { &self.cylinder } else { &self.sphere };
@@ -375,6 +457,75 @@ impl Avatar {
         gl.BindVertexArray(0);
         // What every other draw expects.
         gl.BlendFunc(ffi::SRC_ALPHA, ffi::ONE_MINUS_SRC_ALPHA);
+    }
+
+    /// Read the wearer's chosen figure when it changes, and once read, put it on the GPU. `None`
+    /// is the robot.
+    unsafe fn choose(&self, gl: &ffi::Gles2, path: Option<String>) {
+        let mut chosen = self.chosen.borrow_mut();
+        let current = match &*chosen {
+            Chosen::None => None,
+            Chosen::Reading { path, .. } | Chosen::Ready { path, .. } | Chosen::Unreadable { path } => Some(path.clone()),
+        };
+        if current != path {
+            *chosen = match path {
+                None => Chosen::None,
+                Some(path) => {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let file = path.clone();
+                    std::thread::Builder::new()
+                        .name("figure".into())
+                        .spawn(move || {
+                            let _ = tx.send(crate::figure::read(std::path::Path::new(&file)));
+                        })
+                        .ok();
+                    log::info!("avatar: reading the figure {path}");
+                    Chosen::Reading { path, rx }
+                }
+            };
+            return;
+        }
+        let read = match &*chosen {
+            Chosen::Reading { rx, .. } => rx.try_recv().ok(),
+            _ => None,
+        };
+        if let (Some(read), Chosen::Reading { path, .. }) = (read, &*chosen) {
+            let path = path.clone();
+            *chosen = match read {
+                Ok(figure) => {
+                    log::info!("avatar: {path} read: {} parts, {} pictures, expressions {:?}", figure.parts.len(), figure.pictures.len(), figure.expressions.keys().collect::<Vec<_>>());
+                    Chosen::Ready { path, gpu: ModelGpu::upload(gl, figure) }
+                }
+                Err(why) => {
+                    log::warn!("avatar: the figure {path} could not be read: {why}; the robot stays");
+                    Chosen::Unreadable { path }
+                }
+            };
+        }
+    }
+
+    unsafe fn draw_model(&self, gl: &ffi::Gles2, gpu: &ModelGpu, vp: Mat4, place: Mat4, light: Vec3, eye: Vec3) {
+        gl.UseProgram(self.model_program);
+        let normal = Mat3::from_mat4(place).inverse().transpose();
+        let mvp = vp * place;
+        gl.UniformMatrix4fv(self.model_loc[0], 1, ffi::FALSE, mvp.to_cols_array().as_ptr());
+        gl.UniformMatrix4fv(self.model_loc[1], 1, ffi::FALSE, place.to_cols_array().as_ptr());
+        gl.UniformMatrix3fv(self.model_loc[2], 1, ffi::FALSE, normal.to_cols_array().as_ptr());
+        gl.Uniform1i(self.model_loc[3], 0);
+        gl.Uniform3f(self.model_loc[6], light.x, light.y, light.z);
+        gl.Uniform3f(self.model_loc[7], eye.x, eye.y, eye.z);
+        gl.ActiveTexture(ffi::TEXTURE0);
+        for part in &gpu.parts {
+            let material = gpu.materials.get(part.material);
+            let color = material.map_or([1.0; 4], |m| m.color);
+            let texture = material.and_then(|m| m.texture).and_then(|t| gpu.textures.get(t)).copied().unwrap_or(self.white);
+            gl.BindTexture(ffi::TEXTURE_2D, texture);
+            gl.Uniform4f(self.model_loc[4], color[0], color[1], color[2], color[3]);
+            gl.Uniform1f(self.model_loc[5], material.map_or(0.0, |m| m.cutoff).max(0.02));
+            gl.BindVertexArray(part.vao);
+            gl.DrawElements(ffi::TRIANGLES, part.count, ffi::UNSIGNED_INT, std::ptr::null());
+        }
+        gl.BindVertexArray(0);
     }
 
     /// The robot, part by part, at `at`, facing the wearer, at time `t`.
@@ -624,5 +775,149 @@ mod tests {
         let rect = crop_of(&vp, Vec3::new(0.0, 0.0, -1.3), 0.17).unwrap();
         assert!(rect[0] < 0.0 && rect[1] > 0.0);
         assert!(crop_of(&vp, Vec3::new(0.0, 0.0, 1.3), 0.17).is_none());
+    }
+}
+
+/// The wearer's own figure, as far as it has got.
+enum Chosen {
+    None,
+    Reading { path: String, rx: std::sync::mpsc::Receiver<Result<crate::figure::Figure, String>> },
+    Ready { path: String, gpu: ModelGpu },
+    Unreadable { path: String },
+}
+
+struct GpuPart {
+    vao: u32,
+    positions: u32,
+    count: i32,
+    material: usize,
+    mesh: usize,
+    /// For its face: where it stands, and how each target moves it.
+    rest: Vec<[f32; 3]>,
+    targets: Vec<Vec<[f32; 3]>>,
+}
+
+struct ModelGpu {
+    parts: Vec<GpuPart>,
+    materials: Vec<crate::figure::Material>,
+    textures: Vec<u32>,
+    expressions: std::collections::HashMap<String, Vec<(usize, usize, f32)>>,
+    /// From the figure's own size and place to the robot's.
+    fit: Mat4,
+    /// The weights its targets were last moved to, by (part, target).
+    weights: std::collections::HashMap<(usize, usize), f32>,
+}
+
+impl ModelGpu {
+    unsafe fn upload(gl: &ffi::Gles2, figure: crate::figure::Figure) -> ModelGpu {
+        let textures = figure
+            .pictures
+            .iter()
+            .map(|p| {
+                let t = crate::gl::upload_raw(gl, p.width, p.height, &p.rgba, false);
+                gl.BindTexture(ffi::TEXTURE_2D, t);
+                gl.GenerateMipmap(ffi::TEXTURE_2D);
+                gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_MIN_FILTER, ffi::LINEAR_MIPMAP_LINEAR as i32);
+                t
+            })
+            .collect();
+        let mut parts = Vec::new();
+        for part in figure.parts {
+            let mut vao = 0;
+            gl.GenVertexArrays(1, &mut vao);
+            gl.BindVertexArray(vao);
+            let mut buffers = [0u32; 4];
+            gl.GenBuffers(4, buffers.as_mut_ptr());
+            let floats = |gl: &ffi::Gles2, buffer: u32, data: &[f32], usage: u32| {
+                gl.BindBuffer(ffi::ARRAY_BUFFER, buffer);
+                gl.BufferData(ffi::ARRAY_BUFFER, (data.len() * 4) as isize, data.as_ptr() as *const _, usage);
+            };
+            let flat = |v: &[[f32; 3]]| v.iter().flatten().copied().collect::<Vec<f32>>();
+            let usage = if part.targets.is_empty() { ffi::STATIC_DRAW } else { ffi::DYNAMIC_DRAW };
+            floats(gl, buffers[0], &flat(&part.positions), usage);
+            gl.EnableVertexAttribArray(0);
+            gl.VertexAttribPointer(0, 3, ffi::FLOAT, ffi::FALSE, 12, std::ptr::null());
+            floats(gl, buffers[1], &flat(&part.normals), ffi::STATIC_DRAW);
+            gl.EnableVertexAttribArray(1);
+            gl.VertexAttribPointer(1, 3, ffi::FLOAT, ffi::FALSE, 12, std::ptr::null());
+            floats(gl, buffers[2], &part.uvs.iter().flatten().copied().collect::<Vec<f32>>(), ffi::STATIC_DRAW);
+            gl.EnableVertexAttribArray(2);
+            gl.VertexAttribPointer(2, 2, ffi::FLOAT, ffi::FALSE, 8, std::ptr::null());
+            gl.BindBuffer(ffi::ELEMENT_ARRAY_BUFFER, buffers[3]);
+            gl.BufferData(ffi::ELEMENT_ARRAY_BUFFER, (part.indices.len() * 4) as isize, part.indices.as_ptr() as *const _, ffi::STATIC_DRAW);
+            gl.BindVertexArray(0);
+            parts.push(GpuPart {
+                vao,
+                positions: buffers[0],
+                count: part.indices.len() as i32,
+                material: part.material,
+                mesh: part.mesh,
+                rest: if part.targets.is_empty() { Vec::new() } else { part.positions },
+                targets: part.targets,
+            });
+        }
+        // As tall as the robot, standing where it stands.
+        let size = figure.high - figure.low;
+        let scale = (0.155 / size.z.max(0.01)).min(0.155 / size.x.max(size.y).max(0.01) * 2.0);
+        let middle = (figure.low + figure.high) * 0.5;
+        let fit = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.044)) * Mat4::from_scale(Vec3::splat(scale)) * Mat4::from_translation(Vec3::new(-middle.x, -middle.y, -figure.low.z));
+        ModelGpu { parts, materials: figure.materials, textures, expressions: figure.expressions, fit, weights: Default::default() }
+    }
+
+    /// Its face for the moment: blinking, smiling, the mouth moving while it talks. Only what
+    /// changed is moved, and only the parts it moves are sent again.
+    unsafe fn pose(&mut self, gl: &ffi::Gles2, live: &Live, t: f32) {
+        let since = live.mood_since.elapsed().as_secs_f32();
+        let cycle = (t * 0.27).fract();
+        let mut want: Vec<(&str, f32)> = vec![("blink", if cycle < 0.035 { 1.0 } else { 0.0 })];
+        match live.mood {
+            Mood::Happy if since < 2.0 => want.push(("happy", 1.0)),
+            Mood::Talking => {
+                let open = 0.35 + 0.55 * ((t * 11.0).sin() * 0.5 + 0.5);
+                want.push(("aa", open * ((t * 3.7).sin() * 0.5 + 0.5)));
+                want.push(("oh", open * ((t * 3.7).cos() * 0.5 + 0.5) * 0.7));
+            }
+            Mood::Thinking => want.push(("relaxed", 0.4)),
+            _ => {}
+        }
+        let mut weights: std::collections::HashMap<(usize, usize), f32> = std::collections::HashMap::new();
+        for (name, amount) in want {
+            for (mesh, target, weight) in self.expressions.get(name).into_iter().flatten() {
+                for (p, part) in self.parts.iter().enumerate().filter(|(_, p)| p.mesh == *mesh && *target < p.targets.len()) {
+                    *weights.entry((p, *target)).or_insert(0.0) += amount * weight;
+                    let _ = part;
+                }
+            }
+        }
+        // Targets that were moved and are no longer: back to rest.
+        let mut changed: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for (key, w) in &weights {
+            if (self.weights.get(key).copied().unwrap_or(0.0) - w).abs() > 0.01 {
+                changed.insert(key.0);
+            }
+        }
+        for (key, w) in &self.weights {
+            if *w > 0.0 && !weights.contains_key(key) {
+                changed.insert(key.0);
+            }
+        }
+        for p in changed {
+            let part = &self.parts[p];
+            let mut positions = part.rest.clone();
+            for ((q, target), w) in &weights {
+                if *q != p || *w <= 0.0 {
+                    continue;
+                }
+                for (v, d) in positions.iter_mut().zip(&part.targets[*target]) {
+                    v[0] += d[0] * w;
+                    v[1] += d[1] * w;
+                    v[2] += d[2] * w;
+                }
+            }
+            let flat: Vec<f32> = positions.iter().flatten().copied().collect();
+            gl.BindBuffer(ffi::ARRAY_BUFFER, part.positions);
+            gl.BufferSubData(ffi::ARRAY_BUFFER, 0, (flat.len() * 4) as isize, flat.as_ptr() as *const _);
+        }
+        self.weights = weights;
     }
 }

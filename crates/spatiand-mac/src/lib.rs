@@ -63,6 +63,8 @@ mod dictate;
 mod dmabuf;
 #[path = "../../spatiand/src/environment.rs"]
 mod environment;
+#[path = "../../spatiand/src/figure.rs"]
+mod figure;
 #[path = "../../spatiand/src/gl.rs"]
 mod gl;
 #[path = "../../spatiand/src/icon.rs"]

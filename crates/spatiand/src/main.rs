@@ -34,6 +34,7 @@ mod diagram;
 mod dictate;
 mod dmabuf;
 mod environment;
+mod figure;
 mod gl;
 mod icon;
 mod imu_record;

@@ -306,6 +306,30 @@ pub fn serve(
                 events.push(ShellEvent::Hud(spatiand_shell::HudAction::Recentre));
                 asked.answer(json!({ "done": "recentre" }));
             }
+            // The room's own controls, as the wearer's menu has them.
+            "control" => {
+                use spatiand_shell::HudAction as H;
+                let action = match asked.str("action") {
+                    "keyboard" => Some(H::ToggleKeyboard),
+                    "pinned_corner" => Some(H::PipCorner),
+                    "pinned_size" => Some(H::PipSize),
+                    "look" => Some(H::Look),
+                    "screenshot" => Some(H::Screenshot),
+                    "record" => Some(H::Record),
+                    "windows" => Some(H::OpenSwitcher),
+                    "wifi" => Some(H::OpenSystemSettings("wifi")),
+                    "bluetooth" => Some(H::OpenSystemSettings("bluetooth")),
+                    _ => None,
+                };
+                match action {
+                    Some(action) => {
+                        events.push(ShellEvent::Hud(action));
+                        let done = asked.str("action").to_string();
+                        asked.answer(json!({ "done": done }));
+                    }
+                    None => asked.refuse("not a control the room has"),
+                }
+            }
             "describe" => {
                 let Some(id) = window_of(state, &asked) else {
                     asked.refuse("no such window");

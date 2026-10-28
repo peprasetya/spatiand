@@ -91,6 +91,12 @@ pub fn all(small: bool) -> Vec<Value> {
         ),
         tool("recentre", "Bring the room back in front of the wearer.", json!({}), &[]),
         tool(
+            "room_control",
+            "Use one of the room's own controls: show or hide the keyboard, move the pinned windows to the next corner, change their size, change the room's look (light, dark), take a screenshot, start or stop recording, show the list of windows, open the Wi-Fi or Bluetooth settings.",
+            json!({"action": {"type": "string", "enum": ["keyboard", "pinned_corner", "pinned_size", "look", "screenshot", "record", "windows", "wifi", "bluetooth"]}}),
+            &["action"],
+        ),
+        tool(
             "set_reminder",
             "Remind the wearer of something later: at a time (\"20:00\", \"2026-10-29 08:30\") or in a number of minutes.",
             json!({"text": {"type": "string"}, "at": {"type": "string"}, "in_minutes": {"type": "number"}}),
@@ -263,6 +269,10 @@ fn run_as(call: &ToolCall, room: &Room, agreed: bool) -> Done {
             answer_of(room.ask(with_window(json!({"do": "key", "keys": keys}))), format!("pressed {keys}"))
         }
         "recentre" => answer_of(room.ask(json!({"do": "recentre"})), "recentred the room".into()),
+        "room_control" => {
+            let action = get("action").as_str().unwrap_or_default().to_string();
+            answer_of(room.ask(json!({"do": "control", "action": action})), format!("used the room's {action}"))
+        }
         "set_reminder" => {
             let text = get("text").as_str().unwrap_or_default().trim().to_string();
             let due = match (get("in_minutes").as_f64(), get("at").as_str()) {
