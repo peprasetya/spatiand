@@ -20,7 +20,7 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{zwp_linux_buffer_params_v
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
-use spatiand_proto::client::{spatiand_xr_surface_v1, spatiand_xr_v1};
+use spatiand_proto::client::{spatiand_assist_v1, spatiand_xr_surface_v1, spatiand_xr_v1};
 
 use crate::keys::Keyboard;
 use crate::{Anchor, Button, Event, EyeLayout, Layer, Mode, WindowId};
@@ -126,6 +126,8 @@ pub(crate) struct Wire {
     /// Where each window's account of itself is to be written, while the room waits for it
     /// (`describe`, see [`crate::App::describe`]).
     pub(crate) describing: HashMap<WindowId, std::os::fd::OwnedFd>,
+    /// The room's assistant protocol, for the one process given its key (`spatiand_assist_v1`).
+    assist: Option<spatiand_assist_v1::SpatiandAssistV1>,
 }
 
 /// Text's names, the best first.
@@ -163,6 +165,18 @@ impl Wire {
         let data_device = data_devices.as_ref().map(|m| m.get_data_device(&seat, &handle, ()));
         let dmabuf = globals.bind(&handle, 3..=3, ()).ok();
         let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=9, ()).ok();
+        // Only a process the room gave its assistant's key to has any business here, and it says
+        // the key at once: every question before that is refused.
+        let assist: Option<spatiand_assist_v1::SpatiandAssistV1> = match std::env::var("SPATIAND_ASSIST_KEY") {
+            Ok(key) if !key.is_empty() => {
+                let bound: Option<spatiand_assist_v1::SpatiandAssistV1> = globals.bind(&handle, 1..=1, ()).ok();
+                if let Some(a) = &bound {
+                    a.hello(key);
+                }
+                bound
+            }
+            _ => None,
+        };
         let viewporter = globals.bind(&handle, 1..=1, ()).ok();
         // A compositor with the room's protocol and no word on the mode is an older Spatiand,
         // which has only ever had two eyes; one without the protocol is somebody's desktop.
@@ -197,6 +211,7 @@ impl Wire {
             dragging: None,
             over: None,
             describing: HashMap::new(),
+            assist,
         };
         Ok((wire, queue))
     }
@@ -788,6 +803,50 @@ pub(crate) fn pump(wire: &mut Wire, queue: &mut EventQueue<Wire>, timeout: Optio
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Wire {
     fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+impl Dispatch<spatiand_assist_v1::SpatiandAssistV1, ()> for Wire {
+    fn event(state: &mut Self, _: &spatiand_assist_v1::SpatiandAssistV1, event: spatiand_assist_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let spatiand_assist_v1::Event::Happened { json } = event {
+            state.events.push(Event::Room { json });
+        }
+    }
+}
+
+impl Wire {
+    /// Whether this process is the room's assistant.
+    pub(crate) fn assisting(&self) -> bool {
+        self.assist.is_some()
+    }
+
+    /// Ask the room: the answer is read from the returned end.
+    pub(crate) fn assist_ask(&mut self, json: &str) -> Option<std::os::fd::OwnedFd> {
+        let assist = self.assist.as_ref()?;
+        let (read, write) = pipe()?;
+        assist.ask(json.to_string(), std::os::fd::AsFd::as_fd(&write));
+        Some(read)
+    }
+
+    /// The room's microphone, read from the returned end.
+    pub(crate) fn assist_listen(&mut self) -> Option<std::os::fd::OwnedFd> {
+        let assist = self.assist.as_ref()?;
+        let (read, write) = pipe()?;
+        assist.listen(std::os::fd::AsFd::as_fd(&write));
+        Some(read)
+    }
+}
+
+/// A pipe's two ends, closed on exec.
+fn pipe() -> Option<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
+    use std::os::fd::FromRawFd;
+    let mut ends = [0i32; 2];
+    if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    for fd in ends {
+        unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+    }
+    Some(unsafe { (std::os::fd::OwnedFd::from_raw_fd(ends[0]), std::os::fd::OwnedFd::from_raw_fd(ends[1])) })
 }
 
 impl Dispatch<spatiand_xr_v1::SpatiandXrV1, ()> for Wire {

@@ -31,6 +31,8 @@ mod backend_drm {
     pub use crate::mac::panel::{fit_panel, head_locked_panel_sized};
 }
 
+#[path = "../../spatiand/src/assist.rs"]
+mod assist;
 #[path = "../../spatiand/src/attention.rs"]
 mod attention;
 #[path = "../../spatiand/src/audio.rs"]

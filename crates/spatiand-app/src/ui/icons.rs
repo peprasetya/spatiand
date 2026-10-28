@@ -68,6 +68,10 @@ pub enum Icon {
     Copy,
     /// The web, and a site.
     Globe,
+    /// Listening: a microphone.
+    Microphone,
+    /// Settings: a cog.
+    Cog,
     /// Take care: a triangle with a mark.
     Warning,
     /// Cutting, to move what is cut.
@@ -125,6 +129,8 @@ impl Icon {
             Icon::Puzzle => r#"<path d="M5 8h3.5a2 2 0 1 1 4 0H16v3.5a2 2 0 1 1 0 4V19H5v-3.5a2 2 0 1 0 0-4z"/>"#,
             Icon::Copy => r#"<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/>"#,
             Icon::Globe => r#"<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.3 3.6 5.1 3.6 8.5s-1.2 6.2-3.6 8.5M12 3.5C9.6 5.8 8.4 8.6 8.4 12s1.2 6.2 3.6 8.5"/>"#,
+            Icon::Microphone => r#"<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5M9 20.5h6"/>"#,
+            Icon::Cog => r#"<circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2.3M12 18.2v2.3M3.5 12h2.3M18.2 12h2.3M6 6l1.6 1.6M16.4 16.4L18 18M6 18l1.6-1.6M16.4 7.6L18 6"/>"#,
             Icon::Warning => r#"<path d="M12 4l9 15.5H3z"/><path d="M12 10v4.5M12 17.2v.2"/>"#,
             Icon::Cut => r#"<circle cx="6.5" cy="17.5" r="2.8"/><circle cx="17.5" cy="17.5" r="2.8"/><path d="M8.6 15.6L18 4M15.4 15.6L6 4"/>"#,
             Icon::Pencil => r#"<path d="M15 5l4 4L8.5 19.5H4.5v-4z"/><path d="M12.5 7.5l4 4"/>"#,

@@ -1,0 +1,24 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SpatiPal: a face in a speech bubble">
+  <!-- The ground and the three colours are assets/icons/spatiand.svg's, so the family reads as
+       one. A stand-in until the icons are drawn properly. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.25" y2="1">
+      <stop offset="0" stop-color="#2f3358"/>
+      <stop offset="0.5" stop-color="#15172e"/>
+      <stop offset="1" stop-color="#08090f"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16e6c0"/>
+      <stop offset="0.45" stop-color="#37a6f7"/>
+      <stop offset="1" stop-color="#8f6bf2"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <!-- The bubble, its tail at the lower left: someone speaking. -->
+  <path d="M 300 250 H 724 A 96 96 0 0 1 820 346 V 610 A 96 96 0 0 1 724 706 H 430 L 300 806 V 706 A 96 96 0 0 1 204 610 V 346 A 96 96 0 0 1 300 250 Z" fill="url(#ink)" opacity="0.22"/>
+  <path d="M 300 250 H 724 A 96 96 0 0 1 820 346 V 610 A 96 96 0 0 1 724 706 H 430 L 300 806 V 706 A 96 96 0 0 1 204 610 V 346 A 96 96 0 0 1 300 250 Z" fill="none" stroke="url(#ink)" stroke-width="36" stroke-linejoin="round"/>
+  <!-- Eyes and a smile. -->
+  <rect x="372" y="380" width="64" height="120" rx="32" fill="url(#ink)"/>
+  <rect x="588" y="380" width="64" height="120" rx="32" fill="url(#ink)"/>
+  <path d="M 404 576 Q 512 650 620 576" fill="none" stroke="url(#ink)" stroke-width="44" stroke-linecap="round"/>
+</svg>

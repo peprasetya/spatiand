@@ -2507,6 +2507,7 @@ dependencies = [
  "quinn",
  "resvg",
  "serde",
+ "serde_json",
  "smithay",
  "spatiand-audio",
  "spatiand-hmd",

@@ -24,9 +24,11 @@ pub mod mse;
 pub mod player;
 #[cfg(feature = "engine")]
 pub mod screen;
-#[cfg(feature = "engine")]
+#[cfg(feature = "sound")]
+// A film's clock is the engine's; the assistant, playing sound alone, leaves it unread.
+#[cfg_attr(not(feature = "engine"), allow(dead_code))]
 mod sound;
-#[cfg(feature = "engine")]
+#[cfg(feature = "sound")]
 pub use sound::{SoundGroup, Stream};
 #[cfg(feature = "engine")]
 pub mod still;

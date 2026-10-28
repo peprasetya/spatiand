@@ -180,6 +180,9 @@ pub enum Event {
     /// leans its spelling towards what is said (a terminal's commands, a page's words), and the
     /// assistant reads a window this way. Not answered, the room makes do with the title.
     Describe { window: WindowId },
+    /// The room tells its assistant something (`spatiand_assist_v1.happened`), as JSON. Only the
+    /// assistant hears these.
+    Room { json: String },
     /// Something dragged came over a window -- from this application (`own`) or another, from
     /// anywhere in the room -- at this point of it; `forms` are what it can be had as. While it
     /// is over the window, [`App::accept_drag`] says what the window would do with it there.
@@ -198,7 +201,7 @@ impl Event {
     /// The window an event is about, if it is about one.
     pub fn window(&self) -> Option<WindowId> {
         match self {
-            Event::Mode(_) | Event::Hands | Event::Look { .. } | Event::DragEnded { .. } => None,
+            Event::Mode(_) | Event::Hands | Event::Look { .. } | Event::DragEnded { .. } | Event::Room { .. } => None,
             Event::Ready { window, .. }
             | Event::Resized { window, .. }
             | Event::CloseRequested { window }
@@ -346,6 +349,37 @@ impl App {
     /// only the application knows how far away what is pointed at is.
     pub fn set_cursor_drawn(&mut self, window: WindowId, drawn: bool) {
         self.wire.set_cursor_drawn(window, drawn);
+    }
+
+    /// Whether this process is the room's assistant: started by the room with its key, which it
+    /// said on connecting (`spatiand_assist_v1`).
+    pub fn assisting(&self) -> bool {
+        self.wire.assisting()
+    }
+
+    /// Ask the room something, as its assistant: one JSON object, `{"do": ...}`. The answer, as
+    /// JSON, is sent on `reply` when it comes, from a thread of its own; an error is
+    /// `{"error": "..."}`. The question goes when the application next waits or draws.
+    pub fn room_ask(&mut self, json: &str, reply: std::sync::mpsc::Sender<String>) {
+        let Some(read) = self.wire.assist_ask(json) else {
+            let _ = reply.send("{\"error\":\"this is not the room's assistant\"}".into());
+            return;
+        };
+        let _ = self.queue.flush();
+        std::thread::spawn(move || {
+            let mut file = std::fs::File::from(read);
+            let mut answer = String::new();
+            let _ = std::io::Read::read_to_string(&mut file, &mut answer);
+            let _ = reply.send(answer);
+        });
+    }
+
+    /// The room's microphone, as its assistant: 16 kHz mono 16-bit samples to read, until this is
+    /// dropped or asked for again.
+    pub fn room_listen(&mut self) -> Option<std::fs::File> {
+        let read = self.wire.assist_listen()?;
+        let _ = self.queue.flush();
+        Some(std::fs::File::from(read))
     }
 
     /// What a window shows, in answer to [`Event::Describe`]. Nothing happens if it was not

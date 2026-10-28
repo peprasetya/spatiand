@@ -1,0 +1,21 @@
+[package]
+name = "spatipal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SpatiPal: Spatiand's assistant, with a figure in the room, a voice, and hands on the room's windows"
+
+# See docs/ai-integrations.md. The models are hemera's (spatiand-voice); the room is reached
+# through spatiand_assist_v1 (spatiand-app); the voice is handed to the room by name, through
+# spatiand-media's sound alone, without FFmpeg.
+[dependencies]
+spatiand-app = { path = "../spatiand-app" }
+spatiand-voice = { path = "../spatiand-voice" }
+spatiand-media = { path = "../spatiand-media", default-features = false, features = ["sound"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log.workspace = true
+env_logger.workspace = true
+libc = "0.2"

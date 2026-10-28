@@ -2088,6 +2088,7 @@ pub fn run(
             // installing; then a notification from a host's own screen, which the wearer cannot
             // see.
             let notice = dictation.notice();
+            let notice = if notice.is_empty() { crate::assist::notice() } else { notice };
             let notice = if notice.is_empty() { crate::install::notice() } else { notice };
             let notice = if notice.is_empty() { crate::remote::host_notice() } else { notice };
             scene.sync_notice(&mut renderer, &mut text, &notice, ppd)?;
@@ -3031,6 +3032,9 @@ pub fn run(
                     if let Some(said) = dictation.tick() {
                         type_text(&mut runtime.state, &mut shell, &said, time_ms);
                     }
+                    // The assistant's questions and actions (`crate::assist`); what needs the shell is
+                    // done next frame, as a pointer's is.
+                    pointed_events.extend(crate::assist::serve(&mut runtime.state, Some(&shell), &windows, &mut renderer, time_ms));
 
                     if !typed
                         && !shell.wants_text()
@@ -3054,6 +3058,13 @@ pub fn run(
                                 if let Some(said) = dictation.take_review() {
                                     type_text(&mut runtime.state, &mut shell, &said, time_ms);
                                 }
+                            }
+                            // The assistant's card (a reminder, say): pressed, it is put away.
+                            Some(a)
+                                if !crate::assist::notice().is_empty()
+                                    && scene.notice_hit(&a.ray, tracker.recentred_orientation()) =>
+                            {
+                                crate::assist::notice_pressed();
                             }
                             // The card asking whether to install what was dropped into the room:
                             // pressing it is "yes". It floats in front of everything.

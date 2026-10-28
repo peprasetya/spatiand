@@ -4526,6 +4526,7 @@ dependencies = [
  "quinn",
  "resvg",
  "serde",
+ "serde_json",
  "smithay",
  "spatiand-audio",
  "spatiand-hmd",
@@ -4564,6 +4565,7 @@ dependencies = [
  "quinn",
  "resvg",
  "serde",
+ "serde_json",
  "smithay",
  "spatiand-audio",
  "spatiand-hmd",
@@ -4959,6 +4961,20 @@ dependencies = [
  "spatiand-surfaces",
  "spatimesh",
  "spatimesh-shim",
+]
+
+[[package]]
+name = "spatipal"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "libc",
+ "log",
+ "serde",
+ "serde_json",
+ "spatiand-app",
+ "spatiand-media",
+ "spatiand-voice",
 ]
 
 [[package]]

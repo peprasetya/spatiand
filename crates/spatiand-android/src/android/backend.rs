@@ -1095,6 +1095,7 @@ pub fn run(
             // Dictation's card first (a terminal's text waiting to be typed, or that the room is
             // listening), then this machine's own notification, or failing one, a host's.
             let said = dictation.notice();
+            let said = if said.is_empty() { crate::assist::notice() } else { said };
             let said = if said.is_empty() { super::notice() } else { said };
             let said = if said.is_empty() { crate::remote::host_notice() } else { said };
             scene.sync_notice(&mut renderer, &mut text, &said, ppd)?;
@@ -1611,7 +1612,7 @@ pub fn run(
                                 if let Some(said) = dictation.take_review() {
                                     type_text(&mut runtime.state, &mut shell, &said, time_ms);
                                 }
-                            } else {
+                            } else if !crate::assist::notice_pressed() {
                                 super::notice_pressed();
                             }
                             typed = true;
@@ -1667,6 +1668,9 @@ pub fn run(
                     if let Some(said) = dictation.tick() {
                         type_text(&mut runtime.state, &mut shell, &said, time_ms);
                     }
+                    // The assistant's questions and actions (`crate::assist`); what needs the shell is
+                    // done next frame, as a pointer's is.
+                    pointed_events.extend(crate::assist::serve(&mut runtime.state, Some(&shell), &windows, &mut renderer, time_ms));
 
                     if !typed && !shell.wants_text() && right_click && pointers.drag.is_none() && !right_was_down {
                         if !right_aim.as_ref().map(|a| a.on_popup()).unwrap_or(false) {

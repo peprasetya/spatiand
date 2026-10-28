@@ -593,7 +593,13 @@ pub fn run(
         // not test is the half whose bugs were being fixed by reasoning. `SPATIAND_XWAYLAND=off`
         // still turns it off, which is how a Wayland-only run is asked for.
         let x_display = crate::xwayland::start(&runtime.display_handle, &event_loop.handle());
-        let environment = crate::xwayland::client_environment(x_display);
+        let mut environment = crate::xwayland::client_environment(x_display);
+        // The assistant, if that is what is photographed, is given the room's key, as the room
+        // gives it (`crate::own::launch`).
+        let entry = spatiand_shell::AppEntry { name: String::new(), exec: command.clone(), icon: None, categories: Vec::new() };
+        if crate::own::is_assistant(&entry) {
+            environment.push(("SPATIAND_ASSIST_KEY".into(), crate::assist::key().to_string()));
+        }
         log::info!("launching {command:?} into the snapshot, waiting up to {seconds}s");
         match spatiand_platform::launch(&command, &runtime.state.socket_name, &environment) {
             Ok(pid) => {
@@ -759,6 +765,10 @@ pub fn run(
                             let mut stopped = false;
                             let gave_up = answered + std::time::Duration::from_secs(30);
                             loop {
+                                // The assistant's questions, answered as the session answers them.
+                                for event in crate::assist::serve(&mut runtime.state, None, &windows, &mut renderer, 0) {
+                                    log::info!("assist: the shell would be asked {event:?}");
+                                }
                                 if let Some(said) = dictation.tick() {
                                     log::info!("dictate: typing {said:?}");
                                     act_scripted(&mut runtime.state, &windows, &Scripted::Type(crate::dictate::typeable(&said)), &mut pointer_at);

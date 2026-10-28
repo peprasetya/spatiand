@@ -98,6 +98,8 @@ struct TextKey {
     /// Em size and wrapping width in device pixels.
     size: u32,
     width: u32,
+    /// Each line from the left, rather than centred under the longest.
+    left: bool,
 }
 
 struct Set {
@@ -358,17 +360,26 @@ impl Painter {
     }
 
     fn set(&mut self, gl: &Gl, text: &str, em: f32, width: f32) -> Option<Texture> {
+        self.set_aligned(gl, text, em, width, false)
+    }
+
+    fn set_aligned(&mut self, gl: &Gl, text: &str, em: f32, width: f32, left: bool) -> Option<Texture> {
         let key = TextKey {
             text: text.to_string(),
             size: (em * self.scale.1 * 16.0).round() as u32,
             width: (width * self.scale.1).round().max(1.0) as u32,
+            left,
         };
         if let Some(set) = self.set.get_mut(&key) {
             set.used = self.frame;
             return Some(set.texture);
         }
         // White, and tinted when drawn: one texture serves a label in every state it has.
-        let image: TextImage = self.text.render(text, em * self.scale.1, key.width, [255, 255, 255, 255]);
+        let image: TextImage = if left {
+            self.text.render_aligned(text, em * self.scale.1, key.width, [255, 255, 255, 255], spatiand_render::TextAlign::Left)
+        } else {
+            self.text.render(text, em * self.scale.1, key.width, [255, 255, 255, 255])
+        };
         let texture = self.texture(gl, &image.rgba, image.width, image.height).ok()?;
         self.set.insert(key, Set { texture, used: self.frame });
         Some(texture)
@@ -392,6 +403,33 @@ impl Painter {
         // On whole device pixels, or the glyphs are resampled and go soft.
         let (sx, sy) = self.scale;
         self.image(gl, texture, Rect::new((x * sx).round() / sx, (y * sy).round() / sy, w, h), [0.0, 0.0, 1.0, 1.0], 0.0, color, false);
+        (w, h)
+    }
+
+    /// As [`Painter::text`], with each line starting at `x` rather than centred under the
+    /// longest: for prose, a chat's messages. Returns the room it took, as [`Painter::measure_left`].
+    pub fn text_left(&mut self, gl: &Gl, text: &str, x: f32, y: f32, em: f32, width: f32, color: Color) -> (f32, f32) {
+        if text.is_empty() {
+            return (0.0, em * 1.4);
+        }
+        let room = self.measure_left(gl, text, em, width);
+        let Some(texture) = self.set_aligned(gl, text, em, width, true) else { return (0.0, 0.0) };
+        let (w, h) = (texture.width as f32 / self.scale.1, texture.height as f32 / self.scale.1);
+        let (sx, sy) = self.scale;
+        self.image(gl, texture, Rect::new((x * sx).round() / sx, (y * sy).round() / sy, w, h), [0.0, 0.0, 1.0, 1.0], 0.0, color, false);
+        room
+    }
+
+    /// How much room `text` set from the left takes, wrapped to `width`: its longest line's
+    /// width, and its height -- both from the one layout [`Painter::text_left`] draws, so a
+    /// bubble measured with this is the size of what is drawn in it.
+    pub fn measure_left(&mut self, gl: &Gl, text: &str, em: f32, width: f32) -> (f32, f32) {
+        if text.is_empty() {
+            return (0.0, em * 1.4);
+        }
+        let h = self.set_aligned(gl, text, em, width, true).map_or(0.0, |t| t.height as f32 / self.scale.1);
+        // The longest line: what the centred setting crops to, no wider than the wrapping.
+        let w = self.measure(gl, text, em, width).0.min(width);
         (w, h)
     }
 

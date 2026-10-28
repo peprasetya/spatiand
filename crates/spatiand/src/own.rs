@@ -58,6 +58,12 @@ const OWN: &[Own] = &[
         icon: include_str!("../../../assets/apps/spatimesh.svg"),
         categories: &["Network", "WebBrowser"],
     },
+    Own {
+        name: "SpatiPal",
+        program: "spatipal",
+        icon: include_str!("../../../assets/apps/spatipal.svg"),
+        categories: &["Utility"],
+    },
 ];
 
 const GROUP_ICON: &str = include_str!("../../../assets/icons/spatiand.svg");
@@ -187,9 +193,26 @@ pub fn launch(app: &AppEntry, wayland_display: &str, extra: &[(String, String)])
         extra.push(("SPATIAND_APPS_DIR".into(), dir.clone()));
         extra.push(("LD_LIBRARY_PATH".into(), dir));
     }
+    // The assistant's key into the room (`crate::assist`): to the assistant alone, and not to
+    // any other program, whose children -- a terminal's shells -- would inherit it.
+    if is_assistant(app) {
+        extra.push(("SPATIAND_ASSIST_KEY".into(), crate::assist::key().to_string()));
+    }
     if let Err(e) = spatiand_platform::launch(&app.exec, wayland_display, &extra) {
         log::warn!("could not start {}: {e}", app.name);
     }
+}
+
+/// Whether an entry is Spatiand's assistant, by the program it runs.
+pub fn is_assistant(app: &AppEntry) -> bool {
+    // The program, quoted or not: an own application's is quoted (see `carried`).
+    let exec = app.exec.trim_start();
+    let program = match exec.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or_default(),
+        None => exec.split_whitespace().next().unwrap_or_default(),
+    };
+    let file = std::path::Path::new(program).file_name().and_then(|f| f.to_str()).unwrap_or_default();
+    file == "spatipal" || file == "libspatipal.so"
 }
 
 /// Where Spatiand's OpenXR runtime is, for an application that takes the view, when the session
@@ -544,5 +567,18 @@ pub mod sound {
             }
             entry.slot = Some(slot);
         }
+    }
+}
+
+#[cfg(test)]
+mod assistant_tests {
+    use super::*;
+
+    #[test]
+    fn the_assistant_is_known_by_its_program() {
+        let entry = |exec: &str| AppEntry { name: "x".into(), exec: exec.into(), icon: None, categories: Vec::new() };
+        assert!(is_assistant(&entry("\"/Users/a b/Applications/Spatiand.app/Contents/MacOS/spatipal\"")));
+        assert!(is_assistant(&entry("/data/app/lib/arm64/libspatipal.so --background")));
+        assert!(!is_assistant(&entry("\"/Users/x/spatiquill\"")));
     }
 }

@@ -29,6 +29,7 @@ members = [
     "crates/spatiquill",
     "crates/spatiand-storage",
     "crates/spatishelf",
+    "crates/spatipal",
     "crates/spatiand-sync",
     "crates/spatiand-voice",
     "crates/spatimesh",

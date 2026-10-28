@@ -481,6 +481,67 @@
     </event>
   </interface>
 
+  <interface name="spatiand_assist_v1" version="1">
+    <description summary="the room's assistant: what is in the room, and doing things in it">
+      The assistant is one of Spatiand's own programs, and through this it sees
+      the room as the wearer does and acts in it as the wearer would: which
+      applications and windows there are, what a window shows (its own account
+      of itself, or a picture of it), and the pointer and keyboard on a window,
+      the room's settings, and its own figure in the room.
+
+      Offered to every client and **refused to all but one**: until a client
+      has said the key the room gave the assistant when it started it
+      (`SPATIAND_ASSIST_KEY`, a secret per session, handed to no other
+      program), every question is answered with an error. A key in the
+      environment is not one a shell in a terminal inherits: the room gives
+      it to the assistant's own process alone.
+
+      Questions and actions are JSON (`{"do": "...", ...}`), small enough for
+      one message; the answer is JSON written into the file descriptor that
+      came with the question, which the room closes when it is done. An answer
+      of `{"error": "..."}` says what went wrong in words fit to show.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="done with the room">
+        The microphone, if it was being given, stops.
+      </description>
+    </request>
+
+    <request name="hello">
+      <description summary="say the key">
+        The key from the environment. Said once, first; a wrong one closes
+        nothing but leaves every question refused.
+      </description>
+      <arg name="key" type="string" summary="SPATIAND_ASSIST_KEY"/>
+    </request>
+
+    <request name="ask">
+      <description summary="a question or an action">
+        One JSON object; the answer is written into `answer` and it is closed.
+      </description>
+      <arg name="json" type="string" summary="what is asked, as JSON"/>
+      <arg name="answer" type="fd" summary="where the answer is written"/>
+    </request>
+
+    <request name="listen">
+      <description summary="the microphone, while the assistant listens">
+        The room writes the microphone into `fd` -- 16 kHz, mono, 16-bit little
+        endian -- until either end closes it or `listen` is asked again. One
+        microphone serves the whole room: dictation and the assistant share it.
+      </description>
+      <arg name="fd" type="fd" summary="where the microphone is written"/>
+    </request>
+
+    <event name="happened">
+      <description summary="something the assistant may want to know">
+        JSON: `{"focus": window}` when the focus moves, `{"wake": true}` when the
+        wearer asks for the assistant by a control (the mic key held, say).
+      </description>
+      <arg name="json" type="string" summary="what happened, as JSON"/>
+    </event>
+  </interface>
+
   <interface name="spatiand_xr_pose_channel_v1" version="2">
     <description summary="head and eye poses, in shared memory">
       Poses are NOT sent as events, and that is the central decision in this

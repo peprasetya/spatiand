@@ -13,7 +13,10 @@ description = "What a film is and how it is played: FFmpeg, each platform's deco
 # `cargo test -p spatiand-media --no-default-features`.
 [features]
 default = ["engine"]
-engine = ["dep:rsmpeg", "dep:spatiand-app", "dep:ureq"]
+engine = ["sound", "dep:rsmpeg", "dep:spatiand-app", "dep:ureq"]
+# Only the sound out, handed to the room under a name (`SoundGroup::keyed`): no FFmpeg. The
+# assistant speaks through it.
+sound = []
 
 [dependencies]
 log.workspace = true

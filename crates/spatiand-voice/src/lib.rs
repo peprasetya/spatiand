@@ -8,11 +8,13 @@
 //! phrases, asking hemera what was said, steering it with what has focus, and turning spoken
 //! symbols and near-miss names into what was meant. See `docs/ai-integrations.md`.
 
+pub mod chat;
 pub mod context;
 pub mod dictation;
 pub mod hemera;
 pub mod phrases;
 pub mod settings;
+pub mod speech;
 pub mod spoken;
 pub mod words;
 

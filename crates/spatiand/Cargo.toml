@@ -10,6 +10,7 @@ license.workspace = true
 spatiand-stream = { path = "../spatiand-stream" }
 spatiand-sync = { path = "../spatiand-sync" }
 spatiand-voice = { path = "../spatiand-voice" }
+serde_json.workspace = true
 spatiand-video = { path = "../spatiand-video" }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }

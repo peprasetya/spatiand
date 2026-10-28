@@ -123,3 +123,40 @@ fn a_terminal_gets_commands() {
     assert_eq!(typed[1].0, "git commit -m \"fix scroll\"");
     assert!(typed.iter().all(|(_, review)| *review), "a terminal's text is shown first");
 }
+
+#[test]
+#[ignore]
+fn a_streamed_answer_calls_a_tool_and_speech_streams() {
+    use spatiand_voice::chat::{converse, tool, Ask, Piece};
+    use spatiand_voice::speech::{say, Voice};
+    let hemera = spatiand_voice::Hemera::new(&settings().hemera);
+    let ask = Ask {
+        model: "neohorse-1:4b".into(),
+        messages: vec![serde_json::json!({"role": "user", "content": "Tolong buka SpatiQuill"})],
+        tools: vec![tool("open_app", "Open an application in the room", serde_json::json!({"name": {"type": "string"}}), &["name"])],
+        max_tokens: 100,
+        temperature: 0.2,
+        thinking: false,
+    };
+    let mut pieces = 0;
+    let answer = converse(&hemera, &ask, |_: &Piece| {
+        pieces += 1;
+        true
+    })
+    .unwrap();
+    println!("{answer:#?}");
+    assert_eq!(answer.calls.len(), 1);
+    assert_eq!(answer.calls[0].name, "open_app");
+    assert!(answer.calls[0].arguments.contains("SpatiQuill"));
+    let mut samples = 0usize;
+    let started = Instant::now();
+    let mut first = None;
+    say(&hemera, &Voice { model: "voxcpm2".into(), ..Default::default() }, "Siap, saya buka SpatiQuill.", |pcm| {
+        first.get_or_insert(started.elapsed());
+        samples += pcm.len();
+        true
+    })
+    .unwrap();
+    println!("speech: first sound after {:?}, {:.1} s of it", first, samples as f32 / 24_000.0);
+    assert!(samples > 24_000 / 2);
+}

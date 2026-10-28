@@ -20,6 +20,7 @@ crate-type = ["cdylib"]
 spatiand-stream = { path = "../spatiand-stream" }
 spatiand-sync = { path = "../spatiand-sync" }
 spatiand-voice = { path = "../spatiand-voice" }
+serde_json = "1"
 spatiand-video = { path = "../spatiand-video" }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }

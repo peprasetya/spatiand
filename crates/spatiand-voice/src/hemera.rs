@@ -104,6 +104,12 @@ impl Hemera {
             .ok_or_else(|| "hemera's answer had no text in it".to_string())
     }
 
+    /// A GET of hemera's, as JSON.
+    pub fn get_json(&self, path: &str) -> Result<Value, String> {
+        let reply = self.agent.get(&format!("{}{path}", self.base)).timeout(Duration::from_secs(5)).call().map_err(|e| failure(e, &self.base))?;
+        reply.into_json().map_err(|e| format!("hemera's answer was not readable: {e}"))
+    }
+
     /// hemera's models of one kind (`text`, `transcription`, `speech`), by name.
     pub fn models(&self, kind: &str) -> Result<Vec<String>, String> {
         let reply = self
@@ -121,6 +127,20 @@ impl Hemera {
             .filter(|m| m.pointer("/hemera/kind").and_then(Value::as_str) == Some(kind))
             .filter_map(|m| m.get("id").and_then(Value::as_str).map(str::to_string))
             .collect())
+    }
+
+    /// A request whose answer is read as it comes (server-sent events): the body, to be read
+    /// line by line. Dropping it stops the answer.
+    pub fn post_stream(&self, path: &str, request: &Value, timeout: Duration) -> Result<Box<dyn std::io::Read + Send + Sync>, String> {
+        let reply = self
+            .agent
+            .post(&format!("{}{path}", self.base))
+            .set("Content-Type", "application/json")
+            .set("Accept", "text/event-stream")
+            .timeout(timeout)
+            .send_string(&request.to_string())
+            .map_err(|e| failure(e, &self.base))?;
+        Ok(reply.into_reader())
     }
 
     fn post(&self, path: &str, content_type: &str, body: &[u8], timeout: Duration) -> Result<Value, String> {
