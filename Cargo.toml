@@ -30,6 +30,7 @@ members = [
     "crates/spatiand-storage",
     "crates/spatishelf",
     "crates/spatiand-sync",
+    "crates/spatiand-voice",
     "crates/spatimesh",
     "crates/spatimesh-webkitgtk",
     "crates/spatimesh-shim",

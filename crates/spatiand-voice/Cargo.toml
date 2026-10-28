@@ -1,0 +1,17 @@
+[package]
+name = "spatiand-voice"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Speech for Spatiand: dictation and the assistant's ears and voice, through hemera"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+ureq = { version = "2", features = ["json"] }
+
+[dev-dependencies]
+env_logger = { workspace = true }

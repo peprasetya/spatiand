@@ -4871,6 +4871,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatiand-voice"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "serde",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
 name = "spatiloupe"
 version = "0.1.0"
 dependencies = [
