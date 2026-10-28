@@ -1132,6 +1132,9 @@ pub fn run(
         };
         let eye = spatiand_render::eye_for(side, orientation, DVec3::ZERO, &stereo);
         if view != View::Waiting {
+            // Once to see which figure, then, after waiting for its file, to draw it.
+            scene_ref.prepare_avatar(gl, orientation, &[eye], (stereo.h_fov_deg, stereo.v_fov_deg()), spatiand_render::pip::Corner::default());
+            scene_ref.settle_avatar(std::time::Duration::from_secs(5));
             scene_ref.prepare_avatar(gl, orientation, &[eye], (stereo.h_fov_deg, stereo.v_fov_deg()), spatiand_render::pip::Corner::default());
         }
         // The waiting screen is not a place, so it gets the same bare backdrop the DRM backend

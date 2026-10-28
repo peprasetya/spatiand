@@ -426,6 +426,17 @@ impl Avatar {
         gl.Enable(ffi::BLEND);
     }
 
+    /// Wait, up to `timeout`, for a figure being read: for a test's single picture, which would
+    /// otherwise be taken before the file is read.
+    pub fn settle_figure(&self, timeout: std::time::Duration) {
+        let mut chosen = self.chosen.borrow_mut();
+        if let Chosen::Reading { path, rx } = &*chosen {
+            if let Ok(result) = rx.recv_timeout(timeout) {
+                *chosen = Chosen::Read { path: path.clone(), result: Some(result) };
+            }
+        }
+    }
+
     /// Where the figure is in the room, while it is shown: where its voice comes from.
     pub fn position(&self) -> Option<DVec3> {
         let live = self.live.borrow();
@@ -465,7 +476,7 @@ impl Avatar {
         let mut chosen = self.chosen.borrow_mut();
         let current = match &*chosen {
             Chosen::None => None,
-            Chosen::Reading { path, .. } | Chosen::Ready { path, .. } | Chosen::Unreadable { path } => Some(path.clone()),
+            Chosen::Reading { path, .. } | Chosen::Read { path, .. } | Chosen::Ready { path, .. } | Chosen::Unreadable { path } => Some(path.clone()),
         };
         if current != path {
             *chosen = match path {
@@ -485,11 +496,12 @@ impl Avatar {
             };
             return;
         }
-        let read = match &*chosen {
+        let read = match &mut *chosen {
             Chosen::Reading { rx, .. } => rx.try_recv().ok(),
+            Chosen::Read { result, .. } => result.take(),
             _ => None,
         };
-        if let (Some(read), Chosen::Reading { path, .. }) = (read, &*chosen) {
+        if let (Some(read), Chosen::Reading { path, .. } | Chosen::Read { path, .. }) = (read, &*chosen) {
             let path = path.clone();
             *chosen = match read {
                 Ok(figure) => {
@@ -782,6 +794,8 @@ mod tests {
 enum Chosen {
     None,
     Reading { path: String, rx: std::sync::mpsc::Receiver<Result<crate::figure::Figure, String>> },
+    /// Read, waiting to be put on the GPU (see [`Avatar::settle_figure`]).
+    Read { path: String, result: Option<Result<crate::figure::Figure, String>> },
     Ready { path: String, gpu: ModelGpu },
     Unreadable { path: String },
 }

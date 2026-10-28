@@ -1232,6 +1232,13 @@ impl Scene {
         }
     }
 
+    /// Wait for the assistant's figure to be read: for a test's single picture.
+    pub fn settle_avatar(&self, timeout: std::time::Duration) {
+        if let Some(a) = &self.avatar {
+            a.settle_figure(timeout);
+        }
+    }
+
     /// Where the assistant's figure is, while it is shown.
     pub fn avatar_position(&self) -> Option<glam::DVec3> {
         self.avatar.as_ref().and_then(|a| a.position())

@@ -640,7 +640,7 @@ mod tests {
         let keyboard = Keyboard::default();
         for (key, _) in layout() {
             let label = keyboard.label(key);
-            let expected = matches!(label, "\u{2190}" | "\u{2191}" | "\u{2193}" | "\u{2192}");
+            let expected = matches!(label, "\u{2190}" | "\u{2191}" | "\u{2193}" | "\u{2192}") || label == spatiand_shell::keyboard::MIC;
             assert_eq!(is_icon(label), expected, "is_icon({label:?}) is wrong");
         }
         assert!(is_icon(SOUND_ON) && is_icon(SOUND_OFF));
