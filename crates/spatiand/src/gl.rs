@@ -949,7 +949,7 @@ pub unsafe fn white_texture(gl: &ffi::Gles2) -> u32 {
     upload_raw(gl, 1, 1, &[255, 255, 255, 255], false)
 }
 
-unsafe fn link(gl: &ffi::Gles2, vert: &str, frag: &str) -> Result<u32, String> {
+pub unsafe fn link(gl: &ffi::Gles2, vert: &str, frag: &str) -> Result<u32, String> {
     let vs = compile(gl, ffi::VERTEX_SHADER, &format!("{PREAMBLE}{vert}"))?;
     let fs = compile(gl, ffi::FRAGMENT_SHADER, &format!("{PREAMBLE}{frag}"))?;
     let program = gl.CreateProgram();

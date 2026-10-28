@@ -15,6 +15,7 @@ use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_server::{Display, DisplayHandle};
 
 mod assist;
+mod avatar;
 mod attention;
 mod audio;
 mod cadence;

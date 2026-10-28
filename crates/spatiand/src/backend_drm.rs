@@ -3351,6 +3351,20 @@ pub fn run(
                     // so no correction applies there.
                     let flip_y = Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0));
 
+                    // The assistant's figure, drawn for each eye before the eyes are -- with the
+                    // same flip, so that its picture and its place agree with everything else.
+                    if !waiting {
+                        let eyes: Vec<spatiand_render::Eye> = views
+                            .iter()
+                            .map(|(side, _, _)| {
+                                let mut eye = spatiand_render::eye_for(*side, orientation, DVec3::ZERO, &stereo);
+                                eye.projection = flip_y * eye.projection;
+                                eye
+                            })
+                            .collect();
+                        scene.prepare_avatar(gl, orientation, &eyes, (stereo.h_fov_deg, stereo.v_fov_deg()), prefs.pip_corner);
+                    }
+
                     for (side, x, vw) in views {
                         gl.Viewport(*x, 0, *vw, h as i32);
                         let mut eye =
@@ -3362,6 +3376,7 @@ pub fn run(
                         if !waiting {
                             scene.draw_sky(gl, &eye);
                             scene.draw_windows(gl, &eye, &windows);
+                            scene.draw_avatar(gl, &eye);
                             // The time and the battery, in the corner of the view. Not over a
                             // menu, which is the whole view while it is open.
                             if !shell.menu_is_open() {

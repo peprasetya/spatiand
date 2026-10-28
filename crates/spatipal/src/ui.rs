@@ -62,6 +62,7 @@ pub enum Page {
 #[derive(Clone, Copy, PartialEq)]
 enum Line {
     On,
+    Shown,
     Name,
     Persona,
     Figure,
@@ -80,7 +81,7 @@ enum Line {
 }
 
 const LINES: &[(&str, &[Line])] = &[
-    ("Assistant", &[Line::On, Line::Name, Line::Persona, Line::Figure]),
+    ("Assistant", &[Line::On, Line::Name, Line::Persona, Line::Figure, Line::Shown]),
     ("Voice and ears", &[Line::Voice, Line::Described, Line::Spoken, Line::Listening, Line::Thinking]),
     ("Models and chats", &[Line::Model, Line::Large, Line::Continue]),
     ("Dictation", &[Line::Languages, Line::Words, Line::Cleanup, Line::Hemera]),
@@ -386,6 +387,10 @@ impl Window {
                 s.spoken = !s.spoken;
                 Some(Want::Keep(s, v))
             }
+            Line::Shown => {
+                s.shown = !s.shown;
+                Some(Want::Keep(s, v))
+            }
             Line::Listening => {
                 s.listening = !s.listening;
                 Some(Want::Keep(s, v))
@@ -445,6 +450,7 @@ fn next<S: AsRef<str>>(choices: &[S], now: &str) -> String {
 fn label(line: Line) -> &'static str {
     match line {
         Line::On => "Start with the room",
+        Line::Shown => "Show its figure",
         Line::Name => "Name (what it answers to)",
         Line::Persona => "Personality",
         Line::Figure => "Figure",
@@ -471,6 +477,7 @@ fn value(line: Line, view: &View) -> String {
     let (s, v) = (view.settings, view.speech);
     match line {
         Line::On => on(s.on),
+        Line::Shown => if s.shown { "Shown".into() } else { "Hidden (still listening)".into() },
         Line::Name => s.name.clone(),
         Line::Persona => short(&s.persona),
         Line::Figure => s.character.clone(),

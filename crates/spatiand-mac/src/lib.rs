@@ -33,6 +33,8 @@ mod backend_drm {
 
 #[path = "../../spatiand/src/assist.rs"]
 mod assist;
+#[path = "../../spatiand/src/avatar.rs"]
+mod avatar;
 #[path = "../../spatiand/src/attention.rs"]
 mod attention;
 #[path = "../../spatiand/src/audio.rs"]

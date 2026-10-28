@@ -1862,6 +1862,7 @@ pub fn run(
                 let scene = &scene;
                 let shell = &shell;
                 let windows = &windows;
+                let pinned_corner = prefs.pip_corner;
                 let right_aim = &right_aim;
                 let menu_aim = &menu_aim;
                 let keyboard_open = keyboard.open;
@@ -1897,6 +1898,12 @@ pub fn run(
                     } else {
                         &[(EyeSide::Left, 0, w)]
                     };
+                    // The assistant's figure, drawn for each eye before the eyes are.
+                    if !waiting {
+                        let eyes: Vec<spatiand_render::Eye> =
+                            views.iter().map(|(side, _, _)| spatiand_render::eye_for(*side, orientation, DVec3::ZERO, &stereo)).collect();
+                        scene.prepare_avatar(gl, orientation, &eyes, (stereo.h_fov_deg, stereo.v_fov_deg()), pinned_corner);
+                    }
                     // Straight into a window, which GL presents with its own convention: no flip,
                     // as the nested winit backend on the Deck.
                     for (side, x, vw) in views {
@@ -1905,6 +1912,7 @@ pub fn run(
                         if !waiting {
                             scene.draw_sky(gl, &eye);
                             scene.draw_windows(gl, &eye, windows);
+                            scene.draw_avatar(gl, &eye);
                             // The time and the battery in the corner of the view, and under
                             // them a notification while there is one. Not over a menu, which is
                             // the whole view while it is open.

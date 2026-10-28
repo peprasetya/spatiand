@@ -408,10 +408,25 @@ pub fn serve(
                 let id = window_of(state, &asked);
                 asked.answer(json!({ "window": id }));
             }
-            // Its figure: which, from where. Drawn by the scene (`crate::avatar`, to come); kept
-            // here meanwhile, so that the assistant's choice is not refused.
+            // Its figure: which, what it is doing, whether it is shown. Drawn by the scene
+            // (`crate::avatar`) from this.
+            // What it says is laid over what it said: a mood leaves the figure chosen as it was,
+            // and `wave` counts up, each one a wave.
             "avatar" => {
-                *FIGURE.lock().unwrap() = Some(asked.what.clone());
+                let mut figure = FIGURE.lock().unwrap();
+                let mut now = figure.take().filter(Value::is_object).unwrap_or_else(|| json!({}));
+                if let Some(said) = asked.what.as_object() {
+                    for (key, value) in said {
+                        match key.as_str() {
+                            "do" => {}
+                            "wave" if value.as_bool() == Some(true) => {
+                                now["waves"] = json!(now.get("waves").and_then(Value::as_u64).unwrap_or(0) + 1);
+                            }
+                            _ => now[key.as_str()] = value.clone(),
+                        }
+                    }
+                }
+                *figure = Some(now);
                 asked.answer(json!({ "done": "avatar" }));
             }
             other => asked.refuse(&format!("the room does not know how to {other:?}")),

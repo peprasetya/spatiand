@@ -1131,12 +1131,16 @@ pub fn run(
             _ => EyeSide::Left,
         };
         let eye = spatiand_render::eye_for(side, orientation, DVec3::ZERO, &stereo);
+        if view != View::Waiting {
+            scene_ref.prepare_avatar(gl, orientation, &[eye], (stereo.h_fov_deg, stereo.v_fov_deg()), spatiand_render::pip::Corner::default());
+        }
         // The waiting screen is not a place, so it gets the same bare backdrop the DRM backend
         // gives it. Drawing a world behind it here would make this view a picture of something
         // that never ships -- and the whole reason for the view is to see what does.
         if view != View::Waiting {
             scene_ref.draw_sky(gl, &eye);
             scene_ref.draw_windows(gl, &eye, &windows);
+            scene_ref.draw_avatar(gl, &eye);
             if !shell_ref.menu_is_open() {
                 scene_ref.draw_status(gl, &eye, orientation);
                 scene_ref.draw_notice(gl, &eye, orientation);

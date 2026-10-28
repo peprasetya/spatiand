@@ -54,7 +54,7 @@ impl Corner {
     }
 
     /// `(left, up)`: which way from the middle of the view this corner lies, as +1 or -1.
-    fn signs(self) -> (f64, f64) {
+    pub fn signs(self) -> (f64, f64) {
         match self {
             Corner::TopLeft => (1.0, 1.0),
             Corner::TopRight => (-1.0, 1.0),

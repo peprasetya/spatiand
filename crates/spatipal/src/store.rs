@@ -66,6 +66,8 @@ pub struct Settings {
     pub listening: bool,
     /// Answers spoken aloud, or only written.
     pub spoken: bool,
+    /// Its figure in the room; hidden, it still hears and answers.
+    pub shown: bool,
 }
 
 impl Default for Settings {
@@ -84,6 +86,7 @@ impl Default for Settings {
             continue_hours: 4,
             listening: true,
             spoken: true,
+            shown: true,
         }
     }
 }

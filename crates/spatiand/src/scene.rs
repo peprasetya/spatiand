@@ -373,6 +373,8 @@ impl Pointing {
 
 /// Textures and pipelines that live for the session.
 pub struct Scene {
+    /// The assistant's figure (`crate::avatar`), when the GL here can draw it.
+    avatar: Option<crate::avatar::Avatar>,
     quads: QuadPipeline,
     rounded: RoundedPipeline,
     sky_pipeline: SkyPipeline,
@@ -538,6 +540,18 @@ impl Scene {
         sky_image: &spatiand_render::Sky,
     ) -> Result<Self, String> {
         let quads = QuadPipeline::new(renderer)?;
+        // Not drawing the assistant is no reason not to draw the room.
+        let avatar = match renderer.with_context(|gl| unsafe { crate::avatar::Avatar::new(gl) }) {
+            Ok(Ok(a)) => Some(a),
+            Ok(Err(e)) => {
+                log::warn!("avatar: the assistant's figure cannot be drawn here: {e}");
+                None
+            }
+            Err(e) => {
+                log::warn!("avatar: no GL context for the assistant's figure: {e}");
+                None
+            }
+        };
         let sky_pipeline = SkyPipeline::new(renderer, &quads)?;
         let projection_pipeline = ProjectionPipeline::new(renderer, &quads)?;
         let bubbles = BubblePipeline::new(renderer, &quads)?;
@@ -612,6 +626,7 @@ impl Scene {
             .map_err(|e| format!("no GL context: {e}"))?;
 
         Ok(Self {
+            avatar,
             quads,
             rounded,
             sky_pipeline,
@@ -1203,6 +1218,28 @@ impl Scene {
         self.titles
             .insert(title.to_string(), Texture { id, aspect });
         Some(TitleTexture { id, aspect })
+    }
+
+    /// Draw the assistant's figure for each eye into its own picture: before the eyes are drawn
+    /// (see `crate::avatar`). `pinned` is the corner pinned windows keep to; the figure keeps to
+    /// the other side.
+    ///
+    /// # Safety
+    /// The GL context must be current.
+    pub unsafe fn prepare_avatar(&self, gl: &ffi::Gles2, head: glam::DQuat, eyes: &[Eye], fov_deg: (f64, f64), pinned: spatiand_render::pip::Corner) {
+        if let Some(a) = &self.avatar {
+            a.prepare(gl, head, eyes, fov_deg, pinned);
+        }
+    }
+
+    /// Lay the assistant's figure into this eye, after the windows.
+    ///
+    /// # Safety
+    /// The GL context must be current.
+    pub unsafe fn draw_avatar(&self, gl: &ffi::Gles2, eye: &Eye) {
+        if let Some(a) = &self.avatar {
+            a.draw(gl, eye);
+        }
     }
 
     /// Rebuild the keyboard face if anything drawn on it changed.

@@ -100,6 +100,9 @@ struct Pal {
     characters: Vec<String>,
     lists: Receiver<(Vec<String>, Vec<String>)>,
     lists_tx: Sender<(Vec<String>, Vec<String>)>,
+    /// The mood the figure was last told, and when the last answer finished (it smiles then).
+    mood: &'static str,
+    finished_at: Option<Instant>,
 }
 
 /// What the window is lent to draw from: built from the fields themselves, so that the app and
@@ -242,6 +245,7 @@ impl Pal {
             Told::Done(said) => {
                 self.answering = None;
                 self.answered.now();
+                self.finished_at = Some(Instant::now());
                 if let Some(chat) = self.current.and_then(|i| self.chats.get_mut(i)) {
                     chat.said.push(said);
                     chat.updated = store::now();
@@ -257,6 +261,7 @@ impl Pal {
     fn heard(&mut self, heard: Heard) {
         match heard {
             Heard::Called => {
+                let _ = self.app.room_ask(&json!({"do": "avatar", "wave": true}).to_string(), channel().0);
                 // Its name alone: it answers, and listens for what comes next without it.
                 self.voice.say(if self.speech.languages.iter().any(|l| l == "id") { "Ya?" } else { "Yes?" });
                 self.answered.now();
@@ -328,7 +333,29 @@ impl Pal {
         if listening_changed || ears_changed {
             self.tend_ears();
         }
-        let _ = self.app.room_ask(&json!({"do": "avatar", "character": self.settings.character, "path": store::character_path(&self.settings.character)}).to_string(), channel().0);
+        self.tell_figure();
+    }
+
+    /// The figure, as chosen: which, and whether it is shown.
+    fn tell_figure(&mut self) {
+        let figure = json!({"do": "avatar", "character": self.settings.character, "path": store::character_path(&self.settings.character), "visible": self.settings.shown});
+        let _ = self.app.room_ask(&figure.to_string(), channel().0);
+    }
+
+    /// What the figure is doing, told to the room when it changes.
+    fn tend_mood(&mut self) {
+        let mood = match &self.answering {
+            Some(_) if self.voice.busy() => "talking",
+            Some(_) => "thinking",
+            None if self.voice.busy() => "talking",
+            None if self.finished_at.is_some_and(|at| at.elapsed() < Duration::from_secs(2)) => "happy",
+            None if self.ears.is_some() => "listening",
+            None => "idle",
+        };
+        if mood != self.mood {
+            self.mood = mood;
+            let _ = self.app.room_ask(&json!({"do": "avatar", "mood": mood}).to_string(), channel().0);
+        }
     }
 
     /// hemera's text models and voices, for the settings' choices.
@@ -441,7 +468,7 @@ impl Pal {
         }
         self.tend_ears();
         // Its figure in the room, as chosen.
-        let _ = self.app.room_ask(&json!({"do": "avatar", "character": self.settings.character, "path": store::character_path(&self.settings.character)}).to_string(), channel().0);
+        self.tell_figure();
         loop {
             let wait = if self.answering.is_some() { 33 } else { 250 };
             for event in self.app.wait(Some(Duration::from_millis(wait)))? {
@@ -476,6 +503,7 @@ impl Pal {
                 }
             }
             self.look_at_reminders();
+            self.tend_mood();
             self.draw()?;
         }
     }
@@ -572,6 +600,8 @@ fn main() {
             characters: store::characters(),
             lists,
             lists_tx,
+            mood: "",
+            finished_at: None,
         };
         if !background {
             pal.open_window();

@@ -36,7 +36,7 @@ PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
     FFMPEG_INCLUDE_DIR=$FF/include FFMPEG_LIBS_DIR=$FF/lib FFMPEG_LINK_MODE=dynamic \
     BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/sysroot" \
     RUSTFLAGS="-L native=$(pwd)/xkbcommon/out -L native=$FF/lib -C link-arg=-lc++abi" \
-    cargo ndk -t arm64-v8a -P 34 build --release -p spatireel -p spatiloupe -p spatiquill -p spatishelf -p spatimesh
+    cargo ndk -t arm64-v8a -P 34 build --release -p spatireel -p spatiloupe -p spatiquill -p spatishelf -p spatimesh -p spatipal
 # SpatiMesh's engine, on WPE WebKit built for Android (third_party/wpe/build.sh android), when
 # it has been: without it SpatiMesh shows no pages here.
 WPE_OUT=${SPATIAND_WPE:-$HOME/Developer/spatiand-wpe/out/android}
@@ -83,7 +83,7 @@ $BT/d8 --release --min-api 34 --lib $JAR --output $OUT/dex $(find $OUT/classes -
 
 # --- the APK ---
 cp jniLibs/arm64-v8a/libspatiand.so eglshim/out/libeglshim.so mysofa/out/libmysofa.so $OUT/apk/lib/arm64-v8a/
-for own in spatireel spatiloupe spatiquill spatishelf spatimesh; do
+for own in spatireel spatiloupe spatiquill spatishelf spatimesh spatipal; do
     cp ../target/aarch64-linux-android/release/$own $OUT/apk/lib/arm64-v8a/lib$own.so
 done
 for lib in avcodec avdevice avfilter avformat avutil swresample swscale; do
