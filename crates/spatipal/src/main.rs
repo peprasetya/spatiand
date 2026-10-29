@@ -325,9 +325,11 @@ impl Pal {
             }
             Heard::Called => {
                 let _ = self.app.room_ask(&json!({"do": "avatar", "wave": true}).to_string(), channel().0);
-                // Its name alone: it answers, and listens for what comes next without it.
+                // Its name alone: it answers, and listens for what comes next without it --
+                // attentive, not smiling as after an answer.
                 self.voice.say(if self.speech.languages.iter().any(|l| l == "id") { "Ya?" } else { "Yes?" });
                 self.conversation.touch();
+                self.finished_at = None;
             }
             Heard::Asked { text, ended } => self.ask(text, Some(ended)),
         }

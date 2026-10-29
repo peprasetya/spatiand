@@ -381,7 +381,8 @@ pub fn prime(s: &Settings, larger: bool) -> Value {
         "max_tokens": 1,
         "temperature": 0,
         "stream": false,
-        "chat_template_kwargs": {"enable_thinking": false},
+        // As its requests ask: a template may write the system message differently for it.
+        "chat_template_kwargs": {"enable_thinking": larger},
     })
 }
 
