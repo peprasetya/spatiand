@@ -87,13 +87,26 @@ EOF
 }
 
 build() {
+    # Spatiand's own FFmpeg (third_party/ffmpeg, `build.sh linux` -- 9.0.2, one copy for every
+    # program of Spatiand's): its headers and libraries where build/linux/unbundle/ffmpeg.gn
+    # (patch 0003) looks for them.
+    ffmpeg=${SPATIAND_FFMPEG:-$here/../ffmpeg/out/linux}
+    staged=$work/chromium/src/third_party/spatiand_ffmpeg
+    rm -rf "$staged"; mkdir -p "$staged/lib"
+    cp -a "$ffmpeg/include" "$staged/"
+    cp -a "$ffmpeg"/lib/libav*.so* "$staged/lib/"
     inside bash -s <<'EOF'
 set -e
 cd /cr/chromium/src
+# Chromium's own way to build on an FFmpeg of the system's: //third_party/ffmpeg becomes the shim.
+grep -q spatiand_ffmpeg third_party/ffmpeg/BUILD.gn || python3 build/linux/unbundle/replace_gn_files.py --system-libraries ffmpeg
 # Cromite's Linux arguments; Spatiand's changes made in place (GN refuses a value set twice):
-# no AV1 offered while there is no hardware decoding (the owner wants no software AV1, and an AV1
-# claimed without a decoder stalls YouTube).
+# no AV1 offered while there is no hardware decoding of it through Spatiand's FFmpeg (the owner
+# wants no software AV1, and an AV1 claimed without a decoder stalls YouTube).
 ARGS=$(sed -e "s/^enable_dav1d_decoder=true/enable_dav1d_decoder=false/" -e "s/^enable_av1_decoder=true/enable_av1_decoder=false/" /cr/cromite/build/cromite.gn_args)
+# Dolby Digital and Dolby Digital Plus, decoded by Spatiand's FFmpeg.
+ARGS="$ARGS
+enable_platform_ac3_eac3_audio = true"
 gn gen --args="target_os = \"linux\" $ARGS target_cpu = \"x64\" " out/deck
 # The machine also serves spatiand-host: the lowest priority.
 nice -n 19 ionice -c 3 python3 /cr/depot_tools/siso.py ninja -C out/deck chrome chrome_sandbox --offline
