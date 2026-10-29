@@ -1,0 +1,31 @@
+[package]
+name = "spatikey-core"
+description = "SpatiKey's vault, its crypto, the request protocol and the service, shared by the Mac app, the room and the apps"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+# All the cryptography but one: AEAD, HKDF, HMAC, SHA, P-256 ECDSA, random numbers. Already in
+# every build through rustls, on the Mac, Linux and Android alike.
+ring = "0.17"
+# The recovery code's key derivation.
+argon2 = "0.5"
+base64 = "0.22"
+# Base32, for TOTP secrets and the recovery code.
+data-encoding = "2"
+zeroize = "1"
+libc = "0.2"
+# The pinned-certificate QUIC the rest of Spatiand speaks, for the Deck and the Beam Pro asking
+# the Mac.
+spatiand-stream = { path = "../spatiand-stream" }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time", "io-util", "sync", "macros"] }
+
+[dev-dependencies]
+env_logger.workspace = true

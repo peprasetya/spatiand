@@ -36,6 +36,7 @@ members = [
     "crates/spatimesh-webkitgtk",
     "crates/spatimesh-shim",
     "crates/spatimesh-wpe",
+    "crates/spatikey-core",
 ]
 
 [workspace.package]

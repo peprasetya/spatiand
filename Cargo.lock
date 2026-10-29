@@ -4886,6 +4886,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatikey-core"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "base64 0.22.1",
+ "data-encoding",
+ "env_logger",
+ "libc",
+ "log",
+ "quinn",
+ "ring",
+ "rustls",
+ "serde",
+ "serde_json",
+ "spatiand-stream",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "spatiloupe"
 version = "0.1.0"
 dependencies = [
