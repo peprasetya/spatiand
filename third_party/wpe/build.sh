@@ -333,7 +333,8 @@ linux)
             -DLIBXML2_WITH_TESTS=OFF -DLIBXML2_WITH_PROGRAMS=OFF
         sqlite=sqlite-autoconf-$SQLITE_VERSION
         fetch "$sqlite" "https://sqlite.org/$SQLITE_YEAR/$sqlite.tar.gz"
-        auto_lib "$sqlite" --disable-readline --enable-threadsafe
+        # SQLite's own configure gives its library no name of its own unless asked.
+        auto_lib "$sqlite" --disable-readline --enable-threadsafe --soname=legacy
         fetch "glib-$GLIB_VERSION" "https://download.gnome.org/sources/glib/${GLIB_VERSION%.*}/glib-$GLIB_VERSION.tar.xz"
         meson_lib "glib-$GLIB_VERSION" -Dnls=disabled -Dtests=false -Dintrospection=disabled -Ddocumentation=false -Dman-pages=disabled \
             -Dsysprof=disabled -Dlibelf=disabled -Dglib_debug=disabled -Dselinux=disabled -Dlibmount=disabled -Dxattr=false
@@ -499,7 +500,7 @@ INI
         -DLIBXML2_WITH_TESTS=OFF -DLIBXML2_WITH_PROGRAMS=OFF
     sqlite=sqlite-autoconf-$SQLITE_VERSION
     fetch "$sqlite" "https://sqlite.org/$SQLITE_YEAR/$sqlite.tar.gz"
-    auto_lib "$sqlite" --disable-readline --enable-threadsafe
+    auto_lib "$sqlite" --disable-readline --enable-threadsafe --soname=legacy
     fetch "glib-$GLIB_VERSION" "https://download.gnome.org/sources/glib/${GLIB_VERSION%.*}/glib-$GLIB_VERSION.tar.xz"
     meson_lib "glib-$GLIB_VERSION" -Dnls=disabled -Dtests=false -Dintrospection=disabled -Ddocumentation=false -Dman-pages=disabled \
         -Dsysprof=disabled -Dlibelf=disabled -Dglib_debug=disabled -Dselinux=disabled -Dlibmount=disabled -Dxattr=false
@@ -621,6 +622,29 @@ if [ "$platform" = mac ]; then
     for b in "$out"/libexec/wpe-webkit-2.0/WPE*Process; do
         otool -l "$b" | grep -q '@loader_path/../../lib' || install_name_tool -add_rpath @loader_path/../../lib "$b"
         codesign -f -s - "$b"
+    done
+fi
+if [ "$platform" != mac ] && [ -z "${SYSTEM_DEPS:-}" ]; then
+    # A library built with no name of its own (SQLite's, before --soname=legacy) is recorded by
+    # what links to it as the path it was linked from: this build's, which no Deck or Beam Pro
+    # has (WebKit asked for /wpe/out/<platform>/lib/libsqlite3.so there). Such a library takes
+    # the versioned name of the link beside it, and is asked for by that name.
+    for f in "$out"/lib/lib*.so*; do
+        [ -f "$f" ] && [ ! -L "$f" ] && [ -z "$(patchelf --print-soname "$f" 2>/dev/null)" ] || continue
+        for l in "$out"/lib/lib*.so.[0-9]*; do
+            if [ -L "$l" ] && [ "$(readlink -f "$l")" = "$(readlink -f "$f")" ]; then
+                patchelf --set-soname "$(basename "$l")" "$f"
+                break
+            fi
+        done
+    done
+    for f in "$out"/lib/*.so* "$out"/lib/gstreamer-1.0/*.so "$out"/lib/gio/modules/*.so "$out"/libexec/*/*; do
+        [ -f "$f" ] && [ ! -L "$f" ] || continue
+        # Whatever is not ELF has nothing needed to print.
+        for p in $(patchelf --print-needed "$f" 2>/dev/null | grep "^$out/lib/"); do
+            name=$(patchelf --print-soname "$(readlink -f "$p")" 2>/dev/null)
+            [ -n "$name" ] && patchelf --replace-needed "$p" "$name" "$f"
+        done
     done
 fi
 if [ "$platform" = linux ] && [ -z "${SYSTEM_DEPS:-}" ]; then
