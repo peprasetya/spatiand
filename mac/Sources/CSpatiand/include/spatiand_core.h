@@ -88,6 +88,31 @@ void sp_host_trust(sp_host *host, const char *fingerprint);
 int32_t sp_host_paired_count(sp_host *host);
 void sp_host_forget_all(sp_host *host);
 
+// ---- SpatiKey's service on this Mac. See crates/spatiand-mac-core/src/key.rs and docs/spatikey.md. ----
+//
+// It answers SpatiKey, SpatiMesh, the browsers and the room on its local socket, and paired
+// devices on the same network. What only the app can do it asks through `ask`, from its own
+// threads: copy the JSON and return at once, do the work elsewhere, and answer each question
+// once with sp_key_answer(id, json). A question not answered in time is given up on (120 s for a
+// finger, 180 s for the owner, 10 s otherwise), and a late answer is dropped.
+enum {
+    SP_KEY_UNLOCK = 1,    // {reason, blob, wrapped, linger}: Touch ID, then {"vk": base64}
+    SP_KEY_ENROLL = 2,    // {vk}: a new Secure Enclave key and the vault key wrapped to it: {public, blob, wrapped}
+    SP_KEY_CAN_TOUCH = 3, // {}: whether Touch ID could be used now, asking nobody: {"ok": bool}
+    SP_KEY_ALLOW = 4,     // {name, fp, code}: the owner's yes or no to a device: {"allow": bool}
+};
+// Unlock and enroll answer {"error": code, "message": text} when they cannot; code is "denied",
+// "touch_id_unavailable", "fingerprints_changed", "timeout" or "failed".
+typedef void (*sp_key_ask_fn)(void *user, uint64_t id, int32_t what, const char *json);
+
+// Start the service, once. `identity_dir` holds this Mac's link certificate (made if absent),
+// `device_name` is what devices and cards call this Mac. 1 when it is serving, 0 if it could not.
+int32_t sp_key_start(const char *identity_dir, const char *device_name, void *user, sp_key_ask_fn ask);
+// The answer to question `id`, as JSON.
+void sp_key_answer(uint64_t id, const char *json);
+// Stop: nothing more is asked, every question waiting is refused, the socket goes.
+void sp_key_stop(void);
+
 #ifdef __cplusplus
 }
 #endif

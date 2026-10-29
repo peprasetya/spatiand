@@ -102,6 +102,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         glasses.start()
         refreshIcon()
         if Settings.hostEnabled { MacHost.shared.start() }
+        // SpatiKey's service, from launch and whether or not the room is up: the Touch ID panel has
+        // to come from this app (docs/spatikey.md).
+        SpatiKeyGuard.shared.start()
         wasPlugged = glasses.isPluggedIn
         pairing.start()
         // With the glasses on and the mouse and keyboard theirs, these are the room's own launcher
