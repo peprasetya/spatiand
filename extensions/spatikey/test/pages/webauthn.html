@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>webauthn.js in a real browser</title>
+<!--
+  browser.test.js loads this in headless Chrome as webauthn.html?mode=polyfill|wrapper&run=N.
+  Polyfill: the browser's own WebAuthn is taken away first, as SpatiMesh's engine has none.
+  Wrapper: the browser's own is kept, but its create() and get() are replaced by stand-ins first,
+  so that falling back to them can be seen (and no real authenticator's dialog waits for a person).
+  The checks run in webauthn-checks.js; their results are written into #results and sent to the
+  test's server, which holds the picture below back until then, so that the page's load -- what
+  --dump-dom waits for -- comes after them.
+-->
+<script src="before.js"></script>
+<script src="/src/webauthn.js"></script>
+<script src="after.js"></script>
+<pre id="results">running</pre>
+<script src="webauthn-checks.js"></script>
+<img id="hold" alt="">
+<script>document.getElementById('hold').src = '/hold?' + new URLSearchParams(location.search).get('run');</script>

@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "SpatiKey",
+  "version": "@VERSION@",
+  "description": "Passwords and passkeys from SpatiKey, Spatiand's own manager, approved with Touch ID on your Mac.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmKA0SAwuf4Y2/SiaMLc6yjD/S69t4Fv6cpLDErvst22/Kd7ILOroK2jg8QkITnq2S4oFV/mKOpzq10d0Ayx2Zh/SZSeoOPGYeRJRjHmxWaJ4/xHcwnYLNIj67jD0U2YpReQwn1z1/FCARaCJ8JO7eLvWYVzvVrY8xDEi0BVxAukuQUpOe5kQKietTaC9iHRv11NR9yDh9NlrlZiL2XK4mEZjkJfwzaMHBwFdzp3Z/65SEKzSRJaToNZEoN1hAQ1zcIpBgj0l03hFL/96CHoV7KBVYTaF72etEvJwv/zgwzj3aohlgwfEfIaugzF/Cfus3B6uY403j4jlh9+kG7rfAwIDAQAB",
+  "minimum_chrome_version": "111",
+  "permissions": ["nativeMessaging"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+      "js": ["webauthn.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+      "js": ["forms.js", "content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "icons": {
+    "16": "icons/key-16.png",
+    "32": "icons/key-32.png",
+    "48": "icons/key-48.png",
+    "128": "icons/key-128.png"
+  }
+}

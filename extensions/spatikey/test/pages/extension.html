@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>The extension</title>
+<!--
+  extension.test.js loads this in headless Chrome with the SpatiKey extension (dist/spatikey-chrome)
+  installed, a stand-in native host behind it, and a virtual authenticator as the browser's own.
+  The page does what a site does; the test reads the results back.
+-->
+<style>
+  body { font: 14px sans-serif; margin: 40px; }
+  input { display: block; width: 320px; height: 32px; margin: 8px 0; font-size: 14px; }
+  form { margin-bottom: 40px; }
+</style>
+<form id="login" action="#" onsubmit="event.preventDefault();">
+  <input id="username" name="username" autocomplete="username webauthn">
+  <input id="password" name="password" type="password" autocomplete="current-password">
+  <button id="signin">Sign in</button>
+</form>
+<form id="signup" action="#" onsubmit="event.preventDefault(); window.signedUp = true;">
+  <input id="new-user" name="email" type="email">
+  <input id="new-password" name="new-password" type="password" autocomplete="new-password">
+  <button id="create">Create account</button>
+</form>
+<script>
+  var CHALLENGE = new Uint8Array([0xfb, 0xff, 0xbf, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+  function text(buffer) { return new TextDecoder().decode(buffer); }
+  function b64url(buffer) {
+    var bytes = new Uint8Array(buffer), s = '';
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function fromB64url(s) {
+    var bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(bin, function (c) { return c.charCodeAt(0); });
+  }
+  // What the test needs to know of a credential, or of an error.
+  function summary(c) {
+    var r = c.response;
+    var out = {
+      pkc: c instanceof PublicKeyCredential,
+      ownGetters: Object.getOwnPropertyNames(c).length > 0,
+      id: c.id,
+      type: c.type,
+      data: text(r.clientDataJSON)
+    };
+    if (r instanceof AuthenticatorAttestationResponse) {
+      out.kind = 'attestation';
+      out.alg = r.getPublicKeyAlgorithm();
+      out.transports = r.getTransports();
+      out.json = JSON.parse(JSON.stringify(c));
+    } else if (r instanceof AuthenticatorAssertionResponse) {
+      out.kind = 'assertion';
+      out.signature = b64url(r.signature);
+      out.userHandle = r.userHandle && b64url(r.userHandle);
+    }
+    return out;
+  }
+  function failed(e) { return { error: e.name, message: e.message }; }
+  window.make = function (name) {
+    return navigator.credentials.create({ publicKey: {
+      rp: { name: 'Example' },
+      user: { id: new TextEncoder().encode('user-' + name), name: name, displayName: name.toUpperCase() },
+      challenge: CHALLENGE,
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      authenticatorSelection: { residentKey: 'required', userVerification: 'required' }
+    } }).then(summary, failed);
+  };
+  window.signIn = function (allow) {
+    return navigator.credentials.get({ publicKey: {
+      challenge: CHALLENGE,
+      allowCredentials: (allow || []).map(function (id) { return { type: 'public-key', id: fromB64url(id) }; }),
+      userVerification: 'required'
+    } }).then(summary, failed);
+  };
+  window.waitConditional = function () {
+    window.conditional = navigator.credentials.get({ publicKey: { challenge: CHALLENGE }, mediation: 'conditional' }).then(summary, failed);
+    return 'waiting';
+  };
+</script>
