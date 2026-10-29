@@ -18,6 +18,9 @@ argon2 = "0.5"
 base64 = "0.22"
 # Base32, for TOTP secrets and the recovery code.
 data-encoding = "2"
+# The public suffix list is written in Unicode and hosts arrive in punycode: its rules are
+# turned into punycode once, as they are read. Already locked through url.
+idna = "1"
 zeroize = "1"
 libc = "0.2"
 # The pinned-certificate QUIC the rest of Spatiand speaks, for the Deck and the Beam Pro asking

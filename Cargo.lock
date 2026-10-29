@@ -4893,6 +4893,7 @@ dependencies = [
  "base64 0.22.1",
  "data-encoding",
  "env_logger",
+ "idna",
  "libc",
  "log",
  "quinn",
