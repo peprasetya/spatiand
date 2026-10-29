@@ -12,6 +12,18 @@ and at its end what has been built of it.
 | Linux, the Deck | **WPE WebKit 2.54.1**, the bundle `third_party/wpe/build.sh linux` makes in Ubuntu 22.04 (built 2026-10-29) | `wpe/` beside SpatiMesh |
 | Android (Beam Pro) | WPE, once its build gets through (2026-10-29: WebCore against the NDK's C++23 libc++ still fails) | -- |
 
+**Changed on 2026-10-30:** the owner moved SpatiMesh to **Chromium with Cromite's patches and
+ours**, keeping Chrome's own browser layer (Chrome's extensions, as Chrome has them) with
+SpatiMesh's look over it, as Vivaldi does. WPE's newest code kept failing on real sites (its Skia
+compositor's work for `backdrop-filter` grew as 2^n with the number of glass panels -- fixed
+upstream on 2026-10-18, after 2.54.1 -- and a reflection's mask before that), and on the Mac our
+port of it has one user. Ours to add: drawing through Spatiand's own Wayland protocol on every
+platform (Chromium's Linux drawing, Ozone/Wayland, taken to the Mac and Android), media on
+Spatiand's FFmpeg, SpatiKey's passwords and passkeys, profiles synced through spatiand-host. The
+first build (Chromium 153.0.8010.37, Cromite's 327 patches and its Linux arguments) is for the
+Deck, where Ozone/Wayland already draws into the room. WPE stays the engine of the window
+described below until Chromium replaces it.
+
 **Changed again on 2026-10-29:** WebKitGTK, Linux's fallback, removed too: WPE is the only engine,
 and where it is not installed SpatiMesh says so rather than falling back.
 
