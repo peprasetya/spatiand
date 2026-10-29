@@ -10,6 +10,12 @@
 //! after the microphone opens only learn the room: a phrase begun before then would be the
 //! room itself, and Whisper given a phrase of noise writes something anyway -- "Terima kasih
 //! telah menonton!" is its favourite.
+//!
+//! **A draft before the end**: a pause has to be long to be sure a phrase is over, but most short
+//! pauses are its end. So at a third of a second of quiet the phrase so far is handed out as a
+//! draft, to be written while the cutter waits to be sure ([`Phrases::listen`]); speech going on
+//! takes the draft back. A phrase that ends as drafted is the draft's samples exactly, so what was
+//! written of the draft is what was written of the phrase -- half a second sooner.
 
 use std::collections::VecDeque;
 
@@ -33,6 +39,24 @@ const KEEP_OVER: f32 = 6.0;
 const QUIETEST_SPEECH: f32 = -55.0;
 /// Whisper reads 30 s at most; a phrase this long is sent and the next carries on.
 const LONGEST_MS: u32 = 25_000;
+/// This much quiet in a phrase hands it out as a draft.
+const DRAFT_MS: u32 = 300;
+
+/// What the cutter noticed in what it was fed.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Cut {
+    /// Speech began: a phrase is being heard.
+    Began,
+    /// A pause that may be the phrase's end: what was said so far, to be written while the cutter
+    /// waits to be sure. The phrase, if it ends without [`Cut::Resumed`], is these samples.
+    Draft(Vec<i16>),
+    /// The speaker went on: the last draft is not the phrase.
+    Resumed,
+    /// A phrase, whole.
+    Phrase(Vec<i16>),
+    /// What was heard was too short to be speech -- a click, a cough -- and comes to nothing.
+    Dropped,
+}
 
 pub struct Phrases {
     window: usize,
@@ -52,6 +76,8 @@ struct Building {
     /// Quiet windows since the last loud one.
     quiet: usize,
     loud: usize,
+    /// Handed out as a draft since the last loud window.
+    drafted: bool,
 }
 
 impl Phrases {
@@ -74,25 +100,40 @@ impl Phrases {
 
     /// Take more of the microphone; out come the phrases it finished.
     pub fn feed(&mut self, samples: &[i16]) -> Vec<Vec<i16>> {
-        let mut done = Vec::new();
+        self.listen(samples)
+            .into_iter()
+            .filter_map(|cut| match cut {
+                Cut::Phrase(samples) => Some(samples),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Take more of the microphone; out comes all it noticed, in order: speech beginning, drafts,
+    /// phrases.
+    pub fn listen(&mut self, samples: &[i16]) -> Vec<Cut> {
+        let mut out = Vec::new();
         for &s in samples {
             self.pending.push(s);
             if self.pending.len() == self.window {
                 let window = std::mem::take(&mut self.pending);
-                if let Some(phrase) = self.window_done(&window) {
-                    done.push(phrase);
-                }
+                self.window_done(&window, &mut out);
                 self.pending = window;
                 self.pending.clear();
             }
         }
-        done
+        out
     }
 
     /// What is being said when the microphone is closed: kept if it is speech.
     pub fn flush(&mut self) -> Option<Vec<i16>> {
         let b = self.building.take()?;
         (b.loud * WINDOW_MS as usize >= SHORTEST_SPEECH_MS as usize).then_some(b.samples)
+    }
+
+    /// Whether what is being heard was handed out as a draft, and not taken back.
+    pub fn drafted(&self) -> bool {
+        self.building.as_ref().is_some_and(|b| b.drafted)
     }
 
     /// The last window's loudness from 0 (the floor or quieter) to 1 (30 dB over it): a meter.
@@ -105,7 +146,7 @@ impl Phrases {
         self.building.is_some()
     }
 
-    fn window_done(&mut self, window: &[i16]) -> Option<Vec<i16>> {
+    fn window_done(&mut self, window: &[i16], out: &mut Vec<Cut>) {
         let energy = window.iter().map(|&s| (s as f64) * (s as f64)).sum::<f64>() / window.len() as f64;
         let db = (10.0 * (energy / (32768.0 * 32768.0) + 1e-12).log10()) as f32;
         self.level = db;
@@ -113,12 +154,14 @@ impl Phrases {
         if self.seen <= WARM_UP {
             self.floor = if self.seen == 1 { db } else { self.floor * 0.5 + db * 0.5 };
             self.remember(window);
-            return None;
+            return;
         }
         let rise = if self.building.is_some() { 0.001 } else { 0.01 };
         self.floor = if db < self.floor { self.floor * 0.7 + db * 0.3 } else { self.floor + (db - self.floor) * rise };
         self.floor = self.floor.clamp(-85.0, -30.0);
 
+        let tail = (TAIL_MS / WINDOW_MS) as usize;
+        let speech = |b: &Building| b.loud * WINDOW_MS as usize >= SHORTEST_SPEECH_MS as usize;
         match &mut self.building {
             None => {
                 let loud = db > self.floor + START_OVER && db > QUIETEST_SPEECH;
@@ -126,34 +169,44 @@ impl Phrases {
                 if self.loud_run >= 3 {
                     let mut samples: Vec<i16> = self.pre.drain(..).collect();
                     samples.extend_from_slice(window);
-                    self.building = Some(Building { samples, quiet: 0, loud: self.loud_run });
+                    self.building = Some(Building { samples, quiet: 0, loud: self.loud_run, drafted: false });
                     self.loud_run = 0;
+                    out.push(Cut::Began);
                 } else {
                     self.remember(window);
                 }
-                None
             }
             Some(b) => {
                 b.samples.extend_from_slice(window);
                 if db > self.floor + KEEP_OVER && db > QUIETEST_SPEECH {
                     b.loud += 1;
                     b.quiet = 0;
+                    if std::mem::take(&mut b.drafted) {
+                        out.push(Cut::Resumed);
+                    }
                 } else {
                     b.quiet += 1;
                 }
                 let longest = (LONGEST_MS / WINDOW_MS) as usize * self.window;
+                // The phrase as it would end now: the pause cut to its tail.
+                let ending = |b: &Building, window: usize| {
+                    let cut = b.quiet.saturating_sub(tail) * window;
+                    b.samples[..b.samples.len() - cut.min(b.samples.len())].to_vec()
+                };
                 if b.quiet >= self.pause_windows {
-                    let mut b = self.building.take().unwrap();
-                    let tail = (TAIL_MS / WINDOW_MS) as usize;
-                    let cut = b.quiet.saturating_sub(tail) * self.window;
-                    b.samples.truncate(b.samples.len() - cut.min(b.samples.len()));
-                    (b.loud * WINDOW_MS as usize >= SHORTEST_SPEECH_MS as usize).then_some(b.samples)
+                    let b = self.building.take().unwrap();
+                    out.push(if speech(&b) { Cut::Phrase(ending(&b, self.window)) } else { Cut::Dropped });
                 } else if b.samples.len() >= longest {
                     // Mid-word, perhaps; better than Whisper dropping the end of a long phrase.
-                    let b = self.building.replace(Building { samples: Vec::new(), quiet: 0, loud: 0 }).unwrap();
-                    Some(b.samples)
-                } else {
-                    None
+                    let b = self.building.replace(Building { samples: Vec::new(), quiet: 0, loud: 0, drafted: false }).unwrap();
+                    if b.drafted {
+                        out.push(Cut::Resumed);
+                    }
+                    out.push(Cut::Phrase(b.samples));
+                    out.push(Cut::Began);
+                } else if b.quiet == (DRAFT_MS / WINDOW_MS) as usize && !b.drafted && speech(b) && self.pause_windows > b.quiet {
+                    b.drafted = true;
+                    out.push(Cut::Draft(ending(b, self.window)));
                 }
             }
         }
@@ -244,6 +297,46 @@ mod tests {
     fn speech_while_closing_is_kept() {
         let phrases = run(&[(800, -60.0), (900, -20.0)]);
         assert_eq!(phrases.len(), 1);
+    }
+
+    /// Everything the cutter noticed, for parts of noise at a loudness each.
+    fn cuts(parts: &[(u32, f32)]) -> Vec<Cut> {
+        let mut seed = 7;
+        let mut p = Phrases::new(RATE, 700);
+        parts.iter().flat_map(|&(ms, db)| p.listen(&noise(ms, db, &mut seed))).collect()
+    }
+
+    fn kinds(cuts: &[Cut]) -> Vec<&'static str> {
+        cuts.iter()
+            .map(|c| match c {
+                Cut::Began => "began",
+                Cut::Draft(_) => "draft",
+                Cut::Resumed => "resumed",
+                Cut::Phrase(_) => "phrase",
+                Cut::Dropped => "dropped",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_phrase_that_ends_as_drafted_is_the_draft() {
+        let c = cuts(&[(1000, -60.0), (1000, -20.0), (1500, -60.0)]);
+        assert_eq!(kinds(&c), ["began", "draft", "phrase"]);
+        let (Cut::Draft(draft), Cut::Phrase(phrase)) = (&c[1], &c[2]) else { unreachable!() };
+        assert_eq!(draft, phrase);
+    }
+
+    #[test]
+    fn speech_going_on_takes_the_draft_back() {
+        let c = cuts(&[(800, -60.0), (600, -20.0), (400, -60.0), (600, -20.0), (1500, -60.0)]);
+        assert_eq!(kinds(&c), ["began", "draft", "resumed", "draft", "phrase"]);
+        let (Cut::Draft(second), Cut::Phrase(phrase)) = (&c[3], &c[4]) else { unreachable!() };
+        assert_eq!(second, phrase);
+    }
+
+    #[test]
+    fn a_click_begins_and_comes_to_nothing() {
+        assert_eq!(kinds(&cuts(&[(800, -60.0), (80, -10.0), (1500, -60.0)])), ["began", "dropped"]);
     }
 
     #[test]

@@ -41,6 +41,9 @@ impl Hemera {
         let agent = ureq::AgentBuilder::new()
             // Not reachable in this long is not reachable: away from home without Tailscale.
             .timeout_connect(Duration::from_secs(3))
+            // Connections kept for the next request: over Wi-Fi each new one costs a round trip,
+            // and a turn of the assistant's asks for a few at once.
+            .max_idle_connections_per_host(4)
             .build();
         Hemera { base: base.trim_end_matches('/').to_string(), agent }
     }
@@ -127,6 +130,11 @@ impl Hemera {
             .filter(|m| m.pointer("/hemera/kind").and_then(Value::as_str) == Some(kind))
             .filter_map(|m| m.get("id").and_then(Value::as_str).map(str::to_string))
             .collect())
+    }
+
+    /// A POST of JSON, answered in JSON.
+    pub fn post_json(&self, path: &str, request: &Value, timeout: Duration) -> Result<Value, String> {
+        self.post(path, "application/json", request.to_string().as_bytes(), timeout)
     }
 
     /// A request whose answer is read as it comes (server-sent events): the body, to be read

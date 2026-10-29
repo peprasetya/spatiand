@@ -9,10 +9,18 @@
 //!
 //! What is written is spoken as it is written, a sentence at a time, so the first words are heard
 //! while the rest is still coming.
+//!
+//! **Quick to the first word** (the owner found 10-20 s on 2026-10-29): the small model's decision
+//! is asked beside its answer, not before it, the answer held back until the decision comes; and
+//! what is sent begins the same way every turn -- tools, then a system message that never changes,
+//! then the chat -- so the server reads only what is new. The room as it is now (the time, the
+//! windows) goes with the wearer's words, not in the system message, where a minute passing made
+//! the server read everything after it again.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use spatiand_voice::chat::{converse, Ask, Piece};
@@ -30,12 +38,17 @@ pub struct Turn {
     pub history: Vec<Said>,
     pub look: bool,
     pub settings: Settings,
+    /// When the wearer stopped speaking, when it was said aloud: how long the answer took is
+    /// counted from then.
+    pub ended: Option<Instant>,
 }
 
 /// What the mind has to say to the window.
 pub enum Told {
     Text(String),
     Thinking(String),
+    /// A tool is being done, by name: the figure works.
+    Doing(String),
     Did(String),
     /// The larger model has it now.
     HandedOver(String),
@@ -74,7 +87,18 @@ impl Brain {
 fn think(turns: Receiver<Turn>, room: Room, voice: Voice, told: Sender<Told>, stop: Arc<AtomicBool>) {
     // What waits for the wearer's yes, and since when.
     let mut held: Option<(Held, std::time::Instant)> = None;
+    // One client for every turn, so its connections to hemera are kept from one to the next.
+    let mut client: Option<(String, Hemera)> = None;
     while let Ok(turn) = turns.recv() {
+        let address = VoiceSettings::load(&crate::store::shared()).hemera;
+        let hemera = match &client {
+            Some((at, h)) if *at == address => h.clone(),
+            _ => {
+                let h = Hemera::new(&address);
+                client = Some((address, h.clone()));
+                h
+            }
+        };
         let wake = room.wake.clone();
         let say = |t: Told| {
             let _ = told.send(t);
@@ -110,7 +134,7 @@ fn think(turns: Receiver<Turn>, room: Room, voice: Voice, told: Sender<Told>, st
                 None => {}
             }
         }
-        match answer(&turn, &room, &voice, &say, &stop, &mut held) {
+        match answer(&turn, &hemera, &room, &voice, &say, &stop, &mut held) {
             Ok(said) => say(Told::Done(said)),
             Err(why) => {
                 log::warn!("brain: {why}");
@@ -126,47 +150,47 @@ const ROUNDS: usize = 10;
 /// How much of the chat the model is given.
 const REMEMBERED: usize = 16;
 
-fn answer(turn: &Turn, room: &Room, voice: &Voice, say: &dyn Fn(Told), stop: &AtomicBool, held: &mut Option<(Held, std::time::Instant)>) -> Result<Said, String> {
+fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn(Told), stop: &AtomicBool, held: &mut Option<(Held, std::time::Instant)>) -> Result<Said, String> {
     let s = &turn.settings;
-    let speech = VoiceSettings::load(&crate::store::shared());
-    let hemera = Hemera::new(&speech.hemera);
+    let started = Instant::now();
+    if let Some(ended) = turn.ended {
+        voice.mark(ended);
+    }
+    // **The small model decides who answers**, in one word -- left to a tool the small model
+    // might call, it was seen to write a long program itself instead. Asked beside its answer:
+    // asked first, it put a round trip and a second before every answer.
+    let decision = if turn.look { None } else { decide(hemera, s, turn) };
     let windows = room.ask(json!({"do": "windows"}));
-    let mut messages = vec![json!({"role": "system", "content": system(s, &windows, false)})];
-    for said in turn.history.iter().rev().take(REMEMBERED).collect::<Vec<_>>().into_iter().rev() {
+    let mut messages = vec![json!({"role": "system", "content": system(s, false)})];
+    for said in remembered(&turn.history) {
         let mut text = said.text.clone();
         if !said.did.is_empty() {
             text.push_str(&format!("\n(Done in the room: {}.)", said.did.join("; ")));
         }
         messages.push(json!({"role": said.role, "content": text}));
     }
-    // The window being looked at, shown, when the wearer asked about "this".
-    let mut user = json!({"role": "user", "content": turn.text});
+    // The room as it is, with the wearer's words; the window being looked at, shown, when the
+    // wearer asked about "this".
+    let words = format!("{}\n{}", room_note(&windows), turn.text);
+    let mut user = json!({"role": "user", "content": words});
     if turn.look {
         let picture = room.ask(json!({"do": "picture", "largest": 1024}));
         if let Some(png) = picture.get("png").and_then(Value::as_str) {
             user["content"] = json!([
                 {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{png}")}},
-                {"type": "text", "text": turn.text},
+                {"type": "text", "text": words},
             ]);
         }
     }
     messages.push(user);
 
-    // **The small model decides, at once, who answers**: one word, before anything else. Left to
-    // a tool the small model might call, it was seen to write a long program itself instead.
-    let large_first = !turn.look && wants_larger(&hemera, s, turn);
     let mut large = false;
     let mut model = s.model.clone();
     let mut said = Said { role: "assistant".into(), model: model.clone(), at: crate::store::now(), ..Default::default() };
-    if large_first {
-        large = true;
-        model = s.large_model.clone();
-        said.model = model.clone();
-        messages[0] = json!({"role": "system", "content": system(s, &windows, true)});
-        log::info!("brain: {} decided the larger model answers", s.model);
-        say(Told::HandedOver(model.clone()));
-        voice.set_thinking(s.thinking == "tone");
-    }
+    // Until the decision comes, what the small model writes is held back: shown and said only
+    // once the answer is its to give.
+    let mut decided: Option<bool> = if decision.is_some() { None } else { Some(false) };
+    let mut first_words = false;
     for _ in 0..ROUNDS {
         if stop.load(Ordering::Relaxed) {
             break;
@@ -182,15 +206,38 @@ fn answer(turn: &Turn, room: &Room, voice: &Voice, say: &dyn Fn(Told), stop: &At
         let mut speaking = String::new();
         let mut in_code = false;
         let mut thought = String::new();
+        let mut held_back = String::new();
         let read_thinking = large && s.thinking == "read";
         let asked_at = std::time::Instant::now();
         log::info!("brain: asking {model} ({} messages)", messages.len());
-        let answer = converse(&hemera, &ask, |piece| {
+        let answer = converse(hemera, &ask, |piece| {
             if stop.load(Ordering::Relaxed) {
                 return false;
             }
+            if decided.is_none() {
+                decided = poll(&decision);
+            }
+            match decided {
+                // The larger model's: this answer stops, unseen and unsaid.
+                Some(true) => return false,
+                None => {
+                    if let Piece::Text(t) = piece {
+                        held_back.push_str(t);
+                    }
+                    return true;
+                }
+                Some(false) if !held_back.is_empty() => {
+                    let t = std::mem::take(&mut held_back);
+                    say(Told::Text(t.clone()));
+                    speaking.push_str(&t);
+                }
+                Some(false) => {}
+            }
             match piece {
                 Piece::Text(t) => {
+                    if !std::mem::replace(&mut first_words, true) {
+                        log::info!("brain: first words from {model} {:.2} s into the turn", started.elapsed().as_secs_f32());
+                    }
                     say(Told::Text(t.clone()));
                     speaking.push_str(t);
                     speak_out(&mut speaking, &mut in_code, voice, false);
@@ -209,6 +256,26 @@ fn answer(turn: &Turn, room: &Room, voice: &Voice, say: &dyn Fn(Told), stop: &At
             }
             true
         })?;
+        if decided.is_none() {
+            // Answered before the decision came: it comes in a moment.
+            decided = Some(decision.as_ref().and_then(|rx| rx.recv_timeout(Duration::from_secs(3)).ok()).unwrap_or(false));
+        }
+        if decided == Some(true) && !large {
+            // Decided, and done with: the larger model's answer is its own, not held or cut.
+            decided = Some(false);
+            large = true;
+            model = s.large_model.clone();
+            said.model = model.clone();
+            messages[0] = json!({"role": "system", "content": system(s, true)});
+            log::info!("brain: {} decided the larger model answers", s.model);
+            say(Told::HandedOver(model.clone()));
+            voice.set_thinking(s.thinking == "tone");
+            continue;
+        }
+        if !held_back.is_empty() {
+            say(Told::Text(held_back.clone()));
+            speaking.push_str(&held_back);
+        }
         speak_out(&mut speaking, &mut in_code, voice, true);
         if read_thinking {
             voice.say(&thought);
@@ -230,7 +297,7 @@ fn answer(turn: &Turn, room: &Room, voice: &Voice, say: &dyn Fn(Told), stop: &At
             large = true;
             model = s.large_model.clone();
             said.model = model.clone();
-            messages[0] = json!({"role": "system", "content": system(s, &windows, true)});
+            messages[0] = json!({"role": "system", "content": system(s, true)});
             log::info!("brain: handed over to {model}");
             say(Told::HandedOver(model.clone()));
             voice.set_thinking(s.thinking == "tone");
@@ -246,6 +313,7 @@ fn answer(turn: &Turn, room: &Room, voice: &Voice, say: &dyn Fn(Told), stop: &At
                 messages.push(json!({"role": "tool", "tool_call_id": call.id, "content": "You are the larger model already: answer."}));
                 continue;
             }
+            say(Told::Doing(call.name.clone()));
             let done = tools::run(call, room);
             log::info!("brain: {}({}) -> {}", call.name, call.arguments, done.content.chars().take(160).collect::<String>());
             if let Some(h) = done.held.clone() {
@@ -273,10 +341,52 @@ fn answer(turn: &Turn, room: &Room, voice: &Voice, say: &dyn Fn(Told), stop: &At
     Ok(said)
 }
 
-/// Who it is, what it can do, and what is in the room: the system's part of every turn. The
-/// larger model is not told about handing over -- told, it spent its thinking on whether it
-/// should, and opened an application to be sure.
-fn system(s: &Settings, windows: &Value, larger: bool) -> String {
+/// Who it is and what it can do: the system's part of every turn, **the same every turn** -- the
+/// server keeps what it has read and reads again only from where a request first differs, so
+/// nothing that changes (the time, the windows) belongs here; that goes with the wearer's words
+/// ([`room_note`]). The larger model is not told about handing over -- told, it spent its thinking
+/// on whether it should, and opened an application to be sure.
+fn system(s: &Settings, larger: bool) -> String {
+    format!(
+        "You are {name}, the wearer's assistant in Spatiand, a 3D desktop seen through glasses. {persona}\n\
+         \n\
+         Talk like a person: short, natural sentences, in the language of the wearer's last words. They often mix Indonesian and English in one sentence; follow them. What you write is spoken aloud: no markdown, no lists unless asked, no emoji.\n\
+         \n\
+         Each message from the wearer begins with a note in square brackets on the room as it is then: the time, and the windows in it. The wearer did not say it; use it when it helps.\n\
+         \n\
+         You act in the room with your tools: open applications, work windows as the wearer would (read them, look at them, click, right-click, scroll, drag, type, press keys), bring the room back in front of the wearer, and keep reminders. To find where to click, look at the window first; places are fractions of the window from 0 to 1, from its top left. Say briefly what you are doing.\n\
+         Ask the wearer first before closing a window, deleting anything, sending a message, buying anything, or pressing Enter in a terminal.\n\
+         {route}",
+        name = s.name,
+        persona = s.persona,
+        route = if larger {
+            "You are the larger model: think it through, then answer. Use tools only when the request is about the room. Code goes in a code block; say the rest briefly."
+        } else {
+            "When a request needs careful thought, working out, code, a long or exact answer, or several steps you are unsure of, call hand_over at once instead of answering."
+        },
+    )
+}
+
+/// A request that begins as every one of a model's does, for it to read before it is needed
+/// (`crate::warm`): its tools and its system message, and a word from no one. The larger
+/// model's when `larger`.
+pub fn prime(s: &Settings, larger: bool) -> Value {
+    json!({
+        "model": if larger { &s.large_model } else { &s.model },
+        "messages": [
+            {"role": "system", "content": system(s, larger)},
+            {"role": "user", "content": "[Getting ready: nothing is asked yet.]\nHi."},
+        ],
+        "tools": tools::all(!larger),
+        "max_tokens": 1,
+        "temperature": 0,
+        "stream": false,
+        "chat_template_kwargs": {"enable_thinking": false},
+    })
+}
+
+/// The room as it is now, for the wearer's message: the time, and the windows in it.
+fn room_note(windows: &Value) -> String {
     let mut listed = String::new();
     for w in windows.get("windows").and_then(Value::as_array).into_iter().flatten().take(14) {
         let id = w.get("window").and_then(Value::as_u64).unwrap_or(0);
@@ -296,28 +406,19 @@ fn system(s: &Settings, windows: &Value, larger: bool) -> String {
         listed.push_str(&format!("\n- window {id}: {app} \u{2014} {title}{flags}"));
     }
     if listed.is_empty() {
-        listed = "\n- none".into();
+        listed = " none".into();
     }
-    format!(
-        "You are {name}, the wearer's assistant in Spatiand, a 3D desktop seen through glasses. {persona}\n\
-         \n\
-         Talk like a person: short, natural sentences, in the language the wearer used. They often mix Indonesian and English in one sentence; follow them. What you write is spoken aloud: no markdown, no lists unless asked, no emoji.\n\
-         \n\
-         You act in the room with your tools: open applications, work windows as the wearer would (read them, look at them, click, right-click, scroll, drag, type, press keys), bring the room back in front of the wearer, and keep reminders. To find where to click, look at the window first; places are fractions of the window from 0 to 1, from its top left. Say briefly what you are doing.\n\
-         Ask the wearer first before closing a window, deleting anything, sending a message, buying anything, or pressing Enter in a terminal.\n\
-         {route}\n\
-         \n\
-         It is {now}.\n\
-         Windows in the room:{listed}",
-        name = s.name,
-        persona = s.persona,
-        now = crate::time::now_line(crate::store::now()),
-        route = if larger {
-            "You are the larger model: think it through, then answer. Use tools only when the request is about the room. Code goes in a code block; say the rest briefly."
-        } else {
-            "When a request needs careful thought, working out, code, a long or exact answer, or several steps you are unsure of, call hand_over at once instead of answering."
-        },
-    )
+    format!("[It is {}. Windows in the room:{listed}]", crate::time::now_line(crate::store::now()))
+}
+
+/// How much of the chat the model is given, at the least, and the steps its start moves in: the
+/// start moving every turn would have the server read the whole chat again every turn.
+const STEP: usize = 8;
+
+/// The part of the chat the model is given: the last [`REMEMBERED`] things said or a few more.
+fn remembered(history: &[Said]) -> &[Said] {
+    let start = history.len().saturating_sub(REMEMBERED) / STEP * STEP;
+    &history[start..]
 }
 
 /// Whether what the wearer said is a yes (`Some(true)`), a no (`Some(false)`), or neither: in
@@ -347,7 +448,27 @@ fn looks_indonesian(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::agreement;
+    use super::*;
+
+    #[test]
+    fn what_is_sent_begins_the_same_whatever_the_room() {
+        let s = Settings::default();
+        let a = system(&s, false);
+        let note = room_note(&json!({"windows": [{"window": 3, "app": "id.prasetya.spatiand.spatiquill", "title": "~", "focused": true}]}));
+        assert!(!a.contains("window 3") && note.contains("window 3: spatiquill"));
+        assert_eq!(a, system(&s, false));
+        assert!(note.starts_with("[It is ") && note.ends_with("(focused)]"));
+    }
+
+    #[test]
+    fn the_chat_given_starts_in_steps() {
+        let chat: Vec<Said> = (0..40).map(|i| Said { text: i.to_string(), ..Default::default() }).collect();
+        assert_eq!(remembered(&chat[..10]).len(), 10);
+        assert_eq!(remembered(&chat[..23]).len(), 23);
+        assert_eq!(remembered(&chat[..24]).len(), 16);
+        assert_eq!(remembered(&chat[..31])[0].text, "8");
+        assert_eq!(remembered(&chat[..32])[0].text, "16");
+    }
 
     #[test]
     fn yes_and_no_in_either_language() {
@@ -361,20 +482,51 @@ mod tests {
     }
 }
 
-/// Whether this request is the larger model's: the small one's decision, in one word, made in a
-/// moment. A failed decision is the small model's turn: it can still hand over by itself.
-fn wants_larger(hemera: &Hemera, s: &Settings, turn: &Turn) -> bool {
+/// The small model's decision whether the larger one answers, asked on a thread of its own while
+/// the small one starts answering. `None` when there is no larger model to hand to.
+fn decide(hemera: &Hemera, s: &Settings, turn: &Turn) -> Option<Receiver<bool>> {
     if s.large_model.is_empty() || s.large_model == s.model {
-        return false;
+        return None;
     }
     let last = turn.history.iter().rev().find(|said| said.role == "assistant").map(|said| said.text.chars().take(300).collect::<String>()).unwrap_or_default();
+    let (hemera, model, text) = (hemera.clone(), s.model.clone(), turn.text.clone());
+    let (tx, rx) = channel();
+    std::thread::Builder::new()
+        .name("decide".into())
+        .spawn(move || {
+            let _ = tx.send(wants_larger(&hemera, &model, &text, &last));
+        })
+        .ok()?;
+    Some(rx)
+}
+
+/// The decision, if it has come. One that never will (its thread went) is the small model's.
+fn poll(decision: &Option<Receiver<bool>>) -> Option<bool> {
+    match decision.as_ref()?.try_recv() {
+        Ok(larger) => Some(larger),
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => Some(false),
+    }
+}
+
+/// Whether this request is the larger model's: the small one's decision, in one word, made in a
+/// moment. A failed decision is the small model's turn: it can still hand over by itself.
+fn wants_larger(hemera: &Hemera, model: &str, request: &str, last: &str) -> bool {
+    // Told that the quick model knows the time, and shown a few of each: without them, after an
+    // answer that gave the time, "what day is it tomorrow?" went to the larger model, which took
+    // fifteen seconds over it (the test of 2026-10-29); with them 24 of 25 requests went where
+    // they should.
     let system = "You decide who answers the wearer's request. The quick model answers chat, questions with a short answer, \
                   and actions in the room: opening applications, working windows, clicking, typing, reminders, settings. \
                   The larger model answers what needs careful thought: writing or explaining code, calculations of several steps, \
-                  analysis, planning, comparing, long or exact writing, translating long text. Reply with one word: quick or larger.";
-    let user = if last.is_empty() { format!("Request: {}", turn.text) } else { format!("Your last answer: {last}\n\nRequest: {}", turn.text) };
+                  analysis, planning, comparing, long or exact writing, translating long text. \
+                  The quick model is told the time, the date and what is in the room, so questions about them are quick. \
+                  For example: \"what time is it?\" quick; \"what day is it tomorrow?\" quick; \"buka browser\" quick; \
+                  \"how many days until Friday?\" quick; \"write a script that backs up my photos\" larger; \
+                  \"explain how a VPN works\" larger; \"compare these two laptops\" larger. Reply with one word: quick or larger.";
+    let user = if last.is_empty() { format!("Request: {request}") } else { format!("Your last answer: {last}\n\nRequest: {request}") };
     let started = std::time::Instant::now();
-    let decided = hemera.complete(&s.model, &[spatiand_voice::hemera::Message::system(system), spatiand_voice::hemera::Message::user(user)], 4, std::time::Duration::from_secs(3));
+    let decided = hemera.complete(model, &[spatiand_voice::hemera::Message::system(system), spatiand_voice::hemera::Message::user(user)], 4, std::time::Duration::from_secs(3));
     log::info!("brain: decided {:?} in {:.2} s", decided, started.elapsed().as_secs_f32());
     decided.is_ok_and(|d| d.to_lowercase().contains("larger"))
 }

@@ -17,6 +17,8 @@ pub struct Answering {
     pub did: Vec<String>,
     pub model: String,
     pub handed_over: bool,
+    /// The tool being done now, by name.
+    pub doing: Option<String>,
 }
 
 /// What the window shows, lent to it each frame.

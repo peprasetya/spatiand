@@ -20,6 +20,7 @@ mod time;
 mod tools;
 mod ui;
 mod voice;
+mod warm;
 
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
@@ -35,7 +36,7 @@ use spatiand_voice::speech::Voice as Spoken;
 use spatiand_voice::{Hemera, VoiceSettings};
 
 use brain::{Brain, Told, Turn};
-use ears::{Answered, Ears, Heard};
+use ears::{Conversation, Ear, Ears, Heard};
 use store::{Chat, Said, Settings};
 use tools::Room;
 use ui::{Answering, Page, View, Want, Window};
@@ -89,7 +90,11 @@ struct Pal {
     ears: Option<Ears>,
     heard_tx: Sender<Heard>,
     heard: Receiver<Heard>,
-    answered: Arc<Answered>,
+    conversation: Arc<Conversation>,
+    /// What the ears are doing.
+    ear: Ear,
+    /// When hemera was last asked to have the models ready.
+    warmed: Option<Instant>,
     name: Arc<Mutex<String>>,
     waker: Waker,
     woken: std::fs::File,
@@ -100,8 +105,9 @@ struct Pal {
     characters: Vec<String>,
     lists: Receiver<(Vec<String>, Vec<String>)>,
     lists_tx: Sender<(Vec<String>, Vec<String>)>,
-    /// The mood the figure was last told, and when the last answer finished (it smiles then).
-    mood: &'static str,
+    /// What the figure was last told it is doing, and when the last answer finished (it smiles
+    /// once it is heard out).
+    state: &'static str,
     finished_at: Option<Instant>,
 }
 
@@ -117,7 +123,7 @@ macro_rules! view {
             speech: &$pal.speech,
             listening: $pal.ears.is_some(),
             look: $pal.look,
-            status: status(&$pal.answering, $pal.ears.is_some(), &$pal.settings),
+            status: status($pal.state, &$pal.settings),
             trouble: $pal.trouble.as_ref().filter(|(_, at)| at.elapsed() < Duration::from_secs(12)).map(|(t, _)| t.as_str()),
             models: &$pal.models,
             voices: &$pal.voices,
@@ -126,14 +132,31 @@ macro_rules! view {
     };
 }
 
-/// What it is doing, beside its name.
-fn status(answering: &Option<Answering>, listening: bool, settings: &Settings) -> &'static str {
-    match (answering, listening) {
-        (Some(a), _) if a.handed_over => "thinking",
-        (Some(_), _) => "answering",
-        (None, true) => "listening for its name",
-        (None, false) if !settings.listening => "not listening",
-        (None, false) => "",
+/// What it is doing, beside its name: the figure's state in words.
+fn status(state: &str, settings: &Settings) -> &'static str {
+    match state {
+        "talking" => "speaking",
+        "working" => "working in the room",
+        "pondering" => "thinking it through",
+        "thinking" => "thinking",
+        "transcribing" => "writing down what you said",
+        "hearing" => "listening to you",
+        "attentive" => "listening \u{2014} no need to say its name",
+        "listening" | "checking" => "listening for its name",
+        "idle" if !settings.listening => "not listening",
+        _ => "",
+    }
+}
+
+/// The figure's state as one of the five moods every room knows, for a room older than the
+/// state's name.
+fn mood_of(state: &str) -> &'static str {
+    match state {
+        "talking" => "talking",
+        "working" | "pondering" | "thinking" | "transcribing" => "thinking",
+        "hearing" | "attentive" | "listening" | "checking" => "listening",
+        "happy" => "happy",
+        _ => "idle",
     }
 }
 
@@ -172,14 +195,16 @@ impl Pal {
                     self.speech.clone(),
                     self.name.clone(),
                     self.voice.clone(),
-                    self.answered.clone(),
+                    self.conversation.clone(),
                     self.heard_tx.clone(),
                     move || waker.wake(),
                 ));
+                self.warm(true);
                 log::info!("listening for {:?}", self.settings.name);
             }
             (false, true) => {
                 self.ears = None;
+                self.ear = Ear::Quiet;
                 log::info!("not listening");
             }
             _ => {}
@@ -207,7 +232,31 @@ impl Pal {
         0
     }
 
-    fn ask(&mut self, text: String) {
+    /// Have hemera ready with what the next answer needs (`crate::warm`); not again for a few
+    /// minutes unless `now`.
+    fn warm(&mut self, now: bool) {
+        if !now && self.warmed.is_some_and(|at| at.elapsed() < warm::EVERY) {
+            return;
+        }
+        self.warmed = Some(Instant::now());
+        let mut models = Vec::new();
+        if self.ears.is_some() {
+            models.push(self.speech.transcription_model.clone());
+        }
+        if self.settings.spoken {
+            models.push(self.settings.speech_model.clone());
+        }
+        let wanted = warm::Wanted {
+            models,
+            small: self.settings.model.clone(),
+            prime: brain::prime(&self.settings, false),
+            large: self.settings.large_model.clone(),
+            prime_large: brain::prime(&self.settings, true),
+        };
+        warm::warm(Hemera::new(&self.speech.hemera), wanted, now);
+    }
+
+    fn ask(&mut self, text: String, ended: Option<Instant>) {
         if self.answering.is_some() {
             self.brain.stop();
             self.voice.hush();
@@ -224,16 +273,23 @@ impl Pal {
             log::warn!("the chat could not be kept: {e}");
         }
         self.answering = Some(Answering::default());
-        self.brain.ask(Turn { text, history, look: std::mem::take(&mut self.look), settings: self.settings.clone() });
+        self.brain.ask(Turn { text, history, look: std::mem::take(&mut self.look), settings: self.settings.clone(), ended });
         self.dirty = true;
     }
 
     fn told(&mut self, told: Told) {
         let Some(a) = self.answering.as_mut() else { return };
         match told {
-            Told::Text(t) => a.text.push_str(&t),
+            Told::Text(t) => {
+                a.doing = None;
+                a.text.push_str(&t);
+            }
             Told::Thinking(t) => a.thinking.push_str(&t),
-            Told::Did(d) => a.did.push(d),
+            Told::Doing(name) => a.doing = Some(name),
+            Told::Did(d) => {
+                a.doing = None;
+                a.did.push(d);
+            }
             Told::HandedOver(model) => {
                 a.handed_over = true;
                 a.model = model;
@@ -244,7 +300,7 @@ impl Pal {
             }
             Told::Done(said) => {
                 self.answering = None;
-                self.answered.now();
+                self.conversation.touch();
                 self.finished_at = Some(Instant::now());
                 if let Some(chat) = self.current.and_then(|i| self.chats.get_mut(i)) {
                     chat.said.push(said);
@@ -260,19 +316,26 @@ impl Pal {
 
     fn heard(&mut self, heard: Heard) {
         match heard {
+            Heard::Ear(ear) => {
+                // Someone speaking: a model stopped since is started while they talk.
+                if ear == Ear::Hearing && self.ear != Ear::Hearing {
+                    self.warm(false);
+                }
+                self.ear = ear;
+            }
             Heard::Called => {
                 let _ = self.app.room_ask(&json!({"do": "avatar", "wave": true}).to_string(), channel().0);
                 // Its name alone: it answers, and listens for what comes next without it.
                 self.voice.say(if self.speech.languages.iter().any(|l| l == "id") { "Ya?" } else { "Yes?" });
-                self.answered.now();
+                self.conversation.touch();
             }
-            Heard::Asked(text) => self.ask(text),
+            Heard::Asked { text, ended } => self.ask(text, Some(ended)),
         }
     }
 
     fn want(&mut self, want: Want) {
         match want {
-            Want::Ask(text) => self.ask(text),
+            Want::Ask(text) => self.ask(text, None),
             Want::NewChat => {
                 self.current = None;
                 self.chats.insert(0, Chat::new());
@@ -334,6 +397,8 @@ impl Pal {
             self.tend_ears();
         }
         self.tell_figure();
+        // Other models, perhaps: have them ready.
+        self.warm(true);
     }
 
     /// The figure, as chosen: which, and whether it is shown.
@@ -342,19 +407,35 @@ impl Pal {
         let _ = self.app.room_ask(&figure.to_string(), channel().0);
     }
 
-    /// What the figure is doing, told to the room when it changes.
+    /// What the figure is doing, told to the room when it changes: by name (`state`), and as one
+    /// of the moods every room knows (`mood`), for a room that does not know the name yet.
+    ///
+    /// Its voice heard is talking, whatever else; then what the wearer is saying, in a
+    /// conversation (heard, being written); then the answer's work (a tool, the larger model
+    /// thinking, the small one). Out of a conversation, a phrase being written is only checked
+    /// for the name -- the figure barely stirs, as it may not be for it at all. After an answer
+    /// is heard out it smiles a moment, then waits for more: no name needed, until the
+    /// conversation lapses.
     fn tend_mood(&mut self) {
-        let mood = match &self.answering {
-            Some(_) if self.voice.busy() => "talking",
-            Some(_) => "thinking",
-            None if self.voice.busy() => "talking",
-            None if self.finished_at.is_some_and(|at| at.elapsed() < Duration::from_secs(2)) => "happy",
-            None if self.ears.is_some() => "listening",
-            None => "idle",
+        let engaged = self.conversation.open(&self.voice);
+        let heard_out = self.finished_at.map(|at| self.voice.quiet_at().map_or(at, |q| q.max(at)));
+        let state = match (&self.answering, self.ear) {
+            _ if self.voice.speaking() => "talking",
+            (_, Ear::Hearing) if engaged => "hearing",
+            (_, Ear::Writing) if engaged => "transcribing",
+            (Some(a), _) if a.doing.is_some() => "working",
+            (Some(a), _) if a.handed_over => "pondering",
+            (Some(_), _) => "thinking",
+            (None, Ear::Writing) => "checking",
+            (None, _) if heard_out.is_some_and(|at| at.elapsed() < Duration::from_millis(1200)) => "happy",
+            (None, _) if engaged => "attentive",
+            (None, _) if self.ears.is_some() => "listening",
+            (None, _) => "idle",
         };
-        if mood != self.mood {
-            self.mood = mood;
-            let _ = self.app.room_ask(&json!({"do": "avatar", "mood": mood}).to_string(), channel().0);
+        if state != self.state {
+            self.state = state;
+            self.dirty = true;
+            let _ = self.app.room_ask(&json!({"do": "avatar", "mood": mood_of(state), "state": state}).to_string(), channel().0);
         }
     }
 
@@ -390,7 +471,7 @@ impl Pal {
             log::info!("{line}");
             self.voice.say(&line);
             let _ = self.app.room_ask(&json!({"do": "notice", "text": format!("{}\n{}", self.settings.name, line)}).to_string(), channel().0);
-            self.answered.now();
+            self.conversation.touch();
         }
         if changed {
             let _ = store::save_reminders(&all);
@@ -467,6 +548,9 @@ impl Pal {
             self.app.watch(l.as_raw_fd());
         }
         self.tend_ears();
+        if self.warmed.is_none() {
+            self.warm(true);
+        }
         // Its figure in the room, as chosen.
         self.tell_figure();
         loop {
@@ -589,7 +673,9 @@ fn main() {
             ears: None,
             heard_tx,
             heard,
-            answered: Arc::new(Answered::new()),
+            conversation: Arc::new(Conversation::new()),
+            ear: Ear::Quiet,
+            warmed: None,
             name,
             waker,
             woken,
@@ -600,7 +686,7 @@ fn main() {
             characters: store::characters(),
             lists,
             lists_tx,
-            mood: "",
+            state: "",
             finished_at: None,
         };
         if !background {

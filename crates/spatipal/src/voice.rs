@@ -47,6 +47,8 @@ struct Shared {
     waiting: AtomicU64,
     voice: Mutex<Spoken>,
     hemera: Mutex<Hemera>,
+    /// When the wearer stopped speaking, until the first sound of the answer: for the log.
+    mark: Mutex<Option<Instant>>,
 }
 
 impl Voice {
@@ -61,6 +63,7 @@ impl Voice {
             waiting: AtomicU64::new(0),
             voice: Mutex::new(voice),
             hemera: Mutex::new(hemera),
+            mark: Mutex::new(None),
         });
         let s = shared.clone();
         std::thread::Builder::new().name("voice-say".into()).spawn(move || speak(said, sounds, s)).expect("a thread for the voice");
@@ -108,10 +111,41 @@ impl Voice {
         self.shared.waiting.load(Ordering::Relaxed) > 0 || now < self.shared.quiet_at.load(Ordering::Relaxed) + 350
     }
 
-    /// When the last thing said was heard, if it was (for a follow-up without the name).
-    pub fn quiet_for(&self) -> Duration {
+    /// Whether its voice is being heard now -- not only waiting to be made: the figure's mouth
+    /// moves then and only then.
+    pub fn speaking(&self) -> bool {
         let now = self.shared.epoch.elapsed().as_millis() as u64;
-        Duration::from_millis(now.saturating_sub(self.shared.quiet_at.load(Ordering::Relaxed)))
+        now < self.shared.quiet_at.load(Ordering::Relaxed)
+    }
+
+    /// When the last thing it said will have been heard by, if it said anything: a follow-up
+    /// without the name counts from then.
+    pub fn quiet_at(&self) -> Option<Instant> {
+        let at = self.shared.quiet_at.load(Ordering::Relaxed);
+        (at > 0).then(|| self.shared.epoch + Duration::from_millis(at))
+    }
+
+    /// The wearer stopped speaking at `ended`: the first sound after this is logged with how long
+    /// it took to come.
+    pub fn mark(&self, ended: Instant) {
+        *self.shared.mark.lock().unwrap() = Some(ended);
+    }
+
+    /// A voice that says nothing and plays nothing: for tests.
+    #[cfg(test)]
+    pub fn silent() -> Voice {
+        let (lines, _) = channel::<Line>();
+        let shared = Arc::new(Shared {
+            quiet_at: AtomicU64::new(0),
+            epoch: Instant::now(),
+            thinking: AtomicBool::new(false),
+            spoken: AtomicBool::new(false),
+            waiting: AtomicU64::new(0),
+            voice: Mutex::new(Spoken::default()),
+            hemera: Mutex::new(Hemera::new("http://localhost:9")),
+            mark: Mutex::new(None),
+        });
+        Voice { lines, shared }
     }
 }
 
@@ -170,6 +204,9 @@ fn play(heard: Receiver<Sound>, shared: Arc<Shared>) {
                 }
                 let samples: Vec<f32> = pcm.iter().map(|&s| s as f32 / 32768.0).collect();
                 stream.push(&samples, 1, SPEECH_RATE);
+                if let Some(ended) = shared.mark.lock().unwrap().take() {
+                    log::info!("voice: first sound {:.2} s after the wearer stopped speaking", ended.elapsed().as_secs_f32());
+                }
                 heard_by += Duration::from_secs_f64(pcm.len() as f64 / SPEECH_RATE as f64);
                 let at = heard_by.saturating_duration_since(shared.epoch).as_millis() as u64;
                 shared.quiet_at.store(at, Ordering::Relaxed);
