@@ -40,6 +40,10 @@
 //! `SPATIAND_SNAPSHOT_EYE=right` draws the right eye instead of the left. Rendering both and
 //! comparing them is how a stereoscopic surface is checked without a headset on.
 //!
+//! `SPATIAND_FIGURE='{"state":"hearing","level":0.7}'` shows the assistant's figure as it asked
+//! for that, with no assistant: how each of its gestures is looked at, since each lasts only as
+//! long as a step of an answer does.
+//!
 //! `SPATIAND_VIEW=sidecar SPATIAND_VIEW_PAGE=startup` draws the panel as it looks while a
 //! session is still coming up, with `SPATIAND_VIEW_STAGE=link|stereo|world` for which stage.
 //! That screen only exists during startup on real hardware, so this is the only way to look at
@@ -1132,6 +1136,9 @@ pub fn run(
             _ => EyeSide::Left,
         };
         let eye = spatiand_render::eye_for(side, orientation, DVec3::ZERO, &stereo);
+        if let Some(figure) = std::env::var("SPATIAND_FIGURE").ok().and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) {
+            crate::assist::show_for_test(figure);
+        }
         if view != View::Waiting {
             // Once to see which figure, then, after waiting for its file, to draw it.
             scene_ref.prepare_avatar(gl, orientation, &[eye], (stereo.h_fov_deg, stereo.v_fov_deg()), spatiand_render::pip::Corner::default());

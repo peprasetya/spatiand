@@ -15,7 +15,7 @@
 //! renderer, the windows as drawn and the shell are.
 
 use std::os::fd::OwnedFd;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::{json, Value};
@@ -104,7 +104,21 @@ pub fn tell(what: Value) {
 
 /// Whether the assistant is in the room (has said its key).
 pub fn present() -> bool {
-    LISTENERS.lock().unwrap().iter().any(|r| r.is_alive())
+    SHOWN_FOR_TEST.load(Ordering::Relaxed) || LISTENERS.lock().unwrap().iter().any(|r| r.is_alive())
+}
+
+/// The figure shown as a test asked, with no assistant there (`SPATIAND_FIGURE` in the snapshot
+/// room).
+static SHOWN_FOR_TEST: AtomicBool = AtomicBool::new(false);
+
+/// Show the figure as `figure` says, as if the assistant had asked for it; its `level` is how
+/// loud the room is heard.
+pub fn show_for_test(figure: Value) {
+    if let Some(level) = figure.get("level").and_then(Value::as_f64) {
+        HEARD_LEVEL.store((level as f32).to_bits(), Ordering::Relaxed);
+    }
+    *FIGURE.lock().unwrap() = Some(figure);
+    SHOWN_FOR_TEST.store(true, Ordering::Relaxed);
 }
 
 /// Each binding of the global: whether it has said the key.
@@ -173,6 +187,14 @@ impl Dispatch<SpatiandAssistV1, Trust> for Spatiand {
 
 /// A `listen` not yet acted on: the room opens the microphone for it from [`serve`].
 static WANTED_EARS: Mutex<Option<OwnedFd>> = Mutex::new(None);
+/// How loud what the assistant hears is, 0 to 1 (an `f32`'s bits): its figure listens visibly.
+static HEARD_LEVEL: AtomicU32 = AtomicU32::new(0);
+
+/// How loud the microphone the assistant listens to is now: 0 for the room's quiet, 1 for a
+/// voice raised close by. 0 while it is not listening.
+pub fn heard_level() -> f32 {
+    f32::from_bits(HEARD_LEVEL.load(Ordering::Relaxed))
+}
 /// The assistant went: its microphone closes.
 static STOP_EARS: AtomicBool = AtomicBool::new(false);
 
@@ -189,6 +211,7 @@ thread_local! {
 fn tend_ears() {
     if STOP_EARS.swap(false, Ordering::Relaxed) {
         EARS.with(|e| *e.borrow_mut() = None);
+        HEARD_LEVEL.store(0, Ordering::Relaxed);
     }
     if let Some(fd) = WANTED_EARS.lock().unwrap().take() {
         let gone = Arc::new(AtomicBool::new(false));
@@ -200,6 +223,10 @@ fn tend_ears() {
             if flag.load(Ordering::Relaxed) {
                 return;
             }
+            // A voice at arm's length is about -30 dBFS; a quiet room under -55.
+            let energy = samples.iter().map(|&s| (s as f32 / 32768.0).powi(2)).sum::<f32>() / samples.len().max(1) as f32;
+            let level = ((10.0 * (energy + 1e-10).log10() + 55.0) / 30.0).clamp(0.0, 1.0);
+            HEARD_LEVEL.store(level.to_bits(), Ordering::Relaxed);
             let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
             match std::io::Write::write(&mut file, &bytes) {
                 Ok(_) => {}
@@ -223,6 +250,7 @@ fn tend_ears() {
         let mut e = e.borrow_mut();
         if e.as_ref().is_some_and(|ears| ears.gone.load(Ordering::Relaxed)) {
             *e = None;
+            HEARD_LEVEL.store(0, Ordering::Relaxed);
             log::info!("assist: the assistant stopped listening");
         }
     });

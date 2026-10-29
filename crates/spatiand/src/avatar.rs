@@ -7,9 +7,19 @@
 //!
 //! **What**: by default a small robot drawn from a few shapes -- a head with a visor and two
 //! eyes, a body, two arms, an antenna -- made here rather than loaded, so the default needs no
-//! file and no licence. It blinks, looks up while it thinks (three dots circling over it), moves
-//! its mouth while it talks, smiles after an answer, waves when called. The wearer's own figures
-//! (VRM, glTF) are to come through the same path.
+//! file and no licence. The wearer's own figures (VRM, glTF) come through the same path.
+//!
+//! **What it is doing, at a glance** (the owner asked for it, 2026-10-29): each step of an answer
+//! has its own gesture, so that a slow one is seen to be working rather than stuck. Listening for
+//! its name it stands easy, its antenna glowing with the room's sound; in a conversation it leans
+//! in, the lights at its ears lit -- no name is needed then. Hearing the wearer it cups a hand to
+//! its ear, the sound drawn in as dots; while what was said is written down, its eyes narrow to a
+//! line running along it and three amber dots blink over its head; the small model thinking, a
+//! hand goes to its chin and a blue spark circles its head; the larger one, arms folded, three
+//! dots circle slowly; working a window, it types; talking, its mouth moves and a hand gestures.
+//! It smiles when an answer is heard out, waves when called, and dozes when not listening. A
+//! wearer's own figure shows the same with its expressions and a light over its head. Poses
+//! ease from one to the next.
 //!
 //! **How**, given that the room has no depth buffer (`scene.rs`): the figure is drawn for each eye
 //! into a small picture of its own, with depth, through just the part of that eye's view it
@@ -32,10 +42,13 @@ const FOLLOW_S: f32 = 0.45;
 /// How big the figure is: its shapes are in metres at 1, about 22 cm tall, and that filled
 /// half the view.
 const SIZE: f32 = 0.58;
-/// The figure's bounding sphere, from its middle, metres: what is cropped to.
-const REACH_M: f32 = 0.17 * SIZE;
+/// The figure's bounding sphere, from its middle, metres: what is cropped to -- the signs over
+/// its head and the dots at its ear included.
+const REACH_M: f32 = 0.175 * SIZE;
+/// Where its middle is, above where it stands, metres.
+const MIDDLE_M: f64 = 0.08 * SIZE as f64;
 /// Its height, metres, for keeping all of it in view.
-const TALL_M: f64 = 0.24 * SIZE as f64;
+const TALL_M: f64 = 0.33 * SIZE as f64;
 
 const VERT: &str = r#"
 layout(location = 0) in vec3 a_pos;
@@ -151,10 +164,25 @@ void main() {
 /// What the figure is doing, as the assistant says.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Mood {
+    /// Not listening.
     #[default]
     Idle,
+    /// Listening for its name.
     Listening,
+    /// Out of a conversation, something said is being written to see if it begins with its name.
+    Checking,
+    /// In a conversation: what comes next needs no name.
+    Attentive,
+    /// The wearer is speaking to it.
+    Hearing,
+    /// What they said is being written down.
+    Transcribing,
+    /// The small model is answering.
     Thinking,
+    /// The larger model is thinking.
+    Pondering,
+    /// Doing something in the room.
+    Working,
     Talking,
     Happy,
 }
@@ -163,11 +191,76 @@ impl Mood {
     fn of(name: &str) -> Mood {
         match name {
             "listening" => Mood::Listening,
+            "checking" => Mood::Checking,
+            "attentive" => Mood::Attentive,
+            "hearing" => Mood::Hearing,
+            "transcribing" => Mood::Transcribing,
             "thinking" => Mood::Thinking,
+            "pondering" => Mood::Pondering,
+            "working" => Mood::Working,
             "talking" => Mood::Talking,
             "happy" => Mood::Happy,
             _ => Mood::Idle,
         }
+    }
+}
+
+/// How long a pose takes to become the next mood's, seconds (to about two thirds of the way).
+const EASE_S: f32 = 0.16;
+
+/// Where the robot holds itself in a mood, eased from one to the next; what moves on top of it --
+/// breathing, typing, a gesture -- is added as it is drawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Pose {
+    /// The body tipped towards the wearer (+), radians.
+    lean: f32,
+    /// The head bowed (+) or raised, and tilted to its right (+), radians.
+    nod: f32,
+    tilt: f32,
+    /// Where each hand is (its left, its right), from its shoulder, in the robot's metres: x
+    /// towards the wearer, y to its left, z up. An arm reaches about 0.075.
+    hands: [Vec3; 2],
+    /// The eyes: how open (1 as usual), how far up and to its left they look.
+    open: f32,
+    look_up: f32,
+    look_side: f32,
+}
+
+impl Pose {
+    fn of(mood: Mood) -> Pose {
+        let down = |out: f32| [Vec3::new(0.0, out, -0.074), Vec3::new(0.0, -out, -0.074)];
+        let rest = Pose { lean: 0.0, nod: 0.03, tilt: 0.0, hands: down(0.016), open: 1.0, look_up: 0.0, look_side: 0.0 };
+        match mood {
+            Mood::Idle => Pose { nod: 0.07, hands: down(0.008), open: 0.42, look_up: -0.002, ..rest },
+            Mood::Listening | Mood::Checking => rest,
+            Mood::Attentive => Pose { lean: 0.06, nod: 0.10, tilt: 0.05, hands: [Vec3::new(0.03, 0.015, -0.068), Vec3::new(0.03, -0.015, -0.068)], open: 1.12, ..rest },
+            // Leaning in, a hand cupped to the ear on its right, the head tipped to it.
+            Mood::Hearing => Pose { lean: 0.10, nod: 0.12, tilt: 0.2, hands: [Vec3::new(0.03, 0.015, -0.068), Vec3::new(0.012, -0.016, 0.079)], open: 1.15, ..rest },
+            // Writing it down: a hand at work over the other.
+            Mood::Transcribing => Pose { lean: 0.04, nod: 0.10, hands: [Vec3::new(0.058, -0.012, -0.044), Vec3::new(0.06, 0.008, -0.04)], open: 0.36, ..rest },
+            // A quick thought: a hand to its chin, looking up and aside.
+            Mood::Thinking => Pose { lean: -0.02, nod: -0.13, tilt: -0.12, hands: [Vec3::new(0.052, -0.05, 0.036), Vec3::new(0.0, -0.016, -0.074)], open: 0.9, look_up: 0.006, look_side: 0.007, ..rest },
+            // A long one: arms folded, head back.
+            Mood::Pondering => Pose { lean: -0.04, nod: -0.19, tilt: 0.08, hands: [Vec3::new(0.05, -0.058, -0.012), Vec3::new(0.052, 0.058, -0.018)], open: 0.8, look_up: 0.008, ..rest },
+            Mood::Working => Pose { lean: 0.05, nod: 0.11, hands: [Vec3::new(0.062, -0.02, -0.036), Vec3::new(0.062, 0.02, -0.036)], open: 0.75, ..rest },
+            Mood::Talking => Pose { lean: 0.02, nod: 0.0, hands: [Vec3::new(0.0, 0.016, -0.074), Vec3::new(0.038, -0.02, -0.062)], ..rest },
+            Mood::Happy => Pose { nod: -0.04, hands: [Vec3::new(0.01, 0.045, 0.058), Vec3::new(0.01, -0.045, 0.058)], ..rest },
+        }
+    }
+
+    /// Part of the way to `to`.
+    fn ease(&mut self, to: &Pose, dt: f32) {
+        let k = 1.0 - (-dt / EASE_S).exp();
+        let step = |a: f32, b: f32| a + (b - a) * k;
+        self.lean = step(self.lean, to.lean);
+        self.nod = step(self.nod, to.nod);
+        self.tilt = step(self.tilt, to.tilt);
+        for i in 0..2 {
+            self.hands[i] += (to.hands[i] - self.hands[i]) * k;
+        }
+        self.open = step(self.open, to.open);
+        self.look_up = step(self.look_up, to.look_up);
+        self.look_side = step(self.look_side, to.look_side);
     }
 }
 
@@ -189,6 +282,9 @@ struct Live {
     mood_since: Instant,
     waves_seen: u64,
     wave_since: Option<Instant>,
+    pose: Pose,
+    /// How loud what it hears is, 0 to 1, quick to rise and slow to fall.
+    level: f32,
 }
 
 pub struct Avatar {
@@ -269,6 +365,8 @@ impl Avatar {
                 mood_since: Instant::now(),
                 waves_seen: 0,
                 wave_since: None,
+                pose: Pose::of(Mood::Idle),
+                level: 0.0,
             }),
         })
     }
@@ -287,11 +385,23 @@ impl Avatar {
         // What the assistant says of itself.
         let figure = crate::assist::FIGURE.lock().unwrap().clone().unwrap_or_default();
         let wanted = crate::assist::present() && figure.get("visible").and_then(|v| v.as_bool()) != Some(false);
-        let mood = Mood::of(figure.get("mood").and_then(|m| m.as_str()).unwrap_or("idle"));
+        // What it is doing by name, from an assistant that names it; else one of the five moods.
+        let named = figure.get("state").or_else(|| figure.get("mood")).and_then(|m| m.as_str()).unwrap_or("idle");
+        let mood = Mood::of(named);
         if mood != live.mood {
             live.mood = mood;
             live.mood_since = now;
         }
+        let heard = crate::assist::heard_level();
+        let rate = if heard > live.level { 0.04 } else { 0.25 };
+        live.level += (heard - live.level) * (1.0 - (-dt / rate).exp());
+        // Coming into view, it is already as its mood holds it.
+        let target = Pose::of(mood);
+        if live.at.is_none() {
+            live.pose = target;
+            live.level = heard;
+        }
+        live.pose.ease(&target, dt);
         let waves = figure.get("waves").and_then(|w| w.as_u64()).unwrap_or(0);
         if waves != live.waves_seen {
             live.waves_seen = waves;
@@ -320,7 +430,7 @@ impl Avatar {
         if let Some(eye) = eyes.first() {
             let vp = eye.view_projection();
             for _ in 0..3 {
-                let middle = (place(yaw, pitch) + head * DVec3::new(0.0, 0.0, 0.03 * SIZE as f64)).as_vec3();
+                let middle = (place(yaw, pitch) + head * DVec3::new(0.0, 0.0, MIDDLE_M)).as_vec3();
                 let Some([x0, x1, y0, y1]) = crop_of(&vp, middle, REACH_M * 0.85) else { break };
                 // Which way is down in this eye's coordinates: the Deck draws its eyes flipped.
                 let below = middle - (head * DVec3::Z).as_vec3() * 0.1;
@@ -348,8 +458,9 @@ impl Avatar {
         let t = now.duration_since(self.started).as_secs_f32();
         let path = figure.get("path").and_then(|p| p.as_str()).map(str::to_string);
         self.choose(gl, path);
-        let parts = self.figure_parts(at, t, &live);
-        // A figure of the wearer's, placed and posed as the robot would be.
+        // A figure of the wearer's, placed and posed as the robot would be, with only the robot's
+        // signs of what it is doing over its head.
+        let parts = if matches!(&*self.chosen.borrow(), Chosen::Ready { .. }) { self.signs_over(at, t, &live) } else { self.figure_parts(at, t, &live) };
         let mut chosen = self.chosen.borrow_mut();
         let model = match &mut *chosen {
             Chosen::Ready { gpu, .. } => {
@@ -380,7 +491,7 @@ impl Avatar {
         gl.UseProgram(self.program);
         let light = Vec3::new(0.55, 0.6, 0.58).normalize();
         gl.Uniform3f(self.loc[5], light.x, light.y, light.z);
-        let middle = (at + head * DVec3::new(0.0, 0.0, 0.03 * SIZE as f64)).as_vec3();
+        let middle = (at + head * DVec3::new(0.0, 0.0, MIDDLE_M)).as_vec3();
         for (index, eye) in eyes.iter().enumerate().take(2) {
             let slot = match eye.side {
                 EyeSide::Left => 0,
@@ -400,10 +511,7 @@ impl Avatar {
             let eye_at = eye.position.as_vec3();
             if let Some((place, gpu)) = &model {
                 self.draw_model(gl, gpu, crop * vp, *place, light, eye_at);
-                gl.BindTexture(ffi::TEXTURE_2D, self.pictures[slot]);
-                gl.GenerateMipmap(ffi::TEXTURE_2D);
                 gl.UseProgram(self.program);
-                continue;
             }
             gl.Uniform3f(self.loc[6], eye_at.x, eye_at.y, eye_at.z);
             for part in &parts {
@@ -554,37 +662,26 @@ impl Avatar {
     /// The robot, part by part, at `at`, facing the wearer, at time `t`.
     fn figure_parts(&self, at: DVec3, t: f32, live: &Live) -> Vec<Part> {
         let since = live.mood_since.elapsed().as_secs_f32();
-        // Facing the eyes, upright.
-        let to_eye = (-at).as_vec3();
-        let face_yaw = to_eye.y.atan2(to_eye.x);
-        let bob = 0.006 * SIZE * (t * 1.6).sin();
-        let base = Mat4::from_translation(at.as_vec3() + Vec3::new(0.0, 0.0, bob)) * Mat4::from_rotation_z(face_yaw) * Mat4::from_scale(Vec3::splat(SIZE));
+        let mood = live.mood;
+        let pose = &live.pose;
+        let (base, head) = frames(at, t, live);
 
         let white = Vec3::new(0.90, 0.93, 0.97);
         let teal = Vec3::new(0.09, 0.90, 0.75);
-        let blue = Vec3::new(0.22, 0.65, 0.97);
-        let violet = Vec3::new(0.56, 0.42, 0.95);
         let none = Vec3::ZERO;
 
-        // The head leans in to listen, and up to think.
-        let (head_pitch, head_roll) = match live.mood {
-            Mood::Listening => (0.10, 0.12 * (t * 0.7).sin()),
-            Mood::Thinking => (-0.16, 0.08),
-            _ => (0.03 * (t * 0.9).sin(), 0.04 * (t * 0.6).sin()),
-        };
-        let head_at = Vec3::new(0.0, 0.0, 0.115);
-        let head = base * Mat4::from_translation(head_at) * Mat4::from_rotation_y(head_pitch) * Mat4::from_rotation_x(head_roll);
-
-        // Blinking: a tenth of a second, every few, not in step with anything.
+        // Blinking: a tenth of a second, every few, not in step with anything -- and not while
+        // its eyes are a line reading what was said.
         let cycle = (t * 0.27).fract();
-        let blink = if cycle < 0.035 { 0.12 } else { 1.0 };
-        let (eye_h, eye_up, eye_side) = match live.mood {
-            Mood::Happy if since < 2.0 => (0.32, 0.004, 0.0),
-            Mood::Thinking => (0.85, 0.008, 0.006),
-            Mood::Listening => (1.15, 0.0, 0.0),
-            _ => (1.0, 0.0, 0.0),
-        };
-        let talking = live.mood == Mood::Talking;
+        let blink = if cycle < 0.035 && mood != Mood::Transcribing { 0.12 } else { 1.0 };
+        let (mut open, mut up, mut side) = (pose.open, pose.look_up, pose.look_side);
+        match mood {
+            Mood::Happy if since < 2.0 => (open, up) = (0.32, 0.004),
+            Mood::Transcribing => side += 0.009 * (t * 7.0).sin(),
+            Mood::Hearing => open += 0.15 * live.level,
+            _ => {}
+        }
+        let talking = mood == Mood::Talking;
         let mouth_open = if talking { 0.35 + 0.65 * ((t * 11.0).sin() * 0.5 + 0.5) * ((t * 3.7).sin() * 0.3 + 0.7) } else { 0.0 };
         let glow = 1.0 + 0.25 * (t * 2.2).sin();
 
@@ -595,46 +692,145 @@ impl Avatar {
             // The head, its visor, eyes and mouth.
             Part::sphere(head * scaled(Vec3::ZERO, Vec3::new(0.070, 0.086, 0.064)), white, none, 0.7),
             Part::sphere(head * scaled(Vec3::new(0.030, 0.0, 0.0), Vec3::new(0.046, 0.073, 0.046)), Vec3::new(0.04, 0.05, 0.08), none, 1.0),
-            Part::sphere(head * scaled(Vec3::new(0.074, 0.024 + eye_side, 0.007 + eye_up), Vec3::new(0.005, 0.011, 0.016 * eye_h * blink)), none, teal * 1.1, 0.0),
-            Part::sphere(head * scaled(Vec3::new(0.074, -0.024 + eye_side, 0.007 + eye_up), Vec3::new(0.005, 0.011, 0.016 * eye_h * blink)), none, teal * 1.1, 0.0),
+            Part::sphere(head * scaled(Vec3::new(0.074, 0.024 + side, 0.007 + up), Vec3::new(0.005, 0.011, 0.016 * open * blink)), none, teal * 1.1, 0.0),
+            Part::sphere(head * scaled(Vec3::new(0.074, -0.024 + side, 0.007 + up), Vec3::new(0.005, 0.011, 0.016 * open * blink)), none, teal * 1.1, 0.0),
         ];
-        if talking || live.mood == Mood::Happy {
+        if talking || mood == Mood::Happy {
             let width = if talking { 0.012 } else { 0.016 };
             parts.push(Part::sphere(head * scaled(Vec3::new(0.074, 0.0, -0.017), Vec3::new(0.004, width, 0.002 + 0.006 * mouth_open)), none, teal * 0.8, 0.0));
         }
-        // The antenna: its tip says what it is doing.
-        let tip = match live.mood {
-            Mood::Listening => teal * (0.9 + 0.6 * (t * 4.0).sin().abs()),
-            Mood::Thinking => violet * 1.2,
-            Mood::Talking => blue * 1.1,
-            _ => blue * 0.45,
-        };
+        // The antenna's stalk; its tip is among the signs.
         parts.push(Part::cylinder(head * scaled(Vec3::new(0.0, 0.0, 0.075), Vec3::new(0.003, 0.003, 0.03)), white, none, 0.4));
-        parts.push(Part::sphere(head * scaled(Vec3::new(0.0, 0.0, 0.094), Vec3::splat(0.009)), none, tip, 0.0));
 
-        // Arms: hanging, swinging a little; the right one waves when it is called.
+        // Arms, each from its shoulder towards where its hand should be, and what moves on top:
+        // a swing at rest, typing, a hand writing, a gesture while it talks, a wave.
         let waving = live.wave_since.map(|w| w.elapsed().as_secs_f32()).filter(|w| *w < 1.8);
-        for (side, sign) in [(1.0f32, 1.0f32), (-1.0, -1.0)] {
+        for (i, side) in [1.0f32, -1.0].into_iter().enumerate() {
+            let mut hand = pose.hands[i];
+            match mood {
+                Mood::Idle | Mood::Listening | Mood::Checking | Mood::Attentive => hand.x += 0.008 * (t * 1.3 + side).sin(),
+                Mood::Working => hand.z += 0.007 * (t * 16.0 + side * 1.6).sin(),
+                Mood::Transcribing if i == 1 => hand += Vec3::new(0.004 * (t * 9.0).cos(), 0.004 * (t * 9.0).sin(), 0.0),
+                Mood::Talking if i == 1 => hand += Vec3::new(0.012 * (t * 2.6).sin(), 0.0, 0.014 * (t * 2.6 + 0.7).sin()),
+                _ => {}
+            }
+            if let (1, Some(w)) = (i, waving) {
+                hand = Vec3::new(0.02, -0.05 + 0.014 * (w * 12.0).sin(), 0.058);
+            }
             let shoulder = Vec3::new(0.0, 0.074 * side, 0.025);
-            let swing = 0.12 * (t * 1.3 + side).sin();
-            let (raise, sway) = match (sign < 0.0, waving) {
-                (true, Some(w)) => (-2.5, 0.35 * (w * 12.0).sin()),
-                _ => (0.18 * side, swing),
-            };
-            let arm = base * Mat4::from_translation(shoulder) * Mat4::from_rotation_x(raise * sign.signum() * side.signum()) * Mat4::from_rotation_y(sway);
+            let reach = glam::Quat::from_rotation_arc(Vec3::NEG_Z, hand.normalize_or(Vec3::NEG_Z));
+            let arm = base * Mat4::from_translation(shoulder) * Mat4::from_quat(reach);
             parts.push(Part::sphere(arm * scaled(Vec3::new(0.0, 0.0, -0.035), Vec3::new(0.017, 0.017, 0.042)), white, none, 0.5));
         }
-
-        // Thinking: three dots in the mark's colours, circling over its head.
-        if live.mood == Mood::Thinking {
-            for (k, color) in [teal, blue, violet].into_iter().enumerate() {
-                let a = t * 2.4 + k as f32 * std::f32::consts::TAU / 3.0;
-                let dot = head * scaled(Vec3::new(0.045 * a.cos(), 0.055 * a.sin(), 0.115 + 0.008 * (a * 2.0).sin()), Vec3::splat(0.008));
-                parts.push(Part::sphere(dot, none, color * 1.2, 0.0));
-            }
-        }
+        parts.extend(signs(head, t, live, true));
         parts
     }
+
+    /// Over a wearer's own figure, the robot's signs of what it is doing, as if its head were
+    /// just under them: what the figure's face cannot say on its own.
+    fn signs_over(&self, at: DVec3, t: f32, live: &Live) -> Vec<Part> {
+        let (base, _) = frames(at, t, live);
+        signs(base * Mat4::from_translation(Vec3::new(0.0, 0.0, 0.045)), t, live, false)
+    }
+}
+
+/// Where the robot's body and head are: facing the wearer, bobbing, leaning and turning its head
+/// as its pose has it.
+fn frames(at: DVec3, t: f32, live: &Live) -> (Mat4, Mat4) {
+    let since = live.mood_since.elapsed().as_secs_f32();
+    let pose = &live.pose;
+    let to_eye = (-at).as_vec3();
+    let face_yaw = to_eye.y.atan2(to_eye.x);
+    // A hop for joy, once.
+    let hop = if live.mood == Mood::Happy && since < 0.5 { 0.012 * (since * std::f32::consts::TAU).sin().max(0.0) } else { 0.0 };
+    let bob = 0.006 * SIZE * (t * 1.6).sin() + hop * SIZE;
+    let base = Mat4::from_translation(at.as_vec3() + Vec3::new(0.0, 0.0, bob)) * Mat4::from_rotation_z(face_yaw) * Mat4::from_scale(Vec3::splat(SIZE)) * Mat4::from_rotation_y(pose.lean);
+    // A little life in the head when the pose leaves it still; more for listening.
+    let (nod, tilt) = match live.mood {
+        Mood::Listening | Mood::Checking => (0.0, 0.10 * (t * 0.7).sin()),
+        Mood::Hearing => (0.02 * live.level * (t * 5.0).sin(), 0.03 * (t * 1.1).sin()),
+        Mood::Idle | Mood::Talking | Mood::Happy => (0.03 * (t * 0.9).sin(), 0.04 * (t * 0.6).sin()),
+        _ => (0.0, 0.02 * (t * 0.8).sin()),
+    };
+    let head = base * Mat4::from_translation(Vec3::new(0.0, 0.0, 0.115)) * Mat4::from_rotation_y(pose.nod + nod) * Mat4::from_rotation_x(pose.tilt + tilt);
+    (base, head)
+}
+
+/// What the figure is doing, as lights about its head (`head` is where the robot's head is):
+/// the antenna's tip, the lights at its ears, and what each step of an answer shows. The ears
+/// are the robot's only: on a wearer's figure they would float off its face.
+fn signs(head: Mat4, t: f32, live: &Live, ears: bool) -> Vec<Part> {
+    let teal = Vec3::new(0.09, 0.90, 0.75);
+    let blue = Vec3::new(0.22, 0.65, 0.97);
+    let violet = Vec3::new(0.56, 0.42, 0.95);
+    let amber = Vec3::new(1.0, 0.66, 0.16);
+    let green = Vec3::new(0.35, 0.95, 0.45);
+    let none = Vec3::ZERO;
+    let level = live.level;
+    let on_off = |hz: f32| if (t * hz).fract() < 0.5 { 1.0 } else { 0.3 };
+    let mut parts = Vec::new();
+
+    // The antenna's tip says what it is doing; listening, it glows with the room's sound.
+    let tip = match live.mood {
+        Mood::Idle => blue * 0.25,
+        Mood::Listening => teal * (0.45 + 0.9 * level),
+        Mood::Checking => amber * (0.35 + 0.6 * on_off(3.0)),
+        Mood::Attentive => teal * (1.0 + 0.15 * (t * 2.0).sin()),
+        Mood::Hearing => teal * (0.9 + 1.2 * level),
+        Mood::Transcribing => amber * 1.2,
+        Mood::Thinking => blue * (0.7 + 0.7 * on_off(5.0)),
+        Mood::Pondering => violet * 1.2,
+        Mood::Working => green * (0.6 + 0.6 * on_off(4.0)),
+        Mood::Talking => blue * 1.1,
+        Mood::Happy => teal * 1.1,
+    };
+    let tip_size = if live.mood == Mood::Hearing { 0.009 * (1.0 + 0.5 * level) } else { 0.009 };
+    parts.push(Part::sphere(head * scaled(Vec3::new(0.0, 0.0, 0.094), Vec3::splat(tip_size)), none, tip, 0.0));
+
+    // In a conversation, the lights at its ears are lit: it is listening for more, no name needed.
+    if ears && matches!(live.mood, Mood::Attentive | Mood::Hearing) {
+        let lit = if live.mood == Mood::Hearing { 0.9 + 1.0 * level } else { 1.0 };
+        for side in [1.0f32, -1.0] {
+            parts.push(Part::sphere(head * scaled(Vec3::new(0.004, 0.087 * side, 0.004), Vec3::new(0.006, 0.004, 0.013)), none, teal * lit, 0.0));
+        }
+    }
+    match live.mood {
+        // The wearer's voice, drawn in as dots towards the cupped ear.
+        Mood::Hearing => {
+            for k in 0..3 {
+                let phase = (t * 1.8 - k as f32 / 3.0).rem_euclid(1.0);
+                let at = Vec3::new(0.012, -0.1 - 0.045 * (1.0 - phase), 0.012);
+                let brightness = (0.35 + 1.3 * level) * (phase * std::f32::consts::PI).sin();
+                parts.push(Part::sphere(head * scaled(at, Vec3::splat(0.0055)), none, teal * brightness, 0.0));
+            }
+        }
+        // Written down: three dots over its head, lit in turn.
+        Mood::Transcribing => {
+            let lit = (t * 4.0) as usize % 3;
+            for k in 0..3 {
+                let at = Vec3::new(0.0, 0.018 * (k as f32 - 1.0), 0.124);
+                parts.push(Part::sphere(head * scaled(at, Vec3::splat(0.0065)), none, amber * if k == lit { 1.4 } else { 0.35 }, 0.0));
+            }
+        }
+        // The small model: one quick spark round its head, with a short tail.
+        Mood::Thinking => {
+            for k in 0..3 {
+                let a = t * 6.5 - k as f32 * 0.32;
+                let at = Vec3::new(0.05 * a.cos(), 0.062 * a.sin(), 0.098 + 0.008 * (a * 2.0).sin());
+                parts.push(Part::sphere(head * scaled(at, Vec3::splat(0.008 * (1.0 - 0.28 * k as f32))), none, blue * (1.4 - 0.4 * k as f32), 0.0));
+            }
+        }
+        // The larger model: three dots in the mark's colours, circling slowly over its head.
+        Mood::Pondering => {
+            for (k, color) in [teal, blue, violet].into_iter().enumerate() {
+                let a = t * 2.4 + k as f32 * std::f32::consts::TAU / 3.0;
+                let at = Vec3::new(0.045 * a.cos(), 0.055 * a.sin(), 0.115 + 0.008 * (a * 2.0).sin());
+                parts.push(Part::sphere(head * scaled(at, Vec3::splat(0.008)), none, color * 1.2, 0.0));
+            }
+        }
+        _ => {}
+    }
+    parts
 }
 
 struct Part {
@@ -910,6 +1106,11 @@ impl ModelGpu {
         let since = live.mood_since.elapsed().as_secs_f32();
         let cycle = (t * 0.27).fract();
         let mut want: Vec<(&str, f32)> = vec![("blink", if cycle < 0.035 { 1.0 } else { 0.0 })];
+        // VRM 1.0 names its looks `lookUp`, 0.x `lookup`: both are asked for, and a figure has one.
+        let look = |want: &mut Vec<(&str, f32)>, new: &'static str, old: &'static str, amount: f32| {
+            want.push((new, amount));
+            want.push((old, amount));
+        };
         match live.mood {
             Mood::Happy if since < 2.0 => want.push(("happy", 1.0)),
             Mood::Talking => {
@@ -917,7 +1118,21 @@ impl ModelGpu {
                 want.push(("aa", open * ((t * 3.7).sin() * 0.5 + 0.5)));
                 want.push(("oh", open * ((t * 3.7).cos() * 0.5 + 0.5) * 0.7));
             }
-            Mood::Thinking => want.push(("relaxed", 0.4)),
+            Mood::Idle => {
+                want.push(("relaxed", 0.5));
+                want[0].1 = want[0].1.max(0.35);
+            }
+            Mood::Attentive => want.push(("surprised", 0.12)),
+            Mood::Hearing => want.push(("surprised", 0.2 + 0.3 * live.level)),
+            Mood::Transcribing | Mood::Working => look(&mut want, "lookDown", "lookdown", 0.45),
+            Mood::Thinking => {
+                want.push(("relaxed", 0.3));
+                look(&mut want, "lookUp", "lookup", 0.5);
+            }
+            Mood::Pondering => {
+                want.push(("relaxed", 0.4));
+                look(&mut want, "lookUp", "lookup", 0.35);
+            }
             _ => {}
         }
         let mut weights: std::collections::HashMap<(usize, usize), f32> = std::collections::HashMap::new();

@@ -176,3 +176,69 @@ Later the same day:
 Not yet checked: any of it in the glasses or with a real voice; the assistant running on the
 Deck or the Beam Pro (both build; the Deck's tests pass); a real VRM file -- there is none on any
 of the machines.
+
+### Quick, and seen to be working (2026-10-29)
+
+The owner's first real use: answers came 10-20 s after asking, a follow-up without the name was
+dropped without a word, and nothing showed what Pixel was doing. Where the time went, from the
+log and measured against hemera:
+
+- **Nothing was loaded.** Whisper, the small model and the voice were each started by the first
+  request that wanted them -- 10.5 s in the small model alone. Earlier tests had stopped them.
+- **A decision before every answer**: the small model was asked "quick or larger" first, a round
+  trip of 0.35-2.2 s from the Mac (Wi-Fi to deepmagpie over Tailscale: 7-330 ms a round trip).
+- **A system message that changed every minute** (the time and the windows were in it), so the
+  server read ~500 tokens and the whole chat again every turn: 1.8-2.3 s to the first word.
+- **Whisper after the pause**: 0.8 s of quiet to be sure, then ~0.6 s of Whisper (2-3 s when
+  deepmagpie's GPU is busy with something else).
+- **The follow-up window was measured to when Whisper's text came back**, not to when the
+  wearer began: a follow-up begun three seconds after the answer and spoken for four arrived
+  after the 8 s had passed.
+
+What was done:
+
+- `warm.rs`: on starting to listen, hemera is asked to start Whisper and the voice
+  (`POST /hemera/api/models/load`), and the small model reads the start of every request (its
+  tools and system message) once; the larger model too, but only if something else started it.
+  Looked at again, at most every 3 minutes, when someone begins speaking.
+- The system message is the same every turn; the room as it is goes with the wearer's words as
+  a note in brackets. The chat given starts in steps of 8, so its start rarely moves.
+- The decision is asked **beside** the small model's answer; the answer is held (unshown,
+  unsaid) until it comes, then given or dropped for the larger model. The decision's prompt
+  says the quick model knows the time and date, with a few examples: after an answer that gave
+  the time, "what day is it tomorrow?" had gone to the larger model; with them 24 of 25 test
+  requests went where they should.
+- **Drafts** (`phrases.rs`, `Cut::Draft`): at 0.3 s of quiet the phrase so far goes to Whisper;
+  when the pause proves to be the end, the draft's text is the phrase's. Whisper writes on
+  helper threads, one job at a time, the latest draft waiting; the ears' state is never late.
+- **A follow-up counts from when it began**: within 8 s of the last of an answer finished, the
+  voice going quiet, or a phrase meant for it.
+- **Whisper's prompt uses the name as it is used** ("Pixel, buka browser. ... Pixel, can you
+  check the log?"): given only "Pixel." it left the name out of "Pixel, write a short Python
+  function..." as the ears cut it; now 11 of 11 test phrases, none given a name they lacked.
+- The log says what each step took: `ears: ... written N s after it ended`, `brain: first words
+  ... N s into the turn`, `voice: first sound N s after the wearer stopped speaking`.
+
+**The figure's states** (`state` beside the old `mood`, which a room without them still reads):
+`idle` (dozing: not listening), `listening` (for its name; its antenna glows with the room's
+sound -- `assist::heard_level`, from the microphone it is fed), `checking` (out of a
+conversation, a phrase is being written to see if it begins with its name: the antenna blinks
+amber, nothing else stirs), `attentive` (in a conversation: leaning in, the lights at its ears
+lit -- no name needed), `hearing` (a hand cupped to its ear, the voice drawn in as dots),
+`transcribing` (eyes a line running along what was said, three amber dots over its head),
+`thinking` (the small model: a hand to its chin, a blue spark circling its head), `pondering`
+(the larger model: arms folded, three slow dots), `working` (a tool: it types), `talking` (only
+while its voice is heard, no longer while speech is still being made), `happy` (once an answer
+is heard out). Poses ease from one to the next. A VRM figure shows them with its expressions
+and the antenna's light and dots over its head. `SPATIAND_FIGURE='{"state":"hearing",
+"level":0.7}'` shows a state in the snapshot room with no assistant.
+
+Checked in the Mac's snapshot room against hemera, with phrases spoken by macOS's voices into
+`SPATIAND_LISTEN_WAV`: from the end of speech to the first sound handed to the room 1.6 s for the
+small model, 5.2 s for the larger (primed); the follow-up without the name answered; a sentence
+said 30 s later ignored; every state photographed. The new SpatiPal was put into the installed
+app alone (it sends the old moods too, so the running room shows what it knew before).
+
+Not yet checked: the new gestures in the glasses (they are the room's: Spatiand must be rebuilt
+and restarted); a real voice in a real room -- its own voice heard back, a pause in the middle of
+an Indonesian sentence; the Deck and the Beam Pro; a VRM figure's states (still no VRM file).
