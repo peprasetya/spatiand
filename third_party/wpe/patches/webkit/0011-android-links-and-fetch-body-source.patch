@@ -1,0 +1,41 @@
+--- a/Source/WebCore/Modules/fetch/FetchBodySource.h	2026-10-29 15:29:18
++++ b/Source/WebCore/Modules/fetch/FetchBodySource.h	2026-10-29 15:29:18
+@@ -78,6 +78,10 @@
+         void resolvePullPromise() { pullFinished(); }
+         void detach() { m_bodyOwner = nullptr; }
+ 
++        // Out of line, where FetchBodyOwner is whole (the Android NDK's clang 19 makes the implicit
++        // one wherever this header is, over the pending activity of a type only declared here).
++        ~NonByteSource();
++
+     private:
+         explicit NonByteSource(FetchBodyOwner&);
+ 
+--- a/Source/WebCore/Modules/fetch/FetchBodySource.cpp	2026-10-29 15:29:18
++++ b/Source/WebCore/Modules/fetch/FetchBodySource.cpp	2026-10-29 15:29:18
+@@ -193,6 +193,8 @@
+     : m_bodyOwner(owner)
+ {
+ }
++
++FetchBodySource::NonByteSource::~NonByteSource() = default;
+ 
+ void FetchBodySource::NonByteSource::setActive()
+ {
+--- a/Source/WTF/wtf/PlatformWPE.cmake	2026-10-29 15:29:18
++++ b/Source/WTF/wtf/PlatformWPE.cmake	2026-10-29 15:29:18
+@@ -66,9 +66,14 @@
+     find_library(COREFOUNDATION_LIBRARY CoreFoundation)
+     list(APPEND WTF_LIBRARIES ${COREFOUNDATION_LIBRARY})
+ elseif (ANDROID)
++    # Android is Linux to WTF (OS(LINUX)), whose callers want these two; /proc and pthreads are
++    # there.
+     list(APPEND WTF_SOURCES
+         generic/MemoryFootprintGeneric.cpp
+         generic/MemoryPressureHandlerGeneric.cpp
++
++        linux/CurrentProcessMemoryStatus.cpp
++        linux/HighPriorityThreads.cpp
+     )
+ else ()
+     list(APPEND WTF_SOURCES
