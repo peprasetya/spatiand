@@ -1,0 +1,28 @@
+From 39a988b97437b900e80b819eee7e5dc9ac7c25b2 Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Thu, 29 Oct 2026 18:39:03 +0000
+Subject: [PATCH] Spatiand: JavaScript JIT allowed by default
+
+Cromite blocks the JIT for every site unless allowed one by one, which leaves heavy pages
+(YouTube, Google Sheets, Inoreader) crawling on the Deck; upstream Chromium allows it. The
+per-site setting stays, to block it where wanted.
+---
+ .../content_settings/core/browser/content_settings_registry.cc  | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
+index 4755f4947b..4e2c8e8fd8 100644
+--- a/components/content_settings/core/browser/content_settings_registry.cc
++++ b/components/content_settings/core/browser/content_settings_registry.cc
+@@ -575,7 +575,7 @@ void ContentSettingsRegistry::Init() {
+            PermissionSettingsInfo::EXCEPTIONS_ON_SECURE_ORIGINS_ONLY);
+ 
+   Register(ContentSettingsType::JAVASCRIPT_JIT, "javascript-jit",
+-           CONTENT_SETTING_BLOCK, WebsiteSettingsInfo::UNSYNCABLE,
++           CONTENT_SETTING_ALLOW, WebsiteSettingsInfo::UNSYNCABLE,
+            /*allowlisted_primary_schemes=*/{},
+            /*valid_settings=*/{CONTENT_SETTING_ALLOW, CONTENT_SETTING_BLOCK},
+            WebsiteSettingsInfo::TOP_ORIGIN_ONLY_SCOPE,
+-- 
+2.34.1
+
