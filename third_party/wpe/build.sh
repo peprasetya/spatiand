@@ -572,7 +572,8 @@ INI
     [ -n "${DEPS_ONLY:-}" ] && { echo "libraries for $platform in $out (DEPS_ONLY: WebKit not built)"; exit 0; }
     # WebKit itself for Android: its processes are found as lib<name>.so beside its library
     # (patches/webkit/0003), as the APK carries them.
-    platform_options="$toolchain -DCMAKE_FIND_ROOT_PATH=$out -DCMAKE_SHARED_LINKER_FLAGS=$pages -DCMAKE_EXE_LINKER_FLAGS=$pages
+    # The libraries' own folder searched too: some come to the link as a bare -l (-lintl).
+    platform_options="$toolchain -DCMAKE_FIND_ROOT_PATH=$out -DCMAKE_SHARED_LINKER_FLAGS=$pages,-L,$out/lib -DCMAKE_EXE_LINKER_FLAGS=$pages,-L,$out/lib
         -DUSE_SYSTEM_MALLOC=ON -DENABLE_WPE_PLATFORM_DRM=OFF -DUSE_SKIA_OPENTYPE_SVG=OFF"
     # glib-compile-resources runs here, on the building machine: not the arm64 one built for the
     # Beam Pro beside the libraries. HOST_GLIB_COMPILE_RESOURCES names one (a Linux bundle's, or
@@ -645,6 +646,8 @@ if [ "$platform" = android ]; then
         old=$(patchelf --print-soname "$f" 2>/dev/null || basename "$f")
         new=$(echo "$old" | sed 's/\.so\..*$/.so/')
         [ "$old" = "$new" ] && continue
+        # The plain name is often a link to this very file: a copy of its own, not onto itself.
+        rm -f "$out/lib/$new"
         cp "$f" "$out/lib/$new"
         patchelf --set-soname "$new" "$out/lib/$new"
         renamed="$renamed $old:$new"

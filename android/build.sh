@@ -95,6 +95,8 @@ if [ -f "$WPE_OUT/lib/libWPEWebProcess.so" ]; then
     # Its libraries, processes, GIO's TLS module and GStreamer's plugins, flat, as they were
     # made to be (each a lib*.so); the links between versions of a name are left behind.
     find "$WPE_OUT/lib" -maxdepth 1 -name 'lib*.so' -type f -exec cp {} $OUT/apk/lib/arm64-v8a/ \;
+    # Without what only a debugger needs: WebKit's library alone is gigabytes with it.
+    find $OUT/apk/lib/arm64-v8a -name 'lib*.so' -type f -exec "$NDK/toolchains/llvm/prebuilt/$(case "$(uname -s)" in (Darwin) echo darwin-x86_64 ;; (*) echo linux-x86_64 ;; esac)/bin/llvm-strip" --strip-unneeded {} \; 2>/dev/null || true
 fi
 [ -f "$STORAGE/libspatiand-storage.so" ] && cp "$STORAGE/libspatiand-storage.so" $OUT/apk/lib/arm64-v8a/
 cp $OUT/dex/classes.dex $OUT/apk/
