@@ -326,6 +326,8 @@ struct TabView {
     texture: Option<PageTexture>,
     /// The size and zoom the engine was last told.
     told: Option<View>,
+    /// Told to the engine as behind another tab of its window (`Engine::show`).
+    hidden: bool,
     question: Option<Question>,
     choices: Option<(Vec<Choice>, engine::Rect)>,
     focused: bool,
@@ -464,10 +466,18 @@ pub struct Browser {
     pick_dir: Option<std::path::PathBuf>,
     /// The servers connected to ahead of a load (`preconnect`), and when.
     preconnected: HashMap<String, Instant>,
+    /// When each profile's engine stopped lately, by itself (`engine_gone`).
+    engine_stops: HashMap<String, Vec<Instant>>,
 }
 
 /// How long a server connected to ahead of a load is not connected to again for that.
 const PRECONNECT_EVERY: Duration = Duration::from_secs(30);
+
+/// An engine that stops is started again at once, its tabs with it, unless it stopped this
+/// often in this while: then its tabs wait for the wearer to load them again, so that a page
+/// that stops it whenever it loads does not stop it for ever.
+const ENGINE_RESTARTS: usize = 3;
+const ENGINE_RESTARTS_WITHIN: Duration = Duration::from_secs(120);
 
 /// What SpatiMesh takes when something is dropped on it, the best first: addresses (a file
 /// manager's files among them), or text that is one.
@@ -540,6 +550,7 @@ impl Browser {
             context: None,
             pick_dir: None,
             preconnected: HashMap::new(),
+            engine_stops: HashMap::new(),
         };
         browser.downloads.load(&browser.store);
         let mut extensions = Runtime::new(browser.store.clone());
@@ -744,7 +755,33 @@ impl Browser {
                 host.send(&ToHost::Mute { tab, muted });
             }
         }
-        self.views.entry(tab).or_default().told = Some(view);
+        let shown = self.views.entry(tab).or_default();
+        shown.told = Some(view);
+        // Shown, as every tab opens: hidden at once if it is behind another.
+        shown.hidden = false;
+        self.show_pages();
+    }
+
+    /// Which tab each window shows, told to the engines where it changed: one behind another
+    /// is hidden to its page, which is drawn no more and slowed (`Engine::show`). Extensions'
+    /// pages no window has as a tab are never hidden.
+    fn show_pages(&mut self) {
+        let mut changed: Vec<(TabId, bool)> = Vec::new();
+        for win in &self.wins {
+            let Some(window) = self.tabs.window(win.key) else { continue };
+            for &tab in &window.tabs {
+                let shown = window.active_tab() == Some(tab);
+                if self.views.get(&tab).is_some_and(|v| v.told.is_some() && v.hidden == shown) {
+                    changed.push((tab, shown));
+                }
+            }
+        }
+        for (tab, shown) in changed {
+            if let Some(view) = self.views.get_mut(&tab) {
+                view.hidden = !shown;
+            }
+            self.tell(tab, ToHost::Show { tab, shown });
+        }
     }
 
     /// Tell every tab of a window its page's size, where that changed.
@@ -824,6 +861,7 @@ impl Browser {
                 self.tell(tab, ToHost::Focus { tab, focused });
             }
         }
+        self.show_pages();
     }
 
     /// What the engine hosts have said.
@@ -869,6 +907,46 @@ impl Browser {
         for win in &mut self.wins {
             win.dirty = true;
         }
+        // One that could not start would not start again.
+        if host.failed.is_some() || host.engine.as_deref().is_some_and(|e| e.starts_with("failed")) {
+            return;
+        }
+        let now = Instant::now();
+        let stops = self.engine_stops.entry(profile.to_string()).or_default();
+        stops.retain(|at| now.duration_since(*at) < ENGINE_RESTARTS_WITHIN);
+        stops.push(now);
+        if stops.len() > ENGINE_RESTARTS {
+            log::warn!("{profile}'s engine stopped {} times in {} s: its tabs wait to be loaded again", stops.len(), ENGINE_RESTARTS_WITHIN.as_secs());
+            return;
+        }
+        self.restart_engine(profile);
+    }
+
+    /// An engine that stopped, started again with its profile's tabs: each window's tab in front
+    /// loaded at once, the others when they are next shown, as when SpatiMesh opens a profile's
+    /// windows again (`restore_session`). (A tab whose sound was playing would play nothing
+    /// loaded behind: WebKit plays no sound before the wearer's click.) The developer tools
+    /// close: they open again from their page.
+    fn restart_engine(&mut self, profile: &str) {
+        let tools: Vec<TabId> = self.tabs.tabs().filter(|t| t.profile == profile && t.inspects.is_some()).map(|t| t.id).collect();
+        for gone in tools {
+            self.close_tab(gone);
+        }
+        let tabs: Vec<TabId> = self.tabs.tabs().filter(|t| t.profile == profile).map(|t| t.id).collect();
+        for &tab in &tabs {
+            if let Some(t) = self.tabs.tab_mut(tab) {
+                t.crashed = None;
+                t.playing = false;
+            }
+        }
+        log::info!("{profile}'s engine is started again");
+        for tab in tabs {
+            if self.tabs.window_of(tab).and_then(|k| self.tabs.active(k)) == Some(tab) {
+                self.open_in_engine(tab);
+            }
+        }
+        self.say("The engine showing this profile's pages stopped: it was started again".into());
+        self.focus_pages();
     }
 
     fn heard(&mut self, profile: &str, message: FromHost, fds: Vec<std::os::fd::OwnedFd>) {

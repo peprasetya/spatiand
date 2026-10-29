@@ -58,6 +58,31 @@ own Android process, `android:process`, and so its own renderer). That is the mo
 allows: it has no process-per-tab mode, and a WebView per process means a data directory per
 process, i.e. a cookie jar per tab.
 
+**WPE (every platform now).** A page's own process crashing takes only its tab, as above. The
+engine host is WebKit's UI-process half and SpatiMesh's own C beside it (`native/wpe.c`), so it
+has to be as sturdy as a browser's main process: what a page does must never reach it as anything
+but events. On 2026-10-29 it did -- a window an advertisement opened (`window.open`), whose tab
+was closed at once, kept running with a reference the engine leaked, and its next load told the
+freed tab what it did; the engine read freed memory and stopped, with all ten tabs of the
+profile. Now a tab owns its view's only reference (one `window.open` made but never taken is
+ended after a minute), and a tab's handlers are disconnected when it goes, whatever still holds
+its view. Engine tests `a_window_opened_and_closed_runs_no_more` and
+`a_closed_tab_still_answering_says_nothing_more` run with freed memory scribbled over, so a
+regression fails at once.
+
+**An engine host that stops anyway is started again at once** (`engine_gone`,
+`restart_engine`): each window's tab in front is loaded again, the others when they are next
+shown, as when a profile's windows open again, and a toast says what happened. (A tab that was
+playing would play nothing loaded behind: WebKit plays no sound before a click.) Its developer
+tools close. An engine that stops three times in two
+minutes is left stopped, its tabs saying so until one is loaded again: a page that stops it
+whenever it loads cannot keep it stopping.
+
+**A tab behind another is hidden to its page** (`Engine::show`, `ToHost::Show`): WPE unmaps its
+view, so the page is `document.hidden`, WebKit draws it no more and slows its timers, as every
+browser does a background tab -- ten open tabs cost what the ones in front do. Its sound plays on.
+Extensions' pages no window has as a tab are never hidden.
+
 ## The engine interface
 
 `crates/spatimesh/src/engine/mod.rs`. One trait, implemented once per platform, living in the

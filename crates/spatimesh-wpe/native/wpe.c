@@ -566,6 +566,8 @@ typedef struct {
     /* What is being found in the page, and the link under the pointer as last said. */
     char *finding;
     char *hovered;
+    /* Behind another tab of its window (spatimesh_show): its page hidden. */
+    int hidden;
 } Tab;
 
 /* One extension, as the window gave it (crates/spatimesh-shim): its scheme, its content
@@ -773,15 +775,40 @@ static gboolean on_policy(WebKitWebView *view, WebKitPolicyDecision *decision, W
 
 #define OPENED_PREFIX "spatimesh-opened:"
 
+/* How long a view WebKit made for window.open waits for SpatiMesh's tab to take it: one never
+ * taken (its opener's tab went first) is ended, not left running unseen. */
+#define OPENED_WAIT_S 60
+
+typedef struct {
+    struct Engine *engine;
+    unsigned number;
+} Opened;
+
+static gboolean forget_opened(gpointer data) {
+    Opened *o = data;
+    g_hash_table_remove(o->engine->opened, GUINT_TO_POINTER(o->number));
+    return G_SOURCE_REMOVE;
+}
+
 /* window.open: WebKit is given a view related to the opener's -- so the page opened has
  * window.opener, can post messages back and close itself, as a sign-in window does -- and
- * SpatiMesh opens a tab of its own for it, which takes this view (spatimesh_open). */
+ * SpatiMesh opens a tab of its own for it, which takes this view (spatimesh_open). Its display,
+ * context and session are its opener's, as a related view's must be.
+ *
+ * WebKit keeps no reference of its own to the view it is given: `e->opened` holds the only one
+ * until the tab takes it, and then the tab does, so that closing the tab ends the page. (An extra
+ * reference here once left every closed window.open page running unseen, still telling a tab
+ * that was gone what it did -- the engine read freed memory and stopped, with every tab of the
+ * profile.) */
 static WebKitWebView *on_create(WebKitWebView *view, WebKitNavigationAction *action, Tab *t) {
     Engine *e = t->engine;
-    WebKitWebView *opened = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "display", mesh_display(),
-        "related-view", view, "settings", e->settings, NULL));
+    WebKitWebView *opened = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "related-view", view, "settings", e->settings, NULL));
     unsigned number = ++e->opened_next;
-    g_hash_table_insert(e->opened, GUINT_TO_POINTER(number), g_object_ref(opened));
+    g_hash_table_insert(e->opened, GUINT_TO_POINTER(number), opened);
+    Opened *wait = g_new(Opened, 1);
+    wait->engine = e;
+    wait->number = number;
+    g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, OPENED_WAIT_S, forget_opened, wait, g_free);
     char *address = g_strdup_printf(OPENED_PREFIX "%u", number);
     push(e, EV_OPEN_TAB, t->id, 0, 0, 0, address, NULL);
     g_free(address);
@@ -939,7 +966,7 @@ static Tab *find(struct Engine *e, uint64_t id);
 /* The developer tools were closed (from inside them, or with their page): their tab goes. */
 static void on_inspector_gone(gpointer data) {
     Tab *tools = data;
-    if (!tools->inspected)
+    if (!tools || !tools->inspected)
         return;
     Tab *page = find(tools->engine, tools->inspected);
     if (page)
@@ -962,7 +989,7 @@ static void bind_inspector_view(MeshView *v) {
     v->tab_height = t->height;
     v->on_gone = on_inspector_gone;
     watch_toplevel(v);
-    wpe_view_set_visible(WPE_VIEW(v), TRUE);
+    wpe_view_set_visible(WPE_VIEW(v), !t->hidden);
 }
 
 /* ---- the engine --------------------------------------------------------------------------- */
@@ -976,8 +1003,10 @@ static void free_tab(Tab *t) {
         webkit_script_dialog_close(t->dialog);
         webkit_script_dialog_unref(t->dialog);
     }
-    if (t->wpe)
+    if (t->wpe) {
         t->wpe->on_picture = NULL;
+        t->wpe->data = NULL;
+    }
     if (waiting_inspector == t)
         waiting_inspector = NULL;
     if (t->inspected) {
@@ -997,9 +1026,14 @@ static void free_tab(Tab *t) {
             push(t->engine, EV_CLOSE_TAB, tools->id, 0, 0, 0, NULL, NULL);
         }
     }
-    if (t->view)
+    if (t->view) {
+        /* Nothing the page does reaches this tab once it is gone, whatever still holds its view
+         * a moment longer (a script's answer on its way): its handlers go with it. */
+        g_signal_handlers_disconnect_by_data(t->view, t);
+        g_signal_handlers_disconnect_by_data(webkit_web_view_get_find_controller(t->view), t);
+        g_signal_handlers_disconnect_by_data(webkit_web_view_get_user_content_manager(t->view), t);
         g_object_unref(t->view);
-    else if (t->wpe) {
+    } else if (t->wpe) {
         t->wpe->on_gone = NULL;
         unwatch_toplevel(t->wpe);
         g_object_unref(t->wpe);
@@ -1690,15 +1724,12 @@ int spatimesh_open(Engine *e, uint64_t id, const char *uri, int width, int heigh
     t->engine = e;
     t->width = MAX(width, 1);
     t->height = MAX(height, 1);
-    /* A view WebKit already made, for a page's window.open (on_create). */
+    /* A view WebKit already made, for a page's window.open (on_create): the tab takes the
+     * reference `e->opened` held. */
     WebKitWebView *opened = NULL;
     if (uri && g_str_has_prefix(uri, OPENED_PREFIX)) {
         gpointer number = GUINT_TO_POINTER((unsigned)g_ascii_strtoull(uri + strlen(OPENED_PREFIX), NULL, 10));
-        opened = g_hash_table_lookup(e->opened, number);
-        if (opened) {
-            g_object_ref(opened);
-            g_hash_table_remove(e->opened, number);
-        }
+        g_hash_table_steal_extended(e->opened, number, NULL, (gpointer *)&opened);
         uri = opened ? NULL : "about:blank";
     }
     t->view = opened ? opened : WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "display", mesh_display(), "web-context", e->context,
@@ -1823,6 +1854,18 @@ void spatimesh_mute(Engine *e, uint64_t id, int muted) {
     Tab *t = find_page(e, id);
     if (t)
         webkit_web_view_set_is_muted(t->view, muted);
+}
+
+/* Whether the tab is the one its window shows. A tab behind another is hidden to its page
+ * (document.hidden), as in every browser: WebKit draws it no more and slows its timers, so ten
+ * tabs cost what the ones in front do. Its sound plays on. */
+void spatimesh_show(Engine *e, uint64_t id, int shown) {
+    Tab *t = find(e, id);
+    if (!t)
+        return;
+    t->hidden = !shown;
+    if (t->wpe)
+        wpe_view_set_visible(WPE_VIEW(t->wpe), shown != 0);
 }
 
 /* ---- input ---------------------------------------------------------------------------------- */

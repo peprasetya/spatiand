@@ -419,6 +419,10 @@ pub trait Engine {
     fn release_surface(&mut self, tab: TabId, id: u32) {
         let _ = (tab, id);
     }
+    /// The tab is the one its window shows, or is behind another: a page behind is hidden to
+    /// itself (`document.hidden`), drawn no more, its timers slowed, its sound playing on. A tab
+    /// is shown when it opens.
+    fn show(&mut self, _tab: TabId, _shown: bool) {}
     /// The window's socket: a reason for [`Engine::pump`] to stop waiting.
     fn wake_on(&mut self, _fd: std::os::fd::RawFd) {}
     /// The profile's extensions: which content scripts go into which frames, and what

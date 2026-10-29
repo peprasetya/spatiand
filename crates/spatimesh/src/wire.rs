@@ -70,6 +70,8 @@ pub enum ToHost {
     CredScripts { page: String, world: String },
     /// [`crate::engine::Engine::cred_reply`].
     CredReply { request: u64, ok: bool, json: Secret },
+    /// [`crate::engine::Engine::show`].
+    Show { tab: TabId, shown: bool },
 }
 
 /// From an engine host to its window.
@@ -427,6 +429,10 @@ impl ToHost {
                 b.u64(*request).bool(*ok).str(&json.0);
                 35
             }
+            ToHost::Show { tab, shown } => {
+                b.u64(*tab).bool(*shown);
+                36
+            }
         };
         frame(tag, b)
     }
@@ -493,6 +499,7 @@ impl ToHost {
             33 => ToHost::Preconnect { tab: i.u64()?, url: i.str()? },
             34 => ToHost::CredScripts { page: i.str()?, world: i.str()? },
             35 => ToHost::CredReply { request: i.u64()?, ok: i.bool()?, json: Secret(i.str()?) },
+            36 => ToHost::Show { tab: i.u64()?, shown: i.bool()? },
             _ => return None,
         })
     }
@@ -1271,6 +1278,7 @@ mod tests {
             ToHost::Files { tab: 3, files: None },
             ToHost::CredScripts { page: "page()".into(), world: "world()".into() },
             ToHost::CredReply { request: 9, ok: true, json: Secret("{\"fill\":1}".into()) },
+            ToHost::Show { tab: 3, shown: false },
         ];
         for message in to_host {
             let bytes = message.encode();

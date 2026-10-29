@@ -10,6 +10,8 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Child;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use spatimesh::engine::{Button, Cookie, DialogKind, Format, Happened, KeyPress, Modifiers, ProfileSetup, TabId, View};
@@ -824,6 +826,124 @@ fn a_window_opened_tells_its_opener_and_closes() {
     host.wait_for("the opened window closing itself", 20, |h| matches!(h, Happened::CloseTab { tab: 2 }));
     host.quit();
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A web server on this machine answering each path with its page, counting what is asked of
+/// /ping.
+fn counting_server(pings: Arc<AtomicUsize>, pages: Vec<(&'static str, &'static str)>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut stream = stream;
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut request = [0u8; 4096];
+            let n = stream.read(&mut request).unwrap_or(0);
+            let request = String::from_utf8_lossy(&request[..n]);
+            let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
+            if path.starts_with("/ping") {
+                pings.fetch_add(1, Ordering::SeqCst);
+            }
+            let body = pages.iter().find(|(p, _)| *p == path).map_or("", |(_, b)| *b);
+            let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+        }
+    });
+    address
+}
+
+/// An engine whose freed memory is filled (macOS's MallocScribble), so that anything still
+/// reading what was let go of fails at once rather than by chance.
+fn scribbling() -> Option<Host> {
+    std::env::set_var("MallocScribble", "1");
+    let host = Host::start(&private());
+    std::env::remove_var("MallocScribble");
+    host
+}
+
+/// A window a page opened (an advertisement's, say), whose tab is closed at once, ends with its
+/// tab: it runs no more, and the engine and the opener go on. Its view once outlived its tab,
+/// still loading and telling the gone tab what it did: the engine read freed memory and stopped,
+/// with every tab of the profile.
+#[test]
+fn a_window_opened_and_closed_runs_no_more() {
+    let _turn = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(mut host) = scribbling() else { return };
+    let pings = Arc::new(AtomicUsize::new(0));
+    let address = counting_server(pings.clone(), vec![
+        ("/main", "<title>main</title><body style='margin:0;height:100vh' onclick=\"window.open('/advert')\"></body>"),
+        ("/advert", "<script>var n=0;setInterval(function(){document.title='tick '+(++n);new Image().src='/ping?'+n},20)</script>"),
+    ]);
+    host.send(ToHost::Open { tab: 1, url: format!("{address}/main"), view: View::new(400, 300, 1.0) });
+    host.title(1, "main");
+    host.loaded(1);
+    host.settle(Duration::from_secs(1));
+    host.click(1, 50.0, 50.0);
+    let opened = host.wait_for("the page opening a window", 20, |h| matches!(h, Happened::OpenTab { opener: 1, .. }));
+    let Happened::OpenTab { url, .. } = opened else { unreachable!() };
+    host.send(ToHost::Open { tab: 2, url, view: View::new(400, 300, 1.0) });
+    host.title(2, "tick");
+    host.send(ToHost::Close { tab: 2 });
+    host.settle(Duration::from_secs(1));
+    let at_close = pings.load(Ordering::SeqCst);
+    assert!(at_close > 0, "the window's page never ran");
+    host.settle(Duration::from_secs(2));
+    assert!(!host.link.is_closed(), "the engine stopped after the window's tab was closed");
+    assert_eq!(pings.load(Ordering::SeqCst), at_close, "the closed window's page still runs");
+    host.send(ToHost::Load { tab: 1, url: page("<title>main again</title>") });
+    host.title(1, "main again");
+    host.quit();
+}
+
+/// A tab closed while something still holds its page a moment longer -- a script's answer on
+/// its way -- says nothing more: what the page does meanwhile reaches no tab that is gone.
+#[test]
+fn a_closed_tab_still_answering_says_nothing_more() {
+    let _turn = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(mut host) = scribbling() else { return };
+    host.send(ToHost::Open { tab: 1, url: page("<title>one</title>"), view: View::new(200, 100, 1.0) });
+    host.title(1, "one");
+    host.loaded(1);
+    host.send(ToHost::Open { tab: 2, url: page("<title>two</title>"), view: View::new(200, 100, 1.0) });
+    host.title(2, "two");
+    // The page opens a window before it answers -- WebKit asks the engine for it at once, while
+    // the answer still holds the page -- and its tab is closed meanwhile.
+    let code = "window.open('about:blank');var t=Date.now();while(Date.now()-t<500){}1".to_string();
+    host.send(ToHost::RunScript { tab: 1, world: String::new(), all_frames: false, code, request: 5, boot: false });
+    host.send(ToHost::Close { tab: 1 });
+    host.settle(Duration::from_secs(3));
+    assert!(!host.link.is_closed(), "the engine stopped");
+    assert!(!host.seen.iter().any(|h| matches!(h, Happened::OpenTab { opener: 1, .. })), "a closed tab's page opened a tab");
+    host.send(ToHost::Load { tab: 2, url: page("<title>two again</title>") });
+    host.title(2, "two again");
+    host.quit();
+}
+
+/// A tab behind another is hidden to its page, as in every browser, and drawn no more; shown
+/// again, it is seen and drawn.
+#[test]
+fn a_tab_behind_another_is_hidden_to_its_page() {
+    let Some(mut host) = Host::start(&private()) else { return };
+    // A page that says whether it is seen, and is a new colour every frame it is drawn.
+    let url = page(concat!(
+        "<body style='margin:0'><script>",
+        "function say(){document.title=document.visibilityState}say();document.addEventListener('visibilitychange',say);",
+        "var n=0;(function step(){document.body.style.background='rgb('+(n++%256)+',0,0)';requestAnimationFrame(step)})();",
+        "</script></body>"
+    ));
+    host.send(ToHost::Open { tab: 1, url, view: View::new(200, 100, 1.0) });
+    host.title(1, "visible");
+    host.wait_for("a picture", 10, |h| matches!(h, Happened::Picture { tab: 1 }));
+    host.send(ToHost::Show { tab: 1, shown: false });
+    host.title(1, "hidden");
+    host.settle(Duration::from_millis(300));
+    host.seen.retain(|h| !matches!(h, Happened::Picture { tab: 1 }));
+    host.settle(Duration::from_secs(1));
+    let drawn = host.seen.iter().filter(|h| matches!(h, Happened::Picture { tab: 1 })).count();
+    assert!(drawn <= 1, "{drawn} pictures of a hidden tab in a second");
+    host.send(ToHost::Show { tab: 1, shown: true });
+    host.title(1, "visible");
+    host.wait_for("a picture once shown again", 10, |h| matches!(h, Happened::Picture { tab: 1 }));
+    host.quit();
 }
 
 /// An emoji drawn as SVG text in a CSS background, as Vibrefy draws every picture it has none

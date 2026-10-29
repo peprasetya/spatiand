@@ -156,6 +156,7 @@ pub fn serve(mut engine: Box<dyn Engine>, mut link: Link) {
                 ToHost::Focus { tab, focused } => engine.focus(tab, focused),
                 ToHost::Window { tab, window } => engine.set_window(tab, window),
                 ToHost::Mute { tab, muted } => engine.set_muted(tab, muted),
+                ToHost::Show { tab, shown } => engine.show(tab, shown),
                 ToHost::Release { tab, buffer } => canvas.release(tab, buffer),
                 ToHost::Choose { tab, index } => engine.choose(tab, index),
                 ToHost::Answer { tab, accepted, text } => engine.answer(tab, accepted, text),

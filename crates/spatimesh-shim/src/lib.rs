@@ -53,6 +53,7 @@ extern "C" {
     fn spatimesh_stop(e: *mut Raw, id: u64);
     fn spatimesh_resize(e: *mut Raw, id: u64, width: c_int, height: c_int, zoom: f64);
     fn spatimesh_mute(e: *mut Raw, id: u64, muted: c_int);
+    fn spatimesh_show(e: *mut Raw, id: u64, shown: c_int);
     fn spatimesh_set_window(e: *mut Raw, id: u64, window: u32);
     fn spatimesh_pointer(e: *mut Raw, id: u64, x: f64, y: f64, button: c_int, pressed: c_int, modifiers: c_int);
     fn spatimesh_leave(e: *mut Raw, id: u64);
@@ -503,6 +504,10 @@ impl Engine for Shim {
 
     fn set_muted(&mut self, tab: TabId, muted: bool) {
         unsafe { spatimesh_mute(self.raw, tab, muted as c_int) };
+    }
+
+    fn show(&mut self, tab: TabId, shown: bool) {
+        unsafe { spatimesh_show(self.raw, tab, shown as c_int) };
     }
 
     fn choose(&mut self, tab: TabId, index: Option<usize>) {
