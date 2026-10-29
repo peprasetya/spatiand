@@ -16,7 +16,9 @@ fn main() {
     let pkgconfig = format!("{wpe}/lib/pkgconfig");
     let path = std::env::var("PKG_CONFIG_PATH").map(|p| format!("{pkgconfig}:{p}")).unwrap_or(pkgconfig);
     std::env::set_var("PKG_CONFIG_PATH", path);
-    match pkg_config::Config::new().probe("wpe-webkit-2.0") {
+    // The prefix from where the .pc files are now, not where WPE was built: a bundle is moved (to
+    // the Deck, out of a CI release) and still names the folder it was built in.
+    match pkg_config::Config::new().arg("--define-prefix").probe("wpe-webkit-2.0") {
         Ok(library) => {
             let mut build = cc::Build::new();
             build.file("native/wpe.c");
