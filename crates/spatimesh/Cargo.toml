@@ -8,8 +8,8 @@ repository.workspace = true
 description = "SpatiMesh: Spatiand's web browser"
 
 # See docs/spatimesh.md. One process holds the windows and draws the browser around the page;
-# every tab is a process of its own holding the platform's web engine (WebKit on the Mac,
-# WebKitGTK on Linux, the system WebView on Android) behind one interface, so that one tab
+# every tab's page is in WPE WebKit's own processes, held by an engine host behind one
+# interface (on every platform the same engine), so that one tab
 # crashing takes nothing else with it.
 # `media`: pages' media played by Spatiand's own player, which needs FFmpeg where it is built.
 # Without it, the engine plays them as it always did.
@@ -37,6 +37,9 @@ percent-encoding = "2"
 regex = "1"
 # Extensions' toolbar pictures.
 png = "0.17"
+# SpatiKey: asking its service for passwords and passkeys, and the rules for which site a page
+# is (docs/spatikey.md, "SpatiMesh").
+spatikey-core = { path = "../spatikey-core", default-features = false }
 # Pages' films and sounds, played by Spatiand's own player rather than the engine's
 # (docs/spatimesh.md, "Media"): FFmpeg and the platform's decoder.
 spatiand-media = { path = "../spatiand-media", optional = true }

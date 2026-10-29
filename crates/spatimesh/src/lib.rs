@@ -9,6 +9,7 @@
 pub mod address;
 pub mod bookmarks;
 pub mod cookies;
+pub mod credentials;
 pub mod engine;
 pub mod extensions;
 pub mod history;

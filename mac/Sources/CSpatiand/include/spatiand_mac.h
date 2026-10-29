@@ -51,6 +51,7 @@ enum {
     SP_DESK_CLOSE = 34,       // window id has closed, or the glasses have it now
     SP_CLIPBOARD = 35,        // the session's clipboard to the pasteboard; text is {"host": {"Clipboard": ...}}
     SP_DESCRIBE = 36,         // say what the application with bundle id text shows, with sp_described(id, json)
+    SP_TYPE_TEXT = 37,        // SpatiKey: type {"bundle", "steps"} into that application as Unicode; answer sp_typed(id, error)
 };
 
 typedef void (*sp_asked_fn)(void *user, int32_t what, uint32_t id, double a, double b, double c,
@@ -139,6 +140,8 @@ void sp_window_title(uint32_t id, const char *title);
 /// The answer to SP_DESCRIBE number id: what the application's focused window shows, as the JSON
 /// of spatiand_xr_surface_v1.describe ("kind", "app", "title", "text", "vocabulary", ...).
 void sp_described(uint32_t id, const char *json);
+/// SP_TYPE_TEXT number id done: error NULL, or why not.
+void sp_typed(uint32_t id, const char *error);
 void sp_window_close(uint32_t id);
 
 // A notification to show under the clock: its sender on the first line and what it says on

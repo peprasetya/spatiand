@@ -1,8 +1,7 @@
 //! The one interface every web engine is put behind (docs/spatimesh.md).
 //!
-//! An [`Engine`] lives in the engine host, the process that holds one profile's pages: WebKitGTK
-//! on Linux, Steam's Chromium (CEF) on SteamOS, WKWebView on the Mac, the system WebView on
-//! Android. The window process never links one; it says the same things over the wire
+//! An [`Engine`] lives in the engine host, the process that holds one profile's pages: WPE
+//! WebKit, on every platform. The window process never links one; it says the same things over the wire
 //! (`wire.rs`) and is told what [`Happened`].
 //!
 //! Each tab's picture is drawn by the engine into a [`Canvas`], which the host keeps in memory
@@ -260,11 +259,26 @@ pub enum Happened {
     /// A download's news: the window's own ([`Engine::download`]) by its number, or one the
     /// engine began (numbered from [`ENGINE_DOWNLOADS`]).
     Download { tab: TabId, id: u64, event: Download },
+    /// A frame's message to SpatiKey (docs/spatikey.md, "SpatiMesh"): what `cred-world.js`, in
+    /// its own isolated world, posted -- a passkey wanted, a login field focused, a login sent --
+    /// stamped there with the frame's origin. The page waits for [`Engine::cred_reply`] with
+    /// `request`.
+    Cred { tab: TabId, request: u64, json: Secret },
     /// The profile's cookies, all of them, as asked for with [`Engine::ask_cookies`].
     Cookies { cookies: Vec<Cookie> },
     /// What an engine that cannot list its cookies (Android's) sends to each address it was
     /// asked about, as a page there would get it: `name=value; name=value`, by address.
     CookiesSent { sent: Vec<(String, String)> },
+}
+
+/// Text that may hold a password or a signature: carried as it is, never printed.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct Secret(pub String);
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Secret({} bytes)", self.0.len())
+    }
 }
 
 /// A cookie, as every engine keeps one: a domain that starts with a dot is the domain's and
@@ -355,7 +369,8 @@ impl Happened {
             | Happened::Hovered { tab, .. }
             | Happened::Found { tab, .. }
             | Happened::ChooseFiles { tab, .. }
-            | Happened::Download { tab, .. } => *tab,
+            | Happened::Download { tab, .. }
+            | Happened::Cred { tab, .. } => *tab,
             Happened::OpenTab { opener, .. } => *opener,
             // The profile's, not a tab's.
             Happened::Cookies { .. } | Happened::CookiesSent { .. } => 0,
@@ -369,7 +384,7 @@ impl Happened {
 /// engine does not have is ignored, so that a window and an engine host that have just
 /// crossed (a tab closed on one side while the other was busy) do no harm.
 pub trait Engine {
-    /// What it is, for the log and the About page: "WebKitGTK 2.52.6".
+    /// What it is, for the log and the About page: "WPE WebKit 2.54.1".
     fn name(&self) -> String;
     /// Make a tab and start loading `url` in it.
     fn open(&mut self, tab: TabId, url: &str, view: View) -> Result<(), String>;
@@ -452,6 +467,14 @@ pub trait Engine {
     /// The files the wearer chose for a [`Happened::ChooseFiles`], by their paths; none if they
     /// chose none.
     fn choose_files(&mut self, _tab: TabId, _files: Option<Vec<String>>) {}
+    /// SpatiKey's two scripts for every frame's every document from now on: `page` in the page's
+    /// own world (`webauthn.js`: `navigator.credentials`), `world` in the isolated world
+    /// `spatimesh-cred`, the only one given the message handler `spatimeshCred` (`forms.js` and
+    /// `cred-world.js`). What `world` posts comes as [`Happened::Cred`].
+    fn set_cred_scripts(&mut self, _page: &str, _world: &str) {}
+    /// The answer to a [`Happened::Cred`]: `json` (a string the frame's script reads), or, not
+    /// `ok`, why not.
+    fn cred_reply(&mut self, _request: u64, _ok: bool, _json: &str) {}
 }
 
 /// What a profile is to the engine that holds it.

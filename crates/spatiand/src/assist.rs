@@ -680,6 +680,11 @@ fn scroll(state: &mut Spatiand, dx: f64, dy: f64, time_ms: u32) {
 }
 
 /// A key, with modifiers held around it.
+/// One key, with Shift held if `shift`: SpatiKey's typing (`crate::spatikey`).
+pub fn stroke(state: &mut Spatiand, code: u32, shift: bool, time_ms: u32) {
+    stroke_keys(state, code, shift, false, false, false, time_ms);
+}
+
 fn stroke_keys(state: &mut Spatiand, code: u32, shift: bool, ctrl: bool, alt: bool, logo: bool, time_ms: u32) {
     use spatiand_shell::keyboard as kb;
     let held: Vec<u32> = [(ctrl, kb::KEY_LEFTCTRL), (alt, kb::KEY_LEFTALT), (shift, kb::KEY_LEFTSHIFT), (logo, 125)]

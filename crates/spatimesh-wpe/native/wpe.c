@@ -59,6 +59,7 @@ enum {
     EV_FOUND,
     EV_CHOOSE_FILES,
     EV_DOWNLOAD,
+    EV_CRED,
 };
 
 typedef struct {
@@ -623,7 +624,27 @@ typedef struct Engine {
     GHashTable *downloads;
     int download_next;
     struct Fetch *asking;
+    /* SpatiKey (docs/spatikey.md, "SpatiMesh"): its script for the page's world, its script for
+     * the isolated world "spatimesh-cred", and the frames' messages waiting for the window's
+     * answer, by the number the window was told (CredWait). */
+    char *cred_page, *cred_world;
+    GHashTable *cred_waiting;
+    uint64_t cred_next;
 } Engine;
+
+/* A frame's message to SpatiKey, waiting for the window's answer. */
+typedef struct {
+    WebKitScriptMessageReply *reply;
+    /* The context the message came in: WebKit reads a reply's value through it. */
+    JSCContext *context;
+    uint64_t tab;
+} CredWait;
+
+static void free_cred_wait(CredWait *w) {
+    webkit_script_message_reply_unref(w->reply);
+    g_object_unref(w->context);
+    g_free(w);
+}
 
 /* A download, as the window knows it. */
 typedef struct Fetch {
@@ -991,6 +1012,19 @@ static void free_tab(Tab *t) {
     g_free(t->hovered);
     if (t->worlds)
         g_ptr_array_unref(t->worlds);
+    /* What its frames still wait on from SpatiKey: answered, so no page waits for ever. */
+    if (t->engine->cred_waiting) {
+        GHashTableIter it;
+        gpointer key, value;
+        g_hash_table_iter_init(&it, t->engine->cred_waiting);
+        while (g_hash_table_iter_next(&it, &key, &value)) {
+            CredWait *w = value;
+            if (w->tab == t->id) {
+                webkit_script_message_reply_return_error_message(w->reply, "closed");
+                g_hash_table_iter_remove(&it);
+            }
+        }
+    }
     g_free(t);
 }
 
@@ -1175,6 +1209,54 @@ static void on_ext_message(WebKitUserContentManager *manager, JSCValue *value, T
     g_free(text);
 }
 
+/* What cred-world.js posts from its isolated world: kept, and told to the window, which answers
+ * with spatimesh_cred_reply. Only that world has the handler, so a page cannot post here, and
+ * the origin in the message is the one that world read for itself.
+ *
+ * The tab is the one whose view last took this content manager's scripts: a page opened with
+ * window.open shares its opener's manager, so its messages are told as the opener's tab's. The
+ * answer still reaches the frame that asked, through the reply. */
+static gboolean on_cred_message(WebKitUserContentManager *manager, JSCValue *value, WebKitScriptMessageReply *reply, Engine *e) {
+    uint64_t *tab = g_object_get_data(G_OBJECT(manager), "spatimesh-cred-tab");
+    if (!tab || !jsc_value_is_string(value)) {
+        webkit_script_message_reply_return_error_message(reply, "not for SpatiKey");
+        return TRUE;
+    }
+    char *text = jsc_value_to_string(value);
+    CredWait *w = g_new0(CredWait, 1);
+    w->reply = webkit_script_message_reply_ref(reply);
+    w->context = g_object_ref(jsc_value_get_context(value));
+    w->tab = *tab;
+    uint64_t number = ++e->cred_next;
+    g_hash_table_insert(e->cred_waiting, g_memdup2(&number, sizeof number), w);
+    push(e, EV_CRED, *tab, (double)number, 0, 0, text, NULL);
+    g_free(text);
+    return TRUE;
+}
+
+/* SpatiKey's two scripts into a tab's view, and the handler that only its isolated world has:
+ * registered once for each content manager. */
+static void apply_cred(Tab *t, WebKitUserContentManager *m) {
+    Engine *e = t->engine;
+    if (!e->cred_page || !e->cred_world)
+        return;
+    uint64_t *tab = g_new(uint64_t, 1);
+    *tab = t->id;
+    g_object_set_data_full(G_OBJECT(m), "spatimesh-cred-tab", tab, g_free);
+    if (!g_object_get_data(G_OBJECT(m), "spatimesh-cred")) {
+        if (webkit_user_content_manager_register_script_message_handler_with_reply(m, "spatimeshCred", "spatimesh-cred")) {
+            g_signal_connect(m, "script-message-with-reply-received::spatimeshCred", G_CALLBACK(on_cred_message), e);
+            g_object_set_data(G_OBJECT(m), "spatimesh-cred", GINT_TO_POINTER(1));
+        }
+    }
+    WebKitUserScript *page = webkit_user_script_new(e->cred_page, WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, NULL, NULL);
+    webkit_user_content_manager_add_script(m, page);
+    webkit_user_script_unref(page);
+    WebKitUserScript *world = webkit_user_script_new_for_world(e->cred_world, WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, "spatimesh-cred", NULL, NULL);
+    webkit_user_content_manager_add_script(m, world);
+    webkit_user_script_unref(world);
+}
+
 /* The profile's extensions into a tab's view: their scripts, their style sheets, and the
  * handlers their contexts speak to, in place of what was there. Pages loaded from now on
  * have them. */
@@ -1183,6 +1265,9 @@ static void apply_extensions(Tab *t) {
     WebKitUserContentManager *m = webkit_web_view_get_user_content_manager(t->view);
     webkit_user_content_manager_remove_all_scripts(m);
     webkit_user_content_manager_remove_all_style_sheets(m);
+    /* SpatiKey's before anything else of a page's world: navigator.credentials must be there
+     * before the page's own scripts look for it. */
+    apply_cred(t, m);
     if (!t->worlds) {
         t->worlds = g_ptr_array_new_with_free_func(g_free);
         g_signal_connect(m, "script-message-received::spatimeshExt", G_CALLBACK(on_ext_message), t);
@@ -1579,6 +1664,7 @@ Engine *spatimesh_new(const char *data, const char *cache) {
     }
     e->downloads = g_hash_table_new(g_direct_hash, g_direct_equal);
     e->download_next = 1 << 30;
+    e->cred_waiting = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, (GDestroyNotify)free_cred_wait);
     g_signal_connect(e->session, "download-started", G_CALLBACK(on_download_started), e);
     return e;
 }
@@ -2271,4 +2357,35 @@ void spatimesh_preconnect(Engine *e, uint64_t id, const char *url) {
     if (host && *host)
         webkit_network_session_prefetch_dns(e->session, host);
     g_uri_unref(uri);
+}
+
+/* SpatiKey's scripts for every frame from now on (docs/spatikey.md, "SpatiMesh"). */
+void spatimesh_cred_scripts(Engine *e, const char *page, const char *world) {
+    g_free(e->cred_page);
+    g_free(e->cred_world);
+    e->cred_page = page && *page ? g_strdup(page) : NULL;
+    e->cred_world = world && *world ? g_strdup(world) : NULL;
+    GHashTableIter it;
+    gpointer key, value;
+    g_hash_table_iter_init(&it, e->tabs);
+    while (g_hash_table_iter_next(&it, &key, &value)) {
+        Tab *t = value;
+        if (t->view)
+            apply_extensions(t);
+    }
+}
+
+/* The window's answer to a frame's message: a string for cred-world.js to read, or why not. */
+void spatimesh_cred_reply(Engine *e, uint64_t request, int ok, const char *json) {
+    CredWait *w = g_hash_table_lookup(e->cred_waiting, &request);
+    if (!w)
+        return;
+    if (ok) {
+        JSCValue *value = jsc_value_new_string(w->context, json ? json : "");
+        webkit_script_message_reply_return_value(w->reply, value);
+        g_object_unref(value);
+    } else {
+        webkit_script_message_reply_return_error_message(w->reply, json ? json : "refused");
+    }
+    g_hash_table_remove(e->cred_waiting, &request);
 }

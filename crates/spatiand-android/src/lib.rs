@@ -26,6 +26,8 @@ mod android;
 
 #[path = "../../spatiand/src/assist.rs"]
 mod assist;
+#[path = "../../spatiand/src/spatikey.rs"]
+mod spatikey;
 #[path = "../../spatiand/src/avatar.rs"]
 mod avatar;
 #[path = "../../spatiand/src/attention.rs"]

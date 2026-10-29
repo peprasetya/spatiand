@@ -1094,7 +1094,9 @@ pub fn run(
             scene.sync_status(&mut renderer, &mut text, &status_text, ppd)?;
             // Dictation's card first (a terminal's text waiting to be typed, or that the room is
             // listening), then this machine's own notification, or failing one, a host's.
-            let said = dictation.notice();
+            // SpatiKey's first while it asks a Mac: someone is to touch its sensor now.
+            let said = crate::spatikey::notice();
+            let said = if said.is_empty() { dictation.notice() } else { said };
             let said = if said.is_empty() { crate::assist::notice() } else { said };
             let said = if said.is_empty() { super::notice() } else { said };
             let said = if said.is_empty() { crate::remote::host_notice() } else { said };
@@ -1676,6 +1678,7 @@ pub fn run(
                     // The assistant's questions and actions (`crate::assist`); what needs the shell is
                     // done next frame, as a pointer's is.
                     pointed_events.extend(crate::assist::serve(&mut runtime.state, Some(&shell), &windows, &mut renderer, time_ms));
+                    crate::spatikey::serve(&mut runtime.state, time_ms);
 
                     if !typed && !shell.wants_text() && right_click && pointers.drag.is_none() && !right_was_down {
                         if !right_aim.as_ref().map(|a| a.on_popup()).unwrap_or(false) {

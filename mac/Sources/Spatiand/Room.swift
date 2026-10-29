@@ -187,6 +187,8 @@ final class Room {
             DispatchQueue.main.async { Notices.shared.pressed() }
         case SP_DESCRIBE:
             MacDescribe.describe(bundle: text, request: id)
+        case SP_TYPE_TEXT:
+            SpatiKeyTyping.type(json: text, request: id)
         case SP_MENU_OPEN:
             RoomWindows.shared.menu(of: id)
         case SP_MENU_CHOOSE:

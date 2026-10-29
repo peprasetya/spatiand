@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 # Remote applications: the wire, the decoder, and a Wayland *client* of our own compositor.
 spatiand-stream = { path = "../spatiand-stream" }
+spatikey-core = { path = "../spatikey-core" }
 spatiand-sync = { path = "../spatiand-sync" }
 spatiand-voice = { path = "../spatiand-voice" }
 serde_json.workspace = true

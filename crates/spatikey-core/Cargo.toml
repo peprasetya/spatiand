@@ -14,7 +14,7 @@ log.workspace = true
 # every build through rustls, on the Mac, Linux and Android alike.
 ring = "0.17"
 # The recovery code's key derivation.
-argon2 = "0.5"
+argon2 = { version = "0.5", optional = true }
 base64 = "0.22"
 # Base32, for TOTP secrets and the recovery code.
 data-encoding = "2"
@@ -25,10 +25,16 @@ zeroize = "1"
 libc = "0.2"
 # The pinned-certificate QUIC the rest of Spatiand speaks, for the Deck and the Beam Pro asking
 # the Mac.
-spatiand-stream = { path = "../spatiand-stream" }
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time", "io-util", "sync", "macros"] }
+spatiand-stream = { path = "../spatiand-stream", optional = true }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time", "io-util", "sync", "macros"], optional = true }
+
+[features]
+default = ["service"]
+# The service itself (the vault, its keys, the Mac's and the devices' network); without it, only
+# what asking the service needs.
+service = ["dep:argon2", "dep:spatiand-stream", "dep:quinn", "dep:rustls", "dep:tokio"]
 
 [dev-dependencies]
 env_logger.workspace = true

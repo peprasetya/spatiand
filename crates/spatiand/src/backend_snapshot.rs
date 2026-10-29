@@ -766,6 +766,7 @@ pub fn run(
                             let gave_up = answered + std::time::Duration::from_secs(30);
                             loop {
                                 // The assistant's questions, answered as the session answers them.
+                                crate::spatikey::serve(&mut runtime.state, 0);
                                 for event in crate::assist::serve(&mut runtime.state, None, &windows, &mut renderer, 0) {
                                     log::info!("assist: the shell would be asked {event:?}");
                                 }

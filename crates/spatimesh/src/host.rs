@@ -1,6 +1,6 @@
 //! The engine host: one profile's web engine, spoken to by the window over a [`Link`].
 //!
-//! Each engine is a program of its own (`spatimesh-wpe`, `spatimesh-webkitgtk`), so that the
+//! Each engine is a program of its own (`spatimesh-wpe`), so that the
 //! window process links none of them and a system without one engine's libraries can still run
 //! the others. Each program's `main` is [`main`] with its
 //! engine: what to do with the window's messages is the same whatever the engine.
@@ -124,7 +124,8 @@ pub fn serve(mut engine: Box<dyn Engine>, mut link: Link) {
     let mut trace = std::env::var_os("SPATIMESH_TRACE_TO_HOST").and_then(|p| std::fs::File::create(p).ok());
     loop {
         for message in link.receive_to_host() {
-            if let Some(file) = trace.as_mut().filter(|_| !matches!(message, ToHost::Pointer { .. } | ToHost::ReleaseSurface { .. } | ToHost::Release { .. })) {
+            // Never keys (what is typed into a password field) or SpatiKey's answers.
+            if let Some(file) = trace.as_mut().filter(|_| !matches!(message, ToHost::Pointer { .. } | ToHost::ReleaseSurface { .. } | ToHost::Release { .. } | ToHost::Key { .. } | ToHost::CredReply { .. })) {
                 use std::io::Write;
                 let _ = writeln!(file, "{message:?}");
             }
@@ -179,6 +180,8 @@ pub fn serve(mut engine: Box<dyn Engine>, mut link: Link) {
                 ToHost::CancelDownload { id } => engine.cancel_download(id),
                 ToHost::Find { tab, text, forward } => engine.find(tab, &text, forward),
                 ToHost::Files { tab, files } => engine.choose_files(tab, files),
+                ToHost::CredScripts { page, world } => engine.set_cred_scripts(&page, &world),
+                ToHost::CredReply { request, ok, json } => engine.cred_reply(request, ok, &json.0),
             }
         }
         if link.is_closed() {

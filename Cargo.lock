@@ -4541,6 +4541,7 @@ dependencies = [
  "spatiand-track",
  "spatiand-video",
  "spatiand-voice",
+ "spatikey-core",
  "thiserror 2.0.20",
  "tiny-skia",
  "tokio",
@@ -4580,6 +4581,7 @@ dependencies = [
  "spatiand-track",
  "spatiand-video",
  "spatiand-voice",
+ "spatikey-core",
  "thiserror 2.0.20",
  "tiny-skia",
  "tokio",
@@ -4713,7 +4715,9 @@ dependencies = [
  "spatiand-stream",
  "spatiand-sync",
  "spatiand-track",
+ "spatikey-core",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]
@@ -4886,6 +4890,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatikey"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "libc",
+ "log",
+ "ring",
+ "serde",
+ "serde_json",
+ "spatiand-app",
+ "spatiand-stream",
+ "spatikey-core",
+ "zeroize",
+]
+
+[[package]]
 name = "spatikey-core"
 version = "0.1.0"
 dependencies = [
@@ -4944,6 +4964,7 @@ dependencies = [
  "spatiand-media",
  "spatiand-surfaces",
  "spatiand-sync",
+ "spatikey-core",
  "url",
 ]
 
@@ -4954,20 +4975,6 @@ dependencies = [
  "serde_json",
  "spatiand-app",
  "spatimesh",
-]
-
-[[package]]
-name = "spatimesh-webkitgtk"
-version = "0.1.0"
-dependencies = [
- "cc",
- "libc",
- "log",
- "pkg-config",
- "serde_json",
- "spatiand-app",
- "spatimesh",
- "spatimesh-shim",
 ]
 
 [[package]]

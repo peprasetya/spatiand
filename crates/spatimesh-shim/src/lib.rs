@@ -1,7 +1,7 @@
 //! SpatiMesh's engine interface over a native engine's C half.
 //!
-//! Each engine program (`spatimesh-wpe`, `spatimesh-webkitgtk`) compiles a small native shim --
-//! C against WPE's headers, or WebKitGTK's -- that provides the same few `spatimesh_*`
+//! The engine program (`spatimesh-wpe`) compiles a small native shim -- C against WPE's headers
+//! -- that provides the few `spatimesh_*`
 //! functions, and links it with this crate,
 //! which is the [`Engine`] over them. The engine's own structures are only ever written in its
 //! own language, against its own headers.
@@ -106,6 +106,10 @@ extern "C" {
     fn spatimesh_download_cancel(e: *mut Raw, download: c_int);
     fn spatimesh_find(e: *mut Raw, id: u64, text: *const c_char, forward: c_int);
     fn spatimesh_files(e: *mut Raw, id: u64, paths: *const c_char);
+    // SpatiKey (docs/spatikey.md, "SpatiMesh"): its scripts for every frame, a frame's message
+    // as an event (kind 23: `number` the request, `text` its JSON), and the answer to one.
+    fn spatimesh_cred_scripts(e: *mut Raw, page: *const c_char, world: *const c_char);
+    fn spatimesh_cred_reply(e: *mut Raw, request: u64, ok: c_int, json: *const c_char);
 }
 
 type ServeFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut *const c_char, *mut *mut u8, *mut usize) -> c_int;
@@ -319,7 +323,7 @@ impl Shim {
             }
         };
         if raw.is_null() {
-            return Err("the engine could not start (for WebKitGTK: no display to connect to)".into());
+            return Err("the engine could not start (no display to connect to?)".into());
         }
         unsafe {
             spatimesh_ext_server(serve, serve_free);
@@ -403,6 +407,7 @@ impl Shim {
                 Happened::Download { tab, id: e.x.max(0) as u64, event }
             }
             14 => Happened::ScriptResult { tab, request: e.number as u64, result: if e.a != 0 { Ok(text(e.text)) } else { Err(text(e.text)) } },
+            23 => Happened::Cred { tab, request: e.number as u64, json: spatimesh::engine::Secret(text(e.text)) },
             _ => return None,
         })
     }
@@ -579,6 +584,16 @@ impl Engine for Shim {
     fn set_page_script(&mut self, code: &str) {
         let code = c(code);
         unsafe { spatimesh_set_page_script(self.raw, code.as_ptr()) };
+    }
+
+    fn set_cred_scripts(&mut self, page: &str, world: &str) {
+        let (page, world) = (c(page), c(world));
+        unsafe { spatimesh_cred_scripts(self.raw, page.as_ptr(), world.as_ptr()) };
+    }
+
+    fn cred_reply(&mut self, request: u64, ok: bool, json: &str) {
+        let json = c(json);
+        unsafe { spatimesh_cred_reply(self.raw, request, ok as c_int, json.as_ptr()) };
     }
 
     fn run_script(&mut self, tab: TabId, world: &str, all_frames: bool, code: &str, request: u64, boot: bool) {

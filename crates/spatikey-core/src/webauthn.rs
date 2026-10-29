@@ -171,10 +171,11 @@ pub fn assert(passkey: &Passkey, client_data_hash: &[u8]) -> Result<AssertedAnsw
 }
 
 /// clientDataJSON exactly as browsers write it: `type`, `challenge`, `origin`, `crossOrigin`, and
-/// `topOrigin` when the frame is not the top one, in that order, with JSON string escaping.
+/// `topOrigin` for a cross-origin frame, in that order, with JSON string escaping.
 ///
 /// `challenge` is the challenge's base64url; padding, if the caller left it on, is dropped, as
-/// browsers write none. `topOrigin` is written whenever one is given. Strings are escaped as
+/// browsers write none. `topOrigin` is written only for a cross-origin frame, as Chrome writes it
+/// (a same-origin frame says `"crossOrigin":false` and nothing more). Strings are escaped as
 /// serde_json escapes them. For everything a browser actually writes here (a fixed type, a
 /// base64url challenge, a serialized origin) there is nothing to escape, so browsers, whose
 /// escapers differ only in characters an origin cannot hold, all agree with it.
@@ -188,7 +189,7 @@ pub fn client_data_json(kind: &str, challenge: &str, origin: &str, cross_origin:
     out.push_str(&json_string(origin));
     out.push_str(",\"crossOrigin\":");
     out.push_str(if cross_origin { "true" } else { "false" });
-    if let Some(top_origin) = top_origin {
+    if let Some(top_origin) = top_origin.filter(|_| cross_origin) {
         out.push_str(",\"topOrigin\":");
         out.push_str(&json_string(top_origin));
     }
@@ -454,5 +455,8 @@ mod tests {
         assert_eq!(parsed["origin"], "https://example.com");
         assert_eq!(parsed["crossOrigin"], true);
         assert_eq!(parsed["topOrigin"], "https://top.example");
+        // A frame of the top frame's own origin says no more than that it is not cross-origin.
+        let same = client_data_json("webauthn.get", "Y2g", "https://example.com", false, Some("https://example.com"));
+        assert!(!same.contains("topOrigin"), "{same}");
     }
 }

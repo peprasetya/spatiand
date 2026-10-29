@@ -56,6 +56,7 @@ mod screen_sleep;
 mod shutdown;
 mod startup;
 mod sidecar;
+mod spatikey;
 mod state;
 mod status;
 mod system;

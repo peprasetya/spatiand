@@ -2,7 +2,7 @@
 """SpatiMesh end to end, with no GPU, no display and no glasses.
 
 The room's own compositor (SPATIAND_BACKEND=snapshot, drawing in software where there is no
-GPU) runs SpatiMesh as its client, with WebKitGTK showing a page from a server started here;
+GPU) runs SpatiMesh as its client, with WPE showing a page from a server started here;
 SPATIAND_STEPS types, clicks and photographs SpatiMesh's window after each step, and the
 photographs are checked here, pixel by pixel:
 
@@ -14,7 +14,7 @@ photographs are checked here, pixel by pixel:
 
     tools/spatimesh-e2e.py [target/debug] [out-folder]
 
-The programs are the ones built in the folder given (spatiand, spatimesh, spatimesh-webkitgtk).
+The programs are the ones built in the folder given (spatiand, spatimesh, spatimesh-wpe, and the WPE bundle in wpe/).
 The photographs are left in out-folder (target/spatimesh-e2e) to be looked at.
 """
 
@@ -154,7 +154,7 @@ def main():
         "XDG_RUNTIME_DIR": runtime,
         "HOME": work,
         "SPATIMESH_HOME": os.path.join(work, "spatimesh"),
-        "SPATIMESH_ENGINE": "webkitgtk",
+        "SPATIMESH_ENGINE": "wpe",
         "EGL_PLATFORM": "surfaceless",
         "SPATIAND_BACKEND": "snapshot",
         "SPATIAND_SNAPSHOT": os.path.join(out, "room.png"),

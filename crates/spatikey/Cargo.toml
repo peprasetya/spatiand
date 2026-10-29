@@ -1,0 +1,35 @@
+[package]
+name = "spatikey"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SpatiKey: Spatiand's passwords, passkeys and two-factor codes, and the browsers' way to them"
+
+# docs/spatikey.md. Both programs ask SpatiKey's service for everything, over its local socket
+# (spatikey_core::socket); neither reads the vault.
+[[bin]]
+name = "spatikey"
+path = "src/main.rs"
+
+# Started by Chrome and Firefox for the SpatiKey extension (native messaging), never by a person.
+# It uses spatikey-core alone, so it carries nothing of the window's.
+[[bin]]
+name = "spatikey-host"
+path = "src/host.rs"
+
+[dependencies]
+spatikey-core = { path = "../spatikey-core", default-features = false }
+spatiand-app = { path = "../spatiand-app" }
+# The six digits a pairing shows, made from both machines' fingerprints as every other pairing
+# in Spatiand makes them.
+spatiand-stream = { path = "../spatiand-stream" }
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+env_logger.workspace = true
+libc = "0.2"
+# Random numbers for a new password, from the system; already in every build through rustls.
+ring = "0.17"
+zeroize = "1"

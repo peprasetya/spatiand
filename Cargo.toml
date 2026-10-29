@@ -33,10 +33,10 @@ members = [
     "crates/spatiand-sync",
     "crates/spatiand-voice",
     "crates/spatimesh",
-    "crates/spatimesh-webkitgtk",
     "crates/spatimesh-shim",
     "crates/spatimesh-wpe",
     "crates/spatikey-core",
+    "crates/spatikey",
 ]
 
 [workspace.package]
@@ -54,6 +54,11 @@ serde_json = "1"
 toml = "0.8"
 log = "0.4"
 env_logger = "0.11"
+
+# The recovery code's key derivation is meant to be slow; unoptimised, SpatiKey's tests wait
+# seconds for each.
+[profile.dev.package.argon2]
+opt-level = 3
 
 [profile.release]
 opt-level = 3

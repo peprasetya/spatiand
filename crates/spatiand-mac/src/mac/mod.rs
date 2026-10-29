@@ -402,6 +402,54 @@ fn described(n: u32, json: String) {
     }
 }
 
+/// SpatiKey's typing into this Mac's applications, by number, waiting for `sp_typed`.
+static TYPING: Mutex<Vec<(u32, std::sync::mpsc::Sender<Result<(), String>>)>> = Mutex::new(Vec::new());
+
+/// Is the room window with this app id one of this Mac's own (an application captured from it)?
+pub fn is_mac_window(app_id: &str) -> bool {
+    app_id.starts_with(&format!("remote.{}.", local::HOST))
+}
+
+/// Type into one of this Mac's applications (`app_id` its room id) as the characters
+/// themselves: macOS is given each piece of text as Unicode, so neither the keyboard layout nor
+/// a Shift the room added on its own can change what arrives. The answer comes on `answer` when
+/// the app's side has done it.
+pub fn type_steps(app_id: &str, steps: &[spatikey_core::hooks::Step], answer: std::sync::mpsc::Sender<Result<(), String>>) {
+    use spatikey_core::hooks::Step;
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+    let Some(bundle) = app_id.strip_prefix(&format!("remote.{}.", local::HOST)) else {
+        let _ = answer.send(Err("not one of this Mac's windows".into()));
+        return;
+    };
+    let steps: Vec<serde_json::Value> = steps
+        .iter()
+        .map(|step| match step {
+            Step::Text(text) => serde_json::json!({ "text": text.as_str() }),
+            Step::Tab => serde_json::json!({ "key": "tab" }),
+            Step::Enter => serde_json::json!({ "key": "enter" }),
+        })
+        .collect();
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    {
+        let mut waiting = TYPING.lock().unwrap();
+        while waiting.len() > 8 {
+            let (_, gone) = waiting.remove(0);
+            let _ = gone.send(Err("the Mac did not answer".into()));
+        }
+        waiting.push((n, answer));
+    }
+    let text = zeroize::Zeroizing::new(serde_json::json!({ "bundle": bundle, "steps": steps }).to_string());
+    ffi::call_text(ffi::Asked::TypeText, n, 0.0, 0.0, 0.0, &text);
+}
+
+fn typed(n: u32, result: Result<(), String>) {
+    let mut waiting = TYPING.lock().unwrap();
+    if let Some(at) = waiting.iter().position(|(m, _)| *m == n) {
+        let (_, answer) = waiting.remove(at);
+        let _ = answer.send(result);
+    }
+}
+
 /// The notification the app wants shown, or nothing.
 pub static NOTICE: Mutex<String> = Mutex::new(String::new());
 

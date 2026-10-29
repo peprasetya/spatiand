@@ -2,7 +2,7 @@
 """Dragging between windows in the room, end to end, with no GPU, no display and no glasses.
 
 The room's compositor (SPATIAND_BACKEND=snapshot) runs two SpatiShelf windows and a SpatiMesh
-one (WebKitGTK), and SPATIAND_STEPS drags between them, the button held from one window to the
+one (WPE), and SPATIAND_STEPS drags between them, the button held from one window to the
 next as a wearer's would be:
 
     shelf-to-shelf   a file from one SpatiShelf onto a folder in another: moved there (the same
@@ -83,7 +83,7 @@ def main():
         f"up:{shelf_at(455, 255)}", "wait:3",
     ], os.path.join(out, "room-shelf-to-shelf.png"))
 
-    mesh = f"env -u SPATIAND_APP_FD SPATIMESH_HOME={os.path.join(work, 'mesh')} SPATIMESH_ENGINE=webkitgtk {os.path.join(target, 'spatimesh')} &\n"
+    mesh = f"env -u SPATIAND_APP_FD SPATIMESH_HOME={os.path.join(work, 'mesh')} SPATIMESH_ENGINE=wpe {os.path.join(target, 'spatimesh')} &\n"
     after = os.path.join(out, "mesh-after.png")
     log2 = run("shelf-to-mesh", f"{shelf} {a} &\nsleep 2\n{mesh}", [
         "wait:8", "window:SpatiShelf",

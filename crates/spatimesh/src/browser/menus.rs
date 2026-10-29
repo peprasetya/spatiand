@@ -54,7 +54,7 @@ const MEDIA: &str = "(function(x,y,w){var e=document.elementFromPoint(x,y);while
 if(w==='play'){if(e.paused)e.play();else e.pause()}else if(w==='mute'){e.muted=!e.muted}else if(w==='loop'){e.loop=!e.loop}\
 else if(w==='controls'){e.controls=!e.controls}})(X,Y,'W')";
 
-fn rows_height(rows: &[Row]) -> f32 {
+pub(super) fn rows_height(rows: &[Row]) -> f32 {
     rows.len() as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 24.0
 }
 
@@ -1031,6 +1031,7 @@ impl Browser {
                 let _ = self.settings.save(&self.store);
                 self.refresh_internal();
             }
+            Action::KeyChoice(index) => self.key_chosen(index),
             Action::ToggleBookmarksBar => {
                 self.settings.bookmarks_bar = !self.settings.bookmarks_bar;
                 let _ = self.settings.save(&self.store);

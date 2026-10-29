@@ -1,4 +1,5 @@
-//! Spatiand's own applications: SpatiShelf, SpatiReel, SpatiLoupe, SpatiQuill, SpatiMesh.
+//! Spatiand's own applications: SpatiShelf, SpatiReel, SpatiLoupe, SpatiQuill, SpatiMesh, SpatiPal,
+//! SpatiKey.
 //!
 //! They are programs Spatiand carries, each a process of its own that is a client of this
 //! compositor like any other (`crates/spatiand-app`), and the same programs on the Deck, the
@@ -63,6 +64,12 @@ const OWN: &[Own] = &[
         program: "spatipal",
         icon: include_str!("../../../assets/apps/spatipal.svg"),
         categories: &["Utility"],
+    },
+    Own {
+        name: "SpatiKey",
+        program: "spatikey",
+        icon: include_str!("../../../assets/apps/spatikey.svg"),
+        categories: &["Utility", "Security"],
     },
 ];
 

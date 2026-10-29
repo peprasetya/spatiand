@@ -34,9 +34,9 @@ rust() {
 linux() {
     apt_update_once
     # Smithay's backends (libseat, udev, libinput, GBM/DRM, EGL), the keyboard, Wayland,
-    # PipeWire for sound capture, VA-API (spatiand-video links it), clang for bindgen, and
-    # WebKitGTK with a display to run it on for SpatiMesh's engine on Linux (docs/spatimesh.md),
-    # and Mesa's software GL and a font for the compositor to run SpatiMesh with no GPU.
+    # PipeWire for sound capture, VA-API (spatiand-video links it), clang for bindgen, a display
+    # to run SpatiMesh's WPE on (its bundle is fetched, not built: docs/spatimesh.md), and Mesa's
+    # software GL and a font for the compositor to run SpatiMesh with no GPU.
     $SUDO apt-get install -y -qq --no-install-recommends \
         build-essential pkg-config clang libclang-dev curl ca-certificates git \
         libseat-dev libudev-dev libinput-dev libgbm-dev libdrm-dev \
@@ -44,7 +44,7 @@ linux() {
         libpipewire-0.3-dev libspa-0.2-dev libasound2-dev libusb-1.0-0-dev libdisplay-info-dev libva-dev \
         libx11-dev libxcb1-dev libxcb-composite0-dev libxcb-xfixes0-dev libxcb-render0-dev \
         libxcb-shape0-dev libxcb-xkb-dev xwayland \
-        libwebkit2gtk-4.1-dev xvfb xauth libgl1-mesa-dri fonts-dejavu-core
+        xvfb xauth libgl1-mesa-dri fonts-dejavu-core
     rust
 }
 

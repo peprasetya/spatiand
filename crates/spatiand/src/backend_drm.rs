@@ -2098,7 +2098,9 @@ pub fn run(
             // room is listening); then an application dropped into the room, offered for
             // installing; then a notification from a host's own screen, which the wearer cannot
             // see.
-            let notice = dictation.notice();
+            // SpatiKey's before them all while it asks a Mac: someone is to touch its sensor now.
+            let notice = crate::spatikey::notice();
+            let notice = if notice.is_empty() { dictation.notice() } else { notice };
             let notice = if notice.is_empty() { crate::assist::notice() } else { notice };
             let notice = if notice.is_empty() { crate::install::notice() } else { notice };
             let notice = if notice.is_empty() { crate::remote::host_notice() } else { notice };
@@ -3053,6 +3055,7 @@ pub fn run(
                     // The assistant's questions and actions (`crate::assist`); what needs the shell is
                     // done next frame, as a pointer's is.
                     pointed_events.extend(crate::assist::serve(&mut runtime.state, Some(&shell), &windows, &mut renderer, time_ms));
+                    crate::spatikey::serve(&mut runtime.state, time_ms);
 
                     if !typed
                         && !shell.wants_text()

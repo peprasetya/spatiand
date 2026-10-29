@@ -40,7 +40,7 @@ CROSS_CMAKE= CROSS_MESON= CROSS_AUTO=
 
 fetch() { # name url
     [ -d "$src/$1" ] && return
-    case $2 in *.gz) unpack=-xz ;; *.bz2) unpack=-xj ;; *) unpack=-xJ ;; esac
+    case $2 in *.gz|*.tgz) unpack=-xz ;; *.bz2) unpack=-xj ;; *) unpack=-xJ ;; esac
     curl -fsSL "$2" | tar $unpack -C "$src"
     for p in "$here/patches/${1%-*}"/*.patch; do
         [ -f "$p" ] && (cd "$src/$1" && patch -p1 < "$p")
@@ -380,7 +380,9 @@ linux)
             -Denable-xkbregistry=false -Dxkb-config-root=/usr/share/X11/xkb
         # Media, as on the Mac: GStreamer with only what pages need, decoding by gst-libav on
         # Spatiand's FFmpeg, in hardware by VA-API (va); sound through PulseAudio's client
-        # (PipeWire's, on SteamOS) where Spatiand's own sink is not used. No GStreamer GL.
+        # (PipeWire's, on SteamOS) where Spatiand's own sink is not used. GStreamer's GL library is
+        # built (on EGL and GLES, Mesa's) because WebKit will not configure video without it, though
+        # it does not draw with it (USE_GSTREAMER_GL off).
         gst=https://gstreamer.freedesktop.org/src
         gst_off="-Dauto_features=disabled -Dtests=disabled -Dexamples=disabled -Ddoc=disabled -Dnls=disabled -Dintrospection=disabled"
         fetch "gstreamer-$GSTREAMER_VERSION" "$gst/gstreamer/gstreamer-$GSTREAMER_VERSION.tar.xz"
@@ -388,7 +390,7 @@ linux)
         fetch "gst-plugins-base-$GSTREAMER_VERSION" "$gst/gst-plugins-base/gst-plugins-base-$GSTREAMER_VERSION.tar.xz"
         meson_lib "gst-plugins-base-$GSTREAMER_VERSION" $gst_off -Dtools=disabled \
             -Dapp=enabled -Daudioconvert=enabled -Daudioresample=enabled -Dplayback=enabled -Dtypefind=enabled \
-            -Dvideoconvertscale=enabled -Dvolume=enabled -Dsubparse=enabled -Dgio=enabled -Doverlaycomposition=enabled -Drawparse=enabled -Dgl=disabled
+            -Dvideoconvertscale=enabled -Dvolume=enabled -Dsubparse=enabled -Dgio=enabled -Doverlaycomposition=enabled -Drawparse=enabled -Dgl=enabled -Dgl_api=gles2 -Dgl_platform=egl -Dgl_winsys=egl,surfaceless
         fetch "gst-plugins-good-$GSTREAMER_VERSION" "$gst/gst-plugins-good/gst-plugins-good-$GSTREAMER_VERSION.tar.xz"
         meson_lib "gst-plugins-good-$GSTREAMER_VERSION" ${gst_off% -Dintrospection=disabled} \
             -Disomp4=enabled -Dmatroska=enabled -Daudioparsers=enabled -Dautodetect=enabled -Dpulse=enabled \
@@ -551,7 +553,7 @@ INI
     fetch "gst-plugins-base-$GSTREAMER_VERSION" "$gst/gst-plugins-base/gst-plugins-base-$GSTREAMER_VERSION.tar.xz"
     meson_lib "gst-plugins-base-$GSTREAMER_VERSION" $gst_off -Dtools=disabled \
         -Dapp=enabled -Daudioconvert=enabled -Daudioresample=enabled -Dplayback=enabled -Dtypefind=enabled \
-        -Dvideoconvertscale=enabled -Dvolume=enabled -Dsubparse=enabled -Dgio=enabled -Doverlaycomposition=enabled -Drawparse=enabled -Dgl=disabled
+        -Dvideoconvertscale=enabled -Dvolume=enabled -Dsubparse=enabled -Dgio=enabled -Doverlaycomposition=enabled -Drawparse=enabled -Dgl=enabled -Dgl_api=gles2 -Dgl_platform=egl -Dgl_winsys=android
     fetch "gst-plugins-good-$GSTREAMER_VERSION" "$gst/gst-plugins-good/gst-plugins-good-$GSTREAMER_VERSION.tar.xz"
     meson_lib "gst-plugins-good-$GSTREAMER_VERSION" ${gst_off% -Dintrospection=disabled} \
         -Disomp4=enabled -Dmatroska=enabled -Daudioparsers=enabled -Dautodetect=enabled \

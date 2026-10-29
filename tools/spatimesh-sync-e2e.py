@@ -13,7 +13,7 @@ a server started here:
 
 Checked: A wrote the cookie to the shared folder; B's second request carried it; B shows A's
 page as visited. Where the engine has no visited links that can be told (Steam's Chromium,
-WebKitGTK), the last check is reported, not failed.
+WPE), the last check is reported, not failed.
 
     tools/spatimesh-sync-e2e.py <compositor> [target/debug] [out-folder]
 

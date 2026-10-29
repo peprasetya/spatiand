@@ -5,20 +5,28 @@
 //! cannot choose. The asking program is named from the peer's process, not from what it says of
 //! itself -- except for the browsers' host, which speaks for a browser the kernel cannot see.
 
+#[cfg(feature = "service")]
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, PermissionsExt};
+#[cfg(feature = "service")]
 use std::os::unix::io::AsRawFd;
-use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(feature = "service")]
+use std::os::unix::net::UnixListener;
+use std::os::unix::net::UnixStream;
 use std::path::Path;
+#[cfg(feature = "service")]
 use std::sync::Arc;
+#[cfg(feature = "service")]
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use zeroize::Zeroizing;
 
+#[cfg(feature = "service")]
 use crate::service::{self, Service};
 use crate::wire::{self, Code, Envelope, Refusal, Reply, Request, Who};
 
+#[cfg(feature = "service")]
 /// Spatiand's own programs, by the name they run as, and as a prompt names them.
 const OWN: &[(&str, &str)] = &[
     ("spatikey", "SpatiKey"),
@@ -31,9 +39,11 @@ const OWN: &[(&str, &str)] = &[
     ("spatiand", "Spatiand"),
 ];
 
+#[cfg(feature = "service")]
 /// The browsers' native-messaging host: it relays for an extension, and says which browser.
 const HOST: &str = "spatikey-host";
 
+#[cfg(feature = "service")]
 /// Serve `service` on the socket at `path` (an old socket file there is replaced), one thread per
 /// connection. Only this user's processes are answered (the peer's uid is checked). The asking
 /// program's name is read from the peer process and put in `who.app` ("SpatiMesh"); for the
@@ -85,6 +95,7 @@ pub fn serve(path: &Path, service: Arc<Service>) -> std::io::Result<std::thread:
     })
 }
 
+#[cfg(feature = "service")]
 /// Answer one connection until it closes.
 fn serve_one(mut stream: UnixStream, service: Arc<Service>) {
     let Some(peer) = peer(&stream) else {
@@ -124,6 +135,7 @@ fn serve_one(mut stream: UnixStream, service: Arc<Service>) {
     service.closed(conn);
 }
 
+#[cfg(feature = "service")]
 /// A request, or the refusal to send back: with id 0 when the message is not JSON at all, else
 /// with its own id, so that the caller knows which question was not understood.
 fn parse(frame: &[u8]) -> Result<Envelope, Reply> {
@@ -134,6 +146,7 @@ fn parse(frame: &[u8]) -> Result<Envelope, Reply> {
         .map_err(|e| Reply::err(id, Refusal::new(Code::BadRequest, format!("not a request SpatiKey knows: {e}"))))
 }
 
+#[cfg(feature = "service")]
 /// Who is asking, as the prompt names them: one of Spatiand's own programs by its name, the
 /// browser the host speaks for, or any other program as it is called.
 fn caller(program: Option<&str>, claimed: &str) -> String {
@@ -154,12 +167,14 @@ fn caller(program: Option<&str>, claimed: &str) -> String {
     }
 }
 
+#[cfg(feature = "service")]
 /// The peer of a connection, as the kernel tells it.
 struct Peer {
     uid: u32,
     pid: Option<i32>,
 }
 
+#[cfg(feature = "service")]
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 fn peer(stream: &UnixStream) -> Option<Peer> {
     let fd = stream.as_raw_fd();
@@ -177,6 +192,7 @@ fn peer(stream: &UnixStream) -> Option<Peer> {
     Some(Peer { uid, pid: (found == 0 && pid > 0).then_some(pid) })
 }
 
+#[cfg(feature = "service")]
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn peer(stream: &UnixStream) -> Option<Peer> {
     /// `struct ucred`, the same on Linux and Android (libc keeps Android's elsewhere).
@@ -204,12 +220,14 @@ fn peer(stream: &UnixStream) -> Option<Peer> {
     Some(Peer { uid: credentials.uid, pid: (credentials.pid > 0).then_some(credentials.pid) })
 }
 
+#[cfg(feature = "service")]
 #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "linux", target_os = "android")))]
 fn peer(_stream: &UnixStream) -> Option<Peer> {
     // No way to tell who is calling here, so nobody is answered.
     None
 }
 
+#[cfg(feature = "service")]
 #[cfg(target_os = "macos")]
 fn program_of(pid: i32) -> Option<String> {
     // PROC_PIDPATHINFO_MAXSIZE.
@@ -222,6 +240,7 @@ fn program_of(pid: i32) -> Option<String> {
     program_name(&String::from_utf8_lossy(&buffer[..n as usize]))
 }
 
+#[cfg(feature = "service")]
 #[cfg(not(target_os = "macos"))]
 fn program_of(pid: i32) -> Option<String> {
     std::fs::read_link(format!("/proc/{pid}/exe"))
@@ -230,6 +249,7 @@ fn program_of(pid: i32) -> Option<String> {
         .or_else(|| std::fs::read_to_string(format!("/proc/{pid}/comm")).ok().and_then(|comm| program_name(comm.trim())))
 }
 
+#[cfg(feature = "service")]
 /// A program's name from its path: the file's name, without what Linux adds to a file replaced
 /// since, and on Android without the `lib….so` that Spatiand's programs are carried as there.
 fn program_name(path: &str) -> Option<String> {
@@ -290,6 +310,7 @@ impl Client {
     }
 }
 
+#[cfg(feature = "service")]
 #[cfg(test)]
 mod tests {
     use super::*;

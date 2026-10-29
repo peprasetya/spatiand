@@ -24,6 +24,7 @@ mod downloads;
 mod ext;
 mod find;
 mod kept;
+mod keys;
 mod menus;
 mod omni;
 mod pages;
@@ -45,19 +46,23 @@ const PAGE_DESCRIBE: u64 = 1 << 60;
 
 /// What a page shows, for the room's dictation and assistant: its title and address, its
 /// headings, its words, and the field being typed in (following the focus into frames of the
-/// same origin), the field last because it is what the next words go into.
-const PAGE_DESCRIPTION: &str = "(function(){function go(d){var e=d.activeElement;\
+/// same origin), the field last because it is what the next words go into. Never what is in a
+/// password or one-time-code field: that would reach dictation's and the assistant's models.
+const PAGE_DESCRIPTION: &str = "(function(){function secret(e){return e.tagName==='INPUT'&&(e.type==='password'||/password|one-time-code/i.test(e.autocomplete||''))}\
+function go(d){var e=d.activeElement;\
 if(e&&(e.tagName==='IFRAME'||e.tagName==='FRAME')){try{if(e.contentDocument)return go(e.contentDocument)}catch(x){}}\
-var f='',l='';if(e&&(e.tagName==='INPUT'||e.tagName==='TEXTAREA')){f=e.value||'';l=e.getAttribute('aria-label')||e.placeholder||e.name||''}\
+var f='',l='';if(e&&(e.tagName==='INPUT'||e.tagName==='TEXTAREA')){f=secret(e)?'':(e.value||'');l=e.getAttribute('aria-label')||e.placeholder||e.name||''}\
 else if(e&&e.isContentEditable){f=e.innerText||'';l=e.getAttribute('aria-label')||''}return{f:f.slice(-2000),l:l}}\
 var a=go(document);var h=[].slice.call(document.querySelectorAll('h1,h2,h3')).slice(0,40).map(function(x){return(x.innerText||'').trim()}).filter(Boolean);\
 var b=document.body?document.body.innerText:'';\
 return JSON.stringify({title:document.title,url:location.href,field:a.f,label:a.l,heads:h,text:b.slice(0,8000)})})()";
 
 /// What is chosen in the page -- in a field, or in the text -- following the focus into frames
-/// of the same origin; taken out of the page too if CUT.
+/// of the same origin; taken out of the page too if CUT. Nothing out of a password field, as
+/// browsers refuse it too.
 const PAGE_COPY: &str = "(function(cut){function go(d){var e=d.activeElement;\
 if(e&&(e.tagName==='IFRAME'||e.tagName==='FRAME')){try{if(e.contentDocument)return go(e.contentDocument)}catch(x){}}\
+if(e&&e.tagName==='INPUT'&&e.type==='password')return '';\
 var t='';if(e&&(e.tagName==='INPUT'||e.tagName==='TEXTAREA')&&typeof e.selectionStart==='number'){\
 t=e.value.substring(e.selectionStart,e.selectionEnd)}else{var s=d.getSelection&&d.getSelection();t=s?String(s):''}\
 if(cut&&t){d.execCommand('delete')}return t}return go(document)})(CUT)";
@@ -115,6 +120,8 @@ enum Hover {
     StoreAdd,
     /// A link of the bookmarks bar, by its place there.
     BarMark(usize),
+    /// SpatiKey's key: the focused login filled, a passkey given.
+    Key,
 }
 
 /// A tab being dragged by its place on the bar.
@@ -248,6 +255,8 @@ enum Action {
     /// The home page: the page in front, or the start page.
     SetHome(bool),
     ToggleBookmarksBar,
+    /// One of the accounts SpatiKey offered, by its place in the list.
+    KeyChoice(usize),
     Nothing,
 }
 
@@ -277,6 +286,8 @@ enum Own {
     ClearHistory(String),
     /// "yes", to remove an extension, by the profile and its id.
     Uninstall(String, String),
+    /// Keep a login the page just used in SpatiKey: its page's origin, the user, the password.
+    SaveLogin(String, String, spatimesh::engine::Secret),
 }
 
 /// A locked window: nothing of it is shown, not even its tabs' names, until its profile's PIN
@@ -346,7 +357,7 @@ struct Win {
     dropping: Option<(f32, f32, &'static str)>,
     placed: Vec<(TabId, Rect, Rect)>,
     plus: Rect,
-    buttons: [(Hover, Rect); 10],
+    buttons: [(Hover, Rect); 11],
     page: Rect,
     /// The page has the whole window: something in it is fullscreen (`media/page.js`).
     fullscreen: bool,
@@ -424,6 +435,8 @@ pub struct Browser {
     last_focused: Option<WindowKey>,
     /// Something said for a few seconds: a notification, an extension installed.
     toast: Option<(String, Instant)>,
+    /// SpatiKey's part (`keys`).
+    keys: keys::Keys,
     /// The profiles with a lock that were opened here, and stay open while any window of
     /// theirs is, until the lock button.
     unlocked: HashSet<String>,
@@ -512,6 +525,7 @@ impl Browser {
             ext_popups: HashMap::new(),
             last_focused: None,
             toast: None,
+            keys: keys::Keys::new(),
             unlocked: HashSet::new(),
             tries: (0, Instant::now()),
             icons: HashMap::new(),
@@ -633,6 +647,8 @@ impl Browser {
                     if spatimesh::media::ours() {
                         host.send(&ToHost::PageScript { code: spatimesh::media::page_js() });
                     }
+                    // SpatiKey's, in every frame from the first page on (docs/spatikey.md).
+                    host.send(&ToHost::CredScripts { page: spatimesh::credentials::page_js(), world: spatimesh::credentials::world_js() });
                     self.hosts.insert(profile.to_string(), host);
                     self.extensions_to_new_engine(profile);
                     self.kept_started(profile);
@@ -1032,6 +1048,7 @@ impl Browser {
             self.told.extend(told);
         }
         match happened {
+            Happened::Cred { tab, request, json } => self.heard_cred(tab, request, &json.0),
             Happened::SoundName { tab, name } => {
                 self.tab_sounds.insert(tab, (name, None));
                 self.route_sounds();
@@ -1107,7 +1124,10 @@ impl Browser {
                     }
                 }
             }
-            Happened::CloseTab { tab } => self.close_tab(tab),
+            Happened::CloseTab { tab } => {
+                self.keys.forget(tab);
+                self.close_tab(tab);
+            }
             Happened::Crashed { tab, why } => {
                 self.media.forget(tab);
                 if let Some(t) = self.tabs.tab_mut(tab) {
@@ -1207,7 +1227,7 @@ impl Browser {
             drag: None,
             placed: Vec::new(),
             plus: Rect::default(),
-            buttons: [(Hover::Back, Rect::default()); 10],
+            buttons: [(Hover::Back, Rect::default()); 11],
             page: page_rect(WINDOW, self.settings.bookmarks_bar && profile != PRIVATE),
             fullscreen: false,
             pressed_in_page: None,
@@ -1680,8 +1700,18 @@ impl Browser {
         self.focus_pages();
     }
 
+    /// A yes-or-no question of SpatiMesh's own, over the tab in front.
+    fn ask_own_confirm(&mut self, w: usize, own: Own, message: &str) {
+        let Some(tab) = self.tabs.active(self.wins[w].key) else { return };
+        let question = Question { kind: DialogKind::Confirm, message: message.to_string(), field: Field::default(), ok: Rect::default(), cancel: Rect::default(), own: Some(own) };
+        self.views.entry(tab).or_default().question = Some(question);
+        self.wins[w].dirty = true;
+        self.focus_pages();
+    }
+
     fn answered_own(&mut self, w: usize, own: Own, text: String) {
         match own {
+            Own::SaveLogin(origin, username, password) => self.save_login(origin, username, password),
             Own::RenameProfile(profile) => match profiles::rename(&self.store, &profile, &text) {
                 Ok(()) => {
                     self.profiles = profiles::list(&self.store);
@@ -1843,6 +1873,7 @@ impl Browser {
     fn dismiss_popup(&mut self, w: usize) {
         self.wins[w].flyout = None;
         self.context = None;
+        self.key_list_closed();
         if let Some(popup) = self.wins[w].popup.take() {
             if let Some(tab) = popup.choose_for {
                 if let Some(view) = self.views.get_mut(&tab) {
@@ -2335,6 +2366,7 @@ impl Browser {
                 }
             }
             Hover::Star => self.bookmark_page(w),
+            Hover::Key => self.key_button(w),
             Hover::Menu => {
                 if self.wins[w].popup.is_some() {
                     self.dismiss_popup(w);
@@ -2721,7 +2753,8 @@ impl Browser {
                     p.fill(gl, Rect::new(all.x, all.y, all.w, win.page.y - all.y), 0.0, profile_colour(&profile, 0.22));
                     p.fill(gl, win.page.inset(-4.0), 15.0, profile_colour(&profile, 0.9));
                     draw_tabs(p, gl, win, &window, tabs, &profile, all);
-                    let state = Toolbar { tab: active.as_ref(), marked, profile: &profile, actions: &actions, icons: &icons, store_add, downloads };
+                    let key = active.as_ref().is_some_and(|t| self.keys.has_login(t.id));
+                    let state = Toolbar { tab: active.as_ref(), marked, profile: &profile, actions: &actions, icons: &icons, store_add, downloads, key };
                     draw_toolbar(p, gl, win, all, &state);
                     if bar {
                         draw_bookmarks_bar(p, gl, win, all, &bar_marks);
@@ -2905,7 +2938,7 @@ impl Browser {
 
     pub fn run(&mut self) -> Result<(), String> {
         loop {
-            let busy = self.tabs.tabs().any(|t| t.loading) || self.in_flight.is_some();
+            let busy = self.tabs.tabs().any(|t| t.loading) || self.in_flight.is_some() || self.keys.busy();
             let mut wait = if self.media.busy() { 8 } else if busy { 30 } else { 500 };
             let next_tick = self.extensions.as_ref().and_then(Runtime::next_tick);
             if let Some(at) = next_tick {
@@ -2917,6 +2950,7 @@ impl Browser {
                 }
             }
             self.hear();
+            self.keys_tick();
             self.route_sounds();
             self.media.tick();
             if let Ok(gl) = self.app.gl() {
@@ -3090,6 +3124,8 @@ struct Toolbar<'a> {
     store_add: bool,
     /// The downloads' button, with how far those going have come, when there are any.
     downloads: Option<Option<f32>>,
+    /// SpatiKey's key: a login field has the focus, or a passkey is offered.
+    key: bool,
 }
 
 fn draw_toolbar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, all: Rect, state: &Toolbar) {
@@ -3189,6 +3225,8 @@ fn draw_toolbar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, all: Rect
     let private = profile.is_private();
     let on_page = tab.is_some_and(|t| !is_start(&t.url) && pages::internal(&t.url).is_none());
     let star = button(p, bar.take_right(side), Hover::Star, Icon::Star, !private && on_page, state.marked);
+    // SpatiKey's key, beside it while the page has a login to fill (docs/spatikey.md).
+    let key = if state.key && !private { button(p, bar.take_right(side), Hover::Key, Icon::Key, true, true) } else { Rect::default() };
     bar.take_right(8.0);
     // How the page came: a padlock over HTTPS, a warning over plain HTTP.
     let security = bar.take_left(side);
@@ -3228,6 +3266,7 @@ fn draw_toolbar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, all: Rect
         (Hover::Security, security),
         (Hover::Downloads, downloads),
         (Hover::StoreAdd, store_add),
+        (Hover::Key, key),
     ];
 }
 
@@ -3393,6 +3432,7 @@ fn draw_question(p: &mut Painter, gl: &spatiand_app::Gl, page: Rect, question: &
     let mut inner = pane.inset(28.0);
     let heading = match (&question.own, question.kind) {
         (Some(Own::LoadExtension(_) | Own::RemoveExtension(_)), _) => "Extensions",
+        (Some(Own::SaveLogin(..)), _) => "SpatiKey",
         (Some(_), _) => "This profile",
         (None, DialogKind::Leave) => "Leave this page?",
         (None, _) => "The page asks",

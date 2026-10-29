@@ -48,18 +48,33 @@ jobs:
           path: third_party/ffmpeg/out/linux
           key: ffmpeg-${{ hashFiles('third_party/ffmpeg/versions.sh', 'third_party/ffmpeg/build.sh') }}-ubuntu-24.04
       - uses: Swatinem/rust-cache@v2
+      # SpatiMesh's engine, WPE, as third_party/wpe/build.sh linux makes it (in Ubuntu 22.04, every
+      # library it needs inside): building WebKit takes hours, longer than a job may run, so the
+      # build is published with a release of its own and fetched here. Its version is the
+      # release's name; build it again and publish when WPE_VERSION or a patch changes.
+      - name: SpatiMesh's WPE, as published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          . third_party/wpe/versions.sh
+          gh release download "wpe-$WPE_VERSION-linux" --pattern wpe-linux.tar.xz --output /tmp/wpe-linux.tar.xz
+          mkdir -p target/wpe-linux && tar -xJf /tmp/wpe-linux.tar.xz -C target/wpe-linux
+          echo "SPATIAND_WPE=$PWD/target/wpe-linux" >> "$GITHUB_ENV"
+          mkdir -p target/debug && ln -sfn "$PWD/target/wpe-linux" target/debug/wpe
       - run: . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null; cargo check --workspace --exclude spatiand-host --exclude spatiand-android --locked
       - run: . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null; cargo test --workspace --exclude spatiand-host --exclude spatiand-android --locked
-      # Real pages in WebKitGTK's own processes, drawn offscreen, typed into, crashed: they need
-      # a display, which the step above has not got (and so skips them).
-      - name: SpatiMesh's WebKitGTK engine, on a virtual display
-        run: . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null; xvfb-run -a cargo test -p spatimesh-webkitgtk --locked
-      # The compositor itself, drawing in software, runs SpatiMesh and WebKitGTK as it would in
-      # the room; the window is photographed after each step and the photographs checked.
+      # Real pages in WPE's own processes, drawn offscreen, typed into, crashed, one at a time:
+      # its extensions' test wants a display, which the step above has not got.
+      - name: SpatiMesh's WPE engine
+        run: |
+          . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null
+          EGL_PLATFORM=surfaceless xvfb-run -a cargo test -p spatimesh-wpe --locked -- --test-threads=1
+      # The compositor itself, drawing in software, runs SpatiMesh and WPE as it would in the
+      # room; the window is photographed after each step and the photographs checked.
       - name: SpatiMesh in the compositor, end to end
         run: |
           . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null
-          cargo build -p spatiand -p spatimesh -p spatimesh-webkitgtk --locked
+          cargo build -p spatiand -p spatimesh -p spatimesh-wpe --locked
           python3 -I tools/spatimesh-e2e.py target/debug target/spatimesh-e2e
       # SpatiMesh's own menus, address bar, pages and file chooser, the same way; then started
       # again on the same profile, its tabs back.

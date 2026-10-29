@@ -36,7 +36,7 @@ cp ../third_party/NOTICES.md "$app/Contents/Resources/licences/"
 cp "../third_party/ffmpeg/src/ffmpeg-$FFMPEG_VERSION/COPYING.LGPLv3" "$app/Contents/Resources/licences/"
 cp "../third_party/ffmpeg/src/openssl-$OPENSSL_VERSION/LICENSE.txt" "$app/Contents/Resources/licences/OpenSSL-LICENSE.txt"
 cp Resources/hrtf/NOTICE.txt "$app/Contents/Resources/licences/mysofa-NOTICE.txt" 2>/dev/null || true
-OWN="spatireel spatiloupe spatiquill spatishelf spatimesh spatipal"
+OWN="spatireel spatiloupe spatiquill spatishelf spatimesh spatipal spatikey"
 for own in $OWN; do
   if (cd .. && LIBCLANG_PATH="${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib}" \
       FFMPEG_PKG_CONFIG_PATH="$FFMPEG/lib/pkgconfig" \
@@ -46,6 +46,12 @@ for own in $OWN; do
     echo "warning: $own did not build; the app is made without it"
   fi
 done
+# SpatiKey's second program, built with it: the host Chrome and Firefox start for the SpatiKey
+# extension (native messaging), named by the host manifests tools/spatikey-browsers.sh writes.
+if [ -f "$app/Contents/MacOS/spatikey" ] && [ -f ../target/release/spatikey-host ]; then
+  cp ../target/release/spatikey-host "$app/Contents/MacOS/spatikey-host"
+  OWN="$OWN spatikey-host"
+fi
 # SpatiMesh's engine: WPE WebKit, which third_party/wpe/build.sh mac makes (SpatiMesh has no
 # other on a Mac), in a program of its own beside SpatiMesh, which starts one for each profile in
 # use (docs/spatimesh.md). WPE and every library it was built on go into

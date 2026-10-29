@@ -12,7 +12,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
-use crate::engine::{Button, Canvas, Choice, Cookie, Cursor, DialogKind, Format, Happened, KeyPress, Modifiers, Rect, TabId, View};
+use crate::engine::{Button, Canvas, Choice, Cookie, Cursor, DialogKind, Format, Happened, KeyPress, Modifiers, Rect, Secret, TabId, View};
 
 /// From a window to its engine host.
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +66,10 @@ pub enum ToHost {
     Find { tab: TabId, text: String, forward: bool },
     /// [`crate::engine::Engine::choose_files`].
     Files { tab: TabId, files: Option<Vec<String>> },
+    /// [`crate::engine::Engine::set_cred_scripts`].
+    CredScripts { page: String, world: String },
+    /// [`crate::engine::Engine::cred_reply`].
+    CredReply { request: u64, ok: bool, json: Secret },
 }
 
 /// From an engine host to its window.
@@ -415,6 +419,14 @@ impl ToHost {
                 b.u64(*tab).str(url);
                 33
             }
+            ToHost::CredScripts { page, world } => {
+                b.str(page).str(world);
+                34
+            }
+            ToHost::CredReply { request, ok, json } => {
+                b.u64(*request).bool(*ok).str(&json.0);
+                35
+            }
         };
         frame(tag, b)
     }
@@ -479,6 +491,8 @@ impl ToHost {
             }
             32 => ToHost::ForgetVisited,
             33 => ToHost::Preconnect { tab: i.u64()?, url: i.str()? },
+            34 => ToHost::CredScripts { page: i.str()?, world: i.str()? },
+            35 => ToHost::CredReply { request: i.u64()?, ok: i.bool()?, json: Secret(i.str()?) },
             _ => return None,
         })
     }
@@ -617,6 +631,10 @@ impl FromHost {
                     b.u64(*tab).u64(*id).str(&serde_json::to_string(event).unwrap_or_default());
                     33
                 }
+                Happened::Cred { tab, request, json } => {
+                    b.u64(*tab).u64(*request).str(&json.0);
+                    34
+                }
             },
         };
         frame(tag, b)
@@ -678,6 +696,7 @@ impl FromHost {
             31 => FromHost::Happened(Happened::Found { tab: i.u64()?, matches: i.u32()? }),
             32 => FromHost::Happened(Happened::ChooseFiles { tab: i.u64()?, multiple: i.bool()?, accept: serde_json::from_str(&i.str()?).ok()? }),
             33 => FromHost::Happened(Happened::Download { tab: i.u64()?, id: i.u64()?, event: serde_json::from_str(&i.str()?).ok()? }),
+            34 => FromHost::Happened(Happened::Cred { tab: i.u64()?, request: i.u64()?, json: Secret(i.str()?) }),
             24 => {
                 let (tab, request, ok, text) = (i.u64()?, i.u64()?, i.bool()?, i.str()?);
                 FromHost::Happened(Happened::ScriptResult { tab, request, result: if ok { Ok(text) } else { Err(text) } })
@@ -1250,6 +1269,8 @@ mod tests {
             ToHost::Find { tab: 3, text: "wörd".into(), forward: false },
             ToHost::Files { tab: 3, files: Some(vec!["/home/a b.png".into()]) },
             ToHost::Files { tab: 3, files: None },
+            ToHost::CredScripts { page: "page()".into(), world: "world()".into() },
+            ToHost::CredReply { request: 9, ok: true, json: Secret("{\"fill\":1}".into()) },
         ];
         for message in to_host {
             let bytes = message.encode();
@@ -1278,6 +1299,7 @@ mod tests {
             FromHost::Happened(Happened::ChooseFiles { tab: 5, multiple: true, accept: vec!["image/*".into()] }),
             FromHost::Happened(Happened::Download { tab: 5, id: 1 << 30, event: crate::engine::Download::Progress { received: 10, total: 100 } }),
             FromHost::Happened(Happened::Download { tab: 0, id: 2, event: crate::engine::Download::Started { url: "https://a/x".into(), file: "/d/x".into() } }),
+            FromHost::Happened(Happened::Cred { tab: 4, request: 77, json: Secret("{\"t\":\"ready\"}".into()) }),
         ];
         for message in from_host {
             let bytes = message.encode();

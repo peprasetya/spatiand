@@ -13,15 +13,23 @@ pub mod entry;
 pub mod hooks;
 pub mod lan;
 pub mod paths;
-pub mod recovery;
-pub mod remote;
-pub mod service;
 pub mod site;
 pub mod socket;
 pub mod totp;
-pub mod vault;
 pub mod webauthn;
 pub mod wire;
+
+// The service, and what only it needs: the vault, its keys, and the network to the Mac. A
+// program that only asks it -- SpatiMesh, SpatiKey's window, the browsers' host -- leaves it out
+// (`default-features = false`) and asks over the socket.
+#[cfg(feature = "service")]
+pub mod recovery;
+#[cfg(feature = "service")]
+pub mod remote;
+#[cfg(feature = "service")]
+pub mod service;
+#[cfg(feature = "service")]
+pub mod vault;
 
 pub use entry::{Entry, Kind, Passkey, Summary, Totp};
 pub use wire::{Code, Envelope, Refusal, Reply, Request, Who};

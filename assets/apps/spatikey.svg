@@ -1,0 +1,24 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SpatiKey: a key">
+  <!-- The ground and the three colours are assets/icons/spatiand.svg's, so the family reads as
+       one. A stand-in until the icons are drawn properly. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.25" y2="1">
+      <stop offset="0" stop-color="#2f3358"/>
+      <stop offset="0.5" stop-color="#15172e"/>
+      <stop offset="1" stop-color="#08090f"/>
+    </linearGradient>
+    <!-- Across the whole key in the drawing's own units, not each part's: the shaft is a line
+         with no height, which a gradient over its own box cannot paint at all. -->
+    <linearGradient id="ink" gradientUnits="userSpaceOnUse" x1="200" y1="330" x2="830" y2="680">
+      <stop offset="0" stop-color="#16e6c0"/>
+      <stop offset="0.45" stop-color="#37a6f7"/>
+      <stop offset="1" stop-color="#8f6bf2"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <!-- The bow, a ring on the left; the shaft running right, two teeth hanging from its end. -->
+  <circle cx="352" cy="496" r="148" fill="url(#ink)" opacity="0.2"/>
+  <circle cx="352" cy="496" r="148" fill="none" stroke="url(#ink)" stroke-width="56"/>
+  <path d="M 514 496 L 806 496 M 698 496 L 698 604 M 794 496 L 794 650" fill="none" stroke="url(#ink)" stroke-width="60" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 262 462 A 96 96 0 0 1 318 404" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="24" stroke-linecap="round"/>
+</svg>

@@ -84,6 +84,10 @@ pub enum Asked {
     /// Say what the application with bundle id `text` shows in its focused window, through
     /// Accessibility, answering with `sp_described(id, json)`.
     Describe = 36,
+    /// SpatiKey: type into an application of this Mac, as the characters themselves. `text` is
+    /// `{"bundle": ..., "steps": [{"text": ...} | {"key": "tab" | "enter"}]}`; answered with
+    /// `sp_typed(id, error)`, a null error for done.
+    TypeText = 37,
 }
 
 pub type Callback =
@@ -424,6 +428,17 @@ pub extern "C" fn sp_menu_end() {
 pub unsafe extern "C" fn sp_described(id: u32, json: *const c_char) {
     let json = if json.is_null() { String::new() } else { CStr::from_ptr(json).to_string_lossy().into_owned() };
     super::described(id, json);
+}
+
+/// SpatiKey's typing into an application of this Mac, done ([`Asked::TypeText`] number `id`):
+/// `error` null, or why not.
+///
+/// # Safety
+/// `error` must be a valid C string, or null.
+#[no_mangle]
+pub unsafe extern "C" fn sp_typed(id: u32, error: *const c_char) {
+    let result = if error.is_null() { Ok(()) } else { Err(CStr::from_ptr(error).to_string_lossy().into_owned()) };
+    super::typed(id, result);
 }
 
 /// The application's menu is done with: something was chosen, or it was backed out of.

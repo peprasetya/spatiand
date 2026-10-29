@@ -2,7 +2,7 @@
 """SpatiMesh's own menus and pages, end to end, with no GPU, no display and no glasses.
 
 As tools/spatimesh-e2e.py: the room's compositor (SPATIAND_BACKEND=snapshot) runs SpatiMesh
-with WebKitGTK showing a page from a server started here, SPATIAND_STEPS drives it, and each
+with WPE showing a page from a server started here, SPATIAND_STEPS drives it, and each
 step's photograph is checked:
 
     ctx-link      a right click on a link: SpatiMesh's menu for it
@@ -210,8 +210,8 @@ def main():
             "XDG_RUNTIME_DIR": runtime,
             "HOME": work,
             "SPATIMESH_HOME": os.path.join(work, "spatimesh"),
-            # WebKitGTK unless SPATIMESH_E2E_ENGINE names another (`wpe`, with a WPE built).
-            "SPATIMESH_ENGINE": os.environ.get("SPATIMESH_E2E_ENGINE", "webkitgtk"),
+            # WPE, unless SPATIMESH_E2E_ENGINE names another (`fake`).
+            "SPATIMESH_ENGINE": os.environ.get("SPATIMESH_E2E_ENGINE", "wpe"),
             "EGL_PLATFORM": "surfaceless",
             "SPATIAND_BACKEND": "snapshot",
             "SPATIAND_SNAPSHOT": os.path.join(out, f"room-{name}.png"),

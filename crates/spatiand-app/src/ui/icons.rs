@@ -80,6 +80,8 @@ pub enum Icon {
     Pencil,
     /// What was copied, to put somewhere.
     Paste,
+    /// A key: a password, a passkey (SpatiKey).
+    Key,
 }
 
 impl Icon {
@@ -135,6 +137,7 @@ impl Icon {
             Icon::Cut => r#"<circle cx="6.5" cy="17.5" r="2.8"/><circle cx="17.5" cy="17.5" r="2.8"/><path d="M8.6 15.6L18 4M15.4 15.6L6 4"/>"#,
             Icon::Pencil => r#"<path d="M15 5l4 4L8.5 19.5H4.5v-4z"/><path d="M12.5 7.5l4 4"/>"#,
             Icon::Paste => r#"<rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3.5h6V5M9 11h6M9 15h4"/>"#,
+            Icon::Key => r#"<circle cx="7.5" cy="12" r="4"/><path d="M11.5 12h9M17.5 12v3.5M20.5 12v2.5"/>"#,
             Icon::Back10 => r#"<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v3.8h3.8"/><path d="M9.3 10.4l1.3-1v6" stroke-width="1.6"/><ellipse cx="14.4" cy="12.4" rx="1.7" ry="2.9" stroke-width="1.6"/>"#,
             Icon::Forward10 => r#"<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v3.8h-3.8"/><path d="M8.8 10.4l1.3-1v6" stroke-width="1.6"/><ellipse cx="13.9" cy="12.4" rx="1.7" ry="2.9" stroke-width="1.6"/>"#,
         }
