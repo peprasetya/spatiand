@@ -263,3 +263,38 @@ Unicode key events by the Swift half, so any character and any keyboard layout w
 Mac's room and on the device ("Touch ID on darkPhoenix to sign in to github.com"); when the
 glasses are on the Mac, macOS's own Touch ID panel is brought into the room as a "macOS asks"
 window.
+
+## What was built, and what was checked (2026-10-29)
+
+Built: everything above. `crates/spatikey-core` (vault, recovery code, service, socket, WebAuthn,
+TOTP, the public suffix list, the network rules and the Deck's and Beam Pro's asking);
+`crates/spatikey` (the window and `spatikey-host`); `SpatiKeyGuard.swift` and
+`spatiand-mac-core/src/key.rs` (the service in Spatiand.app from launch); the room's half
+(`crates/spatiand/src/spatikey.rs`, with Mac windows typed as Unicode by `SpatiKeyTyping.swift`);
+SpatiMesh's half (`browser/keys.rs`, `credentials/cred-world.js`, the engine's message handler);
+the Chrome and Firefox extensions (`extensions/spatikey`, `tools/spatikey-browsers.sh`).
+
+| Checked | How |
+|---|---|
+| The library | 91 tests, the cross-module ones included (`cargo test -p spatikey-core -- --include-ignored --skip a_real_broadcast --skip a_kept_connection`) |
+| WebAuthn's output | signatures verified with ring and OpenSSL; the attestation object read back |
+| Same network only | a real broadcast on this Mac's Wi-Fi (en0) answered and paired in one process; utun7 never counted as a LAN |
+| The Mac's Secure Enclave key | made with `.biometryCurrentSet` and restored, with no prompt; the wrap format against a software key |
+| The service in Spatiand.app | starts at launch, its socket answers `status` (no vault yet, Touch ID can set one up) |
+| SpatiMesh on WPE, passkeys | in the test room against `examples/soft-service` (Touch ID stood in for): a page made a passkey and signed in with it, clientDataJSON's origin the isolated world's |
+| SpatiMesh on WPE, passwords | the key button lit on a focused login field; pressed, the right login filled |
+| The extensions | 50 tests, in headless Chrome and Firefox (`node --test extensions/spatikey/test/*.test.js`) |
+| The window | every screen in the test room with `--demo` |
+
+Not yet checked: a real touch (setting the vault up is the owner's, in SpatiKey's window, as it
+shows the recovery code); the Deck and the Beam Pro asking the Mac over the air; typing into
+windows in the live room; the extensions against the real `spatikey-host`; the save question
+after a real login.
+
+**Workarounds, with the proper alternative.** The origin of a SpatiMesh request is the isolated
+world's stamp, not the engine's (a WebKit patch exposing the script message's frame); a Touch ID
+panel that got no answer is taken down by Swift at 110 s, before Rust gives up at 120 s (a cancel
+over the C interface); changed fingers are told from a finger that did not match by how long the
+attempt took when the Secure Enclave's error says nothing more (keep the biometry state hash in
+`touch-id.json` and compare it); the Beam Pro's socket is bound to its Wi-Fi address only
+(`android_setsocknetwork` with the Wi-Fi network from Java).

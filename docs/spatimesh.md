@@ -9,8 +9,11 @@ and at its end what has been built of it.
 | Platform | Engine | Where it comes from |
 |---|---|---|
 | Mac | **WPE WebKit 2.54.1**, our own port (`third_party/wpe`, the "WPE" section below) | bundled in Spatiand.app, with GStreamer and our FFmpeg |
-| Linux, the Deck | WebKitGTK (`webkit2gtk-4.1`) until WPE is built for Linux | the distribution's package |
-| Android (Beam Pro) | none until WPE (wpe-android) is built | -- |
+| Linux, the Deck | **WPE WebKit 2.54.1**, the bundle `third_party/wpe/build.sh linux` makes in Ubuntu 22.04 (built 2026-10-29) | `wpe/` beside SpatiMesh |
+| Android (Beam Pro) | WPE, once its build gets through (2026-10-29: WebCore against the NDK's C++23 libc++ still fails) | -- |
+
+**Changed again on 2026-10-29:** WebKitGTK, Linux's fallback, removed too: WPE is the only engine,
+and where it is not installed SpatiMesh says so rather than falling back.
 
 **Changed on 2026-10-25:** the first plan used each platform's own engine and bundled none.
 WKWebView, Steam's CEF and the Android WebView were all built, then removed
