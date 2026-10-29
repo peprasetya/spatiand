@@ -516,6 +516,7 @@ pub fn run(
                         click_on_the_window(&mut runtime.state, &windows, (u, v), button)
                     }
                     Step::Key(code) => press_key(&mut runtime.state, code),
+                    Step::Swipe(dy) => swipe_on_the_window(&mut runtime.state, &windows, dy),
                     Step::Close => close_the_window(&runtime.state, &windows),
                 }
             }
@@ -683,6 +684,7 @@ pub fn run(
                                     click_on_the_window(&mut runtime.state, &windows, (u, v), button)
                                 }
                                 Step::Key(code) => press_key(&mut runtime.state, code),
+                                Step::Swipe(dy) => swipe_on_the_window(&mut runtime.state, &windows, dy),
                                 Step::Close => close_the_window(&runtime.state, &windows),
                             }
                             let answered =
@@ -1415,6 +1417,10 @@ enum Step {
     Click(f64, f64, Option<u32>),
     /// `SPATIAND_KEY`: an evdev key code, pressed and released. See [`requested_keys`].
     Key(u32),
+    /// `SPATIAND_SWIPE=dy`: the left pad's scroll over the middle of the window -- a finger's,
+    /// in small steps, then the finger leaving -- as `Pointers::scroll` sends it. Positive
+    /// moves the content up.
+    Swipe(f64),
     /// `SPATIAND_CLOSE=1`: what the title bar's close button does. Always last, because
     /// nothing after it has a window to happen to.
     Close,
@@ -1442,6 +1448,9 @@ fn requested_steps() -> Vec<Step> {
         .map(|(u, v, button)| Step::Click(u, v, button))
         .collect();
     steps.extend(requested_keys().into_iter().map(Step::Key));
+    if let Some(dy) = std::env::var("SPATIAND_SWIPE").ok().and_then(|v| v.parse().ok()) {
+        steps.push(Step::Swipe(dy));
+    }
     if std::env::var("SPATIAND_CLOSE").as_deref() == Ok("1") {
         steps.push(Step::Close);
     }
@@ -1578,6 +1587,41 @@ fn click_on_the_window(
         );
         pointer.frame(state);
     }
+}
+
+/// The left pad's scroll over the middle of the chosen window: the pointer put there, twenty
+/// finger-source steps adding up to `dy`, then `axis_stop` -- exactly what `Pointers::scroll`
+/// and `scroll_fling` send, so a remote window hears it as the host hears a Deck's pad.
+fn swipe_on_the_window(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], dy: f64) {
+    use smithay::backend::input::{Axis, AxisSource};
+    use smithay::input::pointer::{AxisFrame, MotionEvent};
+    use smithay::utils::{Point, SERIAL_COUNTER};
+
+    let Some(window) = chosen_window(state, windows) else {
+        log::warn!("asked for a swipe with no window to swipe on");
+        return;
+    };
+    let Some(pointer) = state.seat.get_pointer() else {
+        return;
+    };
+    let location = Point::from((0.5 * window.pixels.0 as f64, 0.5 * window.pixels.1 as f64));
+    log::info!("swiping {dy} over the middle of {}x{}", window.pixels.0, window.pixels.1);
+    let surface = window.surface.clone();
+    let window = window.window.clone();
+    state.focus_window(&window);
+    pointer.motion(
+        state,
+        Some((surface, Point::from((0.0, 0.0)))),
+        &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time: 100 },
+    );
+    pointer.frame(state);
+    for n in 0..20u32 {
+        let frame = AxisFrame::new(110 + n * 8).source(AxisSource::Finger).value(Axis::Vertical, dy / 20.0);
+        pointer.axis(state, frame);
+        pointer.frame(state);
+    }
+    pointer.axis(state, AxisFrame::new(280).source(AxisSource::Finger).stop(Axis::Vertical));
+    pointer.frame(state);
 }
 
 /// One step of `SPATIAND_STEPS`, a script run in order once the client has drawn: steps are
