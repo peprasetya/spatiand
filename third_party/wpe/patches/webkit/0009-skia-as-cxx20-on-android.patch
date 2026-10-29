@@ -1,0 +1,14 @@
+--- a/Source/ThirdParty/skia/CMakeLists.txt	2026-10-29 14:30:07
++++ b/Source/ThirdParty/skia/CMakeLists.txt	2026-10-29 14:30:07
+@@ -1180,4 +1180,11 @@
+     WEBKIT_ADD_COMPILER_FLAGS(CXX SOURCE src/opts/SkOpts_lasx.cpp -mlasx)
+ endif ()
+ 
++# Skia is written for C++17/20. Under WebKit's C++23, the Android NDK's libc++ instantiates its
++# destructors and pairs eagerly over types Skia only declares (constexpr unique_ptr and pair), and
++# Skia does not build; its own standard does.
++if (ANDROID)
++    set_target_properties(Skia PROPERTIES CXX_STANDARD 20)
++endif ()
++
+ add_library(Skia::Skia ALIAS Skia)

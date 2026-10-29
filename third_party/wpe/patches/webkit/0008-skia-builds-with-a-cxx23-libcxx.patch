@@ -1,0 +1,23 @@
+--- a/Source/ThirdParty/skia/src/capture/SkCaptureManager.h	2026-10-29 14:24:21
++++ b/Source/ThirdParty/skia/src/capture/SkCaptureManager.h	2026-10-29 14:24:21
+@@ -29,6 +29,9 @@
+ class SkCaptureManager : public SkRefCnt {
+ public:
+     SkCaptureManager();
++    // Out of line, where SkCapture and SkCaptureCanvas are whole: a C++23 libc++ (the Android
++    // NDK's) makes an implicit one here, over the two types only declared above.
++    ~SkCaptureManager() override;
+ 
+     SkCanvas* makeCaptureCanvas(SkCanvas* canvas);
+ 
+--- a/Source/ThirdParty/skia/src/capture/SkCaptureManager.cpp	2026-10-29 14:24:21
++++ b/Source/ThirdParty/skia/src/capture/SkCaptureManager.cpp	2026-10-29 14:24:21
+@@ -27,6 +27,8 @@
+     return rawCanvasPtr;
+ }
+ 
++SkCaptureManager::~SkCaptureManager() = default;
++
+ sk_sp<SkPicture> SkCaptureManager::snapAndIncrement(SkCaptureCanvas* canvas) {
+     auto picture = canvas->snapPicture();
+     if (picture) {

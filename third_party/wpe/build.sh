@@ -532,7 +532,7 @@ INI
     fetch "glib-networking-$GLIB_NETWORKING_VERSION" "https://download.gnome.org/sources/glib-networking/${GLIB_NETWORKING_VERSION%.*}/glib-networking-$GLIB_NETWORKING_VERSION.tar.xz"
     meson_lib "glib-networking-$GLIB_NETWORKING_VERSION" -Dgnutls=disabled -Dopenssl=enabled -Dlibproxy=disabled -Dgnome_proxy=disabled -Dtests=false
     fetch "libsoup-$LIBSOUP_VERSION" "https://download.gnome.org/sources/libsoup/${LIBSOUP_VERSION%.*}/libsoup-$LIBSOUP_VERSION.tar.xz"
-    meson_lib "libsoup-$LIBSOUP_VERSION" -Dtests=false -Dintrospection=disabled -Dvapi=disabled -Ddocs=disabled \
+    meson_lib "libsoup-$LIBSOUP_VERSION" -Dtests=false -Dtls_check=false -Dintrospection=disabled -Dvapi=disabled -Ddocs=disabled \
         -Dgssapi=disabled -Dntlm=disabled -Dbrotli=enabled -Dsysprof=disabled -Dpkcs11_tests=disabled -Dautobahn=disabled
     fetch "harfbuzz-$HARFBUZZ_VERSION" "https://github.com/harfbuzz/harfbuzz/releases/download/$HARFBUZZ_VERSION/harfbuzz-$HARFBUZZ_VERSION.tar.xz"
     meson_lib "harfbuzz-$HARFBUZZ_VERSION" -Dicu=enabled -Dfreetype=enabled -Dglib=enabled -Dgobject=disabled \
@@ -574,6 +574,12 @@ INI
     # (patches/webkit/0003), as the APK carries them.
     platform_options="$toolchain -DCMAKE_FIND_ROOT_PATH=$out -DCMAKE_SHARED_LINKER_FLAGS=$pages -DCMAKE_EXE_LINKER_FLAGS=$pages
         -DUSE_SYSTEM_MALLOC=ON -DENABLE_WPE_PLATFORM_DRM=OFF -DUSE_SKIA_OPENTYPE_SVG=OFF"
+    # glib-compile-resources runs here, on the building machine: not the arm64 one built for the
+    # Beam Pro beside the libraries. HOST_GLIB_COMPILE_RESOURCES names one (a Linux bundle's, or
+    # the system's).
+    host_gcr=${HOST_GLIB_COMPILE_RESOURCES:-$(command -v glib-compile-resources || true)}
+    [ -n "$host_gcr" ] || { echo "no glib-compile-resources for this machine (HOST_GLIB_COMPILE_RESOURCES)" >&2; exit 1; }
+    platform_options="$platform_options -DGLIB_COMPILE_RESOURCES_EXECUTABLE=$host_gcr"
     ;;
 *) echo "no such platform yet: $platform" >&2; exit 1 ;;
 esac
