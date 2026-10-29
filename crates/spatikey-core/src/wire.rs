@@ -107,9 +107,10 @@ pub enum Request {
         username: String,
         password: String,
     },
-    /// Answers [`CreatedAnswer`].
+    /// Answers [`CreatedAnswer`], or the error `excluded`.
     PasskeyCreate(PasskeyCreate),
-    /// Answers [`AssertedAnswer`], or the error `no_match`.
+    /// Answers [`ChoicesAnswer`] (one signed answer per account the site has here, newest
+    /// first, so that one touch covers choosing between them), or the error `no_match`.
     PasskeyGet(PasskeyGet),
     /// Type an entry's fields into a window (by default [`Request::Target`]'s). Answers `{}`.
     Type {
@@ -313,6 +314,21 @@ pub struct AssertedAnswer {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChoicesAnswer {
+    pub choices: Vec<Choice>,
+}
+
+/// One account's signed answer: the caller shows the names when there are several and gives
+/// the page only the one chosen.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Choice {
+    pub user_name: String,
+    pub user_display: String,
+    #[serde(flatten)]
+    pub assertion: AssertedAnswer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TargetAnswer {
     pub window: u64,
     pub app: String,
@@ -383,6 +399,9 @@ pub enum Code {
     NotSameLan,
     /// Nothing in the vault for that.
     NoMatch,
+    /// The site already has a passkey from SpatiKey for this account (WebAuthn's
+    /// InvalidStateError).
+    Excluded,
     BadRequest,
     /// The session is closed, timed out, or belongs to someone else.
     BadSession,
