@@ -38,7 +38,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
-use quinn::{ClientConfig, Endpoint, ServerConfig, TransportConfig};
+use quinn::{ClientConfig, Endpoint, EndpointConfig, ServerConfig, TransportConfig};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
@@ -275,6 +275,33 @@ pub fn peer_fingerprint(connection: &quinn::Connection) -> Option<Fingerprint> {
 
 /// Listen for a session.
 pub fn server(bind: SocketAddr, identity: &Identity, trust: Trust) -> Result<Endpoint, String> {
+    Endpoint::server(server_config(identity, trust, &[], true)?, bind)
+        .map_err(|e| format!("could not listen on {bind}: {e}"))
+}
+
+/// [`server`], for a protocol of its own beside the link, with the same certificates.
+///
+/// `alpn` names the protocol: a connection must agree on one of them in the handshake, so a
+/// client of the link that knocks on this port (or the other way round) is refused there rather
+/// than misunderstood. With `migration` false a connection stays on the address it arrived from
+/// -- what a server needs that judges a peer by where it is, and checks that again later.
+pub fn server_with(
+    bind: SocketAddr,
+    identity: &Identity,
+    trust: Trust,
+    alpn: &[&[u8]],
+    migration: bool,
+) -> Result<Endpoint, String> {
+    Endpoint::server(server_config(identity, trust, alpn, migration)?, bind)
+        .map_err(|e| format!("could not listen on {bind}: {e}"))
+}
+
+fn server_config(
+    identity: &Identity,
+    trust: Trust,
+    alpn: &[&[u8]],
+    migration: bool,
+) -> Result<ServerConfig, String> {
     let verifier: Arc<dyn ClientCertVerifier> = match trust {
         Trust::Paired(trusted) => Arc::new(Pinned::fixed(trusted)),
         Trust::Anyone => Arc::new(Pinned::fixed(Vec::new())),
@@ -282,7 +309,7 @@ pub fn server(bind: SocketAddr, identity: &Identity, trust: Trust) -> Result<End
             rule: Rule::Gate(gate),
         }),
     };
-    let crypto = rustls::ServerConfig::builder_with_provider(Arc::new(
+    let mut crypto = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
     .with_protocol_versions(&[&rustls::version::TLS13])
@@ -290,12 +317,14 @@ pub fn server(bind: SocketAddr, identity: &Identity, trust: Trust) -> Result<End
     .with_client_cert_verifier(verifier)
     .with_single_cert(vec![identity.certificate.clone()], identity.key())
     .map_err(|e| format!("could not use this host's certificate: {e}"))?;
+    crypto.alpn_protocols = alpn.iter().map(|name| name.to_vec()).collect();
 
     let mut config = ServerConfig::with_crypto(Arc::new(
         QuicServerConfig::try_from(crypto).map_err(|e| format!("QUIC refused the TLS setup: {e}"))?,
     ));
     config.transport_config(transport_config());
-    Endpoint::server(config, bind).map_err(|e| format!("could not listen on {bind}: {e}"))
+    config.migration(migration);
+    Ok(config)
 }
 
 /// Connect to a host this session has **not** met, to find out who it is.
@@ -315,8 +344,59 @@ pub fn client(identity: &Identity, expect: Fingerprint) -> Result<Endpoint, Stri
     client_trusting(identity, vec![expect])
 }
 
+/// Connect, for a protocol of its own beside the link, to a server holding one of `trusted`.
+///
+/// `alpn` names the protocol, as [`server_with`]'s does. The socket is bound to `bind`: the
+/// address of this machine that faces the server, so that the packets leave by that network
+/// and a route cannot carry them into a tunnel instead. An empty `trusted` is refused rather
+/// than read as "anyone": meeting a machine for the first time is [`client_first_contact`]'s
+/// business, and nothing here should do it by accident.
+pub fn client_with(
+    identity: &Identity,
+    trusted: Vec<Fingerprint>,
+    alpn: &[&[u8]],
+    bind: SocketAddr,
+) -> Result<Endpoint, String> {
+    let socket = std::net::UdpSocket::bind(bind)
+        .map_err(|e| format!("could not open a socket on {bind}: {e}"))?;
+    client_on(identity, trusted, alpn, socket)
+}
+
+/// [`client_with`] over a socket the caller has made and set up itself -- bound, and tied to a
+/// network device where the system allows it, which only the caller knows how to do.
+pub fn client_on(
+    identity: &Identity,
+    trusted: Vec<Fingerprint>,
+    alpn: &[&[u8]],
+    socket: std::net::UdpSocket,
+) -> Result<Endpoint, String> {
+    if trusted.is_empty() {
+        return Err("a pinned connection needs a fingerprint to pin".into());
+    }
+    let config = client_config(identity, trusted, alpn)?;
+    let runtime = quinn::default_runtime().ok_or("no async runtime to run the connection on")?;
+    let mut endpoint = Endpoint::new(EndpointConfig::default(), None, socket, runtime)
+        .map_err(|e| format!("could not use the socket: {e}"))?;
+    endpoint.set_default_client_config(config);
+    Ok(endpoint)
+}
+
 fn client_trusting(identity: &Identity, trusted: Vec<Fingerprint>) -> Result<Endpoint, String> {
-    let crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
+    let config = client_config(identity, trusted, &[])?;
+    // Any port; the host is the one that listens.
+    let mut endpoint = Endpoint::client("[::]:0".parse().expect("a valid address"))
+        .or_else(|_| Endpoint::client("0.0.0.0:0".parse().expect("a valid address")))
+        .map_err(|e| format!("could not open a socket: {e}"))?;
+    endpoint.set_default_client_config(config);
+    Ok(endpoint)
+}
+
+fn client_config(
+    identity: &Identity,
+    trusted: Vec<Fingerprint>,
+    alpn: &[&[u8]],
+) -> Result<ClientConfig, String> {
+    let mut crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
     .with_protocol_versions(&[&rustls::version::TLS13])
@@ -325,17 +405,13 @@ fn client_trusting(identity: &Identity, trusted: Vec<Fingerprint>) -> Result<End
     .with_custom_certificate_verifier(Arc::new(Pinned::fixed(trusted)))
     .with_client_auth_cert(vec![identity.certificate.clone()], identity.key())
     .map_err(|e| format!("could not use this session's certificate: {e}"))?;
+    crypto.alpn_protocols = alpn.iter().map(|name| name.to_vec()).collect();
 
     let mut config = ClientConfig::new(Arc::new(
         QuicClientConfig::try_from(crypto).map_err(|e| format!("QUIC refused the TLS setup: {e}"))?,
     ));
     config.transport_config(transport_config());
-    // Any port; the host is the one that listens.
-    let mut endpoint = Endpoint::client("[::]:0".parse().expect("a valid address"))
-        .or_else(|_| Endpoint::client("0.0.0.0:0".parse().expect("a valid address")))
-        .map_err(|e| format!("could not open a socket: {e}"))?;
-    endpoint.set_default_client_config(config);
-    Ok(endpoint)
+    Ok(config)
 }
 
 /// The six digits both ends show while pairing, so a person can see they are talking to each
@@ -751,6 +827,85 @@ mod pairing_tests {
             assert!(
                 usable(&stranger, &host, address).await,
                 "and does for good once written down, with the gate shut again"
+            );
+            accepting.abort();
+        });
+    }
+}
+
+#[cfg(test)]
+mod own_protocol_tests {
+    use super::*;
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime")
+    }
+
+    /// Being talked to, as the tests above prove it: the handshake alone proves nothing, because
+    /// a TLS 1.3 client is done before the server has looked at it.
+    async fn talks(endpoint: Endpoint, address: SocketAddr) -> bool {
+        let Ok(connecting) = endpoint.connect(address, CERT_NAME) else {
+            return false;
+        };
+        let Ok(connection) = connecting.await else {
+            return false;
+        };
+        let Ok(mut stream) = connection.accept_uni().await else {
+            return false;
+        };
+        stream.read_to_end(64).await.is_ok_and(|said| said == b"hello")
+    }
+
+    /// A protocol beside the link is spoken only by a client that names it, pinned to the
+    /// server's certificate, from the socket it was told to use.
+    #[test]
+    fn a_protocol_of_its_own_needs_its_name_and_the_right_certificate() {
+        let server_identity = Identity::new().unwrap();
+        let client_identity = Identity::new().unwrap();
+        runtime().block_on(async {
+            let endpoint = server_with(
+                "127.0.0.1:0".parse().unwrap(),
+                &server_identity,
+                Trust::Paired(vec![client_identity.fingerprint()]),
+                &[b"test/1"],
+                false,
+            )
+            .expect("listens");
+            let address = endpoint.local_addr().unwrap();
+            let accepting = tokio::spawn(async move {
+                while let Some(incoming) = endpoint.accept().await {
+                    tokio::spawn(async move {
+                        if let Ok(connection) = incoming.await {
+                            if let Ok(mut stream) = connection.open_uni().await {
+                                let _ = stream.write_all(b"hello").await;
+                                let _ = stream.finish();
+                                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                            }
+                        }
+                    });
+                }
+            });
+
+            let bind: SocketAddr = "127.0.0.1:0".parse().unwrap();
+            let good = client_with(&client_identity, vec![server_identity.fingerprint()], &[b"test/1"], bind)
+                .expect("client");
+            assert_eq!(good.local_addr().unwrap().ip(), bind.ip(), "the socket is where it was asked to be");
+            assert!(talks(good, address).await, "the right name and the right certificate talk");
+
+            let other = client_with(&client_identity, vec![server_identity.fingerprint()], &[b"other/1"], bind)
+                .expect("client");
+            assert!(!talks(other, address).await, "a client naming another protocol is refused");
+            let link = client(&client_identity, server_identity.fingerprint()).expect("client");
+            assert!(!talks(link, address).await, "and so is a client of the link, which names none");
+            let pinned_wrong = client_with(&client_identity, vec![client_identity.fingerprint()], &[b"test/1"], bind)
+                .expect("client");
+            assert!(!talks(pinned_wrong, address).await, "pinned to another certificate, it does not talk");
+            assert!(
+                client_with(&client_identity, Vec::new(), &[b"test/1"], bind).is_err(),
+                "an empty pin must not mean anyone"
             );
             accepting.abort();
         });
