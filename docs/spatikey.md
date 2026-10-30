@@ -234,6 +234,40 @@ or `PublicKeyCredential`), so the page's half is ours:
 The engine-verified origin a WebKit patch could give (the script message's frame, which WebKit's
 GLib API drops) is the stronger alternative to the isolated world's stamp; it is not built.
 
+## SpatiMesh on Chromium
+
+Chromium has its own password manager and its own WebAuthn, so here SpatiKey is what they keep things in
+(patch 0010); nothing is injected into pages, and the origin is always the browser's own.
+
+**Nothing of the vault is kept on this disk**, not even which sites it has a login for, because the vault
+cannot say so without a touch. `SpatikeyPasswordStoreBackend` wraps Chromium's password store:
+
+* A login form is told there may be one: a credential with the name `SpatiKey` and a placeholder for a
+  password, shown in the field as "Fill from the vault, with a touch". Chromium's fill-on-account-select is on,
+  so opening a page asks for nothing.
+* Choosing it asks `fill` for the frame's origin. One login is filled; several are offered in the same popup
+  with no second touch, and let go of when it closes. Refused or no match says why, in an infobar on the tab.
+* Submitting what was just filled saves nothing: the site and a salted hash of the password are remembered in
+  memory for half an hour, so there is no false "Update password?".
+* A typed login gets Chromium's own "Save password?"; Save calls `save`. `Login Data` stays empty of passwords.
+  "Never for this site" and HTTP authentication stay in Chromium's own store: its dialog cannot ask for a touch.
+* A page never receives the placeholder through the Credential Management API.
+* "Manage passwords" and `chrome://password-manager` open SpatiKey's own window.
+
+**Passkeys** are `device/fido/spatikey/`, the platform authenticator on Linux, as Touch ID is on a Mac.
+`isUserVerifyingPlatformAuthenticatorAvailable` says yes when there is a vault this machine opens or a Mac to
+ask. No dialog comes first: the service's own touch names the site, and several accounts go to Chromium's
+account sheet. A request with no list of its own is told of one passkey standing for all of them, which is also
+the line offered in a login field for `mediation: "conditional"`. Security keys are reached by Chromium's dialog
+when the site asks for cross-platform or after a failure.
+
+The program runs as `spatimesh`, not `chrome`, because the service names who is asking from what is running.
+
+Checked in the Deck's test room against `examples/soft-service` (2026-10-30): a passkey made, signed in with and
+without the site's list, refused when excluded; a login filled, chosen from two, submitted with no save question;
+a typed login saved through the bubble with `Login Data` at 0 rows; Manage passwords opening SpatiKey. Not checked:
+a real touch, and the Deck asking the Mac over the air.
+
 ## The extensions
 
 `extensions/spatikey` builds `dist/spatikey-chrome` (Manifest V3) and `dist/spatikey-firefox`

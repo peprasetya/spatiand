@@ -1,0 +1,29 @@
+<!doctype html><meta charset=utf-8><title>Passkey test</title>
+<h2>Passkeys</h2><pre id=out></pre>
+<input id=cond autocomplete="username webauthn" placeholder="conditional">
+<script>
+const b=(a)=>btoa(String.fromCharCode(...new Uint8Array(a))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+async function make(name, id){
+  const c=await navigator.credentials.create({publicKey:{
+    challenge:crypto.getRandomValues(new Uint8Array(32)),
+    rp:{name:'Passkey test',id:location.hostname},
+    user:{id:new TextEncoder().encode(id),name:name,displayName:name},
+    pubKeyCredParams:[{type:'public-key',alg:-7}],
+    authenticatorSelection:{residentKey:'required',userVerification:'required'},
+    timeout:60000}});
+  return {id:c.id,type:c.type,attach:c.authenticatorAttachment,client:JSON.parse(new TextDecoder().decode(c.response.clientDataJSON)),transports:c.response.getTransports(),alg:c.response.getPublicKeyAlgorithm()};
+}
+async function sign(allow){
+  const c=await navigator.credentials.get({publicKey:{
+    challenge:crypto.getRandomValues(new Uint8Array(32)),rpId:location.hostname,
+    allowCredentials:(allow||[]).map(id=>({type:'public-key',id:Uint8Array.from(atob(id.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0))})),
+    userVerification:'required',timeout:60000}});
+  return {id:c.id,user:new TextDecoder().decode(c.response.userHandle),client:JSON.parse(new TextDecoder().decode(c.response.clientDataJSON)),sig:c.response.signature.byteLength};
+}
+function conditional(){
+  window.condResult=null;
+  navigator.credentials.get({mediation:'conditional',publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),rpId:location.hostname,userVerification:'required'}})
+   .then(c=>{window.condResult={id:c.id,user:new TextDecoder().decode(c.response.userHandle)};out.textContent='conditional: '+JSON.stringify(window.condResult)})
+   .catch(e=>{window.condResult={err:e.name+': '+e.message};out.textContent='conditional failed: '+e.name});
+}
+</script>

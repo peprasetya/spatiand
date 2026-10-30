@@ -15,11 +15,15 @@ export GLIBC_TUNABLES=glibc.rtld.dynamic_sort=1
 # it in software.
 # No back and forward by a sideways swipe: on the Deck's pads that is a thumb's drift, and a
 # swipe taken for it scrolls nothing.
+# ProfilesReordering: the profiles' order is the one every machine shares.
+# EnableExtensionAutoupdate: extensions stay up to date, as in Chrome, and one installed on another
+# machine can be fetched here (off by default in Cromite's patches).
+# The program is named spatimesh, not chrome: SpatiKey names who is asking from what is running.
 # --class is each window's Wayland app id, by which the room gives every SpatiMesh window a sink of
 # its own for its tabs' sound (crates/spatiand/src/audio.rs, CHROMIUM_APP_ID).
-exec "$here/chrome" --ozone-platform=wayland --user-data-dir="$HOME/.config/spatiand-chromium" \
+exec "$here/spatimesh" --ozone-platform=wayland --user-data-dir="$HOME/.config/spatiand-chromium" \
     --class=spatimesh-chromium \
     --password-store=basic --no-first-run --no-default-browser-check \
     --overscroll-history-navigation=0 \
-    --enable-features=AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,VaapiIgnoreDriverChecks,WaylandWindowDecorations \
+    --enable-features=AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,EnableExtensionAutoupdate,ProfilesReordering,VaapiIgnoreDriverChecks,WaylandWindowDecorations \
     "$@"

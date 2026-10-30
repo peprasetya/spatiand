@@ -122,7 +122,9 @@ package() {
     O=$work/chromium/src/out/deck; P=$work/package/spatiand-chromium
     rm -rf "$P"; mkdir -p "$P"
     # What chrome/installer/linux/BUILD.gn packages, with every locale.
-    for f in chrome chrome_crashpad_handler libEGL.so libGLESv2.so libvulkan.so.1 libvk_swiftshader.so \
+    # The program is named as what it is: SpatiKey names who is asking from what is running.
+    cp -a "$O/chrome" "$P/spatimesh"
+    for f in chrome_crashpad_handler libEGL.so libGLESv2.so libvulkan.so.1 libvk_swiftshader.so \
         vk_swiftshader_icd.json libqt5_shim.so libqt6_shim.so icudtl.dat snapshot_blob.bin v8_context_snapshot.bin \
         RELEASE xdg-mime xdg-settings; do
         [ -e "$O/$f" ] && cp -a "$O/$f" "$P/"

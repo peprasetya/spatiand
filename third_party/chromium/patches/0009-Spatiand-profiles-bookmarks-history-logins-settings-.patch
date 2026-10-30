@@ -1,0 +1,4634 @@
+From 3dba51ba26b2f8e044a2b2e700d7106b14e0dd83 Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Fri, 30 Oct 2026 18:21:43 +0700
+Subject: [PATCH 09/10] Spatiand: profiles, bookmarks, history, logins,
+ settings and extensions shared
+
+chrome/browser/spatiand reads and writes the files every Spatiand machine shares
+(apps/spatimesh/, docs/spatimesh.md), so Chromium's own profile menu, bookmarks, history and settings
+show and change the same things the other builds do. A locked profile's windows wait for its PIN or
+password. A store that comes up without most of what was agreed takes it back from the folder rather
+than removing it from every machine; clearing browsing data is told apart by the pref it now sets.
+---
+ chrome/browser/BUILD.gn                       |  22 +
+ .../chrome_browsing_data_remover_delegate.cc  |   4 +
+ chrome/browser/chrome_browser_main.cc         |   3 +
+ ...hrome_browser_main_extra_parts_profiles.cc |   6 +
+ chrome/browser/spatiand/bookmark_sync.cc      | 578 +++++++++++++++++
+ chrome/browser/spatiand/bookmark_sync.h       | 125 ++++
+ chrome/browser/spatiand/cookie_sync.cc        | 529 ++++++++++++++++
+ chrome/browser/spatiand/cookie_sync.h         | 100 +++
+ chrome/browser/spatiand/extension_sync.cc     | 402 ++++++++++++
+ chrome/browser/spatiand/extension_sync.h      |  92 +++
+ chrome/browser/spatiand/history_sync.cc       | 437 +++++++++++++
+ chrome/browser/spatiand/history_sync.h        |  96 +++
+ chrome/browser/spatiand/main_parts.cc         |  16 +
+ chrome/browser/spatiand/main_parts.h          |  25 +
+ .../browser/spatiand/profile_lock_dialog.cc   | 132 ++++
+ chrome/browser/spatiand/profile_lock_dialog.h |  24 +
+ chrome/browser/spatiand/profile_service.cc    |  81 +++
+ chrome/browser/spatiand/profile_service.h     |  64 ++
+ chrome/browser/spatiand/profiles_sync.cc      | 598 ++++++++++++++++++
+ chrome/browser/spatiand/profiles_sync.h       | 139 ++++
+ chrome/browser/spatiand/settings_sync.cc      | 352 +++++++++++
+ chrome/browser/spatiand/settings_sync.h       |  80 +++
+ chrome/browser/spatiand/shared_folder.cc      | 214 +++++++
+ chrome/browser/spatiand/shared_folder.h       |  57 ++
+ chrome/browser/spatiand/spatikey_window.cc    | 105 +++
+ chrome/browser/spatiand/spatikey_window.h     |  26 +
+ chrome/browser/ui/views/frame/browser_view.cc |  23 +
+ components/browsing_data/core/pref_names.cc   |   3 +-
+ 28 files changed, 4331 insertions(+), 2 deletions(-)
+ create mode 100644 chrome/browser/spatiand/bookmark_sync.cc
+ create mode 100644 chrome/browser/spatiand/bookmark_sync.h
+ create mode 100644 chrome/browser/spatiand/cookie_sync.cc
+ create mode 100644 chrome/browser/spatiand/cookie_sync.h
+ create mode 100644 chrome/browser/spatiand/extension_sync.cc
+ create mode 100644 chrome/browser/spatiand/extension_sync.h
+ create mode 100644 chrome/browser/spatiand/history_sync.cc
+ create mode 100644 chrome/browser/spatiand/history_sync.h
+ create mode 100644 chrome/browser/spatiand/main_parts.cc
+ create mode 100644 chrome/browser/spatiand/main_parts.h
+ create mode 100644 chrome/browser/spatiand/profile_lock_dialog.cc
+ create mode 100644 chrome/browser/spatiand/profile_lock_dialog.h
+ create mode 100644 chrome/browser/spatiand/profile_service.cc
+ create mode 100644 chrome/browser/spatiand/profile_service.h
+ create mode 100644 chrome/browser/spatiand/profiles_sync.cc
+ create mode 100644 chrome/browser/spatiand/profiles_sync.h
+ create mode 100644 chrome/browser/spatiand/settings_sync.cc
+ create mode 100644 chrome/browser/spatiand/settings_sync.h
+ create mode 100644 chrome/browser/spatiand/shared_folder.cc
+ create mode 100644 chrome/browser/spatiand/shared_folder.h
+ create mode 100644 chrome/browser/spatiand/spatikey_window.cc
+ create mode 100644 chrome/browser/spatiand/spatikey_window.h
+
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 0b5aeb5dd2..4ad6593b83 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1621,6 +1621,28 @@ source_set("core") {
+       "chrome_browser_main_extra_parts_linux.cc",
+       "chrome_browser_main_extra_parts_linux.h",
+       "chrome_browser_main_linux.h",
++      "spatiand/bookmark_sync.cc",
++      "spatiand/bookmark_sync.h",
++      "spatiand/cookie_sync.cc",
++      "spatiand/cookie_sync.h",
++      "spatiand/extension_sync.cc",
++      "spatiand/extension_sync.h",
++      "spatiand/history_sync.cc",
++      "spatiand/history_sync.h",
++      "spatiand/main_parts.cc",
++      "spatiand/main_parts.h",
++      "spatiand/profile_lock_dialog.cc",
++      "spatiand/profile_lock_dialog.h",
++      "spatiand/profile_service.cc",
++      "spatiand/profile_service.h",
++      "spatiand/profiles_sync.cc",
++      "spatiand/profiles_sync.h",
++      "spatiand/settings_sync.cc",
++      "spatiand/settings_sync.h",
++      "spatiand/shared_folder.cc",
++      "spatiand/spatikey_window.cc",
++      "spatiand/spatikey_window.h",
++      "spatiand/shared_folder.h",
+       "fullscreen_linux.cc",
+       "icon_loader_auralinux.cc",
+       "shell_integration_linux.cc",
+diff --git a/chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.cc b/chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.cc
+index c638dd9428..6d368901ca 100644
+--- a/chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.cc
++++ b/chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.cc
+@@ -111,6 +111,7 @@
+ #include "components/heavy_ad_intervention/heavy_ad_blocklist.h"
+ #include "components/heavy_ad_intervention/heavy_ad_service.h"
+ #include "components/history/core/browser/history_service.h"
++#include "components/browsing_data/core/pref_names.h"
+ #include "components/history/core/common/pref_names.h"
+ #include "components/keyed_service/core/service_access_type.h"
+ #include "components/language/core/browser/url_language_histogram.h"
+@@ -633,6 +634,9 @@ void ChromeBrowsingDataRemoverDelegate::RemoveEmbedderData(
+   if ((remove_mask & content::BrowsingDataRemover::DATA_TYPE_COOKIES) &&
+       (origin_type_mask &
+        content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB)) {
++    // Spatiand: the wearer means this, and it may cross to other machines (spatiand/cookie_sync.cc).
++    prefs->SetInt64(browsing_data::prefs::kLastClearBrowsingDataTime,
++                    base::Time::Now().ToTimeT());
+     base::RecordAction(UserMetricsAction("ClearBrowsingData_Cookies"));
+ 
+     network::mojom::NetworkContext* safe_browsing_context = nullptr;
+diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
+index fb2d0aec83..5c655d08eb 100644
+--- a/chrome/browser/chrome_browser_main.cc
++++ b/chrome/browser/chrome_browser_main.cc
+@@ -339,6 +339,7 @@
+ 
+ #if BUILDFLAG(IS_LINUX)
+ #include "chrome/browser/chrome_browser_main_extra_parts_linux.h"
++#include "chrome/browser/spatiand/main_parts.h"
+ #elif BUILDFLAG(IS_OZONE)
+ #include "chrome/browser/chrome_browser_main_extra_parts_ozone.h"
+ #endif
+@@ -817,6 +818,8 @@ std::unique_ptr<content::BrowserMainParts> ChromeBrowserMainParts::Create(
+ 
+ #if BUILDFLAG(IS_LINUX)
+   main_parts->AddParts(std::make_unique<ChromeBrowserMainExtraPartsLinux>());
++  // Spatiand: SpatiMesh as part of Spatiand (profiles, and what they keep, on every machine).
++  main_parts->AddParts(std::make_unique<spatiand::MainParts>());
+ #elif BUILDFLAG(IS_OZONE)
+   main_parts->AddParts(std::make_unique<ChromeBrowserMainExtraPartsOzone>());
+ #endif
+diff --git a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
+index d29ad6afcf..2ea5e654ea 100644
+--- a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
++++ b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
+@@ -441,6 +441,9 @@
+ #if !BUILDFLAG(IS_CHROMEOS)
+ #include "chrome/browser/download/bubble/download_bubble_update_service_factory.h"
+ #include "chrome/browser/profiles/profile_statistics_factory.h"
++#if BUILDFLAG(IS_LINUX)
++#include "chrome/browser/spatiand/profile_service.h"
++#endif
+ #include "chrome/browser/ui/startup/first_run_service.h"
+ #include "chrome/browser/ui/webui/signin/turn_sync_on_helper.h"
+ #endif
+@@ -1405,6 +1408,9 @@ void ChromeBrowserMainExtraPartsProfiles::
+ #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
+   ProfileStatisticsFactory::GetInstance();
+ #endif
++#if BUILDFLAG(IS_LINUX)
++  spatiand::ProfileServiceFactory::GetInstance();
++#endif
+ #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+   ProfileTokenWebSigninInterceptorFactory::GetInstance();
+   OidcAuthenticationSigninInterceptorFactory::GetInstance();
+diff --git a/chrome/browser/spatiand/bookmark_sync.cc b/chrome/browser/spatiand/bookmark_sync.cc
+new file mode 100644
+index 0000000000..595bbf0e26
+--- /dev/null
++++ b/chrome/browser/spatiand/bookmark_sync.cc
+@@ -0,0 +1,578 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/bookmark_sync.h"
++
++#include <algorithm>
++#include <utility>
++#include <vector>
++
++#include "base/auto_reset.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/location.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "chrome/browser/bookmarks/bookmark_model_factory.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/spatiand/shared_folder.h"
++#include "components/bookmarks/browser/bookmark_node.h"
++#include "components/bookmarks/common/bookmark_metrics.h"
++#include "url/gurl.h"
++
++namespace spatiand {
++
++namespace {
++
++using bookmarks::BookmarkNode;
++
++constexpr char kFileName[] = "spatiand_id";
++constexpr char kOtherId[] = "other";
++constexpr std::string_view kDigits = "0123456789abcdefghijklmnopqrstuvwxyz";
++
++size_t DigitOf(char c) {
++  const size_t at = kDigits.find(c);
++  return at == std::string_view::npos ? 0 : at;
++}
++
++std::string Midpoint(std::string_view a, std::optional<std::string_view> b) {
++  if (b) {
++    // The common start, `a` read as if it went on in zeros.
++    size_t n = 0;
++    while (n < b->size() && (n < a.size() ? a[n] : '0') == (*b)[n]) {
++      ++n;
++    }
++    if (n > 0) {
++      const std::string_view rest_a = n < a.size() ? a.substr(n) : std::string_view();
++      return std::string(b->substr(0, n)) + Midpoint(rest_a, b->substr(n));
++    }
++  }
++  if (a.empty() && !b) {
++    // The first: the middle, room either side.
++    return "i";
++  }
++  const size_t da = a.empty() ? 0 : DigitOf(a[0]);
++  const size_t db = !b || b->empty() ? kDigits.size() : DigitOf((*b)[0]);
++  // At the end, the next digit up, and at the start the next one down, rather than half way:
++  // bookmarks are mostly added at the end.
++  if (!b && da + 1 < kDigits.size()) {
++    return std::string(1, kDigits[da + 1]);
++  }
++  if (a.empty() && db >= 2) {
++    return std::string(1, kDigits[db - 1]);
++  }
++  if (db - da > 1) {
++    return std::string(1, kDigits[(da + db + 1) / 2]);
++  }
++  if (b && b->size() > 1) {
++    return std::string(1, (*b)[0]);
++  }
++  const std::string_view rest = a.size() > 1 ? a.substr(1) : std::string_view();
++  return std::string(1, kDigits[da]) + Midpoint(rest, std::nullopt);
++}
++
++std::string_view TrimZeros(std::string_view key) {
++  return base::TrimString(key, "0", base::TRIM_TRAILING);
++}
++
++base::Value RecordValue(const BookmarkSync::Record& record) {
++  base::DictValue dict;
++  dict.Set("parent", record.parent);
++  dict.Set("title", record.title);
++  if (record.url) {
++    dict.Set("url", *record.url);
++  }
++  dict.Set("order", record.order);
++  dict.Set("added", record.added);
++  return base::Value(std::move(dict));
++}
++
++void WriteRecord(const base::FilePath& file, BookmarkSync::Record record) {
++  WriteJson(file, RecordValue(record));
++}
++
++}  // namespace
++
++std::string KeyBetween(std::string_view a, std::optional<std::string_view> b) {
++  // A key from elsewhere with a trailing zero, or out of order, is not trusted.
++  a = TrimZeros(a);
++  if (b) {
++    b = TrimZeros(*b);
++    if (b->empty() || *b <= a) {
++      b = std::nullopt;
++    }
++  }
++  return Midpoint(a, b);
++}
++
++BookmarkSync::Record::Record() = default;
++BookmarkSync::Record::Record(const Record&) = default;
++BookmarkSync::Record& BookmarkSync::Record::operator=(const Record&) = default;
++BookmarkSync::Record::~Record() = default;
++BookmarkSync::Read::Read() = default;
++BookmarkSync::Read::Read(Read&&) = default;
++BookmarkSync::Read& BookmarkSync::Read::operator=(Read&&) = default;
++BookmarkSync::Read::~Read() = default;
++
++BookmarkSync::BookmarkSync(Profile* profile,
++                           const std::string& id,
++                           scoped_refptr<base::SequencedTaskRunner> files)
++    : model_(BookmarkModelFactory::GetForBrowserContext(profile)),
++      dir_(SharedProfileDir(id).Append("bookmarks")),
++      files_(std::move(files)) {
++  observation_.Observe(model_);
++  if (model_->loaded()) {
++    Poll();
++  }
++}
++
++BookmarkSync::~BookmarkSync() = default;
++
++void BookmarkSync::Poll() {
++  if (reading_ || !model_->loaded()) {
++    return;
++  }
++  reading_ = true;
++  files_->PostTaskAndReplyWithResult(
++      FROM_HERE, base::BindOnce(&BookmarkSync::ReadIfChanged, dir_, last_changed_),
++      base::BindOnce(&BookmarkSync::OnRead, weak_factory_.GetWeakPtr(), changes_));
++}
++
++// static
++BookmarkSync::Read BookmarkSync::ReadIfChanged(const base::FilePath& dir, base::Time last) {
++  Read read;
++  read.changed = FolderChanged(dir);
++  // No folder for this profile at all says nothing about its bookmarks.
++  if (!base::DirectoryExists(dir.DirName())) {
++    read.unchanged = true;
++    return read;
++  }
++  if (!last.is_null() && read.changed == last) {
++    read.unchanged = true;
++    return read;
++  }
++  for (const std::string& id : ListJson(dir)) {
++    std::optional<base::Value> file = ReadJson(dir.Append(id + ".json"));
++    if (!file || !file->is_dict()) {
++      continue;
++    }
++    const base::DictValue& dict = file->GetDict();
++    Record record;
++    if (const std::string* parent = dict.FindString("parent")) {
++      record.parent = *parent;
++    }
++    if (const std::string* title = dict.FindString("title")) {
++      record.title = *title;
++    }
++    if (const std::string* url = dict.FindString("url")) {
++      record.url = *url;
++    }
++    if (const std::string* order = dict.FindString("order")) {
++      record.order = *order;
++    }
++    record.added = dict.FindDouble("added").value_or(0);
++    read.records.emplace(id, std::move(record));
++  }
++  return read;
++}
++
++void BookmarkSync::OnRead(int changes_when_asked, Read read) {
++  reading_ = false;
++  if (read.unchanged) {
++    return;
++  }
++  if (changes_when_asked != changes_) {
++    // Something changed here while that was being read: read again next time.
++    return;
++  }
++  last_changed_ = read.changed;
++  Reconcile(std::move(read.records));
++}
++
++std::map<std::string, const BookmarkNode*> BookmarkSync::CollectNodes(
++    std::vector<const BookmarkNode*>* unnamed) const {
++  std::map<std::string, const BookmarkNode*> nodes;
++  std::vector<const BookmarkNode*> stack = {model_->bookmark_bar_node(), model_->other_node()};
++  while (!stack.empty()) {
++    const BookmarkNode* node = stack.back();
++    stack.pop_back();
++    for (const auto& child : node->children()) {
++      std::string id;
++      // A copy of a bookmark carries its original's name: only the first keeps it.
++      if (child->GetMetaInfo(kFileName, &id) && !id.empty() && !nodes.contains(id)) {
++        nodes.emplace(id, child.get());
++      } else if (unnamed) {
++        unnamed->push_back(child.get());
++      }
++      if (child->is_folder()) {
++        stack.push_back(child.get());
++      }
++    }
++  }
++  return nodes;
++}
++
++bool BookmarkSync::InTree(const BookmarkNode* node) const {
++  for (; node; node = node->parent()) {
++    if (node == model_->bookmark_bar_node() || node == model_->other_node()) {
++      return true;
++    }
++  }
++  return false;
++}
++
++std::string BookmarkSync::IdOf(const BookmarkNode* node) const {
++  if (node == model_->bookmark_bar_node()) {
++    return std::string();
++  }
++  if (node == model_->other_node()) {
++    return kOtherId;
++  }
++  std::string id;
++  node->GetMetaInfo(kFileName, &id);
++  return id;
++}
++
++const BookmarkNode* BookmarkSync::ParentFor(
++    const std::string& parent_id,
++    const std::map<std::string, const BookmarkNode*>& nodes) const {
++  if (parent_id.empty()) {
++    return model_->bookmark_bar_node();
++  }
++  if (parent_id == kOtherId) {
++    return model_->other_node();
++  }
++  const auto it = nodes.find(parent_id);
++  return it != nodes.end() && it->second->is_folder() ? it->second : nullptr;
++}
++
++void BookmarkSync::Reconcile(Records records) {
++  base::AutoReset<bool> applying(&applying_, true);
++  const auto source = bookmarks::metrics::BookmarkEditSource::kOther;
++
++  std::vector<const BookmarkNode*> unnamed;
++  std::map<std::string, const BookmarkNode*> nodes = CollectNodes(&unnamed);
++
++  // Gone from the files: removed on another machine. Parents after their children would be
++  // removed twice, so what is gone is looked up again each time.
++  std::vector<std::string> gone;
++  for (const auto& [id, node] : nodes) {
++    if (!records.contains(id)) {
++      gone.push_back(id);
++    }
++  }
++  for (const std::string& id : gone) {
++    const auto current = CollectNodes(nullptr);
++    const auto it = current.find(id);
++    if (it != current.end()) {
++      model_->Remove(it->second, source, FROM_HERE);
++    }
++  }
++  nodes = CollectNodes(nullptr);
++
++  // Those with no file yet: the same bookmark as one in the files is that one, as on a machine
++  // joining the list; the rest are this machine's own to add.
++  std::vector<const BookmarkNode*> unnamed_now;
++  CollectNodes(&unnamed_now);
++  for (const BookmarkNode* node : unnamed_now) {
++    const std::string parent_id = IdOf(node->parent());
++    std::string found;
++    for (const auto& [id, record] : records) {
++      if (!nodes.contains(id) && record.parent == parent_id &&
++          record.title == base::UTF16ToUTF8(node->GetTitle()) &&
++          record.url.has_value() == node->is_url() &&
++          (!record.url || GURL(*record.url) == node->url())) {
++        found = id;
++        break;
++      }
++    }
++    if (!found.empty()) {
++      model_->SetNodeMetaInfo(node, kFileName, found);
++      nodes.emplace(found, node);
++    }
++  }
++
++  // New and changed, each after its folder. What is left when nothing more can be placed has lost
++  // its folder (deleted on another machine while it was added here): at the top, rather than lost.
++  std::vector<std::string> waiting;
++  for (const auto& [id, record] : records) {
++    if (id != kOtherId) {
++      waiting.push_back(id);
++    }
++  }
++  while (!waiting.empty()) {
++    std::vector<std::string> later;
++    for (const std::string& id : waiting) {
++      const Record& record = records.at(id);
++      const BookmarkNode* parent = ParentFor(record.parent, nodes);
++      if (!parent) {
++        later.push_back(id);
++        continue;
++      }
++      const auto it = nodes.find(id);
++      if (it == nodes.end()) {
++        const std::u16string title = base::UTF8ToUTF16(record.title);
++        const BookmarkNode::MetaInfoMap meta = {{kFileName, id}};
++        const base::Time added = TimeOfMs(record.added);
++        const BookmarkNode* made = nullptr;
++        if (record.url) {
++          const GURL url(*record.url);
++          if (url.is_valid()) {
++            made = model_->AddURL(parent, parent->children().size(), title, url, &meta, added);
++          }
++        } else {
++          made = model_->AddFolder(parent, parent->children().size(), title, &meta, added);
++        }
++        if (made) {
++          nodes.emplace(id, made);
++        }
++        continue;
++      }
++      const BookmarkNode* node = it->second;
++      const std::u16string title = base::UTF8ToUTF16(record.title);
++      if (node->GetTitle() != title) {
++        model_->SetTitle(node, title, source);
++      }
++      if (record.url && node->is_url() && GURL(*record.url) != node->url() &&
++          GURL(*record.url).is_valid()) {
++        model_->SetURL(node, GURL(*record.url), source);
++      }
++      if (node->parent() != parent && !parent->HasAncestor(node)) {
++        model_->Move(node, parent, parent->children().size());
++      }
++    }
++    if (later.size() == waiting.size()) {
++      for (const std::string& id : later) {
++        records.at(id).parent = std::string();
++      }
++    }
++    waiting = std::move(later);
++  }
++
++  // Those still without a file: named, and written.
++  std::vector<const BookmarkNode*> own;
++  CollectNodes(&own);
++  std::vector<std::pair<std::string, Record>> written;
++  for (const BookmarkNode* node : own) {
++    const std::string id = NewId();
++    model_->SetNodeMetaInfo(node, kFileName, id);
++    written.emplace_back(id, Record());
++  }
++
++  // Each folder's order.
++  std::vector<const BookmarkNode*> folders = {model_->bookmark_bar_node(), model_->other_node()};
++  for (const auto& [id, node] : CollectNodes(nullptr)) {
++    if (node->is_folder()) {
++      folders.push_back(node);
++    }
++  }
++  for (const BookmarkNode* folder : folders) {
++    std::vector<const BookmarkNode*> ordered;
++    for (const auto& child : folder->children()) {
++      ordered.push_back(child.get());
++    }
++    const auto key = [this, &records](const BookmarkNode* node) {
++      const std::string id = IdOf(node);
++      const auto it = records.find(id);
++      // One not in the files yet goes at the end, where it was.
++      return std::tuple(it == records.end(), it == records.end() ? std::string() : it->second.order,
++                        id);
++    };
++    if (!std::ranges::is_sorted(ordered, {}, key)) {
++      std::ranges::stable_sort(ordered, {}, key);
++      model_->ReorderChildren(folder, ordered);
++    }
++  }
++
++  records_ = std::move(records);
++
++  for (const auto& [id, record] : written) {
++    const std::map<std::string, const BookmarkNode*> current = CollectNodes(nullptr);
++    const auto it = current.find(id);
++    if (it != current.end()) {
++      WriteNode(it->second);
++    }
++  }
++
++  // Chromium's "Other bookmarks", as the folder it is on every other machine.
++  if (!model_->other_node()->children().empty() && !records_.contains(kOtherId)) {
++    Record other;
++    other.title = base::UTF16ToUTF8(model_->other_node()->GetTitle());
++    other.order = "zz";
++    other.added = static_cast<double>(NowMs());
++    Write(kOtherId, other);
++  }
++}
++
++std::string BookmarkSync::OrderAt(const BookmarkNode* parent, size_t index) const {
++  const auto order_of = [this, parent](size_t at) -> std::optional<std::string> {
++    const auto it = records_.find(IdOf(parent->children()[at].get()));
++    return it == records_.end() ? std::nullopt : std::optional(it->second.order);
++  };
++  const std::optional<std::string> before =
++      index > 0 ? order_of(index - 1) : std::nullopt;
++  const std::optional<std::string> after =
++      index + 1 < parent->children().size() ? order_of(index + 1) : std::nullopt;
++  // Two that ended up with one key (two machines) have nothing between them; the next one then
++  // goes after both.
++  if (before && after && *before >= *after) {
++    return KeyBetween(*before, std::nullopt);
++  }
++  return KeyBetween(before.value_or(std::string()),
++                    after ? std::optional<std::string_view>(*after) : std::nullopt);
++}
++
++void BookmarkSync::WriteNode(const BookmarkNode* node) {
++  const std::string id = IdOf(node);
++  if (id.empty() || id == kOtherId) {
++    return;
++  }
++  const BookmarkNode* parent = node->parent();
++  Record record;
++  const auto old = records_.find(id);
++  if (old != records_.end()) {
++    record = old->second;
++  } else {
++    record.added = MsOfTime(node->date_added());
++  }
++  const std::string parent_id = IdOf(parent);
++  const size_t index = static_cast<size_t>(parent->GetIndexOf(node).value_or(0));
++  // Where it is now, in a key of its own, only if that is not where the files have it.
++  bool in_place = old != records_.end() && old->second.parent == parent_id;
++  if (in_place) {
++    const auto order_of = [this, parent](size_t at) -> std::string {
++      const auto it = records_.find(IdOf(parent->children()[at].get()));
++      return it == records_.end() ? std::string() : it->second.order;
++    };
++    in_place = (index == 0 || order_of(index - 1) <= record.order) &&
++               (index + 1 >= parent->children().size() || record.order <= order_of(index + 1) ||
++                order_of(index + 1).empty());
++  }
++  if (!in_place) {
++    record.order = OrderAt(parent, index);
++  }
++  record.parent = parent_id;
++  record.title = base::UTF16ToUTF8(node->GetTitle());
++  if (node->is_url()) {
++    record.url = node->url().spec();
++  } else {
++    record.url = std::nullopt;
++  }
++  Write(id, record);
++}
++
++void BookmarkSync::Write(const std::string& id, const Record& record) {
++  ++changes_;
++  records_[id] = record;
++  files_->PostTask(FROM_HERE,
++                   base::BindOnce(&WriteRecord, dir_.Append(id + ".json"), record));
++}
++
++void BookmarkSync::RemoveFile(const std::string& id) {
++  ++changes_;
++  records_.erase(id);
++  files_->PostTask(FROM_HERE, base::BindOnce(&RemovePath, dir_.Append(id + ".json")));
++}
++
++void BookmarkSync::BookmarkModelLoaded(bool ids_reassigned) {
++  Poll();
++}
++
++void BookmarkSync::BookmarkNodeMoved(const BookmarkNode* old_parent,
++                                     size_t old_index,
++                                     const BookmarkNode* new_parent,
++                                     size_t new_index) {
++  if (applying_ || !InTree(new_parent)) {
++    return;
++  }
++  const BookmarkNode* node = new_parent->children()[new_index].get();
++  // Moved within its folder, its neighbours are new ones, whatever its key was.
++  const std::string id = IdOf(node);
++  const auto old = records_.find(id);
++  if (old != records_.end()) {
++    Record record = old->second;
++    record.parent = IdOf(new_parent);
++    record.order = OrderAt(new_parent, new_index);
++    Write(id, record);
++  } else {
++    WriteNode(node);
++  }
++}
++
++void BookmarkSync::BookmarkNodeAdded(const BookmarkNode* parent, size_t index, bool added_by_user) {
++  if (applying_ || !InTree(parent)) {
++    return;
++  }
++  const BookmarkNode* node = parent->children()[index].get();
++  std::string id = IdOf(node);
++  // A copy of one carries its name, and an undone removal rightly has its own again.
++  if (id.empty() || records_.contains(id)) {
++    id = NewId();
++    base::AutoReset<bool> applying(&applying_, true);
++    model_->SetNodeMetaInfo(node, kFileName, id);
++  }
++  WriteNode(node);
++}
++
++void BookmarkSync::BookmarkNodeRemoved(const BookmarkNode* parent,
++                                       size_t old_index,
++                                       const BookmarkNode* node,
++                                       const std::set<GURL>& no_longer_bookmarked,
++                                       const base::Location& location) {
++  if (applying_ || !InTree(parent)) {
++    return;
++  }
++  std::vector<const BookmarkNode*> stack = {node};
++  while (!stack.empty()) {
++    const BookmarkNode* going = stack.back();
++    stack.pop_back();
++    const std::string id = IdOf(going);
++    if (!id.empty()) {
++      RemoveFile(id);
++    }
++    for (const auto& child : going->children()) {
++      stack.push_back(child.get());
++    }
++  }
++}
++
++void BookmarkSync::BookmarkNodeChanged(const BookmarkNode* node) {
++  if (applying_ || !InTree(node) || node->is_permanent_node()) {
++    return;
++  }
++  WriteNode(node);
++}
++
++void BookmarkSync::BookmarkNodeChildrenReordered(const BookmarkNode* node) {
++  if (applying_ || !InTree(node)) {
++    return;
++  }
++  std::string previous;
++  for (const auto& child : node->children()) {
++    const std::string id = IdOf(child.get());
++    const auto it = records_.find(id);
++    if (it == records_.end()) {
++      continue;
++    }
++    Record record = it->second;
++    record.order = KeyBetween(previous, std::nullopt);
++    previous = record.order;
++    Write(id, record);
++  }
++}
++
++void BookmarkSync::BookmarkAllUserNodesRemoved(const std::set<GURL>& removed_urls,
++                                               const base::Location& location) {
++  if (applying_) {
++    return;
++  }
++  std::vector<std::string> ids;
++  for (const auto& [id, record] : records_) {
++    ids.push_back(id);
++  }
++  for (const std::string& id : ids) {
++    RemoveFile(id);
++  }
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/bookmark_sync.h b/chrome/browser/spatiand/bookmark_sync.h
+new file mode 100644
+index 0000000000..4d0d5f29a3
+--- /dev/null
++++ b/chrome/browser/spatiand/bookmark_sync.h
+@@ -0,0 +1,125 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_BOOKMARK_SYNC_H_
++#define CHROME_BROWSER_SPATIAND_BOOKMARK_SYNC_H_
++
++#include <map>
++#include <optional>
++#include <string>
++#include <string_view>
++
++#include "base/files/file_path.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/scoped_observation.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/time/time.h"
++#include "components/bookmarks/browser/bookmark_model.h"
++#include "components/bookmarks/browser/bookmark_model_observer.h"
++
++class Profile;
++
++namespace spatiand {
++
++// A key that sorts after `a` (empty: the lowest there is) and before `b` (none: the highest): how
++// SpatiMesh's bookmarks keep their order, so that putting one between two others writes that one
++// file. The same keys as `crates/spatimesh/src/bookmarks.rs`.
++std::string KeyBetween(std::string_view a, std::optional<std::string_view> b);
++
++// A profile's bookmarks, the same as in `apps/spatimesh/profiles/<id>/bookmarks/<bookmark>.json`,
++// one file per bookmark or folder. Chromium's bookmark bar is the top of that list, as it is in
++// SpatiMesh's other builds; "Other bookmarks" is a folder of it with the id `other`. Each node
++// keeps its file's name in its own meta info.
++class BookmarkSync : public bookmarks::BookmarkModelObserver {
++ public:
++  BookmarkSync(Profile* profile,
++               const std::string& id,
++               scoped_refptr<base::SequencedTaskRunner> files);
++  BookmarkSync(const BookmarkSync&) = delete;
++  BookmarkSync& operator=(const BookmarkSync&) = delete;
++  ~BookmarkSync() override;
++
++  // Looks for what the synchroniser brought.
++  void Poll();
++
++  struct Record {
++    Record();
++    Record(const Record&);
++    Record& operator=(const Record&);
++    ~Record();
++    std::string parent;
++    std::string title;
++    std::optional<std::string> url;
++    std::string order;
++    double added = 0;
++  };
++  using Records = std::map<std::string, Record>;
++
++ private:
++  struct Read {
++    Read();
++    Read(Read&&);
++    Read& operator=(Read&&);
++    ~Read();
++    base::Time changed;
++    bool unchanged = false;
++    Records records;
++  };
++
++  static Read ReadIfChanged(const base::FilePath& dir, base::Time last);
++  void OnRead(int changes_when_asked, Read read);
++  void Reconcile(Records records);
++
++  bool InTree(const bookmarks::BookmarkNode* node) const;
++  std::string IdOf(const bookmarks::BookmarkNode* node) const;
++  const bookmarks::BookmarkNode* ParentFor(
++      const std::string& parent_id,
++      const std::map<std::string, const bookmarks::BookmarkNode*>& nodes) const;
++  std::map<std::string, const bookmarks::BookmarkNode*> CollectNodes(
++      std::vector<const bookmarks::BookmarkNode*>* unnamed) const;
++  std::string OrderAt(const bookmarks::BookmarkNode* parent, size_t index) const;
++  void WriteNode(const bookmarks::BookmarkNode* node);
++  void Write(const std::string& id, const Record& record);
++  void RemoveFile(const std::string& id);
++
++  // bookmarks::BookmarkModelObserver:
++  void BookmarkModelLoaded(bool ids_reassigned) override;
++  void BookmarkNodeMoved(const bookmarks::BookmarkNode* old_parent,
++                         size_t old_index,
++                         const bookmarks::BookmarkNode* new_parent,
++                         size_t new_index) override;
++  void BookmarkNodeAdded(const bookmarks::BookmarkNode* parent,
++                         size_t index,
++                         bool added_by_user) override;
++  void BookmarkNodeRemoved(const bookmarks::BookmarkNode* parent,
++                           size_t old_index,
++                           const bookmarks::BookmarkNode* node,
++                           const std::set<GURL>& no_longer_bookmarked,
++                           const base::Location& location) override;
++  void BookmarkNodeChanged(const bookmarks::BookmarkNode* node) override;
++  void BookmarkNodeFaviconChanged(const bookmarks::BookmarkNode* node) override {}
++  void BookmarkNodeChildrenReordered(const bookmarks::BookmarkNode* node) override;
++  void BookmarkAllUserNodesRemoved(const std::set<GURL>& removed_urls,
++                                   const base::Location& location) override;
++
++  const raw_ptr<bookmarks::BookmarkModel> model_;
++  const base::FilePath dir_;
++  scoped_refptr<base::SequencedTaskRunner> files_;
++
++  // The files as last read or written.
++  Records records_;
++  base::Time last_changed_;
++  bool reading_ = false;
++  bool applying_ = false;
++  // Counts what was changed here, so that a read begun before a change is not taken for news.
++  int changes_ = 0;
++
++  base::ScopedObservation<bookmarks::BookmarkModel, bookmarks::BookmarkModelObserver>
++      observation_{this};
++  base::WeakPtrFactory<BookmarkSync> weak_factory_{this};
++};
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_BOOKMARK_SYNC_H_
+diff --git a/chrome/browser/spatiand/cookie_sync.cc b/chrome/browser/spatiand/cookie_sync.cc
+new file mode 100644
+index 0000000000..424679e280
+--- /dev/null
++++ b/chrome/browser/spatiand/cookie_sync.cc
+@@ -0,0 +1,529 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/cookie_sync.h"
++
++#include <algorithm>
++#include <cmath>
++#include <set>
++#include <utility>
++
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/functional/callback_helpers.h"
++#include "base/logging.h"
++#include "base/strings/string_util.h"
++#include "base/time/time.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/spatiand/shared_folder.h"
++#include "components/browsing_data/core/pref_names.h"
++#include "components/prefs/pref_service.h"
++#include "content/public/browser/storage_partition.h"
++#include "net/cookies/cookie_access_result.h"
++#include "net/cookies/cookie_change_dispatcher.h"
++#include "net/cookies/cookie_constants.h"
++#include "net/cookies/cookie_inclusion_status.h"
++#include "net/cookies/cookie_options.h"
++#include "net/cookies/cookie_util.h"
++#include "url/gurl.h"
++
++namespace spatiand {
++
++namespace {
++
++constexpr double kDay = 86400.0;
++constexpr base::TimeDelta kAfterChange = base::Seconds(10);
++constexpr base::TimeDelta kEveryMinute = base::Minutes(1);
++
++using Cookie = CookieSync::Cookie;
++using Key = std::tuple<std::string, std::string, std::string>;
++using Jar = std::map<Key, Cookie>;
++
++Key KeyOf(const Cookie& cookie) {
++  return Key(cookie.name, cookie.domain, cookie.path);
++}
++
++std::string SiteOf(const std::string& domain) {
++  return base::ToLowerASCII(base::TrimString(domain, ".", base::TRIM_LEADING));
++}
++
++// A name the synchroniser and every file system take.
++bool SafeSite(const std::string& site) {
++  if (site.empty() || site.starts_with('.')) {
++    return false;
++  }
++  return std::ranges::all_of(site, [](char c) {
++    return base::IsAsciiAlpha(c) || base::IsAsciiDigit(c) || c == '.' || c == '-' || c == '_';
++  });
++}
++
++// So many cookies that losing most of them at once means something went wrong.
++constexpr size_t kManyCookies = 20;
++
++// The same cookie, for syncing: its expiry may have moved, by less than a day, or be months away
++// on both sides: Chromium holds a cookie to 400 days and another engine may not, which is no news.
++bool Same(const Cookie& a, const Cookie& b) {
++  const double far = base::Time::Now().InSecondsFSinceUnixEpoch() + 30 * kDay;
++  const bool expires = a.expires && b.expires
++                           ? std::fabs(*a.expires - *b.expires) < kDay ||
++                                 std::min(*a.expires, *b.expires) > far
++                           : a.expires == b.expires;
++  return expires && a.name == b.name && a.value == b.value && a.domain == b.domain &&
++         a.path == b.path && a.secure == b.secure && a.http_only == b.http_only &&
++         a.same_site == b.same_site;
++}
++
++bool Differs(const Jar& a, const Jar& b) {
++  if (a.size() != b.size()) {
++    return true;
++  }
++  for (const auto& [key, cookie] : a) {
++    const auto it = b.find(key);
++    if (it == b.end() || !Same(cookie, it->second)) {
++      return true;
++    }
++  }
++  return false;
++}
++
++// The cookies worth syncing, by site: those that outlive the session and are not over.
++std::map<std::string, Jar> BySite(const std::vector<Cookie>& cookies, double now) {
++  std::map<std::string, Jar> sites;
++  for (const Cookie& cookie : cookies) {
++    if (!cookie.expires || *cookie.expires <= now || cookie.name.empty()) {
++      continue;
++    }
++    const std::string site = SiteOf(cookie.domain);
++    if (!SafeSite(site)) {
++      continue;
++    }
++    Cookie rounded = cookie;
++    rounded.expires = std::round(*cookie.expires);
++    sites[site].emplace(KeyOf(rounded), std::move(rounded));
++  }
++  return sites;
++}
++
++base::DictValue CookieToDict(const Cookie& cookie) {
++  base::DictValue dict;
++  dict.Set("name", cookie.name);
++  dict.Set("value", cookie.value);
++  dict.Set("domain", cookie.domain);
++  dict.Set("path", cookie.path);
++  if (cookie.expires) {
++    dict.Set("expires", *cookie.expires);
++  }
++  dict.Set("secure", cookie.secure);
++  dict.Set("http_only", cookie.http_only);
++  if (!cookie.same_site.empty()) {
++    dict.Set("same_site", cookie.same_site);
++  }
++  return dict;
++}
++
++std::optional<Cookie> CookieFromDict(const base::DictValue& dict) {
++  const std::string* name = dict.FindString("name");
++  const std::string* value = dict.FindString("value");
++  const std::string* domain = dict.FindString("domain");
++  const std::string* path = dict.FindString("path");
++  if (!name || !value || !domain || !path) {
++    return std::nullopt;
++  }
++  Cookie cookie;
++  cookie.name = *name;
++  cookie.value = *value;
++  cookie.domain = *domain;
++  cookie.path = *path;
++  cookie.expires = dict.FindDouble("expires");
++  cookie.secure = dict.FindBool("secure").value_or(false);
++  cookie.http_only = dict.FindBool("http_only").value_or(false);
++  if (const std::string* same_site = dict.FindString("same_site")) {
++    cookie.same_site = *same_site;
++  }
++  return cookie;
++}
++
++std::vector<Cookie> CookiesFromList(const base::ListValue& list) {
++  std::vector<Cookie> cookies;
++  for (const base::Value& item : list) {
++    if (item.is_dict()) {
++      if (std::optional<Cookie> cookie = CookieFromDict(item.GetDict())) {
++        cookies.push_back(std::move(*cookie));
++      }
++    }
++  }
++  return cookies;
++}
++
++base::ListValue CookiesToList(const std::vector<Cookie>& cookies) {
++  base::ListValue list;
++  for (const Cookie& cookie : cookies) {
++    list.Append(CookieToDict(cookie));
++  }
++  return list;
++}
++
++std::vector<Cookie> ValuesOf(const Jar& jar) {
++  std::vector<Cookie> cookies;
++  for (const auto& [key, cookie] : jar) {
++    cookies.push_back(cookie);
++  }
++  return cookies;
++}
++
++std::string SameSiteName(net::CookieSameSite same_site) {
++  switch (same_site) {
++    case net::CookieSameSite::NO_RESTRICTION:
++      return "None";
++    case net::CookieSameSite::LAX_MODE:
++      return "Lax";
++    case net::CookieSameSite::STRICT_MODE:
++      return "Strict";
++    default:
++      return std::string();
++  }
++}
++
++net::CookieSameSite SameSiteOf(const std::string& name) {
++  if (name == "None") {
++    return net::CookieSameSite::NO_RESTRICTION;
++  }
++  if (name == "Lax") {
++    return net::CookieSameSite::LAX_MODE;
++  }
++  if (name == "Strict") {
++    return net::CookieSameSite::STRICT_MODE;
++  }
++  return net::CookieSameSite::UNSPECIFIED;
++}
++
++Cookie FromChromium(const net::CanonicalCookie& canonical) {
++  Cookie cookie;
++  cookie.name = canonical.Name();
++  cookie.value = canonical.Value();
++  cookie.domain = canonical.Domain();
++  cookie.path = canonical.Path();
++  if (canonical.IsPersistent()) {
++    cookie.expires = canonical.ExpiryDate().InSecondsFSinceUnixEpoch();
++  }
++  cookie.secure = canonical.SecureAttribute();
++  cookie.http_only = canonical.IsHttpOnly();
++  cookie.same_site = SameSiteName(canonical.SameSite());
++  return cookie;
++}
++
++}  // namespace
++
++CookieSync::Cookie::Cookie() = default;
++CookieSync::Cookie::Cookie(const Cookie&) = default;
++CookieSync::Cookie& CookieSync::Cookie::operator=(const Cookie&) = default;
++CookieSync::Cookie::~Cookie() = default;
++bool CookieSync::Cookie::operator==(const Cookie&) const = default;
++CookieSync::ForChromium::ForChromium() = default;
++CookieSync::ForChromium::ForChromium(ForChromium&&) = default;
++CookieSync::ForChromium& CookieSync::ForChromium::operator=(ForChromium&&) = default;
++CookieSync::ForChromium::~ForChromium() = default;
++
++// The folder's side, on its own sequence, with what was last agreed.
++class CookieSync::Files {
++ public:
++  explicit Files(const std::string& id)
++      : dir_(SharedProfileDir(id).Append("cookies")),
++        agreed_file_(LocalProfileDir(id).Append("cookies.json")) {
++    if (std::optional<base::Value> value = ReadJson(agreed_file_); value && value->is_dict()) {
++      for (const auto [site, cookies] : value->GetDict()) {
++        if (cookies.is_list()) {
++          agreed_[site] = CookiesFromList(cookies.GetList());
++        }
++      }
++    }
++  }
++
++  base::Time FolderChangedTime() { return FolderChanged(dir_); }
++
++  ForChromium Merge(std::vector<Cookie> jar, bool wearer_cleared) {
++    // No folder for this profile at all says nothing about its cookies.
++    if (!base::DirectoryExists(dir_.DirName())) {
++      return ForChromium();
++    }
++    const double now = base::Time::Now().InSecondsFSinceUnixEpoch();
++    const std::map<std::string, Jar> local = BySite(jar, now);
++    // Most of what was agreed gone as the browser starts, or all of it at any time, is no wearer
++    // logging out: that is done in a session, a site at a time, or by clearing browsing data, which
++    // is told apart. It is a store that lost its cookies (the browser killed before it wrote them,
++    // a key it cannot read them with), and it must not take them from every machine: nothing counts
++    // as removed here, and they come back.
++    size_t known = 0;
++    size_t still_here = 0;
++    for (const auto& [site, cookies] : agreed_) {
++      const std::map<std::string, Jar> alive = BySite(cookies, now);
++      const auto here = local.find(site);
++      for (const auto& [alive_site, alive_cookies] : alive) {
++        for (const auto& [key, cookie] : alive_cookies) {
++          ++known;
++          if (here != local.end() && here->second.contains(key)) {
++            ++still_here;
++          }
++        }
++      }
++    }
++    const bool lost = !wearer_cleared && known >= kManyCookies &&
++                      (first_merge_ ? still_here * 2 < known : still_here == 0);
++    first_merge_ = false;
++    if (lost) {
++      LOG(WARNING) << "SpatiMesh: only " << still_here << " of " << known
++                   << " cookies are left in this profile; they are taken back from the shared "
++                      "folder, not removed from it";
++    }
++    const std::vector<std::string> shared_sites = ListJson(dir_);
++    std::set<std::string> sites(shared_sites.begin(), shared_sites.end());
++    for (const auto& [site, cookies] : local) {
++      sites.insert(site);
++    }
++    for (const auto& [site, cookies] : agreed_) {
++      sites.insert(site);
++    }
++
++    ForChromium out;
++    bool changed = false;
++    for (const std::string& site : sites) {
++      Jar base;
++      if (const auto it = agreed_.find(site); !lost && it != agreed_.end()) {
++        std::map<std::string, Jar> by_site = BySite(it->second, now);
++        if (auto found = by_site.find(site); found != by_site.end()) {
++          base = std::move(found->second);
++        }
++      }
++      Jar shared;
++      const base::FilePath file = dir_.Append(site + ".json");
++      if (std::ranges::contains(shared_sites, site)) {
++        if (std::optional<base::Value> value = ReadJson(file); value && value->is_dict()) {
++          if (const base::ListValue* cookies = value->GetDict().FindList("cookies")) {
++            std::map<std::string, Jar> by_site = BySite(CookiesFromList(*cookies), now);
++            if (auto found = by_site.find(site); found != by_site.end()) {
++              shared = std::move(found->second);
++            }
++          }
++        }
++      }
++      Jar mine;
++      if (const auto it = local.find(site); it != local.end()) {
++        mine = it->second;
++      }
++
++      // Three ways: begin from the file; what changed here since the last agreement goes over
++      // it, what was removed here goes from it.
++      Jar result = shared;
++      for (const auto& [key, cookie] : mine) {
++        const auto was = base.find(key);
++        if (was == base.end() || !Same(was->second, cookie)) {
++          result[key] = cookie;
++        }
++      }
++      for (const auto& [key, cookie] : base) {
++        if (!mine.contains(key)) {
++          result.erase(key);
++        }
++      }
++
++      if (Differs(result, shared)) {
++        if (result.empty()) {
++          RemovePath(file);
++        } else {
++          base::DictValue dict;
++          dict.Set("cookies", CookiesToList(ValuesOf(result)));
++          WriteJson(file, base::Value(std::move(dict)));
++        }
++      }
++      for (const auto& [key, cookie] : result) {
++        const auto have = mine.find(key);
++        if (have == mine.end() || !Same(have->second, cookie)) {
++          out.set.push_back(cookie);
++        }
++      }
++      for (const auto& [key, cookie] : mine) {
++        if (!result.contains(key)) {
++          out.remove.push_back(cookie);
++        }
++      }
++      std::vector<Cookie> agreed = ValuesOf(result);
++      const auto old = agreed_.find(site);
++      if (old == agreed_.end() ? !agreed.empty() : old->second != agreed) {
++        changed = true;
++        if (agreed.empty()) {
++          agreed_.erase(site);
++        } else {
++          agreed_[site] = std::move(agreed);
++        }
++      }
++    }
++    if (changed) {
++      SaveAgreed();
++    }
++    return out;
++  }
++
++  // Chromium would not take this one. It is not a cookie removed here, which would remove it on
++  // every machine: it is taken out of what was agreed, and offered again next time.
++  void NotTaken(Cookie cookie) {
++    const auto it = agreed_.find(SiteOf(cookie.domain));
++    if (it != agreed_.end()) {
++      std::erase_if(it->second,
++                    [&cookie](const Cookie& c) { return KeyOf(c) == KeyOf(cookie); });
++      if (it->second.empty()) {
++        agreed_.erase(it);
++      }
++      SaveAgreed();
++    }
++  }
++
++ private:
++  void SaveAgreed() {
++    base::DictValue dict;
++    for (const auto& [site, cookies] : agreed_) {
++      dict.Set(site, CookiesToList(cookies));
++    }
++    WriteJson(agreed_file_, base::Value(std::move(dict)));
++  }
++
++  const base::FilePath dir_;
++  const base::FilePath agreed_file_;
++  std::map<std::string, std::vector<Cookie>> agreed_;
++  bool first_merge_ = true;
++};
++
++CookieSync::CookieSync(Profile* profile,
++                       const std::string& id,
++                       scoped_refptr<base::SequencedTaskRunner> files)
++    : profile_(profile), files_(std::move(files), id) {
++  Connect();
++  MergeSoon();
++  every_minute_.Start(FROM_HERE, kEveryMinute,
++                      base::BindRepeating(&CookieSync::MergeNow, base::Unretained(this)));
++}
++
++CookieSync::~CookieSync() = default;
++
++void CookieSync::Connect() {
++  network::mojom::CookieManager* manager =
++      profile_->GetDefaultStoragePartition()->GetCookieManagerForBrowserProcess();
++  listener_.reset();
++  manager->AddGlobalChangeListener(listener_.BindNewPipeAndPassRemote());
++  // The network service restarting takes the listener with it.
++  listener_.set_disconnect_handler(
++      base::BindOnce(&CookieSync::Connect, base::Unretained(this)));
++}
++
++void CookieSync::OnCookieChange(const net::CookieChangeInfo& change) {
++  if (telling_ == 0 && change.cookie.IsPersistent()) {
++    MergeSoon();
++  }
++}
++
++void CookieSync::MergeSoon() {
++  if (!soon_.IsRunning()) {
++    soon_.Start(FROM_HERE, kAfterChange,
++                base::BindOnce(&CookieSync::MergeNow, base::Unretained(this)));
++  }
++}
++
++void CookieSync::Poll() {
++  files_.AsyncCall(&Files::FolderChangedTime)
++      .Then(base::BindOnce(&CookieSync::OnFolderChanged, weak_factory_.GetWeakPtr()));
++}
++
++void CookieSync::OnFolderChanged(base::Time changed) {
++  if (changed != folder_changed_) {
++    folder_changed_ = changed;
++    MergeNow();
++  }
++}
++
++void CookieSync::MergeNow() {
++  if (merging_) {
++    return;
++  }
++  merging_ = true;
++  profile_->GetDefaultStoragePartition()->GetCookieManagerForBrowserProcess()->GetAllCookies(
++      base::BindOnce(&CookieSync::OnAllCookies, weak_factory_.GetWeakPtr()));
++}
++
++void CookieSync::OnAllCookies(const net::CookieList& cookies) {
++  all_ = cookies;
++  std::vector<Cookie> jar;
++  jar.reserve(cookies.size());
++  for (const net::CanonicalCookie& cookie : cookies) {
++    // A cookie kept per top-level site is that site's alone, here, and has no meaning elsewhere.
++    if (!cookie.IsPartitioned()) {
++      jar.push_back(FromChromium(cookie));
++    }
++  }
++  // "Clear browsing data" was used lately: what it took is meant to be gone.
++  const base::Time cleared = base::Time::FromTimeT(
++      profile_->GetPrefs()->GetInt64(browsing_data::prefs::kLastClearBrowsingDataTime));
++  const bool wearer_cleared = base::Time::Now() - cleared < base::Minutes(10);
++  files_.AsyncCall(&Files::Merge)
++      .WithArgs(std::move(jar), wearer_cleared)
++      .Then(base::BindOnce(&CookieSync::OnMerged, weak_factory_.GetWeakPtr()));
++}
++
++void CookieSync::OnMerged(ForChromium out) {
++  network::mojom::CookieManager* manager =
++      profile_->GetDefaultStoragePartition()->GetCookieManagerForBrowserProcess();
++  for (const Cookie& cookie : out.set) {
++    const base::Time now = base::Time::Now();
++    const GURL url = net::cookie_util::CookieOriginToURL(cookie.domain, cookie.secure);
++    net::CookieInclusionStatus status;
++    std::unique_ptr<net::CanonicalCookie> canonical = net::CanonicalCookie::CreateSanitizedCookie(
++        url, cookie.name, cookie.value,
++        cookie.domain.starts_with('.') ? cookie.domain : std::string(), cookie.path, now,
++        base::Time::FromSecondsSinceUnixEpoch(cookie.expires.value_or(0)), now, cookie.secure,
++        cookie.http_only, SameSiteOf(cookie.same_site), net::COOKIE_PRIORITY_DEFAULT,
++        /*partition_key=*/std::nullopt, &status);
++    if (!canonical) {
++      files_.AsyncCall(&Files::NotTaken).WithArgs(cookie);
++      continue;
++    }
++    ++telling_;
++    manager->SetCanonicalCookie(
++        *canonical, url, net::CookieOptions::MakeAllInclusive(),
++        base::BindOnce(&CookieSync::OnSet, weak_factory_.GetWeakPtr(), cookie));
++  }
++  for (const Cookie& cookie : out.remove) {
++    for (const net::CanonicalCookie& canonical : all_) {
++      if (canonical.Name() == cookie.name && canonical.Domain() == cookie.domain &&
++          canonical.Path() == cookie.path && !canonical.IsPartitioned()) {
++        ++telling_;
++        manager->DeleteCanonicalCookie(canonical,
++                                       base::BindOnce(
++                                           [](base::WeakPtr<CookieSync> self, bool) {
++                                             if (self) {
++                                               self->Merged();
++                                             }
++                                           },
++                                           weak_factory_.GetWeakPtr()));
++        break;
++      }
++    }
++  }
++  // On disk now rather than within half a minute: what was given here is agreed on already, and if
++  // the browser is killed before it is written, the next start would see it as removed here.
++  if (!out.set.empty()) {
++    manager->FlushCookieStore(base::DoNothing());
++  }
++  all_.clear();
++  merging_ = false;
++}
++
++void CookieSync::OnSet(Cookie cookie, net::CookieAccessResult result) {
++  if (!result.status.IsInclude()) {
++    files_.AsyncCall(&Files::NotTaken).WithArgs(std::move(cookie));
++  }
++  Merged();
++}
++
++void CookieSync::Merged() {
++  --telling_;
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/cookie_sync.h b/chrome/browser/spatiand/cookie_sync.h
+new file mode 100644
+index 0000000000..7058ed21a8
+--- /dev/null
++++ b/chrome/browser/spatiand/cookie_sync.h
+@@ -0,0 +1,100 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_COOKIE_SYNC_H_
++#define CHROME_BROWSER_SPATIAND_COOKIE_SYNC_H_
++
++#include <map>
++#include <optional>
++#include <string>
++#include <tuple>
++#include <vector>
++
++#include "base/files/file_path.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/threading/sequence_bound.h"
++#include "base/timer/timer.h"
++#include "mojo/public/cpp/bindings/receiver.h"
++#include "net/cookies/canonical_cookie.h"
++#include "services/network/public/mojom/cookie_manager.mojom.h"
++
++class Profile;
++
++namespace spatiand {
++
++// A profile's logins, the same on every machine: log in on one, be logged in on the others.
++//
++// `apps/spatimesh/profiles/<id>/cookies/<site>.json`, a file per site, merged three ways as
++// `crates/spatimesh/src/cookies.rs` does: what Chromium has, what the file says, and what the two
++// last agreed on (this browser's own file). A cookie changed here since is written out, one changed
++// elsewhere is given to Chromium, one gone from either side is gone from both. Only cookies that
++// outlive the session cross, and an expiry moved by less than a day is not a change.
++class CookieSync : public network::mojom::CookieChangeListener {
++ public:
++  CookieSync(Profile* profile,
++             const std::string& id,
++             scoped_refptr<base::SequencedTaskRunner> files);
++  CookieSync(const CookieSync&) = delete;
++  CookieSync& operator=(const CookieSync&) = delete;
++  ~CookieSync() override;
++
++  // Looks for what the synchroniser brought.
++  void Poll();
++
++  struct Cookie {
++    Cookie();
++    Cookie(const Cookie&);
++    Cookie& operator=(const Cookie&);
++    ~Cookie();
++    bool operator==(const Cookie&) const;
++    std::string name;
++    std::string value;
++    std::string domain;
++    std::string path;
++    std::optional<double> expires;
++    bool secure = false;
++    bool http_only = false;
++    std::string same_site;
++  };
++  struct ForChromium {
++    ForChromium();
++    ForChromium(ForChromium&&);
++    ForChromium& operator=(ForChromium&&);
++    ~ForChromium();
++    std::vector<Cookie> set;
++    std::vector<Cookie> remove;
++  };
++
++  class Files;
++
++ private:
++  void Connect();
++  void MergeNow();
++  void OnAllCookies(const net::CookieList& cookies);
++  void OnMerged(ForChromium out);
++  void OnSet(Cookie cookie, net::CookieAccessResult result);
++  void Merged();
++  void MergeSoon();
++  void OnFolderChanged(base::Time changed);
++
++  // network::mojom::CookieChangeListener:
++  void OnCookieChange(const net::CookieChangeInfo& change) override;
++
++  const raw_ptr<Profile> profile_;
++  base::SequenceBound<Files> files_;
++  mojo::Receiver<network::mojom::CookieChangeListener> listener_{this};
++  base::OneShotTimer soon_;
++  base::RepeatingTimer every_minute_;
++  bool merging_ = false;
++  // What is being told to Chromium: its own change listener hears that too, and it is no news.
++  int telling_ = 0;
++  base::Time folder_changed_;
++  net::CookieList all_;
++  base::WeakPtrFactory<CookieSync> weak_factory_{this};
++};
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_COOKIE_SYNC_H_
+diff --git a/chrome/browser/spatiand/extension_sync.cc b/chrome/browser/spatiand/extension_sync.cc
+new file mode 100644
+index 0000000000..b5f0aa3d4f
+--- /dev/null
++++ b/chrome/browser/spatiand/extension_sync.cc
+@@ -0,0 +1,402 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/extension_sync.h"
++
++#include <algorithm>
++#include <optional>
++#include <utility>
++#include <vector>
++
++#include "base/auto_reset.h"
++#include "base/files/file_enumerator.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/logging.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/functional/callback_helpers.h"
++#include "base/one_shot_event.h"
++#include "base/version.h"
++#include "chrome/browser/extensions/extension_service.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/spatiand/shared_folder.h"
++#include "extensions/browser/disable_reason.h"
++#include "extensions/browser/extension_registrar.h"
++#include "extensions/browser/extension_system.h"
++#include "extensions/browser/pending_extension_manager.h"
++#include "extensions/browser/uninstall_reason.h"
++#include "extensions/browser/unpacked_installer.h"
++#include "extensions/common/extension.h"
++#include "extensions/common/manifest.h"
++#include "extensions/common/manifest_constants.h"
++#include "extensions/common/manifest_handlers/manifest_url_handlers.h"
++#include "extensions/common/mojom/manifest.mojom-shared.h"
++#include "url/gurl.h"
++
++namespace spatiand {
++
++namespace {
++
++using extensions::Extension;
++using extensions::mojom::ManifestLocation;
++
++// The synchroniser sends nothing larger, and an extension's files are not worth more than this.
++constexpr int64_t kLargestFile = 4 << 20;
++constexpr int64_t kLargestExtension = 64 << 20;
++
++bool ShouldAllowInstall(const Extension* extension, content::BrowserContext* context) {
++  return !extension->is_theme();
++}
++
++bool FromFolder(const Extension* extension) {
++  return (extension->location() == ManifestLocation::kUnpacked ||
++          extension->location() == ManifestLocation::kCommandLine) &&
++         extension->manifest()->FindStringPath(extensions::manifest_keys::kPublicKey);
++}
++
++bool FromStore(const Extension* extension) {
++  return extension->location() == ManifestLocation::kInternal &&
++         (extensions::ManifestURL::UpdatesFromGallery(extension) ||
++          !extensions::ManifestURL::GetUpdateURL(extension).is_empty());
++}
++
++bool Syncs(const Extension* extension) {
++  return extension->is_extension() && (FromFolder(extension) || FromStore(extension));
++}
++
++ExtensionSync::Records ReadRecords(const base::FilePath& dir) {
++  ExtensionSync::Records records;
++  for (const std::string& id : ListJson(dir)) {
++    if (std::optional<base::Value> value = ReadJson(dir.Append(id + ".json"));
++        value && value->is_dict()) {
++      records.emplace(id, std::move(*value).TakeDict());
++    }
++  }
++  return records;
++}
++
++// An extension's files, to where every machine can load it from. Refused, with nothing left half
++// done, if a file is more than the synchroniser sends.
++bool CopyFiles(const base::FilePath& from, const base::FilePath& to) {
++  std::vector<base::FilePath> found;
++  int64_t total = 0;
++  base::FileEnumerator files(from, /*recursive=*/true, base::FileEnumerator::FILES);
++  for (base::FilePath file = files.Next(); !file.empty(); file = files.Next()) {
++    base::FilePath relative;
++    from.AppendRelativePath(file, &relative);
++    bool hidden = false;
++    for (const std::string& part : relative.GetComponents()) {
++      hidden |= part.starts_with('.') || part == "node_modules" || part == "_metadata";
++    }
++    if (hidden) {
++      continue;
++    }
++    const int64_t size = files.GetInfo().GetSize();
++    total += size;
++    if (size > kLargestFile || total > kLargestExtension) {
++      LOG(WARNING) << "SpatiMesh: the extension in " << from << " is too large to go to other "
++                   << "machines";
++      return false;
++    }
++    found.push_back(std::move(relative));
++  }
++  // What is no longer there goes from the copy, so that the deletion travels too.
++  base::FileEnumerator old(to, /*recursive=*/true, base::FileEnumerator::FILES);
++  for (base::FilePath file = old.Next(); !file.empty(); file = old.Next()) {
++    base::FilePath relative;
++    to.AppendRelativePath(file, &relative);
++    if (!std::ranges::contains(found, relative)) {
++      base::DeleteFile(file);
++    }
++  }
++  for (const base::FilePath& relative : found) {
++    const base::FilePath source = from.Append(relative);
++    const base::FilePath target = to.Append(relative);
++    if (base::ContentsEqual(source, target)) {
++      continue;
++    }
++    base::CreateDirectory(target.DirName());
++    const base::FilePath temporary =
++        target.DirName().Append("." + target.BaseName().value() + ".new");
++    if (!base::CopyFile(source, temporary) || !base::ReplaceFile(temporary, target, nullptr)) {
++      base::DeleteFile(temporary);
++      return false;
++    }
++  }
++  return true;
++}
++
++void WriteRecord(const base::FilePath& file,
++                 base::DictValue record,
++                 std::optional<base::FilePath> copy_from,
++                 const base::FilePath& copy_to) {
++  if (copy_from && !CopyFiles(*copy_from, copy_to)) {
++    return;
++  }
++  WriteJson(file, base::Value(std::move(record)));
++}
++
++}  // namespace
++
++ExtensionSync::ExtensionSync(Profile* profile,
++                             const std::string& id,
++                             scoped_refptr<base::SequencedTaskRunner> files)
++    : profile_(profile),
++      dir_(SharedProfileDir(id).Append("extensions")),
++      files_dir_(SharedProfileDir(id).Append("extension-files")),
++      known_file_(LocalProfileDir(id).Append("extensions-known.json")),
++      files_(std::move(files)),
++      registry_(extensions::ExtensionRegistry::Get(profile)) {
++  extensions::ExtensionSystem::Get(profile)->ready().Post(
++      FROM_HERE, base::BindOnce(&ExtensionSync::OnReady, weak_factory_.GetWeakPtr()));
++}
++
++ExtensionSync::~ExtensionSync() = default;
++
++void ExtensionSync::OnReady() {
++  observation_.Observe(registry_);
++  files_->PostTaskAndReplyWithResult(
++      FROM_HERE,
++      base::BindOnce(
++          [](const base::FilePath& file) {
++            std::set<std::string> known;
++            if (std::optional<base::Value> value = ReadJson(file); value && value->is_list()) {
++              for (const base::Value& item : value->GetList()) {
++                if (item.is_string()) {
++                  known.insert(item.GetString());
++                }
++              }
++            }
++            return known;
++          },
++          known_file_),
++      base::BindOnce(
++          [](base::WeakPtr<ExtensionSync> self, std::set<std::string> known) {
++            if (self) {
++              self->known_ = std::move(known);
++              self->ready_ = true;
++              self->Poll();
++            }
++          },
++          weak_factory_.GetWeakPtr()));
++}
++
++void ExtensionSync::Poll() {
++  if (!ready_ || reading_) {
++    return;
++  }
++  reading_ = true;
++  files_->PostTaskAndReplyWithResult(
++      FROM_HERE, base::BindOnce(&ReadRecords, dir_),
++      base::BindOnce(&ExtensionSync::OnRead, weak_factory_.GetWeakPtr(), changes_));
++}
++
++void ExtensionSync::OnRead(int changes_when_asked, Records records) {
++  reading_ = false;
++  if (changes_when_asked == changes_ && records != records_) {
++    Reconcile(std::move(records));
++  } else if (records_.empty() && changes_when_asked == changes_) {
++    Reconcile(std::move(records));
++  }
++}
++
++void ExtensionSync::Reconcile(Records records) {
++  base::AutoReset<bool> applying(&applying_, true);
++  extensions::ExtensionRegistrar* registrar = extensions::ExtensionRegistrar::Get(profile_);
++  bool known_changed = false;
++
++  for (const auto& [id, record] : records) {
++    known_changed |= known_.insert(id).second;
++    const Extension* installed = registry_->GetInstalledExtension(id);
++    if (!installed) {
++      if (!installing_.contains(id)) {
++        Install(id, record);
++      }
++      continue;
++    }
++    const bool wanted = record.FindBool("enabled").value_or(true);
++    const bool enabled = registry_->enabled_extensions().Contains(id);
++    if (wanted && !enabled) {
++      registrar->EnableExtension(id);
++    } else if (!wanted && enabled) {
++      registrar->DisableExtension(id, {extensions::disable_reason::DISABLE_USER_ACTION});
++    }
++  }
++
++  // Installed here and not in the list.
++  std::vector<scoped_refptr<const Extension>> installed;
++  for (const auto& extension : registry_->GenerateInstalledExtensionsSet()) {
++    installed.push_back(extension);
++  }
++  for (const scoped_refptr<const Extension>& extension : installed) {
++    if (!Syncs(extension.get()) || records.contains(extension->id())) {
++      continue;
++    }
++    if (known_.contains(extension->id())) {
++      // It was in the list, and is gone from it: removed on another machine.
++      known_.erase(extension->id());
++      known_changed = true;
++      std::u16string error;
++      registrar->UninstallExtension(extension->id(), extensions::UNINSTALL_REASON_SYNC, &error);
++    } else {
++      base::AutoReset<bool> not_applying(&applying_, false);
++      WriteLocal(extension.get());
++      known_changed = true;
++    }
++  }
++  for (auto& [id, record] : records) {
++    records_[id] = std::move(record);
++  }
++  std::erase_if(records_, [this](const auto& item) {
++    return !known_.contains(item.first);
++  });
++  if (known_changed) {
++    SaveKnown();
++  }
++}
++
++void ExtensionSync::Install(const std::string& extension_id, const base::DictValue& record) {
++  const std::string* from = record.FindString("from");
++  if (from && *from == "folder") {
++    const base::FilePath path = files_dir_.Append(extension_id);
++    scoped_refptr<extensions::UnpackedInstaller> installer =
++        extensions::UnpackedInstaller::Create(profile_);
++    installer->set_be_noisy_on_failure(false);
++    installer->set_completion_callback(base::BindOnce(
++        [](base::WeakPtr<ExtensionSync> self, std::string id, const Extension* extension,
++           const base::FilePath& path, const std::u16string& error) {
++          if (!extension) {
++            LOG(WARNING) << "SpatiMesh: the extension " << id << " did not load: " << base::UTF16ToUTF8(error);
++          }
++          if (self) {
++            self->installing_.erase(id);
++          }
++        },
++        weak_factory_.GetWeakPtr(), extension_id));
++    installer->Load(path);
++    installing_.insert(extension_id);
++    return;
++  }
++  const std::string* update_url = record.FindString("update_url");
++  if (!update_url || !GURL(*update_url).is_valid()) {
++    return;
++  }
++  if (extensions::PendingExtensionManager::Get(profile_)->AddFromSync(
++          extension_id, GURL(*update_url), base::Version(), &ShouldAllowInstall,
++          /*remote_install=*/false)) {
++    installing_.insert(extension_id);
++    extensions::ExtensionSystem::Get(profile_)->extension_service()->CheckForUpdatesSoon();
++  }
++}
++
++void ExtensionSync::WriteLocal(const Extension* extension) {
++  if (!Syncs(extension)) {
++    return;
++  }
++  base::DictValue record;
++  record.Set("name", extension->name());
++  record.Set("version", extension->VersionString());
++  record.Set("enabled", registry_->enabled_extensions().Contains(extension->id()));
++  std::optional<base::FilePath> copy_from;
++  if (FromFolder(extension)) {
++    record.Set("from", "folder");
++    // One loaded from the shared copy is already there.
++    if (extension->path().DirName() != files_dir_) {
++      copy_from = extension->path();
++    }
++  } else {
++    record.Set("from", "store");
++    const GURL update_url = extensions::ManifestURL::GetUpdateURL(extension);
++    record.Set("update_url", update_url.is_empty()
++                                 ? std::string("https://clients2.google.com/service/update2/crx")
++                                 : update_url.spec());
++  }
++  const std::string& id = extension->id();
++  ++changes_;
++  known_.insert(id);
++  records_[id] = record.Clone();
++  files_->PostTask(FROM_HERE, base::BindOnce(&WriteRecord, dir_.Append(id + ".json"),
++                                             std::move(record), std::move(copy_from),
++                                             files_dir_.Append(id)));
++}
++
++void ExtensionSync::SaveKnown() {
++  base::ListValue list;
++  for (const std::string& id : known_) {
++    list.Append(id);
++  }
++  files_->PostTask(FROM_HERE, base::BindOnce(
++                                  [](const base::FilePath& file, base::ListValue known) {
++                                    WriteJson(file, base::Value(std::move(known)));
++                                  },
++                                  known_file_, std::move(list)));
++}
++
++void ExtensionSync::OnExtensionLoaded(content::BrowserContext* browser_context,
++                                      const Extension* extension) {
++  installing_.erase(extension->id());
++  if (applying_ || !ready_) {
++    return;
++  }
++  const auto it = records_.find(extension->id());
++  if (it != records_.end() && !it->second.FindBool("enabled").value_or(true)) {
++    WriteLocal(extension);
++  }
++}
++
++void ExtensionSync::OnExtensionUnloaded(content::BrowserContext* browser_context,
++                                        const Extension* extension,
++                                        extensions::UnloadedExtensionReason reason) {
++  if (applying_ || !ready_ || reason != extensions::UnloadedExtensionReason::DISABLE) {
++    return;
++  }
++  // The registry says it is off only after this: said as it will be.
++  const auto it = records_.find(extension->id());
++  if (it != records_.end() && it->second.FindBool("enabled").value_or(true)) {
++    base::DictValue record = it->second.Clone();
++    record.Set("enabled", false);
++    ++changes_;
++    records_[extension->id()] = record.Clone();
++    files_->PostTask(FROM_HERE, base::BindOnce(&WriteRecord, dir_.Append(extension->id() + ".json"),
++                                               std::move(record), std::nullopt, base::FilePath()));
++  }
++}
++
++void ExtensionSync::OnExtensionInstalled(content::BrowserContext* browser_context,
++                                         const Extension* extension,
++                                         bool is_update) {
++  // Fetched for this list: wanted on another machine, where its permissions were agreed to. A store
++  // extension arriving from elsewhere is otherwise left off until someone turns it on here.
++  if (installing_.contains(extension->id()) && !registry_->enabled_extensions().Contains(extension->id())) {
++    const auto wanted = records_.find(extension->id());
++    if (wanted != records_.end() && wanted->second.FindBool("enabled").value_or(true)) {
++      base::AutoReset<bool> applying(&applying_, true);
++      extensions::ExtensionRegistrar::Get(profile_)->GrantPermissionsAndEnableExtension(*extension);
++    }
++  }
++  installing_.erase(extension->id());
++  if (applying_ || !ready_) {
++    return;
++  }
++  WriteLocal(extension);
++  SaveKnown();
++}
++
++void ExtensionSync::OnExtensionUninstalled(content::BrowserContext* browser_context,
++                                           const Extension* extension,
++                                           extensions::UninstallReason reason) {
++  if (applying_ || !ready_ || reason == extensions::UNINSTALL_REASON_SYNC) {
++    return;
++  }
++  const std::string& id = extension->id();
++  if (!known_.erase(id)) {
++    return;
++  }
++  ++changes_;
++  records_.erase(id);
++  files_->PostTask(FROM_HERE, base::BindOnce(&RemovePath, dir_.Append(id + ".json")));
++  files_->PostTask(FROM_HERE, base::BindOnce(&RemovePath, files_dir_.Append(id)));
++  SaveKnown();
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/extension_sync.h b/chrome/browser/spatiand/extension_sync.h
+new file mode 100644
+index 0000000000..76397ec120
+--- /dev/null
++++ b/chrome/browser/spatiand/extension_sync.h
+@@ -0,0 +1,92 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_EXTENSION_SYNC_H_
++#define CHROME_BROWSER_SPATIAND_EXTENSION_SYNC_H_
++
++#include <map>
++#include <set>
++#include <string>
++
++#include "base/files/file_path.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/scoped_observation.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/time/time.h"
++#include "base/values.h"
++#include "extensions/browser/extension_registry.h"
++#include "extensions/browser/extension_registry_observer.h"
++
++class Profile;
++
++namespace spatiand {
++
++// A profile's Chrome extensions on every machine: `apps/spatimesh/profiles/<id>/extensions/<ext>.json`
++// says what is installed and whether it is on. An extension from a store is installed on the next
++// machine as Chrome Sync would install it, from its update address. One loaded from a folder comes
++// along with its files (`extension-files/<ext>/`) if its manifest has a `key`, which is what keeps
++// its id the same wherever it is loaded from; without one its id is made from where it is, and it
++// stays on the machine it was loaded on.
++class ExtensionSync : public extensions::ExtensionRegistryObserver {
++ public:
++  ExtensionSync(Profile* profile,
++                const std::string& id,
++                scoped_refptr<base::SequencedTaskRunner> files);
++  ExtensionSync(const ExtensionSync&) = delete;
++  ExtensionSync& operator=(const ExtensionSync&) = delete;
++  ~ExtensionSync() override;
++
++  void Poll();
++
++  using Records = std::map<std::string, base::DictValue>;
++
++ private:
++  struct Read;
++  void OnReady();
++  void OnRead(int changes_when_asked, Records records);
++  void Reconcile(Records records);
++  void WriteLocal(const extensions::Extension* extension);
++  void Install(const std::string& extension_id, const base::DictValue& record);
++  void SaveKnown();
++
++  // extensions::ExtensionRegistryObserver:
++  void OnExtensionLoaded(content::BrowserContext* browser_context,
++                         const extensions::Extension* extension) override;
++  void OnExtensionUnloaded(content::BrowserContext* browser_context,
++                           const extensions::Extension* extension,
++                           extensions::UnloadedExtensionReason reason) override;
++  void OnExtensionInstalled(content::BrowserContext* browser_context,
++                            const extensions::Extension* extension,
++                            bool is_update) override;
++  void OnExtensionUninstalled(content::BrowserContext* browser_context,
++                              const extensions::Extension* extension,
++                              extensions::UninstallReason reason) override;
++
++  const raw_ptr<Profile> profile_;
++  const base::FilePath dir_;
++  const base::FilePath files_dir_;
++  const base::FilePath known_file_;
++  scoped_refptr<base::SequencedTaskRunner> files_;
++  raw_ptr<extensions::ExtensionRegistry> registry_;
++
++  Records records_;
++  // Those seen in the list: one installed here and gone from the list was removed on another
++  // machine; one not known yet was installed here.
++  std::set<std::string> known_;
++  // Being installed here because the list says so.
++  std::set<std::string> installing_;
++  base::Time last_changed_;
++  bool ready_ = false;
++  bool reading_ = false;
++  bool applying_ = false;
++  int changes_ = 0;
++
++  base::ScopedObservation<extensions::ExtensionRegistry, extensions::ExtensionRegistryObserver>
++      observation_{this};
++  base::WeakPtrFactory<ExtensionSync> weak_factory_{this};
++};
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_EXTENSION_SYNC_H_
+diff --git a/chrome/browser/spatiand/history_sync.cc b/chrome/browser/spatiand/history_sync.cc
+new file mode 100644
+index 0000000000..34c3fe9431
+--- /dev/null
++++ b/chrome/browser/spatiand/history_sync.cc
+@@ -0,0 +1,437 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/history_sync.h"
++
++#include <map>
++#include <functional>
++#include <algorithm>
++#include <set>
++#include <utility>
++
++#include "base/auto_reset.h"
++#include "base/functional/bind.h"
++#include "base/functional/callback_helpers.h"
++#include "base/strings/string_util.h"
++#include "base/strings/stringprintf.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/time/time.h"
++#include "chrome/browser/history/history_service_factory.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/spatiand/shared_folder.h"
++#include "components/history/core/browser/history_types.h"
++#include "components/history/core/browser/url_row.h"
++#include "url/gurl.h"
++
++namespace spatiand {
++
++namespace {
++
++constexpr base::TimeDelta kSaveAfter = base::Seconds(2);
++// A title that comes later, or the same page again this soon, is the same visit.
++constexpr double kSameVisitMs = 30 * 60 * 1000;
++constexpr double kYearMs = 366.0 * 24 * 60 * 60 * 1000;
++// Chromium's own history keeps no more than this: older visits would only be thrown away again.
++constexpr double kImportMs = 90.0 * 24 * 60 * 60 * 1000;
++
++std::string MonthOf(double at_ms) {
++  base::Time::Exploded exploded;
++  TimeOfMs(at_ms).UTCExplode(&exploded);
++  return base::StringPrintf("%04d-%02d", exploded.year, exploded.month);
++}
++
++bool Remembered(const GURL& url) {
++  return url.SchemeIsHTTPOrHTTPS();
++}
++
++base::ListValue VisitsToList(const std::vector<HistorySync::Visit>& visits) {
++  base::ListValue list;
++  for (const HistorySync::Visit& visit : visits) {
++    base::DictValue dict;
++    dict.Set("url", visit.url);
++    dict.Set("title", visit.title);
++    dict.Set("at", visit.at);
++    list.Append(std::move(dict));
++  }
++  return list;
++}
++
++std::vector<HistorySync::Visit> VisitsFromFile(const base::FilePath& file) {
++  std::vector<HistorySync::Visit> visits;
++  std::optional<base::Value> value = ReadJson(file);
++  if (!value || !value->is_list()) {
++    return visits;
++  }
++  for (const base::Value& item : value->GetList()) {
++    if (!item.is_dict()) {
++      continue;
++    }
++    const std::string* url = item.GetDict().FindString("url");
++    const std::string* title = item.GetDict().FindString("title");
++    const std::optional<double> at = item.GetDict().FindDouble("at");
++    if (url && at) {
++      HistorySync::Visit visit;
++      visit.url = *url;
++      if (title) {
++        visit.title = base::UTF8ToUTF16(*title);
++      }
++      visit.at = *at;
++      visits.push_back(std::move(visit));
++    }
++  }
++  return visits;
++}
++
++std::vector<HistorySync::Forgotten> ForgottenFromFile(const base::FilePath& file) {
++  std::vector<HistorySync::Forgotten> forgotten;
++  std::optional<base::Value> value = ReadJson(file);
++  if (!value || !value->is_list()) {
++    return forgotten;
++  }
++  for (const base::Value& item : value->GetList()) {
++    if (!item.is_dict()) {
++      continue;
++    }
++    HistorySync::Forgotten entry;
++    if (const std::string* url = item.GetDict().FindString("url")) {
++      entry.url = *url;
++    }
++    entry.from = item.GetDict().FindDouble("from").value_or(0);
++    entry.until = item.GetDict().FindDouble("until").value_or(0);
++    forgotten.push_back(std::move(entry));
++  }
++  return forgotten;
++}
++
++bool Hides(const HistorySync::Forgotten& forgotten, const HistorySync::Visit& visit) {
++  return visit.at <= forgotten.until && visit.at >= forgotten.from &&
++         (!forgotten.url || *forgotten.url == visit.url);
++}
++
++}  // namespace
++
++HistorySync::News::News() = default;
++HistorySync::News::News(News&&) = default;
++HistorySync::News& HistorySync::News::operator=(News&&) = default;
++HistorySync::News::~News() = default;
++
++// The folder's side, on its own sequence: this machine's month, and how far each other file has
++// been read.
++class HistorySync::Files {
++ public:
++  explicit Files(const std::string& id)
++      : dir_(SharedProfileDir(id).Append("history")),
++        progress_file_(LocalProfileDir(id).Append("history-read.json")) {
++    const base::FilePath machine_file = LocalDir().Append("machine.json");
++    if (std::optional<base::Value> value = ReadJson(machine_file); value && value->is_string()) {
++      machine_ = value->GetString();
++    } else {
++      machine_ = NewId();
++      WriteJson(machine_file, base::Value(machine_));
++    }
++    if (std::optional<base::Value> value = ReadJson(progress_file_); value && value->is_dict()) {
++      for (const auto [name, count] : value->GetDict()) {
++        if (count.is_int()) {
++          read_[name] = count.GetInt();
++        }
++      }
++    }
++    // This machine's files of more than a year ago go.
++    const std::string year_ago = MonthOf(static_cast<double>(NowMs()) - kYearMs);
++    const std::string mine = machine_ + "-";
++    for (const std::string& name : ListJson(dir_)) {
++      if (name.starts_with(mine) && name.substr(mine.size()) < year_ago) {
++        RemovePath(dir_.Append(name + ".json"));
++      }
++    }
++  }
++
++  // Visits made here, written to this month's file.
++  void Save(std::vector<Visit> visits) {
++    for (Visit& visit : visits) {
++      const std::string month = MonthOf(visit.at);
++      if (month != month_) {
++        month_ = month;
++        visits_ = VisitsFromFile(FileOf(month_));
++      }
++      if (!visits_.empty() && visits_.back().url == visit.url &&
++          visit.at - visits_.back().at < kSameVisitMs) {
++        if (!visit.title.empty()) {
++          visits_.back().title = std::move(visit.title);
++        }
++      } else {
++        visits_.push_back(std::move(visit));
++      }
++    }
++    if (!month_.empty()) {
++      WriteJson(FileOf(month_), base::Value(VisitsToList(visits_)));
++    }
++  }
++
++  // What was taken out here, for every machine; this machine's own files, without it.
++  void Forget(Forgotten forgotten) {
++    const base::FilePath list_file = dir_.Append("forgotten-" + machine_ + ".json");
++    std::vector<Forgotten> mine = ForgottenFromFile(list_file);
++    if (!forgotten.url && forgotten.from == 0) {
++      mine.clear();  // Everything makes every earlier entry needless.
++    }
++    mine.push_back(forgotten);
++    base::ListValue list;
++    for (const Forgotten& entry : mine) {
++      base::DictValue dict;
++      if (entry.url) {
++        dict.Set("url", *entry.url);
++      }
++      dict.Set("from", entry.from);
++      dict.Set("until", entry.until);
++      list.Append(std::move(dict));
++    }
++    WriteJson(list_file, base::Value(std::move(list)));
++    read_["forgotten-" + machine_] = static_cast<int>(mine.size());
++    SaveProgress();
++    RemoveFromOwnFiles(forgotten);
++  }
++
++  // What the other machines' files have that was not read yet.
++  News ReadNews(base::Time last) {
++    News news;
++    news.changed = FolderChanged(dir_);
++    if (!last.is_null() && news.changed == last) {
++      news.unchanged = true;
++      return news;
++    }
++    const double oldest = static_cast<double>(NowMs()) - kImportMs;
++    const std::string mine = machine_ + "-";
++    const std::string my_forgotten = "forgotten-" + machine_;
++    bool moved = false;
++    for (const std::string& name : ListJson(dir_)) {
++      if (name.starts_with(mine) || name == my_forgotten) {
++        continue;
++      }
++      int& done = read_[name];
++      if (name.starts_with("forgotten-")) {
++        std::vector<Forgotten> forgotten = ForgottenFromFile(dir_.Append(name + ".json"));
++        for (size_t i = static_cast<size_t>(done) < forgotten.size() ? done : forgotten.size();
++             i < forgotten.size(); ++i) {
++          RemoveFromOwnFiles(forgotten[i]);
++          news.forgotten.push_back(std::move(forgotten[i]));
++        }
++        moved |= done != static_cast<int>(forgotten.size());
++        done = static_cast<int>(forgotten.size());
++        continue;
++      }
++      std::vector<Visit> visits = VisitsFromFile(dir_.Append(name + ".json"));
++      // A file only grows at its end, unless its machine took something out of it.
++      for (size_t i = static_cast<size_t>(done) < visits.size() ? done : visits.size();
++           i < visits.size(); ++i) {
++        if (visits[i].at >= oldest) {
++          news.visits.push_back(std::move(visits[i]));
++        }
++      }
++      moved |= done != static_cast<int>(visits.size());
++      done = static_cast<int>(visits.size());
++    }
++    if (moved) {
++      SaveProgress();
++    }
++    return news;
++  }
++
++ private:
++  base::FilePath FileOf(const std::string& month) const {
++    return dir_.Append(machine_ + "-" + month + ".json");
++  }
++
++  void SaveProgress() {
++    base::DictValue dict;
++    for (const auto& [name, count] : read_) {
++      dict.Set(name, count);
++    }
++    WriteJson(progress_file_, base::Value(std::move(dict)));
++  }
++
++  void RemoveFromOwnFiles(const Forgotten& forgotten) {
++    const std::string mine = machine_ + "-";
++    for (const std::string& name : ListJson(dir_)) {
++      if (!name.starts_with(mine)) {
++        continue;
++      }
++      const base::FilePath file = dir_.Append(name + ".json");
++      std::vector<Visit> visits = VisitsFromFile(file);
++      const size_t before = visits.size();
++      std::erase_if(visits, [&forgotten](const Visit& visit) { return Hides(forgotten, visit); });
++      if (visits.size() == before) {
++        continue;
++      }
++      if (visits.empty()) {
++        RemovePath(file);
++      } else {
++        WriteJson(file, base::Value(VisitsToList(visits)));
++      }
++    }
++    std::erase_if(visits_, [&forgotten](const Visit& visit) { return Hides(forgotten, visit); });
++  }
++
++  const base::FilePath dir_;
++  const base::FilePath progress_file_;
++  std::string machine_;
++  std::string month_;
++  std::vector<Visit> visits_;
++  std::map<std::string, int> read_;
++};
++
++HistorySync::HistorySync(Profile* profile,
++                         const std::string& id,
++                         scoped_refptr<base::SequencedTaskRunner> files)
++    : history_(HistoryServiceFactory::GetForProfile(profile, ServiceAccessType::EXPLICIT_ACCESS)),
++      files_(std::move(files), id) {
++  if (history_) {
++    observation_.Observe(history_);
++    Poll();
++  }
++}
++
++HistorySync::~HistorySync() {
++  if (!unsaved_.empty()) {
++    files_.AsyncCall(&Files::Save).WithArgs(std::move(unsaved_));
++  }
++}
++
++void HistorySync::Poll() {
++  if (reading_ || !history_) {
++    return;
++  }
++  reading_ = true;
++  files_.AsyncCall(&Files::ReadNews)
++      .WithArgs(last_read_)
++      .Then(base::BindOnce(&HistorySync::OnNews, weak_factory_.GetWeakPtr()));
++}
++
++void HistorySync::OnNews(News news) {
++  reading_ = false;
++  if (news.unchanged) {
++    return;
++  }
++  last_read_ = news.changed;
++  if (!news.visits.empty()) {
++    // Newest first, each address's first row counting all its visits here: the first row of an
++    // address is the one its entry is made from. These were browsed, on another machine; Chromium's
++    // own source for that (SOURCE_SYNCED) makes no visit, so the history page would not show them.
++    std::vector<const Visit*> visits;
++    visits.reserve(news.visits.size());
++    std::map<std::string, int> counts;
++    for (const Visit& visit : news.visits) {
++      visits.push_back(&visit);
++      ++counts[visit.url];
++    }
++    std::ranges::stable_sort(visits, std::greater<>(), &Visit::at);
++    history::URLRows rows;
++    rows.reserve(visits.size());
++    for (const Visit* visit : visits) {
++      GURL url(visit->url);
++      if (!url.is_valid()) {
++        continue;
++      }
++      history::URLRow row(url);
++      row.set_title(visit->title);
++      row.set_visit_count(counts[visit->url]);
++      row.set_typed_count(0);
++      row.set_last_visit(TimeOfMs(visit->at));
++      row.set_hidden(false);
++      rows.push_back(std::move(row));
++    }
++    history_->AddPagesWithDetails(rows, history::SOURCE_BROWSED);
++  }
++  for (const Forgotten& forgotten : news.forgotten) {
++    std::set<GURL> urls;
++    if (forgotten.url) {
++      urls.insert(GURL(*forgotten.url));
++    }
++    ++applying_forgotten_;
++    history_->ExpireHistoryBetween(
++        urls, /*restrict_app_id=*/std::nullopt, TimeOfMs(forgotten.from), TimeOfMs(forgotten.until),
++        /*user_initiated=*/false,
++        base::BindOnce([](base::WeakPtr<HistorySync> self) {
++          if (self) {
++            --self->applying_forgotten_;
++          }
++        }, weak_factory_.GetWeakPtr()),
++        &tracker_);
++  }
++}
++
++void HistorySync::SaveSoon() {
++  if (!save_timer_.IsRunning()) {
++    save_timer_.Start(FROM_HERE, kSaveAfter, base::BindOnce(
++                                                 [](HistorySync* self) {
++                                                   self->files_.AsyncCall(&Files::Save)
++                                                       .WithArgs(std::move(self->unsaved_));
++                                                   self->unsaved_.clear();
++                                                 },
++                                                 base::Unretained(this)));
++  }
++}
++
++void HistorySync::OnURLVisited(history::HistoryService* history_service,
++                               const history::VisitedURLInfo& visited_url_info) {
++  const history::URLRow& row = visited_url_info.url_row;
++  if (row.hidden() || !Remembered(row.url())) {
++    return;
++  }
++  Visit visit;
++  visit.url = row.url().spec();
++  visit.title = row.title();
++  visit.at = MsOfTime(visited_url_info.visit_row.visit_time);
++  last_ = visit;
++  unsaved_.push_back(std::move(visit));
++  SaveSoon();
++}
++
++void HistorySync::OnURLsModified(history::HistoryService* history_service,
++                                 const history::URLRows& changed_urls) {
++  // The title of the page just visited, come after it.
++  if (!last_) {
++    return;
++  }
++  for (const history::URLRow& row : changed_urls) {
++    if (row.url().spec() == last_->url && !row.title().empty() && row.title() != last_->title) {
++      last_->title = row.title();
++      unsaved_.push_back(*last_);
++      SaveSoon();
++      return;
++    }
++  }
++}
++
++void HistorySync::OnHistoryDeletions(history::HistoryService* history_service,
++                                     const history::DeletionInfo& deletion_info) {
++  // Chromium's own expiry, and what another machine took out, are not the wearer taking it out.
++  if (applying_forgotten_ > 0 || deletion_info.is_from_expiration()) {
++    return;
++  }
++  const double now = static_cast<double>(NowMs());
++  if (deletion_info.IsAllHistory()) {
++    Forgotten forgotten;
++    forgotten.until = now;
++    files_.AsyncCall(&Files::Forget).WithArgs(std::move(forgotten));
++    return;
++  }
++  const history::DeletionTimeRange& range = deletion_info.time_range();
++  if (range.IsValid() && !deletion_info.restrict_urls().has_value()) {
++    Forgotten forgotten;
++    forgotten.from = range.begin().is_null() ? 0 : MsOfTime(range.begin());
++    forgotten.until = range.end().is_null() ? now : MsOfTime(range.end());
++    files_.AsyncCall(&Files::Forget).WithArgs(std::move(forgotten));
++    return;
++  }
++  for (const history::URLRow& row : deletion_info.deleted_rows()) {
++    if (Remembered(row.url())) {
++      Forgotten forgotten;
++      forgotten.url = row.url().spec();
++      forgotten.until = now;
++      files_.AsyncCall(&Files::Forget).WithArgs(std::move(forgotten));
++    }
++  }
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/history_sync.h b/chrome/browser/spatiand/history_sync.h
+new file mode 100644
+index 0000000000..825ff9cb2c
+--- /dev/null
++++ b/chrome/browser/spatiand/history_sync.h
+@@ -0,0 +1,96 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_HISTORY_SYNC_H_
++#define CHROME_BROWSER_SPATIAND_HISTORY_SYNC_H_
++
++#include <map>
++#include <optional>
++#include <string>
++#include <vector>
++
++#include "base/files/file_path.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/scoped_observation.h"
++#include "base/task/cancelable_task_tracker.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/threading/sequence_bound.h"
++#include "base/timer/timer.h"
++#include "components/history/core/browser/history_service.h"
++#include "components/history/core/browser/history_service_observer.h"
++
++class Profile;
++
++namespace spatiand {
++
++// A profile's history on every machine: `apps/spatimesh/profiles/<id>/history/`. Each machine
++// writes only its own files, a month to a file (`<machine>-<YYYY-MM>.json`), and says what was
++// taken out in `forgotten-<machine>.json`; every machine reads all of them. A visit made elsewhere
++// is put into Chromium's own history as a synced one, so that the address bar, the history page
++// and visited links all know it.
++class HistorySync : public history::HistoryServiceObserver {
++ public:
++  HistorySync(Profile* profile,
++              const std::string& id,
++              scoped_refptr<base::SequencedTaskRunner> files);
++  HistorySync(const HistorySync&) = delete;
++  HistorySync& operator=(const HistorySync&) = delete;
++  ~HistorySync() override;
++
++  void Poll();
++
++  struct Visit {
++    std::u16string title;
++    std::string url;
++    double at = 0;
++  };
++  struct Forgotten {
++    std::optional<std::string> url;
++    double from = 0;
++    double until = 0;
++  };
++  struct News {
++    News();
++    News(News&&);
++    News& operator=(News&&);
++    ~News();
++    base::Time changed;
++    bool unchanged = false;
++    std::vector<Visit> visits;
++    std::vector<Forgotten> forgotten;
++  };
++
++  class Files;
++
++ private:
++  void OnNews(News news);
++  void SaveSoon();
++
++  // history::HistoryServiceObserver:
++  void OnURLVisited(history::HistoryService* history_service,
++                    const history::VisitedURLInfo& visited_url_info) override;
++  void OnURLsModified(history::HistoryService* history_service,
++                      const history::URLRows& changed_urls) override;
++  void OnHistoryDeletions(history::HistoryService* history_service,
++                          const history::DeletionInfo& deletion_info) override;
++
++  const raw_ptr<history::HistoryService> history_;
++  base::SequenceBound<Files> files_;
++  base::OneShotTimer save_timer_;
++  std::optional<Visit> last_;
++  std::vector<Visit> unsaved_;
++  bool reading_ = false;
++  base::Time last_read_;
++  // Taking out what another machine took out is not this machine taking it out.
++  int applying_forgotten_ = 0;
++  base::CancelableTaskTracker tracker_;
++
++  base::ScopedObservation<history::HistoryService, history::HistoryServiceObserver>
++      observation_{this};
++  base::WeakPtrFactory<HistorySync> weak_factory_{this};
++};
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_HISTORY_SYNC_H_
+diff --git a/chrome/browser/spatiand/main_parts.cc b/chrome/browser/spatiand/main_parts.cc
+new file mode 100644
+index 0000000000..c5262fd921
+--- /dev/null
++++ b/chrome/browser/spatiand/main_parts.cc
+@@ -0,0 +1,16 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/main_parts.h"
++
++#include "chrome/browser/spatiand/profiles_sync.h"
++#include "chrome/browser/spatiand/spatikey_window.h"
++
++namespace spatiand {
++
++void MainParts::PreProfileInit() {
++  ProfilesSync::Start();
++  ShowSpatiKeyProblems();
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/main_parts.h b/chrome/browser/spatiand/main_parts.h
+new file mode 100644
+index 0000000000..9722f8c120
+--- /dev/null
++++ b/chrome/browser/spatiand/main_parts.h
+@@ -0,0 +1,25 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_MAIN_PARTS_H_
++#define CHROME_BROWSER_SPATIAND_MAIN_PARTS_H_
++
++#include "chrome/browser/chrome_browser_main_extra_parts.h"
++
++namespace spatiand {
++
++// SpatiMesh as part of Spatiand, from before the first profile is opened.
++class MainParts : public ChromeBrowserMainExtraParts {
++ public:
++  MainParts() = default;
++  MainParts(const MainParts&) = delete;
++  MainParts& operator=(const MainParts&) = delete;
++  ~MainParts() override = default;
++
++  // ChromeBrowserMainExtraParts:
++  void PreProfileInit() override;
++};
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_MAIN_PARTS_H_
+diff --git a/chrome/browser/spatiand/profile_lock_dialog.cc b/chrome/browser/spatiand/profile_lock_dialog.cc
+new file mode 100644
+index 0000000000..2acc69b61a
+--- /dev/null
++++ b/chrome/browser/spatiand/profile_lock_dialog.cc
+@@ -0,0 +1,132 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/profile_lock_dialog.h"
++
++#include <memory>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/functional/callback.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/thread_pool.h"
++#include "base/time/time.h"
++#include "chrome/browser/spatiand/profiles_sync.h"
++#include "ui/base/mojom/dialog_button.mojom.h"
++#include "ui/base/mojom/ui_base_types.mojom-shared.h"
++#include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/controls/textfield/textfield.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/view.h"
++#include "ui/views/widget/widget.h"
++#include "ui/views/window/dialog_delegate.h"
++
++namespace spatiand {
++
++namespace {
++
++constexpr int kTriesBeforeWaiting = 5;
++constexpr base::TimeDelta kWait = base::Seconds(30);
++
++class ProfileLockDialog : public views::DialogDelegate {
++ public:
++  ProfileLockDialog(const std::u16string& profile_name,
++                    bool is_pin,
++                    std::string salt,
++                    std::string hash,
++                    base::OnceCallback<void(bool)> done)
++      : salt_(std::move(salt)), hash_(std::move(hash)), done_(std::move(done)) {
++    SetTitle(profile_name + u" is locked");
++    SetModalType(ui::mojom::ModalType::kNone);
++    SetShowCloseButton(true);
++    SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) |
++               static_cast<int>(ui::mojom::DialogButton::kCancel));
++    SetButtonLabel(ui::mojom::DialogButton::kOk, u"Open");
++    views::View* contents = SetContentsView(std::make_unique<views::View>());
++    contents->SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kVertical, gfx::Insets(16), 10));
++    contents->AddChildView(std::make_unique<views::Label>(is_pin ? u"Its PIN:" : u"Its password:"))
++        ->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    field_ = contents->AddChildView(std::make_unique<views::Textfield>());
++    field_->SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
++    field_->GetViewAccessibility().SetName(is_pin ? u"PIN" : u"Password");
++    said_ = contents->AddChildView(std::make_unique<views::Label>(std::u16string()));
++    said_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    SetAcceptCallbackWithClose(
++        base::BindRepeating(&ProfileLockDialog::Try, base::Unretained(this)));
++    SetCancelCallback(base::BindOnce(&ProfileLockDialog::Finish, base::Unretained(this), false));
++    SetCloseCallback(base::BindOnce(&ProfileLockDialog::Finish, base::Unretained(this), false));
++    SetInitiallyFocusedView(field_);
++  }
++  ~ProfileLockDialog() override = default;
++
++ private:
++  // Whether the dialog closes now: not until the many rounds of hashing have said.
++  bool Try() {
++    if (checking_) {
++      return false;
++    }
++    if (base::Time::Now() < wait_until_) {
++      said_->SetText(u"Too many wrong tries: wait a moment.");
++      return false;
++    }
++    checking_ = true;
++    base::ThreadPool::PostTaskAndReplyWithResult(
++        FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
++        base::BindOnce(&LockHash, salt_, base::UTF16ToUTF8(field_->GetText())),
++        base::BindOnce(&ProfileLockDialog::Tried, weak_factory_.GetWeakPtr()));
++    return false;
++  }
++
++  void Tried(std::string hash) {
++    checking_ = false;
++    if (hash == hash_) {
++      Finish(true);
++      GetWidget()->Close();
++      return;
++    }
++    field_->SetText(std::u16string());
++    field_->RequestFocus();
++    if (++wrong_ >= kTriesBeforeWaiting) {
++      wrong_ = 0;
++      wait_until_ = base::Time::Now() + kWait;
++      said_->SetText(u"Too many wrong tries: wait half a minute.");
++    } else {
++      said_->SetText(u"That is not it.");
++    }
++  }
++
++  void Finish(bool opened) {
++    if (done_) {
++      std::move(done_).Run(opened);
++    }
++  }
++
++  const std::string salt_;
++  const std::string hash_;
++  base::OnceCallback<void(bool)> done_;
++  raw_ptr<views::Textfield> field_ = nullptr;
++  raw_ptr<views::Label> said_ = nullptr;
++  bool checking_ = false;
++  int wrong_ = 0;
++  base::Time wait_until_;
++  base::WeakPtrFactory<ProfileLockDialog> weak_factory_{this};
++};
++
++}  // namespace
++
++void ShowProfileLockDialog(const std::u16string& profile_name,
++                           bool is_pin,
++                           const std::string& salt,
++                           const std::string& hash,
++                           base::OnceCallback<void(bool)> done) {
++  views::DialogDelegate::CreateDialogWidget(
++      std::make_unique<ProfileLockDialog>(profile_name, is_pin, salt, hash, std::move(done)),
++      /*context=*/gfx::NativeWindow(), /*parent=*/gfx::NativeView())
++      ->Show();
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/profile_lock_dialog.h b/chrome/browser/spatiand/profile_lock_dialog.h
+new file mode 100644
+index 0000000000..2350d3f843
+--- /dev/null
++++ b/chrome/browser/spatiand/profile_lock_dialog.h
+@@ -0,0 +1,24 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_PROFILE_LOCK_DIALOG_H_
++#define CHROME_BROWSER_SPATIAND_PROFILE_LOCK_DIALOG_H_
++
++#include <string>
++
++#include "base/functional/callback_forward.h"
++
++namespace spatiand {
++
++// Asks for a profile's PIN or password, in a window of its own: nothing of the profile is shown
++// until it is given. `done` says whether it was. Five wrong tries in a row and the next waits half
++// a minute, as SpatiMesh's other builds do.
++void ShowProfileLockDialog(const std::u16string& profile_name,
++                           bool is_pin,
++                           const std::string& salt,
++                           const std::string& hash,
++                           base::OnceCallback<void(bool)> done);
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_PROFILE_LOCK_DIALOG_H_
+diff --git a/chrome/browser/spatiand/profile_service.cc b/chrome/browser/spatiand/profile_service.cc
+new file mode 100644
+index 0000000000..909a380a51
+--- /dev/null
++++ b/chrome/browser/spatiand/profile_service.cc
+@@ -0,0 +1,81 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/profile_service.h"
++
++#include "base/functional/bind.h"
++#include "base/task/thread_pool.h"
++#include "chrome/browser/bookmarks/bookmark_model_factory.h"
++#include "chrome/browser/history/history_service_factory.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/search_engines/template_url_service_factory.h"
++#include "chrome/browser/spatiand/profiles_sync.h"
++#include "chrome/browser/themes/theme_service_factory.h"
++#include "extensions/browser/extension_registry_factory.h"
++
++namespace spatiand {
++
++namespace {
++constexpr base::TimeDelta kEvery = base::Seconds(3);
++}  // namespace
++
++ProfileService::ProfileService(Profile* profile)
++    : files_(base::ThreadPool::CreateSequencedTaskRunner(
++          {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
++           base::TaskShutdownBehavior::BLOCK_SHUTDOWN})) {
++  ProfilesSync* profiles = ProfilesSync::Get();
++  if (!profiles) {
++    return;
++  }
++  const std::string id = profiles->IdOf(profile->GetPath());
++  bookmarks_ = std::make_unique<BookmarkSync>(profile, id, files_);
++  history_ = std::make_unique<HistorySync>(profile, id, files_);
++  cookies_ = std::make_unique<CookieSync>(profile, id, files_);
++  settings_ = std::make_unique<SettingsSync>(profile, id, files_);
++  extensions_ = std::make_unique<ExtensionSync>(profile, id, files_);
++  timer_.Start(FROM_HERE, kEvery,
++               base::BindRepeating(&ProfileService::Poll, base::Unretained(this)));
++}
++
++ProfileService::~ProfileService() = default;
++
++void ProfileService::Poll() {
++  bookmarks_->Poll();
++  history_->Poll();
++  cookies_->Poll();
++  settings_->Poll();
++  extensions_->Poll();
++}
++
++// static
++ProfileServiceFactory* ProfileServiceFactory::GetInstance() {
++  static base::NoDestructor<ProfileServiceFactory> instance;
++  return instance.get();
++}
++
++ProfileServiceFactory::ProfileServiceFactory()
++    : ProfileKeyedServiceFactory("SpatiandProfileService",
++                                 ProfileSelections::BuildForRegularProfile()) {
++  DependsOn(BookmarkModelFactory::GetInstance());
++  DependsOn(HistoryServiceFactory::GetInstance());
++  DependsOn(TemplateURLServiceFactory::GetInstance());
++  DependsOn(ThemeServiceFactory::GetInstance());
++  DependsOn(extensions::ExtensionRegistryFactory::GetInstance());
++}
++
++ProfileServiceFactory::~ProfileServiceFactory() = default;
++
++std::unique_ptr<KeyedService> ProfileServiceFactory::BuildServiceInstanceForBrowserContext(
++    content::BrowserContext* context) const {
++  return std::make_unique<ProfileService>(Profile::FromBrowserContext(context));
++}
++
++bool ProfileServiceFactory::ServiceIsCreatedWithBrowserContext() const {
++  return true;
++}
++
++bool ProfileServiceFactory::ServiceIsNULLWhileTesting() const {
++  return true;
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/profile_service.h b/chrome/browser/spatiand/profile_service.h
+new file mode 100644
+index 0000000000..f5c06ba963
+--- /dev/null
++++ b/chrome/browser/spatiand/profile_service.h
+@@ -0,0 +1,64 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_PROFILE_SERVICE_H_
++#define CHROME_BROWSER_SPATIAND_PROFILE_SERVICE_H_
++
++#include <memory>
++
++#include "base/no_destructor.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/timer/timer.h"
++#include "chrome/browser/profiles/profile_keyed_service_factory.h"
++#include "chrome/browser/spatiand/bookmark_sync.h"
++#include "chrome/browser/spatiand/cookie_sync.h"
++#include "chrome/browser/spatiand/extension_sync.h"
++#include "chrome/browser/spatiand/history_sync.h"
++#include "chrome/browser/spatiand/settings_sync.h"
++#include "components/keyed_service/core/keyed_service.h"
++
++class Profile;
++
++namespace spatiand {
++
++// While a profile is open: its bookmarks, history, logins, settings and extensions the same as
++// every other Spatiand machine's, in the folder they share. What the synchroniser brought is
++// noticed within three seconds, as in SpatiMesh's other builds.
++class ProfileService : public KeyedService {
++ public:
++  explicit ProfileService(Profile* profile);
++  ProfileService(const ProfileService&) = delete;
++  ProfileService& operator=(const ProfileService&) = delete;
++  ~ProfileService() override;
++
++ private:
++  void Poll();
++
++  scoped_refptr<base::SequencedTaskRunner> files_;
++  std::unique_ptr<BookmarkSync> bookmarks_;
++  std::unique_ptr<HistorySync> history_;
++  std::unique_ptr<CookieSync> cookies_;
++  std::unique_ptr<SettingsSync> settings_;
++  std::unique_ptr<ExtensionSync> extensions_;
++  base::RepeatingTimer timer_;
++};
++
++class ProfileServiceFactory : public ProfileKeyedServiceFactory {
++ public:
++  static ProfileServiceFactory* GetInstance();
++
++ private:
++  friend base::NoDestructor<ProfileServiceFactory>;
++  ProfileServiceFactory();
++  ~ProfileServiceFactory() override;
++
++  // BrowserContextKeyedServiceFactory:
++  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
++      content::BrowserContext* context) const override;
++  bool ServiceIsCreatedWithBrowserContext() const override;
++  bool ServiceIsNULLWhileTesting() const override;
++};
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_PROFILE_SERVICE_H_
+diff --git a/chrome/browser/spatiand/profiles_sync.cc b/chrome/browser/spatiand/profiles_sync.cc
+new file mode 100644
+index 0000000000..b90c819ccb
+--- /dev/null
++++ b/chrome/browser/spatiand/profiles_sync.cc
+@@ -0,0 +1,598 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/profiles_sync.h"
++
++#include <algorithm>
++#include <array>
++#include <utility>
++
++#include "base/files/file_enumerator.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/functional/callback_helpers.h"
++#include "base/no_destructor.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/thread_pool.h"
++#include "base/threading/thread_restrictions.h"
++#include "chrome/browser/browser_process.h"
++#include "chrome/browser/profiles/delete_profile_helper.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/profiles/profile_attributes_entry.h"
++#include "chrome/browser/profiles/profile_attributes_init_params.h"
++#include "chrome/browser/profiles/profile_manager.h"
++#include "chrome/browser/profiles/profile_metrics.h"
++#include "chrome/browser/spatiand/profile_lock_dialog.h"
++#include "chrome/browser/spatiand/shared_folder.h"
++#include "chrome/browser/themes/theme_service.h"
++#include "chrome/browser/themes/theme_service_factory.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
++#include "chrome/browser/ui/profiles/profile_colors_util.h"
++#include "chrome/common/pref_names.h"
++#include "components/prefs/pref_service.h"
++#include "crypto/hash.h"
++#include "ui/base/base_window.h"
++#include "ui/color/color_provider_key.h"
++#include "ui/gfx/color_utils.h"
++
++namespace spatiand {
++
++namespace {
++
++constexpr base::TimeDelta kEvery = base::Seconds(3);
++
++constexpr char kFirstId[] = "default";
++constexpr char kFirstDir[] = "Default";
++constexpr char kDirPrefix[] = "Spatiand-";
++
++// The colours a new profile is given in turn, as SpatiMesh's other builds give them.
++constexpr std::array<std::array<uint8_t, 3>, 6> kColours = {{{55, 166, 247},
++                                                             {22, 230, 192},
++                                                             {143, 107, 242},
++                                                             {242, 160, 61},
++                                                             {235, 87, 120},
++                                                             {120, 200, 90}}};
++
++ProfilesSync*& Instance() {
++  static ProfilesSync* instance = nullptr;
++  return instance;
++}
++
++base::FilePath RecordFile(const std::string& id) {
++  return SharedProfileDir(id).Append("profile.json");
++}
++
++base::FilePath DirsFile() {
++  return LocalDir().Append("profile-dirs.json");
++}
++
++base::FilePath KnownFile() {
++  return LocalDir().Append("profiles-known.json");
++}
++
++SkColor ColourOf(const base::DictValue& file) {
++  const base::ListValue* colour = file.FindList("colour");
++  if (!colour || colour->size() != 3 || !(*colour)[0].is_int() || !(*colour)[1].is_int() ||
++      !(*colour)[2].is_int()) {
++    return SK_ColorTRANSPARENT;
++  }
++  return SkColorSetRGB((*colour)[0].GetInt(), (*colour)[1].GetInt(), (*colour)[2].GetInt());
++}
++
++std::map<std::string, ProfileRecord> ReadRecords() {
++  std::map<std::string, ProfileRecord> records;
++  base::FileEnumerator folders(SharedDir().Append("profiles"), /*recursive=*/false,
++                               base::FileEnumerator::DIRECTORIES);
++  for (base::FilePath folder = folders.Next(); !folder.empty(); folder = folders.Next()) {
++    const std::string id = folder.BaseName().value();
++    if (id.starts_with('.') || id == "private") {
++      continue;
++    }
++    std::optional<base::Value> file = ReadJson(folder.Append("profile.json"));
++    if (!file || !file->is_dict()) {
++      continue;
++    }
++    const base::DictValue& dict = file->GetDict();
++    ProfileRecord record;
++    if (const std::string* name = dict.FindString("name")) {
++      record.name = *name;
++    }
++    record.colour = ColourOf(dict);
++    record.created = dict.FindDouble("created").value_or(0);
++    record.position = dict.FindInt("position");
++    if (const base::DictValue* lock = dict.FindDict("lock")) {
++      const std::string* kind = lock->FindString("kind");
++      const std::string* salt = lock->FindString("salt");
++      const std::string* hash = lock->FindString("hash");
++      if (kind && salt && hash) {
++        record.lock_kind = *kind;
++        record.lock_salt = *salt;
++        record.lock_hash = *hash;
++      }
++    }
++    records.emplace(id, std::move(record));
++  }
++  return records;
++}
++
++std::map<std::string, std::string> ReadStringMap(const base::FilePath& file) {
++  std::map<std::string, std::string> map;
++  if (std::optional<base::Value> value = ReadJson(file); value && value->is_dict()) {
++    for (const auto [key, item] : value->GetDict()) {
++      if (item.is_string()) {
++        map.emplace(key, item.GetString());
++      }
++    }
++  }
++  return map;
++}
++
++std::set<std::string> ReadStringSet(const base::FilePath& file) {
++  std::set<std::string> set;
++  if (std::optional<base::Value> value = ReadJson(file); value && value->is_list()) {
++    for (const base::Value& item : value->GetList()) {
++      if (item.is_string()) {
++        set.insert(item.GetString());
++      }
++    }
++  }
++  return set;
++}
++
++// Changes what this browser has a say in and keeps the rest of the file (a lock, a place in the
++// list) as it is.
++void UpdateRecordFile(const std::string& id, const ProfileRecord& record) {
++  base::DictValue dict;
++  if (std::optional<base::Value> old = ReadJson(RecordFile(id)); old && old->is_dict()) {
++    dict = std::move(*old).TakeDict();
++  } else {
++    dict.Set("created", record.created);
++  }
++  dict.Set("name", record.name);
++  dict.Set("colour", base::ListValue()
++                         .Append(static_cast<int>(SkColorGetR(record.colour)))
++                         .Append(static_cast<int>(SkColorGetG(record.colour)))
++                         .Append(static_cast<int>(SkColorGetB(record.colour))));
++  WriteJson(RecordFile(id), base::Value(std::move(dict)));
++}
++
++void WriteFirstRecord(const std::string& name, SkColor colour) {
++  base::DictValue dict;
++  dict.Set("name", name);
++  dict.Set("colour", base::ListValue()
++                         .Append(static_cast<int>(SkColorGetR(colour)))
++                         .Append(static_cast<int>(SkColorGetG(colour)))
++                         .Append(static_cast<int>(SkColorGetB(colour))));
++  dict.Set("created", 0);
++  WriteJsonAsIfLongAgo(RecordFile(kFirstId), base::Value(std::move(dict)));
++}
++
++}  // namespace
++
++ProfileRecord::ProfileRecord() = default;
++ProfileRecord::ProfileRecord(const ProfileRecord&) = default;
++ProfileRecord& ProfileRecord::operator=(const ProfileRecord&) = default;
++ProfileRecord::~ProfileRecord() = default;
++bool ProfileRecord::operator==(const ProfileRecord&) const = default;
++
++std::string LockHash(const std::string& salt, const std::string& secret) {
++  std::array<uint8_t, crypto::hash::kSha256Size> digest =
++      crypto::hash::Sha256(salt + std::string(1, '\0') + secret);
++  for (int i = 0; i < 100000; ++i) {
++    digest = crypto::hash::Sha256(digest);
++  }
++  return base::ToLowerASCII(base::HexEncode(digest));
++}
++
++// static
++void ProfilesSync::Start() {
++  DCHECK(!Instance());
++  Instance() = new ProfilesSync();
++}
++
++// static
++ProfilesSync* ProfilesSync::Get() {
++  return Instance();
++}
++
++ProfilesSync::ProfilesSync()
++    : files_(base::ThreadPool::CreateSequencedTaskRunner(
++          {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
++           base::TaskShutdownBehavior::BLOCK_SHUTDOWN})) {
++  ProfileManager* manager = g_browser_process->profile_manager();
++  // The first read is made here and now, before any window: a locked profile's window must not
++  // be shown for a moment because the list had not been read yet. This is startup, before the
++  // main loop runs, and a handful of small files.
++  {
++    base::ScopedAllowBlockingForTesting allowed;
++    dirs_ = ReadStringMap(DirsFile());
++    known_ = ReadStringSet(KnownFile());
++    OnRead(ReadRecords());
++  }
++  storage_observation_.Observe(&manager->GetProfileAttributesStorage());
++  manager->AddObserver(this);
++  browsers_observation_.Observe(GlobalBrowserCollection::GetInstance());
++  // Opens the last profile used, as SpatiMesh does, rather than asking whose each time; the
++  // picker's own checkbox still turns that on.
++  g_browser_process->local_state()->SetDefaultPrefValue(prefs::kBrowserShowProfilePickerOnStartup,
++                                                        base::Value(false));
++  timer_.Start(FROM_HERE, kEvery, base::BindRepeating(&ProfilesSync::Poll, base::Unretained(this)));
++}
++
++ProfilesSync::~ProfilesSync() = default;
++
++void ProfilesSync::Poll() {
++  if (reading_) {
++    return;
++  }
++  reading_ = true;
++  files_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce(&ReadRecords),
++                                     base::BindOnce(&ProfilesSync::OnRead,
++                                                    weak_factory_.GetWeakPtr()));
++}
++
++void ProfilesSync::OnRead(std::map<std::string, ProfileRecord> records) {
++  reading_ = false;
++  ProfileManager* manager = g_browser_process->profile_manager();
++  ProfileAttributesStorage& storage = manager->GetProfileAttributesStorage();
++  base::AutoReset<bool> applying(&applying_, true);
++
++  if (records.empty()) {
++    // Nothing shared yet: the first profile, which every machine makes for itself.
++    ProfileAttributesEntry* entry =
++        storage.GetProfileAttributesWithPath(PathOf(kFirstId));
++    const std::string name = entry && !entry->IsUsingDefaultName()
++                                 ? base::UTF16ToUTF8(entry->GetLocalProfileName())
++                                 : "Personal";
++    const std::array<uint8_t, 3>& colour = kColours[0];
++    files_->PostTask(FROM_HERE, base::BindOnce(&WriteFirstRecord, name,
++                                               SkColorSetRGB(colour[0], colour[1], colour[2])));
++    return;
++  }
++
++  bool known_changed = false;
++  for (const auto& [id, record] : records) {
++    const auto old = records_.find(id);
++    Apply(id, record, old == records_.end() || !(old->second == record));
++    known_changed |= known_.insert(id).second;
++  }
++  // Gone from the list: removed on another machine.
++  std::vector<std::string> gone;
++  for (const std::string& id : known_) {
++    if (!records.contains(id)) {
++      gone.push_back(id);
++    }
++  }
++  for (const std::string& id : gone) {
++    removing_.insert(id);
++    Remove(id);
++    known_.erase(id);
++    known_changed = true;
++  }
++  if (records != records_) {
++    ApplyOrder(records);
++  }
++  records_ = std::move(records);
++
++  // A profile this browser has that the list does not: one it made before it was told of the
++  // list, or Chromium's own first run.
++  for (ProfileAttributesEntry* entry : storage.GetAllProfilesAttributes()) {
++    const base::FilePath path = entry->GetPath();
++    const std::string id = IdOf(path);
++    if (!records_.contains(id) && !removing_.contains(id)) {
++      ProfileRecord record;
++      record.name = base::UTF16ToUTF8(entry->GetLocalProfileName());
++      const std::array<uint8_t, 3>& colour = kColours[records_.size() % kColours.size()];
++      record.colour = SkColorSetRGB(colour[0], colour[1], colour[2]);
++      record.created = static_cast<double>(NowMs());
++      WriteRecord(id, record);
++      records_.emplace(id, record);
++      known_changed |= known_.insert(id).second;
++    }
++  }
++
++  if (known_changed) {
++    base::ListValue list;
++    for (const std::string& id : known_) {
++      list.Append(id);
++    }
++    files_->PostTask(FROM_HERE, base::BindOnce(
++                                    [](base::ListValue known) {
++                                      WriteJson(KnownFile(), base::Value(std::move(known)));
++                                    },
++                                    std::move(list)));
++  }
++}
++
++void ProfilesSync::Apply(const std::string& id, const ProfileRecord& record, bool changed) {
++  ProfileManager* manager = g_browser_process->profile_manager();
++  ProfileAttributesStorage& storage = manager->GetProfileAttributesStorage();
++  const base::FilePath path = PathOf(id);
++  ProfileAttributesEntry* entry = storage.GetProfileAttributesWithPath(path);
++  if (!entry) {
++    // Only listed: the profile itself is made when it is first opened.
++    ProfileAttributesInitParams params;
++    params.profile_path = path;
++    params.profile_name = base::UTF8ToUTF16(record.name);
++    storage.AddProfile(std::move(params));
++    entry = storage.GetProfileAttributesWithPath(path);
++    changed = true;
++  }
++  if (!entry || !changed) {
++    return;
++  }
++  const std::u16string name = base::UTF8ToUTF16(record.name);
++  if (!name.empty() && (entry->GetLocalProfileName() != name || entry->IsUsingDefaultName())) {
++    entry->SetLocalProfileName(name, /*is_default_name=*/false);
++  }
++  if (record.colour != SK_ColorTRANSPARENT) {
++    entry->SetProfileThemeColors(GetProfileThemeColorsForAutogeneratedColor(record.colour));
++    if (Profile* profile = manager->GetProfileByPath(path)) {
++      ApplyTheme(profile, record);
++    }
++  }
++}
++
++void ProfilesSync::ApplyTheme(Profile* profile, const ProfileRecord& record) {
++  if (record.colour == SK_ColorTRANSPARENT) {
++    return;
++  }
++  ThemeService* theme = ThemeServiceFactory::GetForProfile(profile);
++  if (theme && theme->GetUserColor() != record.colour) {
++    theme->SetUserColorAndBrowserColorVariant(record.colour,
++                                              ui::mojom::BrowserColorVariant::kTonalSpot);
++  }
++}
++
++void ProfilesSync::Remove(const std::string& id) {
++  ProfileManager* manager = g_browser_process->profile_manager();
++  const base::FilePath path = PathOf(id);
++  if (!manager->GetProfileAttributesStorage().GetProfileAttributesWithPath(path)) {
++    return;
++  }
++  LOG(WARNING) << "SpatiMesh: the profile " << id << " was removed on another machine";
++  manager->GetDeleteProfileHelper().MaybeScheduleProfileForDeletion(
++      path, base::DoNothing(), ProfileMetrics::DELETE_PROFILE_SETTINGS);
++}
++
++void ProfilesSync::ApplyOrder(const std::map<std::string, ProfileRecord>& records) {
++  // As SpatiMesh's other builds list them: by the place given, then as they were made.
++  std::vector<std::string> ids;
++  for (const auto& [id, record] : records) {
++    ids.push_back(id);
++  }
++  std::ranges::sort(ids, [&records](const std::string& a, const std::string& b) {
++    const ProfileRecord& x = records.at(a);
++    const ProfileRecord& y = records.at(b);
++    return std::tuple(x.position.value_or(INT_MAX), x.created, a) <
++           std::tuple(y.position.value_or(INT_MAX), y.created, b);
++  });
++  ProfileAttributesStorage& storage =
++      g_browser_process->profile_manager()->GetProfileAttributesStorage();
++  size_t place = 0;
++  for (const std::string& id : ids) {
++    const base::FilePath path = PathOf(id);
++    const std::vector<ProfileAttributesEntry*> shown =
++        storage.GetAllProfilesAttributesSortedForDisplay();
++    const auto it = std::ranges::find_if(
++        shown, [&path](ProfileAttributesEntry* entry) { return entry->GetPath() == path; });
++    if (it == shown.end()) {
++      continue;
++    }
++    const size_t from = static_cast<size_t>(it - shown.begin());
++    if (from != place) {
++      storage.UpdateProfilesOrderPref(from, place);
++    }
++    ++place;
++  }
++}
++
++base::FilePath ProfilesSync::PathOf(const std::string& id) const {
++  const base::FilePath root = g_browser_process->profile_manager()->user_data_dir();
++  if (id == kFirstId) {
++    return root.Append(kFirstDir);
++  }
++  for (const auto& [dir, known_id] : dirs_) {
++    if (known_id == id) {
++      return root.Append(dir);
++    }
++  }
++  return root.Append(kDirPrefix + id);
++}
++
++std::string ProfilesSync::KnownIdOf(const base::FilePath& profile_path) const {
++  const std::string dir = profile_path.BaseName().value();
++  if (dir == kFirstDir) {
++    return kFirstId;
++  }
++  if (const auto it = dirs_.find(dir); it != dirs_.end()) {
++    return it->second;
++  }
++  if (dir.starts_with(kDirPrefix)) {
++    return dir.substr(std::string_view(kDirPrefix).size());
++  }
++  return std::string();
++}
++
++std::string ProfilesSync::IdOf(const base::FilePath& profile_path) {
++  std::string id = KnownIdOf(profile_path);
++  if (id.empty()) {
++    id = NewId();
++    dirs_.emplace(profile_path.BaseName().value(), id);
++    SaveDirs();
++  }
++  return id;
++}
++
++void ProfilesSync::SaveDirs() {
++  base::DictValue dict;
++  for (const auto& [dir, id] : dirs_) {
++    dict.Set(dir, id);
++  }
++  files_->PostTask(FROM_HERE, base::BindOnce(
++                                  [](base::DictValue dirs) {
++                                    WriteJson(DirsFile(), base::Value(std::move(dirs)));
++                                  },
++                                  std::move(dict)));
++}
++
++void ProfilesSync::WriteRecord(const std::string& id, const ProfileRecord& record) {
++  files_->PostTask(FROM_HERE, base::BindOnce(&UpdateRecordFile, id, record));
++}
++
++void ProfilesSync::LocalColourChanged(const base::FilePath& profile_path, SkColor colour) {
++  if (applying_) {
++    return;
++  }
++  const std::string id = IdOf(profile_path);
++  const auto it = records_.find(id);
++  if (it == records_.end() || it->second.colour == colour) {
++    return;
++  }
++  it->second.colour = colour;
++  WriteRecord(id, it->second);
++  if (ProfileAttributesEntry* entry = g_browser_process->profile_manager()
++                                          ->GetProfileAttributesStorage()
++                                          .GetProfileAttributesWithPath(profile_path)) {
++    entry->SetProfileThemeColors(GetProfileThemeColorsForAutogeneratedColor(colour));
++  }
++}
++
++void ProfilesSync::OnProfileAdded(const base::FilePath& profile_path) {
++  if (applying_) {
++    return;
++  }
++  // Made here, in Chromium's own way: a new profile on every machine.
++  const std::string id = IdOf(profile_path);
++  if (records_.contains(id)) {
++    return;
++  }
++  ProfileAttributesEntry* entry = g_browser_process->profile_manager()
++                                      ->GetProfileAttributesStorage()
++                                      .GetProfileAttributesWithPath(profile_path);
++  ProfileRecord record;
++  record.name = entry ? base::UTF16ToUTF8(entry->GetLocalProfileName()) : std::string("Profile");
++  const std::array<uint8_t, 3>& colour = kColours[records_.size() % kColours.size()];
++  record.colour = SkColorSetRGB(colour[0], colour[1], colour[2]);
++  record.created = static_cast<double>(NowMs());
++  WriteRecord(id, record);
++  records_.emplace(id, record);
++  known_.insert(id);
++}
++
++void ProfilesSync::OnProfileWasRemoved(const base::FilePath& profile_path,
++                                       const std::u16string& profile_name) {
++  const std::string id = KnownIdOf(profile_path);
++  if (id.empty() || !records_.contains(id)) {
++    return;
++  }
++  // Removed here: with its bookmarks, on every machine, as removing a profile is everywhere.
++  records_.erase(id);
++  known_.erase(id);
++  files_->PostTask(FROM_HERE, base::BindOnce(&RemovePath, SharedProfileDir(id)));
++  files_->PostTask(FROM_HERE, base::BindOnce(&RemovePath, LocalProfileDir(id)));
++}
++
++void ProfilesSync::OnProfileNameChanged(const base::FilePath& profile_path,
++                                        const std::u16string& old_profile_name) {
++  if (applying_) {
++    return;
++  }
++  const std::string id = IdOf(profile_path);
++  const auto it = records_.find(id);
++  ProfileAttributesEntry* entry = g_browser_process->profile_manager()
++                                      ->GetProfileAttributesStorage()
++                                      .GetProfileAttributesWithPath(profile_path);
++  if (it == records_.end() || !entry || entry->IsUsingDefaultName()) {
++    return;
++  }
++  const std::string name = base::UTF16ToUTF8(entry->GetLocalProfileName());
++  if (it->second.name != name) {
++    it->second.name = name;
++    WriteRecord(id, it->second);
++  }
++}
++
++void ProfilesSync::OnProfileAdded(Profile* profile) {
++  // A profile's colour is its theme once it is open.
++  if (!profile->IsRegularProfile()) {
++    return;
++  }
++  const auto it = records_.find(KnownIdOf(profile->GetPath()));
++  if (it != records_.end()) {
++    base::AutoReset<bool> applying(&applying_, true);
++    ApplyTheme(profile, it->second);
++  }
++}
++
++bool ProfilesSync::DeferShow(Profile* profile, base::OnceClosure show) {
++  const std::string id = KnownIdOf(profile->GetOriginalProfile()->GetPath());
++  const auto it = records_.find(id);
++  if (it == records_.end() || it->second.lock_hash.empty() || unlocked_.contains(id)) {
++    return false;
++  }
++  std::vector<base::OnceClosure>& waiting = waiting_[id];
++  waiting.push_back(std::move(show));
++  if (waiting.size() == 1) {
++    AskToUnlock(id, base::UTF8ToUTF16(it->second.name), it->second);
++  }
++  return true;
++}
++
++void ProfilesSync::AskToUnlock(const std::string& id,
++                               const std::u16string& name,
++                               const ProfileRecord& record) {
++  ShowProfileLockDialog(name, record.lock_kind == "pin", record.lock_salt, record.lock_hash,
++                        base::BindOnce(&ProfilesSync::Unlocked, weak_factory_.GetWeakPtr(), id));
++}
++
++void ProfilesSync::Unlocked(const std::string& id, bool opened) {
++  std::vector<base::OnceClosure> waiting = std::move(waiting_[id]);
++  waiting_.erase(id);
++  if (opened) {
++    unlocked_.insert(id);
++    for (base::OnceClosure& show : waiting) {
++      std::move(show).Run();
++    }
++    return;
++  }
++  // Not opened: its waiting windows go, never having been seen.
++  std::vector<BrowserWindowInterface*> windows;
++  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++      [this, &id, &windows](BrowserWindowInterface* browser) {
++        if (KnownIdOf(browser->GetProfile()->GetOriginalProfile()->GetPath()) == id) {
++          windows.push_back(browser);
++        }
++        return true;
++      });
++  for (BrowserWindowInterface* browser : windows) {
++    browser->GetWindow()->Close();
++  }
++}
++
++void ProfilesSync::OnBrowserClosed(BrowserWindowInterface* closed) {
++  // The last of a profile's windows closing locks it again.
++  const std::string id = KnownIdOf(closed->GetProfile()->GetOriginalProfile()->GetPath());
++  if (!unlocked_.contains(id)) {
++    return;
++  }
++  bool another = false;
++  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++      [this, closed, &id, &another](BrowserWindowInterface* browser) {
++        if (browser != closed &&
++            KnownIdOf(browser->GetProfile()->GetOriginalProfile()->GetPath()) == id) {
++          another = true;
++          return false;
++        }
++        return true;
++      });
++  if (!another) {
++    unlocked_.erase(id);
++  }
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/profiles_sync.h b/chrome/browser/spatiand/profiles_sync.h
+new file mode 100644
+index 0000000000..464c9166ca
+--- /dev/null
++++ b/chrome/browser/spatiand/profiles_sync.h
+@@ -0,0 +1,139 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_PROFILES_SYNC_H_
++#define CHROME_BROWSER_SPATIAND_PROFILES_SYNC_H_
++
++#include <map>
++#include <optional>
++#include <set>
++#include <string>
++#include <vector>
++
++#include "base/functional/callback.h"
++#include "base/memory/weak_ptr.h"
++#include "base/scoped_observation.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/timer/timer.h"
++#include "chrome/browser/profiles/profile_attributes_storage.h"
++#include "chrome/browser/profiles/profile_attributes_storage_observer.h"
++#include "chrome/browser/profiles/profile_manager_observer.h"
++#include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
++#include "third_party/skia/include/core/SkColor.h"
++
++class Profile;
++class ThemeService;
++
++namespace spatiand {
++
++// A profile as `apps/spatimesh/profiles/<id>/profile.json` has it.
++struct ProfileRecord {
++  ProfileRecord();
++  ProfileRecord(const ProfileRecord&);
++  ProfileRecord& operator=(const ProfileRecord&);
++  ~ProfileRecord();
++  bool operator==(const ProfileRecord&) const;
++
++  std::string name;
++  SkColor colour = SK_ColorTRANSPARENT;
++  double created = 0;
++  std::optional<int> position;
++  // What opens its windows: a PIN or a password, kept only as a salted hash. Empty for nothing.
++  std::string lock_kind;
++  std::string lock_salt;
++  std::string lock_hash;
++};
++
++// Chromium's profiles are Spatiand's: the profile menu, the picker and Chromium's own dialogs stay
++// as they are, and what they show and change is the list every Spatiand machine shares.
++//
++// `Default` is the first profile (`default`, the same on every machine); another is the folder
++// `Spatiand-<id>`, or a folder Chromium named itself, remembered in this browser's own file. A
++// profile from the shared list is only listed until it is opened, so four profiles cost nothing
++// until they are used.
++class ProfilesSync : public ProfileAttributesStorage::Observer,
++                     public ProfileManagerObserver,
++                     public BrowserCollectionObserver {
++ public:
++  // On the UI thread, once, before any profile is opened.
++  static void Start();
++  // Null before Start().
++  static ProfilesSync* Get();
++
++  ProfilesSync(const ProfilesSync&) = delete;
++  ProfilesSync& operator=(const ProfilesSync&) = delete;
++
++  // The shared list's id of the profile at `profile_path`, given one if it has none yet.
++  std::string IdOf(const base::FilePath& profile_path);
++
++  // Chromium's own theme changed to `colour`: the profile's colour, on every machine.
++  void LocalColourChanged(const base::FilePath& profile_path, SkColor colour);
++
++  // A window of a locked profile is not shown until its PIN or password is given: true when this
++  // one has to wait, `show` then being run if it is opened. A window of the profile shown first
++  // opens it for the next, until the last of them closes.
++  bool DeferShow(Profile* profile, base::OnceClosure show);
++
++ private:
++  ProfilesSync();
++  ~ProfilesSync() override;
++
++  void Poll();
++  void OnRead(std::map<std::string, ProfileRecord> records);
++  void Apply(const std::string& id, const ProfileRecord& record, bool changed);
++  void Remove(const std::string& id);
++  void ApplyOrder(const std::map<std::string, ProfileRecord>& records);
++  void ApplyTheme(Profile* profile, const ProfileRecord& record);
++
++  base::FilePath PathOf(const std::string& id) const;
++  std::string KnownIdOf(const base::FilePath& profile_path) const;
++  void SaveDirs();
++  void WriteRecord(const std::string& id, const ProfileRecord& record);
++
++  void AskToUnlock(const std::string& id, const std::u16string& name, const ProfileRecord& record);
++  void Unlocked(const std::string& id, bool opened);
++
++  // ProfileAttributesStorage::Observer:
++  void OnProfileAdded(const base::FilePath& profile_path) override;
++  void OnProfileWasRemoved(const base::FilePath& profile_path,
++                           const std::u16string& profile_name) override;
++  void OnProfileNameChanged(const base::FilePath& profile_path,
++                            const std::u16string& old_profile_name) override;
++
++  // ProfileManagerObserver:
++  void OnProfileAdded(Profile* profile) override;
++
++  // BrowserCollectionObserver:
++  void OnBrowserClosed(BrowserWindowInterface* browser) override;
++
++  scoped_refptr<base::SequencedTaskRunner> files_;
++  base::RepeatingTimer timer_;
++  bool reading_ = false;
++  bool applying_ = false;
++
++  // The list as last read, and what each folder Chromium named itself is called there.
++  std::map<std::string, ProfileRecord> records_;
++  std::map<std::string, std::string> dirs_;
++  // Ids once seen in the list: one gone from it was removed on another machine; a profile only
++  // this browser has yet is not that.
++  std::set<std::string> known_;
++  // Being removed because another machine removed them: not to be listed again meanwhile.
++  std::set<std::string> removing_;
++
++  std::set<std::string> unlocked_;
++  std::map<std::string, std::vector<base::OnceClosure>> waiting_;
++
++  base::ScopedObservation<ProfileAttributesStorage, ProfileAttributesStorage::Observer>
++      storage_observation_{this};
++  base::ScopedObservation<GlobalBrowserCollection, BrowserCollectionObserver> browsers_observation_{
++      this};
++  base::WeakPtrFactory<ProfilesSync> weak_factory_{this};
++};
++
++// The hash a profile's lock keeps, as SpatiMesh's other builds make it. Many rounds: blocks.
++std::string LockHash(const std::string& salt, const std::string& secret);
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_PROFILES_SYNC_H_
+diff --git a/chrome/browser/spatiand/settings_sync.cc b/chrome/browser/spatiand/settings_sync.cc
+new file mode 100644
+index 0000000000..898c55b948
+--- /dev/null
++++ b/chrome/browser/spatiand/settings_sync.cc
+@@ -0,0 +1,352 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/settings_sync.h"
++
++#include <array>
++#include <memory>
++#include <string_view>
++#include <utility>
++
++#include "base/auto_reset.h"
++#include "base/functional/bind.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "chrome/browser/prefs/session_startup_pref.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/search_engines/template_url_service_factory.h"
++#include "chrome/browser/spatiand/profiles_sync.h"
++#include "chrome/browser/spatiand/shared_folder.h"
++#include "chrome/browser/themes/theme_service_factory.h"
++#include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
++#include "chrome/common/pref_names.h"
++#include "components/bookmarks/common/bookmark_pref_names.h"
++#include "components/prefs/pref_service.h"
++#include "components/search_engines/template_url.h"
++#include "components/search_engines/template_url_data.h"
++#include "third_party/blink/public/common/page/page_zoom.h"
++#include "ui/color/color_provider_key.h"
++#include "url/gurl.h"
++
++namespace spatiand {
++
++namespace {
++
++// The search engines SpatiMesh's other builds know by name.
++struct Engine {
++  const char* name;
++  const char* host;
++  const char* url;
++};
++constexpr std::array<Engine, 7> kEngines = {{
++    {"DuckDuckGo", "duckduckgo.com", "https://duckduckgo.com/?q={searchTerms}"},
++    {"Google", "www.google.com", "https://www.google.com/search?q={searchTerms}"},
++    {"Bing", "www.bing.com", "https://www.bing.com/search?q={searchTerms}"},
++    {"Startpage", "www.startpage.com", "https://www.startpage.com/do/search?q={searchTerms}"},
++    {"Brave Search", "search.brave.com", "https://search.brave.com/search?q={searchTerms}"},
++    {"Ecosia", "www.ecosia.org", "https://www.ecosia.org/search?q={searchTerms}"},
++    {"Kagi", "kagi.com", "https://kagi.com/search?q={searchTerms}"},
++}};
++
++SettingsSync::Files ReadFiles(const std::string& id) {
++  SettingsSync::Files files;
++  const base::FilePath shared = SharedDir().Append("settings");
++  for (const char* name : {"search", "custom_search", "zoom", "restore", "bookmarks_bar",
++                           "developer"}) {
++    if (std::optional<base::Value> value = ReadJson(shared.Append(std::string(name) + ".json"))) {
++      files.emplace(name, std::move(*value));
++    }
++  }
++  const base::FilePath own = SharedProfileDir(id).Append("settings");
++  for (const char* name : {"search", "custom_search"}) {
++    if (std::optional<base::Value> value = ReadJson(own.Append(std::string(name) + ".json"))) {
++      files.emplace(std::string("profile/") + name, std::move(*value));
++    }
++  }
++  return files;
++}
++
++void WriteFile(const base::FilePath& file, base::Value value) {
++  WriteJson(file, value);
++}
++
++// Where an engine searches: Chromium's own are written with {google:baseURL}, not as an address.
++GURL AddressOf(const TemplateURLService* service, const TemplateURL* engine) {
++  return engine->GenerateSearchURL(service->search_terms_data());
++}
++
++// The engine at this address; of several at one host, the one of this name.
++TemplateURL* FindEngine(TemplateURLService* service,
++                        std::string_view name,
++                        std::string_view host,
++                        std::string_view url) {
++  TemplateURL* same_host = nullptr;
++  for (TemplateURL* engine : service->GetTemplateURLs()) {
++    if (engine->url().empty()) {
++      continue;
++    }
++    if (engine->url() == url) {
++      return engine;
++    }
++    if (!host.empty() && AddressOf(service, engine).host() == host) {
++      if (base::UTF16ToUTF8(engine->short_name()) == name) {
++        return engine;
++      }
++      same_host = same_host ? same_host : engine;
++    }
++  }
++  return same_host;
++}
++
++}  // namespace
++
++SettingsSync::SettingsSync(Profile* profile,
++                           const std::string& id,
++                           scoped_refptr<base::SequencedTaskRunner> files)
++    : profile_(profile), id_(id), files_(std::move(files)) {
++  prefs_.Init(profile_->GetPrefs());
++  prefs_.Add(bookmarks::prefs::kShowBookmarkBar,
++             base::BindRepeating(&SettingsSync::LocalBool, base::Unretained(this), "bookmarks_bar",
++                                 bookmarks::prefs::kShowBookmarkBar));
++  prefs_.Add(prefs::kExtensionsUIDeveloperMode,
++             base::BindRepeating(&SettingsSync::LocalBool, base::Unretained(this), "developer",
++                                 prefs::kExtensionsUIDeveloperMode));
++  prefs_.Add(prefs::kRestoreOnStartup,
++             base::BindRepeating(&SettingsSync::LocalRestore, base::Unretained(this)));
++  if (ChromeZoomLevelPrefs* zoom = profile_->GetZoomLevelPrefs()) {
++    zoom_subscription_ = zoom->RegisterDefaultZoomLevelCallback(
++        base::BindRepeating(&SettingsSync::LocalZoom, base::Unretained(this)));
++  }
++  if (TemplateURLService* search = TemplateURLServiceFactory::GetForProfile(profile_)) {
++    search_observation_.Observe(search);
++    search->Load();
++  }
++  if (ThemeService* theme = ThemeServiceFactory::GetForProfile(profile_)) {
++    theme_observation_.Observe(theme);
++  }
++  Poll();
++}
++
++SettingsSync::~SettingsSync() = default;
++
++void SettingsSync::Poll() {
++  if (reading_) {
++    return;
++  }
++  reading_ = true;
++  files_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce(&ReadFiles, id_),
++                                     base::BindOnce(&SettingsSync::OnRead,
++                                                    weak_factory_.GetWeakPtr()));
++}
++
++void SettingsSync::OnRead(Files files) {
++  reading_ = false;
++  base::AutoReset<bool> applying(&applying_, true);
++  PrefService* prefs = profile_->GetPrefs();
++  const auto changed = [this, &files](const std::string& name) -> const base::Value* {
++    const auto it = files.find(name);
++    if (it == files.end()) {
++      return nullptr;
++    }
++    const auto seen = seen_.find(name);
++    return seen != seen_.end() && seen->second == it->second ? nullptr : &it->second;
++  };
++  if (const base::Value* value = changed("zoom"); value && value->is_double()) {
++    if (ChromeZoomLevelPrefs* zoom = profile_->GetZoomLevelPrefs()) {
++      zoom->SetDefaultZoomLevelPref(blink::ZoomFactorToZoomLevel(value->GetDouble()));
++    }
++  } else if (value && value->is_int()) {
++    if (ChromeZoomLevelPrefs* zoom = profile_->GetZoomLevelPrefs()) {
++      zoom->SetDefaultZoomLevelPref(blink::ZoomFactorToZoomLevel(value->GetInt()));
++    }
++  }
++  if (const base::Value* value = changed("restore"); value && value->is_bool()) {
++    SessionStartupPref startup = SessionStartupPref::GetStartupPref(prefs);
++    const SessionStartupPref::Type wanted =
++        value->GetBool() ? SessionStartupPref::LAST : SessionStartupPref::DEFAULT;
++    if (startup.type != wanted) {
++      startup.type = wanted;
++      SessionStartupPref::SetStartupPref(prefs, startup);
++    }
++  }
++  if (const base::Value* value = changed("bookmarks_bar"); value && value->is_bool()) {
++    prefs->SetBoolean(bookmarks::prefs::kShowBookmarkBar, value->GetBool());
++  }
++  if (const base::Value* value = changed("developer"); value && value->is_bool()) {
++    prefs->SetBoolean(prefs::kExtensionsUIDeveloperMode, value->GetBool());
++  }
++  const bool search_changed = changed("search") || changed("custom_search") ||
++                              changed("profile/search") || changed("profile/custom_search");
++  for (auto& [name, value] : files) {
++    seen_[name] = std::move(value);
++  }
++  read_once_ = true;
++  if (search_changed) {
++    ApplySearch();
++  }
++}
++
++void SettingsSync::ApplySearch() {
++  TemplateURLService* service = TemplateURLServiceFactory::GetForProfile(profile_);
++  if (!service || !service->loaded() || !read_once_) {
++    return;
++  }
++  search_applied_ = true;
++  base::AutoReset<bool> applying(&applying_, true);
++  // The profile's own, else what every profile has.
++  const auto text = [this](const std::string& name) -> std::string {
++    const auto it = seen_.find(name);
++    return it != seen_.end() && it->second.is_string() ? it->second.GetString() : std::string();
++  };
++  std::string name = text("profile/search");
++  std::string custom = text("profile/custom_search");
++  if (name.empty()) {
++    name = text("search");
++    custom = text("custom_search");
++  }
++  std::string address;
++  std::string host;
++  if (!custom.empty() && (name == "Custom" || name.empty()) && custom.find("{}") != std::string::npos) {
++    base::ReplaceFirstSubstringAfterOffset(&custom, 0, "{}", "{searchTerms}");
++    address = custom;
++  } else {
++    for (const Engine& engine : kEngines) {
++      if (name == engine.name) {
++        address = engine.url;
++        host = engine.host;
++      }
++    }
++  }
++  if (address.empty()) {
++    return;
++  }
++  TemplateURL* engine = FindEngine(service, name, host, address);
++  if (!engine) {
++    TemplateURLData data;
++    const std::u16string short_name = base::UTF8ToUTF16(name.empty() ? "Custom" : name);
++    data.SetShortName(short_name);
++    data.SetKeyword(base::UTF8ToUTF16(GURL(address).host()));
++    data.SetURL(address);
++    engine = service->Add(std::make_unique<TemplateURL>(data));
++  }
++  if (engine && service->CanMakeDefault(engine) &&
++      service->GetDefaultSearchProvider() != engine) {
++    service->SetUserSelectedDefaultSearchProvider(engine);
++  }
++}
++
++void SettingsSync::OnTemplateURLServiceChanged() {
++  if (applying_ || !read_once_) {
++    return;
++  }
++  TemplateURLService* service = TemplateURLServiceFactory::GetForProfile(profile_);
++  const TemplateURL* engine = service ? service->GetDefaultSearchProvider() : nullptr;
++  if (!service || !service->loaded() || !engine) {
++    return;
++  }
++  // The engines have only just loaded: what is shared comes first, or Chromium's default, which
++  // nobody chose, would be taken for a choice and sent to every machine.
++  if (!search_applied_) {
++    ApplySearch();
++    return;
++  }
++  // Which of the shared names it is, or an address of the wearer's own.
++  const GURL address = AddressOf(service, engine);
++  std::string name = "Custom";
++  for (const Engine& known : kEngines) {
++    if (address.host() == known.host) {
++      name = known.name;
++    }
++  }
++  const auto current = [this](const std::string& key) -> std::string {
++    const auto it = seen_.find(key);
++    return it != seen_.end() && it->second.is_string() ? it->second.GetString() : std::string();
++  };
++  const std::string was =
++      current("profile/search").empty() ? current("search") : current("profile/search");
++  if (was.empty()) {
++    // Chromium's default before anything is known of it is not a choice.
++    return;
++  }
++  if (name == was && name != "Custom") {
++    return;
++  }
++  if (name == "Custom") {
++    std::string custom = engine->url();
++    base::ReplaceFirstSubstringAfterOffset(&custom, 0, "{searchTerms}", "{}");
++    if (current("profile/custom_search") != custom) {
++      WriteProfileSetting("custom_search", base::Value(custom));
++    }
++  }
++  if (current("profile/search") != name) {
++    WriteProfileSetting("search", base::Value(name));
++  }
++}
++
++void SettingsSync::OnThemeChanged() {
++  if (applying_) {
++    return;
++  }
++  ThemeService* theme = ThemeServiceFactory::GetForProfile(profile_);
++  std::optional<SkColor> colour = theme ? theme->GetUserColor() : std::nullopt;
++  if (colour && ProfilesSync::Get()) {
++    ProfilesSync::Get()->LocalColourChanged(profile_->GetPath(), *colour);
++  }
++}
++
++void SettingsSync::WriteSetting(const std::string& name, base::Value value) {
++  seen_[name] = value.Clone();
++  files_->PostTask(FROM_HERE, base::BindOnce(&WriteFile,
++                                             SharedDir().Append("settings").Append(name + ".json"),
++                                             std::move(value)));
++}
++
++void SettingsSync::WriteProfileSetting(const std::string& name, base::Value value) {
++  seen_["profile/" + name] = value.Clone();
++  files_->PostTask(FROM_HERE,
++                   base::BindOnce(&WriteFile,
++                                  SharedProfileDir(id_).Append("settings").Append(name + ".json"),
++                                  std::move(value)));
++}
++
++bool SettingsSync::Seen(const std::string& key, const base::Value& value) {
++  const auto it = seen_.find(key);
++  return it != seen_.end() && it->second == value;
++}
++
++void SettingsSync::LocalBool(const std::string& name, const char* pref) {
++  if (applying_) {
++    return;
++  }
++  base::Value value(profile_->GetPrefs()->GetBoolean(pref));
++  if (!Seen(name, value)) {
++    WriteSetting(name, std::move(value));
++  }
++}
++
++void SettingsSync::LocalRestore() {
++  if (applying_) {
++    return;
++  }
++  base::Value value(SessionStartupPref::GetStartupPref(profile_->GetPrefs()).type ==
++                    SessionStartupPref::LAST);
++  if (!Seen("restore", value)) {
++    WriteSetting("restore", std::move(value));
++  }
++}
++
++void SettingsSync::LocalZoom() {
++  if (applying_) {
++    return;
++  }
++  ChromeZoomLevelPrefs* zoom = profile_->GetZoomLevelPrefs();
++  if (!zoom) {
++    return;
++  }
++  base::Value value(blink::ZoomLevelToZoomFactor(zoom->GetDefaultZoomLevelPref()));
++  if (!Seen("zoom", value)) {
++    WriteSetting("zoom", std::move(value));
++  }
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/settings_sync.h b/chrome/browser/spatiand/settings_sync.h
+new file mode 100644
+index 0000000000..bdad8719a6
+--- /dev/null
++++ b/chrome/browser/spatiand/settings_sync.h
+@@ -0,0 +1,80 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_SETTINGS_SYNC_H_
++#define CHROME_BROWSER_SPATIAND_SETTINGS_SYNC_H_
++
++#include <map>
++#include <optional>
++#include <string>
++
++#include "base/callback_list.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/scoped_observation.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/values.h"
++#include "chrome/browser/themes/theme_service.h"
++#include "chrome/browser/themes/theme_service_observer.h"
++#include "components/prefs/pref_change_registrar.h"
++#include "components/search_engines/template_url_service.h"
++#include "components/search_engines/template_url_service_observer.h"
++
++class Profile;
++
++namespace spatiand {
++
++// The settings every machine's SpatiMesh shares, one file each, in Chromium's own settings:
++// `apps/spatimesh/settings/{zoom,restore,bookmarks_bar,developer}.json`, and the search engine,
++// `search.json` and `custom_search.json`, which a profile may have its own of
++// (`profiles/<id>/settings/`). A setting is written only when it changes here, so that one left
++// alone never overrides another machine's. The profile's colour is its Chromium theme.
++class SettingsSync : public TemplateURLServiceObserver, public ThemeServiceObserver {
++ public:
++  SettingsSync(Profile* profile,
++               const std::string& id,
++               scoped_refptr<base::SequencedTaskRunner> files);
++  SettingsSync(const SettingsSync&) = delete;
++  SettingsSync& operator=(const SettingsSync&) = delete;
++  ~SettingsSync() override;
++
++  void Poll();
++
++  using Files = std::map<std::string, base::Value>;
++
++ private:
++  void OnRead(Files files);
++  void ApplySearch();
++  void WriteSetting(const std::string& name, base::Value value);
++  void WriteProfileSetting(const std::string& name, base::Value value);
++  void LocalBool(const std::string& name, const char* pref);
++  void LocalRestore();
++  void LocalZoom();
++  bool Seen(const std::string& key, const base::Value& value);
++
++  // TemplateURLServiceObserver:
++  void OnTemplateURLServiceChanged() override;
++  // ThemeServiceObserver:
++  void OnThemeChanged() override;
++
++  const raw_ptr<Profile> profile_;
++  const std::string id_;
++  scoped_refptr<base::SequencedTaskRunner> files_;
++  // Each setting as the files last had it, or as this browser last wrote it.
++  Files seen_;
++  bool reading_ = false;
++  bool read_once_ = false;
++  // Whether what is shared has been applied to the engines, which load late.
++  bool search_applied_ = false;
++  bool applying_ = false;
++
++  PrefChangeRegistrar prefs_;
++  base::CallbackListSubscription zoom_subscription_;
++  base::ScopedObservation<TemplateURLService, TemplateURLServiceObserver> search_observation_{this};
++  base::ScopedObservation<ThemeService, ThemeServiceObserver> theme_observation_{this};
++  base::WeakPtrFactory<SettingsSync> weak_factory_{this};
++};
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_SETTINGS_SYNC_H_
+diff --git a/chrome/browser/spatiand/shared_folder.cc b/chrome/browser/spatiand/shared_folder.cc
+new file mode 100644
+index 0000000000..e9309f81cc
+--- /dev/null
++++ b/chrome/browser/spatiand/shared_folder.cc
+@@ -0,0 +1,214 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/shared_folder.h"
++
++#include <cmath>
++#include <memory>
++
++#include "base/base_paths.h"
++#include "base/environment.h"
++#include "base/files/file_enumerator.h"
++#include "base/files/file_util.h"
++#include "base/json/json_reader.h"
++#include "base/json/json_writer.h"
++#include "base/json/string_escape.h"
++#include "base/process/process_handle.h"
++#include "base/rand_util.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_util.h"
++#include "base/strings/stringprintf.h"
++
++namespace spatiand {
++
++namespace {
++
++base::FilePath ConfigRoot() {
++  std::unique_ptr<base::Environment> env = base::Environment::Create();
++  if (std::optional<std::string> named = env->GetVar("SPATIAND_APPS_CONFIG");
++      named && !named->empty()) {
++    return base::FilePath(*named);
++  }
++  base::FilePath base;
++  if (std::optional<std::string> config = env->GetVar("XDG_CONFIG_HOME");
++      config && base::FilePath(*config).IsAbsolute()) {
++    base = base::FilePath(*config);
++  } else {
++    base = base::GetHomeDir().Append(".config");
++  }
++  return base.Append("spatiand");
++}
++
++// JSON as SpatiMesh's other builds read it. A time in milliseconds does not fit a base::Value's
++// integer, so it is kept as a double, and base's writer would then put a ".0" on it, which those
++// builds, reading a whole number, refuse: a whole number is written as one here.
++void AppendJson(const base::Value& value, int depth, std::string* out) {
++  const std::string indent(2 * (depth + 1), ' ');
++  const std::string closing(2 * depth, ' ');
++  switch (value.type()) {
++    case base::Value::Type::NONE:
++      out->append("null");
++      break;
++    case base::Value::Type::BOOLEAN:
++      out->append(value.GetBool() ? "true" : "false");
++      break;
++    case base::Value::Type::INTEGER:
++      out->append(base::NumberToString(value.GetInt()));
++      break;
++    case base::Value::Type::DOUBLE: {
++      const double number = value.GetDouble();
++      if (number == std::trunc(number) && std::fabs(number) < 9.0e15) {
++        out->append(base::NumberToString(static_cast<int64_t>(number)));
++      } else {
++        std::string text;
++        base::JSONWriter::Write(value, &text);
++        out->append(text);
++      }
++      break;
++    }
++    case base::Value::Type::STRING:
++      base::EscapeJSONString(value.GetString(), /*put_in_quotes=*/true, out);
++      break;
++    case base::Value::Type::BINARY:
++      out->append("null");
++      break;
++    case base::Value::Type::DICT: {
++      if (value.GetDict().empty()) {
++        out->append("{}");
++        break;
++      }
++      out->append("{\n");
++      bool first = true;
++      for (const auto [key, item] : value.GetDict()) {
++        if (!first) {
++          out->append(",\n");
++        }
++        first = false;
++        out->append(indent);
++        base::EscapeJSONString(key, /*put_in_quotes=*/true, out);
++        out->append(": ");
++        AppendJson(item, depth + 1, out);
++      }
++      out->append("\n" + closing + "}");
++      break;
++    }
++    case base::Value::Type::LIST: {
++      if (value.GetList().empty()) {
++        out->append("[]");
++        break;
++      }
++      out->append("[\n");
++      bool first = true;
++      for (const base::Value& item : value.GetList()) {
++        if (!first) {
++          out->append(",\n");
++        }
++        first = false;
++        out->append(indent);
++        AppendJson(item, depth + 1, out);
++      }
++      out->append("\n" + closing + "]");
++      break;
++    }
++  }
++}
++
++}  // namespace
++
++base::FilePath SharedDir() {
++  return ConfigRoot().Append("apps").Append("spatimesh");
++}
++
++base::FilePath LocalDir() {
++  return ConfigRoot().Append("local").Append("spatimesh-chromium");
++}
++
++base::FilePath SharedProfileDir(const std::string& profile) {
++  return SharedDir().Append("profiles").Append(profile);
++}
++
++base::FilePath LocalProfileDir(const std::string& profile) {
++  return LocalDir().Append("profiles").Append(profile);
++}
++
++std::optional<base::Value> ReadJson(const base::FilePath& path) {
++  std::string text;
++  if (!base::ReadFileToString(path, &text)) {
++    return std::nullopt;
++  }
++  return base::JSONReader::Read(text, base::JSON_PARSE_RFC);
++}
++
++bool WriteJson(const base::FilePath& path, const base::Value& value) {
++  // Unchanged is not written: a write is a change to every machine that syncs it.
++  if (std::optional<base::Value> old = ReadJson(path); old && *old == value) {
++    return true;
++  }
++  const base::FilePath dir = path.DirName();
++  if (!base::CreateDirectory(dir)) {
++    return false;
++  }
++  std::string text;
++  AppendJson(value, 0, &text);
++  const base::FilePath temporary = dir.Append(base::StringPrintf(
++      ".%s.%d.new", path.BaseName().value().c_str(), base::GetCurrentProcId()));
++  if (!base::WriteFile(temporary, text)) {
++    return false;
++  }
++  if (!base::ReplaceFile(temporary, path, nullptr)) {
++    base::DeleteFile(temporary);
++    return false;
++  }
++  return true;
++}
++
++bool WriteJsonAsIfLongAgo(const base::FilePath& path, const base::Value& value) {
++  if (base::PathExists(path)) {
++    return true;
++  }
++  if (!WriteJson(path, value)) {
++    return false;
++  }
++  const base::Time long_ago = base::Time::UnixEpoch() + base::Seconds(1);
++  return base::TouchFile(path, long_ago, long_ago);
++}
++
++void RemovePath(const base::FilePath& path) {
++  base::DeletePathRecursively(path);
++}
++
++std::vector<std::string> ListJson(const base::FilePath& dir) {
++  std::vector<std::string> names;
++  base::FileEnumerator files(dir, /*recursive=*/false, base::FileEnumerator::FILES,
++                             FILE_PATH_LITERAL("*.json"));
++  for (base::FilePath file = files.Next(); !file.empty(); file = files.Next()) {
++    const std::string name = file.BaseName().RemoveFinalExtension().value();
++    if (!name.empty() && !name.starts_with('.')) {
++      names.push_back(name);
++    }
++  }
++  return names;
++}
++
++base::Time FolderChanged(const base::FilePath& dir) {
++  base::File::Info info;
++  return base::GetFileInfo(dir, &info) ? info.last_modified : base::Time();
++}
++
++std::string NewId() {
++  return base::ToLowerASCII(base::HexEncode(base::RandBytesAsVector(8)));
++}
++
++int64_t NowMs() {
++  return base::Time::Now().InMillisecondsSinceUnixEpoch();
++}
++
++base::Time TimeOfMs(double ms) {
++  return base::Time::UnixEpoch() + base::Milliseconds(ms);
++}
++
++double MsOfTime(base::Time time) {
++  return static_cast<double>(time.InMillisecondsSinceUnixEpoch());
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/shared_folder.h b/chrome/browser/spatiand/shared_folder.h
+new file mode 100644
+index 0000000000..8ef28e4f24
+--- /dev/null
++++ b/chrome/browser/spatiand/shared_folder.h
+@@ -0,0 +1,57 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_SHARED_FOLDER_H_
++#define CHROME_BROWSER_SPATIAND_SHARED_FOLDER_H_
++
++#include <cstdint>
++#include <optional>
++#include <string>
++#include <vector>
++
++#include "base/files/file_path.h"
++#include "base/time/time.h"
++#include "base/values.h"
++
++// SpatiMesh's data as every Spatiand machine keeps it (docs/spatimesh.md, "Settings"), read and
++// written here in the same files as SpatiMesh's other builds:
++//
++//   ~/.config/spatiand/apps/spatimesh/         shared: spatiand-sync copies it between every two
++//                                              linked Spatiands and spatiand-hosts, the newest
++//                                              file winning, deletions remembered
++//   ~/.config/spatiand/local/spatimesh-chromium/  this browser's own, on this machine
++//
++// A file is written whole (to a hidden file, then renamed over), so a machine syncing at the wrong
++// moment never takes half of one, and only when it changed, since a write is a change to every
++// machine. Everything here blocks: for the sequences that may.
++namespace spatiand {
++
++base::FilePath SharedDir();
++base::FilePath LocalDir();
++
++// One profile's folders.
++base::FilePath SharedProfileDir(const std::string& profile);
++base::FilePath LocalProfileDir(const std::string& profile);
++
++std::optional<base::Value> ReadJson(const base::FilePath& path);
++bool WriteJson(const base::FilePath& path, const base::Value& value);
++// A file made because there was none: written as if long ago, so that any version of it from
++// another machine wins over this one. Left alone if it is there.
++bool WriteJsonAsIfLongAgo(const base::FilePath& path, const base::Value& value);
++void RemovePath(const base::FilePath& path);
++
++// The names of a folder's `.json` files, without it, hidden ones left out.
++std::vector<std::string> ListJson(const base::FilePath& dir);
++// When a folder last had a file come or go: every file arrives by a rename.
++base::Time FolderChanged(const base::FilePath& dir);
++
++// Sixteen hex digits from the system's randomness.
++std::string NewId();
++// Milliseconds since 1970: the times in SpatiMesh's files.
++int64_t NowMs();
++base::Time TimeOfMs(double ms);
++double MsOfTime(base::Time time);
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_SHARED_FOLDER_H_
+diff --git a/chrome/browser/spatiand/spatikey_window.cc b/chrome/browser/spatiand/spatikey_window.cc
+new file mode 100644
+index 0000000000..f1dbd321f1
+--- /dev/null
++++ b/chrome/browser/spatiand/spatikey_window.cc
+@@ -0,0 +1,105 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/spatikey_window.h"
++
++#include <memory>
++#include <optional>
++#include <string>
++
++#include "base/base_paths.h"
++#include "base/command_line.h"
++#include "base/environment.h"
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/process/launch.h"
++#include "base/process/process.h"
++#include "base/path_service.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/task/thread_pool.h"
++#include "chrome/browser/infobars/simple_alert_infobar_creator.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
++#include "components/infobars/content/content_infobar_manager.h"
++#include "components/infobars/core/infobar_delegate.h"
++#include "components/spatikey/client.h"
++#include "components/tabs/public/tab_interface.h"
++#include "content/public/browser/navigation_controller.h"
++#include "content/public/browser/web_contents.h"
++
++namespace spatiand {
++
++namespace {
++
++// Beside the room's other programs: where it says, else where this install keeps Spatiand's, as
++// this browser's FFmpeg is found.
++base::FilePath FindSpatiKey() {
++  std::unique_ptr<base::Environment> env = base::Environment::Create();
++  if (std::optional<std::string> named = env->GetVar("SPATIAND_APPS_DIR"); named && !named->empty()) {
++    const base::FilePath program = base::FilePath(*named).Append("spatikey");
++    if (base::PathExists(program)) {
++      return program;
++    }
++  }
++  base::FilePath here;
++  base::PathService::Get(base::DIR_EXE, &here);
++  const base::FilePath program = here.DirName().Append("spatiand/target/release/spatikey");
++  return base::PathExists(program) ? program : base::FilePath();
++}
++
++void Launch() {
++  const base::FilePath program = FindSpatiKey();
++  if (program.empty()) {
++    return;
++  }
++  base::LaunchOptions options;
++  options.new_process_group = true;
++  base::Process process = base::LaunchProcess(base::CommandLine(program), options);
++  if (process.IsValid()) {
++    base::EnsureProcessGetsReaped(std::move(process));
++  }
++}
++
++void ShowProblem(const std::u16string& message) {
++  BrowserWindowInterface* browser = GlobalBrowserCollection::GetInstance()->GetLastActiveBrowser();
++  tabs::TabInterface* tab = browser ? browser->GetActiveTabInterface() : nullptr;
++  content::WebContents* contents = tab ? tab->GetContents() : nullptr;
++  infobars::ContentInfoBarManager* infobars =
++      contents ? infobars::ContentInfoBarManager::FromWebContents(contents) : nullptr;
++  if (infobars) {
++    CreateSimpleAlertInfoBar(infobars, infobars::InfoBarDelegate::TEST_INFOBAR,
++                             /*vector_icon=*/nullptr, message, /*auto_expire=*/true,
++                             /*should_animate=*/true);
++  }
++}
++
++void GoBackOrClose(base::WeakPtr<content::WebContents> contents) {
++  if (!contents) {
++    return;
++  }
++  if (contents->GetController().CanGoBack()) {
++    contents->GetController().GoBack();
++  } else {
++    contents->Close();
++  }
++}
++
++}  // namespace
++
++void OpenSpatiKey() {
++  base::ThreadPool::PostTask(FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++                             base::BindOnce(&Launch));
++}
++
++void OpenSpatiKeyInstead(content::WebContents* contents) {
++  OpenSpatiKey();
++  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++      FROM_HERE, base::BindOnce(&GoBackOrClose, contents->GetWeakPtr()));
++}
++
++void ShowSpatiKeyProblems() {
++  spatikey::SetProblemReporter(base::BindRepeating(&ShowProblem));
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/spatikey_window.h b/chrome/browser/spatiand/spatikey_window.h
+new file mode 100644
+index 0000000000..0d2e091f9e
+--- /dev/null
++++ b/chrome/browser/spatiand/spatikey_window.h
+@@ -0,0 +1,26 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_SPATIKEY_WINDOW_H_
++#define CHROME_BROWSER_SPATIAND_SPATIKEY_WINDOW_H_
++
++namespace content {
++class WebContents;
++}
++
++namespace spatiand {
++
++// Where passwords and passkeys are looked at and changed: SpatiKey's own window, the same on every
++// machine, rather than a page listing what this browser cannot list without a touch for each.
++void OpenSpatiKey();
++
++// The same for a tab that went to chrome://password-manager: SpatiKey opens and the tab goes back,
++// or closes if it has nowhere to go back to.
++void OpenSpatiKeyInstead(content::WebContents* contents);
++
++// Problems SpatiKey's parts report are shown on the active tab.
++void ShowSpatiKeyProblems();
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_SPATIKEY_WINDOW_H_
+diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
+index f9b1d3de05..3aefe793c1 100644
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -4,6 +4,10 @@
+ 
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ 
++#if BUILDFLAG(IS_LINUX)
++#include "chrome/browser/spatiand/profiles_sync.h"
++#endif
++
+ #include <stdint.h>
+ 
+ #include <algorithm>
+@@ -1586,6 +1590,16 @@ void BrowserView::Show() {
+     return;
+   }
+ 
++#if BUILDFLAG(IS_LINUX)
++  // Spatiand: a locked profile's window waits for its PIN or password.
++  if (auto* profiles = spatiand::ProfilesSync::Get();
++      profiles && profiles->DeferShow(browser()->GetProfile(),
++                                      base::BindOnce(&BrowserView::Show,
++                                                     weak_ptr_factory_.GetWeakPtr()))) {
++    return;
++  }
++#endif
++
+   if (auto* manager = InitialWebUIManager::From(browser())) {
+     if (manager->RequestDeferShow(base::BindOnce(
+             &BrowserView::Show, weak_ptr_factory_.GetWeakPtr()))) {
+@@ -1646,6 +1660,15 @@ void BrowserView::Show() {
+ }
+ 
+ void BrowserView::ShowInactive() {
++#if BUILDFLAG(IS_LINUX)
++  // Spatiand: as in Show().
++  if (auto* profiles = spatiand::ProfilesSync::Get();
++      profiles && profiles->DeferShow(browser()->GetProfile(),
++                                      base::BindOnce(&BrowserView::ShowInactive,
++                                                     weak_ptr_factory_.GetWeakPtr()))) {
++    return;
++  }
++#endif
+   if (!browser_widget_->IsVisible()) {
+     browser_widget_->ShowInactive();
+   }
+diff --git a/components/browsing_data/core/pref_names.cc b/components/browsing_data/core/pref_names.cc
+index 558693de8a..f551f0958b 100644
+--- a/components/browsing_data/core/pref_names.cc
++++ b/components/browsing_data/core/pref_names.cc
+@@ -76,9 +76,8 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
+   registry->RegisterBooleanPref(kDeleteDownloadHistory, true);
+   registry->RegisterBooleanPref(kDeleteHostedAppsData, false);
+   registry->RegisterBooleanPref(kDeleteSiteSettings, false);
+-#else
+-  registry->RegisterInt64Pref(prefs::kLastClearBrowsingDataTime, 0);
+ #endif  // !BUILDFLAG(IS_IOS)
++  registry->RegisterInt64Pref(prefs::kLastClearBrowsingDataTime, 0);
+ 
+ #if BUILDFLAG(IS_ANDROID)
+   registry->RegisterBooleanPref(kCloseTabs, false);
+-- 
+2.53.0
+

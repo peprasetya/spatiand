@@ -24,6 +24,10 @@ first build (Chromium 153.0.8010.37, Cromite's 327 patches and its Linux argumen
 Deck, where Ozone/Wayland already draws into the room. WPE stays the engine of the window
 described below until Chromium replaces it.
 
+**On 2026-10-30, Chromium became the room's SpatiMesh on Linux** (`~/spatiand-chromium`, the launcher's
+SpatiMesh; WPE everywhere else until Chromium is ported) and took Spatiand's data over. See "Chromium on
+Spatiand's data" below.
+
 **Changed again on 2026-10-29:** WebKitGTK, Linux's fallback, removed too: WPE is the only engine,
 and where it is not installed SpatiMesh says so rather than falling back.
 
@@ -32,6 +36,49 @@ WKWebView, Steam's CEF and the Android WebView were all built, then removed
 (`spatimesh-webkit`, `spatimesh-cef`, the Android WebView service): one engine, WPE, everywhere,
 with media through GStreamer on our FFmpeg. Where the sections below compare WKWebView, CEF and
 the WebView, they are the record of what those engines did, kept for why WPE was chosen.
+
+## Chromium on Spatiand's data (2026-10-30)
+
+Chromium keeps its own menus, profile menu, bubbles and settings; what they show and change is what
+every Spatiand machine shares. All of it is `chrome/browser/spatiand/` (patch 0009) with a few lines of
+hooks, reading and writing the files the WPE build uses, so the two builds and spatiand-host agree:
+
+| What | Where it is shared | Chromium's side |
+|---|---|---|
+| Profiles: name, colour, order, lock | `apps/spatimesh/profiles/<id>/profile.json` | `profiles_sync`: `default` is `Default`, another is `Spatiand-<id>`; listed without being opened until they are used; added and removed both ways |
+| A profile's lock | the same file (salted hash) | `profile_lock_dialog`: its own window, PIN or password, before any of that profile's windows shows; again after its last window closes |
+| Bookmarks | `profiles/<id>/bookmarks/<id>.json` | `bookmark_sync`: the bookmark bar is the top level, Other bookmarks the folder `other`; fractional order keys as the Rust side makes them |
+| History | `profiles/<id>/history/<machine>-<YYYY-MM>.json`, `forgotten-<machine>.json` | `history_sync`: this browser's own machine id; last 90 days taken in as real visits |
+| Logins | `profiles/<id>/cookies/<site>.json` | `cookie_sync`: the same three-way merge as `crates/spatimesh/src/cookies.rs` |
+| Search, zoom, restore, bookmark bar, developer mode | `settings/<name>.json`, `profiles/<id>/settings/` | `settings_sync` |
+| Chrome extensions | `profiles/<id>/extensions/<ext>.json`, `extension-files/<ext>/` | `extension_sync`: a store extension is fetched on the next machine; one loaded from a folder comes with its files if its manifest has a `key` (which is what keeps its id the same) |
+
+What only this browser needs is in `local/spatimesh-chromium/`, which is never synced. Passwords and
+passkeys are not here at all: docs/spatikey.md, "SpatiMesh on Chromium".
+
+**Cromite's "Partitioning all cookies" patch is undone (patch 0008).** It deleted every unpartitioned
+cookie each time the browser started, so logins taken from the shared folder lasted until the next
+start, and the merge then took their absence for a logout on every machine. It also stopped an extension's
+requests carrying a site's cookies. Cookies now behave as in Chrome, and third-party ones can be blocked in
+Settings.
+
+**Nothing lost here is lost everywhere.** A store that comes up without most of what was agreed (the browser
+killed before it wrote them, a key it cannot read them with) is told apart from a wearer logging out: that
+happens during a session, one site at a time, or by clearing browsing data, which is recorded. The cookies
+come back from the folder instead of being removed from it. A profile with no folder at all changes nothing.
+
+**In the room**, Chromium draws every bubble -- the profile menu, the address bar's suggestions, a login
+field's list, the save question, permission questions -- as a Wayland subsurface. The room now draws those
+and points at them as it does a window's menus (`push_subsurfaces` in `scene.rs`); before, they opened unseen.
+
+Checked in the Deck's test room against a copy of the shared folder (2026-10-30): the four profiles with their
+names, colours and order; Cec's lock; a bookmark, a visit and a cookie each way, while open and while closed, and
+the WPE build reading what Chromium wrote; 79 cookies through two restarts with the folder unchanged; a profile
+removed elsewhere; a folder extension and a store extension arriving on a browser that had neither.
+
+Not built: "Lock profiles now", and setting or changing a lock from Chromium (the WPE build still does both).
+Settings' "You and Google" page is still there. A page of a locked profile may run hidden behind the lock
+until the PIN is given, as the window is what waits.
 
 ## Three kinds of process
 
