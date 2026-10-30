@@ -84,8 +84,14 @@ names, colours and order; Cec's lock; a bookmark, a visit and a cookie each way,
 the WPE build reading what Chromium wrote; 79 cookies through two restarts with the folder unchanged; a profile
 removed elsewhere; a folder extension and a store extension arriving on a browser that had neither.
 
-Not built: "Lock profiles now", and setting or changing a lock from Chromium (the WPE build still does both).
-Settings' "You and Google" page is still there. A page of a locked profile may run hidden behind the lock
+**Locks from the profile menu (patch 0012).** "Set a PIN or password" (or "Change its PIN or password") opens a window
+of its own: nothing, a PIN or a password, typed twice, changed or removed only after the present one, written to the
+shared `profile.json` so WPE and every machine agree. "Lock profiles now", there once any profile has a lock, puts every
+locked profile's windows out of sight and hushes their tabs until it is given; "Close its windows" is the way out, so
+no profile is left hidden with nothing asking for it. The lock window also offers "Open with a fingerprint" where
+SpatiKey is usable: `profile_unlock`, always a new touch, even with a touch set to last.
+Settings' "You and Google" is now "Your profile": no sign-in, sync or Google rows, only Customize profile and Import,
+which have no other home. A page of a locked profile may run hidden behind the lock
 until the PIN is given, as the window is what waits.
 
 ## Three kinds of process

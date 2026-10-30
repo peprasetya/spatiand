@@ -107,6 +107,11 @@ pub enum Request {
         username: String,
         password: String,
     },
+    /// A finger's yes to opening a browser profile's locked windows, every time: nothing of the
+    /// vault leaves, and a touch that lingers for other things does not count. Answers `{}`.
+    ProfileUnlock {
+        profile: String,
+    },
     /// Answers [`CreatedAnswer`], or the error `excluded`.
     PasskeyCreate(PasskeyCreate),
     /// Answers [`ChoicesAnswer`] (one signed answer per account the site has here, newest

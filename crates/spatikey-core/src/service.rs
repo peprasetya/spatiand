@@ -240,6 +240,7 @@ impl Service {
             Request::Save { origin, title, username, password } => {
                 self.save(guard, &who, &origin, &title, &username, Zeroizing::new(password))
             }
+            Request::ProfileUnlock { profile } => self.profile_unlock(guard, &who, &profile),
             Request::PasskeyCreate(request) => self.passkey_create(guard, &who, &request),
             Request::PasskeyGet(request) => self.passkey_get(guard, &who, &request),
             Request::Type { session, id, fields, window } => {
@@ -392,6 +393,12 @@ impl Service {
         vault.delete(&key, id, &self.short()).map_err(failed)?;
         lock(&self.titles).remove(id);
         nothing()
+    }
+
+    fn profile_unlock(&self, guard: &dyn Guard, who: &Who, profile: &str) -> Result<Value, Refusal> {
+        let vault = self.vault()?;
+        self.unlock_lingering(guard, &vault, who, &format!("open the profile {}", shown(profile)), 0)?;
+        Ok(json!({}))
     }
 
     fn totp(&self, guard: &dyn Guard, conn: ConnId, who: &Who, session: Option<&str>, id: &str) -> Result<Value, Refusal> {
@@ -745,6 +752,11 @@ impl Service {
 
     /// Ask for a finger, for `what` ("open SpatiKey"), and take the vault key.
     fn unlock(&self, guard: &dyn Guard, vault: &Vault, who: &Who, what: &str) -> Result<VaultKey, Refusal> {
+        self.unlock_lingering(guard, vault, who, what, self.settings().touch_secs)
+    }
+
+    /// The same, with how long this touch may go on covering others, and be covered by them.
+    fn unlock_lingering(&self, guard: &dyn Guard, vault: &Vault, who: &Who, what: &str, linger: u64) -> Result<VaultKey, Refusal> {
         let Some(touch) = vault.touch_id() else {
             return Err(refuse(
                 Code::NotHere,
@@ -752,7 +764,6 @@ impl Service {
             ));
         };
         let reason = format!("{what}{}", asking(who));
-        let linger = self.settings().touch_secs;
         let _prompt = lock(&self.prompt);
         // Someone asking from another device sees a card here too: the finger is wanted on this Mac.
         let elsewhere = !who.device.is_empty();

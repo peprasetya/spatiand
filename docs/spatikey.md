@@ -145,6 +145,7 @@ uid is checked) and names the asking program in the prompt.
 | `fill` | the logins for a page's origin | yes |
 | `save` | save a login a page has just used | yes |
 | `passkey_create`, `passkey_get` | WebAuthn, given the origin and the hash of clientDataJSON | yes |
+| `profile_unlock` | a finger's yes to opening a browser profile's locked windows; nothing of the vault leaves | yes, always a new one |
 | `type` | type an entry's fields into a window | alone: yes |
 | `target` | the window that had the focus before SpatiKey's own | no |
 | `recovery_new`, `recover` | a new recovery code; set Touch ID up again from the code | session / the code |

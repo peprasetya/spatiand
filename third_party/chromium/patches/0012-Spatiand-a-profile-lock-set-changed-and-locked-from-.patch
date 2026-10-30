@@ -1,0 +1,858 @@
+From 5ac0f67ad69e22c1e3c76fc3abe323db935f5866 Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Fri, 30 Oct 2026 22:25:27 +0700
+Subject: [PATCH] Spatiand: a profile lock set, changed and locked from the
+ profile menu, and opened by a finger; nothing of Google in Settings
+
+---
+ chrome/app/settings_strings.grdp              |   2 +-
+ chrome/browser/BUILD.gn                       |   1 +
+ .../settings/people_page/people_page.html     |  90 +-----
+ .../browser/spatiand/profile_lock_dialog.cc   | 282 ++++++++++++++++--
+ chrome/browser/spatiand/profile_lock_dialog.h |  18 +-
+ chrome/browser/spatiand/profiles_sync.cc      | 136 ++++++++-
+ chrome/browser/spatiand/profiles_sync.h       |  22 ++
+ .../ui/views/profiles/profile_menu_view.cc    |  30 ++
+ 8 files changed, 471 insertions(+), 110 deletions(-)
+
+diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
+index fa76986f98..99832bec12 100644
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -3607,7 +3607,7 @@ Please note that it only applies to the states of California (under CCPA and CPR
+ 
+     <!-- Sync / People Page -->
+     <message name="IDS_SETTINGS_PEOPLE" desc="Name of the settings page which manages the user's relationship to Google.">
+-      You and Google
++      Your profile
+     </message>
+     <message name="IDS_SETTINGS_CHANGE_PICTURE_PROFILE_PHOTO" desc="The text on the Google profile photo of the user.">
+       Google Profile photo
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 4ad6593b83..593573cbd2 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1243,6 +1243,7 @@ source_set("core") {
+     "//components/site_engagement/core/mojom:mojo_bindings",
+     "//components/site_isolation",
+     "//components/skills:features",
++    "//components/spatikey",
+     "//components/spellcheck:buildflags",
+     "//components/spellcheck/browser",
+     "//components/spellcheck/common",
+diff --git a/chrome/browser/resources/settings/people_page/people_page.html b/chrome/browser/resources/settings/people_page/people_page.html
+index b76edfc2ac..a5d36ca00d 100644
+--- a/chrome/browser/resources/settings/people_page/people_page.html
++++ b/chrome/browser/resources/settings/people_page/people_page.html
+@@ -73,44 +73,6 @@
+     <settings-section page-title="$i18n{peoplePageTitle}">
+       <div>
+ 
+-<if expr="not is_chromeos">
+-        <template is="dom-if" if="[[shouldShowSyncAccountControl_(
+-            syncStatus.syncSystemEnabled, syncStatus.signedInStatus)]]" restamp>
+-          <settings-sync-account-control
+-              sync-status="[[syncStatus]]"
+-              promo-label-with-account="$i18n{peopleSignInPrompt}"
+-              promo-label-with-no-account="$i18n{peopleSignInPrompt}"
+-              promo-secondary-label-with-account=
+-                  "$i18n{peopleSignInPromptSecondaryWithAccount}"
+-              promo-secondary-label-with-no-account=
+-                  "$i18n{peopleSignInPromptSecondaryWithNoAccount}"
+-              access-point="[[accessPointEnum_.SETTINGS]]">
+-          </settings-sync-account-control>
+-        </template>
+-
+-        <template is="dom-if" if="[[shouldLinkToProfileRow_(
+-            syncStatus.syncSystemEnabled, signinAllowed_,
+-            syncStatus.signedInState)]]" restamp>
+-          <div id="profile-row" class="cr-row first two-line"
+-              actionable$="[[isProfileActionable_]]"
+-              on-click="onProfileClick_">
+-            <template is="dom-if" if="[[syncStatus]]">
+-              <div id="profile-icon"
+-                  style="background-image: [[getIconImageSet_(
+-                      profileIconUrl_)]]">
+-              </div>
+-              <div class="flex cr-row-gap cr-padded-text text-elide">
+-                <span id="profile-name">[[profileName_]]</span>
+-              </div>
+-              <cr-icon-button class="subpage-arrow"
+-                  aria-label="$i18n{editPerson}"
+-                  aria-describedby="profile-name"
+-                  aria-roledescription="$i18n{subpageArrowRoleDescription}">
+-              </cr-icon-button>
+-            </template>
+-          </div>
+-        </template>
+-</if>
+ 
+ <if expr="is_chromeos">
+         <template is="dom-if" if="[[!shouldLinkToAccountSettingsPage_(
+@@ -139,60 +101,18 @@
+         </template>
+ </if>
+ 
+-        <!-- Shared Elements -->
+-        <cr-link-row id="account-subpage-row" class="cr-row first"
+-            on-click="onAccountClick_"
+-            label="[[primaryAccountName_]]"
+-            sub-label="[[getAccountRowSubtitle_(primaryAccountEmail_, syncStatus)]]"
+-            role-description="$i18n{subpageArrowRoleDescription}"
+-            button-aria-description="$i18n{accountPageTitle}"
+-            hidden="[[!shouldLinkToAccountSettingsPage_(
+-              syncStatus.signedInState)]]">
+-          <div id="profile-icon"
+-              style="background-image: [[getIconImageSet_(
+-                  primaryAccountIconUrl_)]]">
+-          </div>
+-        </cr-link-row>
+-
+-        <cr-link-row id="sync-setup"
+-            label="$i18n{syncAndNonPersonalizedServices}"
+-            sub-label="[[getSyncAndNonPersonalizedServicesSubtext_(syncStatus)]]"
+-            on-click="onSyncClick_"
+-            role-description="$i18n{subpageArrowRoleDescription}"
+-            hidden="[[shouldHideSyncSetupLinkRow_(syncStatus)]]">
+-        </cr-link-row>
+-
+-        <cr-link-row id="google-services"
+-            label="$i18n{googleServicesPageTitle}"
+-            on-click="onGoogleServicesClick_"
+-            role-description="$i18n{subpageArrowRoleDescription}"
+-            hidden="[[!shouldHideSyncSetupLinkRow_(syncStatus)]]">
+-        </cr-link-row>
++
++
+ 
+ <if expr="not is_chromeos">
+-        <template is="dom-if" if="[[signinAllowed_]]">
+-          <cr-link-row id="manage-google-account"
+-              label="$i18n{manageGoogleAccount}"
+-              hidden="[[!shouldShowGoogleAccount_]]"
+-              on-click="openGoogleAccount_" external></cr-link-row>
+-
+-          <cr-link-row id="edit-profile"
+-              label="$i18n{profileNameAndPicture}"
+-              on-click="onProfileClick_" ></cr-link-row>
+-        </template>
++        <cr-link-row id="edit-profile" class="first"
++            label="$i18n{profileNameAndPicture}"
++            on-click="onProfileClick_"></cr-link-row>
+ 
+         <cr-link-row id="importDataDialogTrigger"
+             label="$i18n{importTitle}"
+             on-click="onImportDataClick_"></cr-link-row>
+ 
+-        <template is="dom-if" if="[[isDasherlessProfile_]]">
+-          <div id="sync-not-allowed" class="cr-row continuation">
+-            <cr-icon id="info-icon" icon="cr:info"></cr-icon>
+-            <div id="sync-not-allowed-text" class="flex cr-padded-text">
+-              $i18n{syncUnavailableForNonGoogleAccount}
+-            </div>
+-          </div>
+-        </template>
+ </if>
+ 
+       </div>
+diff --git a/chrome/browser/spatiand/profile_lock_dialog.cc b/chrome/browser/spatiand/profile_lock_dialog.cc
+index 2acc69b61a..160c2f0dcc 100644
+--- a/chrome/browser/spatiand/profile_lock_dialog.cc
++++ b/chrome/browser/spatiand/profile_lock_dialog.cc
+@@ -3,6 +3,7 @@
+ 
+ #include "chrome/browser/spatiand/profile_lock_dialog.h"
+ 
++#include <algorithm>
+ #include <memory>
+ #include <utility>
+ 
+@@ -10,13 +11,19 @@
+ #include "base/functional/callback.h"
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/weak_ptr.h"
++#include "base/strings/string_util.h"
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/task/thread_pool.h"
+ #include "base/time/time.h"
++#include "base/uuid.h"
++#include "base/values.h"
+ #include "chrome/browser/spatiand/profiles_sync.h"
++#include "components/spatikey/client.h"
+ #include "ui/base/mojom/dialog_button.mojom.h"
+ #include "ui/base/mojom/ui_base_types.mojom-shared.h"
+ #include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/controls/button/md_text_button.h"
++#include "ui/views/controls/button/radio_button.h"
+ #include "ui/views/controls/label.h"
+ #include "ui/views/controls/textfield/textfield.h"
+ #include "ui/views/layout/box_layout.h"
+@@ -31,45 +38,110 @@ namespace {
+ constexpr int kTriesBeforeWaiting = 5;
+ constexpr base::TimeDelta kWait = base::Seconds(30);
+ 
++const char kPin[] = "pin";
++const char kPassword[] = "password";
++
++// Wrong tries in a row, and what they have earned.
++struct Tries {
++  // Whether another may be made now.
++  bool Allowed() const { return base::Time::Now() >= wait_until; }
++  // What to say about one that was wrong.
++  std::u16string Wrong() {
++    if (++wrong >= kTriesBeforeWaiting) {
++      wrong = 0;
++      wait_until = base::Time::Now() + kWait;
++      return u"Too many wrong tries: wait half a minute.";
++    }
++    return u"That is not it.";
++  }
++
++  int wrong = 0;
++  base::Time wait_until;
++};
++
++views::Textfield* AddSecretField(views::View* contents, const std::u16string& name) {
++  auto* field = contents->AddChildView(std::make_unique<views::Textfield>());
++  field->SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
++  field->GetViewAccessibility().SetName(name);
++  return field;
++}
++
++views::Label* AddLabel(views::View* contents, const std::u16string& text) {
++  auto* label = contents->AddChildView(std::make_unique<views::Label>(text));
++  label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++  return label;
++}
++
+ class ProfileLockDialog : public views::DialogDelegate {
+  public:
+   ProfileLockDialog(const std::u16string& profile_name,
+                     bool is_pin,
+                     std::string salt,
+                     std::string hash,
++                    bool windows_waiting,
+                     base::OnceCallback<void(bool)> done)
+-      : salt_(std::move(salt)), hash_(std::move(hash)), done_(std::move(done)) {
++      : profile_name_(profile_name),
++        salt_(std::move(salt)),
++        hash_(std::move(hash)),
++        done_(std::move(done)) {
+     SetTitle(profile_name + u" is locked");
+     SetModalType(ui::mojom::ModalType::kNone);
+     SetShowCloseButton(true);
+     SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) |
+                static_cast<int>(ui::mojom::DialogButton::kCancel));
+     SetButtonLabel(ui::mojom::DialogButton::kOk, u"Open");
++    if (windows_waiting) {
++      SetButtonLabel(ui::mojom::DialogButton::kCancel, u"Close its windows");
++    }
+     views::View* contents = SetContentsView(std::make_unique<views::View>());
+     contents->SetLayoutManager(std::make_unique<views::BoxLayout>(
+         views::BoxLayout::Orientation::kVertical, gfx::Insets(16), 10));
+-    contents->AddChildView(std::make_unique<views::Label>(is_pin ? u"Its PIN:" : u"Its password:"))
+-        ->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+-    field_ = contents->AddChildView(std::make_unique<views::Textfield>());
+-    field_->SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
+-    field_->GetViewAccessibility().SetName(is_pin ? u"PIN" : u"Password");
+-    said_ = contents->AddChildView(std::make_unique<views::Label>(std::u16string()));
+-    said_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    AddLabel(contents, is_pin ? u"Its PIN:" : u"Its password:");
++    field_ = AddSecretField(contents, is_pin ? u"PIN" : u"Password");
++    said_ = AddLabel(contents, std::u16string());
+     SetAcceptCallbackWithClose(
+         base::BindRepeating(&ProfileLockDialog::Try, base::Unretained(this)));
+     SetCancelCallback(base::BindOnce(&ProfileLockDialog::Finish, base::Unretained(this), false));
+     SetCloseCallback(base::BindOnce(&ProfileLockDialog::Finish, base::Unretained(this), false));
+     SetInitiallyFocusedView(field_);
++    // A finger too, on a machine with a SpatiKey to ask: on the Deck, the Mac's.
++    finger_ = SetExtraView(std::make_unique<views::MdTextButton>(
++        base::BindRepeating(&ProfileLockDialog::AskFinger, base::Unretained(this)),
++        u"Open with a fingerprint"));
++    finger_->SetVisible(false);
++    spatikey::WhenUsableKnown(
++        base::BindOnce(&ProfileLockDialog::UsableKnown, weak_factory_.GetWeakPtr()));
+   }
+   ~ProfileLockDialog() override = default;
+ 
+  private:
++  void UsableKnown(bool usable) { finger_->SetVisible(usable); }
++
++  void AskFinger() {
++    finger_->SetEnabled(false);
++    said_->SetText(u"Waiting for a finger on SpatiKey's Touch ID.");
++    base::DictValue fields;
++    fields.Set("profile", base::UTF16ToUTF8(profile_name_));
++    spatikey::Ask("profile_unlock", std::move(fields),
++                  base::BindOnce(&ProfileLockDialog::Fingered, weak_factory_.GetWeakPtr()));
++  }
++
++  void Fingered(spatikey::Answer answer) {
++    if (answer.has_value()) {
++      Finish(true);
++      GetWidget()->Close();
++      return;
++    }
++    finger_->SetEnabled(true);
++    said_->SetText(base::UTF8ToUTF16(answer.error().message));
++  }
++
+   // Whether the dialog closes now: not until the many rounds of hashing have said.
+   bool Try() {
+     if (checking_) {
+       return false;
+     }
+-    if (base::Time::Now() < wait_until_) {
++    if (!tries_.Allowed()) {
+       said_->SetText(u"Too many wrong tries: wait a moment.");
+       return false;
+     }
+@@ -90,13 +162,7 @@ class ProfileLockDialog : public views::DialogDelegate {
+     }
+     field_->SetText(std::u16string());
+     field_->RequestFocus();
+-    if (++wrong_ >= kTriesBeforeWaiting) {
+-      wrong_ = 0;
+-      wait_until_ = base::Time::Now() + kWait;
+-      said_->SetText(u"Too many wrong tries: wait half a minute.");
+-    } else {
+-      said_->SetText(u"That is not it.");
+-    }
++    said_->SetText(tries_.Wrong());
+   }
+ 
+   void Finish(bool opened) {
+@@ -105,26 +171,204 @@ class ProfileLockDialog : public views::DialogDelegate {
+     }
+   }
+ 
++  const std::u16string profile_name_;
+   const std::string salt_;
+   const std::string hash_;
+   base::OnceCallback<void(bool)> done_;
+   raw_ptr<views::Textfield> field_ = nullptr;
+   raw_ptr<views::Label> said_ = nullptr;
++  raw_ptr<views::MdTextButton> finger_ = nullptr;
+   bool checking_ = false;
+-  int wrong_ = 0;
+-  base::Time wait_until_;
++  Tries tries_;
+   base::WeakPtrFactory<ProfileLockDialog> weak_factory_{this};
+ };
+ 
++struct NewLock {
++  std::string salt;
++  std::string hash;
++};
++
++NewLock MakeLock(const std::string& secret) {
++  NewLock lock;
++  lock.salt = base::Uuid::GenerateRandomV4().AsLowercaseString();
++  lock.hash = LockHash(lock.salt, secret);
++  return lock;
++}
++
++class ProfileLockSettings : public views::DialogDelegate {
++ public:
++  ProfileLockSettings(const std::u16string& profile_name,
++                      std::string kind,
++                      std::string salt,
++                      std::string hash,
++                      SaveLock save)
++      : kind_(std::move(kind)),
++        salt_(std::move(salt)),
++        hash_(std::move(hash)),
++        save_(std::move(save)) {
++    SetTitle(u"What opens " + profile_name);
++    SetModalType(ui::mojom::ModalType::kNone);
++    SetShowCloseButton(true);
++    SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) |
++               static_cast<int>(ui::mojom::DialogButton::kCancel));
++    SetButtonLabel(ui::mojom::DialogButton::kOk, u"Save");
++    views::View* contents = SetContentsView(std::make_unique<views::View>());
++    contents->SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kVertical, gfx::Insets(16), 8));
++    if (!hash_.empty()) {
++      AddLabel(contents, kind_ == kPin ? u"Its PIN now:" : u"Its password now:");
++      present_ = AddSecretField(contents, u"The present one");
++    }
++    const int group = 1;
++    const auto add_choice = [&](const std::u16string& label) {
++      auto* radio = contents->AddChildView(std::make_unique<views::RadioButton>(label, group));
++      radio->SetCallback(
++          base::BindRepeating(&ProfileLockSettings::ChoiceChanged, base::Unretained(this)));
++      return radio;
++    };
++    nothing_ = add_choice(u"Nothing: its windows just open");
++    pin_ = add_choice(u"A PIN, of 4 to 12 digits");
++    password_ = add_choice(u"A password, of at least 6 characters");
++    (kind_ == kPin ? pin_ : kind_ == kPassword ? password_ : nothing_)->SetChecked(true);
++    new_label_ = AddLabel(contents, u"The new one:");
++    new_ = AddSecretField(contents, u"The new one");
++    again_label_ = AddLabel(contents, u"Once more:");
++    again_ = AddSecretField(contents, u"Once more");
++    said_ = AddLabel(contents, std::u16string());
++    SetAcceptCallbackWithClose(
++        base::BindRepeating(&ProfileLockSettings::Try, base::Unretained(this)));
++    if (present_) {
++      SetInitiallyFocusedView(present_);
++    } else {
++      SetInitiallyFocusedView(nothing_);
++    }
++    ChoiceChanged();
++  }
++  ~ProfileLockSettings() override = default;
++
++ private:
++  void ChoiceChanged() {
++    const bool secret = !nothing_->GetChecked();
++    new_label_->SetEnabled(secret);
++    new_->SetEnabled(secret);
++    again_label_->SetEnabled(secret);
++    again_->SetEnabled(secret);
++  }
++
++  // Why what was typed will not do, if it will not.
++  std::u16string Refusal() const {
++    if (nothing_->GetChecked()) {
++      return std::u16string();
++    }
++    const std::u16string secret(new_->GetText());
++    if (pin_->GetChecked() &&
++        (secret.size() < 4 || secret.size() > 12 ||
++         !std::ranges::all_of(secret, [](char16_t c) { return base::IsAsciiDigit(c); }))) {
++      return u"A PIN is 4 to 12 digits.";
++    }
++    if (password_->GetChecked() && secret.size() < 6) {
++      return u"A password is at least 6 characters.";
++    }
++    if (secret != again_->GetText()) {
++      return u"The two are not the same.";
++    }
++    return std::u16string();
++  }
++
++  bool Try() {
++    if (working_) {
++      return false;
++    }
++    if (const std::u16string why = Refusal(); !why.empty()) {
++      said_->SetText(why);
++      return false;
++    }
++    if (hash_.empty()) {
++      Save();
++      return false;
++    }
++    if (!tries_.Allowed()) {
++      said_->SetText(u"Too many wrong tries: wait a moment.");
++      return false;
++    }
++    working_ = true;
++    base::ThreadPool::PostTaskAndReplyWithResult(
++        FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
++        base::BindOnce(&LockHash, salt_, base::UTF16ToUTF8(present_->GetText())),
++        base::BindOnce(&ProfileLockSettings::Checked, weak_factory_.GetWeakPtr()));
++    return false;
++  }
++
++  void Checked(std::string hash) {
++    working_ = false;
++    if (hash != hash_) {
++      present_->SetText(std::u16string());
++      present_->RequestFocus();
++      said_->SetText(tries_.Wrong());
++      return;
++    }
++    Save();
++  }
++
++  void Save() {
++    if (nothing_->GetChecked()) {
++      Saved(std::string(), {});
++      return;
++    }
++    working_ = true;
++    base::ThreadPool::PostTaskAndReplyWithResult(
++        FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
++        base::BindOnce(&MakeLock, base::UTF16ToUTF8(new_->GetText())),
++        base::BindOnce(&ProfileLockSettings::Saved, weak_factory_.GetWeakPtr(),
++                       std::string(pin_->GetChecked() ? kPin : kPassword)));
++  }
++
++  void Saved(std::string kind, NewLock lock) {
++    working_ = false;
++    std::move(save_).Run(kind, lock.salt, lock.hash);
++    GetWidget()->Close();
++  }
++
++  const std::string kind_;
++  const std::string salt_;
++  const std::string hash_;
++  SaveLock save_;
++  raw_ptr<views::Textfield> present_ = nullptr;
++  raw_ptr<views::RadioButton> nothing_ = nullptr;
++  raw_ptr<views::RadioButton> pin_ = nullptr;
++  raw_ptr<views::RadioButton> password_ = nullptr;
++  raw_ptr<views::Label> new_label_ = nullptr;
++  raw_ptr<views::Textfield> new_ = nullptr;
++  raw_ptr<views::Label> again_label_ = nullptr;
++  raw_ptr<views::Textfield> again_ = nullptr;
++  raw_ptr<views::Label> said_ = nullptr;
++  bool working_ = false;
++  Tries tries_;
++  base::WeakPtrFactory<ProfileLockSettings> weak_factory_{this};
++};
++
+ }  // namespace
+ 
+ void ShowProfileLockDialog(const std::u16string& profile_name,
+                            bool is_pin,
+                            const std::string& salt,
+                            const std::string& hash,
++                           bool windows_waiting,
+                            base::OnceCallback<void(bool)> done) {
+   views::DialogDelegate::CreateDialogWidget(
+-      std::make_unique<ProfileLockDialog>(profile_name, is_pin, salt, hash, std::move(done)),
++      std::make_unique<ProfileLockDialog>(profile_name, is_pin, salt, hash, windows_waiting,
++                                          std::move(done)),
++      /*context=*/gfx::NativeWindow(), /*parent=*/gfx::NativeView())
++      ->Show();
++}
++
++void ShowProfileLockSettings(const std::u16string& profile_name,
++                             const std::string& kind,
++                             const std::string& salt,
++                             const std::string& hash,
++                             SaveLock save) {
++  views::DialogDelegate::CreateDialogWidget(
++      std::make_unique<ProfileLockSettings>(profile_name, kind, salt, hash, std::move(save)),
+       /*context=*/gfx::NativeWindow(), /*parent=*/gfx::NativeView())
+       ->Show();
+ }
+diff --git a/chrome/browser/spatiand/profile_lock_dialog.h b/chrome/browser/spatiand/profile_lock_dialog.h
+index 2350d3f843..3c8938fd50 100644
+--- a/chrome/browser/spatiand/profile_lock_dialog.h
++++ b/chrome/browser/spatiand/profile_lock_dialog.h
+@@ -11,14 +11,28 @@
+ namespace spatiand {
+ 
+ // Asks for a profile's PIN or password, in a window of its own: nothing of the profile is shown
+-// until it is given. `done` says whether it was. Five wrong tries in a row and the next waits half
+-// a minute, as SpatiMesh's other builds do.
++// until it is given, or a finger is, if there is a SpatiKey to ask. `done` says whether it was.
++// Five wrong tries in a row and the next waits half a minute, as SpatiMesh's other builds do.
++// `windows_waiting`: its windows are there behind the lock, and not opening closes them.
+ void ShowProfileLockDialog(const std::u16string& profile_name,
+                            bool is_pin,
+                            const std::string& salt,
+                            const std::string& hash,
++                           bool windows_waiting,
+                            base::OnceCallback<void(bool)> done);
+ 
++// What a profile's windows ask for: nothing, a PIN of 4 to 12 digits or a password of at least 6
++// characters, typed twice, and changed or removed only after the present one. `save` is given the
++// new kind ("pin", "password"; empty for nothing), salt and hash.
++using SaveLock = base::OnceCallback<void(const std::string& kind,
++                                         const std::string& salt,
++                                         const std::string& hash)>;
++void ShowProfileLockSettings(const std::u16string& profile_name,
++                             const std::string& kind,
++                             const std::string& salt,
++                             const std::string& hash,
++                             SaveLock save);
++
+ }  // namespace spatiand
+ 
+ #endif  // CHROME_BROWSER_SPATIAND_PROFILE_LOCK_DIALOG_H_
+diff --git a/chrome/browser/spatiand/profiles_sync.cc b/chrome/browser/spatiand/profiles_sync.cc
+index b90c819ccb..443e40ab5a 100644
+--- a/chrome/browser/spatiand/profiles_sync.cc
++++ b/chrome/browser/spatiand/profiles_sync.cc
+@@ -25,6 +25,9 @@
+ #include "chrome/browser/profiles/profile_manager.h"
+ #include "chrome/browser/profiles/profile_metrics.h"
+ #include "chrome/browser/spatiand/profile_lock_dialog.h"
++#include "content/public/browser/web_contents.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "base/task/single_thread_task_runner.h"
+ #include "chrome/browser/spatiand/shared_folder.h"
+ #include "chrome/browser/themes/theme_service.h"
+ #include "chrome/browser/themes/theme_service_factory.h"
+@@ -160,6 +163,28 @@ void UpdateRecordFile(const std::string& id, const ProfileRecord& record) {
+   WriteJson(RecordFile(id), base::Value(std::move(dict)));
+ }
+ 
++// A profile's lock, or none, and the rest of the file as it is.
++void UpdateLockFile(const std::string& id,
++                    const std::string& kind,
++                    const std::string& salt,
++                    const std::string& hash) {
++  std::optional<base::Value> old = ReadJson(RecordFile(id));
++  if (!old || !old->is_dict()) {
++    return;
++  }
++  base::DictValue dict = std::move(*old).TakeDict();
++  if (kind.empty()) {
++    dict.Remove("lock");
++  } else {
++    base::DictValue lock;
++    lock.Set("kind", kind);
++    lock.Set("salt", salt);
++    lock.Set("hash", hash);
++    dict.Set("lock", std::move(lock));
++  }
++  WriteJson(RecordFile(id), base::Value(std::move(dict)));
++}
++
+ void WriteFirstRecord(const std::string& name, SkColor colour) {
+   base::DictValue dict;
+   dict.Set("name", name);
+@@ -535,29 +560,134 @@ bool ProfilesSync::DeferShow(Profile* profile, base::OnceClosure show) {
+   if (it == records_.end() || it->second.lock_hash.empty() || unlocked_.contains(id)) {
+     return false;
+   }
+-  std::vector<base::OnceClosure>& waiting = waiting_[id];
+-  waiting.push_back(std::move(show));
+-  if (waiting.size() == 1) {
++  waiting_[id].push_back(std::move(show));
++  if (!asking_.contains(id)) {
+     AskToUnlock(id, base::UTF8ToUTF16(it->second.name), it->second);
+   }
+   return true;
+ }
+ 
++bool ProfilesSync::HasLock(const base::FilePath& profile_path) const {
++  const auto it = records_.find(KnownIdOf(profile_path));
++  return it != records_.end() && !it->second.lock_hash.empty();
++}
++
++bool ProfilesSync::AnyLock() const {
++  return std::ranges::any_of(records_,
++                             [](const auto& record) { return !record.second.lock_hash.empty(); });
++}
++
++void ProfilesSync::EditLock(const base::FilePath& profile_path) {
++  const std::string id = IdOf(profile_path);
++  const auto it = records_.find(id);
++  if (it == records_.end()) {
++    return;
++  }
++  ShowProfileLockSettings(base::UTF8ToUTF16(it->second.name), it->second.lock_kind,
++                          it->second.lock_salt, it->second.lock_hash,
++                          base::BindOnce(&ProfilesSync::LockChanged,
++                                         weak_factory_.GetWeakPtr(), id));
++}
++
++void ProfilesSync::LockChanged(const std::string& id,
++                               const std::string& kind,
++                               const std::string& salt,
++                               const std::string& hash) {
++  if (const auto it = records_.find(id); it != records_.end()) {
++    it->second.lock_kind = kind;
++    it->second.lock_salt = salt;
++    it->second.lock_hash = hash;
++  }
++  // Whoever just said this is looking at it: its windows stay open, until the last of them closes.
++  unlocked_.insert(id);
++  files_->PostTask(FROM_HERE, base::BindOnce(&UpdateLockFile, id, kind, salt, hash));
++}
++
++void ProfilesSync::LockNow() {
++  // Not from inside the menu that asked, which goes with its window.
++  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
++      FROM_HERE, base::BindOnce(&ProfilesSync::LockAll, weak_factory_.GetWeakPtr()));
++}
++
++void ProfilesSync::LockAll() {
++  std::set<std::string> with_windows;
++  std::vector<BrowserWindowInterface*> windows;
++  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++      [this, &with_windows, &windows](BrowserWindowInterface* browser) {
++        const std::string id = KnownIdOf(browser->GetProfile()->GetOriginalProfile()->GetPath());
++        const auto it = records_.find(id);
++        if (it != records_.end() && !it->second.lock_hash.empty()) {
++          with_windows.insert(id);
++          windows.push_back(browser);
++        }
++        return true;
++      });
++  for (const auto& [id, record] : records_) {
++    if (!record.lock_hash.empty()) {
++      unlocked_.erase(id);
++    }
++  }
++  for (BrowserWindowInterface* browser : windows) {
++    const std::string id = KnownIdOf(browser->GetProfile()->GetOriginalProfile()->GetPath());
++    TabStripModel* tabs = browser->GetTabStripModel();
++    for (int i = 0; tabs && i < tabs->count(); ++i) {
++      content::WebContents* contents = tabs->GetWebContentsAt(i);
++      if (!contents->IsAudioMuted()) {
++        contents->SetAudioMuted(true);
++        hushed_[id].push_back(contents->GetWeakPtr());
++      }
++    }
++    browser->GetWindow()->Hide();
++  }
++  for (const std::string& id : with_windows) {
++    if (!asking_.contains(id)) {
++      const ProfileRecord& record = records_.at(id);
++      AskToUnlock(id, base::UTF8ToUTF16(record.name), record);
++    }
++  }
++}
++
+ void ProfilesSync::AskToUnlock(const std::string& id,
+                                const std::u16string& name,
+                                const ProfileRecord& record) {
++  asking_.insert(id);
++  bool windows_waiting = false;
++  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++      [this, &id, &windows_waiting](BrowserWindowInterface* browser) {
++        windows_waiting |= KnownIdOf(browser->GetProfile()->GetOriginalProfile()->GetPath()) == id &&
++                           !waiting_.contains(id);
++        return !windows_waiting;
++      });
+   ShowProfileLockDialog(name, record.lock_kind == "pin", record.lock_salt, record.lock_hash,
++                        windows_waiting,
+                         base::BindOnce(&ProfilesSync::Unlocked, weak_factory_.GetWeakPtr(), id));
+ }
+ 
+ void ProfilesSync::Unlocked(const std::string& id, bool opened) {
+   std::vector<base::OnceClosure> waiting = std::move(waiting_[id]);
+   waiting_.erase(id);
++  asking_.erase(id);
++  std::vector<base::WeakPtr<content::WebContents>> hushed = std::move(hushed_[id]);
++  hushed_.erase(id);
+   if (opened) {
+     unlocked_.insert(id);
+     for (base::OnceClosure& show : waiting) {
+       std::move(show).Run();
+     }
++    // And those Lock profiles now put out of sight.
++    ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++        [this, &id](BrowserWindowInterface* browser) {
++          if (KnownIdOf(browser->GetProfile()->GetOriginalProfile()->GetPath()) == id &&
++              !browser->GetWindow()->IsVisible()) {
++            browser->GetWindow()->Show();
++          }
++          return true;
++        });
++    for (const base::WeakPtr<content::WebContents>& contents : hushed) {
++      if (contents) {
++        contents->SetAudioMuted(false);
++      }
++    }
+     return;
+   }
+   // Not opened: its waiting windows go, never having been seen.
+diff --git a/chrome/browser/spatiand/profiles_sync.h b/chrome/browser/spatiand/profiles_sync.h
+index 464c9166ca..9c79c611de 100644
+--- a/chrome/browser/spatiand/profiles_sync.h
++++ b/chrome/browser/spatiand/profiles_sync.h
+@@ -25,6 +25,10 @@
+ class Profile;
+ class ThemeService;
+ 
++namespace content {
++class WebContents;
++}  // namespace content
++
+ namespace spatiand {
+ 
+ // A profile as `apps/spatimesh/profiles/<id>/profile.json` has it.
+@@ -75,6 +79,15 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
+   // opens it for the next, until the last of them closes.
+   bool DeferShow(Profile* profile, base::OnceClosure show);
+ 
++  // Whether this profile's windows ask for something, and whether any profile's do.
++  bool HasLock(const base::FilePath& profile_path) const;
++  bool AnyLock() const;
++  // What this profile's windows ask for, in a window of its own, for every machine.
++  void EditLock(const base::FilePath& profile_path);
++  // Every profile with a PIN or password locked: its windows out of sight and out of hearing until
++  // it is given. Their pages run on behind the lock.
++  void LockNow();
++
+  private:
+   ProfilesSync();
+   ~ProfilesSync() override;
+@@ -93,6 +106,11 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
+ 
+   void AskToUnlock(const std::string& id, const std::u16string& name, const ProfileRecord& record);
+   void Unlocked(const std::string& id, bool opened);
++  void LockChanged(const std::string& id,
++                   const std::string& kind,
++                   const std::string& salt,
++                   const std::string& hash);
++  void LockAll();
+ 
+   // ProfileAttributesStorage::Observer:
+   void OnProfileAdded(const base::FilePath& profile_path) override;
+@@ -122,6 +140,10 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
+   std::set<std::string> removing_;
+ 
+   std::set<std::string> unlocked_;
++  // Being asked for their PIN or password now.
++  std::set<std::string> asking_;
++  // Tabs hushed by LockNow, to be heard again when their profile opens.
++  std::map<std::string, std::vector<base::WeakPtr<content::WebContents>>> hushed_;
+   std::map<std::string, std::vector<base::OnceClosure>> waiting_;
+ 
+   base::ScopedObservation<ProfileAttributesStorage, ProfileAttributesStorage::Observer>
+diff --git a/chrome/browser/ui/views/profiles/profile_menu_view.cc b/chrome/browser/ui/views/profiles/profile_menu_view.cc
+index 1a49d286b6..176f91baee 100644
+--- a/chrome/browser/ui/views/profiles/profile_menu_view.cc
++++ b/chrome/browser/ui/views/profiles/profile_menu_view.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "chrome/browser/ui/views/profiles/profile_menu_view.h"
+ 
++#include "chrome/browser/spatiand/profiles_sync.h"
++
+ #include <algorithm>
+ #include <optional>
+ #include <string>
+@@ -1266,6 +1268,20 @@ void ProfileMenuView::BuildFeatureButtons() {
+   BuildAutofillSettingsButton();
+   MaybeBuildManageGoogleAccountButton();
+   BuildCustomizeProfileButton();
++  if (spatiand::ProfilesSync* profiles = spatiand::ProfilesSync::Get()) {
++    const base::FilePath path = profile().GetPath();
++    AddFeatureButton(
++        profiles->HasLock(path) ? u"Change its PIN or password" : u"Set a PIN or password",
++        base::BindRepeating(
++            [](ProfileMenuView* menu, base::FilePath path) {
++              menu->GetWidget()->CloseWithReason(views::Widget::ClosedReason::kUnspecified);
++              if (spatiand::ProfilesSync* profiles = spatiand::ProfilesSync::Get()) {
++                profiles->EditLock(path);
++              }
++            },
++            base::Unretained(this), path),
++        vector_icons::kLockIcon);
++  }
+   (syncer::IsReplaceSyncPromosWithSignInPromosEnabled() &&
+    (!identity_manager ||
+     !identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync)))
+@@ -1425,4 +1441,18 @@ void ProfileMenuView::BuildProfileManagementFeatureButtons() {
+       l10n_util::GetStringUTF16(IDS_PROFILE_MENU_MANAGE_PROFILES),
+       base::BindRepeating(&ProfileMenuView::OnManageProfilesButtonClicked,
+                           base::Unretained(this)));
++
++  if (spatiand::ProfilesSync* profiles = spatiand::ProfilesSync::Get();
++      profiles && profiles->AnyLock()) {
++    AddProfileManagementFeatureButton(
++        vector_icons::kLockIcon, u"Lock profiles now",
++        base::BindRepeating(
++            [](ProfileMenuView* menu) {
++              menu->GetWidget()->CloseWithReason(views::Widget::ClosedReason::kUnspecified);
++              if (spatiand::ProfilesSync* profiles = spatiand::ProfilesSync::Get()) {
++                profiles->LockNow();
++              }
++            },
++            base::Unretained(this)));
++  }
+ }
+-- 
+2.53.0
+

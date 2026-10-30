@@ -127,6 +127,7 @@ pub fn op(request: &Request) -> &'static str {
         Request::Reveal { .. } => "reveal",
         Request::Fill { .. } => "fill",
         Request::Save { .. } => "save",
+        Request::ProfileUnlock { .. } => "profile_unlock",
         Request::PasskeyCreate(_) => "passkey_create",
         Request::PasskeyGet(_) => "passkey_get",
         Request::Type { .. } => "type",
