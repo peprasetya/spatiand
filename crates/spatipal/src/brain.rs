@@ -50,6 +50,8 @@ pub enum Told {
     /// A tool is being done, by name: the figure works.
     Doing(String),
     Did(String),
+    /// The wearer dismissed it: it goes once it has said so.
+    Dismissed,
     /// The larger model has it now.
     HandedOver(String),
     Done(Said),
@@ -210,6 +212,7 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
         let read_thinking = large && s.thinking == "read";
         let asked_at = std::time::Instant::now();
         log::info!("brain: asking {model} ({} messages)", messages.len());
+        voice.set_generating(true);
         let answer = converse(hemera, &ask, |piece| {
             if stop.load(Ordering::Relaxed) {
                 return false;
@@ -255,7 +258,9 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
                 Piece::Calling(_) => {}
             }
             true
-        })?;
+        });
+        voice.set_generating(false);
+        let answer = answer?;
         if decided.is_none() {
             // Answered before the decision came: it comes in a moment.
             decided = Some(decision.as_ref().and_then(|rx| rx.recv_timeout(Duration::from_secs(3)).ok()).unwrap_or(false));
@@ -314,6 +319,9 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
                 continue;
             }
             say(Told::Doing(call.name.clone()));
+            if call.name == "dismiss" {
+                say(Told::Dismissed);
+            }
             let done = tools::run(call, room);
             log::info!("brain: {}({}) -> {}", call.name, call.arguments, done.content.chars().take(160).collect::<String>());
             if let Some(h) = done.held.clone() {
@@ -350,9 +358,11 @@ fn system(s: &Settings, larger: bool) -> String {
     format!(
         "You are {name}, the wearer's assistant in Spatiand, a 3D desktop seen through glasses. {persona}\n\
          \n\
-         Talk like a person: short, natural sentences, in the language of the wearer's last words. They often mix Indonesian and English in one sentence; follow them. What you write is spoken aloud: no markdown, no lists unless asked, no emoji.\n\
+         Talk like a person: short, natural sentences. Answer in the language of the wearer's last message: English to English, Indonesian to Indonesian; only when they mix the two in that message, mix them too. What you write is spoken aloud: no markdown, no lists unless asked, no emoji.\n\
          \n\
-         Each message from the wearer begins with a note in square brackets on the room as it is then: the time, and the windows in it. The wearer did not say it; use it when it helps.\n\
+         Each message from the wearer begins with a note in square brackets on the room as it is then: the time, the windows on show, and the hidden ones. The wearer did not say it; use it when it helps.\n\
+         The windows on show are what the wearer sees and means. A hidden window is not in the room, and may be something on their computer's own screen: read it, look at it or bring it out only when they name it or ask for it. Asked what is open, talk about what is on show, and mention the hidden ones only if asked.\n\
+         Told to go away or that it is all for now, call dismiss, and do nothing to any window.\n\
          \n\
          You act in the room with your tools: open applications, work windows as the wearer would (read them, look at them, click, right-click, scroll, drag, type, press keys), bring the room back in front of the wearer, and keep reminders. To find where to click, look at the window first; places are fractions of the window from 0 to 1, from its top left. Say briefly what you are doing.\n\
          Ask the wearer first before closing a window, deleting anything, sending a message, buying anything, or pressing Enter in a terminal.\n\
@@ -388,14 +398,15 @@ pub fn prime(s: &Settings, larger: bool) -> Value {
 
 /// The room as it is now, for the wearer's message: the time, and the windows in it.
 fn room_note(windows: &Value) -> String {
-    let mut listed = String::new();
-    for w in windows.get("windows").and_then(Value::as_array).into_iter().flatten().take(14) {
+    let (mut shown, mut hidden) = (String::new(), String::new());
+    let (mut n_shown, mut n_hidden) = (0, 0);
+    for w in windows.get("windows").and_then(Value::as_array).into_iter().flatten() {
         let id = w.get("window").and_then(Value::as_u64).unwrap_or(0);
         let app = w.get("app").and_then(Value::as_str).unwrap_or_default();
         let app = app.rsplit('.').next().unwrap_or(app);
         let title = w.get("title").and_then(Value::as_str).unwrap_or_default();
         let mut flags = Vec::new();
-        for (key, word) in [("focused", "focused"), ("hidden", "hidden"), ("pinned", "pinned")] {
+        for (key, word) in [("focused", "focused"), ("pinned", "pinned")] {
             if w.get(key).and_then(Value::as_bool) == Some(true) {
                 flags.push(word);
             }
@@ -404,12 +415,24 @@ fn room_note(windows: &Value) -> String {
             flags.push("your own chat window");
         }
         let flags = if flags.is_empty() { String::new() } else { format!(" ({})", flags.join(", ")) };
-        listed.push_str(&format!("\n- window {id}: {app} \u{2014} {title}{flags}"));
+        let line = format!("\n- window {id}: {app} \u{2014} {title}{flags}");
+        if w.get("hidden").and_then(Value::as_bool) == Some(true) {
+            n_hidden += 1;
+            if n_hidden <= 10 {
+                hidden.push_str(&line);
+            }
+        } else {
+            n_shown += 1;
+            if n_shown <= 14 {
+                shown.push_str(&line);
+            }
+        }
     }
-    if listed.is_empty() {
-        listed = " none".into();
+    if shown.is_empty() {
+        shown = " none".into();
     }
-    format!("[It is {}. Windows in the room:{listed}]", crate::time::now_line(crate::store::now()))
+    let hidden = if hidden.is_empty() { String::new() } else { format!("\nHidden, not in the room:{hidden}") };
+    format!("[It is {}. Windows on show in the room:{shown}{hidden}]", crate::time::now_line(crate::store::now()))
 }
 
 /// How much of the chat the model is given, at the least, and the steps its start moves in: the
@@ -459,6 +482,12 @@ mod tests {
         assert!(!a.contains("window 3") && note.contains("window 3: spatiquill"));
         assert_eq!(a, system(&s, false));
         assert!(note.starts_with("[It is ") && note.ends_with("(focused)]"));
+        let both = room_note(&json!({"windows": [
+            {"window": 6, "app": "Terminal", "title": "temp", "hidden": true},
+            {"window": 3, "app": "spatiquill", "title": "~"},
+        ]}));
+        let (on_show, kept) = both.split_once("Hidden, not in the room:").unwrap();
+        assert!(on_show.contains("window 3") && !on_show.contains("window 6") && kept.contains("window 6"));
     }
 
     #[test]

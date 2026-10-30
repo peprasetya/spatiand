@@ -581,14 +581,14 @@ fn window_list(state: &Spatiand, windows: &[crate::scene::WindowQuad]) -> Vec<Va
 }
 
 /// The window a question is about: its `window`, else the one the wearer is working in -- the
-/// focused one, unless that is the assistant's own (they have just been typing to it), and then
-/// the one on top of the others.
+/// focused one, unless that is the assistant's own (they have just been typing to it) or hidden,
+/// and then the one on top of the others.
 fn window_of(state: &Spatiand, asked: &Asked) -> Option<usize> {
     if let Some(id) = asked.number("window").map(|n| n as usize) {
         return state.space.elements().any(|w| state.layout.id_of(w) == Some(id)).then_some(id);
     }
     let focused = state.space.elements().find(|w| state.layout.id_of(w) == state.layout.focused_id() && state.layout.focused_id().is_some());
-    if let Some(w) = focused.filter(|w| !is_own(w)) {
+    if let Some(w) = focused.filter(|w| !is_own(w) && !state.layout.is_hidden(w)) {
         return state.layout.id_of(w);
     }
     // The space lists windows bottom to top: the last that is not the assistant's.

@@ -425,13 +425,14 @@ impl Avatar {
             let (y, p) = (yaw.to_radians(), pitch.to_radians());
             head * DVec3::new(p.cos() * y.cos(), p.cos() * y.sin(), p.sin()) * DISTANCE_M
         };
-        // **All of it inside the view**, measured through the eye itself rather than trusted to
-        // the field of view's numbers: what pokes out is brought in by as much.
+        // **In the corner of the view**, measured through the eye itself rather than trusted to the
+        // field of view's numbers -- which left it a third of the way out from the middle on the
+        // Mac (2026-10-30). Moved out or in until its edges are at the view's.
         if let Some(eye) = eyes.first() {
             let vp = eye.view_projection();
-            for _ in 0..3 {
+            for _ in 0..4 {
                 let middle = (place(yaw, pitch) + head * DVec3::new(0.0, 0.0, MIDDLE_M)).as_vec3();
-                let Some([x0, x1, y0, y1]) = crop_of(&vp, middle, REACH_M * 0.85) else { break };
+                let Some([x0, x1, y0, y1]) = extent_of(&vp, middle, REACH_M * 0.85) else { break };
                 // Which way is down in this eye's coordinates: the Deck draws its eyes flipped.
                 let below = middle - (head * DVec3::Z).as_vec3() * 0.1;
                 let ndc = |p: Vec3| {
@@ -441,11 +442,11 @@ impl Avatar {
                 let down_is_negative = ndc(below) < ndc(middle);
                 let over_x = if side > 0.0 { -0.97 - x0 } else { x1 - 0.97 };
                 let over_y = if down_is_negative { -0.95 - y0 } else { y1 - 0.95 };
-                if over_x <= 0.0 && over_y <= 0.0 {
+                if over_x.abs() < 0.01 && over_y.abs() < 0.01 {
                     break;
                 }
-                yaw -= side * over_x.max(0.0) as f64 * fov_deg.0 * 0.5;
-                pitch += over_y.max(0.0) as f64 * fov_deg.1 * 0.5;
+                yaw -= side * over_x as f64 * fov_deg.0 * 0.5;
+                pitch += over_y as f64 * fov_deg.1 * 0.5;
             }
         }
         let target = place(yaw, pitch);
@@ -858,6 +859,20 @@ fn scaled(at: Vec3, size: Vec3) -> Mat4 {
 /// The part of an eye's view a sphere at `middle` of `reach` covers, in its normalised device
 /// coordinates, a little more for safety; `None` when it is behind the eye.
 fn crop_of(vp: &Mat4, middle: Vec3, reach: f32) -> Option<[f32; 4]> {
+    let [x0, x1, y0, y1] = extent_of(vp, middle, reach)?;
+    // Square, so the picture's pixels are square on the glass.
+    let (cx, cy) = ((x0 + x1) * 0.5, (y0 + y1) * 0.5);
+    let half = (x1 - x0).max(y1 - y0) * 0.5;
+    let (hx, hy) = (half, half);
+    if cx + hx < -1.2 || cx - hx > 1.2 || cy + hy < -1.2 || cy - hy > 1.2 {
+        return None;
+    }
+    Some([cx - hx, cx + hx, cy - hy, cy + hy])
+}
+
+/// How far across and up an eye's view a sphere at `middle` of `reach` really goes, in its
+/// normalised device coordinates; `None` when it is behind the eye.
+fn extent_of(vp: &Mat4, middle: Vec3, reach: f32) -> Option<[f32; 4]> {
     let mut x0 = f32::MAX;
     let mut x1 = f32::MIN;
     let mut y0 = f32::MAX;
@@ -878,14 +893,7 @@ fn crop_of(vp: &Mat4, middle: Vec3, reach: f32) -> Option<[f32; 4]> {
         y0 = y0.min(ndc.y);
         y1 = y1.max(ndc.y);
     }
-    // Square, so the picture's pixels are square on the glass.
-    let (cx, cy) = ((x0 + x1) * 0.5, (y0 + y1) * 0.5);
-    let half = (x1 - x0).max(y1 - y0) * 0.5;
-    let (hx, hy) = (half, half);
-    if cx + hx < -1.2 || cx - hx > 1.2 || cy + hy < -1.2 || cy - hy > 1.2 {
-        return None;
-    }
-    Some([cx - hx, cx + hx, cy - hy, cy + hy])
+    Some([x0, x1, y0, y1])
 }
 
 /// The clip-space transform that makes the crop `rect` the whole of what is drawn.

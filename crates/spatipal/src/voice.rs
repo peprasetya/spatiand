@@ -7,6 +7,12 @@
 //! handed it more than a third of a second ahead -- and hemera makes speech two and a half times
 //! faster than it is spoken. The second also keeps the time the last sound will have been heard
 //! by, for the ears: what is heard while it speaks is its own voice, not the wearer's.
+//!
+//! **The voice shares its GPU with the models.** Alone it makes speech 2.5 times faster than it is
+//! spoken; while the small model writes, 0.7 times; while the larger one does, 0.6 (measured
+//! 2026-10-30), and played as it came it stuttered. So a sentence is not begun until the model is
+//! done writing, if that is a moment away -- most answers are a sentence or two -- and it is not
+//! played until enough has been made that the rest will arrive before it is needed.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -26,9 +32,23 @@ enum Line {
 }
 
 enum Sound {
+    /// A sentence begins, about this many seconds long.
+    Begin(f32),
     Pcm(Vec<i16>),
+    /// All of it has come.
+    End,
     Hush,
 }
+
+/// How long a sentence waits for a model that is writing to be done.
+const WAIT_FOR_MODEL: Duration = Duration::from_millis(600);
+/// At least this much is made before it is played, seconds.
+const LEAST_AHEAD: f32 = 0.25;
+/// And at most this much, whatever it looks like: the wearer is waiting.
+const MOST_AHEAD: f32 = 4.0;
+/// How long a slice is handed to the room at a time, in samples: it drops what is more than a
+/// third of a second ahead, and speech comes in pieces of up to two thirds.
+const SLICE: usize = SPEECH_RATE as usize / 20;
 
 /// The voice, to be told what to say. Cheap to clone.
 #[derive(Clone)]
@@ -49,6 +69,8 @@ struct Shared {
     hemera: Mutex<Hemera>,
     /// When the wearer stopped speaking, until the first sound of the answer: for the log.
     mark: Mutex<Option<Instant>>,
+    /// A model is writing, on the GPU the voice needs.
+    generating: AtomicBool,
 }
 
 impl Voice {
@@ -64,6 +86,7 @@ impl Voice {
             voice: Mutex::new(voice),
             hemera: Mutex::new(hemera),
             mark: Mutex::new(None),
+            generating: AtomicBool::new(false),
         });
         let s = shared.clone();
         std::thread::Builder::new().name("voice-say".into()).spawn(move || speak(said, sounds, s)).expect("a thread for the voice");
@@ -85,6 +108,11 @@ impl Voice {
     /// Stop talking: what is waiting is not said.
     pub fn hush(&self) {
         let _ = self.lines.send(Line::Hush);
+    }
+
+    /// Whether a model is writing now: what is to be said gives it a moment to finish.
+    pub fn set_generating(&self, on: bool) {
+        self.shared.generating.store(on, Ordering::Relaxed);
     }
 
     /// A soft tone while the larger model thinks, when nothing is being said.
@@ -144,6 +172,7 @@ impl Voice {
             voice: Mutex::new(Spoken::default()),
             hemera: Mutex::new(Hemera::new("http://localhost:9")),
             mark: Mutex::new(None),
+            generating: AtomicBool::new(false),
         });
         Voice { lines, shared }
     }
@@ -160,9 +189,16 @@ fn speak(lines: Receiver<Line>, sounds: Sender<Sound>, shared: Arc<Shared>) {
                 let _ = sounds.send(Sound::Hush);
             }
             Line::Say(text) => {
+                let asked = Instant::now();
+                while shared.generating.load(Ordering::Relaxed) && asked.elapsed() < WAIT_FOR_MODEL {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
                 let voice = shared.voice.lock().unwrap().clone();
                 let hemera = shared.hemera.lock().unwrap().clone();
-                let result = speech::say(&hemera, &voice, &spoken_form(&text), |pcm| sounds.send(Sound::Pcm(pcm.to_vec())).is_ok());
+                let said = spoken_form(&text);
+                let _ = sounds.send(Sound::Begin(said.chars().count() as f32 / 17.0));
+                let result = speech::say(&hemera, &voice, &said, |pcm| sounds.send(Sound::Pcm(pcm.to_vec())).is_ok());
+                let _ = sounds.send(Sound::End);
                 if let Err(why) = result {
                     log::warn!("voice: {why}");
                 }
@@ -190,43 +226,95 @@ fn play(heard: Receiver<Sound>, shared: Arc<Shared>) {
     // The moment the sound handed over so far will have been heard by.
     let mut heard_by = Instant::now();
     let mut next_tone = Instant::now();
+    let seconds_of = |n: usize| n as f32 / SPEECH_RATE as f32;
+    // What has come and not been handed over; whether it is being held to let more come.
+    let mut waiting: std::collections::VecDeque<i16> = std::collections::VecDeque::new();
+    let mut holding = true;
+    // The sentence being made: how long it should be, how much has come, since when, and whether
+    // all of it has.
+    let (mut expected, mut came, mut first_came) = (0.0f32, 0.0f32, None::<(Instant, f32)>);
+    let mut all_came = true;
     loop {
-        match heard.recv_timeout(Duration::from_millis(40)) {
+        match heard.recv_timeout(Duration::from_millis(10)) {
+            Ok(Sound::Begin(seconds)) => {
+                (expected, came, first_came, all_came) = (seconds, 0.0, None, false);
+                // Going on from what is playing, there is nothing to hold; else, enough first.
+                holding = waiting.is_empty() && Instant::now() >= heard_by;
+            }
             Ok(Sound::Pcm(pcm)) => {
-                // Not more than a fifth of a second ahead of the ear.
                 let now = Instant::now();
-                if heard_by < now {
-                    heard_by = now;
-                }
-                let ahead = heard_by - now;
-                if ahead > Duration::from_millis(200) {
-                    std::thread::sleep(ahead - Duration::from_millis(150));
-                }
-                let samples: Vec<f32> = pcm.iter().map(|&s| s as f32 / 32768.0).collect();
-                stream.push(&samples, 1, SPEECH_RATE);
-                if let Some(ended) = shared.mark.lock().unwrap().take() {
-                    log::info!("voice: first sound {:.2} s after the wearer stopped speaking", ended.elapsed().as_secs_f32());
-                }
-                heard_by += Duration::from_secs_f64(pcm.len() as f64 / SPEECH_RATE as f64);
-                let at = heard_by.saturating_duration_since(shared.epoch).as_millis() as u64;
-                shared.quiet_at.store(at, Ordering::Relaxed);
-                next_tone = heard_by + Duration::from_millis(900);
+                came += seconds_of(pcm.len());
+                first_came.get_or_insert((now, came));
+                waiting.extend(pcm);
+            }
+            Ok(Sound::End) => {
+                all_came = true;
+                holding = false;
             }
             Ok(Sound::Hush) => {
                 // What was handed over is heard out; nothing more is.
+                waiting.clear();
                 heard_by = Instant::now();
+                holding = true;
+                all_came = true;
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                let now = Instant::now();
-                if shared.thinking.load(Ordering::Relaxed) && shared.waiting.load(Ordering::Relaxed) == 0 && now >= next_tone && now >= heard_by {
-                    let tone = thinking_tone();
-                    stream.push(&tone, 1, SPEECH_RATE);
-                    heard_by = now + Duration::from_secs_f64(tone.len() as f64 / SPEECH_RATE as f64);
-                    next_tone = now + Duration::from_millis(1800);
-                }
-            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
         }
+        let now = Instant::now();
+        if holding {
+            let rate = first_came.and_then(|(at, then)| {
+                let time = now.duration_since(at).as_secs_f32();
+                (time > 0.05).then(|| (came - then) / time)
+            });
+            holding = !enough(seconds_of(waiting.len()), (expected - came).max(0.0), rate);
+        }
+        if !holding {
+            // Not more than a fifth of a second ahead of the ear.
+            while !waiting.is_empty() && heard_by.saturating_duration_since(now) < Duration::from_millis(200) {
+                let slice: Vec<f32> = waiting.drain(..SLICE.min(waiting.len())).map(|s| s as f32 / 32768.0).collect();
+                if heard_by < now {
+                    heard_by = now;
+                }
+                stream.push(&slice, 1, SPEECH_RATE);
+                if let Some(ended) = shared.mark.lock().unwrap().take() {
+                    log::info!("voice: first sound {:.2} s after the wearer stopped speaking", ended.elapsed().as_secs_f32());
+                }
+                heard_by += Duration::from_secs_f64(slice.len() as f64 / SPEECH_RATE as f64);
+                next_tone = heard_by + Duration::from_millis(900);
+            }
+            // Run dry with more to come: hold again rather than stutter on.
+            if waiting.is_empty() && !all_came && now >= heard_by {
+                log::info!("voice: ran dry, holding for more ({:.1} s of about {expected:.1} s came)", came);
+                holding = true;
+            }
+        }
+        if heard_by > shared.epoch {
+            let at = heard_by + Duration::from_secs_f32(seconds_of(waiting.len()));
+            shared.quiet_at.store(at.saturating_duration_since(shared.epoch).as_millis() as u64, Ordering::Relaxed);
+        }
+        if waiting.is_empty() && shared.thinking.load(Ordering::Relaxed) && shared.waiting.load(Ordering::Relaxed) == 0 && now >= next_tone && now >= heard_by {
+            let tone = thinking_tone();
+            stream.push(&tone, 1, SPEECH_RATE);
+            heard_by = now + Duration::from_secs_f64(tone.len() as f64 / SPEECH_RATE as f64);
+            next_tone = now + Duration::from_millis(1800);
+        }
+    }
+}
+
+/// Whether what has been made is enough to start playing: `ahead` seconds of it, `left` still to
+/// come at `rate` seconds of speech a second (`None` while too little has come to tell). It lasts
+/// `ahead + left` seconds, and the rest takes `left / rate` to come.
+fn enough(ahead: f32, left: f32, rate: Option<f32>) -> bool {
+    if ahead < LEAST_AHEAD {
+        return false;
+    }
+    if ahead >= MOST_AHEAD {
+        return true;
+    }
+    match rate {
+        Some(rate) if rate > 0.01 => ahead + left >= left / rate * 1.1,
+        _ => false,
     }
 }
 
@@ -255,6 +343,18 @@ mod tests {
         let t = thinking_tone();
         assert!(t.iter().all(|s| s.abs() <= 0.05));
         assert!(t[0].abs() < 1e-3 && t.last().unwrap().abs() < 1e-3);
+    }
+
+    #[test]
+    fn it_plays_once_the_rest_will_come_in_time() {
+        // Alone on the GPU: as soon as there is anything to speak of.
+        assert!(!enough(0.16, 4.8, None));
+        assert!(enough(0.3, 4.7, Some(2.5)));
+        // A model writing beside it, at 0.7: the 5 s sentence wants about 2 s made first.
+        assert!(!enough(0.5, 4.5, Some(0.7)));
+        assert!(enough(2.0, 3.0, Some(0.7)));
+        // But the wearer is not kept waiting for ever.
+        assert!(enough(4.0, 20.0, Some(0.1)));
     }
 
     #[test]

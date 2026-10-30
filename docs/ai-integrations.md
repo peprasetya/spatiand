@@ -242,3 +242,31 @@ app alone (it sends the old moods too, so the running room shows what it knew be
 Not yet checked: the new gestures in the glasses (they are the room's: Spatiand must be rebuilt
 and restarted); a real voice in a real room -- its own voice heard back, a pause in the middle of
 an Indonesian sentence; the Deck and the Beam Pro; a VRM figure's states (still no VRM file).
+
+### What the owner's next test found (2026-10-30)
+
+- **A silent room asked "can you check the log?" over and over.** My Whisper prompt of the day
+  before ended "Pixel, can you check the log?"; Whisper given noise reads back the end of its
+  prompt, and with the name in it that was a request, and each answer kept the conversation open.
+  And the cutter fed it 25 s "phrases" of silence: its floor was the quietest moment, so the
+  room's own wavering kept them going. Now: the name is not last in the prompt; the floor is the
+  quiet end of the last 3 s; **a voice's loudness moves 3-6 dB from window to window and a hum's
+  under 0.5 dB**, so what does not move is let go within 3 s; and what Whisper writes is let go when
+  it barely believes it (mean word probability under 0.4), when there are far too few letters
+  for the time, or when one sentence repeats. A workaround for a real voice detector (Silero or
+  the like), which is the proper answer if this lets noise through. Checked on generated noise;
+  **not on the owner's microphone** -- `ears: let go, ...` in the log says what it drops.
+- **Speech stuttered while a model wrote**: they share a GPU. voxcpm2 makes speech at 2.5x alone,
+  0.7x beside the small model, 0.6x beside the larger. A sentence now waits up to 0.6 s for the
+  model to finish, and is played only once the rest will come in time (`voice::enough`, at most 4 s
+  held; `voice: ran dry` in the log if it still does). Costs up to about 1 s before the first sound.
+- **It read windows that were not in the room**: a Mac's windows arrive hidden. The note given
+  with each message now separates those on show from the hidden, the system message says to
+  leave hidden ones alone unless named, `list_windows` puts them last, and a request naming no
+  window never takes a hidden one.
+- **The figure sat a third of the way out** from the middle: the room moved it in if it poked out,
+  never out to the edge, and measured a box square in device coordinates, wider than the figure
+  on a 16:9 view. Now it is placed at the corner by its true extent, either way.
+- **No way to shut it down**: closing its window left it listening. Closing now quits it unless it
+  is switched on (`on`); the `dismiss` tool ("you may go") has it say goodbye and go -- or, switched
+  on, stay deaf and unseen for its reminders until opened again.

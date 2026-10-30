@@ -45,7 +45,7 @@ pub fn all(small: bool) -> Vec<Value> {
     let mut tools = vec![
         tool("open_app", "Open an application in the room, by its name.", json!({"name": {"type": "string"}}), &["name"]),
         tool("list_apps", "The applications that can be opened.", json!({}), &[]),
-        tool("list_windows", "The windows in the room now, with their numbers.", json!({}), &[]),
+        tool("list_windows", "The windows there are, with their numbers: those on show in the room first, then the hidden ones.", json!({}), &[]),
         tool(
             "window",
             "Do something to a window: focus it, hide it, show it again, pin it to the view, unpin it, or close it. Closing waits for the wearer's yes.",
@@ -90,6 +90,12 @@ pub fn all(small: bool) -> Vec<Value> {
             &["keys"],
         ),
         tool("recentre", "Bring the room back in front of the wearer.", json!({}), &[]),
+        tool(
+            "dismiss",
+            "Go away: stop listening and leave the room, until the wearer opens you again. For \"you may go\", \"go away\", \"that's all\", \"pergi\", \"sudah, makasih\", \"shut down\". Then say only a very short goodbye.",
+            json!({}),
+            &[],
+        ),
         tool(
             "room_control",
             "Use one of the room's own controls: show or hide the keyboard, move the pinned windows to the next corner, change their size, change the room's look (light, dark), take a screenshot, start or stop recording, show the list of windows, open the Wi-Fi or Bluetooth settings.",
@@ -187,7 +193,14 @@ fn run_as(call: &ToolCall, room: &Room, agreed: bool) -> Done {
             answer_of(answer, format!("opened {opened}"))
         }
         "list_apps" => done(room.ask(json!({"do": "apps"})).to_string(), None),
-        "list_windows" => done(room.ask(json!({"do": "windows"})).to_string(), None),
+        "dismiss" => done("You will leave once you have said goodbye.".to_string(), Some("left the room".to_string())),
+        "list_windows" => {
+            let mut answer = room.ask(json!({"do": "windows"}));
+            if let Some(list) = answer.get_mut("windows").and_then(Value::as_array_mut) {
+                list.sort_by_key(|w| w.get("hidden").and_then(Value::as_bool) == Some(true));
+            }
+            done(answer.to_string(), None)
+        }
         "window" => {
             let action = get("action").as_str().unwrap_or("focus").to_string();
             if action == "close" && !agreed {
