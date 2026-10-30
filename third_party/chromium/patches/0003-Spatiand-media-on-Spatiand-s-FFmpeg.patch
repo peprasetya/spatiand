@@ -1,4 +1,4 @@
-From 19cb1ecdce059f8c8f1e22dd975966645d64c640 Mon Sep 17 00:00:00 2001
+From 5fb26b806da29cdaabe97bdc0cc0780dbc081101 Mon Sep 17 00:00:00 2001
 From: Spatiand build <claude@prasetya.id>
 Date: Thu, 29 Oct 2026 23:52:33 +0000
 Subject: [PATCH] Spatiand: media on Spatiand's FFmpeg
@@ -7,20 +7,20 @@ Chromium links Spatiand's FFmpeg 9.0.2 (build/linux/unbundle/ffmpeg.gn, staged b
 build.sh), which also decodes HEVC in software and Dolby Digital (Plus); VA-API keeps VP9, AV1
 and H.264 but never HEVC, which has reset this GPU family.
 ---
- build/linux/unbundle/ffmpeg.gn        | 23 +++++++++++++++++------
- media/base/supported_types.cc         | 11 +----------
- media/ffmpeg/ffmpeg_common.cc         |  7 +++++--
- media/filters/ffmpeg_demuxer.cc       | 13 ++-----------
+ build/linux/unbundle/ffmpeg.gn        | 29 +++++++++++++++++++++------
+ media/base/supported_types.cc         | 11 +---------
+ media/ffmpeg/ffmpeg_common.cc         | 14 +++++++++++--
+ media/filters/ffmpeg_demuxer.cc       | 13 ++----------
  media/filters/ffmpeg_glue.cc          |  2 ++
  media/filters/ffmpeg_video_decoder.cc |  8 ++++----
  media/gpu/vaapi/vaapi_wrapper.cc      |  7 ++-----
- 7 files changed, 33 insertions(+), 38 deletions(-)
+ 7 files changed, 46 insertions(+), 38 deletions(-)
 
 diff --git a/build/linux/unbundle/ffmpeg.gn b/build/linux/unbundle/ffmpeg.gn
-index c0f0e21620..278e507f43 100644
+index c0f0e21620..e29b9a7e37 100644
 --- a/build/linux/unbundle/ffmpeg.gn
 +++ b/build/linux/unbundle/ffmpeg.gn
-@@ -2,15 +2,25 @@
+@@ -2,15 +2,30 @@
  # Use of this source code is governed by a BSD-style license that can be
  # found in the LICENSE file.
  
@@ -46,13 +46,18 @@ index c0f0e21620..278e507f43 100644
 +    "avformat",
 +    "avutil",
 +  ]
++}
++
++# Linker flags count only where a program is linked, and a source set's public_configs never
++# reach one: these go to everything that depends on FFmpeg, however far up.
++config("system_ffmpeg_link") {
 +  ldflags = [
 +    "-Wl,--allow-shlib-undefined",
 +    "-Wl,-rpath=\$ORIGIN/../spatiand/third_party/ffmpeg/out/linux/lib:\$ORIGIN/ffmpeg",
    ]
  }
  
-@@ -25,6 +35,7 @@ shim_headers("ffmpeg_shim") {
+@@ -25,6 +40,7 @@ shim_headers("ffmpeg_shim") {
      "libavcodec/avcodec.h",
      "libavcodec/packet.h",
      "libavformat/avformat.h",
@@ -60,6 +65,12 @@ index c0f0e21620..278e507f43 100644
      "libavutil/imgutils.h",
      "libavutil/rational.h",
    ]
+@@ -36,4 +52,5 @@ source_set("ffmpeg") {
+     ":ffmpeg_shim",
+   ]
+   public_configs = [ ":system_ffmpeg" ]
++  all_dependent_configs = [ ":system_ffmpeg_link" ]
+ }
 diff --git a/media/base/supported_types.cc b/media/base/supported_types.cc
 index efc7246c8c..f78f093796 100644
 --- a/media/base/supported_types.cc
@@ -84,7 +95,7 @@ index efc7246c8c..f78f093796 100644
    return false;
  #endif  // BUILDFLAG(ENABLE_PLATFORM_HEVC)
 diff --git a/media/ffmpeg/ffmpeg_common.cc b/media/ffmpeg/ffmpeg_common.cc
-index 280dce6885..7716de4ce4 100644
+index 280dce6885..7506e2fb9a 100644
 --- a/media/ffmpeg/ffmpeg_common.cc
 +++ b/media/ffmpeg/ffmpeg_common.cc
 @@ -69,7 +69,8 @@ VideoColorSpace GetGuessedColorSpace(const VideoColorSpace& color_space) {
@@ -97,7 +108,21 @@ index 280dce6885..7716de4ce4 100644
  #else
    return "";
  #endif
-@@ -1127,7 +1128,9 @@ const char* GetAllowedAudioDecoders() {
+@@ -222,6 +223,13 @@ AVCodecID AudioCodecToCodecID(AudioCodec audio_codec,
+ #if BUILDFLAG(ENABLE_PLATFORM_MPEG_H_AUDIO)
+     case AudioCodec::kMpegHAudio:
+       return AV_CODEC_ID_MPEGH_3D_AUDIO;
++#endif
++#if BUILDFLAG(ENABLE_PLATFORM_AC3_EAC3_AUDIO)
++    // Spatiand: Dolby Digital (Plus) is decoded by Spatiand's FFmpeg, like everything else.
++    case AudioCodec::kAC3:
++      return AV_CODEC_ID_AC3;
++    case AudioCodec::kEAC3:
++      return AV_CODEC_ID_EAC3;
+ #endif
+     default:
+       DVLOG(1) << "Unknown AudioCodec: " << audio_codec;
+@@ -1127,7 +1135,9 @@ const char* GetAllowedAudioDecoders() {
    // This should match the configured lists in //third_party/ffmpeg.
    static constexpr std::string_view kAllowedAudioCodecs =
        "vorbis,libopus,flac,pcm_u8,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le,"
@@ -200,5 +225,5 @@ index 94a78b9ad1..8d69236f8c 100644
    return *kMediaToVAProfileMap;
  }
 -- 
-2.34.1
+2.53.0
 
