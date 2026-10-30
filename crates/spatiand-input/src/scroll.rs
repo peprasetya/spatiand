@@ -126,18 +126,30 @@ const LAG: usize = 4;
 /// is thrown when nobody threw it, which is the whole complaint.
 const EDGE: f32 = 0.75;
 
-/// How much more one axis must have moved than the other for a gesture to scroll along it only.
+/// A gesture scrolls along one axis only, and the thumb's first movements choose which.
 ///
 /// A thumb swiping up a pad drifts sideways as it goes, and that drift was being sent as a
-/// sideways scroll. Chromium (pages, and every Electron application) decides early whether a
-/// touchpad gesture is vertical or horizontal; a drift that came first read as horizontal --
-/// on a page that cannot scroll sideways, the back gesture -- and the whole swipe then scrolled
-/// nothing. So a gesture locks to the axis its first movements took, as a laptop touchpad's
-/// driver does: twice as far along one as the other, about 27 degrees either side of it.
-/// Until then, a diagonal start, both are sent.
-const AXIS_LOCK_RATIO: f32 = 2.0;
+/// sideways scroll. Chromium (pages, and every Electron application) keeps a touchpad gesture to
+/// what it began on: a drift that came first read as sideways -- on a page that cannot scroll
+/// sideways, the back gesture -- and the whole swipe then scrolled nothing.
+///
+/// **Up and down is what a thumb is nearly always asking for, so the choice is lopsided**: this
+/// far along the pad up or down, and no more than [`SIDEWAYS_RATIO`] times as far sideways, is
+/// enough to scroll vertically. Recorded on the Deck, 24 swipes of a thumb meaning to scroll a
+/// conversation: the arc of a thumb covers a third to a half as much ground sideways as up, and
+/// its first frames, where the contact is still settling, can go any way at all. An even-handed
+/// choice from those first frames, twice as far along one as the other, made 7 of the 24 sideways.
+const VERTICAL_AFTER: f32 = 0.03;
 
-/// The axis a gesture has locked to. See [`AXIS_LOCK_RATIO`].
+/// How far sideways a thumb must have gone, with hardly anything up or down, to scroll sideways.
+/// See [`VERTICAL_AFTER`]. Four times as far: a sideways scroll starts a little later, which is
+/// nothing beside a swipe up that does not scroll at all.
+const SIDEWAYS_AFTER: f32 = 0.12;
+
+/// How many times further sideways than up or down is sideways. See [`VERTICAL_AFTER`].
+const SIDEWAYS_RATIO: f32 = 3.0;
+
+/// The axis a gesture has locked to. See [`VERTICAL_AFTER`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Lock {
     Vertical,
@@ -184,8 +196,10 @@ pub struct PadScroll {
     /// that unambiguously says the press is finished and the next thing is deliberate.
     disarmed: bool,
     /// The axis this gesture scrolls along, once its first movements have said. See
-    /// [`AXIS_LOCK_RATIO`].
+    /// [`VERTICAL_AFTER`].
     lock: Option<Lock>,
+    /// Vouched for, and waiting for the axis to be chosen.
+    undecided: (f32, f32),
 }
 
 impl PadScroll {
@@ -202,6 +216,7 @@ impl PadScroll {
         self.held.clear();
         self.running = false;
         self.lock = None;
+        self.undecided = (0.0, 0.0);
     }
 
     /// The fastest this frame is allowed to be, given what the gesture has been doing.
@@ -261,21 +276,25 @@ impl PadScroll {
         self.last = Some(now);
 
         if self.held.len() > LAG {
-            // The axis is decided from everything in hand -- the frame going out and the LAG
-            // behind it -- so from the gesture's first several movements, not its first one.
+            if let Some((dx, dy)) = self.held.pop_front() {
+                self.undecided.0 += dx;
+                self.undecided.1 += dy;
+            }
+            // Chosen from the thumb's whole way so far, what is still held included. Until it is
+            // chosen nothing goes out, so that a thumb settling on the pad scrolls nothing.
             if self.lock.is_none() {
-                let (sx, sy) = self.held.iter().fold((0.0f32, 0.0f32), |(x, y), (dx, dy)| (x + dx, y + dy));
-                if sy.abs() >= sx.abs() * AXIS_LOCK_RATIO {
-                    self.lock = Some(Lock::Vertical);
-                } else if sx.abs() >= sy.abs() * AXIS_LOCK_RATIO {
+                let (sx, sy) = self.held.iter().fold(self.undecided, |(x, y), (dx, dy)| (x + dx, y + dy));
+                if sx.abs() >= SIDEWAYS_AFTER && sx.abs() >= sy.abs() * SIDEWAYS_RATIO {
                     self.lock = Some(Lock::Horizontal);
+                } else if sy.abs() >= VERTICAL_AFTER && sy.abs() * SIDEWAYS_RATIO >= sx.abs() {
+                    self.lock = Some(Lock::Vertical);
                 }
             }
-            if let Some((mut dx, mut dy)) = self.held.pop_front() {
-                match self.lock {
-                    Some(Lock::Vertical) => dx = 0.0,
-                    Some(Lock::Horizontal) => dy = 0.0,
-                    None => {}
+            if let Some(lock) = self.lock {
+                let (mut dx, mut dy) = std::mem::take(&mut self.undecided);
+                match lock {
+                    Lock::Vertical => dx = 0.0,
+                    Lock::Horizontal => dy = 0.0,
                 }
                 if dx != 0.0 || dy != 0.0 {
                     self.running = true;
@@ -387,6 +406,39 @@ mod tests {
             assert_eq!(dy, 0.0, "an upward part was sent: {dy}");
             assert!(dx > 0.0);
         }
+    }
+
+    #[test]
+    fn a_swipe_that_begins_sideways_and_goes_on_up_scrolls_only_up() {
+        // The thumb's arc, or its print settling: a little way sideways, then on up the pad. Not
+        // far enough sideways to say so, so nothing is sent until it has said which.
+        let mut s = PadScroll::default();
+        let mut pads = vec![at(0.0, 0.0)];
+        for i in 1..=5 {
+            pads.push(at(i as f32 * 0.016, 0.0));
+        }
+        for i in 1..=12 {
+            pads.push(at(0.08, i as f32 * STEP));
+        }
+        let sent: Vec<Scroll> = run(&mut s, &pads).into_iter().filter(|s| *s != Scroll::Idle).collect();
+        assert!(!sent.is_empty());
+        for step in sent {
+            let Scroll::By { dx, dy } = step else { panic!("expected a scroll, got {step:?}") };
+            assert_eq!(dx, 0.0, "a sideways part was sent: {dx}");
+            assert!(dy >= 0.0);
+        }
+    }
+
+    #[test]
+    fn a_thumb_settling_on_the_pad_scrolls_nothing() {
+        // Its print finding its shape: a few hundredths this way and that, and back again.
+        let mut s = PadScroll::default();
+        let settling = [(0.20, -0.19), (0.187, -0.21), (0.196, -0.191), (0.198, -0.205), (0.205, -0.195), (0.2, -0.2)];
+        let mut pads: Vec<Pad> = settling.iter().map(|(x, y)| at(*x, *y)).collect();
+        pads.extend((0..12).map(|i| at(0.2 + (i % 2) as f32 * 0.002, -0.2)));
+        let out = run(&mut s, &pads);
+        assert!(out.iter().all(|e| *e == Scroll::Idle), "got {out:?}");
+        assert_eq!(s.update(&lifted()), Scroll::Idle);
     }
 
     #[test]
@@ -531,7 +583,7 @@ mod tests {
 #[cfg(test)]
 mod trace {
     use super::*;
-    use crate::scroll_trace::{CONTACT_2, CONTACT_3, CONTACT_4};
+    use crate::scroll_trace::{CONTACT_2, CONTACT_3, CONTACT_4, SWIPE_BEGINNING_SIDEWAYS, SWIPE_ON_AN_ARC, SWIPE_UP_AND_DOWN};
 
     /// What a scroll of this many pad units means on screen: `SCROLL_SCALE` in the compositor
     /// is 260, so a tenth of a pad is 26 units — a couple of lines of text. A jolt is anything
@@ -586,6 +638,23 @@ mod trace {
             .iter()
             .map(|(dx, dy)| (dx * dx + dy * dy).sqrt())
             .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn a_thumb_meaning_to_scroll_up_and_down_scrolls_up_and_down() {
+        // Recorded from the wearer scrolling a conversation that would not move. It could not:
+        // the first and the last of these locked to sideways, for the whole of each swipe.
+        for (name, contact) in [
+            ("beginning sideways", SWIPE_BEGINNING_SIDEWAYS),
+            ("on an arc", SWIPE_ON_AN_ARC),
+            ("up and down", SWIPE_UP_AND_DOWN),
+        ] {
+            let sent = replay(contact);
+            assert!(sent.iter().all(|(dx, _)| *dx == 0.0), "{name}: scrolled sideways");
+            let thumb: f32 = contact.windows(2).map(|w| (w[1].1 - w[0].1).abs()).sum();
+            let scrolled: f32 = sent.iter().map(|(_, dy)| dy.abs()).sum();
+            assert!(scrolled > thumb * 0.6, "{name}: {scrolled:.2} of the thumb's {thumb:.2}");
+        }
     }
 
     #[test]
