@@ -186,6 +186,12 @@ final class PadScroll {
     private var waiting = (x: 0.0, y: 0.0)
     /// Points a second, smoothed over the last movements: what momentum starts from.
     private var velocity = (x: 0.0, y: 0.0)
+    /// How much further a swipe goes the faster it is: a trackpad's events reach an application
+    /// with the system's acceleration already in them, and a posted event gets none, while a
+    /// Deck's pad is a third as long as a trackpad. As sent, a pad's half-width is 260 points, a
+    /// slow tenth of a window; a thumb's ordinary swipe does about 400 points a second, here two
+    /// and a half times as far, and its fastest four times.
+    private var gain: Double { min(4, 1 + hypot(velocity.x, velocity.y) / 250) }
     private var glide: DispatchSourceTimer?
     /// No word of the finger leaving for this long, and the gesture is over without momentum.
     private var quiet: DispatchWorkItem?
@@ -216,7 +222,7 @@ final class PadScroll {
         }
         last = now
         if !going { self.point = point; self.window = window }
-        MacInput.realScroll(dx: dx, dy: dy, at: self.point, phase: going ? Self.changed : Self.began, momentum: 0)
+        MacInput.realScroll(dx: dx * gain, dy: dy * gain, at: self.point, phase: going ? Self.changed : Self.began, momentum: 0)
         going = true
         quiet?.cancel()
         let end = DispatchWorkItem { [weak self] in self?.end(carryOn: false) }
@@ -238,7 +244,7 @@ final class PadScroll {
         // A finger that had stopped before it left leaves the page where it is.
         let fresh = Date().timeIntervalSince(last) < 0.08
         guard carryOn, fresh, hypot(velocity.x, velocity.y) > 120 else { return }
-        var v = velocity
+        var v = (x: velocity.x * gain, y: velocity.y * gain)
         var first = true
         let timer = DispatchSource.makeTimerSource(queue: MacInput.real)
         timer.schedule(deadline: .now(), repeating: .milliseconds(16))
