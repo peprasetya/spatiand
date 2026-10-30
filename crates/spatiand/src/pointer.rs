@@ -752,6 +752,19 @@ pub fn aim(ray: Ray, windows: &[WindowQuad]) -> Aim {
             ) else {
                 continue;
             };
+            // Not through another window in front of it: a menu is there for a moment, but a
+            // subsurface for as long as its window likes, and a browser behind this window would
+            // otherwise take the clicks that land on its status bubble. A little slack, as a
+            // popup is tested in its window's plane and its window may be the one hit.
+            if hit.as_ref().is_some_and(|(index, front)| *index != w && h.distance > front.distance + BEHIND_SLACK_M) {
+                continue;
+            }
+            // Only where it takes the pointer: past that, what is behind it does.
+            if quad.input.as_ref().is_some_and(|region| {
+                !region.contains(((h.u * quad.pixels.0 as f64) as i32, (h.v * quad.pixels.1 as f64) as i32))
+            }) {
+                continue;
+            }
             if popup
                 .as_ref()
                 .map_or(true, |(_, _, best)| h.distance < best.distance)
@@ -784,6 +797,9 @@ pub fn aim(ray: Ray, windows: &[WindowQuad]) -> Aim {
         zone,
     }
 }
+
+/// How far behind the window the ray hit a popup of another window counts as behind it.
+const BEHIND_SLACK_M: f64 = 0.01;
 
 /// The quad an open popup occupies, on its parent window's plane.
 ///

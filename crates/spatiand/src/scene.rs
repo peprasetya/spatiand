@@ -238,6 +238,10 @@ pub struct PopupQuad {
     /// True when the buffer has no alpha channel, so whatever is in those bits is meaningless
     /// and must not be blended against. See `u_opaque` in [`crate::gl`].
     pub opaque: bool,
+    /// Where it takes the pointer, in its own pixels, when that is not everywhere: a subsurface
+    /// that only shows something (a browser's status bubble) says nowhere, and the pointer goes
+    /// through it to what is behind.
+    pub input: Option<smithay::wayland::compositor::RegionAttributes>,
 }
 
 /// A window title, already on the GPU.
@@ -3974,10 +3978,16 @@ pub fn collect_windows(
             continue;
         };
 
+        // Its subsurfaces, under its menus. Importing the toplevel's tree gives them textures, but
+        // only the toplevel's own was drawn, and nothing pointed at them: every bubble Chromium
+        // shows is one -- the profile menu, the address bar's suggestions, a login field's list,
+        // a permission's question -- and all of them opened unseen.
+        let mut popups = Vec::new();
+        push_subsurfaces(renderer, &surface, (0, 0), &mut popups);
+
         // Menus, dropdowns and submenus, in the order the client stacked them. Each is its own
         // surface with its own buffer -- importing the toplevel's tree does not reach them,
         // which is why a window whose menu was open still drew as if it were not.
-        let mut popups = Vec::new();
         for (popup, offset) in smithay::desktop::PopupManager::popups_for_surface(&surface) {
             let popup_surface = popup.wl_surface().clone();
             // Said out loud, once per menu, for the same reason the window's three failures
@@ -4017,13 +4027,15 @@ pub fn collect_windows(
                 log::info!("menu {pw}x{ph} at ({}, {})", offset.x, offset.y);
             }
             popups.push(PopupQuad {
-                surface: popup_surface,
+                surface: popup_surface.clone(),
                 texture,
                 offset: (offset.x, offset.y),
                 pixels: (pw, ph),
                 crop,
                 opaque,
+                input: None,
             });
+            push_subsurfaces(renderer, &popup_surface, (offset.x, offset.y), &mut popups);
         }
 
         // The same treatment for an X11 application's menus, which are not popups as far as
@@ -4082,6 +4094,7 @@ pub fn collect_windows(
                     pixels: (pw, ph),
                     crop,
                     opaque,
+                    input: None,
                 });
             }
         }
@@ -4143,6 +4156,39 @@ pub fn collect_windows(
         crate::pip::lock(&mut out, state.pip, &state.layout, *head, view);
     }
     out
+}
+
+/// `parent`'s subsurfaces and theirs, at `origin` in the window's pixels, as quads like its menus':
+/// the same drawing, and the same pointing, as each gets the pointer in its own coordinates. A
+/// subsurface with nothing committed is left out until it has something to show.
+fn push_subsurfaces(
+    renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
+    parent: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    origin: (i32, i32),
+    out: &mut Vec<PopupQuad>,
+) {
+    use smithay::backend::renderer::utils::with_renderer_surface_state;
+    use smithay::backend::renderer::Renderer;
+    use smithay::wayland::compositor::{get_children, with_states, SubsurfaceCachedState, SurfaceAttributes};
+    let context = renderer.context_id();
+    for child in get_children(parent) {
+        let (location, input) = with_states(&child, |states| {
+            let location = states.cached_state.get::<SubsurfaceCachedState>().current().location;
+            let input = states.cached_state.get::<SurfaceAttributes>().current().input_region.clone();
+            (location, input)
+        });
+        let at = (origin.0 + location.x, origin.1 + location.y);
+        let imported = with_renderer_surface_state(&child, |st| {
+            let t = st.texture::<smithay::backend::renderer::gles::GlesTexture>(context.clone())?;
+            let ((pw, ph), crop) = shape_of(st)?;
+            Some((t.tex_id(), pw, ph, crop, has_no_alpha(t)))
+        })
+        .flatten();
+        if let Some((texture, pw, ph, crop, opaque)) = imported {
+            out.push(PopupQuad { surface: child.clone(), texture, offset: at, pixels: (pw, ph), crop, opaque, input });
+        }
+        push_subsurfaces(renderer, &child, at, out);
+    }
 }
 
 /// A surface's logical size, and which part of its buffer it shows.

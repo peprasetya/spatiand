@@ -41,7 +41,9 @@ clock and battery, on-screen keyboard, screenshots to `~/Pictures/Screenshots`.
 **Windows.** Real Wayland clients as quads on a sphere, facing the viewer in yaw and pitch.
 Title bar drag to move, left thumb for depth, two-thumb gesture to move and scale, D-pad to
 cycle focus. Chromium-family apps get `--ozone-platform=wayland`, and Flatpak `@@u … @@` markers
-are stripped.
+are stripped. A window's subsurfaces are drawn and pointed at as its menus are (Chromium's bubbles
+are subsurfaces: the profile menu, the address bar's suggestions, a login field's list), except
+through another window in front of them.
 
 **Sidecar.** Second `DrmCompositor` on the Deck's panel: CPU/GPU/memory graphs, clock, battery,
 volume and brightness. Flip completions are tracked per-CRTC — a single flag lets one screen

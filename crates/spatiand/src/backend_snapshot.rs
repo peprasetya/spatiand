@@ -1837,7 +1837,18 @@ fn pointer_event_on(
         let w = window.window.clone();
         state.focus_window(&w);
     }
-    let focus = (!on_room).then(|| (surface, Point::from((0.0, 0.0))));
+    // On a menu or a bubble if there is one there, as a ray would be: the last drawn is on top.
+    let on_popup = window.popups.iter().rev().find(|p| {
+        let (x, y) = (location.x - p.offset.0 as f64, location.y - p.offset.1 as f64);
+        (0.0..p.pixels.0 as f64).contains(&x)
+            && (0.0..p.pixels.1 as f64).contains(&y)
+            && p.input.as_ref().is_none_or(|region| region.contains((x as i32, y as i32)))
+    });
+    let target = match on_popup {
+        Some(p) => (p.surface.clone(), Point::from((p.offset.0 as f64, p.offset.1 as f64))),
+        None => (surface, Point::from((0.0, 0.0))),
+    };
+    let focus = (!on_room).then_some(target);
     pointer.motion(state, focus, &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time: 100 });
     pointer.frame(state);
     if let Some((button, pressed)) = button {
