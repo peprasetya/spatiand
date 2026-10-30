@@ -29,7 +29,10 @@
 //! thumb still and pressing A is the accurate way to click on something small.
 
 use smithay::backend::input::{Axis, AxisSource};
-use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent, RelativeMotionEvent};
+use smithay::input::pointer::{
+    AxisFrame, ButtonEvent, GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
+    MotionEvent, RelativeMotionEvent,
+};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
 use smithay::wayland::pointer_constraints::with_pointer_constraint;
@@ -44,6 +47,9 @@ use crate::state::Spatiand;
 pub const BTN_LEFT: u32 = 0x110;
 pub const BTN_RIGHT: u32 = 0x111;
 pub const BTN_MIDDLE: u32 = 0x112;
+/// A mouse's back and forward buttons, which browsers and file managers take as such.
+pub const BTN_SIDE: u32 = 0x113;
+pub const BTN_EXTRA: u32 = 0x114;
 
 /// How tall the title bar is, as a fraction of the window's height.
 ///
@@ -691,6 +697,9 @@ pub struct PointerState {
     /// The ray that last moved the pointer, and how far along it the pointer landed: where
     /// something dragged between windows is drawn ([`crate::scene::Scene::draw_dragged`]).
     pub last_aim: Option<(Ray, Option<f64>)>,
+    /// A pinch under way: the scale last sent, and whether it went out as the standard pinch
+    /// (which has to be ended) rather than in Spatiand's own terms. See [`Self::pinch`].
+    pinching: Option<(f64, bool)>,
 }
 
 /// A ray plus what it currently hits.
@@ -1143,6 +1152,53 @@ impl PointerState {
             .stop(Axis::Horizontal);
         pointer.axis(state, frame);
         pointer.frame(state);
+    }
+
+    /// Pinch the surface under the pointer: `scale` since the pinch began, 1 at its start.
+    ///
+    /// A surface that zooms its own content (`set_pinch_taken`, Spatiand's protocol) is told in
+    /// its own terms, the change since the last; any other gets the standard pinch
+    /// (`zwp_pointer_gestures_v1`), which Chromium answers by zooming the page about the pointer.
+    pub fn pinch(&mut self, state: &mut Spatiand, scale: f64, time_ms: u32) {
+        state.attention.stir();
+        let Some(pointer) = state.seat.get_pointer() else {
+            return;
+        };
+        let Some(surface) = pointer.current_focus() else {
+            return;
+        };
+        let (was, standard) = self.pinching.unwrap_or((1.0, false));
+        if self.pinching.is_some() && (scale - was).abs() < 1e-4 {
+            return;
+        }
+        if !standard && crate::xr::tell_pinch(&surface, (scale / was) as f32) {
+            self.pinching = Some((scale, false));
+            return;
+        }
+        if !standard {
+            pointer.gesture_pinch_begin(
+                state,
+                &GesturePinchBeginEvent { serial: SERIAL_COUNTER.next_serial(), time: time_ms, fingers: 2 },
+            );
+        }
+        pointer.gesture_pinch_update(
+            state,
+            &GesturePinchUpdateEvent { time: time_ms, delta: Point::from((0.0, 0.0)), scale, rotation: 0.0 },
+        );
+        self.pinching = Some((scale, true));
+    }
+
+    /// End a pinch, if one is under way.
+    pub fn pinch_end(&mut self, state: &mut Spatiand, time_ms: u32) {
+        let Some((_, standard)) = self.pinching.take() else {
+            return;
+        };
+        if let (true, Some(pointer)) = (standard, state.seat.get_pointer()) {
+            pointer.gesture_pinch_end(
+                state,
+                &GesturePinchEndEvent { serial: SERIAL_COUNTER.next_serial(), time: time_ms, cancelled: false },
+            );
+        }
     }
 
     /// Release everything. Used when the pointer is taken away — a menu opening, the glasses

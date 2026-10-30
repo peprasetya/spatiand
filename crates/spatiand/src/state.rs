@@ -113,6 +113,9 @@ pub struct Spatiand {
     pub _relative_pointer_state: RelativePointerManagerState,
     /// `zwp_pointer_constraints_v1`: a game locking the pointer in place while it looks around.
     pub _pointer_constraints_state: PointerConstraintsState,
+    /// `zwp_pointer_gestures_v1`: a pinch, which a browser zooms its page by. Held for the
+    /// global's lifetime only.
+    pub _pointer_gestures_state: smithay::wayland::pointer_gestures::PointerGesturesState,
     /// Handing us a picture rather than a copy of one — see [`crate::dmabuf`].
     pub dmabuf_state: DmabufState,
     /// `None` until a backend has a renderer whose import formats can be advertised.
@@ -294,6 +297,9 @@ impl Spatiand {
         // into and the camera stops at the window's border.
         let relative_pointer_state = RelativePointerManagerState::new::<Self>(&dh);
         let pointer_constraints_state = PointerConstraintsState::new::<Self>(&dh);
+        // Pinching: both of the Deck's pads pressed and the thumbs spread or drawn together, which
+        // Chromium zooms the page by (`spatiand_input::press`).
+        let pointer_gestures_state = smithay::wayland::pointer_gestures::PointerGesturesState::new::<Self>(&dh);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let mut seat_state = SeatState::new();
         let data_device_state = DataDeviceState::new::<Self>(&dh);
@@ -367,6 +373,7 @@ impl Spatiand {
             _viewporter_state: viewporter_state,
             _relative_pointer_state: relative_pointer_state,
             _pointer_constraints_state: pointer_constraints_state,
+            _pointer_gestures_state: pointer_gestures_state,
             dmabuf_state,
             dmabuf_global: None,
             pending_dmabufs: Vec::new(),
@@ -2024,6 +2031,7 @@ impl PointerConstraintsHandler for Spatiand {
 
 smithay::delegate_pointer_constraints!(Spatiand);
 smithay::delegate_relative_pointer!(Spatiand);
+smithay::delegate_pointer_gestures!(Spatiand);
 
 #[cfg(test)]
 mod screen_tests {

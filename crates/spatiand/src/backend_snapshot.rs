@@ -1645,8 +1645,8 @@ fn swipe_on_the_window(state: &mut Spatiand, windows: &[crate::scene::WindowQuad
 /// separated by `;`, each `what:arguments`, and each is given half a second to be answered.
 ///
 /// ```text
-/// click:u,v  rclick:u,v  move:u,v  down:u,v  up:u,v  drag:u,v,u,v  scroll:dx,dy  pinch:1.5
-/// key:28  key:ctrl+shift+20  keydown:42  keyup:42  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
+/// click:u,v  rclick:u,v  back:u,v  forward:u,v  move:u,v  down:u,v  up:u,v  drag:u,v,u,v
+/// scroll:dx,dy  pinch:1.5  key:28  key:ctrl+shift+20  keydown:42  keyup:42  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
 /// roomup  notice  dictate:/tmp/said.wav
 /// ```
 ///
@@ -1671,8 +1671,9 @@ enum Scripted {
     Up(f64, f64),
     Drag(f64, f64, f64, f64),
     Scroll(f64, f64),
-    /// Two fingers spreading by this factor over the chosen window, as the room hands a pinch
-    /// to a window that takes them (and does nothing to one that does not).
+    /// Two fingers spreading by this factor over the chosen window, as the room hands a pinch:
+    /// in Spatiand's own terms to a window that zooms itself, and as the standard pinch to any
+    /// other (`zwp_pointer_gestures_v1`, which Chromium zooms its page by).
     Pinch(f64),
     Key(Vec<u32>, u32),
     /// A key held down, or let go: `keydown:42` holds Shift for the clicks after it.
@@ -1698,6 +1699,10 @@ fn scripted_steps() -> Vec<Scripted> {
             Some(match (what, n.as_slice()) {
                 ("click", [u, v]) => Scripted::Click(*u, *v, crate::pointer::BTN_LEFT),
                 ("rclick", [u, v]) => Scripted::Click(*u, *v, crate::pointer::BTN_RIGHT),
+                // A mouse's back and forward buttons, which both of the Deck's pads pressed and
+                // swept sideways are.
+                ("back", [u, v]) => Scripted::Click(*u, *v, crate::pointer::BTN_SIDE),
+                ("forward", [u, v]) => Scripted::Click(*u, *v, crate::pointer::BTN_EXTRA),
                 ("move", [u, v]) => Scripted::Move(*u, *v),
                 ("down", [u, v]) => Scripted::Down(*u, *v),
                 ("up", [u, v]) => Scripted::Up(*u, *v),
@@ -1791,6 +1796,19 @@ fn key_event(state: &mut Spatiand, code: u32, pressed: bool) {
     let Some(keyboard) = state.seat.get_keyboard() else { return };
     let key_state = if pressed { KeyState::Pressed } else { KeyState::Released };
     keyboard.input::<(), _>(state, Keycode::new(code + 8), key_state, SERIAL_COUNTER.next_serial(), 300, |_, _, _| FilterResult::Forward);
+}
+
+/// The standard pinch to whatever the pointer is on, spreading to `scale` in ten steps.
+fn standard_pinch(state: &mut Spatiand, scale: f64) {
+    use smithay::input::pointer::{GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent};
+    use smithay::utils::{Point, SERIAL_COUNTER};
+    let Some(pointer) = state.seat.get_pointer() else { return };
+    pointer.gesture_pinch_begin(state, &GesturePinchBeginEvent { serial: SERIAL_COUNTER.next_serial(), time: 100, fingers: 2 });
+    for step in 1..=10 {
+        let update = GesturePinchUpdateEvent { time: 100 + step * 14, delta: Point::from((0.0, 0.0)), scale: scale.powf(step as f64 / 10.0), rotation: 0.0 };
+        pointer.gesture_pinch_update(state, &update);
+    }
+    pointer.gesture_pinch_end(state, &GesturePinchEndEvent { serial: SERIAL_COUNTER.next_serial(), time: 260, cancelled: false });
 }
 
 fn pointer_event(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], at: (f64, f64), button: Option<(u32, bool)>) {
@@ -1897,7 +1915,10 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
             pointer_event(state, windows, *at, None);
             let surface = chosen_window(state, windows).and_then(|w| w.window.toplevel().map(|t| t.wl_surface().clone()));
             let taken = surface.is_some_and(|s| crate::xr::tell_pinch(&s, *scale as f32));
-            log::info!("pinch {scale}: {}", if taken { "the window zooms its content" } else { "the window does not take pinches" });
+            if !taken {
+                standard_pinch(state, *scale);
+            }
+            log::info!("pinch {scale}: {}", if taken { "the window zooms its content" } else { "sent as the standard pinch" });
         }
         Scripted::Key(held, code) => {
             if let Some(window) = chosen_window(state, windows).map(|w| w.window.clone()) {

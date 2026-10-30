@@ -56,7 +56,9 @@ use crate::calib::Calibration;
 use crate::environment::Environments;
 use crate::gl::upload_rgba;
 use crate::input_map::intent_for;
-use crate::pointer::{self, Aim, Drag, PointerState, Zone, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+use crate::pointer::{
+    self, Aim, Drag, PointerState, Zone, BTN_EXTRA, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE,
+};
 use crate::scene::{eye_centre, Cursor, Scene};
 use crate::{Runtime, Spatiand};
 
@@ -231,6 +233,15 @@ pub fn run(
     // pad, not about what the pointer is doing with it.
     let mut right_was_down = false;
     let mut left_was_down = false;
+    // What each pad's press is: a click, or half of both pressed together. See
+    // `spatiand_input::press`.
+    let mut pad_clicks = spatiand_input::PadClicks::default();
+    // Where the thumbs were as both pads went down together, which the pointers aim from until
+    // they let go: the thumbs move to make the gesture, not to point.
+    let mut gesture_pads: Option<(spatiand_input::Pad, spatiand_input::Pad)> = None;
+    // A press is felt when the pad goes down, before its click is let through.
+    let mut right_was_felt = false;
+    let mut left_was_felt = false;
     let mut face_down: Vec<u32> = Vec::new();
     // The left pad read as a wheel. Absolute positions in, deltas out, and the samples taken
     // across the moment the thumb lifts thrown away rather than scrolled.
@@ -2414,8 +2425,41 @@ pub fn run(
                     )
                 })
             };
-            let right_aim = pads.as_ref().and_then(|p| aim_of(&p.right_pad));
-            let left_aim = pads.as_ref().and_then(|p| aim_of(&p.left_pad));
+
+            // What the pads' presses mean this frame: each its click, held back a moment in case
+            // the other comes too -- both pressed together are a gesture, and keep the pointer
+            // where it is. Read before anything aims for that reason. With the keyboard up
+            // nothing waits: both thumbs come down on keys together, and each is a key.
+            let pressed = match pads.as_ref() {
+                Some(p) => {
+                    let within_the_frame = |control| controller.as_ref().is_some_and(|c| c.just_pressed(control));
+                    pad_clicks.update(
+                        &p.left_pad,
+                        p.left_pad.clicked || within_the_frame(spatiand_input::Control::LPadClick),
+                        &p.right_pad,
+                        p.right_pad.clicked || within_the_frame(spatiand_input::Control::RPadClick),
+                        !keyboard.open,
+                        std::time::Instant::now(),
+                    )
+                }
+                None => {
+                    pad_clicks.forget();
+                    spatiand_input::Pressed::default()
+                }
+            };
+            if pressed.pinch.is_none() {
+                pointers.pinch_end(&mut runtime.state, time_ms);
+            }
+            gesture_pads = match (pressed.together, pads.as_ref()) {
+                (true, Some(p)) => gesture_pads.or(Some((p.left_pad, p.right_pad))),
+                _ => None,
+            };
+            let right_aim = pads
+                .as_ref()
+                .and_then(|p| aim_of(gesture_pads.as_ref().map_or(&p.right_pad, |(_, right)| right)));
+            let left_aim = pads
+                .as_ref()
+                .and_then(|p| aim_of(gesture_pads.as_ref().map_or(&p.left_pad, |(left, _)| left)));
 
             // --- pointing at a menu ---
             //
@@ -2658,6 +2702,35 @@ pub fn run(
                             }
                         }
                     }
+                    // Both pads pressed together: a gesture of the window under the pointer,
+                    // which stays where the presses found it -- a pinch zooms about it.
+                    None if pressed.together => {
+                        // The left thumb is half of the gesture, not a wheel. A scroll it was in
+                        // the middle of ends as any other does: late, carrying no speed.
+                        left_scroll.forget();
+                        if scrolled_at.is_some_and(|at| at.elapsed() >= GESTURE_ENDS_AFTER) {
+                            pointers.scroll_fling(&mut runtime.state, time_ms);
+                            scrolled_at = None;
+                        }
+                        if let Some(sweep) = pressed.sweep {
+                            // A mouse's own back and forward buttons, which a browser takes
+                            // where the pointer is, rather than keys to whatever has the keyboard.
+                            let button = match sweep {
+                                spatiand_input::Sweep::Back => BTN_SIDE,
+                                spatiand_input::Sweep::Forward => BTN_EXTRA,
+                            };
+                            pointers.button(&mut runtime.state, button, true, time_ms);
+                            pointers.button(&mut runtime.state, button, false, time_ms);
+                            if let Some(c) = controller.as_ref() {
+                                c.pulse(spatiand_input::HapticPad::Left, spatiand_input::Feel::Tick);
+                                c.pulse(spatiand_input::HapticPad::Right, spatiand_input::Feel::Tick);
+                            }
+                            log::info!("both pads swept: {sweep:?}");
+                        }
+                        if let Some(scale) = pressed.pinch {
+                            pointers.pinch(&mut runtime.state, scale as f64, time_ms);
+                        }
+                    }
                     None => {
                         // Both thumbs moving together manipulates the focused window and takes
                         // the pads away from pointing. Merely *resting* a thumb does not --
@@ -2888,28 +2961,35 @@ pub fn run(
                     // press this frame and a release the next, which is a click.
                     let clicked_within_the_frame =
                         |control| controller.as_ref().is_some_and(|c| c.just_pressed(control));
-                    let right_click = p.right_pad.clicked
-                        || r2
-                        || clicked_within_the_frame(spatiand_input::Control::RPadClick);
-                    let left_click = p.left_pad.clicked
-                        || l2
-                        || clicked_within_the_frame(spatiand_input::Control::LPadClick);
+                    // The pads' own clicks as `pressed` lets them through (above): late by a
+                    // moment, and not at all while both are a gesture.
+                    let right_click = pressed.right || r2;
+                    let left_click = pressed.left || l2;
 
                     // Confirm the press under the thumb that made it. Without this the pads
                     // feel dead: the click registers, the world responds, and the hand is
                     // told nothing -- which reads as the pad being broken rather than as
-                    // missing feedback.
+                    // missing feedback. Felt as the pad goes down, not when its click is let
+                    // through: a gesture's presses are presses too.
+                    let right_felt = p.right_pad.clicked
+                        || r2
+                        || clicked_within_the_frame(spatiand_input::Control::RPadClick);
+                    let left_felt = p.left_pad.clicked
+                        || l2
+                        || clicked_within_the_frame(spatiand_input::Control::LPadClick);
                     if let Some(c) = controller.as_ref() {
-                        if right_click && !right_was_down {
+                        if right_felt && !right_was_felt {
                             c.pulse(
                                 spatiand_input::HapticPad::Right,
                                 spatiand_input::Feel::Click,
                             );
                         }
-                        if left_click && !left_was_down {
+                        if left_felt && !left_was_felt {
                             c.pulse(spatiand_input::HapticPad::Left, spatiand_input::Feel::Click);
                         }
                     }
+                    right_was_felt = right_felt;
+                    left_was_felt = left_felt;
 
                     // Where the keyboard is this frame, if it is up at all. Worked out once:
                     // the press, the resize drag and the drawing all have to agree, and three

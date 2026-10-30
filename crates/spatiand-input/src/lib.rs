@@ -10,6 +10,7 @@
 //! * [`layout`] — which bit is which, as data.
 //! * [`report`] — bytes to [`ControllerState`], a pure function.
 //! * [`gesture`] — two-thumb pan and scale, a pure state machine.
+//! * [`press`] — the pads' clicks: one pressed a mouse button, both a gesture. Also pure.
 //! * [`scroll`] — an absolute pad read as a wheel, including what to do about the thumb
 //!   leaving it. Also a pure state machine.
 //! * [`trigger`] — an analogue trigger read as a button.
@@ -29,6 +30,7 @@ pub mod gesture;
 pub mod haptics;
 pub mod layout;
 pub mod phone;
+pub mod press;
 pub mod report;
 pub mod scroll;
 #[cfg(test)]
@@ -43,6 +45,7 @@ pub use spatiand_pad as virtual_pad;
 pub use gesture::{GestureDelta, TwoPadGesture};
 pub use haptics::{Feel, Pad as HapticPad};
 pub use layout::{Confidence, Control};
+pub use press::{PadClicks, Pressed, Sweep};
 pub use report::{Buttons, ControllerState, Pad};
 pub use scroll::{PadScroll, Scroll};
 pub use touch::{Contact, TouchEvent, Touchscreen};

@@ -26,8 +26,13 @@ cycle the four valid pitch/roll interpretations, since a wrong one is a valid ro
 nothing in the measurement can catch it.
 
 **Controller.** Raw hidraw, every button confirmed by pressing it. Both pads point; right pad
-click is left mouse, left pad right mouse, A/B/X duplicate them. Haptics work —
-`ID_TRIGGER_HAPTIC_PULSE` (0x8f), pad byte 0 is right, 1 is left.
+click is left mouse, left pad right mouse, A/B/X duplicate them. Both pads *pressed* together
+(resting both thumbs is nothing) are a gesture of the window under the pointer, which stays
+put: the thumbs swept sideways are back or forward (a mouse's back and forward buttons), spread
+or drawn together a pinch (the standard Wayland pinch, which Chromium zooms the page by; a
+Spatiand app that zooms itself gets its own). So a pad's click waits 80 ms for the other's,
+except with the on-screen keyboard up, where both thumbs type (`spatiand_input::press`).
+Haptics work — `ID_TRIGGER_HAPTIC_PULSE` (0x8f), pad byte 0 is right, 1 is left.
 
 **World.** 360 environment (generated studio, plus five NOIRLab observatory panoramas), glass
 bubble launcher with real Breeze icons and freedesktop categories, STEAM HUD, status bar with
