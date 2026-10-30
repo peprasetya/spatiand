@@ -58,6 +58,12 @@ impl Hemera {
     /// what keeps a sentence that mixes Indonesian and English as it was said. Given `en`,
     /// Whisper *translated* the Indonesian half (`docs/ai-integrations.md`).
     pub fn transcribe(&self, model: &str, pcm: &[i16], rate: u32, language: Option<&str>, prompt: &str) -> Result<String, String> {
+        Ok(self.transcribe_surely(model, pcm, rate, language, prompt)?.0)
+    }
+
+    /// As [`Hemera::transcribe`], with how sure Whisper was of its words, 0 to 1, on average: it
+    /// writes words given noise too, but says of them that it barely believes them.
+    pub fn transcribe_surely(&self, model: &str, pcm: &[i16], rate: u32, language: Option<&str>, prompt: &str) -> Result<(String, f32), String> {
         let boundary = "spatiand-voice-a7c3f9e1";
         let mut body = Vec::with_capacity(pcm.len() * 2 + 2048);
         let mut field = |name: &str, value: &str| {
@@ -65,7 +71,7 @@ impl Hemera {
         };
         field("model", model);
         field("temperature", "0");
-        field("response_format", "json");
+        field("response_format", "verbose_json");
         if let Some(language) = language {
             field("language", language);
         }
@@ -83,7 +89,19 @@ impl Hemera {
             &body,
             Duration::from_secs(30),
         )?;
-        Ok(reply.get("text").and_then(Value::as_str).unwrap_or_default().trim().to_string())
+        let text = reply.get("text").and_then(Value::as_str).unwrap_or_default().trim().to_string();
+        let words: Vec<f64> = reply
+            .get("segments")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|segment| segment.get("words").and_then(Value::as_array).into_iter().flatten())
+            .filter(|word| word.get("word").and_then(Value::as_str).is_some_and(|w| w.chars().any(char::is_alphanumeric)))
+            .filter_map(|word| word.get("probability").and_then(Value::as_f64))
+            .collect();
+        // Told nothing of its words, it is taken at its word.
+        let sure = if words.is_empty() { 1.0 } else { words.iter().sum::<f64>() / words.len() as f64 };
+        Ok((text, sure as f32))
     }
 
     /// A short answer from a text model, thinking off: the whole reply at once.

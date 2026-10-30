@@ -116,7 +116,7 @@ enum Said {
     /// A phrase, whole: its job is its draft's when it ended as drafted.
     Phrase { job: u64, drafted: bool, samples: Vec<i16>, began: Instant, ended: Instant },
     /// Whisper's text for a job.
-    Written { job: u64, text: Result<String, String> },
+    Written { job: u64, text: Result<(String, f32), String> },
 }
 
 /// Start listening to `microphone` (16 kHz mono 16-bit, from the room).
@@ -254,7 +254,7 @@ struct Judge {
     /// The job to write next.
     next: Option<(u64, Vec<i16>)>,
     /// The last job written.
-    written: Option<(u64, Result<String, String>)>,
+    written: Option<(u64, Result<(String, f32), String>)>,
     /// A phrase waiting for its job's text: the job, when it began and ended, how long it was,
     /// whether its draft is what is written.
     waiting: Option<(u64, Instant, Instant, f32, bool)>,
@@ -336,7 +336,7 @@ impl Judge {
         let answer = self.written_tx.clone();
         let spawned = std::thread::Builder::new().name("ears-write".into()).spawn(move || {
             let started = Instant::now();
-            let text = hemera.transcribe(&model, &samples, RATE, language.as_deref(), &prompt);
+            let text = hemera.transcribe_surely(&model, &samples, RATE, language.as_deref(), &prompt);
             log::debug!("ears: job {job} written in {:.2} s", started.elapsed().as_secs_f32());
             let _ = answer.send(Said::Written { job, text });
         });
@@ -354,17 +354,24 @@ impl Judge {
             ended.elapsed().as_secs_f32(),
             if drafted { ", from its draft" } else { "" }
         );
-        self.judge(text, began, ended)
+        self.judge(text, began, ended, seconds)
     }
 
     /// Whether what was said was meant for SpatiPal, and if so, hand it on. `false` when no one
     /// is listening any more.
-    fn judge(&mut self, text: Result<String, String>, began: Instant, ended: Instant) -> bool {
+    fn judge(&mut self, text: Result<(String, f32), String>, began: Instant, ended: Instant, seconds: f32) -> bool {
         // What the ears are doing now: someone may have begun speaking again meanwhile.
         let now = if self.hearing { Ear::Hearing } else { Ear::Quiet };
         let text = match text {
-            Ok(t) if !is_hallucination(&t) => t,
-            Ok(_) => return self.tell(Heard::Ear(now)),
+            Ok((t, sure)) => match made_up(&t, seconds, sure) {
+                None => t,
+                Some(why) => {
+                    if !t.is_empty() {
+                        log::info!("ears: let go, {why}: {t:?} ({seconds:.1} s, sure {sure:.2})");
+                    }
+                    return self.tell(Heard::Ear(now));
+                }
+            },
             Err(why) => {
                 log::warn!("ears: {why}");
                 return self.tell(Heard::Ear(now));
@@ -395,16 +402,40 @@ impl Judge {
 }
 
 /// What Whisper is given to lean on: its name as the wearer says it -- calling it, at the start of
-/// a sentence -- round a sentence in the way they speak. Given only "Pixel." before that sentence,
-/// Whisper left the name out of "Pixel, write a short Python function..." as the ears cut it
-/// (2026-10-29), and the request was taken for talk in the room; with the name used as it is
-/// used, Whisper kept it in eleven phrases of eleven and wrote it into none that did not have it.
+/// a sentence -- before a sentence in the way they speak.
+///
+/// **Not the name last**: Whisper given noise reads back the end of its prompt, and "Pixel, can you
+/// check the log?" there was heard, over and over, in a silent room (2026-10-30). And not the name
+/// alone: given "Pixel." it left the name out of "Pixel, write a short Python function...".
 fn prompt(name: &str, settings: &VoiceSettings) -> String {
     let indonesian = settings.languages.iter().any(|l| l == "id");
-    let english = settings.languages.iter().any(|l| l == "en") || !indonesian;
     let first = if indonesian { format!("{name}, buka browser.") } else { format!("{name}, open the browser.") };
-    let last = if english { format!("{name}, can you check the log?") } else { format!("{name}, tolong cek log-nya.") };
-    format!("{first} {} {last}", settings.primer())
+    format!("{first} {name}, what do you think? {}", settings.primer())
+}
+
+/// Why this is not something said, if it is not: Whisper writes something for anything it is given.
+///
+/// - One of its favourites.
+/// - Words it barely believes (noise came back at 0.06-0.2, speech at 0.88 or more).
+/// - Far too few for the time they took: "Okay." from 25 s of a silent room.
+/// - One sentence over and over, which is how it runs away with a sentence from its prompt.
+fn made_up(text: &str, seconds: f32, sure: f32) -> Option<&'static str> {
+    if is_hallucination(text) {
+        return Some("one of Whisper's favourites");
+    }
+    if sure < 0.4 {
+        return Some("Whisper barely believes it");
+    }
+    let letters = text.chars().filter(|c| c.is_alphanumeric()).count();
+    if seconds > 2.0 && (letters as f32) < 1.5 * seconds {
+        return Some("too few words for the time");
+    }
+    let lower = text.to_lowercase();
+    let sentences: Vec<&str> = lower.split(['.', '?', '!']).map(str::trim).filter(|s| !s.is_empty()).collect();
+    if sentences.iter().any(|s| sentences.iter().filter(|o| o == &s).count() >= 3) {
+        return Some("one sentence over and over");
+    }
+    None
 }
 
 /// What `text` asks of a figure called `name`: anything at all when it is in a conversation (or
@@ -517,10 +548,23 @@ mod tests {
         let both = VoiceSettings::default();
         assert_eq!(
             prompt("Pixel", &both),
-            format!("Pixel, buka browser. {} Pixel, can you check the log?", both.primer())
+            format!("Pixel, buka browser. Pixel, what do you think? {}", both.primer())
         );
         let english = VoiceSettings { languages: vec!["en".into()], ..Default::default() };
         assert!(prompt("Pixel", &english).starts_with("Pixel, open the browser. "));
+    }
+
+    #[test]
+    fn what_whisper_makes_of_a_silent_room_is_let_go() {
+        // As they came from the owner's room, 2026-10-30.
+        assert!(made_up("Okay.", 25.0, 0.73).is_some());
+        assert!(made_up("the", 3.0, 0.9).is_some());
+        assert!(made_up("Pixel, can you check the log? Pixel, can you check the log? Pixel, can you check the log?", 25.0, 0.9).is_some());
+        assert!(made_up("Oke.", 1.0, 0.06).is_some());
+        // What people say.
+        assert_eq!(made_up("Oke.", 0.8, 0.9), None);
+        assert_eq!(made_up("Pixel, can you check the log?", 2.0, 0.95), None);
+        assert_eq!(made_up("ya", 1.2, 0.7), None);
     }
 
     #[test]

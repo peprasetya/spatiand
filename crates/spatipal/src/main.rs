@@ -105,6 +105,10 @@ struct Pal {
     characters: Vec<String>,
     lists: Receiver<(Vec<String>, Vec<String>)>,
     lists_tx: Sender<(Vec<String>, Vec<String>)>,
+    /// Told to go: it does once it has finished speaking.
+    leaving: bool,
+    /// It went, but is switched on, so stays for its reminders: silent and unseen until opened.
+    away: bool,
     /// What the figure was last told it is doing, and when the last answer finished (it smiles
     /// once it is heard out).
     state: &'static str,
@@ -180,8 +184,36 @@ impl Pal {
         self.painter = None;
     }
 
+    /// Dismissed, and done speaking: it goes. **Switched on it must stay** -- the room would only
+    /// start it again, and its reminders need it -- but deaf and unseen, until it is opened again.
+    /// `false` when the process should end.
+    fn leave(&mut self) -> bool {
+        self.leaving = false;
+        log::info!("dismissed");
+        if !self.settings.on {
+            return false;
+        }
+        self.close_window();
+        self.ears = None;
+        self.ear = Ear::Quiet;
+        self.away = true;
+        let _ = self.app.room_ask(&json!({"do": "avatar", "visible": false}).to_string(), channel().0);
+        true
+    }
+
+    /// Opened again after being dismissed.
+    fn come_back(&mut self) {
+        if std::mem::take(&mut self.away) {
+            self.tend_ears();
+            self.tell_figure();
+        }
+    }
+
     /// Listen for its name, or stop, as the settings say.
     fn tend_ears(&mut self) {
+        if self.away {
+            return;
+        }
         match (self.settings.listening, self.ears.is_some()) {
             (true, false) => {
                 let Some(microphone) = self.app.room_listen() else {
@@ -286,6 +318,7 @@ impl Pal {
             }
             Told::Thinking(t) => a.thinking.push_str(&t),
             Told::Doing(name) => a.doing = Some(name),
+            Told::Dismissed => self.leaving = true,
             Told::Did(d) => {
                 a.doing = None;
                 a.did.push(d);
@@ -525,8 +558,9 @@ impl Pal {
             }
             Event::CloseRequested { .. } => {
                 self.close_window();
-                // Switched on, it stays: its ears and reminders need no window.
-                return self.settings.on || self.ears.is_some();
+                // Switched on, it stays: its ears and reminders need no window. Otherwise closing
+                // its window is how it is shut down.
+                return self.settings.on;
             }
             Event::Describe { window } => {
                 let text = self.current.and_then(|i| self.chats.get(i)).map(|c| c.said.iter().rev().take(6).rev().map(|s| format!("{}: {}", s.role, s.text)).collect::<Vec<_>>().join("\n")).unwrap_or_default();
@@ -584,9 +618,13 @@ impl Pal {
                     let _ = stream.set_read_timeout(Some(Duration::from_millis(300)));
                     let _ = stream.read_to_string(&mut asked);
                     if asked.trim() == "window" {
+                        self.come_back();
                         self.open_window();
                     }
                 }
+            }
+            if self.leaving && self.answering.is_none() && !self.voice.busy() && !self.leave() {
+                return Ok(());
             }
             self.look_at_reminders();
             self.tend_mood();
@@ -688,6 +726,8 @@ fn main() {
             characters: store::characters(),
             lists,
             lists_tx,
+            leaving: false,
+            away: false,
             state: "",
             finished_at: None,
         };

@@ -4,9 +4,15 @@
 //! Realtime socket -- which holds every background job on deepmagpie for as long as it is open --
 //! is never needed (`docs/ai-integrations.md`).
 //!
-//! **Loudness over the room's own noise**, in 20 ms windows. The noise floor falls at once to a
-//! quieter window and rises only slowly, so a fan is learnt and a voice is not; a phrase starts
-//! after three loud windows in a row and ends after a pause of `pause_ms`. The first moments
+//! **Loudness over the room's own noise**, in 20 ms windows. The noise floor is the quiet end of
+//! the last three seconds (a fixed fraction up from the quietest, so one quiet moment does not
+//! pull it down: as the quietest window alone it sat so low that a silent room's own wavering
+//! kept a "phrase" going for its full 25 s); a phrase starts after three loud windows in a row and
+//! ends after a pause of `pause_ms`.
+//!
+//! **A voice comes and goes**: its loudness moves 3-6 dB from window to window, a fan's or a
+//! microphone's hiss under half a dB, however loud. What does not move is not a phrase, and is let
+//! go after three seconds at most -- given to Whisper it would be read back as words. The first moments
 //! after the microphone opens only learn the room: a phrase begun before then would be the
 //! room itself, and Whisper given a phrase of noise writes something anyway -- "Terima kasih
 //! telah menonton!" is its favourite.
@@ -41,6 +47,13 @@ const QUIETEST_SPEECH: f32 = -55.0;
 const LONGEST_MS: u32 = 25_000;
 /// This much quiet in a phrase hands it out as a draft.
 const DRAFT_MS: u32 = 300;
+/// The floor is this far up the last `FLOOR_WINDOWS` of loudness, quietest first.
+const FLOOR_AT: f32 = 0.15;
+const FLOOR_WINDOWS: usize = 150;
+/// A voice's loudness moves at least this much from window to window, on average, in dB.
+const LEAST_MOVEMENT: f32 = 1.2;
+/// Heard for this long and not moving like a voice, it is let go.
+const JUDGED_AFTER_MS: u32 = 3000;
 
 /// What the cutter noticed in what it was fed.
 #[derive(Clone, Debug, PartialEq)]
@@ -64,6 +77,8 @@ pub struct Phrases {
     pending: Vec<i16>,
     floor: f32,
     level: f32,
+    /// The last loudnesses, for the floor.
+    heard: VecDeque<f32>,
     seen: usize,
     loud_run: usize,
     pre: VecDeque<i16>,
@@ -78,6 +93,24 @@ struct Building {
     loud: usize,
     /// Handed out as a draft since the last loud window.
     drafted: bool,
+    /// How far its loudness has moved, window to window, in all; over how many.
+    moved: f32,
+    windows: usize,
+}
+
+impl Building {
+    fn new(samples: Vec<i16>, loud: usize) -> Building {
+        Building { samples, quiet: 0, loud, drafted: false, moved: 0.0, windows: 0 }
+    }
+
+    /// Long enough, and moving as a voice does.
+    fn is_speech(&self) -> bool {
+        self.loud * WINDOW_MS as usize >= SHORTEST_SPEECH_MS as usize && self.moves()
+    }
+
+    fn moves(&self) -> bool {
+        self.windows < 5 || self.moved / self.windows as f32 >= LEAST_MOVEMENT
+    }
 }
 
 impl Phrases {
@@ -90,6 +123,7 @@ impl Phrases {
             pending: Vec::with_capacity(window),
             floor: -60.0,
             level: -100.0,
+            heard: VecDeque::with_capacity(FLOOR_WINDOWS + 1),
             seen: 0,
             loud_run: 0,
             pre: VecDeque::new(),
@@ -128,7 +162,7 @@ impl Phrases {
     /// What is being said when the microphone is closed: kept if it is speech.
     pub fn flush(&mut self) -> Option<Vec<i16>> {
         let b = self.building.take()?;
-        (b.loud * WINDOW_MS as usize >= SHORTEST_SPEECH_MS as usize).then_some(b.samples)
+        b.is_speech().then_some(b.samples)
     }
 
     /// Whether what is being heard was handed out as a draft, and not taken back.
@@ -149,19 +183,22 @@ impl Phrases {
     fn window_done(&mut self, window: &[i16], out: &mut Vec<Cut>) {
         let energy = window.iter().map(|&s| (s as f64) * (s as f64)).sum::<f64>() / window.len() as f64;
         let db = (10.0 * (energy / (32768.0 * 32768.0) + 1e-12).log10()) as f32;
-        self.level = db;
+        let last = std::mem::replace(&mut self.level, db);
         self.seen += 1;
+        self.heard.push_back(db);
+        if self.heard.len() > FLOOR_WINDOWS {
+            self.heard.pop_front();
+        }
         if self.seen <= WARM_UP {
             self.floor = if self.seen == 1 { db } else { self.floor * 0.5 + db * 0.5 };
             self.remember(window);
             return;
         }
-        let rise = if self.building.is_some() { 0.001 } else { 0.01 };
-        self.floor = if db < self.floor { self.floor * 0.7 + db * 0.3 } else { self.floor + (db - self.floor) * rise };
-        self.floor = self.floor.clamp(-85.0, -30.0);
+        let mut sorted: Vec<f32> = self.heard.iter().copied().collect();
+        sorted.sort_by(f32::total_cmp);
+        self.floor = sorted[((sorted.len() - 1) as f32 * FLOOR_AT) as usize].clamp(-85.0, -30.0);
 
         let tail = (TAIL_MS / WINDOW_MS) as usize;
-        let speech = |b: &Building| b.loud * WINDOW_MS as usize >= SHORTEST_SPEECH_MS as usize;
         match &mut self.building {
             None => {
                 let loud = db > self.floor + START_OVER && db > QUIETEST_SPEECH;
@@ -169,7 +206,7 @@ impl Phrases {
                 if self.loud_run >= 3 {
                     let mut samples: Vec<i16> = self.pre.drain(..).collect();
                     samples.extend_from_slice(window);
-                    self.building = Some(Building { samples, quiet: 0, loud: self.loud_run, drafted: false });
+                    self.building = Some(Building::new(samples, self.loud_run));
                     self.loud_run = 0;
                     out.push(Cut::Began);
                 } else {
@@ -178,6 +215,8 @@ impl Phrases {
             }
             Some(b) => {
                 b.samples.extend_from_slice(window);
+                b.moved += (db - last).abs();
+                b.windows += 1;
                 if db > self.floor + KEEP_OVER && db > QUIETEST_SPEECH {
                     b.loud += 1;
                     b.quiet = 0;
@@ -193,18 +232,25 @@ impl Phrases {
                     let cut = b.quiet.saturating_sub(tail) * window;
                     b.samples[..b.samples.len() - cut.min(b.samples.len())].to_vec()
                 };
-                if b.quiet >= self.pause_windows {
+                if b.windows * WINDOW_MS as usize >= JUDGED_AFTER_MS as usize && !b.moves() {
+                    // A hum, not a voice.
                     let b = self.building.take().unwrap();
-                    out.push(if speech(&b) { Cut::Phrase(ending(&b, self.window)) } else { Cut::Dropped });
+                    if b.drafted {
+                        out.push(Cut::Resumed);
+                    }
+                    out.push(Cut::Dropped);
+                } else if b.quiet >= self.pause_windows {
+                    let b = self.building.take().unwrap();
+                    out.push(if b.is_speech() { Cut::Phrase(ending(&b, self.window)) } else { Cut::Dropped });
                 } else if b.samples.len() >= longest {
                     // Mid-word, perhaps; better than Whisper dropping the end of a long phrase.
-                    let b = self.building.replace(Building { samples: Vec::new(), quiet: 0, loud: 0, drafted: false }).unwrap();
+                    let b = self.building.replace(Building::new(Vec::new(), 0)).unwrap();
                     if b.drafted {
                         out.push(Cut::Resumed);
                     }
                     out.push(Cut::Phrase(b.samples));
                     out.push(Cut::Began);
-                } else if b.quiet == (DRAFT_MS / WINDOW_MS) as usize && !b.drafted && speech(b) && self.pause_windows > b.quiet {
+                } else if b.quiet == (DRAFT_MS / WINDOW_MS) as usize && !b.drafted && b.is_speech() && self.pause_windows > b.quiet {
                     b.drafted = true;
                     out.push(Cut::Draft(ending(b, self.window)));
                 }
@@ -256,12 +302,25 @@ mod tests {
             .collect()
     }
 
+    /// Something at about `db` whose loudness moves as a voice's does: a stand-in for speech.
+    /// Anything louder than -30 dB in these tests is taken for a voice.
+    fn sound(ms: u32, db: f32, seed: &mut u32) -> Vec<i16> {
+        let mut out = noise(ms, db, seed);
+        if db > -30.0 {
+            for (w, window) in out.chunks_mut(320).enumerate() {
+                let gain = [1.0, 0.45, 0.8, 0.3][w % 4];
+                window.iter_mut().for_each(|s| *s = (*s as f32 * gain) as i16);
+            }
+        }
+        out
+    }
+
     fn run(parts: &[(u32, f32)]) -> Vec<Vec<i16>> {
         let mut seed = 7;
         let mut p = Phrases::new(RATE, 700);
         let mut out = Vec::new();
         for &(ms, db) in parts {
-            out.extend(p.feed(&noise(ms, db, &mut seed)));
+            out.extend(p.feed(&sound(ms, db, &mut seed)));
         }
         out.extend(p.flush());
         out
@@ -303,7 +362,7 @@ mod tests {
     fn cuts(parts: &[(u32, f32)]) -> Vec<Cut> {
         let mut seed = 7;
         let mut p = Phrases::new(RATE, 700);
-        parts.iter().flat_map(|&(ms, db)| p.listen(&noise(ms, db, &mut seed))).collect()
+        parts.iter().flat_map(|&(ms, db)| p.listen(&sound(ms, db, &mut seed))).collect()
     }
 
     fn kinds(cuts: &[Cut]) -> Vec<&'static str> {
@@ -337,6 +396,29 @@ mod tests {
     #[test]
     fn a_click_begins_and_comes_to_nothing() {
         assert_eq!(kinds(&cuts(&[(800, -60.0), (80, -10.0), (1500, -60.0)])), ["began", "dropped"]);
+    }
+
+    #[test]
+    fn a_hum_however_loud_is_let_go_as_no_phrase() {
+        // A fan turned on: over the quiet it came to, and not moving as a voice does.
+        let mut seed = 7;
+        let mut p = Phrases::new(RATE, 800);
+        let mut cuts = p.listen(&noise(1000, -60.0, &mut seed));
+        cuts.extend(p.listen(&noise(8000, -30.0, &mut seed)));
+        assert_eq!(kinds(&cuts), ["began", "dropped"]);
+    }
+
+    #[test]
+    fn a_silent_room_that_wavers_is_no_phrase() {
+        // The noise wandering slowly by more than the 6 dB that keeps a phrase going.
+        let mut seed = 9;
+        let mut p = Phrases::new(RATE, 800);
+        let mut phrases = 0;
+        for i in 0..30 {
+            let db = -58.0 + 9.0 * (i as f32 * 0.8).sin();
+            phrases += p.feed(&noise(1000, db, &mut seed)).len();
+        }
+        assert_eq!(phrases, 0);
     }
 
     #[test]
