@@ -721,6 +721,7 @@ pub fn run(
                             let mut settle = 0.5f32;
                             match &step {
                                 Scripted::Wait(seconds) => settle = *seconds,
+                                Scripted::Thumbs(_, seconds, _) => settle = *seconds as f32 + 0.6,
                                 Scripted::Window(_) | Scripted::Dump(_) => settle = 0.0,
                                 _ => {}
                             }
@@ -770,7 +771,12 @@ pub fn run(
                             // as it takes for the last phrase to be written.
                             let mut stopped = false;
                             let gave_up = answered + std::time::Duration::from_secs(30);
+                            let began = std::time::Instant::now();
+                            let mut thumbs_ended = false;
                             loop {
+                                if let Scripted::Thumbs(dy, seconds, hover) = &step {
+                                    thumbs_frame(&mut runtime.state, &windows, pointer_at, began.elapsed().as_secs_f64(), *dy, *seconds, *hover, &mut thumbs_ended);
+                                }
                                 // The assistant's questions, answered as the session answers them.
                                 crate::spatikey::serve(&mut runtime.state, 0);
                                 for event in crate::assist::serve(&mut runtime.state, None, &windows, &mut renderer, 0) {
@@ -1646,7 +1652,7 @@ fn swipe_on_the_window(state: &mut Spatiand, windows: &[crate::scene::WindowQuad
 ///
 /// ```text
 /// click:u,v  rclick:u,v  back:u,v  forward:u,v  move:u,v  down:u,v  up:u,v  drag:u,v,u,v
-/// scroll:dx,dy  pinch:1.5  key:28  key:ctrl+shift+20  keydown:42  keyup:42  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
+/// scroll:dx,dy  thumbs:dy,seconds,hover  pinch:1.5  key:28  key:ctrl+shift+20  keydown:42  keyup:42  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
 /// roomup  notice  dictate:/tmp/said.wav
 /// ```
 ///
@@ -1671,6 +1677,10 @@ enum Scripted {
     Up(f64, f64),
     Drag(f64, f64, f64, f64),
     Scroll(f64, f64),
+    /// `thumbs:dy,seconds,hover`: the left pad as a session sends it, a scroll every frame and
+    /// its end a quarter of a second after the last; `hover` 1 has a right thumb resting on its
+    /// pad all the while, which moves the pointer a little every frame.
+    Thumbs(f64, f64, bool),
     /// Two fingers spreading by this factor over the chosen window, as the room hands a pinch:
     /// in Spatiand's own terms to a window that zooms itself, and as the standard pinch to any
     /// other (`zwp_pointer_gestures_v1`, which Chromium zooms its page by).
@@ -1708,6 +1718,7 @@ fn scripted_steps() -> Vec<Scripted> {
                 ("up", [u, v]) => Scripted::Up(*u, *v),
                 ("drag", [a, b, c, d]) => Scripted::Drag(*a, *b, *c, *d),
                 ("scroll", [dx, dy]) => Scripted::Scroll(*dx, *dy),
+                ("thumbs", [dy, seconds, hover]) => Scripted::Thumbs(*dy, *seconds, *hover != 0.0),
                 ("pinch", [scale]) => Scripted::Pinch(*scale),
                 ("wait", [seconds]) => Scripted::Wait(*seconds as f32),
                 ("size", [w, h]) => Scripted::Size(*w as i32, *h as i32),
@@ -1858,6 +1869,45 @@ fn pointer_event_on(
     }
 }
 
+/// One frame of [`Scripted::Thumbs`], `elapsed` seconds into it.
+#[allow(clippy::too_many_arguments)]
+fn thumbs_frame(
+    state: &mut Spatiand,
+    windows: &[crate::scene::WindowQuad],
+    at: (f64, f64),
+    elapsed: f64,
+    dy: f64,
+    seconds: f64,
+    hover: bool,
+    ended: &mut bool,
+) {
+    use smithay::backend::input::{Axis, AxisSource};
+    use smithay::input::pointer::{AxisFrame, MotionEvent};
+    use smithay::utils::{Point, SERIAL_COUNTER};
+    let Some(window) = chosen_window(state, windows) else { return };
+    let Some(pointer) = state.seat.get_pointer() else { return };
+    let time = (elapsed * 1000.0) as u32 + 1000;
+    if hover {
+        // A thumb at rest is never quite still.
+        let location = Point::from((
+            at.0 * window.pixels.0 as f64 + (elapsed * 40.0).sin() * 0.5,
+            at.1 * window.pixels.1 as f64 + (elapsed * 31.0).cos() * 0.5,
+        ));
+        let focus = Some((window.surface.clone(), Point::from((0.0, 0.0))));
+        pointer.motion(state, focus, &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time });
+        pointer.frame(state);
+    }
+    if elapsed < seconds {
+        let frame = AxisFrame::new(time).source(AxisSource::Finger).value(Axis::Vertical, dy * 0.016 / seconds);
+        pointer.axis(state, frame);
+        pointer.frame(state);
+    } else if elapsed >= seconds + 0.25 && !*ended {
+        *ended = true;
+        pointer.axis(state, AxisFrame::new(time).source(AxisSource::Finger).stop(Axis::Vertical).stop(Axis::Horizontal));
+        pointer.frame(state);
+    }
+}
+
 fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step: &Scripted, at: &mut (f64, f64)) {
     use smithay::backend::input::{Axis, AxisSource};
     use smithay::input::pointer::AxisFrame;
@@ -1903,6 +1953,8 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
             *at = (*c, *d);
             pointer_event(state, windows, *at, Some((crate::pointer::BTN_LEFT, false)));
         }
+        // Done frame by frame by the steps' loop, after the pointer is put there.
+        Scripted::Thumbs(..) => pointer_event(state, windows, *at, None),
         Scripted::Scroll(dx, dy) => {
             pointer_event(state, windows, *at, None);
             let Some(pointer) = state.seat.get_pointer() else { return };
