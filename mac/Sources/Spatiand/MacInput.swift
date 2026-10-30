@@ -101,9 +101,14 @@ enum MacInput {
     /// What rounding to whole points has kept back of a gesture so far, carried into its next event.
     private static var scrollCarry = (x: 0.0, y: 0.0)
 
-    /// The wheel, where the real pointer is put, as one event of a gesture.
+    /// The wheel, where the real pointer is put, as one event of a gesture. Put there once, as the
+    /// gesture begins: the system's call waits for the window server, as long as 65 ms measured
+    /// with windows being captured, and once for each of a pad's 72 events a second it held the
+    /// host to 45, the rest queueing up to be scrolled ten seconds after the thumb had gone, the
+    /// server too busy for the pictures to come smoothly. A trackpad's pointer does not move
+    /// under a gesture either, and an application keeps a gesture to what it began on.
     static func realScroll(dx: Double, dy: Double, at point: CGPoint, phase: Int64, momentum: Int64) {
-        CGWarpMouseCursorPosition(point)
+        if phase == 1 { CGWarpMouseCursorPosition(point) }
         // Whole points, the remainder carried: a slow swipe on a Deck's pad is under half a point
         // an event, and rounded on its own each came to nothing -- the page hardly moved.
         if phase == 1 || momentum == 1 { scrollCarry = (0, 0) }
@@ -170,15 +175,36 @@ final class PadScroll {
     private static let glideBegin: Int64 = 1, glideOn: Int64 = 2, glideEnd: Int64 = 3
 
     private var going = false
+    /// Where the gesture began, and the window: what it scrolls until it ends.
     private var point = CGPoint.zero
+    private var window: CGWindowID = 0
     private var last = Date.distantPast
+    /// What the session has said and is not posted yet. Each event posted takes in all that has
+    /// arrived, so that a host held up for any reason catches up at once, and a scroll is never
+    /// replayed after the thumb has gone.
+    private let waitingLock = NSLock()
+    private var waiting = (x: 0.0, y: 0.0)
     /// Points a second, smoothed over the last movements: what momentum starts from.
     private var velocity = (x: 0.0, y: 0.0)
     private var glide: DispatchSourceTimer?
     /// No word of the finger leaving for this long, and the gesture is over without momentum.
     private var quiet: DispatchWorkItem?
 
-    func moved(dx: Double, dy: Double, at point: CGPoint) {
+    /// A movement of the pad, on the thread the session is heard on; `moved`, on `MacInput.real`, posts it.
+    func heard(dx: Double, dy: Double) {
+        waitingLock.lock()
+        waiting = (waiting.x + dx, waiting.y + dy)
+        waitingLock.unlock()
+    }
+
+    func moved(at point: CGPoint, window: CGWindowID) {
+        waitingLock.lock()
+        let (dx, dy) = waiting
+        waiting = (0, 0)
+        waitingLock.unlock()
+        // Posted already, with an earlier one.
+        guard dx != 0 || dy != 0 else { return }
+        if going && window != self.window { end(carryOn: false) }
         stopGlide()
         let now = Date()
         let dt = now.timeIntervalSince(last)
@@ -189,8 +215,8 @@ final class PadScroll {
             velocity = (0, 0)
         }
         last = now
-        self.point = point
-        MacInput.realScroll(dx: dx, dy: dy, at: point, phase: going ? Self.changed : Self.began, momentum: 0)
+        if !going { self.point = point; self.window = window }
+        MacInput.realScroll(dx: dx, dy: dy, at: self.point, phase: going ? Self.changed : Self.began, momentum: 0)
         going = true
         quiet?.cancel()
         let end = DispatchWorkItem { [weak self] in self?.end(carryOn: false) }

@@ -624,9 +624,10 @@ final class MacHost {
             let others = Set(shared.values.map(\.info.windowID)).union(offered.values.map(\.windowID))
             let again = Date().timeIntervalSince(scrolledAt) > 0.5
             scrolledAt = Date()
+            MacInput.pad.heard(dx: h, dy: v)
             MacInput.real.async {
                 if again, info.display == nil { MacInput.bringForward(info, at: point, others: others) }
-                MacInput.pad.moved(dx: h, dy: v, at: point)
+                MacInput.pad.moved(at: point, window: info.windowID)
             }
         case "Key":
             guard let code = (fields["code"] as? NSNumber)?.uint32Value, let down = fields["pressed"] as? Bool else { return }
