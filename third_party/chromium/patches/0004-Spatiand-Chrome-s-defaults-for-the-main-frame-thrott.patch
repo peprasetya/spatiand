@@ -1,0 +1,48 @@
+From 8e259fc994bbc3e7b8ccbb53ff03cd7f373aba13 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Fri, 30 Oct 2026 11:08:47 +0700
+Subject: [PATCH 4/6] Spatiand: Chrome's defaults for the main-frame throttle
+ and autoplay
+
+The 60 Hz main-frame throttle Cromite turns on for the desktop stopped a page's main frames on the
+room's 72 Hz display: YouTube's view transition never finished and its pseudo-elements took every
+click over a frozen page. Autoplay is allowed by default, so Chrome's own policy decides.
+---
+ cc/base/features.cc                                          | 5 ++++-
+ .../core/browser/content_settings_registry.cc                | 4 +++-
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/cc/base/features.cc b/cc/base/features.cc
+index f90b4254b0..48e4eadfbb 100644
+--- a/cc/base/features.cc
++++ b/cc/base/features.cc
+@@ -185,7 +185,10 @@ BASE_FEATURE_PARAM(int,
+                    2);
+ 
+ // Enabled on Android, after a field trial showed improvements.
+-CROMITE_FEATURE(kThrottleMainFrameTo60Hz, "ThrottleMainFrameTo60Hz", base::FEATURE_ENABLED_BY_DEFAULT);
++// Spatiand: off, as in Chrome on the desktop. On a display that is not 60 Hz (the room presents at
++// 72) it stopped a page's main frames altogether: YouTube's view transition then never finished,
++// leaving a frozen page under the transition's pseudo-elements that took every click.
++CROMITE_FEATURE(kThrottleMainFrameTo60Hz, "ThrottleMainFrameTo60Hz", base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ #if BUILDFLAG(IS_ANDROID)
+ BASE_FEATURE(kThrottleMainFrameTo60HzWebView,
+diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
+index 4e2c8e8fd8..7d42b72f78 100644
+--- a/components/content_settings/core/browser/content_settings_registry.cc
++++ b/components/content_settings/core/browser/content_settings_registry.cc
+@@ -253,7 +253,9 @@ void ContentSettingsRegistry::Init() {
+            ContentSettingsInfo::INHERIT_IN_INCOGNITO,
+            PermissionSettingsInfo::EXCEPTIONS_ON_SECURE_ORIGINS_ONLY);
+ 
+-  Register(ContentSettingsType::AUTOPLAY, "autoplay", CONTENT_SETTING_BLOCK,
++  // Spatiand: allowed, so Chrome's own autoplay policy decides (a site the wearer uses plays on
++  // opening, as YouTube does); a site can still be blocked in its settings.
++  Register(ContentSettingsType::AUTOPLAY, "autoplay", CONTENT_SETTING_ALLOW,
+            WebsiteSettingsInfo::UNSYNCABLE, /*allowlisted_primary_schemes=*/{},
+            /*valid_settings=*/{CONTENT_SETTING_ALLOW, CONTENT_SETTING_BLOCK},
+            WebsiteSettingsInfo::TOP_ORIGIN_ONLY_SCOPE,
+-- 
+2.53.0
+

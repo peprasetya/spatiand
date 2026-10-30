@@ -1,11 +1,11 @@
-From 5fb26b806da29cdaabe97bdc0cc0780dbc081101 Mon Sep 17 00:00:00 2001
+From fe765ad4bd97e407ea147de6b3066fa8c280a6f4 Mon Sep 17 00:00:00 2001
 From: Spatiand build <claude@prasetya.id>
 Date: Thu, 29 Oct 2026 23:52:33 +0000
-Subject: [PATCH] Spatiand: media on Spatiand's FFmpeg
+Subject: [PATCH 3/6] Spatiand: media on Spatiand's FFmpeg
 
 Chromium links Spatiand's FFmpeg 9.0.2 (build/linux/unbundle/ffmpeg.gn, staged by Spatiand's
-build.sh), which also decodes HEVC in software and Dolby Digital (Plus); VA-API keeps VP9, AV1
-and H.264 but never HEVC, which has reset this GPU family.
+build.sh, its linker flags given to every program that depends on it), which decodes HEVC in
+software where there is no GPU decoder for it, and Dolby Digital (Plus).
 ---
  build/linux/unbundle/ffmpeg.gn        | 29 +++++++++++++++++++++------
  media/base/supported_types.cc         | 11 +---------
@@ -13,8 +13,7 @@ and H.264 but never HEVC, which has reset this GPU family.
  media/filters/ffmpeg_demuxer.cc       | 13 ++----------
  media/filters/ffmpeg_glue.cc          |  2 ++
  media/filters/ffmpeg_video_decoder.cc |  8 ++++----
- media/gpu/vaapi/vaapi_wrapper.cc      |  7 ++-----
- 7 files changed, 46 insertions(+), 38 deletions(-)
+ 6 files changed, 44 insertions(+), 33 deletions(-)
 
 diff --git a/build/linux/unbundle/ffmpeg.gn b/build/linux/unbundle/ffmpeg.gn
 index c0f0e21620..e29b9a7e37 100644
@@ -172,7 +171,7 @@ index 6ecbf5d8b3..5e0cd2e693 100644
    // Ensures format parsing errors will bail out. From an audit on 11/2017, all
    // instances were real failures. Solves bugs like http://crbug.com/710791.
 diff --git a/media/filters/ffmpeg_video_decoder.cc b/media/filters/ffmpeg_video_decoder.cc
-index b13e1aabd6..4c18fc2604 100644
+index b13e1aabd6..f754854f55 100644
 --- a/media/filters/ffmpeg_video_decoder.cc
 +++ b/media/filters/ffmpeg_video_decoder.cc
 @@ -74,7 +74,6 @@ static int GetFFmpegVideoDecoderThreadCount(const VideoDecoderConfig& config) {
@@ -196,8 +195,8 @@ index b13e1aabd6..4c18fc2604 100644
    }
  #endif
 -#if BUILDFLAG(ENABLE_PLATFORM_HEVC)
-+  // Spatiand: HEVC is decoded here, by Spatiand's FFmpeg; VA-API never claims it (see
-+  // vaapi_wrapper.cc).
++  // Spatiand: HEVC in software too, by Spatiand's FFmpeg, where the GPU does not decode it
++  // (SpatiandVideoDecoder does, where it does).
    if (codec == VideoCodec::kHEVC) {
 -    return false;
 +    return true;
@@ -205,24 +204,6 @@ index b13e1aabd6..4c18fc2604 100644
 -#endif
    // We only build support for H.264.
    return codec == VideoCodec::kH264 && IsDecoderBuiltInVideoCodec(codec);
- }
-diff --git a/media/gpu/vaapi/vaapi_wrapper.cc b/media/gpu/vaapi/vaapi_wrapper.cc
-index 94a78b9ad1..8d69236f8c 100644
---- a/media/gpu/vaapi/vaapi_wrapper.cc
-+++ b/media/gpu/vaapi/vaapi_wrapper.cc
-@@ -860,11 +860,8 @@ const ProfileCodecMap& GetProfileCodecMap() {
-           {AV1PROFILE_PROFILE_MAIN, VAProfileAV1Profile0},
-         // VaapiWrapper does not support AV1 Profile 1.
-         // {AV1PROFILE_PROFILE_HIGH, VAProfileAV1Profile1},
--#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
--          {HEVCPROFILE_MAIN, VAProfileHEVCMain},
--          {HEVCPROFILE_MAIN_STILL_PICTURE, VAProfileHEVCMain},
--          {HEVCPROFILE_MAIN10, VAProfileHEVCMain10},
--#endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
-+          // Spatiand: no HEVC through VA-API -- decoding HEVC there has reset this GPU family
-+          // (AMD, the Deck's and deepmagpie's). Spatiand's FFmpeg decodes it in software.
-   });
-   return *kMediaToVAProfileMap;
  }
 -- 
 2.53.0

@@ -1,0 +1,822 @@
+From 4d550d40691619c30411070c859c7e169531ae11 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Fri, 30 Oct 2026 11:08:48 +0700
+Subject: [PATCH 6/6] Spatiand: video decoded by Spatiand's FFmpeg on VA-API
+
+SpatiandVideoDecoder takes VaapiVideoDecoder's place in the GPU process: the pipeline's frame
+pool allocates its buffers as VA surfaces through VaapiWrapper, FFmpeg decodes each picture into
+one (its get_buffer2, on VaapiWrapper's display), and the frame goes to the compositor with
+nothing copied. H.264, HEVC (8 and 10 bit), VP8, VP9 and AV1, as far as the GPU decodes them.
+---
+ media/gpu/chromeos/video_decoder_pipeline.cc |   4 +-
+ media/gpu/vaapi/BUILD.gn                     |   3 +
+ media/gpu/vaapi/spatiand_video_decoder.cc    | 589 +++++++++++++++++++
+ media/gpu/vaapi/spatiand_video_decoder.h     | 140 +++++
+ media/gpu/vaapi/vaapi_wrapper.h              |   4 +
+ 5 files changed, 739 insertions(+), 1 deletion(-)
+ create mode 100644 media/gpu/vaapi/spatiand_video_decoder.cc
+ create mode 100644 media/gpu/vaapi/spatiand_video_decoder.h
+
+diff --git a/media/gpu/chromeos/video_decoder_pipeline.cc b/media/gpu/chromeos/video_decoder_pipeline.cc
+index 7fa0c0787a..3502b281b0 100644
+--- a/media/gpu/chromeos/video_decoder_pipeline.cc
++++ b/media/gpu/chromeos/video_decoder_pipeline.cc
+@@ -39,6 +39,7 @@
+ 
+ #if BUILDFLAG(USE_VAAPI)
+ #include <drm_fourcc.h>
++#include "media/gpu/vaapi/spatiand_video_decoder.h"
+ #include "media/gpu/vaapi/vaapi_video_decoder.h"
+ #endif  // BUILDFLAG(USE_VAAPI)
+ 
+@@ -239,8 +240,9 @@ std::unique_ptr<VideoDecoder> VideoDecoderPipeline::Create(
+     DCHECK(frame_pool);
+     switch (ActiveLinuxVideoDecoderType()) {
+ #if BUILDFLAG(USE_VAAPI)
++      // Spatiand: video is decoded by Spatiand's FFmpeg on VA-API, not by Chromium's decoders.
+       case VideoDecoderType::kVaapi:
+-        create_decoder_function_cb = base::BindOnce(&VaapiVideoDecoder::Create);
++        create_decoder_function_cb = base::BindOnce(&SpatiandVideoDecoder::Create);
+         break;
+ #endif  // BUILDFLAG(USE_VAAPI)
+ #if BUILDFLAG(USE_V4L2_CODEC)
+diff --git a/media/gpu/vaapi/BUILD.gn b/media/gpu/vaapi/BUILD.gn
+index 0dae890813..43736ea341 100644
+--- a/media/gpu/vaapi/BUILD.gn
++++ b/media/gpu/vaapi/BUILD.gn
+@@ -51,6 +51,8 @@ source_set("vaapi") {
+     "vaapi_jpeg_decoder.h",
+     "vaapi_jpeg_encoder.cc",
+     "vaapi_jpeg_encoder.h",
++    "spatiand_video_decoder.cc",
++    "spatiand_video_decoder.h",
+     "vaapi_video_decoder.cc",
+     "vaapi_video_decoder.h",
+     "vaapi_video_decoder_delegate.cc",
+@@ -89,6 +91,7 @@ source_set("vaapi") {
+     "//media/gpu:video_frame_mapper_common",
+     "//media/gpu/chromeos:common",
+     "//mojo/public/cpp/bindings",
++    "//third_party/ffmpeg",
+     "//third_party/libaom:libaomrc",
+     "//third_party/libvpx:libvpxrc",
+     "//third_party/libyuv",
+diff --git a/media/gpu/vaapi/spatiand_video_decoder.cc b/media/gpu/vaapi/spatiand_video_decoder.cc
+new file mode 100644
+index 0000000000..883405357f
+--- /dev/null
++++ b/media/gpu/vaapi/spatiand_video_decoder.cc
+@@ -0,0 +1,589 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "media/gpu/vaapi/spatiand_video_decoder.h"
++
++#include <utility>
++
++#include "base/compiler_specific.h"
++#include "base/containers/span.h"
++#include "base/functional/bind.h"
++#include "base/functional/callback_helpers.h"
++#include "base/logging.h"
++#include "base/memory/ptr_util.h"
++#include "base/numerics/safe_conversions.h"
++#include "base/task/sequenced_task_runner.h"
++#include "media/base/decoder_buffer.h"
++#include "media/base/media_log.h"
++#include "media/base/video_types.h"
++#include "media/ffmpeg/ffmpeg_common.h"
++#include "media/gpu/chromeos/dmabuf_video_frame_pool.h"
++#include "media/gpu/chromeos/fourcc.h"
++#include "media/gpu/chromeos/native_pixmap_frame_resource.h"
++#include "media/gpu/vaapi/vaapi_utils.h"
++#include "media/gpu/vaapi/vaapi_wrapper.h"
++
++extern "C" {
++#include <libavutil/hwcontext.h>
++#include <libavutil/hwcontext_vaapi.h>
++}
++
++namespace media {
++
++namespace {
++
++// Frames the codec keeps for reference beyond what is on the screen: the most H.264 and HEVC
++// may hold, plus the one being decoded and one FFmpeg holds back for reordering.
++constexpr size_t kReferenceFrames = 18;
++
++const char* DecoderName(VideoCodec codec) {
++  switch (codec) {
++    case VideoCodec::kH264:
++      return "h264";
++    case VideoCodec::kHEVC:
++      return "hevc";
++    case VideoCodec::kVP8:
++      return "vp8";
++    case VideoCodec::kVP9:
++      return "vp9";
++    // FFmpeg's own AV1 decoder decodes only through a hardware accelerator, which is the point.
++    case VideoCodec::kAV1:
++      return "av1";
++    default:
++      return nullptr;
++  }
++}
++
++// What FFmpeg decodes into, as the pool and VA-API know it.
++std::optional<VideoPixelFormat> PoolFormat(AVPixelFormat sw_format) {
++  switch (sw_format) {
++    case AV_PIX_FMT_NV12:
++      return PIXEL_FORMAT_NV12;
++    case AV_PIX_FMT_P010:
++      return PIXEL_FORMAT_P010LE;
++    default:
++      return std::nullopt;
++  }
++}
++
++// A pool buffer while FFmpeg holds it: released when FFmpeg is done with the picture, for output
++// and for reference. The frame goes back to the pool once the screen is done with it too.
++struct Held {
++  scoped_refptr<FrameResource> frame;
++  VASurfaceID surface;
++};
++
++void ReleaseHeld(void* opaque, uint8_t* /*data*/) {
++  delete static_cast<Held*>(opaque);
++}
++
++}  // namespace
++
++SpatiandVideoDecoder::DecodeTask::DecodeTask(scoped_refptr<DecoderBuffer> buffer,
++                                             DecodeCB decode_cb)
++    : buffer(std::move(buffer)), decode_cb(std::move(decode_cb)) {}
++SpatiandVideoDecoder::DecodeTask::DecodeTask(DecodeTask&&) = default;
++SpatiandVideoDecoder::DecodeTask::~DecodeTask() = default;
++
++// static
++std::unique_ptr<VideoDecoderMixin> SpatiandVideoDecoder::Create(
++    std::unique_ptr<MediaLog> media_log,
++    scoped_refptr<base::SequencedTaskRunner> decoder_task_runner,
++    base::WeakPtr<VideoDecoderMixin::Client> client) {
++  return base::WrapUnique<VideoDecoderMixin>(new SpatiandVideoDecoder(
++      std::move(media_log), std::move(decoder_task_runner), std::move(client)));
++}
++
++SpatiandVideoDecoder::SpatiandVideoDecoder(
++    std::unique_ptr<MediaLog> media_log,
++    scoped_refptr<base::SequencedTaskRunner> decoder_task_runner,
++    base::WeakPtr<VideoDecoderMixin::Client> client)
++    : VideoDecoderMixin(std::move(media_log), std::move(decoder_task_runner), std::move(client)) {}
++
++SpatiandVideoDecoder::~SpatiandVideoDecoder() {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  weak_this_factory_.InvalidateWeakPtrs();
++  if (current_) {
++    std::move(current_->decode_cb).Run(DecoderStatus::Codes::kAborted);
++    current_.reset();
++  }
++  while (!tasks_.empty()) {
++    std::move(tasks_.front().decode_cb).Run(DecoderStatus::Codes::kAborted);
++    tasks_.pop();
++  }
++  CloseCodec();
++  surfaces_.clear();
++  vaapi_wrapper_ = nullptr;
++}
++
++void SpatiandVideoDecoder::Initialize(const VideoDecoderConfig& config,
++                                      bool /*low_delay*/,
++                                      CdmContext* /*cdm_context*/,
++                                      InitCB init_cb,
++                                      const PipelineOutputCB& output_cb,
++                                      const WaitingCB& /*waiting_cb*/) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  DCHECK(config.IsValidConfig());
++  if (current_ || !tasks_.empty()) {
++    std::move(init_cb).Run(
++        {DecoderStatus::Codes::kFailed, "initialized with decoding in flight"});
++    return;
++  }
++  if (config.is_encrypted()) {
++    std::move(init_cb).Run({DecoderStatus::Codes::kUnsupportedEncryptionMode,
++                            "encrypted video is not decoded by Spatiand's FFmpeg"});
++    return;
++  }
++  CloseCodec();
++  surfaces_.clear();
++  vaapi_wrapper_ = nullptr;
++  failed_ = false;
++
++  // Chromium's VaapiWrapper holds the VA display, allocates and exports the pool's surfaces and
++  // says whether the GPU decodes this profile at all; FFmpeg does the decoding.
++  auto wrapper = VaapiWrapper::CreateForVideoCodec(VaapiWrapper::kDecode, config.profile(),
++                                                   EncryptionScheme::kUnencrypted,
++                                                   base::DoNothing());
++  if (!wrapper.has_value()) {
++    std::move(init_cb).Run(std::move(wrapper).error().WithData("profile", config.profile()));
++    return;
++  }
++  vaapi_wrapper_ = std::move(wrapper.value());
++
++  codec_ = config.codec();
++  color_space_ = config.color_space_info();
++  hdr_metadata_ = config.hdr_metadata();
++  aspect_ratio_ = config.aspect_ratio();
++  if (!OpenCodec(config)) {
++    vaapi_wrapper_ = nullptr;
++    std::move(init_cb).Run({DecoderStatus::Codes::kUnsupportedConfig,
++                            "Spatiand's FFmpeg cannot decode this on the GPU"});
++    return;
++  }
++  output_cb_ = output_cb;
++  MEDIA_LOG(INFO, media_log_) << "SpatiandVideoDecoder: Spatiand's FFmpeg "
++                              << DecoderName(codec_) << " on VA-API";
++  std::move(init_cb).Run(DecoderStatus::Codes::kOk);
++}
++
++bool SpatiandVideoDecoder::OpenCodec(const VideoDecoderConfig& config) {
++  const char* name = DecoderName(config.codec());
++  const AVCodec* codec = name ? avcodec_find_decoder_by_name(name) : nullptr;
++  if (!codec) {
++    return false;
++  }
++
++  // FFmpeg's VA-API device on Chromium's own display: the driver is loaded before the GPU
++  // process's sandbox closes, and Chromium's display is the one that loaded it.
++  device_ = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_VAAPI);
++  if (!device_) {
++    return false;
++  }
++  auto* device = reinterpret_cast<AVHWDeviceContext*>(device_->data);
++  static_cast<AVVAAPIDeviceContext*>(device->hwctx)->display =
++      vaapi_wrapper_->va_display_for_ffmpeg();
++  if (av_hwdevice_ctx_init(device_) < 0) {
++    return false;
++  }
++
++  codec_context_ = avcodec_alloc_context3(codec);
++  if (!codec_context_) {
++    return false;
++  }
++  codec_context_->opaque = this;
++  codec_context_->hw_device_ctx = av_buffer_ref(device_);
++  codec_context_->pkt_timebase = {1, 1000000};
++  codec_context_->thread_count = 1;
++  // The visible rectangle goes with the frame; the surface keeps its whole coded size.
++  codec_context_->apply_cropping = 0;
++  codec_context_->coded_width = config.coded_size().width();
++  codec_context_->coded_height = config.coded_size().height();
++  // H.264 and HEVC arrive as Annex B, their parameter sets in the stream (the pipeline converts
++  // them), so the avcC or hvcC the container had would describe a different layout.
++  if (config.codec() != VideoCodec::kH264 && config.codec() != VideoCodec::kHEVC &&
++      !config.extra_data().empty()) {
++    codec_context_->extradata = static_cast<uint8_t*>(
++        av_mallocz(config.extra_data().size() + AV_INPUT_BUFFER_PADDING_SIZE));
++    UNSAFE_BUFFERS(base::span(codec_context_->extradata, config.extra_data().size()))
++        .copy_from(config.extra_data());
++    codec_context_->extradata_size = base::checked_cast<int>(config.extra_data().size());
++  }
++  codec_context_->get_format = [](AVCodecContext* context,
++                                  const AVPixelFormat* formats) -> AVPixelFormat {
++    return static_cast<AVPixelFormat>(static_cast<SpatiandVideoDecoder*>(context->opaque)
++                                          ->ChooseFormat(reinterpret_cast<const int*>(formats)));
++  };
++  codec_context_->get_buffer2 = [](AVCodecContext* context, AVFrame* frame, int flags) -> int {
++    if (frame->format != AV_PIX_FMT_VAAPI) {
++      return avcodec_default_get_buffer2(context, frame, flags);
++    }
++    return static_cast<SpatiandVideoDecoder*>(context->opaque)->GetBufferForFrame(frame);
++  };
++  if (avcodec_open2(codec_context_, codec, nullptr) < 0) {
++    return false;
++  }
++  av_frame_ = av_frame_alloc();
++  pool_format_ = -1;
++  pool_size_ = gfx::Size();
++  return !!av_frame_;
++}
++
++void SpatiandVideoDecoder::CloseCodec() {
++  if (av_frame_) {
++    av_frame_free(&av_frame_);
++  }
++  if (codec_context_) {
++    avcodec_free_context(&codec_context_);
++  }
++  if (device_) {
++    av_buffer_unref(&device_);
++  }
++}
++
++int SpatiandVideoDecoder::ChooseFormat(const int* formats) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  const auto* list = reinterpret_cast<const AVPixelFormat*>(formats);
++  bool offered = false;
++  for (const AVPixelFormat* f = list; *f != AV_PIX_FMT_NONE; UNSAFE_BUFFERS(++f)) {
++    offered |= *f == AV_PIX_FMT_VAAPI;
++  }
++  if (!offered) {
++    return AV_PIX_FMT_NONE;
++  }
++
++  // The frames FFmpeg will ask for: a dynamic pool (no surfaces of its own), every surface
++  // handed over by GetBufferForFrame().
++  AVBufferRef* frames = nullptr;
++  if (avcodec_get_hw_frames_parameters(codec_context_, codec_context_->hw_device_ctx,
++                                       AV_PIX_FMT_VAAPI, &frames) < 0) {
++    return AV_PIX_FMT_NONE;
++  }
++  auto* frames_context = reinterpret_cast<AVHWFramesContext*>(frames->data);
++  frames_context->initial_pool_size = 0;
++  const std::optional<VideoPixelFormat> format = PoolFormat(frames_context->sw_format);
++  const gfx::Size coded_size(frames_context->width, frames_context->height);
++  if (!format || av_hwframe_ctx_init(frames) < 0) {
++    av_buffer_unref(&frames);
++    return AV_PIX_FMT_NONE;
++  }
++  av_buffer_unref(&codec_context_->hw_frames_ctx);
++  codec_context_->hw_frames_ctx = frames;
++
++  // The pool, sized and shaped for this stream, its buffers our VA surfaces. Asked again only
++  // when the stream's size or depth changes (an adaptive stream switching quality).
++  if (*format != pool_format_ || coded_size != pool_size_) {
++    const gfx::Rect visible_rect(codec_context_->width, codec_context_->height);
++    const std::optional<Fourcc> fourcc = Fourcc::FromVideoPixelFormat(*format);
++    if (!fourcc || !client_) {
++      return AV_PIX_FMT_NONE;
++    }
++    std::vector<ImageProcessor::PixelLayoutCandidate> candidates = {
++        {.fourcc = *fourcc, .size = coded_size, .modifier = gfx::NativePixmapHandle::kNoModifier}};
++    surfaces_.clear();
++    auto layout = client_->PickDecoderOutputFormat(
++        candidates, visible_rect, aspect_ratio_.GetNaturalSize(visible_rect), visible_rect.size(),
++        kReferenceFrames, /*use_protected=*/false, /*need_aux_frame_pool=*/true,
++        base::BindRepeating(&SpatiandVideoDecoder::AllocateFrameProxy,
++                            weak_this_factory_.GetWeakPtr()));
++    if (!layout.has_value()) {
++      LOG(ERROR) << "SpatiandVideoDecoder: no frame pool for " << coded_size.ToString();
++      return AV_PIX_FMT_NONE;
++    }
++    pool_format_ = *format;
++    pool_size_ = coded_size;
++  }
++  return AV_PIX_FMT_VAAPI;
++}
++
++int SpatiandVideoDecoder::GetBufferForFrame(AVFrame* frame) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  DmabufVideoFramePool* pool = client_ ? client_->GetVideoFramePool() : nullptr;
++  scoped_refptr<FrameResource> resource = pool ? pool->GetFrame() : nullptr;
++  if (!resource) {
++    // DecodeNext() waits for a free buffer before every packet, so this is a stream wanting more
++    // pictures at once than the pool was sized for.
++    LOG(ERROR) << "SpatiandVideoDecoder: the frame pool is exhausted";
++    return AVERROR(ENOMEM);
++  }
++  const auto it = surfaces_.find(resource->tracking_token());
++  if (it == surfaces_.end()) {
++    LOG(ERROR) << "SpatiandVideoDecoder: a pool buffer that is not a surface of ours";
++    return AVERROR(EINVAL);
++  }
++  const VASurfaceID surface = it->second->id();
++  auto* held = new Held{std::move(resource), surface};
++  frame->buf[0] = av_buffer_create(nullptr, 0, &ReleaseHeld, held, 0);
++  if (!frame->buf[0]) {
++    delete held;
++    return AVERROR(ENOMEM);
++  }
++  frame->data[3] = reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(surface));
++  frame->hw_frames_ctx = av_buffer_ref(codec_context_->hw_frames_ctx);
++  return frame->hw_frames_ctx ? 0 : AVERROR(ENOMEM);
++}
++
++// static
++CroStatus::Or<scoped_refptr<FrameResource>> SpatiandVideoDecoder::AllocateFrameProxy(
++    base::WeakPtr<SpatiandVideoDecoder> decoder,
++    VideoPixelFormat format,
++    const gfx::Size& coded_size,
++    const gfx::Rect& visible_rect,
++    const gfx::Size& natural_size,
++    bool /*use_protected*/,
++    bool /*use_linear_buffers*/,
++    bool /*needs_detiling*/,
++    base::TimeDelta timestamp) {
++  if (!decoder) {
++    return CroStatus::Codes::kFailedToCreateVideoFrame;
++  }
++  return decoder->AllocateFrame(format, coded_size, visible_rect, natural_size, timestamp);
++}
++
++CroStatus::Or<scoped_refptr<FrameResource>> SpatiandVideoDecoder::AllocateFrame(
++    VideoPixelFormat format,
++    const gfx::Size& coded_size,
++    const gfx::Rect& visible_rect,
++    const gfx::Size& natural_size,
++    base::TimeDelta timestamp) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  unsigned int rt_format;
++  switch (format) {
++    case PIXEL_FORMAT_NV12:
++      rt_format = VA_RT_FORMAT_YUV420;
++      break;
++    case PIXEL_FORMAT_P010LE:
++      rt_format = VA_RT_FORMAT_YUV420_10;
++      break;
++    default:
++      return CroStatus::Codes::kFailedToCreateVideoFrame;
++  }
++  std::unique_ptr<ScopedVASurface> surface = vaapi_wrapper_->CreateVASurfaceWithUsageHints(
++      rt_format, coded_size, {VaapiWrapper::SurfaceUsageHint::kVideoDecoder});
++  if (!surface) {
++    return CroStatus::Codes::kFailedToCreateVideoFrame;
++  }
++  auto exported = vaapi_wrapper_->ExportVASurfaceAsNativePixmapDmaBuf(*surface);
++  if (!exported.has_value()) {
++    return CroStatus::Codes::kFailedToCreateVideoFrame;
++  }
++  scoped_refptr<FrameResource> frame = NativePixmapFrameResource::Create(
++      visible_rect, natural_size, timestamp, gfx::BufferUsage::SCANOUT_VDA_WRITE,
++      std::move(std::move(exported).value()->pixmap));
++  if (!frame) {
++    return CroStatus::Codes::kFailedToCreateVideoFrame;
++  }
++  surfaces_.insert_or_assign(frame->tracking_token(), std::move(surface));
++  return frame;
++}
++
++void SpatiandVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer, DecodeCB decode_cb) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  if (failed_) {
++    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE, base::BindOnce(std::move(decode_cb), DecoderStatus::Codes::kFailed));
++    return;
++  }
++  tasks_.emplace(std::move(buffer), std::move(decode_cb));
++  if (!current_) {
++    ScheduleNext();
++  }
++}
++
++void SpatiandVideoDecoder::ScheduleNext() {
++  if (current_ || tasks_.empty()) {
++    return;
++  }
++  current_.emplace(std::move(tasks_.front()));
++  tasks_.pop();
++  decoder_task_runner_->PostTask(
++      FROM_HERE,
++      base::BindOnce(&SpatiandVideoDecoder::DecodeNext, weak_this_factory_.GetWeakPtr()));
++}
++
++void SpatiandVideoDecoder::DecodeNext() {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  if (!current_ || failed_ || waiting_for_frames_) {
++    return;
++  }
++  const DecoderBuffer& buffer = *current_->buffer;
++
++  // A packet may need a buffer to decode into: wait for one rather than fail inside FFmpeg.
++  DmabufVideoFramePool* pool = client_ ? client_->GetVideoFramePool() : nullptr;
++  if (!buffer.end_of_stream() && pool && pool_format_ != -1 && pool->IsExhausted()) {
++    waiting_for_frames_ = true;
++    pool->NotifyWhenFrameAvailable(base::BindOnce(
++        [](base::WeakPtr<SpatiandVideoDecoder> self) {
++          if (self) {
++            self->waiting_for_frames_ = false;
++            self->DecodeNext();
++          }
++        },
++        weak_this_factory_.GetWeakPtr()));
++    return;
++  }
++
++  bool ok;
++  if (buffer.end_of_stream()) {
++    // Everything still inside FFmpeg comes out, and it starts again for what follows.
++    ok = SendAndReceive(nullptr);
++    if (ok) {
++      avcodec_flush_buffers(codec_context_);
++    }
++  } else {
++    AVPacket* packet = av_packet_alloc();
++    auto data = base::span(buffer);
++    packet->data = const_cast<uint8_t*>(data.data());
++    packet->size = base::checked_cast<int>(data.size());
++    packet->pts = buffer.timestamp().InMicroseconds();
++    ok = SendAndReceive(packet);
++    av_packet_free(&packet);
++  }
++  if (!ok) {
++    Fail("error decoding the stream");
++    return;
++  }
++  std::move(current_->decode_cb).Run(DecoderStatus::Codes::kOk);
++  current_.reset();
++  ScheduleNext();
++}
++
++bool SpatiandVideoDecoder::SendAndReceive(const AVPacket* packet) {
++  for (;;) {
++    const int sent = avcodec_send_packet(codec_context_, packet);
++    if (sent == AVERROR(EAGAIN)) {
++      // Pictures have to come out before this goes in.
++      if (!ReceiveFrames()) {
++        return false;
++      }
++      continue;
++    }
++    if (sent < 0 && sent != AVERROR_EOF) {
++      // A damaged packet costs a picture, not the whole stream, as with Chromium's software
++      // decoder; one FFmpeg cannot even take is the end of it.
++      if (sent != AVERROR_INVALIDDATA) {
++        return false;
++      }
++      DLOG(WARNING) << "SpatiandVideoDecoder: an invalid packet, skipped";
++    }
++    return ReceiveFrames();
++  }
++}
++
++bool SpatiandVideoDecoder::ReceiveFrames() {
++  for (;;) {
++    const int received = avcodec_receive_frame(codec_context_, av_frame_);
++    if (received == AVERROR(EAGAIN) || received == AVERROR_EOF) {
++      return true;
++    }
++    if (received < 0) {
++      return received == AVERROR_INVALIDDATA;
++    }
++    OutputFrame(av_frame_);
++    av_frame_unref(av_frame_);
++  }
++}
++
++void SpatiandVideoDecoder::OutputFrame(AVFrame* frame) {
++  if (frame->format != AV_PIX_FMT_VAAPI || !frame->buf[0]) {
++    return;
++  }
++  auto* held = static_cast<Held*>(av_buffer_get_opaque(frame->buf[0]));
++  if (!held || !held->frame) {
++    return;
++  }
++  // The picture is finished before anything else reads its buffer.
++  if (!vaapi_wrapper_->SyncSurface(held->surface)) {
++    Fail("the GPU did not finish a picture");
++    return;
++  }
++
++  const int left = base::checked_cast<int>(frame->crop_left);
++  const int top = base::checked_cast<int>(frame->crop_top);
++  const gfx::Rect visible_rect(left, top,
++                               frame->width - left - base::checked_cast<int>(frame->crop_right),
++                               frame->height - top - base::checked_cast<int>(frame->crop_bottom));
++  const int64_t pts =
++      frame->best_effort_timestamp != AV_NOPTS_VALUE ? frame->best_effort_timestamp : frame->pts;
++
++  // The pool's buffer goes back to the pool only once both FFmpeg and the screen let go of it;
++  // what goes on is a wrapper, so the same buffer can be shown again with another timestamp.
++  scoped_refptr<FrameResource> out = held->frame->CreateWrappingFrame(
++      visible_rect, aspect_ratio_.GetNaturalSize(visible_rect));
++  if (!out) {
++    Fail("could not wrap a decoded picture");
++    return;
++  }
++  out->set_timestamp(base::Microseconds(pts));
++
++  // The container's colour description, else the stream's own.
++  gfx::ColorSpace color_space = color_space_.ToGfxColorSpace();
++  if (!color_space.IsValid()) {
++    color_space = VideoColorSpace(frame->color_primaries, frame->color_trc, frame->colorspace,
++                                  frame->color_range == AVCOL_RANGE_JPEG
++                                      ? gfx::ColorSpace::RangeID::FULL
++                                      : gfx::ColorSpace::RangeID::LIMITED)
++                      .ToGfxColorSpace();
++  }
++  if (color_space.IsValid()) {
++    out->set_color_space(color_space);
++  }
++  out->set_hdr_metadata(hdr_metadata_);
++  output_cb_.Run(std::move(out));
++}
++
++void SpatiandVideoDecoder::Fail(const char* what) {
++  LOG(ERROR) << "SpatiandVideoDecoder: " << what;
++  MEDIA_LOG(ERROR, media_log_) << "SpatiandVideoDecoder: " << what;
++  failed_ = true;
++  if (current_) {
++    std::move(current_->decode_cb).Run({DecoderStatus::Codes::kFailed, what});
++    current_.reset();
++  }
++  while (!tasks_.empty()) {
++    std::move(tasks_.front().decode_cb).Run(DecoderStatus::Codes::kFailed);
++    tasks_.pop();
++  }
++}
++
++void SpatiandVideoDecoder::Reset(base::OnceClosure reset_cb) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  if (current_) {
++    std::move(current_->decode_cb).Run(DecoderStatus::Codes::kAborted);
++    current_.reset();
++  }
++  while (!tasks_.empty()) {
++    std::move(tasks_.front().decode_cb).Run(DecoderStatus::Codes::kAborted);
++    tasks_.pop();
++  }
++  waiting_for_frames_ = false;
++  if (codec_context_ && !failed_) {
++    avcodec_flush_buffers(codec_context_);
++  }
++  decoder_task_runner_->PostTask(FROM_HERE, std::move(reset_cb));
++}
++
++// The pool is asked for again from ChooseFormat() as FFmpeg meets a new size, so there is no
++// separate resolution change to apply.
++void SpatiandVideoDecoder::ApplyResolutionChange() {}
++
++bool SpatiandVideoDecoder::NeedsBitstreamConversion() const {
++  NOTREACHED();
++}
++
++bool SpatiandVideoDecoder::CanReadWithoutStalling() const {
++  NOTREACHED();
++}
++
++int SpatiandVideoDecoder::GetMaxDecodeRequests() const {
++  NOTREACHED();
++}
++
++VideoDecoderType SpatiandVideoDecoder::GetDecoderType() const {
++  return VideoDecoderType::kVaapi;
++}
++
++bool SpatiandVideoDecoder::IsPlatformDecoder() const {
++  return true;
++}
++
++}  // namespace media
+diff --git a/media/gpu/vaapi/spatiand_video_decoder.h b/media/gpu/vaapi/spatiand_video_decoder.h
+new file mode 100644
+index 0000000000..e8d61a8f00
+--- /dev/null
++++ b/media/gpu/vaapi/spatiand_video_decoder.h
+@@ -0,0 +1,140 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef MEDIA_GPU_VAAPI_SPATIAND_VIDEO_DECODER_H_
++#define MEDIA_GPU_VAAPI_SPATIAND_VIDEO_DECODER_H_
++
++#include <map>
++#include <memory>
++#include <optional>
++
++#include "base/containers/queue.h"
++#include "base/memory/scoped_refptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/sequence_checker.h"
++#include "base/unguessable_token.h"
++#include "media/base/video_aspect_ratio.h"
++#include "media/base/video_color_space.h"
++#include "media/gpu/chromeos/video_decoder_pipeline.h"
++#include "ui/gfx/hdr_metadata.h"
++
++struct AVBufferRef;
++struct AVCodecContext;
++struct AVFrame;
++struct AVPacket;
++
++namespace media {
++
++class ScopedVASurface;
++class VaapiWrapper;
++
++// Video decoded by Spatiand's FFmpeg on the GPU (VA-API), in place of Chromium's own VA-API
++// decoders: one decoder for every program of Spatiand's, so a stream plays the same here as in
++// the room's own players.
++//
++// The rest of Chromium's hardware path is kept as it is. The pipeline's frame pool allocates its
++// buffers as VA surfaces through VaapiWrapper (as VaapiVideoDecoder does), FFmpeg decodes each
++// picture straight into one of them (its get_buffer2), and the frame goes on to the compositor
++// with nothing copied.
++class SpatiandVideoDecoder : public VideoDecoderMixin {
++ public:
++  static std::unique_ptr<VideoDecoderMixin> Create(
++      std::unique_ptr<MediaLog> media_log,
++      scoped_refptr<base::SequencedTaskRunner> decoder_task_runner,
++      base::WeakPtr<VideoDecoderMixin::Client> client);
++
++  SpatiandVideoDecoder(const SpatiandVideoDecoder&) = delete;
++  SpatiandVideoDecoder& operator=(const SpatiandVideoDecoder&) = delete;
++  ~SpatiandVideoDecoder() override;
++
++  // VideoDecoderMixin.
++  void Initialize(const VideoDecoderConfig& config,
++                  bool low_delay,
++                  CdmContext* cdm_context,
++                  InitCB init_cb,
++                  const PipelineOutputCB& output_cb,
++                  const WaitingCB& waiting_cb) override;
++  void Decode(scoped_refptr<DecoderBuffer> buffer, DecodeCB decode_cb) override;
++  void Reset(base::OnceClosure reset_cb) override;
++  void ApplyResolutionChange() override;
++  bool NeedsBitstreamConversion() const override;
++  bool CanReadWithoutStalling() const override;
++  int GetMaxDecodeRequests() const override;
++  VideoDecoderType GetDecoderType() const override;
++  bool IsPlatformDecoder() const override;
++
++ private:
++  struct DecodeTask {
++    DecodeTask(scoped_refptr<DecoderBuffer> buffer, DecodeCB decode_cb);
++    DecodeTask(DecodeTask&&);
++    ~DecodeTask();
++    scoped_refptr<DecoderBuffer> buffer;
++    DecodeCB decode_cb;
++  };
++
++  SpatiandVideoDecoder(std::unique_ptr<MediaLog> media_log,
++                       scoped_refptr<base::SequencedTaskRunner> decoder_task_runner,
++                       base::WeakPtr<VideoDecoderMixin::Client> client);
++
++  bool OpenCodec(const VideoDecoderConfig& config);
++  void CloseCodec();
++  void ScheduleNext();
++  void DecodeNext();
++  // Sends the current task's packet (or the end of the stream) and outputs what comes out.
++  // False on a decoding error.
++  bool SendAndReceive(const AVPacket* packet);
++  bool ReceiveFrames();
++  void OutputFrame(AVFrame* frame);
++  void Fail(const char* what);
++
++  // FFmpeg's side (its get_format and get_buffer2): choosing VA-API and sizing the frame pool
++  // for it, and handing it a surface of that pool.
++  int ChooseFormat(const int* formats);
++  int GetBufferForFrame(AVFrame* frame);
++
++  // The frame pool's allocator: a VA surface, exported as the pool's buffer.
++  static CroStatus::Or<scoped_refptr<FrameResource>> AllocateFrameProxy(
++      base::WeakPtr<SpatiandVideoDecoder> decoder,
++      VideoPixelFormat format,
++      const gfx::Size& coded_size,
++      const gfx::Rect& visible_rect,
++      const gfx::Size& natural_size,
++      bool use_protected,
++      bool use_linear_buffers,
++      bool needs_detiling,
++      base::TimeDelta timestamp);
++  CroStatus::Or<scoped_refptr<FrameResource>> AllocateFrame(VideoPixelFormat format,
++                                                            const gfx::Size& coded_size,
++                                                            const gfx::Rect& visible_rect,
++                                                            const gfx::Size& natural_size,
++                                                            base::TimeDelta timestamp);
++
++  scoped_refptr<VaapiWrapper> vaapi_wrapper_;
++  AVCodecContext* codec_context_ = nullptr;
++  AVBufferRef* device_ = nullptr;
++  AVFrame* av_frame_ = nullptr;
++  // What the pool was last sized for, so it is asked again only when that changes.
++  int pool_format_ = -1;
++  gfx::Size pool_size_;
++
++  // The pool's buffers by tracking token, each with the VA surface it is.
++  std::map<base::UnguessableToken, std::unique_ptr<ScopedVASurface>> surfaces_;
++
++  VideoCodec codec_ = VideoCodec::kUnknown;
++  VideoColorSpace color_space_;
++  gfx::HDRMetadata hdr_metadata_;
++  VideoAspectRatio aspect_ratio_;
++  PipelineOutputCB output_cb_;
++
++  base::queue<DecodeTask> tasks_;
++  std::optional<DecodeTask> current_;
++  bool waiting_for_frames_ = false;
++  bool failed_ = false;
++
++  SEQUENCE_CHECKER(sequence_checker_);
++  base::WeakPtrFactory<SpatiandVideoDecoder> weak_this_factory_{this};
++};
++
++}  // namespace media
++
++#endif  // MEDIA_GPU_VAAPI_SPATIAND_VIDEO_DECODER_H_
+diff --git a/media/gpu/vaapi/vaapi_wrapper.h b/media/gpu/vaapi/vaapi_wrapper.h
+index f14aea396e..af73f3beaf 100644
+--- a/media/gpu/vaapi/vaapi_wrapper.h
++++ b/media/gpu/vaapi/vaapi_wrapper.h
+@@ -471,6 +471,10 @@ class MEDIA_GPU_EXPORT VaapiWrapper
+   // between contexts.
+   [[nodiscard]] bool SyncSurface(VASurfaceID va_surface_id);
+ 
++  // Spatiand: the display, for Spatiand's FFmpeg to decode on (SpatiandVideoDecoder). FFmpeg
++  // makes its own libva calls, on the decoder's sequence.
++  VADisplay va_display_for_ffmpeg() const NO_THREAD_SAFETY_ANALYSIS { return va_display_; }
++
+   // Calls SubmitBuffer_Locked() to request libva to allocate a new VABufferID
+   // of |va_buffer_type| and |size|, and to map-and-copy the |data| into it. The
+   // allocated VABufferIDs stay alive until DestroyPendingBuffers_Locked(). Note
+-- 
+2.53.0
+

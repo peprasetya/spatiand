@@ -105,9 +105,9 @@ ln -sfn ../../third_party/spatiand_ffmpeg/lib out/deck/ffmpeg
 # Chromium's own way to build on an FFmpeg of the system's: //third_party/ffmpeg becomes the shim.
 grep -q spatiand_ffmpeg third_party/ffmpeg/BUILD.gn || python3 build/linux/unbundle/replace_gn_files.py --system-libraries ffmpeg
 # Cromite's Linux arguments; Spatiand's changes made in place (GN refuses a value set twice):
-# no AV1 offered while there is no hardware decoding of it through Spatiand's FFmpeg (the owner
-# wants no software AV1, and an AV1 claimed without a decoder stalls YouTube).
-ARGS=$(sed -e "s/^enable_dav1d_decoder=true/enable_dav1d_decoder=false/" -e "s/^enable_av1_decoder=true/enable_av1_decoder=false/" /cr/cromite/build/cromite.gn_args)
+# no software AV1 (the owner's choice) -- AV1 is read and offered, and decoded only on the GPU by
+# Spatiand's FFmpeg (patch 0006; the Deck's GPU decodes AV1).
+ARGS=$(sed -e "s/^enable_dav1d_decoder=true/enable_dav1d_decoder=false/" /cr/cromite/build/cromite.gn_args)
 # Dolby Digital and Dolby Digital Plus, decoded by Spatiand's FFmpeg.
 ARGS="$ARGS
 enable_platform_ac3_eac3_audio = true"

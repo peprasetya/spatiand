@@ -105,6 +105,19 @@ fn native_library_dir() -> Option<PathBuf> {
         .and_then(|path| std::path::Path::new(path).parent().map(PathBuf::from))
 }
 
+/// SpatiMesh on Linux is Chromium (`third_party/chromium`), installed beside Spatiand's tree at
+/// `~/spatiand-chromium`, or where `SPATIAND_CHROMIUM` says. Elsewhere -- the Mac, the Beam Pro --
+/// it is the WPE program until Chromium draws through the room there too.
+fn chromium_spatimesh() -> Option<PathBuf> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let dir = std::env::var_os("SPATIAND_CHROMIUM")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join("spatiand-chromium")))?;
+    Some(dir.join("run.sh")).filter(|run| run.is_file())
+}
+
 fn program(own: &Own) -> Option<PathBuf> {
     let name = if cfg!(target_os = "android") { format!("lib{}.so", own.program) } else { own.program.to_string() };
     directories().into_iter().map(|dir| dir.join(&name)).find(|path| path.is_file())
@@ -154,12 +167,19 @@ pub fn is_installed(app: &AppEntry) -> bool {
 fn carried() -> Vec<AppEntry> {
     OWN.iter()
         .filter_map(|own| {
-            let program = program(own)?;
-            Some(AppEntry {
-                name: own.name.to_string(),
+            // Its own switches named, so the launcher adds no Chromium switches after them
+            // (`spatiand_platform::wayland_arguments`): Chromium heeds only the last of each.
+            let chromium = (own.program == "spatimesh").then(chromium_spatimesh).flatten();
+            let exec = match (&chromium, program(own)) {
+                (Some(run), _) => format!("\"{}\" --ozone-platform=wayland", run.display()),
                 // Quoted: a Mac's home folder may have a space in its name, and so then does
                 // the bundle the program is in.
-                exec: format!("\"{}\"", program.display()),
+                (None, Some(program)) => format!("\"{}\"", program.display()),
+                (None, None) => return None,
+            };
+            Some(AppEntry {
+                name: own.name.to_string(),
+                exec,
                 icon: icon_file(own.program, own.icon),
                 categories: own.categories.iter().map(|c| c.to_string()).collect(),
             })
