@@ -66,6 +66,10 @@ const PANEL_DISTANCE: f32 = 1.4;
 /// A pad spans -1..1, so a corner-to-corner drag is 2 units. 260 makes that about two screens
 /// of a text document, which is the same ballpark as a laptop touchpad.
 const SCROLL_SCALE: f64 = 260.0;
+/// How long after the left pad last scrolled a thumb lifted mid-pad has its gesture ended
+/// (`axis_stop`): later than any toolkit still measures a fling from -- Chromium stops at
+/// 200 ms -- so the end carries no speed and the page stays where the thumb left it.
+const GESTURE_ENDS_AFTER: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// How long Y is held on the window list before the application is killed outright.
 const FORCE_CLOSE_HOLD: Duration = Duration::from_secs(5);
@@ -231,6 +235,8 @@ pub fn run(
     // The left pad read as a wheel. Absolute positions in, deltas out, and the samples taken
     // across the moment the thumb lifts thrown away rather than scrolled.
     let mut left_scroll = spatiand_input::PadScroll::default();
+    // When the left pad last scrolled, while its gesture has not been ended to the client.
+    let mut scrolled_at: Option<std::time::Instant> = None;
     // The triggers read as mouse buttons, the way they are on the desktop: right pulls the left
     // button, left pulls the right one.
     let mut right_trigger = spatiand_input::Trigger::default();
@@ -2727,19 +2733,38 @@ pub fn run(
                                 match left_scroll.update(&p.left_pad) {
                                     // Natural direction: dragging the thumb up sends the
                                     // content up, which is what every touchpad does.
-                                    spatiand_input::Scroll::By { dx, dy } => pointers.scroll(
-                                        &mut runtime.state,
-                                        -(dx as f64) * SCROLL_SCALE,
-                                        dy as f64 * SCROLL_SCALE,
-                                        time_ms,
-                                    ),
+                                    spatiand_input::Scroll::By { dx, dy } => {
+                                        pointers.scroll(
+                                            &mut runtime.state,
+                                            -(dx as f64) * SCROLL_SCALE,
+                                            dy as f64 * SCROLL_SCALE,
+                                            time_ms,
+                                        );
+                                        scrolled_at = Some(std::time::Instant::now());
+                                    }
                                     // Only ever sent when the thumb left from the rim: the
                                     // client turns this into a kinetic fling, so it is the
                                     // pad saying "carry on", not "settle down".
                                     spatiand_input::Scroll::Fling => {
-                                        pointers.scroll_fling(&mut runtime.state, time_ms)
+                                        pointers.scroll_fling(&mut runtime.state, time_ms);
+                                        scrolled_at = None;
                                     }
-                                    spatiand_input::Scroll::Idle => {}
+                                    // A gesture the thumb has left anywhere but the rim still
+                                    // has to end, or a client never knows it did: Chromium
+                                    // keeps the whole session's swipes as one gesture, held
+                                    // to whatever the first one scrolled -- or to its back
+                                    // gesture -- so nothing else would scroll. Ended late, it
+                                    // throws nothing: a toolkit flings at the speed of the
+                                    // last moments before `axis_stop`, and there are none
+                                    // (Chromium gives up after 200 ms, the Mac host after 80).
+                                    spatiand_input::Scroll::Idle => {
+                                        if !p.left_pad.touched
+                                            && scrolled_at.is_some_and(|at| at.elapsed() >= GESTURE_ENDS_AFTER)
+                                        {
+                                            pointers.scroll_fling(&mut runtime.state, time_ms);
+                                            scrolled_at = None;
+                                        }
+                                    }
                                 }
                             }
                         }

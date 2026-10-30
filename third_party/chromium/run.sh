@@ -13,7 +13,10 @@ export GLIBC_TUNABLES=glibc.rtld.dynamic_sort=1
 # YouTube sends a large window; VaapiIgnoreDriverChecks lets VA-API run on AMD's Mesa driver.
 # HEVC never goes to VA-API (patch 0003: it has reset this GPU family); Spatiand's FFmpeg decodes
 # it in software.
+# No back and forward by a sideways swipe: on the Deck's pads that is a thumb's drift, and a
+# swipe taken for it scrolls nothing.
 exec "$here/chrome" --ozone-platform=wayland --user-data-dir="$HOME/.config/spatiand-chromium" \
     --password-store=basic --no-first-run --no-default-browser-check \
+    --overscroll-history-navigation=0 \
     --enable-features=AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,VaapiIgnoreDriverChecks,WaylandWindowDecorations \
     "$@"

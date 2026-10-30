@@ -126,6 +126,24 @@ const LAG: usize = 4;
 /// is thrown when nobody threw it, which is the whole complaint.
 const EDGE: f32 = 0.75;
 
+/// How much more one axis must have moved than the other for a gesture to scroll along it only.
+///
+/// A thumb swiping up a pad drifts sideways as it goes, and that drift was being sent as a
+/// sideways scroll. Chromium (pages, and every Electron application) decides early whether a
+/// touchpad gesture is vertical or horizontal; a drift that came first read as horizontal --
+/// on a page that cannot scroll sideways, the back gesture -- and the whole swipe then scrolled
+/// nothing. So a gesture locks to the axis its first movements took, as a laptop touchpad's
+/// driver does: twice as far along one as the other, about 27 degrees either side of it.
+/// Until then, a diagonal start, both are sent.
+const AXIS_LOCK_RATIO: f32 = 2.0;
+
+/// The axis a gesture has locked to. See [`AXIS_LOCK_RATIO`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Lock {
+    Vertical,
+    Horizontal,
+}
+
 /// What the pad is asking the pointer to do this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Scroll {
@@ -165,6 +183,9 @@ pub struct PadScroll {
     /// drifting. Nothing resumes until the thumb is lifted, because that is the only moment
     /// that unambiguously says the press is finished and the next thing is deliberate.
     disarmed: bool,
+    /// The axis this gesture scrolls along, once its first movements have said. See
+    /// [`AXIS_LOCK_RATIO`].
+    lock: Option<Lock>,
 }
 
 impl PadScroll {
@@ -180,6 +201,7 @@ impl PadScroll {
         self.typical = 0.0;
         self.held.clear();
         self.running = false;
+        self.lock = None;
     }
 
     /// The fastest this frame is allowed to be, given what the gesture has been doing.
@@ -239,7 +261,22 @@ impl PadScroll {
         self.last = Some(now);
 
         if self.held.len() > LAG {
-            if let Some((dx, dy)) = self.held.pop_front() {
+            // The axis is decided from everything in hand -- the frame going out and the LAG
+            // behind it -- so from the gesture's first several movements, not its first one.
+            if self.lock.is_none() {
+                let (sx, sy) = self.held.iter().fold((0.0f32, 0.0f32), |(x, y), (dx, dy)| (x + dx, y + dy));
+                if sy.abs() >= sx.abs() * AXIS_LOCK_RATIO {
+                    self.lock = Some(Lock::Vertical);
+                } else if sx.abs() >= sy.abs() * AXIS_LOCK_RATIO {
+                    self.lock = Some(Lock::Horizontal);
+                }
+            }
+            if let Some((mut dx, mut dy)) = self.held.pop_front() {
+                match self.lock {
+                    Some(Lock::Vertical) => dx = 0.0,
+                    Some(Lock::Horizontal) => dy = 0.0,
+                    None => {}
+                }
                 if dx != 0.0 || dy != 0.0 {
                     self.running = true;
                     return Scroll::By { dx, dy };
@@ -311,6 +348,44 @@ mod tests {
                 }
                 other => panic!("expected a scroll, got {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn a_swipe_up_that_drifts_sideways_scrolls_only_up() {
+        // The thumb's drift, sent as a sideways scroll, made Chromium take the swipe for its back
+        // gesture and scroll nothing. A gesture that is mostly vertical sends nothing sideways --
+        // its first frames included, which drift the most.
+        let mut s = PadScroll::default();
+        let mut pads = vec![at(0.0, 0.0)];
+        for i in 1..=12 {
+            let drift = if i % 2 == 0 { 0.006 } else { -0.002 };
+            pads.push(at(i as f32 * drift * 0.5, i as f32 * STEP));
+        }
+        let sent: Vec<Scroll> = run(&mut s, &pads).into_iter().filter(|s| *s != Scroll::Idle).collect();
+        assert!(!sent.is_empty());
+        for step in sent {
+            match step {
+                Scroll::By { dx, dy } => {
+                    assert_eq!(dx, 0.0, "a sideways part was sent: {dx}");
+                    assert!(dy > 0.0);
+                }
+                other => panic!("expected a scroll, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_sideways_swipe_scrolls_only_sideways() {
+        let mut s = PadScroll::default();
+        let mut pads = vec![at(0.0, 0.0)];
+        for i in 1..=12 {
+            pads.push(at(i as f32 * STEP, i as f32 * 0.002));
+        }
+        for step in run(&mut s, &pads).into_iter().filter(|s| *s != Scroll::Idle) {
+            let Scroll::By { dx, dy } = step else { panic!("expected a scroll, got {step:?}") };
+            assert_eq!(dy, 0.0, "an upward part was sent: {dy}");
+            assert!(dx > 0.0);
         }
     }
 
