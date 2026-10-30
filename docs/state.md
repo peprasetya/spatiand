@@ -26,7 +26,9 @@ cycle the four valid pitch/roll interpretations, since a wrong one is a valid ro
 nothing in the measurement can catch it.
 
 **Controller.** Raw hidraw, every button confirmed by pressing it. Both pads point; right pad
-click is left mouse, left pad right mouse, A/B/X duplicate them. Both pads *pressed* together
+click is left mouse, left pad right mouse, A/B/X duplicate them. The left pad scrolls up and down
+unless it has clearly gone sideways (`spatiand-input/src/scroll.rs`, with a real thumb's swipes in
+its tests). Both pads *pressed* together
 (resting both thumbs is nothing) are a gesture of the window under the pointer, which stays
 put: the thumbs swept sideways are back or forward (a mouse's back and forward buttons), spread
 or drawn together a pinch (the standard Wayland pinch, which Chromium zooms the page by; a

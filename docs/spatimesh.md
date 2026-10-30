@@ -56,6 +56,14 @@ hooks, reading and writing the files the WPE build uses, so the two builds and s
 What only this browser needs is in `local/spatimesh-chromium/`, which is never synced. Passwords and
 passkeys are not here at all: docs/spatikey.md, "SpatiMesh on Chromium".
 
+**A right thumb resting no longer throws the page (patch 0011).** Chromium timed each scroll frame
+from the last pointer frame of any kind, so the pointer moving under a resting right thumb made a
+scroll's frames look a moment apart, and its end, a quarter of a second after the last of them, look
+recent: a fling at a speed worked out from those. It is now timed from the last frame with a scroll
+in it. In the test room (`thumbs:600,1,1` in `SPATIAND_STEPS`, on a long page keeping `scrollY` per
+frame) the same swipe went 7321 px in 3081 ms before, and 5681 px in 988 ms after, as it does with no
+right thumb.
+
 **Cromite's "Partitioning all cookies" patch is undone (patch 0008).** It deleted every unpartitioned
 cookie each time the browser started, so logins taken from the shared folder lasted until the next
 start, and the merge then took their absence for a logout on every machine. It also stopped an extension's

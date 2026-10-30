@@ -233,3 +233,30 @@ compositor); the protocol, the pairing and the clipboard rules do.
 2. The 3D world on the Mac: the Rust renderer, or HoloFrame's Metal one?
 3. How the VR/non-VR switch is carried: a new message in `spatiand-stream`, and what an
    application has to do to honour it (SpatiWorld is the first).
+
+## A Deck's scroll into a Mac window, and the stream (measured 2026-10-30)
+
+On the owner's real stream, from the session's own count of frames (`remote <host>: N shown in 2.0s`;
+`the window in front drew N` is that window alone).
+
+- **The host puts the real pointer in place once per gesture.** `CGWarpMouseCursorPosition` waits on
+  the window server, up to 65 ms. Once per scroll event it took the stream from 55-61 frames per 2 s to
+  37, 17, 7, 4, 3, 0, 16, 22, 8, and held the host to 45 events a second against the Deck's 72, so
+  scrolls were still being replayed ten seconds after the thumb had gone. Once per gesture: 56-65, no
+  dip. Each event posted takes in all that has arrived, so a host held up catches up at once.
+- **Through the real host from a Deck test room** (`SPATIAND_REMOTE=1 SPATIAND_THUMBS=...`, with
+  `scrollwatch`-style listening on the Mac): a 2 s swipe is over on the Mac in about 2 s, the pointer
+  stays, and the conversation moves. Frames stayed at 40-54 per 2 s throughout, for one window. The
+  capture alone, with nothing else running, does 80-96: where the rest goes is not found.
+- **A pad's swipe is accelerated by the host** (`PadScroll.gain`), as a trackpad's is by the system
+  and a posted event is not: 1 + points a second / 250, at most 4.
+- **`minimumFrameInterval` is not the limit.** 1/60 and zero both give 48 fps with the Mac's screen
+  alone (47.95 Hz) and the Mac cool. An earlier comparison showing 16 against 55 was made while the
+  glasses were being plugged in and the Mac was hot.
+- **The Mac's Wi-Fi hop is the jittery one.** Deck to router 0.8/3.0/6.7 ms; Mac to router 1.3/14/89 ms,
+  with a spike of 20-30 ms every half second exactly and one 3 s stretch of 100-350 ms. Suspected
+  AWDL and scanning, not proven; `awdl0` is active. Turning it off is the owner's to do.
+- **Heat and WindowServer.** `pmset -g therm` CPU_Speed_Limit fell to 47-60 while builds ran on the Mac
+  and stayed there a while; 100 once cool. WindowServer takes 50-65% of a core with nothing captured.
+  `loginwindow` holds 80 full-screen windows, two more after a cycle of the glasses, and
+  `com.apple.spaces` remembers stale virtual displays: suspected, not proven; a reboot would test it.

@@ -518,6 +518,20 @@ pub fn run(
                     Step::Key(code) => press_key(&mut runtime.state, code),
                     Step::Swipe { at, dy, stop } => swipe_on_the_window(&mut runtime.state, &windows, at, dy, stop),
                     Step::Close => close_the_window(&runtime.state, &windows),
+                    Step::Thumbs { at, dy, seconds, hover } => {
+                        pointer_event(&mut runtime.state, &windows, at, None);
+                        let mut thumbs = ThumbsScroll::new(at, dy, seconds, hover);
+                        while !thumbs.over() {
+                            thumbs.frame(&mut runtime.state, &windows);
+                            let screen = runtime.state.screen.clone();
+                            runtime.state.send_frames(&screen, std::time::Duration::ZERO);
+                            runtime.state.space.refresh();
+                            display.dispatch_clients(&mut runtime.state)?;
+                            display.flush_clients()?;
+                            event_loop.dispatch(Some(std::time::Duration::from_millis(4)), runtime)?;
+                            crate::dmabuf::settle(&mut runtime.state, &mut renderer);
+                        }
+                    }
                 }
             }
             // Long enough for the click to reach the other machine, for the application to
@@ -686,6 +700,9 @@ pub fn run(
                                 Step::Key(code) => press_key(&mut runtime.state, code),
                                 Step::Swipe { at, dy, stop } => swipe_on_the_window(&mut runtime.state, &windows, at, dy, stop),
                                 Step::Close => close_the_window(&runtime.state, &windows),
+                                // A swipe over time wants pumping as it goes: `thumbs:` in
+                                // SPATIAND_STEPS is this room's way to it.
+                                Step::Thumbs { .. } => log::warn!("SPATIAND_THUMBS: for a remote window; use thumbs: in SPATIAND_STEPS"),
                             }
                             let answered =
                                 std::time::Instant::now() + std::time::Duration::from_secs(3);
@@ -771,11 +788,13 @@ pub fn run(
                             // as it takes for the last phrase to be written.
                             let mut stopped = false;
                             let gave_up = answered + std::time::Duration::from_secs(30);
-                            let began = std::time::Instant::now();
-                            let mut thumbs_ended = false;
+                            let mut thumbs = match &step {
+                                Scripted::Thumbs(dy, seconds, hover) => Some(ThumbsScroll::new(pointer_at, *dy, *seconds, *hover)),
+                                _ => None,
+                            };
                             loop {
-                                if let Scripted::Thumbs(dy, seconds, hover) = &step {
-                                    thumbs_frame(&mut runtime.state, &windows, pointer_at, began.elapsed().as_secs_f64(), *dy, *seconds, *hover, &mut thumbs_ended);
+                                if let Some(thumbs) = thumbs.as_mut() {
+                                    thumbs.frame(&mut runtime.state, &windows);
                                 }
                                 // The assistant's questions, answered as the session answers them.
                                 crate::spatikey::serve(&mut runtime.state, 0);
@@ -1423,6 +1442,8 @@ enum Step {
     Click(f64, f64, Option<u32>),
     /// `SPATIAND_KEY`: an evdev key code, pressed and released. See [`requested_keys`].
     Key(u32),
+    /// `SPATIAND_THUMBS=u,v,dy,seconds,hover`, `;` apart: a swipe over time. See [`ThumbsScroll`].
+    Thumbs { at: (f64, f64), dy: f64, seconds: f64, hover: bool },
     /// `SPATIAND_SWIPE=dy`: the left pad's scroll over the middle of the window -- a finger's,
     /// in small steps, then the finger leaving -- as `Pointers::scroll` sends it. Positive
     /// moves the content up. Several, `;` apart, each `dy`, `u,v,dy` (where, as a fraction
@@ -1470,6 +1491,13 @@ fn requested_steps() -> Vec<Step> {
         match step {
             Some(step) => steps.push(step),
             None => log::warn!("SPATIAND_SWIPE: not a swipe: {swipe}"),
+        }
+    }
+    for thumbs in std::env::var("SPATIAND_THUMBS").unwrap_or_default().split(';').filter(|s| !s.is_empty()) {
+        let parts: Vec<f64> = thumbs.split(',').filter_map(|p| p.parse().ok()).collect();
+        match parts[..] {
+            [u, v, dy, seconds, hover] => steps.push(Step::Thumbs { at: (u, v), dy, seconds, hover: hover != 0.0 }),
+            _ => log::warn!("SPATIAND_THUMBS: not u,v,dy,seconds,hover: {thumbs}"),
         }
     }
     if std::env::var("SPATIAND_CLOSE").as_deref() == Ok("1") {
@@ -1869,42 +1897,62 @@ fn pointer_event_on(
     }
 }
 
-/// One frame of [`Scripted::Thumbs`], `elapsed` seconds into it.
-#[allow(clippy::too_many_arguments)]
-fn thumbs_frame(
-    state: &mut Spatiand,
-    windows: &[crate::scene::WindowQuad],
+/// A left thumb scrolling as a session sends it, a right one resting on its pad if `hover`: a finger
+/// scroll every frame at the room's 72 a second, `dy` in all over `seconds`, and its end a quarter
+/// of a second after the last. The right thumb moves the pointer a little every frame.
+struct ThumbsScroll {
     at: (f64, f64),
-    elapsed: f64,
     dy: f64,
     seconds: f64,
     hover: bool,
-    ended: &mut bool,
-) {
-    use smithay::backend::input::{Axis, AxisSource};
-    use smithay::input::pointer::{AxisFrame, MotionEvent};
-    use smithay::utils::{Point, SERIAL_COUNTER};
-    let Some(window) = chosen_window(state, windows) else { return };
-    let Some(pointer) = state.seat.get_pointer() else { return };
-    let time = (elapsed * 1000.0) as u32 + 1000;
-    if hover {
-        // A thumb at rest is never quite still.
-        let location = Point::from((
-            at.0 * window.pixels.0 as f64 + (elapsed * 40.0).sin() * 0.5,
-            at.1 * window.pixels.1 as f64 + (elapsed * 31.0).cos() * 0.5,
-        ));
-        let focus = Some((window.surface.clone(), Point::from((0.0, 0.0))));
-        pointer.motion(state, focus, &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time });
-        pointer.frame(state);
+    began: std::time::Instant,
+    last: f64,
+    ended: bool,
+}
+
+impl ThumbsScroll {
+    fn new(at: (f64, f64), dy: f64, seconds: f64, hover: bool) -> Self {
+        ThumbsScroll { at, dy, seconds, hover, began: std::time::Instant::now(), last: 0.0, ended: false }
     }
-    if elapsed < seconds {
-        let frame = AxisFrame::new(time).source(AxisSource::Finger).value(Axis::Vertical, dy * 0.016 / seconds);
-        pointer.axis(state, frame);
-        pointer.frame(state);
-    } else if elapsed >= seconds + 0.25 && !*ended {
-        *ended = true;
-        pointer.axis(state, AxisFrame::new(time).source(AxisSource::Finger).stop(Axis::Vertical).stop(Axis::Horizontal));
-        pointer.frame(state);
+
+    /// Its end has been sent, and a little more has gone by.
+    fn over(&self) -> bool {
+        self.ended && self.began.elapsed().as_secs_f64() > self.seconds + 0.6
+    }
+
+    /// Called as often as anything is; does a frame's worth when one is due.
+    fn frame(&mut self, state: &mut Spatiand, windows: &[crate::scene::WindowQuad]) {
+        use smithay::backend::input::{Axis, AxisSource};
+        use smithay::input::pointer::{AxisFrame, MotionEvent};
+        use smithay::utils::{Point, SERIAL_COUNTER};
+        let elapsed = self.began.elapsed().as_secs_f64();
+        if elapsed - self.last < 1.0 / 72.0 {
+            return;
+        }
+        let Some(window) = chosen_window(state, windows) else { return };
+        let Some(pointer) = state.seat.get_pointer() else { return };
+        let time = (elapsed * 1000.0) as u32 + 1000;
+        if self.hover {
+            // A thumb at rest is never quite still.
+            let location = Point::from((
+                self.at.0 * window.pixels.0 as f64 + (elapsed * 40.0).sin() * 0.5,
+                self.at.1 * window.pixels.1 as f64 + (elapsed * 31.0).cos() * 0.5,
+            ));
+            let focus = Some((window.surface.clone(), Point::from((0.0, 0.0))));
+            pointer.motion(state, focus, &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time });
+            pointer.frame(state);
+        }
+        if self.last < self.seconds {
+            let part = (elapsed.min(self.seconds) - self.last) / self.seconds;
+            let frame = AxisFrame::new(time).source(AxisSource::Finger).value(Axis::Vertical, self.dy * part);
+            pointer.axis(state, frame);
+            pointer.frame(state);
+        } else if elapsed >= self.seconds + 0.25 && !self.ended {
+            self.ended = true;
+            pointer.axis(state, AxisFrame::new(time).source(AxisSource::Finger).stop(Axis::Vertical).stop(Axis::Horizontal));
+            pointer.frame(state);
+        }
+        self.last = elapsed;
     }
 }
 
