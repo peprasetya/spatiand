@@ -250,6 +250,18 @@ impl Audio {
         log::info!("window {window} ({key}) sounds through slot {slot}");
     }
 
+    /// Give a window a sink of its own under `key`, in place of the one its process was
+    /// launched with: SpatiMesh's windows, each tab of which plays into the sink of the window
+    /// it is in (Chromium reads where they are from [`write_sink_map`]).
+    pub fn adopt_own(&mut self, window: usize, key: &str, width: Width) {
+        if self.bound.get(&window).is_some_and(|slot| self.keyed.get(key) == Some(slot)) {
+            return;
+        }
+        // The launch's sink stays for the process (its other windows, a tab not yet routed).
+        self.bound.remove(&window);
+        self.adopt_keyed(window, key, width);
+    }
+
     /// Where each keyed sink is, by key: what remote sound players aim at.
     pub fn keyed_sinks(&self) -> HashMap<String, String> {
         self.keyed
@@ -440,6 +452,25 @@ pub fn width_for(categories: &[String]) -> Width {
         Width::Stereo
     } else {
         Width::Full
+    }
+}
+
+/// The application id SpatiMesh's Chromium gives its windows (`--class`, its `run.sh`): each
+/// gets a sink of its own, keyed by [`crate::state::Spatiand::window_sound_key_of_id`].
+pub const CHROMIUM_APP_ID: &str = "spatimesh-chromium";
+
+/// Write where each keyed sink is to `$XDG_RUNTIME_DIR/spatiand-sinks`, a `key<TAB>sink` line
+/// each: SpatiMesh's Chromium sends each tab's sound to the sink of its window's key.
+pub fn write_sink_map(sinks: &HashMap<String, String>) {
+    let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from) else {
+        return;
+    };
+    let mut lines: Vec<String> = sinks.iter().map(|(key, sink)| format!("{key}\t{sink}\n")).collect();
+    lines.sort();
+    let path = dir.join("spatiand-sinks");
+    let staged = dir.join("spatiand-sinks.new");
+    if std::fs::write(&staged, lines.concat()).is_ok() {
+        let _ = std::fs::rename(&staged, &path);
     }
 }
 

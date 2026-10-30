@@ -1,0 +1,338 @@
+From 09ee0a35f6eec2e43d03aded4c21a79ec80edbc5 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Fri, 30 Oct 2026 12:18:05 +0700
+Subject: [PATCH] Spatiand: each tab's sound at the room's window it is in
+
+The room gives every SpatiMesh window a sink of its own, keyed by this process and the window's
+Wayland surface (ui::PlatformWindow::GetSpatiandSurfaceId), and lists them in
+$XDG_RUNTIME_DIR/spatiand-sinks. SpatiandWindowAudio makes each tab's preferred output its
+window's sink, so its streams switch as it moves to another window.
+---
+ content/browser/BUILD.gn                      |   2 +
+ content/browser/browser_main_loop.cc          |   6 +
+ .../browser/media/spatiand_window_audio.cc    | 130 ++++++++++++++++++
+ content/browser/media/spatiand_window_audio.h |  20 +++
+ ui/aura/window_tree_host.cc                   |   4 +
+ ui/aura/window_tree_host.h                    |   4 +
+ ui/aura/window_tree_host_platform.cc          |   4 +
+ ui/aura/window_tree_host_platform.h           |   1 +
+ .../platform/wayland/host/wayland_window.cc   |   4 +
+ .../platform/wayland/host/wayland_window.h    |   1 +
+ ui/platform_window/platform_window.cc         |   4 +
+ ui/platform_window/platform_window.h          |   4 +
+ 12 files changed, 184 insertions(+)
+ create mode 100644 content/browser/media/spatiand_window_audio.cc
+ create mode 100644 content/browser/media/spatiand_window_audio.h
+
+diff --git a/content/browser/BUILD.gn b/content/browser/BUILD.gn
+index 040006272e..244bf65d19 100644
+--- a/content/browser/BUILD.gn
++++ b/content/browser/BUILD.gn
+@@ -1249,6 +1249,8 @@ source_set("browser") {
+     "media/flinging_renderer.cc",
+     "media/flinging_renderer.h",
+     "media/forwarding_audio_stream_factory.cc",
++    "media/spatiand_window_audio.cc",
++    "media/spatiand_window_audio.h",
+     "media/forwarding_audio_stream_factory.h",
+     "media/frameless_media_interface_proxy.cc",
+     "media/frameless_media_interface_proxy.h",
+diff --git a/content/browser/browser_main_loop.cc b/content/browser/browser_main_loop.cc
+index 78f29c0e4d..e2b7ba6d3e 100644
+--- a/content/browser/browser_main_loop.cc
++++ b/content/browser/browser_main_loop.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "content/browser/browser_main_loop.h"
+ 
++#include "content/browser/media/spatiand_window_audio.h"
++
+ #include <stddef.h>
+ 
+ #include <algorithm>
+@@ -1122,6 +1124,10 @@ int BrowserMainLoop::PreMainMessageLoopRun() {
+   base::DisallowUnresponsiveTasks();
+   responsiveness_watcher_ = new responsiveness::Watcher;
+   responsiveness_watcher_->SetUp();
++#if BUILDFLAG(IS_LINUX)
++  // Spatiand: each tab's sound at the room's window it is in.
++  SpatiandWindowAudio::Start();
++#endif
+   return result_code_;
+ }
+ 
+diff --git a/content/browser/media/spatiand_window_audio.cc b/content/browser/media/spatiand_window_audio.cc
+new file mode 100644
+index 0000000000..9bb78a52c5
+--- /dev/null
++++ b/content/browser/media/spatiand_window_audio.cc
+@@ -0,0 +1,130 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "content/browser/media/spatiand_window_audio.h"
++
++#include <unistd.h>
++
++#include <map>
++#include <memory>
++#include <string>
++#include <string_view>
++#include <vector>
++
++#include "base/environment.h"
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/functional/callback_helpers.h"
++#include "base/no_destructor.h"
++#include "base/strings/string_split.h"
++#include "base/strings/stringprintf.h"
++#include "base/supports_user_data.h"
++#include "base/task/thread_pool.h"
++#include "base/timer/timer.h"
++#include "content/browser/renderer_host/media/media_stream_manager.h"
++#include "content/browser/renderer_host/media/preferred_audio_output_device_manager.h"
++#include "content/browser/web_contents/web_contents_impl.h"
++#include "content/public/browser/browser_task_traits.h"
++#include "content/public/browser/browser_thread.h"
++#include "content/public/browser/global_routing_id.h"
++#include "content/public/browser/render_frame_host.h"
++#include "ui/aura/window.h"
++#include "ui/aura/window_tree_host.h"
++
++namespace content {
++
++namespace {
++
++// How soon a tab's sound follows it into another window (or the room's sink for a new window
++// appears): twice a second, a file read off the UI thread and a walk over the tabs.
++constexpr base::TimeDelta kEvery = base::Milliseconds(500);
++
++const char kRoutedKey[] = "spatiand_window_audio";
++
++// Where a tab's sound was last sent, so it is sent again only when that changes.
++struct Routed : public base::SupportsUserData::Data {
++  GlobalRenderFrameHostToken frame;
++  std::string sink;
++};
++
++using SinkMap = std::map<std::string, std::string>;
++
++// The room's sinks by window key, from `$XDG_RUNTIME_DIR/spatiand-sinks` (`key<TAB>sink` lines,
++// written by the room as windows come and go).
++SinkMap ReadSinkMap() {
++  SinkMap sinks;
++  std::unique_ptr<base::Environment> env = base::Environment::Create();
++  std::optional<std::string> dir = env->GetVar("XDG_RUNTIME_DIR");
++  std::string text;
++  if (!dir || !base::ReadFileToString(base::FilePath(*dir).Append("spatiand-sinks"), &text)) {
++    return sinks;
++  }
++  for (std::string_view line :
++       base::SplitStringPiece(text, "\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
++    std::vector<std::string_view> parts =
++        base::SplitStringPiece(line, "\t", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    if (parts.size() == 2) {
++      sinks.emplace(std::string(parts[0]), std::string(parts[1]));
++    }
++  }
++  return sinks;
++}
++
++void SetPreferredSinkOnIO(GlobalRenderFrameHostToken frame, std::string sink) {
++  if (auto* manager = MediaStreamManager::GetPreferredOutputManagerInstance()) {
++    manager->SetPreferredSinkId(frame, sink, base::DoNothing());
++  }
++}
++
++// Each tab's sound to the sink of the window it is in: its window's key is this process and the
++// window's surface, as the room keys the sink it gives every SpatiMesh window.
++void Route(SinkMap sinks) {
++  for (WebContentsImpl* contents : WebContentsImpl::GetAllWebContents()) {
++    gfx::NativeWindow window = contents->GetTopLevelNativeWindow();
++    if (!window || !window->GetHost() || !contents->GetPrimaryMainFrame()) {
++      continue;
++    }
++    std::string sink;
++    if (const uint32_t surface = window->GetHost()->GetSpatiandSurfaceId()) {
++      const auto it = sinks.find(base::StringPrintf("wl:%d:%u", getpid(), surface));
++      if (it != sinks.end()) {
++        sink = it->second;
++      }
++    }
++    const GlobalRenderFrameHostToken frame =
++        contents->GetPrimaryMainFrame()->GetGlobalFrameToken();
++    auto* routed = static_cast<Routed*>(contents->GetUserData(kRoutedKey));
++    if (routed && routed->frame == frame && routed->sink == sink) {
++      continue;
++    }
++    if (!routed) {
++      auto owned = std::make_unique<Routed>();
++      routed = owned.get();
++      contents->SetUserData(kRoutedKey, std::move(owned));
++    }
++    routed->frame = frame;
++    routed->sink = sink;
++    // Streams playing on the default device switch to it as they play; an empty sink is the
++    // default again (the sink SpatiMesh was launched with).
++    GetIOThreadTaskRunner({})->PostTask(FROM_HERE,
++                                        base::BindOnce(&SetPreferredSinkOnIO, frame, sink));
++  }
++}
++
++void Tick() {
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++      base::BindOnce(&ReadSinkMap), base::BindOnce(&Route));
++}
++
++}  // namespace
++
++// static
++void SpatiandWindowAudio::Start() {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  static base::NoDestructor<base::RepeatingTimer> timer;
++  timer->Start(FROM_HERE, kEvery, base::BindRepeating(&Tick));
++}
++
++}  // namespace content
+diff --git a/content/browser/media/spatiand_window_audio.h b/content/browser/media/spatiand_window_audio.h
+new file mode 100644
+index 0000000000..e88fbb636c
+--- /dev/null
++++ b/content/browser/media/spatiand_window_audio.h
+@@ -0,0 +1,20 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CONTENT_BROWSER_MEDIA_SPATIAND_WINDOW_AUDIO_H_
++#define CONTENT_BROWSER_MEDIA_SPATIAND_WINDOW_AUDIO_H_
++
++namespace content {
++
++// Each tab's sound placed at the window it is in, in Spatiand's room: the room gives every
++// SpatiMesh window a sink of its own and says where they are; each tab plays to its window's
++// (the page's preferred output device), and follows it to another window as it is dragged there.
++class SpatiandWindowAudio {
++ public:
++  // Begins routing, for the life of the browser. On the UI thread.
++  static void Start();
++};
++
++}  // namespace content
++
++#endif  // CONTENT_BROWSER_MEDIA_SPATIAND_WINDOW_AUDIO_H_
+diff --git a/ui/aura/window_tree_host.cc b/ui/aura/window_tree_host.cc
+index 7d3ae00b69..ce7bc67247 100644
+--- a/ui/aura/window_tree_host.cc
++++ b/ui/aura/window_tree_host.cc
+@@ -855,4 +855,8 @@ void WindowTreeHost::OnFirstSurfaceActivation(
+                     window()->GetLocalSurfaceId());
+ }
+ 
++uint32_t WindowTreeHost::GetSpatiandSurfaceId() const {
++  return 0;
++}
++
+ }  // namespace aura
+diff --git a/ui/aura/window_tree_host.h b/ui/aura/window_tree_host.h
+index e859d77fe1..6209d0137d 100644
+--- a/ui/aura/window_tree_host.h
++++ b/ui/aura/window_tree_host.h
+@@ -228,6 +228,10 @@ class AURA_EXPORT WindowTreeHost : public ui::ImeKeyEventDispatcher,
+   virtual void SetBoundsInPixels(const gfx::Rect& bounds_in_pixels) = 0;
+   virtual gfx::Rect GetBoundsInPixels() const = 0;
+ 
++  // Spatiand: the platform window's own surface's protocol id, where it has one (see
++  // ui::PlatformWindow::GetSpatiandSurfaceId); 0 elsewhere.
++  virtual uint32_t GetSpatiandSurfaceId() const;
++
+   // Gets the bounds in DIP.
+   virtual gfx::Rect GetBoundsInDIP() const;
+ 
+diff --git a/ui/aura/window_tree_host_platform.cc b/ui/aura/window_tree_host_platform.cc
+index 122e8b50e2..4ec519b22b 100644
+--- a/ui/aura/window_tree_host_platform.cc
++++ b/ui/aura/window_tree_host_platform.cc
+@@ -127,6 +127,10 @@ void WindowTreeHostPlatform::HideImpl() {
+   platform_window_->Hide();
+ }
+ 
++uint32_t WindowTreeHostPlatform::GetSpatiandSurfaceId() const {
++  return platform_window_ ? platform_window_->GetSpatiandSurfaceId() : 0u;
++}
++
+ gfx::Rect WindowTreeHostPlatform::GetBoundsInPixels() const {
+   return platform_window_->GetBoundsInPixels();
+ }
+diff --git a/ui/aura/window_tree_host_platform.h b/ui/aura/window_tree_host_platform.h
+index 20b1f3b112..8d0cc18fd1 100644
+--- a/ui/aura/window_tree_host_platform.h
++++ b/ui/aura/window_tree_host_platform.h
+@@ -44,6 +44,7 @@ class AURA_EXPORT WindowTreeHostPlatform : public WindowTreeHost,
+   void ShowImpl() override;
+   void HideImpl() override;
+   gfx::Rect GetBoundsInPixels() const override;
++  uint32_t GetSpatiandSurfaceId() const override;
+   void SetBoundsInPixels(const gfx::Rect& bounds) override;
+   void SetCapture() override;
+   void ReleaseCapture() override;
+diff --git a/ui/ozone/platform/wayland/host/wayland_window.cc b/ui/ozone/platform/wayland/host/wayland_window.cc
+index 81a046be49..d1f0fbb345 100644
+--- a/ui/ozone/platform/wayland/host/wayland_window.cc
++++ b/ui/ozone/platform/wayland/host/wayland_window.cc
+@@ -562,6 +562,10 @@ void WaylandWindow::Close() {
+   delegate_->OnClosed();
+ }
+ 
++uint32_t WaylandWindow::GetSpatiandSurfaceId() const {
++  return root_surface() ? root_surface()->get_surface_id() : 0u;
++}
++
+ bool WaylandWindow::IsVisible() const {
+   NOTREACHED();
+ }
+diff --git a/ui/ozone/platform/wayland/host/wayland_window.h b/ui/ozone/platform/wayland/host/wayland_window.h
+index 7d82e02ad1..fa23a940e9 100644
+--- a/ui/ozone/platform/wayland/host/wayland_window.h
++++ b/ui/ozone/platform/wayland/host/wayland_window.h
+@@ -210,6 +210,7 @@ class WaylandWindow : public PlatformWindow,
+   void Hide() override;
+   void Close() override;
+   bool IsVisible() const override;
++  uint32_t GetSpatiandSurfaceId() const override;
+   void PrepareForShutdown() override;
+   void SetBoundsInPixels(const gfx::Rect& bounds) override;
+   gfx::Rect GetBoundsInPixels() const override;
+diff --git a/ui/platform_window/platform_window.cc b/ui/platform_window/platform_window.cc
+index 8b5964d3c9..eddababc20 100644
+--- a/ui/platform_window/platform_window.cc
++++ b/ui/platform_window/platform_window.cc
+@@ -76,4 +76,8 @@ bool PlatformWindow::IsClientControlledWindowMovementSupported() const {
+ 
+ void PlatformWindow::NotifyStartupComplete(const std::string& startup_id) {}
+ 
++uint32_t PlatformWindow::GetSpatiandSurfaceId() const {
++  return 0;
++}
++
+ }  // namespace ui
+diff --git a/ui/platform_window/platform_window.h b/ui/platform_window/platform_window.h
+index e9eb27e497..57c2325dad 100644
+--- a/ui/platform_window/platform_window.h
++++ b/ui/platform_window/platform_window.h
+@@ -45,6 +45,10 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindow
+ 
+   virtual bool IsVisible() const = 0;
+ 
++  // Spatiand: the protocol id of the window's own surface where there is one (a Wayland
++  // toplevel's), which Spatiand's room keys the window's sound by; 0 elsewhere.
++  virtual uint32_t GetSpatiandSurfaceId() const;
++
+   // Informs the window it is going to be destroyed sometime soon. This is only
+   // called for specific code paths, for example by Ash, so it shouldn't be
+   // assumed this will get called before destruction.
+-- 
+2.53.0
+

@@ -534,6 +534,16 @@ impl Spatiand {
         said.or_else(|| self.instance_of(&window))
     }
 
+    /// The key a SpatiMesh window's own sink is kept under: its client's process and its
+    /// surface's protocol id, which Chromium knows of its own window too and routes each tab's
+    /// sound by (`crate::audio::CHROMIUM_APP_ID`).
+    pub fn window_sound_key_of_id(&self, id: usize, pid: Option<u32>) -> Option<String> {
+        use smithay::reexports::wayland_server::Resource;
+        let window = self.space.elements().find(|w| self.layout.id_of(w) == Some(id))?.clone();
+        let surface = window.toplevel()?.wl_surface().clone();
+        Some(format!("wl:{}:{}", pid?, surface.id().protocol_id()))
+    }
+
     pub fn instance_of_id(&self, id: usize) -> Option<String> {
         let window = self.space.elements().find(|w| self.layout.id_of(w) == Some(id))?.clone();
         self.instance_of(&window)

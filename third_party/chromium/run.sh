@@ -15,7 +15,10 @@ export GLIBC_TUNABLES=glibc.rtld.dynamic_sort=1
 # it in software.
 # No back and forward by a sideways swipe: on the Deck's pads that is a thumb's drift, and a
 # swipe taken for it scrolls nothing.
+# --class is each window's Wayland app id, by which the room gives every SpatiMesh window a sink of
+# its own for its tabs' sound (crates/spatiand/src/audio.rs, CHROMIUM_APP_ID).
 exec "$here/chrome" --ozone-platform=wayland --user-data-dir="$HOME/.config/spatiand-chromium" \
+    --class=spatimesh-chromium \
     --password-store=basic --no-first-run --no-default-browser-check \
     --overscroll-history-navigation=0 \
     --enable-features=AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,VaapiIgnoreDriverChecks,WaylandWindowDecorations \

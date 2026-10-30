@@ -457,7 +457,7 @@ pub fn run(
     // The gyro offset and the magnetometer's own field, from last time and for next time.
     let mut sensor_memory = spatiand_track::SensorMemory::new();
     // Windows that arrived before their app id was set, still to be matched to a sink.
-    let mut awaiting_app_id: Vec<(usize, std::time::Instant)> = Vec::new();
+    let mut awaiting_app_id: Vec<(usize, Option<u32>, std::time::Instant)> = Vec::new();
     // Raw samples to a file, when the session environment asks: see `imu_record`.
     let mut imu_recorder = crate::imu_record::Recorder::from_env();
 
@@ -2295,6 +2295,14 @@ pub fn run(
                         spatial_audio.adopt_keyed(id, &app_id, crate::remote::sound_width(&app_id));
                         sinks_changed = true;
                     }
+                    // A SpatiMesh window: a sink of its own, which its tabs' sound is sent to.
+                    Some(app_id) if app_id == crate::audio::CHROMIUM_APP_ID => {
+                        spatial_audio.adopt(id, pid);
+                        if let Some(key) = runtime.state.window_sound_key_of_id(id, pid) {
+                            spatial_audio.adopt_own(id, &key, spatiand_audio::server::Width::Full);
+                            sinks_changed = true;
+                        }
+                    }
                     Some(_) => spatial_audio.adopt(id, pid),
                     // A toplevel is announced before its app id is set — the id comes with the
                     // first commit — so a window that arrived without one is looked at again
@@ -2302,14 +2310,19 @@ pub fn run(
                     // the Deck's speakers instead of at its window.
                     None => {
                         spatial_audio.adopt(id, pid);
-                        awaiting_app_id.push((id, std::time::Instant::now()));
+                        awaiting_app_id.push((id, pid, std::time::Instant::now()));
                     }
                 }
             }
-            awaiting_app_id.retain(|(id, since)| {
+            awaiting_app_id.retain(|(id, pid, since)| {
                 match runtime.state.app_id_of_id(*id) {
                     Some(app_id) => {
-                        if app_id.starts_with("remote.") {
+                        if app_id == crate::audio::CHROMIUM_APP_ID {
+                            if let Some(key) = runtime.state.window_sound_key_of_id(*id, *pid) {
+                                spatial_audio.adopt_own(*id, &key, spatiand_audio::server::Width::Full);
+                                sinks_changed = true;
+                            }
+                        } else if app_id.starts_with("remote.") {
                             spatial_audio.adopt_keyed(
                                 *id,
                                 &app_id,
@@ -2323,12 +2336,13 @@ pub fn run(
                 }
             });
             for id in std::mem::take(&mut runtime.state.departed_windows) {
-                awaiting_app_id.retain(|(w, _)| *w != id);
+                awaiting_app_id.retain(|(w, _, _)| *w != id);
                 spatial_audio.forget(id);
                 sinks_changed = true;
             }
             if sinks_changed {
                 crate::remote::sound::set_sinks(spatial_audio.keyed_sinks());
+                crate::audio::write_sink_map(&spatial_audio.keyed_sinks());
             }
             // Where every window's sound is, now, and what it is doing. The head has moved
             // since the last frame even if nothing else has, so the aim is unconditional --
