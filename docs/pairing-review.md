@@ -34,7 +34,7 @@ certainly gone is a deletion, and a mass disappearance is not; a private bin of 
 signed list of the owner's devices, `spatiand-sync/src/roster.rs`: paired with one machine is paired with all, removed
 on one is removed on all, a removal changes the key and hangs up), 5. The owner chose **one kind of pairing, no guests**,
 with the warning in `docs/privacy.md`; so 2's "friend's machine" stands as a thing the docs warn of, not something
-prevented. Still open: 6, 7, 8 (a Linux machine's host and session stay two entries), 9 to 14.
+prevented. Checked across the real Mac, deepmagpie and Deck: a device paired on one reached the other in seconds, and one removed on the Mac left deepmagpie as fast. Still open: 6, 7, 8 (a Linux machine's host and session stay two entries), 9 to 14.
 
 **Since this review:** a device paired with a Mac as a host may ask its SpatiKey with no second pairing (one pairing now
 guards more, which makes 1, 4 and 6 weigh more). Forgetting such a device is still the host's forget-all.
