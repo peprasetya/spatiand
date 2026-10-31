@@ -158,6 +158,7 @@ static ROOM: Mutex<()> = Mutex::new(());
 struct FakeRoom {
     target: Option<Target>,
     typed: Mutex<Vec<(u64, Vec<Step>)>>,
+    said: Mutex<Vec<String>>,
     refuse: bool,
 }
 
@@ -174,7 +175,9 @@ impl Room for FakeRoom {
         Ok(())
     }
 
-    fn notice(&self, _text: &str) {}
+    fn notice(&self, text: &str) {
+        self.said.lock().unwrap().push(text.to_string());
+    }
 }
 
 const SHORT: &str = "0b8dfc23";
@@ -805,6 +808,29 @@ fn a_forwarder_with_no_approver_answers_no_approver() {
     let status: StatusAnswer = answer(ask(&service, conn, Request::Status));
     assert!(!status.opens_here && !status.can_set_up && status.approvers.is_empty());
     assert_eq!(status.name, "Steam Deck");
+}
+
+#[test]
+fn a_forwarder_shows_a_card_while_a_finger_may_be_wanted_on_the_mac() {
+    let _room = ROOM.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let place = Place::new("waitcard");
+    let service = forwarder(&place);
+    let conn = next_conn();
+    let room = Arc::new(FakeRoom::default());
+    hooks::set_room(Some(room.clone()));
+    let _ = ask(&service, conn, Request::Fill { origin: "https://github.com".into() });
+    let _ = ask(&service, conn, Request::ProfileUnlock { profile: "Work".into() });
+    let said = std::mem::take(&mut *room.said.lock().unwrap());
+    // Nothing that needs no finger shows it.
+    let _ = ask(&service, conn, Request::Status);
+    let _ = ask(&service, conn, Request::Totp { session: Some("elsewhere".into()), id: "a".into() });
+    let quiet = room.said.lock().unwrap().len();
+    hooks::set_room(None);
+    assert_eq!(
+        said,
+        ["Touch ID on your Mac to fill in your password for github.com", "", "Touch ID on your Mac to open the profile Work", ""]
+    );
+    assert_eq!(quiet, 0);
 }
 
 #[test]

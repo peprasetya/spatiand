@@ -276,6 +276,9 @@ final class MacHost {
     private func tick() {
         followRoster()
         guard attached else { return }
+        for s in shared.values where s.info.display == nil {
+            MacWindows.bringOntoScreen(s.info, frame: s.capture.frame())
+        }
         sendCatalog(force: false)
         reconcile()
         // What changed in the settings here, every few seconds, to a session that keeps them.

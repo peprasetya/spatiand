@@ -298,7 +298,9 @@ Unicode key events by the Swift half, so any character and any keyboard layout w
 `SpatiKeyGuard.swift` holds the Secure Enclave key and asks for Touch ID; the service in
 `spatiand-mac-core` calls it through one callback and takes the answer back (`sp_key_start`,
 `sp_key_answer`), the pattern of `SP_DESCRIBE`. A request from another device shows a card in the
-Mac's room and on the device ("Touch ID on darkPhoenix to sign in to github.com"); when the
+Mac's room ("Touch ID on darkPhoenix to sign in to github.com"), and the device that asked shows
+its own card for as long as its request is out ("Touch ID on your Mac to add a passkey for
+github.com"), whoever on it asked: the browser, SpatiKey's window or the room's typing. When the
 glasses are on the Mac, macOS's own Touch ID panel is brought into the room as a "macOS asks"
 window.
 

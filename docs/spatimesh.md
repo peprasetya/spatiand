@@ -100,6 +100,11 @@ Settings' "You and Google" is now "Your profile": no sign-in, sync or Google row
 which have no other home. A page of a locked profile may run hidden behind the lock
 until the PIN is given, as the window is what waits.
 
+Settings has no Default browser page: the room decides what opens links. Adblock sits under Privacy and
+security, where it shows without scrolling the menu. Cromite's firewall (`services/firewall/tools/rules.xml`)
+lets only listed downloads out; the spell-check dictionary is listed now, so it fetches from Google's
+`redirector.gvt1.com` once per language (patch 0015).
+
 ## Three kinds of process
 
 ```text

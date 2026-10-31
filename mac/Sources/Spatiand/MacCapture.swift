@@ -47,6 +47,33 @@ enum MacWindows {
         return false
     }
 
+    /// A window reaching past the screens is slid back onto them. It stays where it was when the
+    /// display it was on goes, as the glasses' does when unplugged: its picture and keys still come
+    /// and go, and the real pointer, which clicks and scrolls need, cannot reach the part outside.
+    /// Whether it moved.
+    @discardableResult
+    static func bringOntoScreen(_ info: MacWindowInfo, frame: CGRect) -> Bool {
+        var count: UInt32 = 0
+        var displays = [CGDirectDisplayID](repeating: 0, count: 16)
+        guard CGGetActiveDisplayList(16, &displays, &count) == .success, count > 0, frame.width > 0 else { return false }
+        let screens = displays.prefix(Int(count)).map { CGDisplayBounds($0) }
+        func shown(_ screen: CGRect) -> CGFloat {
+            let part = screen.intersection(frame)
+            return part.isNull ? 0 : part.width * part.height
+        }
+        guard screens.map(shown).reduce(0, +) < frame.width * frame.height * 0.99 else { return false }
+        let screen = screens.max { shown($0) < shown($1) } ?? CGDisplayBounds(CGMainDisplayID())
+        // Slid as little as fits; one taller or wider than the screen keeps its top left there.
+        var origin = CGPoint(x: min(max(frame.minX, screen.minX), max(screen.minX, screen.maxX - frame.width)),
+                             y: min(max(frame.minY, screen.minY), max(screen.minY, screen.maxY - frame.height)))
+        // macOS holds windows below the menu bar, which this does not know the height of.
+        guard abs(origin.x - frame.minX) > 2 || abs(origin.y - frame.minY) > 40, let window = axWindow(info) else { return false }
+        if abs(origin.y - frame.minY) <= 40 { origin.y = frame.minY }
+        guard let value = AXValueCreate(.cgPoint, &origin) else { return false }
+        print("host: \(info.app) reached past the screens at \(Int(frame.minX)),\(Int(frame.minY)): brought back")
+        return AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value) == .success
+    }
+
     /// The accessibility element of a window, for closing it and sizing it. Needs Accessibility.
     static func axWindow(_ info: MacWindowInfo) -> AXUIElement? {
         let app = AXUIElementCreateApplication(info.pid)

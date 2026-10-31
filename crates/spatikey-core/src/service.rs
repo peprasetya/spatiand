@@ -985,7 +985,7 @@ impl Service {
         let opening = matches!(env.request, Request::Open);
         let closing = matches!(env.request, Request::Close { .. });
         let id = env.id;
-        let mut reply = asker.call(env);
+        let mut reply = call_showing_wait(asker, env);
         reply.id = id;
         let answered = reply.into_result();
         match &answered {
@@ -1019,7 +1019,7 @@ impl Service {
         let (room, window, _) = typing_target(window)?;
         let steps = if fields.iter().any(|&field| needs_secret(field)) {
             let reveal = Envelope { id, who, request: Request::Reveal { session, id: entry, fields: fields.clone() } };
-            let value = asker.call(reveal).into_result()?;
+            let value = call_showing_wait(asker, reveal).into_result()?;
             // Never the parser's message: it can quote what it could not read.
             let mut got: RevealAnswer =
                 serde_json::from_value(value).map_err(|_| refuse(Code::Failed, "the Mac's answer could not be read"))?;
@@ -1109,6 +1109,35 @@ fn typing_target(window: Option<u64>) -> Result<(Arc<dyn Room>, u64, String), Re
         _ => "a window".to_string(),
     };
     Ok((room, window, into))
+}
+
+/// A request to the Mac, with a card in this room for as long as a finger may be wanted there:
+/// macOS asks on the Mac's own screen, which the wearer may not be looking at.
+fn call_showing_wait(asker: &Asker, env: Envelope) -> Reply {
+    let room = finger_wanted(&env.request).and_then(|what| Some((crate::hooks::room()?, what)));
+    if let Some((room, what)) = &room {
+        room.notice(&format!("Touch ID on your Mac to {what}"));
+    }
+    let reply = asker.call(env);
+    if let Some((room, _)) = &room {
+        room.notice("");
+    }
+    reply
+}
+
+/// What a request asks a finger for, in the Mac's words, if it does.
+fn finger_wanted(request: &Request) -> Option<String> {
+    match request {
+        Request::Open => Some("open SpatiKey".to_string()),
+        Request::Fill { origin } => Some(format!("fill in your password for {}", page_host(origin).ok()?)),
+        Request::Save { origin, .. } => Some(format!("save your password for {}", page_host(origin).ok()?)),
+        Request::Totp { session: None, .. } => Some("get a code".to_string()),
+        Request::Reveal { session: None, .. } => Some("type a password".to_string()),
+        Request::ProfileUnlock { profile } => Some(format!("open the profile {}", shown(profile))),
+        Request::PasskeyCreate(request) => Some(format!("add a passkey for {}", request.rp_id)),
+        Request::PasskeyGet(request) => Some(format!("sign in to {} with a passkey", request.rp_id)),
+        _ => None,
+    }
 }
 
 /// Does typing `field` need the vault opened? Tab and Enter do not.
