@@ -34,7 +34,7 @@ Or from a terminal:
 
 ## A Steam Deck
 
-In the room: open **Remote computers**, go to the host's row, and press **Y** twice. This removes a
+In the room: open **Remote computers**, go to the host's row, and press forget on it twice. This removes a
 *host*. To remove any other device, use a shell (Desktop Mode, or ssh):
 
 ```bash
