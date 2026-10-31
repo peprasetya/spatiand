@@ -52,6 +52,7 @@ enum {
     SP_CLIPBOARD = 35,        // the session's clipboard to the pasteboard; text is {"host": {"Clipboard": ...}}
     SP_DESCRIBE = 36,         // say what the application with bundle id text shows, with sp_described(id, json)
     SP_TYPE_TEXT = 37,        // SpatiKey: type {"bundle", "steps"} into that application as Unicode; answer sp_typed(id, error)
+    SP_FORCE_QUIT = 38,       // force the application with bundle id text to quit
 };
 
 typedef void (*sp_asked_fn)(void *user, int32_t what, uint32_t id, double a, double b, double c,

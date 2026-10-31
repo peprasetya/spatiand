@@ -411,6 +411,13 @@ pub fn is_mac_window(app_id: &str) -> bool {
     app_id.starts_with(&format!("remote.{}.", local::HOST))
 }
 
+/// Force the application behind one of this Mac's windows (`app_id` its room id) to quit.
+pub fn force_quit(app_id: &str) {
+    if let Some(bundle) = app_id.strip_prefix(&format!("remote.{}.", local::HOST)) {
+        ffi::tell(ffi::Asked::ForceQuit, bundle);
+    }
+}
+
 /// Type into one of this Mac's applications (`app_id` its room id) as the characters
 /// themselves: macOS is given each piece of text as Unicode, so neither the keyboard layout nor
 /// a Shift the room added on its own can change what arrives. The answer comes on `answer` when

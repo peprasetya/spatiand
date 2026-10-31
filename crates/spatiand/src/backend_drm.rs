@@ -73,9 +73,6 @@ const SCROLL_SCALE: f64 = 260.0;
 /// 200 ms -- so the end carries no speed and the page stays where the thumb left it.
 const GESTURE_ENDS_AFTER: std::time::Duration = std::time::Duration::from_millis(250);
 
-/// How long Y is held on the window list before the application is killed outright.
-const FORCE_CLOSE_HOLD: Duration = Duration::from_secs(5);
-
 /// How long the headset may stay silent before it is reopened.
 ///
 /// The glasses stream at about a kilohertz, so a second of nothing is already thousands of
@@ -223,8 +220,7 @@ pub fn run(
     // Which window the layout was last chosen for. Choosing reads the window's process
     // environment, so it happens when focus moves rather than every frame.
     let mut controls_focus: Option<usize> = None;
-    // How long Y has been held on the window list, for the force-close.
-    let mut force_close_since: Option<std::time::Instant> = None;
+    let mut force_close = crate::input_map::ForceClose::default();
     let mut gesture = spatiand_input::TwoPadGesture::new();
     let pointer_config = PointerConfig::default();
     let mut pointers = PointerState::default();
@@ -1337,51 +1333,13 @@ pub fn run(
                 }
             }
 
-            // Holding Y on the window list kills the application outright. The way out of an
-            // application that ignores a close request -- a game that has stopped drawing, a
-            // dialog with no buttons reachable -- without a terminal, which in a headset there
-            // is not. Long enough that it cannot be done by accident while pressing Y to close.
-            if shell.mode() == Mode::Switcher
-                && controller
-                    .as_ref()
-                    .is_some_and(|c| c.state().buttons.is_down(spatiand_input::Control::Y))
-            {
-                let since = force_close_since.get_or_insert_with(std::time::Instant::now);
-                if since.elapsed() >= FORCE_CLOSE_HOLD {
-                    force_close_since = None;
-                    let window = shell.switcher().activate().and_then(|id| {
-                        runtime
-                            .state
-                            .space
-                            .elements()
-                            .find(|w| runtime.state.layout.id_of(w) == Some(id))
-                            .cloned()
-                    });
-                    if let Some(window) = window {
-                        let title = runtime.state.display_title(&window);
-                        let remote = runtime
-                            .state
-                            .app_id_of(&window)
-                            .filter(|id| id.starts_with("remote."));
-                        if let Some(app_id) = remote {
-                            log::warn!("force-closing {title} on its host");
-                            remotes.force_quit(&app_id);
-                        } else {
-                        match runtime.state.pid_of(&window) {
-                            Some(pid) => {
-                                log::warn!("force-closing {title} (pid {pid})");
-                                // SIGKILL rather than SIGTERM: this is the second ask, and the
-                                // first one was the polite one.
-                                unsafe { libc::kill(pid as i32, libc::SIGKILL) };
-                            }
-                            None => log::warn!("cannot force-close {title}: no process id"),
-                        }
-                        }
-                    }
-                }
-            } else {
-                force_close_since = None;
-            }
+            force_close.tick(
+                &runtime.state,
+                &shell,
+                &remotes,
+                menu_keys.y_held()
+                    || controller.as_ref().is_some_and(|c| c.state().buttons.is_down(spatiand_input::Control::Y)),
+            );
 
             shell_events.extend(typed_event.take());
             remotes.tick(&mut runtime.display_handle, &mut prefs, &mut shell);

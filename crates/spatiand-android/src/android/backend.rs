@@ -196,6 +196,7 @@ pub fn run(
     let mut keyboard_struck: Vec<(&'static Key, Instant)> = Vec::new();
     let mut nav_repeat = crate::input_map::NavRepeat::default();
     let mut menu_keys = crate::input_map::MenuKeys::default();
+    let mut force_close = crate::input_map::ForceClose::default();
     let mut pointed_events: Vec<ShellEvent> = Vec::new();
     let mut menu_click_was = false;
     let mut keyboard_reach: [Option<spatiand_render::ray::Hit>; 2] = [None, None];
@@ -684,6 +685,13 @@ pub fn run(
                     }
                 }
             }
+
+            force_close.tick(
+                &runtime.state,
+                &shell,
+                &remotes,
+                menu_keys.y_held() || (missing.is_none() && controller.state().buttons.is_down(spatiand_input::Control::Y)),
+            );
 
             shell_events.extend(typed_event.take());
             remotes.tick(&mut runtime.display_handle, &mut prefs, &mut shell);

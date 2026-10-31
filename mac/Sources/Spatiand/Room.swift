@@ -187,6 +187,11 @@ final class Room {
             DispatchQueue.main.async { Notices.shared.pressed() }
         case SP_DESCRIBE:
             MacDescribe.describe(bundle: text, request: id)
+        case SP_FORCE_QUIT:
+            // Every window of it goes, unsaved work with them: Y was held for five seconds.
+            for app in NSRunningApplication.runningApplications(withBundleIdentifier: text) where app != .current {
+                app.forceTerminate()
+            }
         case SP_TYPE_TEXT:
             SpatiKeyTyping.type(json: text, request: id)
         case SP_MENU_OPEN:

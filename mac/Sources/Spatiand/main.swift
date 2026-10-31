@@ -686,6 +686,45 @@ if CommandLine.arguments.contains("--selftest-windows") {
     application.run()
 }
 
+if CommandLine.arguments.contains("--selftest-window-keys") {
+    // The list of windows worked with the keyboard alone, as on a Mac with no pad: X hides, Y asks
+    // to close, and Y held forces the application to quit. Shown only the application named by
+    // SPATIAND_TEST_ONLY_BUNDLE, which should refuse to close, and which is killed: never run it
+    // without that. Each step is said on standard output and pictured (~/screenshots).
+    guard let bundle = ProcessInfo.processInfo.environment["SPATIAND_TEST_ONLY_BUNDLE"] else {
+        print("--selftest-window-keys needs SPATIAND_TEST_ONLY_BUNDLE")
+        exit(1)
+    }
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    func after(_ seconds: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body) }
+    func press(_ control: Int32, at time: Double) { after(time) { sp_control(control, true); after(0.08) { sp_control(control, false) } } }
+    func alive() -> Bool { !NSRunningApplication.runningApplications(withBundleIdentifier: bundle).isEmpty }
+    let keyX: UInt16 = 0x07, keyY: UInt16 = 0x10
+    DispatchQueue.main.async {
+        Room.shared.start(preview: true)
+        press(3, at: 1.5)
+        press(0, at: 4.0)
+        let down = Int(ProcessInfo.processInfo.environment["SPATIAND_TEST_STEPS"] ?? "") ?? 5
+        for step in 0..<down { press(7, at: 4.5 + Double(step) * 0.3) }
+        press(2, at: 6.6)
+        after(8) { sp_screenshot(); print("the list, alive \(alive())") }
+        after(9) { sp_key(keyX, true); after(0.08) { sp_key(keyX, false) } }
+        after(10) { sp_screenshot(); print("X pressed, alive \(alive())") }
+        after(11) { sp_key(keyY, true); after(0.08) { sp_key(keyY, false) } }
+        after(13) { sp_screenshot(); print("Y tapped, alive \(alive())") }
+        // Three seconds is not enough, and five is.
+        after(14) { sp_key(keyY, true) }
+        after(17) { sp_key(keyY, false); print("Y held 3 s, alive \(alive())") }
+        after(18) { sp_key(keyY, true) }
+        after(24) { sp_key(keyY, false); print("Y held 6 s, alive \(alive())") }
+        after(26) { sp_screenshot(); Room.shared.stop(); exit(alive() ? 1 : 0) }
+    }
+    application.run()
+}
+
 if let at = CommandLine.arguments.firstIndex(of: "--selftest-click") {
     // --selftest-click [application.app]: the room in a window, an application's window brought
     // in, and the room's pointer -- which starts in the middle of the view, where the window is --

@@ -88,6 +88,8 @@ pub enum Asked {
     /// `{"bundle": ..., "steps": [{"text": ...} | {"key": "tab" | "enter"}]}`; answered with
     /// `sp_typed(id, error)`, a null error for done.
     TypeText = 37,
+    /// Force an application of this Mac to quit. `text` is its bundle id.
+    ForceQuit = 38,
 }
 
 pub type Callback =

@@ -17,7 +17,13 @@
 use std::time::{Duration, Instant};
 
 use spatiand_input::Control;
-use spatiand_shell::{Intent, NavDirection, Shell, ShellEvent};
+use spatiand_shell::{Intent, Mode, NavDirection, Shell, ShellEvent};
+
+use crate::state::Spatiand;
+
+/// The Y and X keys (evdev).
+const KEY_Y: u32 = 21;
+const KEY_X: u32 = 45;
 
 /// Map a control to an intent, or `None` if it means nothing to the shell.
 pub fn intent_for(control: Control) -> Option<Intent> {
@@ -101,6 +107,78 @@ pub fn held_direction(buttons: spatiand_input::Buttons) -> Option<Control> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn window_list() -> Shell {
+        let window = |id, title: &str| spatiand_shell::WindowEntry {
+            id,
+            title: title.into(),
+            current: false,
+            hidden: false,
+            pinned: false,
+            room: false,
+            screen: false,
+            heading: false,
+        };
+        let mut shell = Shell::new(vec![], spatiand_shell::DesktopPanels::ALL, true);
+        shell.set_windows(vec![window(7, "one"), window(8, "two")]);
+        shell.handle(Intent::ToggleSwitcher);
+        shell
+    }
+
+    #[test]
+    fn the_x_and_y_keys_are_the_x_and_y_buttons_on_the_window_list() {
+        let mut shell = window_list();
+        let mut keys = MenuKeys::default();
+        let mut events = Vec::new();
+        assert!(keys.key(&mut shell, KEY_X, true, &mut events));
+        assert_eq!(events.drain(..).collect::<Vec<_>>(), [ShellEvent::HideWindow { id: 7, hidden: true }]);
+        assert!(keys.key(&mut shell, KEY_Y, true, &mut events));
+        assert_eq!(events.drain(..).collect::<Vec<_>>(), [ShellEvent::CloseWindow(7)]);
+        assert!(keys.y_held());
+    }
+
+    #[test]
+    fn a_held_key_closes_one_window_not_the_ones_after_it() {
+        let mut shell = window_list();
+        let mut keys = MenuKeys::default();
+        let mut events = Vec::new();
+        for _ in 0..3 {
+            keys.key(&mut shell, KEY_Y, true, &mut events);
+        }
+        assert_eq!(events.len(), 1);
+        keys.key(&mut shell, KEY_Y, false, &mut events);
+        assert!(!keys.y_held());
+        keys.key(&mut shell, KEY_Y, true, &mut events);
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn a_key_let_go_once_the_menu_is_closed_is_not_still_held() {
+        let mut shell = window_list();
+        let mut keys = MenuKeys::default();
+        let mut events = Vec::new();
+        keys.key(&mut shell, KEY_Y, true, &mut events);
+        shell.handle(Intent::Back);
+        assert!(!shell.menu_is_open());
+        assert!(!keys.key(&mut shell, KEY_Y, false, &mut events));
+        assert!(!keys.y_held());
+    }
+
+    #[test]
+    fn y_and_x_away_from_a_list_of_windows_are_not_taken() {
+        // With no menu open they are the focused window's letters.
+        let mut shell = Shell::new(vec![], spatiand_shell::DesktopPanels::ALL, true);
+        let mut keys = MenuKeys::default();
+        let mut events = Vec::new();
+        assert!(!keys.key(&mut shell, KEY_Y, true, &mut events));
+        assert!(!keys.y_held());
+        // In the launcher they narrow it.
+        shell.handle(Intent::ToggleLauncher);
+        assert!(shell.searches());
+        assert!(keys.key(&mut shell, KEY_Y, true, &mut events));
+        assert!(!keys.y_held());
+        assert!(events.is_empty());
+    }
 
     #[test]
     fn a_short_press_moves_once() {
@@ -257,9 +335,16 @@ mod tests {
 /// them: the arrows walk it, Enter chooses, Escape backs out -- and in the launcher, letters
 /// narrow what is on show. Without this they went to whatever window was behind the menu, which
 /// was typed into by someone looking at a list of applications.
+///
+/// The X and Y keys are the X and Y buttons, for a Mac with no pad plugged in: on the window list
+/// X hides, Y closes, and Y held forces an application to quit ([`ForceClose`]). Not where letters
+/// are text: in the launcher they narrow it.
 #[derive(Debug, Default)]
 pub struct MenuKeys {
     shift: bool,
+    /// The Y key, down since it was pressed on a menu that took it.
+    y: bool,
+    x: bool,
 }
 
 impl MenuKeys {
@@ -273,6 +358,15 @@ impl MenuKeys {
             self.shift = pressed;
             return false;
         }
+        // Let go of wherever it was let go: a key the menu never sees come up must not stay held,
+        // as the force-quit is counted from it.
+        if !pressed {
+            match code {
+                KEY_Y => self.y = false,
+                KEY_X => self.x = false,
+                _ => {}
+            }
+        }
         if !shell.menu_is_open() || shell.wants_text() {
             return false;
         }
@@ -280,6 +374,16 @@ impl MenuKeys {
         // the menu opened, and nobody's otherwise.
         if !pressed {
             return false;
+        }
+        // Once for a press, as a button is: a key that repeats would close the window it closed,
+        // and then the one the list moved on to.
+        if !shell.searches() && matches!(code, KEY_Y | KEY_X) {
+            let held = if code == KEY_Y { &mut self.y } else { &mut self.x };
+            if !std::mem::replace(held, true) {
+                let intent = if code == KEY_Y { Intent::Close } else { Intent::Hide };
+                events.extend(shell.handle(intent));
+            }
+            return true;
         }
         let intent = match code {
             103 => Some(Intent::Navigate(NavDirection::Up)),
@@ -302,6 +406,67 @@ impl MenuKeys {
             }
         }
         true
+    }
+
+    /// Is the Y key down, as a menu took it?
+    pub fn y_held(&self) -> bool {
+        self.y
+    }
+}
+
+/// How long Y is held on the window list before the application is killed outright.
+const FORCE_CLOSE_HOLD: Duration = Duration::from_secs(5);
+
+/// Holding Y on the window list kills the application outright. The way out of an application
+/// that ignores a close request -- a game that has stopped drawing, a dialog with no buttons
+/// reachable -- without a terminal, which in a headset there is not. Long enough that it cannot
+/// be done by accident while pressing Y to close.
+#[derive(Debug, Default)]
+pub struct ForceClose {
+    /// When Y went down, on which window. No window once it is spent: a window that answered the
+    /// press by closing, or was killed, is gone, and the list has moved on to one nobody chose.
+    held: Option<(Instant, Option<usize>)>,
+}
+
+impl ForceClose {
+    /// A turn of the loop: `held` is whether Y, the button or the key, is down.
+    pub fn tick(&mut self, state: &Spatiand, shell: &Shell, remotes: &crate::remote::Remotes, held: bool) {
+        if !held || shell.mode() != Mode::Switcher {
+            self.held = None;
+            return;
+        }
+        let selected = shell.switcher().activate();
+        let (since, target) = self.held.get_or_insert_with(|| (Instant::now(), selected));
+        if *target != selected {
+            *target = None;
+        }
+        let Some(id) = *target else { return };
+        if since.elapsed() < FORCE_CLOSE_HOLD {
+            return;
+        }
+        *target = None;
+        let Some(window) = state.space.elements().find(|w| state.layout.id_of(w) == Some(id)) else { return };
+        let title = state.display_title(window);
+        if let Some(app_id) = state.app_id_of(window).filter(|id| id.starts_with("remote.")) {
+            #[cfg(target_os = "macos")]
+            if crate::mac::is_mac_window(&app_id) {
+                log::warn!("force-quitting {title} on this Mac");
+                crate::mac::force_quit(&app_id);
+                return;
+            }
+            log::warn!("force-closing {title} on its host");
+            remotes.force_quit(&app_id);
+            return;
+        }
+        match state.pid_of(window) {
+            Some(pid) => {
+                log::warn!("force-closing {title} (pid {pid})");
+                // SIGKILL rather than SIGTERM: this is the second ask, and the first one was
+                // the polite one.
+                unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+            }
+            None => log::warn!("cannot force-close {title}: no process id"),
+        }
     }
 }
 

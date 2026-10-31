@@ -217,8 +217,11 @@ enum MacWindows {
     static func list() async -> [MacWindowInfo] {
         guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true) else { return [] }
         let mine = ProcessInfo.processInfo.processIdentifier
+        // A test that closes and kills what it is shown is shown only its own application.
+        let only = ProcessInfo.processInfo.environment["SPATIAND_TEST_ONLY_BUNDLE"]
         return content.windows.compactMap { w in
             guard let app = w.owningApplication, app.processID != mine, !app.applicationName.isEmpty, w.isOnScreen else { return nil }
+            if let only, app.bundleIdentifier != only { return nil }
             if isPrompt(bundle: app.bundleIdentifier, layer: w.windowLayer), w.frame.width >= 60, w.frame.height >= 40 {
                 var info = MacWindowInfo(windowID: w.windowID, pid: app.processID, bundle: app.bundleIdentifier, app: "macOS asks",
                                          title: w.title ?? "", frame: w.frame)
