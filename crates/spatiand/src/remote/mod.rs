@@ -377,6 +377,7 @@ fn config_for(entry: &crate::prefs::RemoteHost, microphone: bool) -> Result<Conf
             .unwrap_or_else(|_| "/dev/dri/renderD128".into()),
         launch: entry.launch.clone(),
         microphone,
+        on_demand: entry.on_demand,
     })
 }
 
@@ -394,7 +395,11 @@ pub struct Remotes {
     /// Whether this session sends its microphone to a host that asks. From the preferences,
     /// once, at startup.
     microphone: bool,
+    /// This device's fingerprint.
+    me: String,
     pairing: Option<PairingInProgress>,
+    /// The owner's devices, as they change. See `spatiand_sync::roster`.
+    roster: Option<std::sync::mpsc::Receiver<Vec<spatiand_sync::roster::Entry>>>,
     /// What the shell was last given, so it is only given something when it changed.
     shown: Option<(Vec<HostRow>, Vec<HostTab>)>,
     shown_pairing: Option<PairingView>,
@@ -435,6 +440,24 @@ impl Remotes {
         };
         for entry in &prefs.remotes {
             remotes.add(display, entry);
+        }
+        let dir = spatiand_track::config::config_dir();
+        if let Ok(me) = spatiand_stream::Identity::load_or_create(&dir) {
+            let fp = me.fingerprint().to_string();
+            remotes.me = fp.clone();
+            let name = crate::system::machine_name();
+            // Read again only when the file has changed: reading it says so in the log.
+            let prefs_file = dir.join("prefs.toml");
+            let mut read: Option<(Option<std::time::SystemTime>, Vec<(String, String)>)> = None;
+            remotes.roster = Some(spatiand_sync::roster::Roster::watch(move || {
+                spatiand_sync::roster::Roster::open_default().note(&fp, &name, "", true);
+                let changed = std::fs::metadata(&prefs_file).and_then(|m| m.modified()).ok();
+                if read.as_ref().is_none_or(|(when, _)| *when != changed) {
+                    let hosts = crate::prefs::Prefs::load().remotes.into_iter().map(|r| (r.fingerprint, r.host)).collect();
+                    read = Some((changed, hosts));
+                }
+                read.as_ref().map(|(_, hosts)| hosts.clone()).unwrap_or_default()
+            }));
         }
         remotes
     }
@@ -498,6 +521,10 @@ impl Remotes {
 
     /// Stop knowing a host: stop showing it, and take it out of the preferences.
     pub fn forget(&mut self, address: &str, prefs: &mut crate::prefs::Prefs) {
+        // From every machine of the owner's, as the host is.
+        if let Some(entry) = prefs.remotes.iter().find(|r| r.host == address) {
+            let _ = spatiand_sync::roster::Roster::open_default().remove(&entry.fingerprint);
+        }
         // Dropping the handle stops its thread, and its windows go with the connection.
         self.hosts.retain(|r| r.host != address);
         prefs.remotes.retain(|r| r.host != address);
@@ -659,6 +686,7 @@ impl Remotes {
         shell: &mut Shell,
     ) {
         self.settle_pairing(display, prefs);
+        self.follow_roster(display, prefs);
 
         let (rows, tabs) = self.describe(prefs);
         if self.shown.as_ref() != Some(&(rows.clone(), tabs.clone())) {
@@ -669,6 +697,37 @@ impl Remotes {
             if self.shown_pairing.as_ref() != Some(&view) {
                 shell.set_pairing(view.clone());
                 self.shown_pairing = Some(view);
+            }
+        }
+    }
+
+    /// A host on the owner's list is one this device can use, though it was paired from another;
+    /// one taken off the list, or this device taken off, is gone.
+    fn follow_roster(&mut self, display: &mut DisplayHandle, prefs: &mut crate::prefs::Prefs) {
+        let Some(entries) = self.roster.as_ref().and_then(|r| r.try_iter().last()) else { return };
+        let i_am_gone = entries.iter().any(|e| e.fp == self.me && e.removed());
+        for e in &entries {
+            let known = prefs.remotes.iter().find(|r| r.fingerprint.eq_ignore_ascii_case(&e.fp)).map(|r| r.host.clone());
+            match known {
+                Some(address) if e.removed() || i_am_gone => {
+                    log::info!("{} was removed from the owner's devices", e.label());
+                    self.hosts.retain(|r| r.host != address);
+                    prefs.remotes.retain(|r| r.host != address);
+                    prefs.save();
+                }
+                None if !e.removed() && !i_am_gone && !e.address.is_empty() && e.fp != self.me => {
+                    log::info!("{} is on the owner's list: its applications can be used here", e.label());
+                    let entry = crate::prefs::RemoteHost {
+                        host: e.address.clone(),
+                        fingerprint: e.fp.clone(),
+                        launch: Vec::new(),
+                        on_demand: true,
+                    };
+                    prefs.remotes.push(entry.clone());
+                    prefs.save();
+                    self.add(display, &entry);
+                }
+                _ => {}
             }
         }
     }
@@ -696,7 +755,9 @@ impl Remotes {
             host: address.clone(),
             fingerprint: paired.fingerprint.to_string(),
             launch: Vec::new(),
+            on_demand: false,
         };
+        spatiand_sync::roster::Roster::open_default().pair(&entry.fingerprint, &paired.name, &address);
         // Pairing again with a host already known replaces it, which is what pairing again
         // after the host forgot this headset needs.
         self.hosts.retain(|r| r.host != address);
@@ -774,15 +835,20 @@ impl Remotes {
                 label,
                 address: entry.host.clone(),
                 online: status == HostStatus::Online,
-                apps: view
-                    .apps
-                    .iter()
-                    .map(|a| RemoteEntry {
-                        id: a.id.clone(),
-                        name: a.name.clone(),
-                        icon: a.icon.clone(),
-                    })
-                    .collect(),
+                apps: if entry.on_demand && view.apps.is_empty() {
+                    // Its applications are not known until it is connected to, and connecting
+                    // takes its windows from whichever device has them: so it is asked for.
+                    vec![RemoteEntry { id: String::new(), name: "Use this computer".into(), icon: None }]
+                } else {
+                    view.apps
+                        .iter()
+                        .map(|a| RemoteEntry {
+                            id: a.id.clone(),
+                            name: a.name.clone(),
+                            icon: a.icon.clone(),
+                        })
+                        .collect()
+                },
             });
         }
         (rows, tabs)

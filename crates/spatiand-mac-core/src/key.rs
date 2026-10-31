@@ -59,6 +59,7 @@ static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
 
 struct Running {
     socket: PathBuf,
+    service: Arc<Service>,
     /// Answering paired devices on the network; dropped, it stops. None when it could not start:
     /// the Mac still answers its own programs.
     _remote: Option<remote::Listening>,
@@ -271,7 +272,7 @@ pub unsafe extern "C" fn sp_key_start(
         *lock(&ASK) = None;
         return 0;
     }
-    let remote = match remote::serve(service, identity) {
+    let remote = match remote::serve(service.clone(), identity) {
         Ok(listening) => Some(listening),
         Err(e) => {
             log::warn!("spatikey: devices on the network cannot ask this Mac: {e}");
@@ -279,7 +280,7 @@ pub unsafe extern "C" fn sp_key_start(
         }
     };
     log::info!("spatikey: serving {}", path.display());
-    *running = Some(Running { socket: path, _remote: remote });
+    *running = Some(Running { socket: path, service: service.clone(), _remote: remote });
     1
 }
 
@@ -496,5 +497,12 @@ mod tests {
         hooks::set_room(None);
         MacGuard.notice("only logged");
         assert_eq!(*room.0.lock().unwrap(), ["Touch ID on darkPhoenix to sign in to github.com"]);
+    }
+}
+
+/// A device removed from the owner's list may no longer ask SpatiKey.
+pub fn forget_device(fp: &str) {
+    if let Some(running) = lock(&RUNNING).as_ref() {
+        running.service.drop_device(fp);
     }
 }

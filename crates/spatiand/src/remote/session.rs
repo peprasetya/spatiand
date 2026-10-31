@@ -47,6 +47,8 @@ pub struct Config {
     /// Whether this session will send its microphone when a host asks for one. See
     /// [`super::microphone`].
     pub microphone: bool,
+    /// Not connected to until the wearer asks. See `RemoteHost::on_demand`.
+    pub on_demand: bool,
 }
 
 /// One remote window's decoder and its conversion, made when the host says what it is sending.
@@ -207,6 +209,29 @@ pub fn run(
         // An application asked for while another device had the windows: started once they
         // are back here.
         let mut launch_first: Option<String> = None;
+        if config.on_demand {
+            set(Link::Offline("connects when you use it".into()));
+            loop {
+                if stop.load(Ordering::Relaxed) {
+                    return;
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+                    command = commands.recv() => match command {
+                        Some(Command::Launch(app)) => {
+                            launch_first = Some(app).filter(|a| !a.is_empty());
+                            break;
+                        }
+                        None => return,
+                        _ => {}
+                    }
+                }
+                if let Err(e) = client::pump(&mut client, &mut queue) {
+                    log::error!("remote: {e}");
+                    return;
+                }
+            }
+        }
         while !stop.load(Ordering::Relaxed) {
             set(Link::Connecting);
             let ended = match connect(&identity, &config).await {
@@ -271,7 +296,7 @@ pub fn run(
                             command = commands.recv() => match command {
                                 Some(Command::Launch(app)) => {
                                     log::info!("remote {}: taking the windows back for {app}", config.host);
-                                    launch_first = Some(app);
+                                    launch_first = Some(app).filter(|a| !a.is_empty());
                                     break;
                                 }
                                 None => return,

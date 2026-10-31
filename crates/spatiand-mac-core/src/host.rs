@@ -155,6 +155,37 @@ impl HostCore {
             spatiand_stream::transport::server(bind, &identity, Trust::Gate(gate.clone()))
                 .or_else(|_| spatiand_stream::transport::server(format!("0.0.0.0:{port}").parse().unwrap(), &identity, Trust::Gate(gate.clone())))?
         };
+        // The owner's devices: one paired with any of their machines may connect here; one
+        // removed on any may not, and is hung up on (`serve`, `gone`).
+        {
+            let (paired, paired_path, gate) = (paired.clone(), paired_path.clone(), gate.clone());
+            let me = identity.fingerprint().to_string();
+            let known_path = paired_path.clone();
+            let list = spatiand_sync::roster::Roster::watch(move || {
+                load_paired(&known_path).iter().map(|f| (f.to_string(), String::new())).collect()
+            });
+            std::thread::spawn(move || {
+                for entries in list {
+                    let i_am_gone = entries.iter().any(|e| e.fp == me && e.removed());
+                    let mut now = paired.lock().unwrap().clone();
+                    let before = now.len();
+                    for e in &entries {
+                        let Ok(fp) = e.fp.parse::<Fingerprint>() else { continue };
+                        if e.removed() || i_am_gone {
+                            now.retain(|f| *f != fp);
+                            crate::key::forget_device(&e.fp);
+                        } else if e.fp != me && !now.contains(&fp) {
+                            now.push(fp);
+                        }
+                    }
+                    if now.len() != before || *paired.lock().unwrap() != now {
+                        *paired.lock().unwrap() = now.clone();
+                        save_paired(&paired_path, &now);
+                        gate.set_paired(now);
+                    }
+                }
+            });
+        }
         let (out, outbox) = unbounded_channel();
         let waiting = Arc::new(Mutex::new(None));
         runtime.spawn(serve(
@@ -260,6 +291,7 @@ async fn serve(
             save_paired(&paired_path, &list);
             gate.set_paired(list);
             gate.set_open(false);
+            spatiand_sync::roster::Roster::open_default().pair(&who.to_string(), "", "");
         }
         // Whatever is queued was meant for the session before this one; this one hears its windows
         // from the start, after its own hello, which the app sends when it hears `attached`.
@@ -267,6 +299,10 @@ async fn serve(
         callbacks.say(&json!({ "attached": { "who": who.to_string() } }));
         tokio::select! {
             _ = session(&connection, &mut outbox, callbacks) => {}
+            _ = gone(&paired, who) => {
+                log::info!("{} was removed from the owner's devices", who.short());
+                connection.close(1u32.into(), b"not paired");
+            }
             arrived = arrival(&endpoint) => {
                 let Some(arrived) = arrived else { return };
                 connection.close(CLOSE_TAKEN_OVER.into(), b"another device took over");
@@ -274,6 +310,16 @@ async fn serve(
             }
         }
         callbacks.say(&json!({ "left": { "refused": false } }));
+    }
+}
+
+/// Until this session's device is no longer one of those paired.
+async fn gone(paired: &Mutex<Vec<Fingerprint>>, who: Fingerprint) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        if !paired.lock().unwrap().contains(&who) {
+            return;
+        }
     }
 }
 

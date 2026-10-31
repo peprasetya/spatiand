@@ -92,6 +92,10 @@ pub struct RemoteHost {
     /// whatever is already open there", which is what a reconnection wants.
     #[serde(default)]
     pub launch: Vec<String>,
+    /// Came from the list of the owner's devices rather than being paired here: not connected to
+    /// until the wearer asks, as connecting takes the windows from the device now using them.
+    #[serde(default)]
+    pub on_demand: bool,
 }
 
 fn system_look() -> String {

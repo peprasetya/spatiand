@@ -239,7 +239,37 @@ final class MacHost {
     private var offered: [UInt16: MacWindowInfo] = [:]
     private var askedFor: Set<CGWindowID> = []
 
+    /// The owner's list, kept with the hosts this Mac can use: a host paired from any of their
+    /// devices can be used from here, and one removed from any cannot.
+    private var rosterLooked = Date.distantPast
+    private func followRoster() {
+        guard Date().timeIntervalSince(rosterLooked) >= 2, let link else { return }
+        rosterLooked = Date()
+        let me = link.fingerprint
+        DispatchQueue.global(qos: .utility).async {
+            sp_roster_note(me, Host.current().localizedName ?? "Mac", "", 1)
+            for host in Hosts.all { sp_roster_note(host.fingerprint, host.name, host.address, 0) }
+            guard let raw = sp_roster_json() else { return }
+            defer { sp_settings_free(raw) }
+            let entries = ((try? JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8))) as? [[String: Any]]) ?? []
+            DispatchQueue.main.async {
+                for entry in entries {
+                    guard let fp = entry["fp"] as? String, fp != me else { continue }
+                    let removed = (entry["removed_ms"] as? NSNumber)?.intValue ?? 0 != 0
+                    let known = Hosts.all.first { $0.fingerprint.lowercased() == fp.lowercased() }
+                    if removed, let known { Hosts.forget(known) }
+                    let address = entry["address"] as? String ?? ""
+                    if !removed, known == nil, !address.isEmpty {
+                        let name = entry["name"] as? String ?? ""
+                        Hosts.add(PairedHost(name: name.isEmpty ? address : name, address: address, fingerprint: fp))
+                    }
+                }
+            }
+        }
+    }
+
     private func tick() {
+        followRoster()
         guard attached else { return }
         sendCatalog(force: false)
         reconcile()

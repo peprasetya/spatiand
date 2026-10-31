@@ -15,7 +15,8 @@
 //! spatiand-host --pair               # pair a headset: compare a code, then say yes
 //! spatiand-host --paired             # who is trusted
 //! spatiand-host --trust <64 hex>     # trust one by name
-//! spatiand-host --forget <8 hex>     # and undo it
+//! spatiand-host --forget <8 hex>     # and undo it, on every machine
+//! spatiand-host --devices             # the owner's devices, on every machine
 //! spatiand-host --run <id>           # start an application and report its frames, no network
 //! spatiand-host --run <id> --encode /tmp/out.hevc   # ...and encode them to a file
 //! ```
@@ -85,6 +86,10 @@ fn main() {
     let paired_path = pair::Paired::path();
     let mut paired = pair::Paired::load(&paired_path);
 
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if spatiand_sync::roster::command_line(&arguments) {
+        return;
+    }
     if flag("--fingerprint") {
         println!("{}", identity.fingerprint());
         return;
@@ -102,6 +107,7 @@ fn main() {
         match text.parse() {
             Ok(fingerprint) => {
                 let new = paired.trust(&fingerprint);
+                spatiand_sync::roster::Roster::open_default().pair(&fingerprint.to_string(), "", "");
                 if let Err(e) = paired.save(&paired_path) {
                     log::error!("could not write {}: {e}", paired_path.display());
                     std::process::exit(1);
@@ -125,7 +131,9 @@ fn main() {
                     log::error!("could not write {}: {e}", paired_path.display());
                     std::process::exit(1);
                 }
-                println!("forgot {gone}");
+                // From every machine, not only this one.
+                let _ = spatiand_sync::roster::Roster::open_default().remove(&gone);
+                println!("forgot {gone}, on every machine of yours as they sync");
             }
             Err(e) => {
                 log::error!("{e}");
@@ -445,9 +453,21 @@ fn run_host(
     let modified = |path: &std::path::Path| std::fs::metadata(path).and_then(|m| m.modified()).ok();
     let mut paired_seen = modified(&paired_path);
     let mut paired_checked = Instant::now();
+    // Who is here now, and the list of the owner's devices: one paired with any of their machines
+    // is paired with this one, and one removed on any is removed here, and hung up on.
+    let mut here: Option<Fingerprint> = None;
+    let roster = {
+        let me = this_host.to_string();
+        let name = std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default().trim().to_string();
+        let list = paired_path.clone();
+        spatiand_sync::roster::Roster::open_default().note(&me, &name, "", true);
+        spatiand_sync::roster::Roster::watch(move || {
+            pair::Paired::load(&list).fingerprints().iter().map(|f| (f.to_string(), String::new())).collect()
+        })
+    };
     // Whether the session that is here has been let in. A stranger that came through an open
     // pairing gate is connected but **not** admitted until somebody at this machine says its
-    // code matches: until then it is told nothing and whatever it asks for is ignored.
+    // code matches: until then it is told nothing (`net.rs` sees to that) and what it asks is ignored.
     let mut admitted = false;
     // Set when a session arrives: one frame of every window, whether or not anything changed.
     let mut refresh_all = false;
@@ -475,11 +495,8 @@ fn run_host(
             for event in net.poll() {
                 match event {
                     FromSession::Joined { who, address } => {
-                        attached = true;
-                        if let Some(s) = &host.sounds {
-                            s.set_attached(true);
-                        }
                         admitted = false;
+                        here = Some(who);
                         let code = pairing_code(&this_host, &who);
                         if paired.contains(&who) {
                             log::info!("{} is a session this host knows", who.short());
@@ -515,11 +532,18 @@ fn run_host(
                             }));
                         }
                         if admitted {
+                            // Only now is it listened to or spoken to. Encoding and sound wait too.
+                            net.set_admitted(true);
+                            attached = true;
+                            if let Some(s) = &host.sounds {
+                                s.set_attached(true);
+                            }
                             greet(net, &host, &library.served, &mut streams, recording);
                             refresh_all = true;
                         }
                     }
                     FromSession::Left => {
+                        here = None;
                         host.settings_peer = false;
                         attached = false;
                         // What the session was holding goes with it. What was copied here
@@ -563,6 +587,33 @@ fn run_host(
                 if let (Some(settings), Some(out)) = (host.settings.as_mut(), host.out.as_ref()) {
                     if let Some(changed) = settings.changed() {
                         let _ = out.send(crate::net::ToSession::Control(HostMessage::ConfigSync(changed)));
+                    }
+                }
+            }
+            if let Some(entries) = roster.try_iter().last() {
+                let me = this_host.to_string();
+                let i_am_gone = entries.iter().any(|e| e.fp == me && e.removed());
+                let mut changed = false;
+                for e in &entries {
+                    let Ok(fp) = e.fp.parse::<Fingerprint>() else { continue };
+                    if e.removed() || i_am_gone {
+                        if paired.contains(&fp) {
+                            let _ = paired.forget(&e.fp);
+                            changed = true;
+                            log::info!("{} was removed from the owner's devices", e.label());
+                        }
+                        if here == Some(fp) {
+                            if let Some(net) = &net {
+                                net.send(ToSession::Close);
+                            }
+                        }
+                    } else if e.fp != me {
+                        changed |= paired.trust(&fp);
+                    }
+                }
+                if changed {
+                    if let Err(e) = paired.save(&paired_path) {
+                        log::error!("could not write {}: {e}", paired_path.display());
                     }
                 }
             }
@@ -682,7 +733,12 @@ fn run_host(
                             admit_pairing(&mut paired, &paired_path, &gate, &who);
                             control.tell(client, &format!("paired {}", who.short()));
                             admitted = true;
+                            attached = true;
+                            if let Some(s) = &host.sounds {
+                                s.set_attached(true);
+                            }
                             if let Some(net) = &net {
+                                net.set_admitted(true);
                                 greet(net, &host, &library.served, &mut streams, recording);
                             }
                             refresh_all = true;
@@ -693,6 +749,7 @@ fn run_host(
                                     version: spatiand_stream::VERSION,
                                     reason: "the code was not confirmed on the host".into(),
                                 }));
+                                net.send(ToSession::Close);
                             }
                             control.tell(client, "refused");
                         }
@@ -1161,6 +1218,7 @@ fn admit_pairing(
     gate: &Gate,
     who: &Fingerprint,
 ) {
+    spatiand_sync::roster::Roster::open_default().pair(&who.to_string(), "", "");
     if paired.trust(who) {
         match paired.save(path) {
             Ok(()) => log::info!("paired with {who}"),

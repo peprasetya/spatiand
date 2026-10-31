@@ -214,6 +214,19 @@ impl Service {
         devices
     }
 
+    /// (Approver) a device off the owner's list may ask no longer.
+    pub fn drop_device(&self, fp: &str) {
+        let _writing = lock(&self.writing);
+        let mut allowed = self.allowed();
+        let before = allowed.len();
+        allowed.retain(|d| !d.fp.eq_ignore_ascii_case(fp));
+        if allowed.len() != before {
+            if let Err(e) = vault::write_json(&self.local.join("allowed.json"), &allowed) {
+                log::warn!("could not write the allowed list: {e}");
+            }
+        }
+    }
+
     /// (Approver) let a device ask from now on.
     pub fn allow(&self, device: Device) -> Result<(), String> {
         if device.fp.trim().is_empty() {

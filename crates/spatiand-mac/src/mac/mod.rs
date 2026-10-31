@@ -211,6 +211,7 @@ pub fn adopt_paired_hosts(prefs: &mut crate::prefs::Prefs) {
             host: address.clone(),
             fingerprint: fingerprint.clone(),
             launch: Vec::new(),
+            on_demand: false,
         });
         changed = true;
     }

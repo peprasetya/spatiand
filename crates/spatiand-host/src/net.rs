@@ -26,7 +26,9 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
 
 use quinn::Connection;
 use spatiand_stream::transport::{peer_fingerprint, Trust, CLOSE_TAKEN_OVER};
@@ -37,6 +39,8 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 /// What the compositor sends out.
 pub enum ToSession {
     Control(HostMessage),
+    /// Hang up on it: it was refused.
+    Close,
     /// One encoded picture, already whole.
     Video {
         window: u16,
@@ -68,6 +72,9 @@ pub enum FromSession {
 
 /// The network, as the compositor sees it: post, and poll.
 pub struct Net {
+    /// Whether the session here has been let in. Until it has, nothing is sent it but its
+    /// refusal, and nothing it sends is listened to, whoever in the compositor forgets to ask.
+    admitted: Arc<AtomicBool>,
     out: UnboundedSender<ToSession>,
     inbox: Receiver<FromSession>,
 }
@@ -84,6 +91,8 @@ impl Net {
     ) -> Result<Net, String> {
         let (out, outbox) = unbounded_channel();
         let (inbox_tx, inbox) = std::sync::mpsc::channel();
+        let admitted = Arc::new(AtomicBool::new(false));
+        let admitted_there = admitted.clone();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             // Two: one for the socket, one for everything else. A host is not a web server.
             .worker_threads(2)
@@ -106,10 +115,15 @@ impl Net {
         std::thread::Builder::new()
             .name("spatiand-host-net".into())
             .spawn(move || {
-                runtime.block_on(serve(endpoint, outbox, inbox_tx, poses));
+                runtime.block_on(serve(endpoint, outbox, inbox_tx, poses, admitted_there));
             })
             .map_err(|e| format!("could not start the network thread: {e}"))?;
-        Ok(Net { out, inbox })
+        Ok(Net { admitted, out, inbox })
+    }
+
+    /// The session here is let in, or is not.
+    pub fn set_admitted(&self, admitted: bool) {
+        self.admitted.store(admitted, Ordering::SeqCst);
     }
 
     /// Post something. Never blocks, and never fails in a way the caller can do anything about:
@@ -134,6 +148,7 @@ async fn serve(
     mut outbox: UnboundedReceiver<ToSession>,
     inbox: Sender<FromSession>,
     mut poses: Option<crate::pose::Poses>,
+    admitted: Arc<AtomicBool>,
 ) {
     let mut next: Option<(Connection, spatiand_stream::Fingerprint)> = None;
     loop {
@@ -146,6 +161,7 @@ async fn serve(
         };
         let address = connection.remote_address();
         log::info!("session {} joined from {address}", who.short());
+        admitted.store(false, Ordering::SeqCst);
         let _ = inbox.send(FromSession::Joined { who, address });
         if let Some(poses) = poses.as_mut() {
             poses.reset();
@@ -153,7 +169,7 @@ async fn serve(
 
         // One at a time, and listening meanwhile: a newcomer takes over.
         tokio::select! {
-            _ = session(&connection, &mut outbox, &inbox, poses.as_mut()) => {
+            _ = session(&connection, &mut outbox, &inbox, poses.as_mut(), &admitted) => {
                 log::info!("session {} left", who.short());
             }
             arrived = arrival(&endpoint) => {
@@ -196,6 +212,7 @@ async fn session(
     outbox: &mut UnboundedReceiver<ToSession>,
     inbox: &Sender<FromSession>,
     mut poses: Option<&mut crate::pose::Poses>,
+    admitted: &Arc<AtomicBool>,
 ) {
     // Whatever is still queued was meant for the session before this one -- pictures and news
     // of its windows, posted before the compositor heard it had gone. This one hears its
@@ -214,13 +231,14 @@ async fn session(
     let reading = tokio::spawn({
         let connection = connection.clone();
         let inbox = inbox.clone();
+        let admitted = admitted.clone();
         async move {
             loop {
                 let stream = match connection.accept_uni().await {
                     Ok(stream) => stream,
                     Err(_) => return,
                 };
-                tokio::spawn(heard(stream, inbox.clone()));
+                tokio::spawn(heard(stream, inbox.clone(), admitted.clone()));
             }
         }
     });
@@ -237,7 +255,17 @@ async fn session(
         tokio::select! {
             outgoing = outbox.recv() => {
                 let Some(outgoing) = outgoing else { break };
+                // **The only way out.** A stranger through an open pairing gate gets its refusal
+                // and nothing else: not a picture, a sound, a window's name or the clipboard.
+                let for_stranger = matches!(outgoing, ToSession::Close | ToSession::Control(HostMessage::Refused { .. }));
+                if !for_stranger && !admitted.load(Ordering::SeqCst) {
+                    continue;
+                }
                 match outgoing {
+                    ToSession::Close => {
+                        connection.close(1u32.into(), b"not paired");
+                        break;
+                    }
                     ToSession::Control(message) => {
                         let bytes = match spatiand_stream::to_bytes(&message) {
                             Ok(bytes) => bytes,
@@ -327,7 +355,7 @@ async fn session(
                 let Ok(datagram) = datagram else { break };
                 match spatiand_stream::from_bytes::<ClientMessage>(&datagram) {
                     Ok(ClientMessage::Viewport(viewport)) => {
-                        if let Some(poses) = poses.as_deref_mut() {
+                        if let (Some(poses), true) = (poses.as_deref_mut(), admitted.load(Ordering::SeqCst)) {
                             poses.heard(&viewport, crate::pose::now_ns());
                         }
                     }
@@ -347,7 +375,7 @@ async fn session(
 /// means a malformed message can never desynchronise the next one. The exception is sound
 /// coming *up* from the headset, which is endless and so is recognised by its magic before
 /// anything tries to read it to the end. See `spatiand_stream::audio` and `crate::microphone`.
-async fn heard(mut stream: quinn::RecvStream, inbox: Sender<FromSession>) {
+async fn heard(mut stream: quinn::RecvStream, inbox: Sender<FromSession>, admitted: Arc<AtomicBool>) {
     // Enough to tell the two apart, and read in a way that tolerates a message shorter than
     // the magic: `Detach` is a couple of bytes.
     let mut first = Vec::new();

@@ -16,6 +16,8 @@
 //! What is this machine's alone -- tokens a native application is let in with, a device's name
 //! to a media server -- is kept in `local/`, which is never sent.
 
+pub mod roster;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -25,6 +27,16 @@ use spatiand_stream::{ConfigFile, ConfigSync};
 
 /// Larger than this is not a setting, and is not sent.
 const LARGEST: u64 = 4 << 20;
+
+/// A scan that finds this share of what was here gone, of at least [`MANY_GONE`] files, is taken
+/// for something wrong here (a folder not mounted, a restored backup) and not as deletions.
+const MOST_GONE: f32 = 0.5;
+const MANY_GONE: usize = 8;
+
+/// What was deleted here because another machine said so is kept this long, in this much, in
+/// `local/sync-bin`: nothing of it is sent anywhere. A whole folder of settings is under a megabyte.
+const BIN_DAYS: u64 = 30;
+const BIN_BYTES: u64 = 20 << 20;
 
 /// The folder every machine shares, and this machine's own, as `spatiand_app::config` has them.
 pub fn default_folders() -> (PathBuf, PathBuf) {
@@ -39,6 +51,15 @@ pub fn default_folders() -> (PathBuf, PathBuf) {
     (root.join("apps"), root.join("local"))
 }
 
+/// One copy in the bin. See [`Sync::in_bin`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Binned {
+    pub name: String,
+    pub path: String,
+    pub deleted_ms: u64,
+    pub bytes: u64,
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct State {
     /// Files deleted here, or taken as deleted from elsewhere, and when.
@@ -49,6 +70,7 @@ struct State {
 
 pub struct Sync {
     shared: PathBuf,
+    bin: PathBuf,
     state_path: PathBuf,
     state: State,
     /// The manifest last said to the other end, to say it again only when it changes.
@@ -90,7 +112,8 @@ impl Sync {
         let _ = std::fs::create_dir_all(&local);
         let state_path = local.join("sync-state.json");
         let state = std::fs::read_to_string(&state_path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-        Sync { shared, state_path, state, said: None }
+        let bin = local.join("sync-bin");
+        Sync { shared, bin, state_path, state, said: None }
     }
 
     /// The usual folders.
@@ -108,46 +131,81 @@ impl Sync {
         }
     }
 
-    /// Every file here now, with its time and hash.
-    fn scan(&self) -> BTreeMap<String, (u64, u64)> {
+    /// Every file here now, with its time and hash; and what could not be looked at, or is too
+    /// large to send, which is not the same as gone. A folder that could not be read is all of it.
+    fn scan(&self) -> (BTreeMap<String, (u64, u64)>, Vec<String>) {
         let mut found = BTreeMap::new();
+        let mut unsure = Vec::new();
         let mut stack = vec![PathBuf::new()];
+        let text = |path: &Path| path.to_string_lossy().replace('\\', "/");
         while let Some(rel) = stack.pop() {
-            let Ok(read) = std::fs::read_dir(self.shared.join(&rel)) else { continue };
+            let read = match std::fs::read_dir(self.shared.join(&rel)) {
+                Ok(read) => read,
+                Err(e) => {
+                    log::warn!("settings: could not read {}: {e}", rel.display());
+                    unsure.push(text(&rel));
+                    continue;
+                }
+            };
             for entry in read.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
                 if ignored(&name) {
                     continue;
                 }
                 let rel_path = rel.join(&name);
-                let Ok(meta) = entry.metadata() else { continue };
+                let Ok(meta) = entry.metadata() else {
+                    unsure.push(text(&rel_path));
+                    continue;
+                };
                 if meta.is_dir() {
                     stack.push(rel_path);
                 } else if meta.is_file() && meta.len() <= LARGEST {
                     let modified = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
-                    if let Ok(bytes) = std::fs::read(self.shared.join(&rel_path)) {
-                        found.insert(rel_path.to_string_lossy().replace('\\', "/"), (modified, hash(&bytes)));
+                    match std::fs::read(self.shared.join(&rel_path)) {
+                        Ok(bytes) => {
+                            found.insert(text(&rel_path), (modified, hash(&bytes)));
+                        }
+                        Err(_) => unsure.push(text(&rel_path)),
                     }
+                } else if meta.is_file() {
+                    unsure.push(text(&rel_path));
                 }
             }
         }
-        found
+        (found, unsure)
     }
 
     /// What is here, deletions included: noticing, first, what has gone since last looked.
     pub fn manifest(&mut self) -> Vec<ConfigFile> {
-        let found = self.scan();
+        let (found, unsure) = self.scan();
         let mut changed = false;
-        for gone in self.state.known.iter().filter(|k| !found.contains_key(*k)).cloned().collect::<Vec<_>>() {
-            self.state.deleted.insert(gone, now_ms());
-            changed = true;
+        // Only what is certainly gone is a deletion: a deletion is passed to every machine.
+        let is_unsure = |path: &str| {
+            unsure.iter().any(|u| u.is_empty() || path == u || path.strip_prefix(u.as_str()).is_some_and(|rest| rest.starts_with('/')))
+        };
+        let gone: Vec<String> = self.state.known.iter().filter(|k| !found.contains_key(*k) && !is_unsure(k)).cloned().collect();
+        let most = gone.len() >= MANY_GONE && gone.len() as f32 >= self.state.known.len() as f32 * MOST_GONE;
+        if most {
+            log::warn!(
+                "settings: {} of {} files are gone from {} at once: not taken as deletions, and the other machines' copies come back",
+                gone.len(),
+                self.state.known.len(),
+                self.shared.display()
+            );
+        } else {
+            for gone in gone {
+                self.state.deleted.insert(gone, now_ms());
+                changed = true;
+            }
         }
         for back in found.keys() {
             if self.state.deleted.remove(back).is_some() {
                 changed = true;
             }
         }
-        let known: BTreeSet<String> = found.keys().cloned().collect();
+        let mut known: BTreeSet<String> = found.keys().cloned().collect();
+        // Still known: not seen, but not deleted either.
+        known.extend(self.state.known.iter().filter(|k| !self.state.deleted.contains_key(*k) && !found.contains_key(*k)).cloned());
         if known != self.state.known {
             self.state.known = known;
             changed = true;
@@ -280,10 +338,97 @@ impl Sync {
         }
     }
 
+    /// Into the bin, and out of the oldest of it what no longer fits.
+    fn to_bin(&self, path: &str, file: &Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(&self.bin)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.bin, std::fs::Permissions::from_mode(0o700));
+        }
+        let kept = self.bin.join(format!("{}~{}", now_ms(), path.replace('%', "%25").replace('/', "%2F")));
+        std::fs::rename(file, &kept)?;
+        self.trim_bin();
+        Ok(())
+    }
+
+    fn trim_bin(&self) {
+        let oldest = now_ms().saturating_sub(BIN_DAYS * 24 * 60 * 60 * 1000);
+        let mut kept = self.in_bin();
+        let mut total: u64 = kept.iter().map(|k| k.bytes).sum();
+        kept.sort_by_key(|k| k.deleted_ms);
+        for k in kept {
+            if k.deleted_ms < oldest || total > BIN_BYTES {
+                total = total.saturating_sub(k.bytes);
+                let _ = std::fs::remove_file(self.bin.join(&k.name));
+            }
+        }
+    }
+
+    /// What is in the bin, newest first.
+    pub fn in_bin(&self) -> Vec<Binned> {
+        let mut kept: Vec<Binned> = std::fs::read_dir(&self.bin)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let (ms, path) = name.split_once('~')?;
+                Some(Binned {
+                    deleted_ms: ms.parse().ok()?,
+                    path: path.replace("%2F", "/").replace("%25", "%"),
+                    bytes: entry.metadata().ok()?.len(),
+                    name,
+                })
+            })
+            .collect();
+        kept.sort_by_key(|k| std::cmp::Reverse(k.deleted_ms));
+        kept
+    }
+
+    /// Put the newest copies of every file deleted at or after `since_ms` back, or only those whose
+    /// path starts with `prefix`, and give them the time now: so they are the newest version on
+    /// every machine, and the deletion is undone there too. Says how many came back.
+    pub fn restore(&mut self, since_ms: u64, prefix: &str) -> usize {
+        let mut seen = BTreeSet::new();
+        let mut back = 0;
+        for k in self.in_bin() {
+            if k.deleted_ms < since_ms || !k.path.starts_with(prefix) || !seen.insert(k.path.clone()) {
+                continue;
+            }
+            let Some(rel) = safe(&k.path) else { continue };
+            let full = self.shared.join(rel);
+            if full.exists() {
+                continue;
+            }
+            if let Some(parent) = full.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if std::fs::copy(self.bin.join(&k.name), &full).is_ok() {
+                // A copy may keep the old time, which the deletion would beat.
+                if let Ok(file) = std::fs::OpenOptions::new().write(true).open(&full) {
+                    let _ = file.set_modified(SystemTime::now());
+                }
+                self.state.deleted.remove(&k.path);
+                self.state.known.insert(k.path.clone());
+                back += 1;
+            }
+        }
+        self.save_state();
+        back
+    }
+
     fn delete(&mut self, path: &str, at: u64) {
         if let Some(rel) = safe(path) {
-            if std::fs::remove_file(self.shared.join(rel)).is_ok() {
-                log::info!("settings: {path} was deleted at the other end");
+            let file = self.shared.join(rel);
+            if file.is_file() {
+                match self.to_bin(path, &file) {
+                    Ok(()) => log::info!("settings: {path} was deleted at the other end; a copy is in the bin"),
+                    Err(e) => {
+                        log::warn!("settings: {path} was deleted at the other end, and could not be kept: {e}");
+                        let _ = std::fs::remove_file(&file);
+                    }
+                }
             }
             self.state.known.remove(path);
             self.state.deleted.insert(path.to_string(), at);
@@ -306,6 +451,71 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("spatiand-sync-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         (Sync::open(dir.join("apps"), dir.join("local")), dir)
+    }
+
+    #[test]
+    fn a_file_too_large_to_send_is_not_a_deletion() {
+        let (mut a, dir) = end("large");
+        let file = dir.join("apps/grown.json");
+        std::fs::write(&file, b"small").unwrap();
+        a.manifest();
+        std::fs::write(&file, vec![0u8; (LARGEST + 1) as usize]).unwrap();
+        let files = a.manifest();
+        assert!(files.iter().all(|f| !f.deleted), "it would have been deleted on every machine");
+    }
+
+    #[test]
+    fn most_of_the_folder_gone_at_once_is_no_deletion() {
+        let (mut a, dir) = end("most");
+        for i in 0..10 {
+            std::fs::write(dir.join(format!("apps/{i}.json")), b"x").unwrap();
+        }
+        a.manifest();
+        for i in 0..9 {
+            std::fs::remove_file(dir.join(format!("apps/{i}.json"))).unwrap();
+        }
+        assert!(a.manifest().iter().all(|f| !f.deleted), "a folder not mounted would delete everywhere");
+        // One gone, on purpose, still is.
+        let (mut b, dir) = end("one");
+        for i in 0..10 {
+            std::fs::write(dir.join(format!("apps/{i}.json")), b"x").unwrap();
+        }
+        b.manifest();
+        std::fs::remove_file(dir.join("apps/3.json")).unwrap();
+        assert_eq!(b.manifest().iter().filter(|f| f.deleted).count(), 1);
+    }
+
+    #[test]
+    fn a_deletion_from_elsewhere_can_be_undone_everywhere() {
+        let (mut a, dir_a) = end("bin-a");
+        let (mut b, dir_b) = end("bin-b");
+        std::fs::create_dir_all(dir_a.join("apps/some")).unwrap();
+        std::fs::write(dir_a.join("apps/some/thing.json"), b"precious").unwrap();
+        converse(&mut a, &mut b);
+        assert!(dir_b.join("apps/some/thing.json").exists());
+        std::fs::remove_file(dir_a.join("apps/some/thing.json")).unwrap();
+        converse(&mut a, &mut b);
+        assert!(!dir_b.join("apps/some/thing.json").exists());
+        let kept = b.in_bin();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].path, "some/thing.json");
+        assert_eq!(b.restore(0, ""), 1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        converse(&mut a, &mut b);
+        assert_eq!(std::fs::read(dir_a.join("apps/some/thing.json")).unwrap(), b"precious");
+    }
+
+    #[test]
+    fn the_bin_keeps_to_its_size() {
+        let (a, dir) = end("trim");
+        std::fs::create_dir_all(&a.bin).unwrap();
+        let old = now_ms() - (BIN_DAYS + 1) * 24 * 60 * 60 * 1000;
+        std::fs::write(a.bin.join(format!("{old}~old.json")), b"x").unwrap();
+        std::fs::write(a.bin.join(format!("{}~big.json", now_ms() - 5)), vec![0u8; (BIN_BYTES + 1) as usize]).unwrap();
+        std::fs::write(dir.join("apps/new.json"), b"y").unwrap();
+        a.to_bin("new.json", &dir.join("apps/new.json")).unwrap();
+        let names: Vec<String> = a.in_bin().into_iter().map(|k| k.path).collect();
+        assert_eq!(names, vec!["new.json"], "too old and too much go; the newest stays");
     }
 
     /// Let two ends talk until neither has anything to say.

@@ -420,6 +420,7 @@ pub fn adopt_paired_hosts(prefs: &mut crate::prefs::Prefs) {
             host: entry.address,
             fingerprint: entry.fingerprint,
             launch: entry.launch,
+            on_demand: false,
         });
         changed = true;
     }

@@ -349,11 +349,44 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                  action: #selector(togglePairing), keyEquivalent: "")
         pairing.target = self
         menu.addItem(pairing)
+        buildDevices(menu)
         if host.pairedCount > 0 {
             let forget = NSMenuItem(title: "   Forget the \(host.pairedCount) paired device\(host.pairedCount == 1 ? "" : "s")", action: #selector(forgetDevices), keyEquivalent: "")
             forget.target = self
             menu.addItem(forget)
         }
+    }
+
+    /// The owner's devices, each of which can be taken off every machine's list from here.
+    private func buildDevices(_ menu: NSMenu) {
+        guard let raw = sp_roster_json() else { return }
+        defer { sp_settings_free(raw) }
+        let entries = ((try? JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8))) as? [[String: Any]]) ?? []
+        let members = entries.filter { ($0["removed_ms"] as? NSNumber)?.intValue ?? 0 == 0 }
+        guard !members.isEmpty else { return }
+        let top = NSMenuItem(title: "   Your devices", action: nil, keyEquivalent: "")
+        let list = NSMenu()
+        for entry in members {
+            let fp = entry["fp"] as? String ?? ""
+            let name = entry["name"] as? String ?? ""
+            let item = NSMenuItem(title: "Remove \(name.isEmpty ? "unnamed " + fp.prefix(8) : name)\u{2026}", action: #selector(removeDevice(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = fp
+            list.addItem(item)
+        }
+        top.submenu = list
+        menu.addItem(top)
+    }
+
+    @objc private func removeDevice(_ item: NSMenuItem) {
+        guard let fp = item.representedObject as? String else { return }
+        let alert = NSAlert()
+        alert.messageText = String(item.title.dropFirst("Remove ".count).dropLast())
+        alert.informativeText = "Remove it from all your machines? It loses its windows and sync at once, and can no longer ask SpatiKey. What it has already copied stays on it, so change any passwords it could see if it was lost."
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn { _ = sp_roster_remove(fp) }
     }
 
     @objc private func toggleHost() {
@@ -491,6 +524,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 }
 
+if let data = try? JSONSerialization.data(withJSONObject: Array(CommandLine.arguments.dropFirst())),
+   let text = String(data: data, encoding: .utf8), sp_roster_command_line(text) != 0 {
+    exit(0)
+}
 if CommandLine.arguments.contains("--selftest") {
     print("outputs:")
     let current = AudioDevices.systemDefault()

@@ -2686,6 +2686,7 @@ name = "spatiand-sync"
 version = "0.1.0"
 dependencies = [
  "log",
+ "ring",
  "serde",
  "serde_json",
  "spatiand-stream",

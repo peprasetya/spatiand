@@ -89,6 +89,9 @@ fn main() {
     // Installing applications from a terminal, without a session: what dropping a `.spatiapp`
     // into the room does (see `spatiand_platform::installed`).
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if spatiand_sync::roster::command_line(&args) {
+        return;
+    }
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["--install", path] => {
             match spatiand_platform::installed::install(std::path::Path::new(path)) {

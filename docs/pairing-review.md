@@ -29,5 +29,12 @@ Suggested order: 1, 3 and 5 are contained fixes. Then the user model (2, 4, 8): 
 device at pairing, signing a roster with revocations; sync and SpatiKey only inside a roster; a host outside it is a
 guest, windows only. Then commit-and-reveal for the code (6), then per-user ports (7).
 
+**Fixed on 2026-10-31:** 1 (nothing leaves a Linux host until the owner confirms, refusing hangs up), 3 (only what is
+certainly gone is a deletion, and a mass disappearance is not; a private bin of 30 days and 20 MB), 4 and 2's list (a
+signed list of the owner's devices, `spatiand-sync/src/roster.rs`: paired with one machine is paired with all, removed
+on one is removed on all, a removal changes the key and hangs up), 5. The owner chose **one kind of pairing, no guests**,
+with the warning in `docs/privacy.md`; so 2's "friend's machine" stands as a thing the docs warn of, not something
+prevented. Still open: 6, 7, 8 (a Linux machine's host and session stay two entries), 9 to 14.
+
 **Since this review:** a device paired with a Mac as a host may ask its SpatiKey with no second pairing (one pairing now
 guards more, which makes 1, 4 and 6 weigh more). Forgetting such a device is still the host's forget-all.
