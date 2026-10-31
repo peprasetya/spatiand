@@ -310,22 +310,37 @@ impl Roster {
         self.write(&seed, entry);
     }
 
-    /// Take a device off every machine's list, by the start of its fingerprint or its name.
-    pub fn remove(&self, which: &str) -> Result<Entry, String> {
+    /// The one member that `which` means. People know their devices by name: its whole name, then
+    /// part of one; and for a device that has none, the start of its fingerprint.
+    fn find(&self, which: &str) -> Result<Entry, String> {
         let which = which.trim().to_lowercase();
-        if which.len() < 4 {
-            return Err("give at least four characters, or the wrong machine goes".into());
+        if which.is_empty() {
+            return Err("say which device: --devices lists them".into());
         }
-        let members: Vec<Entry> = self
-            .all()
-            .into_iter()
-            .filter(|e| !e.removed() && (e.fp.starts_with(&which) || e.name.to_lowercase() == which))
-            .collect();
-        let mut entry = match <[Entry; 1]>::try_from(members) {
-            Ok([entry]) => entry,
-            Err(found) if found.is_empty() => return Err(format!("no device on the list is {which}")),
-            Err(found) => return Err(format!("{} devices match {which}", found.len())),
-        };
+        let members: Vec<Entry> = self.all().into_iter().filter(|e| !e.removed()).collect();
+        let tries: [&dyn Fn(&Entry) -> bool; 3] = [
+            &|e| e.name.to_lowercase() == which,
+            &|e| e.name.to_lowercase().contains(&which),
+            &|e| which.len() >= 4 && e.fp.starts_with(&which),
+        ];
+        for matches in tries {
+            let found: Vec<&Entry> = members.iter().filter(|e| matches(e)).collect();
+            match found[..] {
+                [] => continue,
+                [one] => return Ok(one.clone()),
+                _ => {
+                    let names: Vec<String> = found.iter().map(|e| format!("{} ({})", e.label(), &e.fp[..e.fp.len().min(8)])).collect();
+                    return Err(format!("{which} could be any of: {}. Say which by the part in brackets", names.join(", ")));
+                }
+            }
+        }
+        let names: Vec<String> = members.iter().map(Entry::label).collect();
+        Err(format!("no device on the list is called {which}. There are: {}", names.join(", ")))
+    }
+
+    /// Take a device off every machine's list, by its name.
+    pub fn remove(&self, which: &str) -> Result<Entry, String> {
+        let mut entry = self.find(which)?;
         // A new key first, and everything signed with it, so what the removed one signs is not.
         let seed = self.new_key().ok_or("could not make a new key")?;
         self.settle();
@@ -373,13 +388,13 @@ pub fn command_line(args: &[String]) -> bool {
         }
         for e in entries {
             let state = if e.removed() { "removed" } else { "member" };
-            println!("{}  {state:8} {}{}", &e.fp[..e.fp.len().min(12)], e.label(), if e.address.is_empty() { String::new() } else { format!("  ({})", e.address) });
+            println!("{:<24} {state:8} {}{}", e.label(), &e.fp[..e.fp.len().min(8)], if e.address.is_empty() { String::new() } else { format!("  {}", e.address) });
         }
         return true;
     }
     if let Some(rest) = after("--forget-device") {
         let Some(which) = rest.first() else {
-            eprintln!("--forget-device <the start of its fingerprint, or its name>");
+            eprintln!("--forget-device <its name>; --devices lists them");
             std::process::exit(2);
         };
         match Roster::open_default().remove(which) {
@@ -540,11 +555,35 @@ mod tests {
     }
 
     #[test]
-    fn it_takes_enough_of_a_fingerprint_and_only_one_match() {
-        let (r, _) = roster("match");
-        r.note(A, "x", "", true);
-        assert!(r.remove("aa").is_err());
-        assert!(r.remove("cc000").is_err());
-        assert!(r.remove("aa00").is_ok());
+    fn a_device_is_removed_by_what_people_call_it() {
+        let (r, _) = roster("name");
+        r.note(A, "Steam Deck", "", true);
+        r.note(B, "Beam Pro", "", true);
+        assert_eq!(r.remove("steam deck").unwrap().fp, A, "its name, in any case");
+        assert_eq!(r.remove("beam").unwrap().fp, B, "part of it");
+    }
+
+    #[test]
+    fn a_name_that_could_be_two_devices_removes_neither() {
+        let (r, _) = roster("two");
+        r.note(A, "Paulus's Deck", "", true);
+        r.note(B, "Office Deck", "", true);
+        let why = r.remove("deck").unwrap_err();
+        assert!(why.contains("Paulus's Deck") && why.contains("Office Deck"), "got {why}");
+        assert_eq!(r.all().iter().filter(|e| !e.removed()).count(), 2);
+        // The whole name is not ambiguous, though a shorter name is inside a longer.
+        r.note(A, "Deck", "", true);
+        assert_eq!(r.remove("deck").unwrap().fp, A);
+    }
+
+    #[test]
+    fn one_with_no_name_goes_by_its_fingerprint_and_what_is_not_there_says_what_is() {
+        let (r, _) = roster("unnamed");
+        r.note(A, "", "", false);
+        r.note(B, "Beam Pro", "", true);
+        assert!(r.remove("aa").is_err(), "too little of a fingerprint");
+        let why = r.remove("toaster").unwrap_err();
+        assert!(why.contains("Beam Pro") && why.contains("unnamed aa000000"), "got {why}");
+        assert_eq!(r.remove("aa00").unwrap().fp, A);
     }
 }

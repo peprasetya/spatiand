@@ -8,43 +8,40 @@ Removing takes effect on a machine as soon as that machine hears of it: at once 
 the machine you removed it on, otherwise the next time it connects to one that knows. The removed
 device is hung up on, loses its windows and sync, and can no longer ask SpatiKey.
 
-**To see the list on any platform**, use `--devices`, which prints the start of each fingerprint:
+You remove a device by its name, as `--devices` lists it. Part of the name will do if it matches only
+one device. A device that hasn't named itself yet shows as `unnamed` with the start of its ID: use that.
+
+## A Linux host (such as deepmagpie)
 
 ```bash
 spatiand-host --devices
 ```
 
-## A Linux host (such as deepmagpie)
-
-From a shell on the host, by the start of the fingerprint or by the device's name:
-
 ```bash
-spatiand-host --forget e74e570c
+spatiand-host --forget "Beam Pro"
 ```
 
 ## A Mac
 
-In the menu bar: **Spatiand > Let other devices use this Mac's windows > Your devices > Remove...**
+In the menu bar: **Spatiand > Let other devices use this Mac's windows > Your devices**, then choose
+**Remove** beside its name.
 
 Or from a terminal:
 
 ```bash
-~/Applications/Spatiand.app/Contents/MacOS/Spatiand --forget-device e74e570c
+~/Applications/Spatiand.app/Contents/MacOS/Spatiand --forget-device "Beam Pro"
 ```
 
-## A Steam Deck
+## A Steam Deck or Beam Pro
 
-In the room: open **Remote computers**, go to the host's row, and press forget on it twice. This removes a
-*host*. To remove any other device, use a shell (Desktop Mode, or ssh):
+In the room: open **Remote computers**. Your computers and your other devices are listed by name. Go
+to the one to remove and press it twice.
+
+On a Deck you can also use a shell (Desktop Mode, or ssh):
 
 ```bash
-/home/deck/spatiand/target/release/spatiand --forget-device e74e570c
+/home/deck/spatiand/target/release/spatiand --forget-device "Beam Pro"
 ```
-
-## A Beam Pro
-
-In the room: open **Remote computers**, go to the host's row, and forget it the same way. It has no
-terminal, so remove any other device from one of your other machines.
 
 ## If the device was stolen
 

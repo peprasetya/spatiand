@@ -9,7 +9,7 @@
 //! spatiand-host --pair              # trust the next session that connects, for two minutes
 //! spatiand-host --trust <60 hex>    # trust one by name
 //! spatiand-host --paired            # who is trusted
-//! spatiand-host --forget <8 hex>    # and undo it
+//! spatiand-host --forget <its name> # and undo it
 //! ```
 //!
 //! This is deliberately *not* a PIN typed into the headset. A PIN exists so that two machines

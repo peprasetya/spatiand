@@ -368,6 +368,9 @@ impl Remote {
     }
 }
 
+/// What a row of another of the owner's devices is known by on the remote computers page.
+const DEVICE_ROW: &str = "device:";
+
 fn config_for(entry: &crate::prefs::RemoteHost, microphone: bool) -> Result<Config, String> {
     Ok(Config {
         host: entry.host.clone(),
@@ -397,6 +400,8 @@ pub struct Remotes {
     microphone: bool,
     /// This device's fingerprint.
     me: String,
+    /// The owner's other devices that are not hosts here, to be forgotten by name: fingerprint, name.
+    devices: Vec<(String, String)>,
     pairing: Option<PairingInProgress>,
     /// The owner's devices, as they change. See `spatiand_sync::roster`.
     roster: Option<std::sync::mpsc::Receiver<Vec<spatiand_sync::roster::Entry>>>,
@@ -521,6 +526,14 @@ impl Remotes {
 
     /// Stop knowing a host: stop showing it, and take it out of the preferences.
     pub fn forget(&mut self, address: &str, prefs: &mut crate::prefs::Prefs) {
+        if let Some(fp) = address.strip_prefix(DEVICE_ROW) {
+            match spatiand_sync::roster::Roster::open_default().remove(fp) {
+                Ok(e) => log::info!("forgot {} on every machine", e.label()),
+                Err(e) => log::warn!("{e}"),
+            }
+            self.devices.retain(|(known, _)| known != fp);
+            return;
+        }
         // From every machine of the owner's, as the host is.
         if let Some(entry) = prefs.remotes.iter().find(|r| r.host == address) {
             let _ = spatiand_sync::roster::Roster::open_default().remove(&entry.fingerprint);
@@ -706,6 +719,11 @@ impl Remotes {
     fn follow_roster(&mut self, display: &mut DisplayHandle, prefs: &mut crate::prefs::Prefs) {
         let Some(entries) = self.roster.as_ref().and_then(|r| r.try_iter().last()) else { return };
         let i_am_gone = entries.iter().any(|e| e.fp == self.me && e.removed());
+        self.devices = entries
+            .iter()
+            .filter(|e| !e.removed() && e.fp != self.me && e.address.is_empty())
+            .map(|e| (e.fp.clone(), e.label()))
+            .collect();
         for e in &entries {
             let known = prefs.remotes.iter().find(|r| r.fingerprint.eq_ignore_ascii_case(&e.fp)).map(|r| r.host.clone());
             match known {
@@ -850,6 +868,11 @@ impl Remotes {
                         .collect()
                 },
             });
+        }
+        for (fp, name) in &self.devices {
+            if !prefs.remotes.iter().any(|r| r.fingerprint.eq_ignore_ascii_case(fp)) {
+                rows.push(HostRow { label: name.clone(), address: format!("{DEVICE_ROW}{fp}"), status: HostStatus::Device });
+            }
         }
         (rows, tabs)
     }

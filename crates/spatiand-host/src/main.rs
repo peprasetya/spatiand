@@ -15,7 +15,7 @@
 //! spatiand-host --pair               # pair a headset: compare a code, then say yes
 //! spatiand-host --paired             # who is trusted
 //! spatiand-host --trust <64 hex>     # trust one by name
-//! spatiand-host --forget <8 hex>     # and undo it, on every machine
+//! spatiand-host --forget <its name>   # and undo it, on every machine
 //! spatiand-host --devices             # the owner's devices, on every machine
 //! spatiand-host --run <id>           # start an application and report its frames, no network
 //! spatiand-host --run <id> --encode /tmp/out.hevc   # ...and encode them to a file
@@ -124,16 +124,20 @@ fn main() {
         }
         return;
     }
-    if let Some(prefix) = value("--forget") {
-        match paired.forget(&prefix) {
-            Ok(gone) => {
+    if let Some(which) = value("--forget") {
+        // By its name on the list, from every machine; or as only this host knows it.
+        let listed = spatiand_sync::roster::Roster::open_default().remove(&which);
+        let (key, said) = match &listed {
+            Ok(entry) => (entry.fp.clone(), entry.label()),
+            Err(_) => (which.clone(), which.clone()),
+        };
+        match paired.forget(&key).or_else(|e| if listed.is_ok() { Ok(key.clone()) } else { Err(listed.as_ref().err().cloned().unwrap_or(e)) }) {
+            Ok(_) => {
                 if let Err(e) = paired.save(&paired_path) {
                     log::error!("could not write {}: {e}", paired_path.display());
                     std::process::exit(1);
                 }
-                // From every machine, not only this one.
-                let _ = spatiand_sync::roster::Roster::open_default().remove(&gone);
-                println!("forgot {gone}, on every machine of yours as they sync");
+                println!("forgot {said}, on every machine of yours as they sync");
             }
             Err(e) => {
                 log::error!("{e}");

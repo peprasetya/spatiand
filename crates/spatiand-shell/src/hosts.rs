@@ -33,6 +33,8 @@ pub enum HostStatus {
     Online,
     Connecting,
     Offline,
+    /// One of the owner's devices that is not a computer to use: here to be forgotten.
+    Device,
     /// It answered and would not have this headset — forgotten on its side, usually.
     Refused,
 }
@@ -43,6 +45,7 @@ impl HostStatus {
             HostStatus::Online => "online",
             HostStatus::Connecting => "connecting",
             HostStatus::Offline => "offline",
+            HostStatus::Device => "your device",
             HostStatus::Refused => "not paired",
         }
     }
