@@ -21,9 +21,11 @@ export GLIBC_TUNABLES=glibc.rtld.dynamic_sort=1
 # The program is named spatimesh, not chrome: SpatiKey names who is asking from what is running.
 # --class is each window's Wayland app id, by which the room gives every SpatiMesh window a sink of
 # its own for its tabs' sound (crates/spatiand/src/audio.rs, CHROMIUM_APP_ID).
+# SigninPromoOnAvatarPill off: there is no signing in to the browser here.
 exec "$here/spatimesh" --ozone-platform=wayland --user-data-dir="$HOME/.config/spatiand-chromium" \
     --class=spatimesh-chromium \
     --password-store=basic --no-first-run --no-default-browser-check \
     --overscroll-history-navigation=0 \
     --enable-features=AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,EnableExtensionAutoupdate,ProfilesReordering,VaapiIgnoreDriverChecks,WaylandWindowDecorations \
+    --disable-features=SigninPromoOnAvatarPill \
     "$@"

@@ -77,6 +77,13 @@ fn forward() {
     let name = crate::system::machine_name();
     let fp = identity.fingerprint().to_string();
     let asker = Arc::new(spatikey_core::remote::Asker::new(identity, paths::local(), name.clone()));
+    asker.also_ask(Box::new(|| {
+        crate::prefs::Prefs::load()
+            .remotes
+            .into_iter()
+            .map(|r| spatikey_core::wire::Device { fp: r.fingerprint, name: r.host, added: 0 })
+            .collect()
+    }));
     let service = Service::new(Mode::Forwarder(asker), Me { fp, name }, paths::shared(), paths::local());
     match spatikey_core::socket::serve(&paths::socket(), service) {
         Ok(_) => log::info!("SpatiKey: asking a Mac on this network, at {}", paths::socket().display()),

@@ -188,7 +188,10 @@ almaserver, the subnet router -- an on-link neighbour by every address test. So:
   interfaces and was heard broadcasting within the last two minutes; the device broadcasts again
   before each connection and every minute while connected. A request that fails is refused with
   `not_same_lan`.
-* **Who may ask** is SpatiKey's own list, not the host's: pairing the Beam Pro with the Mac *as a
+* **A device paired with this Mac as a host may ask too**, with no second pairing (the owner, 2026-10-31): the same
+  certificate, and each use still wants a finger on the Mac and the device on its network. Forgetting such a device is
+  the host's to do, for now. Devices that are not hosts' pair as follows.
+* **Who else may ask** is SpatiKey's own list: pairing the Beam Pro with the Mac *as a
   host* would make it take the Mac's windows over from the Deck. A device pairs with SpatiKey on a
   Mac once, on the same network: it sends `SPATIKEY1 PAIR <nonce> <fp> <name>`, the Mac lets that
   one certificate through the handshake for a minute, the device connects and asks `pair`, and

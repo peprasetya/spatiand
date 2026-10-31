@@ -36,6 +36,29 @@ enum MacInput {
     /// an application is waited for, briefly, when it is brought forward.
     static let real = DispatchQueue(label: "spatiand.macinput.real", qos: .userInteractive)
 
+    /// The pointer's newest movement, not posted yet. Only the newest matters: held up for any
+    /// reason, movements must not queue, with every press and scroll waiting behind them and the
+    /// real pointer being replayed long after the thumb has gone.
+    private static let moveLock = NSLock()
+    private static var move: (() -> Void)?
+
+    static func moved(_ post: @escaping () -> Void) {
+        moveLock.lock()
+        let queued = move != nil
+        move = post
+        moveLock.unlock()
+        if !queued { real.async { takeMove()?() } }
+    }
+
+    /// What has not been posted, for a press to post first and in its turn.
+    static func takeMove() -> (() -> Void)? {
+        moveLock.lock()
+        defer { moveLock.unlock() }
+        let post = move
+        move = nil
+        return post
+    }
+
     /// The window on top at a point of the Mac's screen, and whose it is: among ordinary windows
     /// and whatever `pid` has up. (The system's own see-through sheets are over everything.)
     static func top(at p: CGPoint, for pid: pid_t) -> (pid: pid_t, id: CGWindowID)? {
@@ -76,7 +99,11 @@ enum MacInput {
     /// background, a press is taken by some and ignored by others -- anything drawn by a
     /// browser's engine among them, which is a great many applications.
     static func realMouse(_ type: CGEventType, button: CGMouseButton, at point: CGPoint, clicks: Int) {
-        CGWarpMouseCursorPosition(point)
+        // A press is where it is said to be, at once. A movement carries the pointer by itself, and
+        // the warp waits on the window server: as long as 65 ms, for each of a pad's 72 a second.
+        if ![.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged].contains(type) {
+            CGWarpMouseCursorPosition(point)
+        }
         guard let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: button) else { return }
         event.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, clicks)))
         event.setIntegerValueField(.eventSourceUserData, value: spatiandEventMark)

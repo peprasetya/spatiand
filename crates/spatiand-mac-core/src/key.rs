@@ -250,6 +250,7 @@ pub unsafe extern "C" fn sp_key_start(
     if running.is_some() {
         return 1;
     }
+    let host_paired = PathBuf::from(&dir).with_file_name("host-paired.txt");
     let identity = match Identity::load_or_create(&PathBuf::from(dir)) {
         Ok(identity) => identity,
         Err(e) => {
@@ -260,6 +261,7 @@ pub unsafe extern "C" fn sp_key_start(
     *lock(&ASK) = Some((ask, user as usize));
     let me = Me { fp: identity.fingerprint().to_string(), name };
     let service = Service::new(Mode::Approver(Arc::new(MacGuard)), me, paths::shared(), paths::local());
+    service.also_allow(host_paired);
     let path = paths::socket();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);

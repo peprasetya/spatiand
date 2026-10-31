@@ -1,0 +1,172 @@
+From d258e75f5669a33679719eb85921b465fdecaeaa Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Sat, 31 Oct 2026 11:39:19 +0700
+Subject: [PATCH 14/14] Spatiand: light or dark as Spatiand is set, and no
+ extensions from the machine
+
+The dark mode manager reads the look Spatiand's other applications read, every second, in place of the desktop portal. What the machine's packages put in /usr/share/chromium/extensions (KDE's Plasma Integration on a Deck) is not installed.
+---
+ .../extensions/external_provider_impl.cc      |  4 +-
+ ui/linux/dark_mode_manager_linux.cc           | 84 ++++++++++++++++++-
+ ui/linux/dark_mode_manager_linux.h            |  7 ++
+ 3 files changed, 91 insertions(+), 4 deletions(-)
+
+diff --git a/chrome/browser/extensions/external_provider_impl.cc b/chrome/browser/extensions/external_provider_impl.cc
+index de142296b3..a52dee3ba7 100644
+--- a/chrome/browser/extensions/external_provider_impl.cc
++++ b/chrome/browser/extensions/external_provider_impl.cc
+@@ -852,7 +852,9 @@ void ExternalProviderImpl::CreateExternalProviders(
+ 
+ #endif  // BUILDFLAG(IS_CHROMEOS)
+   if (!profile->GetPrefs()->GetBoolean(pref_names::kBlockExternalExtensions)) {
+-#if BUILDFLAG(IS_LINUX)
++    // Spatiand: not what the machine's packages put in /usr/share/chromium/extensions (KDE's
++    // Plasma Integration, on a Deck): a profile's extensions are those it chose, on every machine.
++#if BUILDFLAG(IS_LINUX) && 0
+     provider_list->push_back(std::make_unique<ExternalProviderImpl>(
+         service,
+         base::MakeRefCounted<ExternalPrefLoader>(
+diff --git a/ui/linux/dark_mode_manager_linux.cc b/ui/linux/dark_mode_manager_linux.cc
+index 316897e7cb..868fda4bf8 100644
+--- a/ui/linux/dark_mode_manager_linux.cc
++++ b/ui/linux/dark_mode_manager_linux.cc
+@@ -4,6 +4,19 @@
+ 
+ #include "ui/linux/dark_mode_manager_linux.h"
+ 
++#include <memory>
++#include <optional>
++#include <string>
++#include <string_view>
++
++#include "base/environment.h"
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
++#include "base/strings/string_split.h"
++#include "base/strings/string_util.h"
++#include "base/task/thread_pool.h"
++#include "base/time/time.h"
++
+ #include <optional>
+ #include <tuple>
+ 
+@@ -25,6 +38,53 @@
+ 
+ namespace ui {
+ 
++namespace {
++
++// As `spatiand_app`'s `look` module: SPATIAND_LOOK; then `look` in Spatiand's prefs.toml; then the
++// desktop's colour scheme where there is one (KDE's); dark where there is none, the room's own look.
++bool ReadSpatiandDark() {
++  std::unique_ptr<base::Environment> env = base::Environment::Create();
++  base::FilePath config;
++  if (std::optional<std::string> dir = env->GetVar("XDG_CONFIG_HOME"); dir && !dir->empty()) {
++    config = base::FilePath(*dir);
++  } else if (std::optional<std::string> home = env->GetVar("HOME")) {
++    config = base::FilePath(*home).Append(".config");
++  }
++  std::string chosen = env->GetVar("SPATIAND_LOOK").value_or(std::string());
++  std::string text;
++  if (chosen.empty() &&
++      base::ReadFileToString(config.Append("spatiand/prefs.toml"), &text)) {
++    for (std::string_view line : base::SplitStringPiece(
++             text, "\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
++      const size_t equals = line.find('=');
++      if (equals != std::string_view::npos &&
++          base::TrimWhitespaceASCII(line.substr(0, equals), base::TRIM_ALL) == "look") {
++        chosen = std::string(base::TrimString(
++            base::TrimWhitespaceASCII(line.substr(equals + 1), base::TRIM_ALL), "\"",
++            base::TRIM_ALL));
++        break;
++      }
++    }
++  }
++  if (chosen == "light" || chosen == "dark") {
++    return chosen == "dark";
++  }
++  text.clear();
++  if (!base::ReadFileToString(config.Append("kdeglobals"), &text)) {
++    return true;
++  }
++  for (std::string_view line : base::SplitStringPiece(
++           text, "\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
++    if (line.starts_with("ColorScheme=")) {
++      // By its name (BreezeDark, BreezeLight, ...): dark unless it says light.
++      return base::ToLowerASCII(line).find("light") == std::string::npos;
++    }
++  }
++  return true;
++}
++
++}  // namespace
++
+ DarkModeManagerLinux::DarkModeManagerLinux()
+     : DarkModeManagerLinux(dbus_thread_linux::GetSharedSessionBus(),
+                            &ui::GetLinuxUiThemes()) {}
+@@ -38,9 +98,11 @@ DarkModeManagerLinux::DarkModeManagerLinux(
+       settings_proxy_(bus_->GetObjectProxy(
+           kFreedesktopSettingsService,
+           dbus::ObjectPath(kFreedesktopSettingsObjectPath))) {
+-  dbus_xdg::RequestXdgDesktopPortal(
+-      bus_.get(), base::BindOnce(&DarkModeManagerLinux::OnPortalRequestResult,
+-                                 weak_ptr_factory_.GetWeakPtr()));
++  // Not the portal: Spatiand's own setting, which outranks the desktop's, and is read as often as
++  // its other applications read it.
++  CheckSpatiandLook();
++  spatiand_look_timer_.Start(FROM_HERE, base::Seconds(1), this,
++                             &DarkModeManagerLinux::CheckSpatiandLook);
+   // No seeding is needed: until the portal preference (if any) arrives, the
+   // toolkit OsSettingsProviders source the toolkit-derived color scheme for
+   // the web NativeTheme.
+@@ -48,6 +110,22 @@ DarkModeManagerLinux::DarkModeManagerLinux(
+ 
+ DarkModeManagerLinux::~DarkModeManagerLinux() = default;
+ 
++void DarkModeManagerLinux::CheckSpatiandLook() {
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++      base::BindOnce(&ReadSpatiandDark),
++      base::BindOnce(&DarkModeManagerLinux::OnSpatiandLook,
++                     weak_ptr_factory_.GetWeakPtr()));
++}
++
++void DarkModeManagerLinux::OnSpatiandLook(bool dark) {
++  if (spatiand_dark_ != dark) {
++    spatiand_dark_ = dark;
++    SetColorScheme(dark ? NativeTheme::PreferredColorScheme::kDark
++                        : NativeTheme::PreferredColorScheme::kLight);
++  }
++}
++
+ // static
+ NativeTheme::PreferredColorScheme
+ DarkModeManagerLinux::FreedesktopColorSchemeToNativeThemeColorScheme(
+diff --git a/ui/linux/dark_mode_manager_linux.h b/ui/linux/dark_mode_manager_linux.h
+index 85bad19f97..4d665e2265 100644
+--- a/ui/linux/dark_mode_manager_linux.h
++++ b/ui/linux/dark_mode_manager_linux.h
+@@ -13,6 +13,7 @@
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/scoped_refptr.h"
+ #include "base/memory/weak_ptr.h"
++#include "base/timer/timer.h"
+ #include "components/dbus/utils/call_method.h"
+ #include "components/dbus/utils/connect_to_signal.h"
+ #include "components/dbus/utils/variant.h"
+@@ -89,6 +90,12 @@ class DarkModeManagerLinux {
+ 
+   void SetAccentColor(dbus_utils::Variant variant);
+ 
++  // Spatiand's: light or dark is what the wearer chose in Spatiand, as for its other applications.
++  void CheckSpatiandLook();
++  void OnSpatiandLook(bool dark);
++  std::optional<bool> spatiand_dark_;
++  base::RepeatingTimer spatiand_look_timer_;
++
+   raw_ptr<const std::vector<raw_ptr<LinuxUiTheme, VectorExperimental>>>
+       linux_ui_themes_;
+ 
+-- 
+2.53.0
+

@@ -145,7 +145,7 @@ final class MacHost {
         let code = info["code"] as? String ?? "??? ???"
         let address = info["address"] as? String ?? ""
         let alert = NSAlert()
-        alert.messageText = "A device wants to use this Mac's windows"
+        alert.messageText = "A device wants to use this Mac's windows, and to ask its SpatiKey"
         alert.informativeText = "Check that it shows the same six digits:\n\n\(code)\n\nIt is connecting from \(address). Allow it only if you started this and the digits match."
         alert.addButton(withTitle: "Allow")
         alert.addButton(withTitle: "Don't allow")
@@ -565,14 +565,19 @@ final class MacHost {
             let type: CGEventType = pressedDown ? (pressedButton == .right ? .rightMouseDragged : .leftMouseDragged) : .mouseMoved
             let point = s.capture.screenPoint(x: x, y: y)
             let (down, button) = (pressedDown, pressedButton)
+            // The session says where the pointer is every frame, moved or not. Said again it is
+            // nothing: on a screen it would pull the Mac's own pointer back, over and over,
+            // from whoever is moving it there.
+            let same = lastPoint == (x, y)
+            lastPoint = (x, y)
+            if same { return }
             // Carried with the button down, it is the real pointer that is carried; only
             // pointed, the application is told and the real pointer is left where it is.
-            MacInput.real.async {
+            MacInput.moved {
                 // In a screen the pointer is the Mac's real one, pressed or not.
                 if down || info.display != nil { MacInput.realMouse(type, button: button, at: point, clicks: 1) }
                 else { MacInput.mouse(type, button: button, at: point, clicks: 1, window: info.windowID, pid: info.pid) }
             }
-            lastPoint = (x, y)
         case "Button":
             guard let code = (fields["button"] as? NSNumber)?.intValue, let down = fields["pressed"] as? Bool else { return }
             let button: CGMouseButton = code == 0x111 ? .right : (code == 0x112 ? .center : .left)
@@ -596,7 +601,9 @@ final class MacHost {
                 }
             }()
             let others = Set(shared.values.map(\.info.windowID)).union(offered.values.map(\.windowID))
+            let move = MacInput.takeMove()
             MacInput.real.async {
+                move?()
                 if down, info.display == nil { MacInput.bringForward(info, at: point, others: others) }
                 MacInput.realMouse(type, button: button, at: point, clicks: clicks)
             }

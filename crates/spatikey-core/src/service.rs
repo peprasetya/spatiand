@@ -115,6 +115,8 @@ pub struct Service {
     relayed: Mutex<HashMap<String, ConnId>>,
     /// One prompt at a time: a second request waits for the person's answer to the first.
     prompt: Mutex<()>,
+    /// (Approver) The host's paired list, whose devices may ask too. See [`Service::also_allow`].
+    host_paired: Mutex<Option<PathBuf>>,
     /// One writer at a time, so that two changes to one entry each count its version up.
     writing: Mutex<()>,
     /// The titles of the entries this service has opened, by id: the prompt for an entry asked
@@ -133,6 +135,7 @@ impl Service {
             sessions: Mutex::default(),
             relayed: Mutex::default(),
             prompt: Mutex::default(),
+            host_paired: Mutex::default(),
             writing: Mutex::default(),
             titles: Mutex::default(),
         });
@@ -189,6 +192,26 @@ impl Service {
     /// (Approver) the devices allowed to ask, from `local/spatikey/allowed.json`.
     pub fn allowed(&self) -> Vec<Device> {
         vault::read_json(&self.local.join("allowed.json")).unwrap_or_default()
+    }
+
+    /// (Approver) a device paired with this Mac as a host needs no second pairing: it is the same
+    /// certificate, and every use still wants a finger here and the device on this network.
+    pub fn also_allow(&self, host_paired: PathBuf) {
+        *lock(&self.host_paired) = Some(host_paired);
+    }
+
+    /// (Approver) the devices that may ask: those paired with SpatiKey, and with the host. The
+    /// list has only fingerprints, so a prompt cannot name one by anything the owner approved.
+    pub fn may_ask(&self) -> Vec<Device> {
+        let mut devices = self.allowed();
+        let path = lock(&self.host_paired).clone();
+        let text = path.and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+        for fp in text.lines().filter_map(|l| l.split_whitespace().next()) {
+            if !devices.iter().any(|d| d.fp.eq_ignore_ascii_case(fp)) {
+                devices.push(Device { fp: fp.to_string(), name: "your paired device".into(), added: 0 });
+            }
+        }
+        devices
     }
 
     /// (Approver) let a device ask from now on.

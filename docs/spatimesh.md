@@ -56,6 +56,12 @@ hooks, reading and writing the files the WPE build uses, so the two builds and s
 What only this browser needs is in `local/spatimesh-chromium/`, which is never synced. Passwords and
 passkeys are not here at all: docs/spatikey.md, "SpatiMesh on Chromium".
 
+**Visited links, light and dark, and the machine's extensions (patches 0013, 0014).** Cromite's "Disable visited pseudo
+class" is undone: Chrome's own per-site `:visited` stands, a link followed in one tab updating others of that site
+without a reload. Light or dark is `look` in Spatiand's prefs.toml, read every second as its other applications read it,
+in place of the desktop portal. What the machine's packages put in `/usr/share/chromium/extensions` (KDE's Plasma
+Integration, on a Deck) is not installed.
+
 **A right thumb resting no longer throws the page (patch 0011).** Chromium timed each scroll frame
 from the last pointer frame of any kind, so the pointer moving under a resting right thumb made a
 scroll's frames look a moment apart, and its end, a quarter of a second after the last of them, look

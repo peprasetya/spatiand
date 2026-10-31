@@ -248,6 +248,9 @@ On the owner's real stream, from the session's own count of frames (`remote <hos
   `scrollwatch`-style listening on the Mac): a 2 s swipe is over on the Mac in about 2 s, the pointer
   stays, and the conversation moves. Frames stayed at 40-54 per 2 s throughout, for one window. The
   capture alone, with nothing else running, does 80-96: where the rest goes is not found.
+- **The pointer does not queue either.** Movements over a Mac screen warped the real pointer too, sent every frame moved
+  or not: the Mac's own cursor dragged and lagging, every press and scroll behind them, until the session closed. A
+  position said again is now dropped, only the newest is kept, and only a press warps.
 - **A pad's swipe is accelerated by the host** (`PadScroll.gain`), as a trackpad's is by the system
   and a posted event is not: 1 + points a second / 250, at most 4.
 - **`minimumFrameInterval` is not the limit.** 1/60 and zero both give 48 fps with the Mac's screen

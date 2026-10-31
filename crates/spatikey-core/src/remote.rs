@@ -173,7 +173,7 @@ impl Answers for Service {
     }
 
     fn allowed(&self) -> Vec<Device> {
-        Service::allowed(self)
+        self.may_ask()
     }
 
     fn allow(&self, device: Device) -> Result<(), String> {
@@ -701,7 +701,12 @@ pub struct Asker {
     /// Macs whose owner said yes, waiting for this device's wearer: fingerprint to name.
     pending: Mutex<HashMap<Fingerprint, String>>,
     runtime: OnceLock<Result<tokio::runtime::Runtime, String>>,
+    /// The hosts this device has paired with: those that are Macs need no second pairing.
+    hosts: Mutex<Option<HostList>>,
 }
+
+/// What [`Asker::also_ask`] is given: read each time, as hosts come and go.
+pub type HostList = Box<dyn Fn() -> Vec<Device> + Send + Sync>;
 
 impl Asker {
     /// `local` is `local/spatikey`, where `approvers.json` is kept; `name` is this device's.
@@ -721,11 +726,31 @@ impl Asker {
             connecting: tokio::sync::Mutex::new(()),
             pending: Mutex::new(HashMap::new()),
             runtime: OnceLock::new(),
+            hosts: Mutex::new(None),
         }
     }
 
-    /// The Macs this device has paired with.
+    /// Ask the Macs among the hosts this device is paired with, as well as those in its own list.
+    /// Only a Mac answers a broadcast, and each is pinned to the certificate paired with.
+    pub fn also_ask(&self, hosts: HostList) {
+        *lock(&self.hosts) = Some(hosts);
+    }
+
+    /// The Macs this device can ask: those paired with SpatiKey, and its hosts.
     pub fn approvers(&self) -> Vec<Device> {
+        let mut devices = self.paired_approvers();
+        if let Some(hosts) = lock(&self.hosts).as_ref() {
+            for host in hosts() {
+                if !devices.iter().any(|d| same_fp(&d.fp, &host.fp)) {
+                    devices.push(host);
+                }
+            }
+        }
+        devices
+    }
+
+    /// The Macs this device has paired with SpatiKey.
+    fn paired_approvers(&self) -> Vec<Device> {
         let path = self.local.join(APPROVERS);
         match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
@@ -747,12 +772,15 @@ impl Asker {
             return Vec::new();
         }
         let found = self.find(wait);
+        let paired = self.paired_approvers();
         approvers
             .into_iter()
             .map(|d| {
                 let near = found.iter().any(|f| same_fp(&f.fp, &d.fp));
                 Approver { fp: d.fp, name: d.name, near }
             })
+            // A host that is not here may be no Mac at all: not one to say could approve.
+            .filter(|a| a.near || paired.iter().any(|d| same_fp(&d.fp, &a.fp)))
             .collect()
     }
 
