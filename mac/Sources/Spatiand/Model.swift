@@ -4,6 +4,7 @@
 //  One object, on the main thread, because everything it holds is only ever read to draw a menu
 //  or a window. The link's callbacks arrive here already on the main queue.
 
+import CSpatiand
 import AppKit
 
 final class Model {
