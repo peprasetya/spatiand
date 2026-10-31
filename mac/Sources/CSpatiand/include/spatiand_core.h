@@ -74,6 +74,7 @@ void sp_host_say(sp_host *host, const char *json);
 // are freed with `sp_settings_free`.
 char *sp_settings_said(const char *json);
 char *sp_settings_changed(void);
+char *sp_settings_hello(void);
 void sp_settings_free(char *text);
 // The owner's devices (crates/spatiand-sync, roster): the list as JSON, freed with
 // `sp_settings_free`; what this Mac knows of one; taking one off every machine's list; and the

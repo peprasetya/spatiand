@@ -65,6 +65,7 @@ final class Model {
         }
         // Until a picture has been shown, ask again every second.
         watchdog = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [unowned self] _ in
+            tellConfig()
             for (id, surface) in windows where surface.view.pictures == 0 {
                 link.say(["WantKeyframe": ["window": Int(id)]])
             }
@@ -159,6 +160,7 @@ final class Model {
         switch what {
         case "connected":
             connected = true
+            sayConfig(sp_settings_hello())
             clipboard.connected = true
             sendGlasses()
             sendBandwidth()
@@ -202,12 +204,39 @@ final class Model {
         onChange?()
     }
 
+    private func sayConfig(_ text: UnsafeMutablePointer<CChar>?) {
+        guard let text else { return }
+        defer { sp_settings_free(text) }
+        let replies = ((try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8))) as? [Any]) ?? []
+        for reply in replies { link.say(["ConfigSync": reply]) }
+    }
+
+    private var configLooked = Date.distantPast
+    /// What changed in the settings here, to the host; the Mac's host gets the same (it does its
+    /// own telling only while this is not connected: what changed is said once).
+    private func tellConfig() {
+        guard connected, Date().timeIntervalSince(configLooked) >= 3, let text = sp_settings_changed() else { return }
+        configLooked = Date()
+        defer { sp_settings_free(text) }
+        let replies = ((try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8))) as? [Any]) ?? []
+        for reply in replies {
+            link.say(["ConfigSync": reply])
+            MacHost.shared.tellConfig(reply)
+        }
+    }
+
     private func handle(_ message: [String: Any]) {
         guard let (name, body) = message.first else { return }
         if debug, name != "Catalog", name != "Cursor" { print("host: \(name) \(body)") }
         let fields = body as? [String: Any] ?? [:]
         func window() -> UInt16? { (fields["window"] as? NSNumber).map { UInt16(truncatingIfNeeded: $0.intValue) } }
         switch name {
+        case "ConfigSync":
+            // The Mac is one of the owner's devices as much as a Deck is: its settings and their
+            // list go to and from each host it connects to, and on to whoever connects to it.
+            if let data = try? JSONSerialization.data(withJSONObject: body, options: [.fragmentsAllowed]), let text = String(data: data, encoding: .utf8) {
+                sayConfig(sp_settings_said(text))
+            }
         case "Catalog":
             apps = ((fields["apps"] as? [[String: Any]]) ?? []).compactMap {
                 guard let id = $0["id"] as? String, let name = $0["name"] as? String else { return nil }

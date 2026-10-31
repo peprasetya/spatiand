@@ -97,6 +97,15 @@ pub unsafe extern "C" fn sp_settings_said(json: *const c_char) -> *mut c_char {
     reply(replies)
 }
 
+/// The manifest, said now whatever was said before: what a link to a host opens with. An array
+/// of one `ConfigSync`, to be freed with `sp_settings_free`.
+#[no_mangle]
+pub extern "C" fn sp_settings_hello() -> *mut c_char {
+    let mut settings = SETTINGS.lock().unwrap();
+    let hello = settings.get_or_insert_with(Sync::open_default).hello();
+    reply(vec![hello])
+}
+
 /// What changed here since last said, once a session has started keeping the settings: an
 /// array of none or one `ConfigSync`, to be freed with `sp_settings_free`.
 #[no_mangle]

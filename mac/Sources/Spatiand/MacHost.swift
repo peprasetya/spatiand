@@ -242,6 +242,11 @@ final class MacHost {
     /// The owner's list, kept with the hosts this Mac can use: a host paired from any of their
     /// devices can be used from here, and one removed from any cannot.
     private var rosterLooked = Date.distantPast
+    /// What changed in the settings, told by the Mac's own link to a host.
+    func tellConfig(_ reply: Any) {
+        if attached, settingsPeer { link?.say(["ConfigSync": reply]) }
+    }
+
     private func followRoster() {
         guard Date().timeIntervalSince(rosterLooked) >= 2, let link else { return }
         rosterLooked = Date()
@@ -274,7 +279,7 @@ final class MacHost {
         sendCatalog(force: false)
         reconcile()
         // What changed in the settings here, every few seconds, to a session that keeps them.
-        if settingsPeer, Date().timeIntervalSince(settingsLooked) >= 3 {
+        if settingsPeer, !Model.shared.connected, Date().timeIntervalSince(settingsLooked) >= 3 {
             settingsLooked = Date()
             sayAll(settingsReplies(sp_settings_changed()))
         }
