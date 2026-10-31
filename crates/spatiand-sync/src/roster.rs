@@ -11,6 +11,11 @@
 //! there first: whoever has a member's disk can do what a member can, and the owner's shell wins
 //! that race (`docs/remove-a-device.md`). Two machines that made keys before they met take the
 //! newer, and sign again what they had signed with the old.
+//!
+//! **A removal is a file of its own**, `<fingerprint>.removed`, because sync keeps whichever copy of
+//! a file is newest: a machine that had not heard yet, writing the device's entry again as it
+//! signed or filled it in, would otherwise have overwritten the removal with "still a member". Only
+//! pairing again, later than the removal, outranks it.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -37,6 +42,21 @@ pub struct Entry {
     pub removed_ms: u64,
     #[serde(default)]
     pub sig: String,
+}
+
+/// That a device was removed, and when.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct Removal {
+    fp: String,
+    removed_ms: u64,
+    #[serde(default)]
+    sig: String,
+}
+
+impl Removal {
+    fn signed_text(&self) -> String {
+        format!("spatiand roster removal 1\n{}\n{}", self.fp, self.removed_ms)
+    }
 }
 
 impl Entry {
@@ -141,6 +161,40 @@ impl Roster {
             .collect()
     }
 
+    fn removals_on_disk(&self) -> Vec<Removal> {
+        std::fs::read_dir(&self.dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|f| f.path().extension().is_some_and(|e| e == "removed"))
+            .filter_map(|f| serde_json::from_slice::<Removal>(&std::fs::read(f.path()).ok()?).ok())
+            .filter(|r| !r.fp.is_empty() && r.fp.bytes().all(|b| b.is_ascii_hexdigit()))
+            .collect()
+    }
+
+    fn write_removal(&self, seed: &[u8], mut removal: Removal) {
+        let Some(pair) = pair_of(seed) else { return };
+        removal.sig = hex(pair.sign(removal.signed_text().as_bytes()).as_ref());
+        let path = self.dir.join(format!("{}.removed", removal.fp));
+        match serde_json::to_vec_pretty(&removal).map(|b| write_private(&path, &b)) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => log::warn!("roster: could not write {}: {e}", path.display()),
+            Err(e) => log::warn!("roster: {e}"),
+        }
+    }
+
+    /// Whether this removal was signed with this key.
+    fn removal_verifies(seed: &[u8], removal: &Removal) -> bool {
+        let (Some(pair), Some(sig)) = (pair_of(seed), unhex(&removal.sig)) else { return false };
+        UnparsedPublicKey::new(&ED25519, pair.public_key().as_ref()).verify(removal.signed_text().as_bytes(), &sig).is_ok()
+    }
+
+    /// When this device was removed, if it was and has not been paired since.
+    fn removed_at(&self, seed: &[u8], fp: &str, added_ms: u64) -> Option<u64> {
+        let removal = std::fs::read(self.dir.join(format!("{fp}.removed"))).ok().and_then(|b| serde_json::from_slice::<Removal>(&b).ok())?;
+        (Self::removal_verifies(seed, &removal) && removal.removed_ms >= added_ms).then_some(removal.removed_ms)
+    }
+
     fn write(&self, seed: &[u8], mut entry: Entry) {
         sign(seed, &mut entry);
         let path = self.entry_path(&entry.fp);
@@ -164,6 +218,11 @@ impl Roster {
                     self.write(&seed, entry);
                 }
             }
+            for removal in self.removals_on_disk() {
+                if !Self::removal_verifies(&seed, &removal) && Self::removal_verifies(&old, &removal) {
+                    self.write_removal(&seed, removal);
+                }
+            }
         }
         if Self::read_seed(&self.seen).as_deref() != Some(&seed) {
             let _ = write_private(&self.seen, hex(&seed).as_bytes());
@@ -185,6 +244,17 @@ impl Roster {
                 good
             })
             .collect();
+        for e in &mut entries {
+            if let Some(at) = self.removed_at(&seed, &e.fp, e.added_ms) {
+                e.removed_ms = at;
+            }
+        }
+        // Removed, with its entry out of date or never seen here: still removed.
+        for r in self.removals_on_disk() {
+            if Self::removal_verifies(&seed, &r) && !entries.iter().any(|e| e.fp == r.fp) {
+                entries.push(Entry { fp: r.fp, removed_ms: r.removed_ms, ..Entry::default() });
+            }
+        }
         entries.sort_by_key(|e| (e.removed(), e.label().to_lowercase()));
         entries
     }
@@ -197,8 +267,16 @@ impl Roster {
         if fp.is_empty() || !fp.bytes().all(|b| b.is_ascii_hexdigit()) {
             return;
         }
-        let old = std::fs::read(self.entry_path(&fp)).ok().and_then(|b| serde_json::from_slice::<Entry>(&b).ok()).filter(|e| verifies(&seed, e));
-        let mut entry = match old {
+        let on_disk = std::fs::read(self.entry_path(&fp)).ok().and_then(|b| serde_json::from_slice::<Entry>(&b).ok());
+        // Signed with a key not here yet: not this machine's to write over.
+        if on_disk.as_ref().is_some_and(|e| !verifies(&seed, e)) {
+            return;
+        }
+        let old_added = on_disk.as_ref().map_or(0, |e| e.added_ms);
+        if self.removed_at(&seed, &fp, old_added).is_some() {
+            return;
+        }
+        let mut entry = match on_disk {
             Some(old) if old.removed() => return,
             Some(old) => old,
             None => Entry { fp: fp.clone(), added_ms: now_ms(), ..Entry::default() },
@@ -252,7 +330,7 @@ impl Roster {
         let seed = self.new_key().ok_or("could not make a new key")?;
         self.settle();
         entry.removed_ms = now_ms();
-        self.write(&seed, entry.clone());
+        self.write_removal(&seed, Removal { fp: entry.fp.clone(), removed_ms: entry.removed_ms, sig: String::new() });
         Ok(entry)
     }
 
@@ -408,6 +486,29 @@ mod tests {
     }
 
     #[test]
+    fn a_machine_that_has_not_heard_cannot_overwrite_a_removal() {
+        let (a, dir_a) = roster("late-a");
+        let (b, dir_b) = roster("late-b");
+        a.note(A, "deck", "", true);
+        a.note(B, "fake", "", true);
+        copy(&dir_a, &dir_b);
+        b.all();
+        // A removes it. Everything of A's reaches B in the worst order: the removal, before the key
+        // that signs it. Meanwhile B goes on noting what it trusts, and signing.
+        a.remove("fake").unwrap();
+        let (from, to) = (dir_a.join("apps/roster"), dir_b.join("apps/roster"));
+        std::fs::copy(from.join(format!("{B}.removed")), to.join(format!("{B}.removed"))).unwrap();
+        b.note(B, "", "", false);
+        assert!(b.all().iter().any(|e| e.fp == B && !e.removed()), "not believed yet: the key has not come");
+        std::fs::copy(from.join("user.key"), to.join("user.key")).unwrap();
+        b.note(B, "", "", false);
+        assert!(b.all().iter().any(|e| e.fp == B && e.removed()), "got {:?}", b.all());
+        // And B's copy of the entry, newer than A's, going back to A changes nothing.
+        copy(&dir_b, &dir_a);
+        assert!(a.all().iter().any(|e| e.fp == B && e.removed()));
+    }
+
+    #[test]
     fn what_a_removed_device_signs_afterwards_is_not_believed() {
         let (home, dir_home) = roster("thief-home");
         let (stolen, dir_stolen) = roster("thief-stolen");
@@ -418,7 +519,7 @@ mod tests {
         home.remove("stolen").unwrap();
         // It still has the old key, and tries: undoing its removal, adding a friend.
         let mut undo = stolen.all().into_iter().find(|e| e.fp == B).unwrap();
-        undo.added_ms += 1;
+        undo.added_ms = u64::MAX / 2;
         sign(&Roster::read_seed(&dir_stolen.join("apps/roster/user.key")).unwrap(), &mut undo);
         std::fs::write(dir_home.join(format!("apps/roster/{B}.json")), serde_json::to_vec(&undo).unwrap()).unwrap();
         let seen = home.all();
