@@ -152,7 +152,10 @@ pub fn watch(host: &mut Host, app: String, ours: OwnedFd) {
                     libc::MSG_DONTWAIT,
                 )
             };
-            if n == 0 {
+            // An application that exits with something of ours unread is a reset, not an end of
+            // file: it has gone just the same, and what it claimed must not outlive it.
+            let reset = n < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::WouldBlock;
+            if n == 0 || reset {
                 log::info!("{app} closed its control socket; whatever it claimed is given back");
                 if host.presentation.remove(&app).is_some() {
                     host.presentation_changed.push(app.clone());
@@ -164,12 +167,7 @@ pub fn watch(host: &mut Host, app: String, ours: OwnedFd) {
                 return Ok(PostAction::Remove);
             }
             if n < 0 {
-                let e = std::io::Error::last_os_error();
-                if e.kind() == std::io::ErrorKind::WouldBlock {
-                    return Ok(PostAction::Continue);
-                }
-                log::warn!("{app}'s control socket: {e}");
-                return Ok(PostAction::Remove);
+                return Ok(PostAction::Continue);
             }
             let message = String::from_utf8_lossy(&buffer[..n as usize]);
             match parse(&message) {

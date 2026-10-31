@@ -869,6 +869,11 @@ fn run_host(
             for id in &arrived {
                 if let Some(tracked) = host.windows.iter().find(|t| t.id == *id) {
                     net.send(ToSession::Control(HostMessage::Opened(info(tracked))));
+                    // A window that opens after its application said what it is.
+                    let layer = presented(&host, id.0).1;
+                    if layer != spatiand_stream::Layer::Window {
+                        net.send(ToSession::Control(HostMessage::Layer { window: *id, layer }));
+                    }
                 }
             }
             for id in &departed {
