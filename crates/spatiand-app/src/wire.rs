@@ -16,8 +16,10 @@ use wayland_client::protocol::{
     wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
 };
 use wayland_client::{event_created_child, Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
+use wayland_protocols::wp::cursor_shape::v1::client::{wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1};
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
+use wayland_protocols::xdg::decoration::zv1::client::{zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 use spatiand_proto::client::{spatiand_assist_v1, spatiand_xr_surface_v1, spatiand_xr_v1};
@@ -73,6 +75,7 @@ pub(crate) struct Window {
     surface: wl_surface::WlSurface,
     xdg: xdg_surface::XdgSurface,
     toplevel: xdg_toplevel::XdgToplevel,
+    decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
     xr: Option<spatiand_xr_surface_v1::SpatiandXrSurfaceV1>,
     viewport: Option<wp_viewport::WpViewport>,
     /// The compositor has said its first word, before which nothing may be attached.
@@ -98,6 +101,11 @@ pub(crate) struct Wire {
     dmabuf: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>,
     xr: Option<spatiand_xr_v1::SpatiandXrV1>,
     viewporter: Option<wp_viewporter::WpViewporter>,
+    /// On somebody's desktop, not the room, where a window has its frame and pointer from the
+    /// desktop: the room draws neither protocol's business itself.
+    decorations: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
+    cursor_shapes: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
+    cursor_shape: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     pub(crate) mode: Mode,
     windows: HashMap<WindowId, Window>,
     ids: HashMap<wl_surface::WlSurface, WindowId>,
@@ -178,6 +186,9 @@ impl Wire {
             _ => None,
         };
         let viewporter = globals.bind(&handle, 1..=1, ()).ok();
+        let on_desktop = xr.is_none();
+        let decorations = if on_desktop { globals.bind(&handle, 1..=1, ()).ok() } else { None };
+        let cursor_shapes = if on_desktop { globals.bind(&handle, 1..=1, ()).ok() } else { None };
         // A compositor with the room's protocol and no word on the mode is an older Spatiand,
         // which has only ever had two eyes; one without the protocol is somebody's desktop.
         let mode = match &xr {
@@ -192,6 +203,9 @@ impl Wire {
             dmabuf,
             xr,
             viewporter,
+            decorations,
+            cursor_shapes,
+            cursor_shape: None,
             mode,
             windows: HashMap::new(),
             ids: HashMap::new(),
@@ -229,6 +243,11 @@ impl Wire {
         let toplevel = xdg.get_toplevel(&self.handle, id);
         toplevel.set_app_id(app_id.to_string());
         toplevel.set_title(title.to_string());
+        let decoration = self.decorations.as_ref().map(|decorations| {
+            let decoration = decorations.get_toplevel_decoration(&toplevel, &self.handle, ());
+            decoration.set_mode(zxdg_toplevel_decoration_v1::Mode::ServerSide);
+            decoration
+        });
         // With nothing attached: this is what asks for the first configure.
         surface.commit();
         self.ids.insert(surface.clone(), id);
@@ -238,6 +257,7 @@ impl Wire {
                 surface,
                 xdg,
                 toplevel,
+                decoration,
                 xr: None,
                 viewport: None,
                 configured: false,
@@ -273,6 +293,9 @@ impl Wire {
         }
         if let Some(viewport) = window.viewport {
             viewport.destroy();
+        }
+        if let Some(decoration) = &window.decoration {
+            decoration.destroy();
         }
         window.toplevel.destroy();
         window.xdg.destroy();
@@ -982,14 +1005,19 @@ ignore! {
     zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1 => (),
     zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1 => (),
     wp_viewporter::WpViewporter => (),
+    zxdg_decoration_manager_v1::ZxdgDecorationManagerV1 => (),
+    zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1 => (),
+    wp_cursor_shape_manager_v1::WpCursorShapeManagerV1 => (),
+    wp_cursor_shape_device_v1::WpCursorShapeDeviceV1 => (),
     wp_viewport::WpViewport => (),
 }
 
 impl Dispatch<wl_seat::WlSeat, ()> for Wire {
-    fn event(_: &mut Self, seat: &wl_seat::WlSeat, event: wl_seat::Event, _: &(), _: &Connection, handle: &QueueHandle<Self>) {
+    fn event(state: &mut Self, seat: &wl_seat::WlSeat, event: wl_seat::Event, _: &(), _: &Connection, handle: &QueueHandle<Self>) {
         if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(capabilities) } = event {
             if capabilities.contains(wl_seat::Capability::Pointer) {
-                seat.get_pointer(handle, ());
+                let pointer = seat.get_pointer(handle, ());
+                state.cursor_shape = state.cursor_shapes.as_ref().map(|shapes| shapes.get_pointer(&pointer, handle, ()));
             }
             if capabilities.contains(wl_seat::Capability::Keyboard) {
                 seat.get_keyboard(handle, ());
@@ -1004,6 +1032,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for Wire {
             wl_pointer::Event::Enter { surface, surface_x, surface_y, serial, .. } => {
                 state.serial = serial;
                 state.pointer_on = state.ids.get(&surface).copied();
+                if let Some(shape) = &state.cursor_shape {
+                    shape.set_shape(serial, wp_cursor_shape_device_v1::Shape::Default);
+                }
                 if let Some(window) = state.pointer_on {
                     state.events.push(Event::PointerMoved { window, x: surface_x as f32, y: surface_y as f32 });
                 }

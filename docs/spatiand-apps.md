@@ -378,3 +378,21 @@ install replacing the first, seven kinds of wrong package refused leaving nothin
 landed on master), so a `.spatiapp` dragged out of it onto the room should be offered the same way;
 that was merged, not tried. A drag from an X11 application (Xwayland) is not bridged. There is no way to remove an installed application in the room yet
 (`spatiand --uninstall`). Not tried on the Deck.
+
+## On the Deck's desktop, without the room
+
+`tools/install-desktop-apps.sh [folder with the programs]` lists SpatiShelf, SpatiReel, SpatiLoupe,
+SpatiQuill, SpatiPal, SpatiKey and SpatiMesh under a **Spatiand** category of Plasma's menu. They are
+the same programs, ordinary Wayland windows of KWin: with no `spatiand_xr_v1` the SDK is in
+`Mode::Flat`, asks the desktop for a title bar (`zxdg_decoration_manager_v1`) and its pointer
+(`wp_cursor_shape_v1`). The room's launcher skips the entries' `X-Spatiand` category, as it has these
+behind its own bubble.
+
+`spatiand --spatikey-service` holds SpatiKey's socket on the desktop, started at login by an autostart
+entry, and ends when the desktop's compositor does, leaving the socket to the room. Asking for a
+finger on the Mac shows as a desktop notification, which stays its few seconds after the finger.
+
+What needs the room and is not there: stereo and the room's sound placement, typing into another
+window from SpatiKey, SpatiPal's microphone and reading of windows, SpatiQuill's dictation, and the
+settings and device-list sync the room runs (a program reads what was last synced). Only the Deck's
+tree is covered: a release folder does not carry these programs yet.

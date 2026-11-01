@@ -93,6 +93,14 @@ fn main() {
         return;
     }
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        #[cfg(not(target_os = "macos"))]
+        ["--spatikey-service"] => {
+            if let Err(e) = spatikey::desktop_service() {
+                eprintln!("SpatiKey's service did not start: {e}");
+                std::process::exit(1);
+            }
+            return;
+        }
         ["--install", path] => {
             match spatiand_platform::installed::install(std::path::Path::new(path)) {
                 Ok(app) => println!("installed {} in {}", app.manifest.name, app.dir.display()),

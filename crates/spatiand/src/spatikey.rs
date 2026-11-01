@@ -61,6 +61,49 @@ fn start() {
     });
 }
 
+/// SpatiKey with no room: the desktop's own session, where programs still want their passwords and
+/// a finger is still asked for on the Mac. Runs as long as that desktop does, so that the socket
+/// is free for the room when the session changes to it.
+#[cfg(not(target_os = "macos"))]
+pub fn desktop_service() -> Result<(), String> {
+    use std::io::Read;
+    let socket = std::env::var_os("XDG_RUNTIME_DIR")
+        .zip(std::env::var_os("WAYLAND_DISPLAY"))
+        .map(|(dir, display)| std::path::Path::new(&dir).join(display))
+        .ok_or("no Wayland desktop here")?;
+    let mut desktop = std::os::unix::net::UnixStream::connect(&socket).map_err(|e| format!("{}: {e}", socket.display()))?;
+    spatikey_core::hooks::set_room(Some(Arc::new(Desktop)));
+    forward();
+    // Nothing is said on it: the compositor closes it as it ends.
+    let _ = desktop.read(&mut [0u8; 1]);
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+struct Desktop;
+
+#[cfg(not(target_os = "macos"))]
+impl Room for Desktop {
+    fn target(&self) -> Option<Target> {
+        None
+    }
+
+    fn type_into(&self, _window: u64, _steps: &[Step]) -> Result<(), String> {
+        Err("typing into a window needs the room".to_string())
+    }
+
+    /// As a notification of the desktop's, which stays its few seconds after the finger.
+    fn notice(&self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let text = text.to_string();
+        std::thread::spawn(move || {
+            let _ = std::process::Command::new("notify-send").args(["-a", "SpatiKey", "SpatiKey", &text]).status();
+        });
+    }
+}
+
 /// The Deck's and the Beam Pro's service: everything to a paired Mac on this network, with the
 /// identity this machine pairs with hosts as.
 #[cfg(not(target_os = "macos"))]

@@ -138,6 +138,11 @@ pub fn parse(text: &str, path: &Path) -> Option<DesktopEntry> {
         }
     }
 
+    // What tools/install-desktop-apps.sh lists for the desktop's own menu: the room has these
+    // behind its Spatiand bubble already.
+    if categories.iter().any(|c| c == "X-Spatiand") {
+        return None;
+    }
     if hidden || kind.as_deref() != Some("Application") {
         return None;
     }
@@ -232,6 +237,12 @@ pub fn icon_for_app(app_id: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_desktops_own_menu_of_spatiands_apps_is_not_the_rooms() {
+        let entry = "[Desktop Entry]\nType=Application\nName=SpatiReel\nExec=spatireel\nCategories=X-Spatiand;\n";
+        assert!(parse(entry, Path::new("id.prasetya.spatiand.spatireel.desktop")).is_none());
+    }
+
     use super::*;
 
     fn p() -> PathBuf {

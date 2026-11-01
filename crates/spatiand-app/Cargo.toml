@@ -18,7 +18,7 @@ spatiand-render = { path = "../spatiand-render" }
 log.workspace = true
 libc = "0.2"
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 # What a key means: the compositor sends its keymap, and this reads it.
 xkbcommon = "0.8"
 memmap2 = "0.9"
