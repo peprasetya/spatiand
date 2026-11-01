@@ -270,3 +270,22 @@ an Indonesian sentence; the Deck and the Beam Pro; a VRM figure's states (still 
 - **No way to shut it down**: closing its window left it listening. Closing now quits it unless it
   is switched on (`on`); the `dismiss` tool ("you may go") has it say goodbye and go -- or, switched
   on, stay deaf and unseen for its reminders until opened again.
+
+## Dictation with no room
+
+The same phrases and clean-up, with a switch instead of the mic key: while it is on the microphone
+is open and what is said is typed into the front window (`dictate::on_a_desktop`).
+
+- **The Mac's menu bar**: "Dictation: type what I say into the front window", remembered across
+  launches (`MacDictation.swift`). The icon becomes a microphone while listening. Typed as Unicode
+  key events, so any layout; needs the Microphone and Accessibility permissions. It gives way while
+  in the glasses, where the room holds the keyboard and has its own mic key.
+- **The Deck's desktop**: the Dictation entry under Spatiand in Plasma's menu (`desktop_dictation.rs`).
+  It does not start the room. Typed by a uinput keyboard, so only what the US layout has; the window
+  in front comes from a KWin script read through `dbus-monitor`, because KWin scripts have no other
+  way out (a D-Bus name of its own would be the proper way, and a D-Bus library for it).
+
+A terminal's words wait in both: on a card at the Mac, on a notification on the Deck. Only the
+window's name is known on the Deck; on the Mac what is in it is read by Accessibility. Everything
+said is typed while it is on, so a conversation in the room is typed too. Only phrases go to hemera,
+cut on the device by pause detection.

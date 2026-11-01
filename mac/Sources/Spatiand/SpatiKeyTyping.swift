@@ -58,7 +58,7 @@ enum SpatiKeyTyping {
     }
 
     /// Text as Unicode, a few characters to an event (macOS takes at most 20 UTF-16 units each).
-    private static func post(text: String, source: CGEventSource) {
+    static func post(text: String, source: CGEventSource) {
         var units = Array(text.utf16)
         defer { units.withUnsafeMutableBufferPointer { $0.update(repeating: 0) } }
         var at = 0

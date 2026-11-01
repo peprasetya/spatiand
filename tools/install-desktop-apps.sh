@@ -53,6 +53,39 @@ app spatiquill SpatiQuill "Terminal"
 app spatipal SpatiPal "Companion"
 app spatikey SpatiKey "Passwords and passkeys"
 
+# Dictation is a switch, not a program with a window: this script turns it on and off, and it is on
+# again at the next login only if it was left on.
+SWITCH="$HOME/.local/share/spatiand/dictation.sh"
+cat > "$SWITCH" <<E
+#!/bin/sh
+# toggle: from the menu. start: from the login, if it was left on.
+LOGIN="$AUTOSTART/spatiand-dictation.desktop"
+start() {
+    systemd-run --user --quiet --collect --unit=spatiand-dictation --setenv=WAYLAND_DISPLAY=\${WAYLAND_DISPLAY:-wayland-0} "$PROGRAMS/spatiand" --dictation-service
+}
+if [ "\$1" = start ]; then start; exit; fi
+if systemctl --user is-active -q spatiand-dictation; then
+    systemctl --user stop spatiand-dictation
+    rm -f "\$LOGIN"
+    notify-send -a Dictation "Dictation is off" "The microphone is closed."
+else
+    start
+    printf '[Desktop Entry]\\nType=Application\\nName=Dictation\\nExec=$SWITCH start\\nOnlyShowIn=KDE;\\nNoDisplay=true\\n' > "\$LOGIN"
+    notify-send -a Dictation "Dictation is on" "Listening: what you say is typed into the front window. Choose Dictation in the menu again to stop."
+fi
+E
+chmod +x "$SWITCH"
+cat > "$ENTRIES/id.prasetya.spatiand.dictation.desktop" <<E
+[Desktop Entry]
+Type=Application
+Name=Dictation
+Comment=Turn dictation on or off: while on, the microphone is open and what you say is typed
+Exec=$SWITCH toggle
+Icon=audio-input-microphone
+Terminal=false
+Categories=X-Spatiand;
+E
+
 # The browser is Chromium, where it is unpacked, with the launcher that has its switches.
 if [ -x "$BROWSER" ]; then
     entry id.prasetya.spatiand.spatimesh SpatiMesh "Web browser" "$BROWSER %U" spatimesh spatimesh-chromium

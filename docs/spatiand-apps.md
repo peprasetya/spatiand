@@ -392,7 +392,10 @@ behind its own bubble.
 entry, and ends when the desktop's compositor does, leaving the socket to the room. Asking for a
 finger on the Mac shows as a desktop notification, which stays its few seconds after the finger.
 
+`spatiand --dictation-service` is dictation on the desktop, switched by the menu's Dictation entry
+(`crates/spatiand/src/desktop_dictation.rs`, `docs/ai-integrations.md`).
+
 What needs the room and is not there: stereo and the room's sound placement, typing into another
-window from SpatiKey, SpatiPal's microphone and reading of windows, SpatiQuill's dictation, and the
+window from SpatiKey, SpatiPal's microphone and reading of windows, and the
 settings and device-list sync the room runs (a program reads what was last synced). Only the Deck's
 tree is covered: a release folder does not carry these programs yet.

@@ -121,6 +121,14 @@ void sp_display_scale(double scale);
 /// Whether macOS has allowed the microphone: it is not opened for a host until it has.
 void sp_microphone_allowed(bool allowed);
 
+// Dictation with no glasses on, into the front window of the Mac. sp_dictation_next gives what it
+// has said, oldest first, or NULL: kind 1, words to type; 2, a terminal's, to be looked at first;
+// 3, trouble with one phrase; 4, the microphone would not open and it has stopped listening.
+void sp_dictation_listen(bool on);
+void sp_dictation_focus(int32_t pid, const char *description);
+char *sp_dictation_next(int32_t *kind);
+void sp_dictation_free(char *words);
+
 // A window of this Mac's, for the room. id is the app's own and never 0; the size is its
 // picture's, in pixels. hidden lists it without showing it: it is in the room's list of windows
 // until it is brought out, from there or with sp_window_show, and SP_WINDOW_SHOWN says when.

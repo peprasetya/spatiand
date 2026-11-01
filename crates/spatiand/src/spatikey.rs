@@ -66,17 +66,28 @@ fn start() {
 /// is free for the room when the session changes to it.
 #[cfg(not(target_os = "macos"))]
 pub fn desktop_service() -> Result<(), String> {
-    use std::io::Read;
+    let desktop = desktop_connection()?;
+    spatikey_core::hooks::set_room(Some(Arc::new(Desktop)));
+    forward();
+    until_it_ends(desktop);
+    Ok(())
+}
+
+/// A connection to the desktop's compositor, for knowing when it has gone.
+#[cfg(not(target_os = "macos"))]
+pub fn desktop_connection() -> Result<std::os::unix::net::UnixStream, String> {
     let socket = std::env::var_os("XDG_RUNTIME_DIR")
         .zip(std::env::var_os("WAYLAND_DISPLAY"))
         .map(|(dir, display)| std::path::Path::new(&dir).join(display))
         .ok_or("no Wayland desktop here")?;
-    let mut desktop = std::os::unix::net::UnixStream::connect(&socket).map_err(|e| format!("{}: {e}", socket.display()))?;
-    spatikey_core::hooks::set_room(Some(Arc::new(Desktop)));
-    forward();
-    // Nothing is said on it: the compositor closes it as it ends.
+    std::os::unix::net::UnixStream::connect(&socket).map_err(|e| format!("{}: {e}", socket.display()))
+}
+
+/// Nothing is said on it: the compositor closes it as it ends.
+#[cfg(not(target_os = "macos"))]
+pub fn until_it_ends(mut desktop: std::os::unix::net::UnixStream) {
+    use std::io::Read;
     let _ = desktop.read(&mut [0u8; 1]);
-    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]

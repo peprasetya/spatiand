@@ -32,6 +32,8 @@ mod controls;
 mod desk;
 mod diagram;
 mod dictate;
+#[cfg(not(target_os = "macos"))]
+mod desktop_dictation;
 mod dmabuf;
 mod environment;
 mod figure;
@@ -97,6 +99,15 @@ fn main() {
         ["--spatikey-service"] => {
             if let Err(e) = spatikey::desktop_service() {
                 eprintln!("SpatiKey's service did not start: {e}");
+                std::process::exit(1);
+            }
+            return;
+        }
+        #[cfg(not(target_os = "macos"))]
+        ["--dictation-service"] => {
+            if let Err(e) = desktop_dictation::run() {
+                eprintln!("Dictation did not start: {e}");
+                let _ = std::process::Command::new("notify-send").args(["-a", "Dictation", "Dictation did not start", &e]).status();
                 std::process::exit(1);
             }
             return;

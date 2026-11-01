@@ -107,6 +107,14 @@ impl Dictation {
         }
     }
 
+    /// The same window, seen again: what is in it now steers the next phrase.
+    #[cfg(not(target_os = "android"))]
+    fn refresh_focus(&self, focus: Description) {
+        if let Some(running) = &self.running {
+            running.voice.set_focus(focus);
+        }
+    }
+
     /// Text to type into what has focus now, if a phrase has been written.
     pub fn tick(&mut self) -> Option<String> {
         // The window's account of itself, when it comes, steers the phrases after it.
@@ -210,6 +218,78 @@ impl Dictation {
     }
 }
 
+/// What the desktop's dictation is told, from wherever its switch is.
+#[cfg(not(target_os = "android"))]
+pub enum Asked {
+    /// Be listening or not.
+    Listen(bool),
+    /// What has focus, and something that changes when it does (a process, a window).
+    Focus(Description, u64),
+}
+
+/// What it says back.
+#[cfg(not(target_os = "android"))]
+pub enum Said {
+    /// To type into what has focus.
+    Text(String),
+    /// A terminal's, for its owner to look at first.
+    Review(String),
+    Trouble(String),
+    /// The microphone would not open: it is not listening, whatever it was told.
+    Refused(String),
+}
+
+/// Dictation with no room around it: a switch rather than a key, and what is said going to the
+/// desktop's front window. Until `asked` closes. Its own thread: the microphone is opened here.
+#[cfg(not(target_os = "android"))]
+pub fn on_a_desktop(asked: std::sync::mpsc::Receiver<Asked>, mut say: impl FnMut(Said)) {
+    use std::sync::mpsc::RecvTimeoutError;
+    let mut dictation = Dictation::default();
+    let mut wanted = false;
+    let mut focus = (Description::default(), 0u64);
+    let mut last_trouble = None;
+    loop {
+        match asked.recv_timeout(Duration::from_millis(50)) {
+            Ok(Asked::Listen(on)) => wanted = on,
+            Ok(Asked::Focus(now, id)) => {
+                if id == focus.1 {
+                    dictation.refresh_focus(now.clone());
+                } else {
+                    dictation.focus_changed(now.clone(), Some(id as usize));
+                }
+                focus = (now, id);
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
+        // Stopping lets the last phrase be written; asked to start again meanwhile, it starts after.
+        match (wanted, dictation.look()) {
+            (true, Dictating::Off) => {
+                dictation.toggle(focus.0.clone(), Some(focus.1 as usize));
+                if dictation.look() == Dictating::Off {
+                    wanted = false;
+                    let why = dictation.trouble.take().map(|(why, _)| why).unwrap_or_default();
+                    say(Said::Refused(why));
+                }
+            }
+            (false, Dictating::Listening) => dictation.toggle(focus.0.clone(), None),
+            _ => {}
+        }
+        if let Some(text) = dictation.tick() {
+            say(Said::Text(text));
+        }
+        if let Some(text) = dictation.take_review() {
+            say(Said::Review(text));
+        }
+        if let Some((why, at)) = &dictation.trouble {
+            if last_trouble != Some(*at) {
+                last_trouble = Some(*at);
+                say(Said::Trouble(why.clone()));
+            }
+        }
+    }
+}
+
 /// `text` as the keyboard can type it: the punctuation Whisper writes in its typographer's
 /// forms made plain, and accents dropped from the letters that have them. What is left that
 /// the keyboard cannot type is skipped by the typing, and logged.
@@ -302,10 +382,10 @@ fn told(basic: &Description, json: &str) -> Description {
 
 /// Whether an application id is a terminal's: ours, the Mac's own and the usual Linux ones, by
 /// any of the names they go by.
-fn is_terminal(app: &str) -> bool {
+pub(crate) fn is_terminal(app: &str) -> bool {
     let app = app.to_lowercase();
     const TERMINALS: &[&str] = &[
-        "spatiquill", "com.apple.terminal", "iterm", "ghostty", "kitty", "alacritty", "wezterm", "konsole", "gnome.terminal",
+        "spatiquill", "konsole", "com.apple.terminal", "iterm", "ghostty", "kitty", "alacritty", "wezterm", "konsole", "gnome.terminal",
         "ptyxis", "kgx", "org.gnome.console", "foot", "xterm", "tilix", "terminator", "warp",
     ];
     TERMINALS.iter().any(|t| app.contains(t))

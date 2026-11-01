@@ -95,6 +95,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let button = item.button {
             button.image = NSImage(systemSymbolName: "eyeglasses", accessibilityDescription: "Spatiand")
         }
+        // While dictation has the microphone the icon says so, whatever else is plugged in.
+        MacDictation.shared.onListening = { [unowned self] _ in self.refreshIcon() }
+        MacDictation.shared.begin()
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
@@ -153,7 +156,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The icon says which world Spatiand is in: dimmed with nothing plugged in, normal with
     /// glasses.
     private func refreshIcon() {
-        item.button?.appearsDisabled = !glasses.isPluggedIn
+        let listening = MacDictation.shared.listening
+        item.button?.appearsDisabled = !glasses.isPluggedIn && !listening
+        item.button?.image = NSImage(systemSymbolName: listening ? "mic.fill" : "eyeglasses", accessibilityDescription: "Spatiand")
         let unplugged = wasPlugged && !glasses.isPluggedIn
         wasPlugged = glasses.isPluggedIn
         // A display that has gone leaves a ghost of the glasses' window in the window server for
@@ -229,6 +234,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ask.target = self
             menu.addItem(ask)
         }
+        let dictation = NSMenuItem(
+            title: room.inGlasses ? "Dictation (in the glasses: the keyboard\u{2019}s mic key)" : "Dictation: type what I say into the front window",
+            action: room.inGlasses ? nil : #selector(toggleDictation), keyEquivalent: "")
+        dictation.target = self
+        dictation.state = MacDictation.shared.enabled ? .on : .off
+        menu.addItem(dictation)
         menu.addItem(.separator())
 
         if room.inGlasses {
@@ -457,6 +468,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func allowCapture() { _ = MacWindows.allowed(ask: true) }
+    @objc private func toggleDictation() {
+        MacDictation.shared.enabled.toggle()
+    }
+
     @objc private func allowMicrophone() {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .notDetermined:

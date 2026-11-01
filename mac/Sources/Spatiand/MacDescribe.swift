@@ -27,6 +27,11 @@ enum MacDescribe {
         }
     }
 
+    /// The same, to whoever is not the room.
+    static func describe(bundle: String, answer: @escaping (String) -> Void) {
+        queue.async { answer(describing(bundle: bundle)) }
+    }
+
     private static func describing(bundle: String) -> String {
         var said: [String: Any] = ["kind": kind(of: bundle)]
         guard let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first else {

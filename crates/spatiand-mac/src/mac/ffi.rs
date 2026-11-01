@@ -393,6 +393,54 @@ pub extern "C" fn sp_microphone_allowed(allowed: bool) {
     super::MICROPHONE_ALLOWED.store(allowed, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Dictation with no glasses on: its thread, the first time it is asked for, and what it has said.
+fn desktop_dictation() -> &'static std::sync::mpsc::Sender<crate::dictate::Asked> {
+    use std::sync::OnceLock;
+    static ASK: OnceLock<std::sync::mpsc::Sender<crate::dictate::Asked>> = OnceLock::new();
+    ASK.get_or_init(|| {
+        let (ask, asked) = std::sync::mpsc::channel();
+        std::thread::spawn(move || crate::dictate::on_a_desktop(asked, |said| DICTATION_SAID.lock().unwrap().push_back(said)));
+        ask
+    })
+}
+
+static DICTATION_SAID: Mutex<std::collections::VecDeque<crate::dictate::Said>> = Mutex::new(std::collections::VecDeque::new());
+
+/// Be listening or not, for the front window of the Mac.
+#[no_mangle]
+pub extern "C" fn sp_dictation_listen(on: bool) {
+    let _ = desktop_dictation().send(crate::dictate::Asked::Listen(on));
+}
+
+/// What is in front: the application's process, and MacDescribe's account of it.
+#[no_mangle]
+pub unsafe extern "C" fn sp_dictation_focus(pid: i32, description: *const c_char) {
+    let focus = spatiand_voice::Description::from_json(&text(description)).unwrap_or_default();
+    let _ = desktop_dictation().send(crate::dictate::Asked::Focus(focus, pid as u64));
+}
+
+/// The next thing dictation has said, or NULL: for `sp_dictation_free`. `kind` as in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_dictation_next(kind: *mut i32) -> *mut c_char {
+    use crate::dictate::Said;
+    let Some(said) = DICTATION_SAID.lock().unwrap().pop_front() else { return std::ptr::null_mut() };
+    let (number, words) = match said {
+        Said::Text(words) => (1, words),
+        Said::Review(words) => (2, words),
+        Said::Trouble(words) => (3, words),
+        Said::Refused(words) => (4, words),
+    };
+    *kind = number;
+    CString::new(words.replace('\0', "")).unwrap_or_default().into_raw()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sp_dictation_free(words: *mut c_char) {
+    if !words.is_null() {
+        drop(CString::from_raw(words));
+    }
+}
+
 thread_local! {
     static AUDIO_BEING_SAID: std::cell::RefCell<Vec<super::AudioDevice>> = const { std::cell::RefCell::new(Vec::new()) };
 }
