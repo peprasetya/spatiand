@@ -62,6 +62,13 @@ without a reload. Light or dark is `look` in Spatiand's prefs.toml, read every s
 in place of the desktop portal. What the machine's packages put in `/usr/share/chromium/extensions` (KDE's Plasma
 Integration, on a Deck) is not installed.
 
+**Bounce tracking no longer deletes all history (patch 0016).** Cromite's `DATA_TYPE_SKIP_SSL_HOST_STATE` was `1 << 28`, the
+same bit as Chrome's `DATA_TYPE_HISTORY`, and bounce tracking adds it to every clearing of a tracker's state: at most
+hourly, as soon as a site was due, usually just after a start. History has no per-site filter, so each one emptied the
+profile's history and wrote an all-time entry to `forgotten-<machine>.json`. Such entries are from `-9.2e18` to `9.2e18`;
+a person clearing all history writes `from` 0. To reproduce, age `timer_last_fired` and the `bounces` times in a copy
+of the profile's `DIPS` database and start it: the cleanup runs within seconds.
+
 **A right thumb resting no longer throws the page (patch 0011).** Chromium timed each scroll frame
 from the last pointer frame of any kind, so the pointer moving under a resting right thumb made a
 scroll's frames look a moment apart, and its end, a quarter of a second after the last of them, look
