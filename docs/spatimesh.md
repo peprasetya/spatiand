@@ -37,7 +37,7 @@ Chromium the same way (`x11-packages/chromium-host-tools/cr-patches` in termux-p
 Android's libc, `--target=aarch64-linux-android`), which is where its changes for that libc come from. Still to write
 for Android: the sound of each tab to the room's `spatiand-sound` (as the other programs send theirs there), video on
 Spatiand's FFmpeg with Android's decoders in place of VA-API, the drawing through the GPU (software, through `wl_shm`,
-to begin with), and the sandbox (seccomp only: Android lets no program make namespaces). The tree is on deepmagpie,
+to begin with), and the sandbox (seccomp only: Android lets no app make namespaces). The tree is on deepmagpie,
 `spatiand-chromium-android`, fetched for both targets; Chrome's own Android application (`CHROMIUM_TARGET=android`)
 is not built.
 
@@ -60,12 +60,25 @@ opens, as on the Deck), started through `/system/bin/sh run.sh`, as nothing in t
 Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources by `SPATIMESH_ASSETS`
 (`android-libc/0010`). Different from the Deck, each by what Android has not got, each to be closed:
 
-* **The sandbox is half the Deck's**: Android lets no app make namespaces, so Chromium's first layer is off
-  (`--disable-setuid-sandbox`); the second, the seccomp filter on every tab's process, is on. A page loads so.
+* **No sandbox yet** (corrected 2026-11-08: this said the seccomp filter was on; it was not). Termux's
+  `1001-chromium-disable-sandbox` appends `--no-sandbox` to every process, so each tab runs with the app's own
+  rights over the app's files. Android lets no app make namespaces, so the Deck's first layer cannot be had; the
+  second, Chromium's seccomp filter with file access through its broker, is being built for it.
 * **It draws without the GPU** (`--disable-gpu`): its pictures go to the room as shared memory. Chromium's ANGLE
   libraries are not carried yet: named `libEGL.so` and `libGLESv2.so`, they would stand in for Android's own in the
   app's library folder, which every program the room starts searches first.
-* **No sound**: built without PulseAudio and ALSA, which Android has not got; the room's `spatiand-sound` is next.
+* **Sound, as on the Deck, through the room** (2026-11-08, `android-libc/0012`): there is no PulseAudio, so
+  Chromium's Linux audio has a backend of Spatiand's own (`media/audio/spatiand`). Every stream goes to the room's
+  `spatiand-sound` under the name of the sink its tab is in, `spatiand.window.<slot>`, which patch 0007 makes the
+  tab's output device from `spatiand-sinks` as on the Deck; the room gives each SpatiMesh window a slot keyed by its
+  process and surface, writes `spatiand-sinks`, and places the sound at the window through the HRTF, under the
+  window's mute and volume. A tab moved to another window has its streams opened again under that window's name;
+  a stream for the default device (a tab not yet routed) is heard at SpatiMesh's newest window. The microphone is
+  the room's too: `spatiand-mic` (`crates/spatiand/src/own.rs`, `mic`), recording while a page listens, with
+  Android's echo cancelling and noise suppression. Tried with a stand-in room on the Beam Pro: a 660 Hz tone came
+  through whole under its window's sink, a 7 s tone moved to another window's sink mid-play with nothing lost, and a
+  page heard a 440 Hz tone from the stand-in microphone. The room's half (each window's slot) runs only with the
+  glasses on, as the room does nothing per frame without them.
 * **Video in software**, by Spatiand's FFmpeg; Android's decoders (MediaCodec, in that FFmpeg) are not yet asked.
 * No D-Bus: libdbus asks for a system bus at its build folder's path and finds none, as there is none to find.
 

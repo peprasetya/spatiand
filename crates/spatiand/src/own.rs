@@ -607,6 +607,140 @@ pub mod sound {
     }
 }
 
+/// The machine's microphone, for Spatiand's own applications that ask for it: SpatiMesh's pages
+/// on the Beam Pro, which on the Deck reach the microphone through PipeWire.
+///
+/// A program connects to `$XDG_RUNTIME_DIR/spatiand-mic` and says `SPMC`. While anyone is
+/// connected the session records the microphone -- as a voice, with the platform's echo
+/// cancelling and noise suppression, as for a call -- and sends each of them 48 kHz mono
+/// little-endian 16-bit samples as they come; recording stops when the last has gone. Chromium
+/// asks each site first, as it does everywhere (media/audio/spatiand in its build for Android).
+#[cfg(any(target_os = "macos", target_os = "android"))]
+pub mod mic {
+    use std::io::{Read, Write};
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Duration;
+
+    /// What it is sent at: what Chromium's side says its microphone is.
+    pub const RATE: u32 = 48_000;
+
+    /// The most kept for one that is not reading, in bytes: half a second.
+    const MOST_WAITING: usize = RATE as usize;
+
+    struct Listener {
+        stream: UnixStream,
+        /// Bytes not yet taken; the first of them is `sent % 2` into a sample.
+        waiting: Vec<u8>,
+        sent: usize,
+    }
+
+    #[derive(Default)]
+    struct Recording {
+        listeners: Vec<Listener>,
+        capture: Option<spatiand_audio::server::Capture>,
+    }
+
+    fn recording() -> &'static Mutex<Recording> {
+        static RECORDING: OnceLock<Mutex<Recording>> = OnceLock::new();
+        RECORDING.get_or_init(Default::default)
+    }
+
+    pub fn socket_path() -> Option<std::path::PathBuf> {
+        std::env::var_os("XDG_RUNTIME_DIR").map(|d| std::path::PathBuf::from(d).join("spatiand-mic"))
+    }
+
+    /// Start listening, once.
+    pub fn listen() {
+        static STARTED: OnceLock<()> = OnceLock::new();
+        STARTED.get_or_init(|| {
+            let Some(path) = socket_path() else { return };
+            let _ = std::fs::remove_file(&path);
+            let listener = match UnixListener::bind(&path) {
+                Ok(listener) => listener,
+                Err(e) => {
+                    log::warn!("no socket for the microphone of Spatiand's applications: {e}");
+                    return;
+                }
+            };
+            let _ = std::thread::Builder::new().name("own-mic".into()).spawn(move || {
+                for stream in listener.incoming().flatten() {
+                    let _ = std::thread::Builder::new().name("own-mic-in".into()).spawn(move || welcome(stream));
+                }
+            });
+            // Recording stops once nobody listens. Not from the recording's own callback, which
+            // the platform's stream waits on as it closes.
+            let _ = std::thread::Builder::new().name("own-mic-close".into()).spawn(|| loop {
+                std::thread::sleep(Duration::from_millis(250));
+                let done = {
+                    let mut recording = recording().lock().unwrap();
+                    if recording.listeners.is_empty() { recording.capture.take() } else { None }
+                };
+                if let Some(capture) = done {
+                    drop(capture);
+                    log::info!("the microphone is closed: nothing of Spatiand's listens");
+                }
+            });
+            log::info!("Spatiand's applications' microphone is at {}", path.display());
+        });
+    }
+
+    fn welcome(mut stream: UnixStream) {
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+        let mut head = [0u8; 4];
+        if stream.read_exact(&mut head).is_err() || &head != b"SPMC" {
+            return;
+        }
+        if stream.set_nonblocking(true).is_err() {
+            return;
+        }
+        let mut recording = recording().lock().unwrap();
+        recording.listeners.push(Listener { stream, waiting: Vec::new(), sent: 0 });
+        if recording.capture.is_none() {
+            match spatiand_audio::server::Capture::open(RATE, 1, Box::new(hand_on)) {
+                Ok(capture) => {
+                    recording.capture = Some(capture);
+                    log::info!("the microphone is open for Spatiand's applications");
+                }
+                Err(e) => {
+                    // Closing them says so: the page's track ends.
+                    log::warn!("the microphone would not open for Spatiand's applications: {e}");
+                    recording.listeners.clear();
+                }
+            }
+        }
+    }
+
+    /// What the microphone has heard, to everyone listening: written as far as each will take,
+    /// the rest kept for it, and the oldest of that let go past half a second.
+    fn hand_on(samples: &[i16]) {
+        let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let mut recording = recording().lock().unwrap();
+        recording.listeners.retain_mut(|listener| {
+            listener.waiting.extend_from_slice(&bytes);
+            while !listener.waiting.is_empty() {
+                match listener.stream.write(&listener.waiting) {
+                    Ok(0) => return false,
+                    Ok(n) => {
+                        listener.waiting.drain(..n);
+                        listener.sent += n;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => return false,
+                }
+            }
+            if listener.waiting.len() > MOST_WAITING {
+                // Whole samples only, after the rest of one half sent.
+                let keep = listener.sent % 2;
+                let extra = (listener.waiting.len() - MOST_WAITING) & !1;
+                listener.waiting.drain(keep..keep + extra);
+            }
+            true
+        });
+    }
+}
+
 #[cfg(test)]
 mod assistant_tests {
     use super::*;

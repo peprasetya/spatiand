@@ -188,10 +188,12 @@ pub fn run(
     // The keyboard's mic key: what is said is typed (`crate::dictate`).
     let mut dictation = crate::dictate::Dictation::default();
     let mut spatial_audio = crate::audio::Audio::new(prefs.spatial_audio, prefs.directness());
-    // Spatiand's own applications hand their sound to the session (crate::own::sound).
+    // Spatiand's own applications hand their sound to the session (crate::own::sound), and
+    // take the microphone from it (crate::own::mic: SpatiMesh's pages).
     if spatial_audio.is_on() {
         crate::own::sound::listen();
     }
+    crate::own::mic::listen();
     type KeyboardResize = (f32, f64);
     let mut keyboard_resize: Option<KeyboardResize> = None;
     let mut keyboard_border_hot = false;
@@ -1208,6 +1210,16 @@ pub fn run(
                         spatial_audio.adopt_keyed(id, &app_id, crate::remote::sound_width(&app_id));
                         sinks_changed = true;
                     }
+                    // A SpatiMesh window: a sink of its own, keyed as on the Deck by its process
+                    // and surface. Chromium reads which sink that is from `spatiand-sinks` and
+                    // hands each tab's sound over under it (media/audio/spatiand in its build for
+                    // Android), so a tab's sound is at its window, and moves with it.
+                    Some(app_id) if app_id == crate::audio::CHROMIUM_APP_ID => {
+                        if let Some(key) = runtime.state.window_sound_key_of_id(id, pid) {
+                            spatial_audio.adopt_keyed(id, &key, spatiand_audio::server::Width::Full);
+                            sinks_changed = true;
+                        }
+                    }
                     Some(app_id) if own_app(&app_id) => {
                         // Each window by the name its sound comes with: two pages of one
                         // browser are two places in the room.
@@ -1223,6 +1235,11 @@ pub fn run(
                     if app_id.starts_with("remote.") {
                         spatial_audio.adopt_keyed(*id, &app_id, crate::remote::sound_width(&app_id));
                         sinks_changed = true;
+                    } else if app_id == crate::audio::CHROMIUM_APP_ID {
+                        if let Some(key) = runtime.state.window_sound_key_of_id(*id, *pid) {
+                            spatial_audio.adopt_keyed(*id, &key, spatiand_audio::server::Width::Full);
+                            sinks_changed = true;
+                        }
                     } else if own_app(&app_id) {
                         let key = runtime.state.sound_key_of_id(*id).unwrap_or(app_id);
                         spatial_audio.adopt_keyed(*id, &format!("own:{key}"), spatiand_audio::server::Width::Full);
@@ -1241,8 +1258,22 @@ pub fn run(
             let unplaced = crate::own::sound::waiting();
             if !unplaced.is_empty() {
                 let sinks = spatial_audio.keyed_sinks();
+                // SpatiMesh's windows' slots, newest last: slots are never numbered again.
+                let mut chromium: Vec<_> = sinks
+                    .iter()
+                    .filter(|(key, _)| key.starts_with("wl:"))
+                    .filter_map(|(_, sink)| spatiand_audio::server::slot_of_sink(sink))
+                    .collect();
+                chromium.sort_unstable();
                 for app in unplaced {
-                    if let Some(slot) = sinks.get(&format!("own:{app}")).and_then(|s| spatiand_audio::server::slot_of_sink(s)) {
+                    let slot = sinks
+                        .get(&format!("own:{app}"))
+                        .and_then(|s| spatiand_audio::server::slot_of_sink(s))
+                        // A SpatiMesh tab's, under its window's sink, while that window is here.
+                        .or_else(|| sinks.values().any(|s| *s == app).then(|| spatiand_audio::server::slot_of_sink(&app)).flatten())
+                        // A tab not yet routed to its window: at SpatiMesh's newest.
+                        .or_else(|| (app == crate::audio::CHROMIUM_APP_ID).then(|| chromium.last().copied()).flatten());
+                    if let Some(slot) = slot {
                         crate::own::sound::assign(&app, slot);
                     }
                 }
@@ -1254,6 +1285,8 @@ pub fn run(
             }
             if sinks_changed {
                 crate::remote::sound::set_sinks(spatial_audio.keyed_sinks());
+                // Where SpatiMesh's windows' sinks are, for its tabs (as on the Deck).
+                crate::audio::write_sink_map(&spatial_audio.keyed_sinks());
             }
 
             // Where every window's sound is, now, and what it is doing. The head has moved

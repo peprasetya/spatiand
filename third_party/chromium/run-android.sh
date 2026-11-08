@@ -6,9 +6,9 @@
 #
 # The switches are the Deck's (run.sh) but for VA-API, which Android has not got, and the GPU:
 # Chromium draws in software here and hands the room its pictures as shared memory, until it draws
-# with Android's GPU. And its sandbox is half the Deck's: Android lets no app make namespaces, so
-# Chromium's first layer (--disable-setuid-sandbox: neither the setuid helper nor namespaces) is
-# not there; its second, the seccomp filter on every tab's process, is.
+# with Android's GPU. Android lets no app make namespaces, so Chromium's first sandbox layer
+# (--disable-setuid-sandbox: neither the setuid helper nor namespaces) cannot be had here; its
+# second, the seccomp filter, is not on yet either (docs/spatimesh.md, "No sandbox yet").
 here=${0%/*}
 # Its resources, which a Linux build finds beside the program (android-libc/0010).
 export SPATIMESH_ASSETS="$here"
