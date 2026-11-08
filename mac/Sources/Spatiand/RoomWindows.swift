@@ -732,6 +732,11 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             if button == .left { lastClick = (now, p, count); down.insert(id); noteDrag(id) }
             let event = CGEvent(mouseEventSource: source, mouseType: downType, mouseCursorPosition: p, mouseButton: button)
             event?.setIntegerValueField(.mouseEventClickState, value: Int64(count))
+            PointerLog.shared.note({
+                let front = NSWorkspace.shared.frontmostApplication
+                let top = topWindow(at: p, for: entries[id]?.info.pid ?? 0)
+                return String(format: "press window %ld at %.1f %.1f count %ld flags %llx | front %@ (app wanted %@) | top window there %@ (wanted %@) | cursor now %@", Int(id), p.x, p.y, count, RoomTap.shared.flags.rawValue, front?.bundleIdentifier ?? "?", entries[id]?.info.bundle ?? "?", top.map { String($0.id) } ?? "none", entries[id].map { String($0.info.windowID) } ?? "?", String(describing: CGEvent(source: nil)?.location))
+            }())
             post(event)
         } else {
             let dragged = button == .left && down.contains(id)
@@ -741,6 +746,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             let p = dragged ? (CGEvent(source: nil)?.location ?? p) : p
             let event = CGEvent(mouseEventSource: source, mouseType: upType, mouseCursorPosition: p, mouseButton: button)
             event?.setIntegerValueField(.mouseEventClickState, value: Int64(button == .left ? lastClick.2 : 1))
+            PointerLog.shared.note(String(format: "release window %ld at %.1f %.1f flags %llx", Int(id), p.x, p.y, RoomTap.shared.flags.rawValue))
             post(event)
         }
     }
