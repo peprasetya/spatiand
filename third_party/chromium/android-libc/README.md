@@ -48,3 +48,4 @@ libnss). With them the Deck's code for certificates and D-Bus is built as it is.
 | 0006 | V8's stack traces without `backtrace()`: Android's libc has it from API 33, and this builds for 24, as Termux's changes are written for (Termux brings libandroid-execinfo). |
 | 0007 | minigbm without Android's system properties (`cutils/`, the platform's, not the NDK's), as Termux's 2013 does for its log. |
 | 0008 | A dummy HID service, Termux's 1019 placed for 153: no HID devices without udev. |
+| 0009 | The Linux notifications bridge depends on `//components/dbus`, whose headers it includes: without GTK and GLib nothing else brings their path to it. |

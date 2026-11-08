@@ -1,0 +1,13 @@
+diff --git a/chrome/browser/notifications/BUILD.gn b/chrome/browser/notifications/BUILD.gn
+index 8c6b02e11f..885cd9bb30 100644
+--- a/chrome/browser/notifications/BUILD.gn
++++ b/chrome/browser/notifications/BUILD.gn
+@@ -334,6 +334,8 @@ source_set("impl") {
+       deps += [
+         "//chrome/app/theme:chrome_unscaled_resources_grit",
+         "//chrome/browser/themes",
++        # Spatiand: its D-Bus headers, which reach it otherwise only through GTK's or GLib's.
++        "//components/dbus",
+       ]
+     }
+   }
