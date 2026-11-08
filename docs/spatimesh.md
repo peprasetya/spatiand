@@ -41,6 +41,14 @@ to begin with), and the sandbox (seccomp only: Android lets no program make name
 `spatiand-chromium-android`, fetched for both targets; Chrome's own Android application (`CHROMIUM_TARGET=android`)
 is not built.
 
+**It runs (2026-11-08).** The first build linked as an arm64 program of Android's (`/system/bin/linker64`), and on
+the Beam Pro, headless, started from adb as Spatiand's own app user (`run-as`, from its cache), it fetched
+example.com and Wikipedia and drew Wikipedia's page right, in Android's fonts through Chromium's own fontconfig.
+Names went by DNS over HTTPS to OpenDNS, Cromite's default, and never to the 8.8.8.8 of Termux's change. Learnt:
+its libc++ must be the one of the NDK it was built against, Chromium's, newer than the r28c one the APK carries
+(`std::__hash_memory`), so it is to be linked in whole; libdbus looks for a system bus at its build folder's path.
+Not yet: carried in the APK, a window in the room, sound, video, the GPU.
+
 **Changed again on 2026-10-29:** WebKitGTK, Linux's fallback, removed too: WPE is the only engine,
 and where it is not installed SpatiMesh says so rather than falling back.
 
