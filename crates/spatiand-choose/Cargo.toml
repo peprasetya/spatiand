@@ -1,0 +1,15 @@
+[package]
+name = "spatiand-choose"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Spatiand's file chooser: a window of the room that a program asks for files, a folder or a name to save under"
+
+# A program's file dialog where the machine has none for the room: SpatiMesh's Chromium on the
+# Beam Pro (third_party/chromium/android-libc/0019), which on the Deck asks the desktop portal.
+[dependencies]
+spatiand-app = { path = "../spatiand-app" }
+log.workspace = true
+env_logger.workspace = true

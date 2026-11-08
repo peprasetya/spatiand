@@ -114,6 +114,16 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   emptied page drops about 60% of its frames whichever decoder plays it, software too; on a page with other
   content it drops none.
 * No D-Bus: libdbus asks for a system bus at its build folder's path and finds none, as there is none to find.
+* **Choosing files** (`android-libc/0019`, `crates/spatiand-choose`): there is no desktop portal on Android to ask, as
+  there is on the Deck, so a page's file input, Save as, a folder to upload or an extension to load ask Spatiand's own
+  chooser, a window of the room carried as `libspatiand-choose.so` and run as a program that writes what was chosen, a
+  path a line (`--mode open|open-multiple|folder|save`, `--dir`, `--name`, `--accept`). It is SpatiMesh's WPE picker
+  made a program: places, the folder's lines (the cursor starts on them, and finding moves it to the first found, so
+  Enter takes it), a field to find in or type a path into, several marked then chosen, a name to save under (asked
+  before writing over a file). Tried in the Mac's snapshot room by script (a file found and taken, a page saved, two
+  marked and chosen) and on the Beam Pro from SpatiMesh: its window opened in the room, a choice reached the page,
+  closing it was a cancel. Android's own shared storage (Download, Pictures) is offered, and downloads go to its
+  Download folder (`run-android.sh`), only once Spatiand has "All files access", which Android shows declined.
 * **Crashes leave minidumps** (`android-libc/0018`): Chromium's crash handler is carried as `libspatimesh_crashpad.so`;
   a tab crashed on purpose (`chrome://crash`) left its `.dmp` in `$XDG_CONFIG_HOME/chromium/Crash Reports/pending`.
 

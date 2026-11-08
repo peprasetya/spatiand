@@ -37,6 +37,7 @@ members = [
     "crates/spatimesh-wpe",
     "crates/spatikey-core",
     "crates/spatikey",
+    "crates/spatiand-choose",
 ]
 
 [workspace.package]

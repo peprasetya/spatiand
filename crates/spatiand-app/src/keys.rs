@@ -24,7 +24,10 @@ pub(crate) struct Keyboard {
 impl Default for Keyboard {
     fn default() -> Self {
         Keyboard {
-            context: xkb::Context::new(xkb::CONTEXT_NO_FLAGS),
+            // Without the machine's XKB folders: the compositor's keymap is whole, and with
+            // them a program that cannot find them (one started without XKB_CONFIG_ROOT on
+            // Android) had no context, and crashed on its first keyboard.
+            context: xkb::Context::new(xkb::CONTEXT_NO_DEFAULT_INCLUDES),
             state: None,
             rate: 25,
             delay: Duration::from_millis(400),

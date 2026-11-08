@@ -36,7 +36,7 @@ PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
     FFMPEG_INCLUDE_DIR=$FF/include FFMPEG_LIBS_DIR=$FF/lib FFMPEG_LINK_MODE=dynamic \
     BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/sysroot" \
     RUSTFLAGS="-L native=$(pwd)/xkbcommon/out -L native=$FF/lib -C link-arg=-lc++abi" \
-    cargo ndk -t arm64-v8a -P 34 build --release -p spatireel -p spatiloupe -p spatiquill -p spatishelf -p spatimesh -p spatipal -p spatikey
+    cargo ndk -t arm64-v8a -P 34 build --release -p spatireel -p spatiloupe -p spatiquill -p spatishelf -p spatimesh -p spatipal -p spatikey -p spatiand-choose
 # SpatiMesh's engine, on WPE WebKit built for Android (third_party/wpe/build.sh android), when
 # it has been: without it SpatiMesh shows no pages here.
 WPE_OUT=${SPATIAND_WPE:-$HOME/Developer/spatiand-wpe/out/android}
@@ -106,6 +106,8 @@ cp jniLibs/arm64-v8a/libspatiand.so eglshim/out/libeglshim.so mysofa/out/libmyso
 for own in spatireel spatiloupe spatiquill spatishelf spatimesh spatipal spatikey; do
     cp ../target/aarch64-linux-android/release/$own $OUT/apk/lib/arm64-v8a/lib$own.so
 done
+# The file chooser SpatiMesh's Chromium asks (crates/spatiand-choose): not one of the launcher's.
+cp ../target/aarch64-linux-android/release/spatiand-choose $OUT/apk/lib/arm64-v8a/libspatiand-choose.so
 for lib in avcodec avdevice avfilter avformat avutil swresample swscale; do
     cp "$FF/lib/lib$lib.so" $OUT/apk/lib/arm64-v8a/
 done

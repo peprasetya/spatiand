@@ -1,0 +1,341 @@
+From bd5cd1a2e8d8bee60c0e1e6e50c5240b1d19efa6 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Sun, 8 Nov 2026 20:15:47 +0700
+Subject: [PATCH] Spatiand: built for Android libc: files chosen in Spatiand's
+ own chooser
+
+There is no desktop portal on Android to ask, as there is on the Deck: a page's file input, Save as,
+a folder to upload or an extension to load ask Spatiand's chooser instead, a window of the room
+(libspatiand-choose.so, beside SpatiMesh in the APK), run as a program that writes what was chosen.
+It starts where the page asked, else where the last choice was, else Downloads, else Android's own
+Download folder where Spatiand may read it.
+---
+ ui/shell_dialogs/BUILD.gn                     |   7 +
+ .../select_file_dialog_linux_spatiand.cc      | 202 ++++++++++++++++++
+ .../select_file_dialog_linux_spatiand.h       |  54 +++++
+ ui/shell_dialogs/shell_dialog_linux.cc        |   9 +-
+ 4 files changed, 271 insertions(+), 1 deletion(-)
+ create mode 100644 ui/shell_dialogs/select_file_dialog_linux_spatiand.cc
+ create mode 100644 ui/shell_dialogs/select_file_dialog_linux_spatiand.h
+
+diff --git a/ui/shell_dialogs/BUILD.gn b/ui/shell_dialogs/BUILD.gn
+index 8de23c6560..cc300bdff5 100644
+--- a/ui/shell_dialogs/BUILD.gn
++++ b/ui/shell_dialogs/BUILD.gn
+@@ -2,6 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
++import("//build/config/compiler/compiler.gni")
+ import("//build/config/features.gni")
+ import("//build/config/ui.gni")
+ import("//testing/test.gni")
+@@ -59,6 +60,12 @@ component("shell_dialogs") {
+       "shell_dialog_linux.cc",
+     ]
+     deps += [ "//ui/linux:linux_ui" ]
++    if (spatiand_android_libc) {
++      sources += [
++        "select_file_dialog_linux_spatiand.cc",
++        "select_file_dialog_linux_spatiand.h",
++      ]
++    }
+     if (use_dbus) {
+       sources += [
+         "select_file_dialog_linux_portal.cc",
+diff --git a/ui/shell_dialogs/select_file_dialog_linux_spatiand.cc b/ui/shell_dialogs/select_file_dialog_linux_spatiand.cc
+new file mode 100644
+index 0000000000..de2a498c81
+--- /dev/null
++++ b/ui/shell_dialogs/select_file_dialog_linux_spatiand.cc
+@@ -0,0 +1,202 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "ui/shell_dialogs/select_file_dialog_linux_spatiand.h"
++
++#include <utility>
++
++#include "base/command_line.h"
++#include "base/environment.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/logging.h"
++#include "base/process/launch.h"
++#include "base/strings/string_split.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/thread_pool.h"
++#include "ui/shell_dialogs/selected_file_info.h"
++
++namespace ui {
++
++namespace {
++
++struct Asked {
++  const char* mode;
++  std::string title;
++  base::FilePath default_path;
++  base::FilePath last_path;
++  std::vector<std::string> accept;
++};
++
++// The chooser run, and what it wrote: nothing if it is not here, or nothing was chosen. Off the
++// UI thread: it waits for the wearer.
++std::optional<std::vector<base::FilePath>> RunChooser(Asked asked) {
++  std::unique_ptr<base::Environment> env = base::Environment::Create();
++  const std::string apps = env->GetVar("SPATIAND_APPS_DIR").value_or("");
++  const base::FilePath chooser = base::FilePath(apps).Append("libspatiand-choose.so");
++  if (apps.empty() || !base::PathExists(chooser)) {
++    LOG(WARNING) << "Spatiand: no file chooser at " << chooser.value();
++    return std::nullopt;
++  }
++  // Where to begin: the folder of what was asked about, else where the last choice was, else
++  // the downloads, else home.
++  const base::FilePath home(env->GetVar("HOME").value_or("/"));
++  base::FilePath dir;
++  std::string name;
++  if (!asked.default_path.empty()) {
++    if (base::DirectoryExists(asked.default_path)) {
++      dir = asked.default_path;
++    } else {
++      name = asked.default_path.BaseName().value();
++      if (asked.default_path.IsAbsolute() && base::DirectoryExists(asked.default_path.DirName())) {
++        dir = asked.default_path.DirName();
++      }
++    }
++  }
++  if (dir.empty() && !asked.last_path.empty() && base::DirectoryExists(asked.last_path)) {
++    dir = asked.last_path;
++  }
++  if (dir.empty() && base::DirectoryExists(home.Append("Downloads"))) {
++    dir = home.Append("Downloads");
++  }
++  // Android's own Download folder, where Spatiand may read it ("All files access").
++  const base::FilePath shared("/storage/emulated/0/Download");
++  if (dir.empty() && base::DirectoryExists(shared) && base::PathIsReadable(shared)) {
++    dir = shared;
++  }
++  if (dir.empty()) {
++    dir = home;
++  }
++  base::CommandLine command(chooser);
++  command.AppendArg("--mode");
++  command.AppendArg(asked.mode);
++  command.AppendArg("--dir");
++  command.AppendArg(dir.value());
++  if (!asked.title.empty()) {
++    command.AppendArg("--title");
++    command.AppendArg(asked.title);
++  }
++  if (!name.empty()) {
++    command.AppendArg("--name");
++    command.AppendArg(name);
++  }
++  if (!asked.accept.empty()) {
++    command.AppendArg("--accept");
++    command.AppendArg(base::JoinString(asked.accept, ","));
++  }
++  std::string output;
++  int exit_code = -1;
++  if (!base::GetAppOutputWithExitCode(command, &output, &exit_code) || exit_code != 0) {
++    return std::nullopt;
++  }
++  std::vector<base::FilePath> paths;
++  for (const std::string& line :
++       base::SplitString(output, "\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
++    paths.emplace_back(line);
++  }
++  if (paths.empty()) {
++    return std::nullopt;
++  }
++  return paths;
++}
++
++}  // namespace
++
++SelectFileDialogLinuxSpatiand::SelectFileDialogLinuxSpatiand(
++    Listener* listener,
++    std::unique_ptr<SelectFilePolicy> policy)
++    : SelectFileDialogLinux(listener, std::move(policy)) {}
++
++SelectFileDialogLinuxSpatiand::~SelectFileDialogLinuxSpatiand() = default;
++
++bool SelectFileDialogLinuxSpatiand::IsRunning(gfx::NativeWindow parent_window) const {
++  return running_;
++}
++
++bool SelectFileDialogLinuxSpatiand::HasMultipleFileTypeChoicesImpl() {
++  return false;
++}
++
++void SelectFileDialogLinuxSpatiand::SelectFileImpl(
++    Type type,
++    const std::u16string& title,
++    const base::FilePath& default_path,
++    const FileTypeInfo* file_types,
++    int file_type_index,
++    const base::FilePath::StringType& default_extension,
++    gfx::NativeWindow owning_window,
++    const GURL* caller) {
++  set_type(type);
++  if (file_types) {
++    set_file_types(*file_types);
++  }
++  Asked asked;
++  switch (type) {
++    case SELECT_OPEN_FILE:
++      asked.mode = "open";
++      break;
++    case SELECT_OPEN_MULTI_FILE:
++      asked.mode = "open-multiple";
++      break;
++    case SELECT_FOLDER:
++    case SELECT_UPLOAD_FOLDER:
++    case SELECT_EXISTING_FOLDER:
++      asked.mode = "folder";
++      break;
++    case SELECT_SAVEAS_FILE:
++      asked.mode = "save";
++      break;
++    case SELECT_NONE:
++      return;
++  }
++  asked.title = base::UTF16ToUTF8(title);
++  asked.default_path = default_path;
++  const base::FilePath* last =
++      type == SELECT_SAVEAS_FILE ? last_saved_path() : last_opened_path();
++  if (last) {
++    asked.last_path = *last;
++  }
++  if (file_types) {
++    for (const auto& kinds : file_types->extensions) {
++      for (const auto& extension : kinds) {
++        asked.accept.push_back(extension);
++      }
++    }
++  }
++  running_ = true;
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE,
++      {base::MayBlock(), base::TaskPriority::USER_BLOCKING,
++       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
++      base::BindOnce(&RunChooser, std::move(asked)),
++      base::BindOnce(&SelectFileDialogLinuxSpatiand::Chosen, weak_factory_.GetWeakPtr(), type));
++}
++
++void SelectFileDialogLinuxSpatiand::Chosen(Type type,
++                                           std::optional<std::vector<base::FilePath>> paths) {
++  running_ = false;
++  if (!listener_) {
++    return;
++  }
++  if (!paths) {
++    listener_->FileSelectionCanceled();
++    return;
++  }
++  if (type == SELECT_SAVEAS_FILE) {
++    set_last_saved_path(paths->front().DirName());
++  } else if (type == SELECT_OPEN_FILE || type == SELECT_OPEN_MULTI_FILE) {
++    set_last_opened_path(paths->front().DirName());
++  }
++  if (type == SELECT_OPEN_MULTI_FILE) {
++    std::vector<SelectedFileInfo> files;
++    for (const base::FilePath& path : *paths) {
++      files.emplace_back(path);
++    }
++    listener_->MultiFilesSelected(files);
++    return;
++  }
++  listener_->FileSelected(SelectedFileInfo(paths->front()), 0);
++}
++
++}  // namespace ui
+diff --git a/ui/shell_dialogs/select_file_dialog_linux_spatiand.h b/ui/shell_dialogs/select_file_dialog_linux_spatiand.h
+new file mode 100644
+index 0000000000..067b7e8c60
+--- /dev/null
++++ b/ui/shell_dialogs/select_file_dialog_linux_spatiand.h
+@@ -0,0 +1,54 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef UI_SHELL_DIALOGS_SELECT_FILE_DIALOG_LINUX_SPATIAND_H_
++#define UI_SHELL_DIALOGS_SELECT_FILE_DIALOG_LINUX_SPATIAND_H_
++
++#include <memory>
++#include <optional>
++#include <string>
++#include <vector>
++
++#include "base/files/file_path.h"
++#include "base/memory/weak_ptr.h"
++#include "ui/shell_dialogs/select_file_dialog_linux.h"
++
++namespace ui {
++
++// Spatiand: files chosen in Spatiand's own chooser, a window of the room (crates/spatiand-choose
++// in Spatiand, carried in the APK as libspatiand-choose.so), for SpatiMesh on Android's libc,
++// where there is no desktop portal to ask as there is on the Deck (android-libc/0019). The chooser
++// is run as a program, which writes what was chosen, a path a line.
++class SelectFileDialogLinuxSpatiand : public SelectFileDialogLinux {
++ public:
++  SelectFileDialogLinuxSpatiand(Listener* listener, std::unique_ptr<SelectFilePolicy> policy);
++  SelectFileDialogLinuxSpatiand(const SelectFileDialogLinuxSpatiand&) = delete;
++  SelectFileDialogLinuxSpatiand& operator=(const SelectFileDialogLinuxSpatiand&) = delete;
++
++  // SelectFileDialog:
++  bool IsRunning(gfx::NativeWindow parent_window) const override;
++
++ protected:
++  ~SelectFileDialogLinuxSpatiand() override;
++
++  // SelectFileDialog:
++  void SelectFileImpl(Type type,
++                      const std::u16string& title,
++                      const base::FilePath& default_path,
++                      const FileTypeInfo* file_types,
++                      int file_type_index,
++                      const base::FilePath::StringType& default_extension,
++                      gfx::NativeWindow owning_window,
++                      const GURL* caller) override;
++  bool HasMultipleFileTypeChoicesImpl() override;
++
++ private:
++  void Chosen(Type type, std::optional<std::vector<base::FilePath>> paths);
++
++  bool running_ = false;
++  base::WeakPtrFactory<SelectFileDialogLinuxSpatiand> weak_factory_{this};
++};
++
++}  // namespace ui
++
++#endif  // UI_SHELL_DIALOGS_SELECT_FILE_DIALOG_LINUX_SPATIAND_H_
+diff --git a/ui/shell_dialogs/shell_dialog_linux.cc b/ui/shell_dialogs/shell_dialog_linux.cc
+index 154651427f..9cfa3db8cd 100644
+--- a/ui/shell_dialogs/shell_dialog_linux.cc
++++ b/ui/shell_dialogs/shell_dialog_linux.cc
+@@ -12,12 +12,19 @@
+ #include "ui/shell_dialogs/select_file_dialog_linux_portal.h"
+ #endif
+ 
++#if defined(__TERMUX__)
++#include "ui/shell_dialogs/select_file_dialog_linux_spatiand.h"
++#endif
++
+ namespace ui {
+ 
+ SelectFileDialog* CreateSelectFileDialog(
+     SelectFileDialog::Listener* listener,
+     std::unique_ptr<SelectFilePolicy> policy) {
+-#if BUILDFLAG(USE_DBUS)
++#if defined(__TERMUX__)
++  // Spatiand: no desktop portal on Android; Spatiand's own chooser (android-libc/0019).
++  return new SelectFileDialogLinuxSpatiand(listener, std::move(policy));
++#elif BUILDFLAG(USE_DBUS)
+   return new SelectFileDialogLinuxPortal(listener, std::move(policy));
+ #else
+   const LinuxUi* linux_ui = LinuxUi::instance();
+-- 
+2.53.0
+

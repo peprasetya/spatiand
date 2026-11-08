@@ -4627,6 +4627,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatiand-choose"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "spatiand-app",
+]
+
+[[package]]
 name = "spatiand-hmd"
 version = "0.1.0"
 dependencies = [

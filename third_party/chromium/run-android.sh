@@ -17,6 +17,14 @@ export SPATIMESH_ASSETS="$here"
 mkdir -p "$XDG_CACHE_HOME/fontconfig"
 sed "s|CACHE|$XDG_CACHE_HOME/fontconfig|" "$here/fonts.conf" > "$XDG_CACHE_HOME/spatimesh-fonts.conf"
 export FONTCONFIG_FILE="$XDG_CACHE_HOME/spatimesh-fonts.conf"
+# Downloads into Android's own Download folder, where the phone's other apps find them, when
+# Spatiand may write there ("All files access"); otherwise into Downloads in its own home.
+shared=/storage/emulated/0/Download
+if [ -d "$shared" ] && [ -w "$shared" ]; then
+    printf 'XDG_DOWNLOAD_DIR="%s"\n' "$shared" > "$XDG_CONFIG_HOME/user-dirs.dirs"
+elif [ -f "$XDG_CONFIG_HOME/user-dirs.dirs" ] && grep -q "$shared" "$XDG_CONFIG_HOME/user-dirs.dirs"; then
+    rm -f "$XDG_CONFIG_HOME/user-dirs.dirs"
+fi
 exec "$SPATIAND_APPS_DIR/libspatimesh_chromium.so" --ozone-platform=wayland --user-data-dir="$HOME/.config/spatiand-chromium" \
     --class=spatimesh-chromium \
     --password-store=basic --no-first-run --no-default-browser-check \
