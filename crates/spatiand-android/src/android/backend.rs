@@ -337,9 +337,11 @@ pub fn run(
         log::info!("presenting at {w}x{h}, stereo: {on_glasses}");
         runtime.state.set_display_stereo(on_glasses);
 
-        // Side by side, once the glasses are open and the window is not already double-width.
+        // Side by side, once the glasses are open, unless they are already in it. A window
+        // already double-width is not enough: a Mac goes on sending the wide picture to glasses
+        // that have gone back to one eye under it, which then show its left half to both eyes.
         if let Some(x) = hmd.as_mut() {
-            if !on_glasses && !stereo_asked {
+            if (!on_glasses || x.display_mode() != DisplayMode::Stereo) && !stereo_asked {
                 stereo_asked = true;
                 match x.set_display_mode(DisplayMode::Stereo) {
                     Ok(m) => log::info!("headset display mode -> {m:?}; waiting for its display"),

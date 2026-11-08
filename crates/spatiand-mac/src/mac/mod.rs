@@ -266,7 +266,9 @@ pub fn take_glasses(
         // Glasses left in a two-eye mode by whatever had them last do nothing when asked for
         // it again, and macOS, which only learns of the wide picture when they change, goes on
         // offering one eye. Back to one eye first, and a moment for the Mac to see it.
-        if matches!(glasses.raw_display_mode(), Some(0x03 | 0x04 | 0x09)) {
+        let raw = glasses.raw_display_mode();
+        log::info!("the glasses say they are in mode {:?}", raw.map(|m| format!("{m:#04x}")));
+        if matches!(raw, Some(0x03 | 0x04 | 0x09)) {
             log::info!("the glasses were left in a two-eye mode; starting them from one eye");
             let _ = glasses.set_display_mode(spatiand_hmd::DisplayMode::Mono);
             std::thread::sleep(std::time::Duration::from_millis(3000));

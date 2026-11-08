@@ -138,16 +138,51 @@ final class GlassesScreen {
         (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
     }
 
-    /// The display's double-width mode, when it offers one: 72 Hz as the Deck runs it, else any.
-    private static func wideMode(of id: CGDirectDisplayID) -> CGDisplayMode? {
+    private static func modes(of id: CGDirectDisplayID) -> [CGDisplayMode] {
         let options = [kCGDisplayShowDuplicateLowResolutionModes: true] as CFDictionary
-        let modes = (CGDisplayCopyAllDisplayModes(id, options) as? [CGDisplayMode]) ?? []
-        let wide = modes.filter { $0.pixelWidth == 3840 && $0.pixelHeight == 1080 }
+        return (CGDisplayCopyAllDisplayModes(id, options) as? [CGDisplayMode]) ?? []
+    }
+
+    /// The display's double-width mode, when it offers one: 72 Hz as the Deck runs it, else any.
+    /// Only one drawn at its own size: glasses in one eye also get a 3840 by 1080 from macOS, as
+    /// a picture at twice the size shrunk onto their 1920 by 1080, which they show squeezed and
+    /// the same to both eyes. Once chosen macOS keeps it for them until the Mac logs out, so
+    /// every plug-in came up in it and the room, seeing a wide window, never asked for 3D.
+    private static func wideMode(of id: CGDirectDisplayID) -> CGDisplayMode? {
+        let wide = modes(of: id).filter { $0.pixelWidth == 3840 && $0.pixelHeight == 1080 && $0.width == 3840 }
         return wide.first { abs($0.refreshRate - 72) < 1 } ?? wide.max { $0.refreshRate < $1.refreshRate }
+    }
+
+    /// One eye at its own size, for glasses left in that shrunk double width.
+    private static func oneEyeMode(of id: CGDirectDisplayID) -> CGDisplayMode? {
+        let one = modes(of: id).filter { $0.pixelWidth == 1920 && $0.pixelHeight == 1080 && $0.width == 1920 }
+        return one.max { $0.refreshRate < $1.refreshRate }
+    }
+
+    /// Wide in pixels, but not on the cable: the shrunk mode `wideMode` refuses.
+    private static func isShrunkWide(_ id: CGDirectDisplayID) -> Bool {
+        guard let mode = CGDisplayCopyDisplayMode(id), mode.pixelWidth >= 3000 else { return false }
+        return mode.width != mode.pixelWidth && wideMode(of: id) == nil
+    }
+
+    private static func use(_ mode: CGDisplayMode, on id: CGDirectDisplayID) {
+        var config: CGDisplayConfigRef?
+        CGBeginDisplayConfiguration(&config)
+        CGConfigureDisplayWithDisplayMode(config, id, mode, nil)
+        CGCompleteDisplayConfiguration(config, .forSession)
     }
 
     private func open(on id: CGDirectDisplayID) {
         guard opening else { return }
+        if Self.isShrunkWide(id), let one = Self.oneEyeMode(of: id) {
+            print("glasses: macOS has them in a shrunk double width; back to one eye first")
+            Self.use(one, on: id)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                guard let self, self.opening else { return }
+                self.open(on: Self.findDisplay() ?? id)
+            }
+            return
+        }
         // AppKit's screen list lags a display that has just changed; wait until it agrees.
         let expected = Self.appKitFrame(of: id)
         let deadline = Date().addingTimeInterval(6)
@@ -231,10 +266,7 @@ final class GlassesScreen {
         let width = CGFloat(CGDisplayCopyDisplayMode(displayID)?.pixelWidth ?? Int(CGDisplayBounds(displayID).width))
         if width < 3000, Date().timeIntervalSince(lastModeTry) > 1.0, let wide = Self.wideMode(of: displayID) {
             lastModeTry = Date()
-            var config: CGDisplayConfigRef?
-            CGBeginDisplayConfiguration(&config)
-            CGConfigureDisplayWithDisplayMode(config, displayID, wide, nil)
-            CGCompleteDisplayConfiguration(config, .forSession)
+            Self.use(wide, on: displayID)
         }
         // And where the display is: one that has moved leaves the window where it was, which
         // may be the Mac's own screen.
