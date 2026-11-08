@@ -221,9 +221,10 @@ use_cfi_icall = false
 use_thin_lto = false
 exclude_unwind_tables = false
 clang_warning_suppression_file = ""
-# A Wayland window of the room and nothing else of a Linux desktop: no X11, GTK, Pango, BlueZ, GLib,
-# CUPS, Kerberos, PulseAudio or udev here (as Chromium's own headless build leaves them out). D-Bus
-# and NSS as on the Deck (deps.sh). Fonts by Chromium's own fontconfig.
+# A Wayland window of the room and nothing else of a Linux desktop: no X11, GTK, Pango, GLib, CUPS,
+# Kerberos, PulseAudio or udev here (as Chromium's own headless build leaves them out). D-Bus and NSS
+# as on the Deck (deps.sh), and with D-Bus BlueZ's client, which Linux's startup calls (Android has no
+# BlueZ for it to find). Fonts by Chromium's own fontconfig.
 use_ozone = true
 ozone_auto_platforms = false
 ozone_platform = "wayland"
@@ -235,7 +236,6 @@ ozone_platform_headless = true
 use_system_minigbm = false
 use_gtk = false
 use_pangocairo = false
-use_bluez = false
 use_glib = false
 use_gio = false
 use_cups = false
