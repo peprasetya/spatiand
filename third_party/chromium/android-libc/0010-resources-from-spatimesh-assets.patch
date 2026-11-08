@@ -1,0 +1,28 @@
+diff --git a/base/base_paths.cc b/base/base_paths.cc
+index 38241c6fba..9ca4617a2b 100644
+--- a/base/base_paths.cc
++++ b/base/base_paths.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "base/base_paths.h"
+ 
++#include <stdlib.h>
++
+ #include "base/environment.h"
+ #include "base/files/file_path.h"
+ #include "base/files/file_util.h"
+@@ -72,6 +74,14 @@ bool PathProvider(int key, FilePath* result) {
+       *result = result->DirName();
+       return true;
+     case DIR_ASSETS:
++#if defined(__TERMUX__)
++      // Spatiand: on Android the program is in the APK's library folder, which holds libraries
++      // alone; the app unpacks its resources into a folder of its own and names it here.
++      if (const char* assets = getenv("SPATIMESH_ASSETS"); assets && *assets) {
++        *result = FilePath(assets);
++        return true;
++      }
++#endif
+       return PathService::Get(DIR_MODULE, result);
+ #endif  // !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_IOS)
+     case DIR_TEMP:

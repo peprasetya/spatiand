@@ -99,6 +99,7 @@ public class MainActivity extends Activity implements SensorEventListener {
         Native.configDir(getFilesDir().getPath(), getCacheDir().getPath());
         Native.xkbDir(unpackLayouts());
         unpackAsset("default.sofa", new File(getFilesDir(), "default.sofa"));
+        new Thread(this::unpackSpatiMesh, "unpack-spatimesh").start();
         File movies = getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES);
         if (movies != null) Native.recordingsDir(movies.getPath());
         Native.begin();
@@ -563,6 +564,38 @@ public class MainActivity extends Activity implements SensorEventListener {
             Log.e(TAG, "could not unpack the keyboard layouts", e);
         }
         return root.getPath();
+    }
+
+    /**
+     * SpatiMesh's resources -- Chromium's .pak files, ICU's data, V8's snapshot, its fonts and its
+     * launcher -- out of the APK into the app's files, again whenever they change (android/build.sh
+     * stamps them). The program itself is in the APK's library folder, which holds libraries alone.
+     * Until this is done, and in an APK built without Chromium, the launcher's SpatiMesh is WPE's.
+     */
+    void unpackSpatiMesh() {
+        File root = new File(getFilesDir(), "spatimesh-chromium");
+        File stamp = new File(root, ".version");
+        String version;
+        try (InputStream in = getAssets().open("spatimesh-chromium/version")) {
+            version = new String(in.readAllBytes());
+        } catch (Exception e) {
+            return;
+        }
+        try {
+            if (stamp.exists() && new String(java.nio.file.Files.readAllBytes(stamp.toPath())).equals(version)) return;
+            // The stamp last, so that one cut short is done again.
+            stamp.delete();
+            root.mkdirs();
+            for (String name : getAssets().list("spatimesh-chromium")) {
+                if (!name.equals("version")) copyAssets("spatimesh-chromium/" + name, new File(root, name));
+            }
+            try (OutputStream out = new FileOutputStream(stamp)) {
+                out.write(version.getBytes());
+            }
+            Log.i(TAG, "SpatiMesh unpacked: " + version.trim());
+        } catch (Exception e) {
+            Log.e(TAG, "could not unpack SpatiMesh", e);
+        }
     }
 
     /** One file out of the APK, once. */

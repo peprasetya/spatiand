@@ -31,6 +31,8 @@ use crate::wire::{self, Code, Envelope, Refusal, Reply, Request, Who};
 const OWN: &[(&str, &str)] = &[
     ("spatikey", "SpatiKey"),
     ("spatimesh", "SpatiMesh"),
+    // SpatiMesh's Chromium as the Beam Pro's APK carries it (crates/spatiand/src/own.rs).
+    ("spatimesh_chromium", "SpatiMesh"),
     ("spatipal", "SpatiPal"),
     ("spatiquill", "SpatiQuill"),
     ("spatishelf", "SpatiShelf"),
@@ -318,6 +320,7 @@ mod tests {
     #[test]
     fn callers_are_named_by_their_program() {
         assert_eq!(caller(Some("spatimesh"), "Chrome"), "SpatiMesh", "what a program says of itself is not taken");
+        assert_eq!(caller(Some("spatimesh_chromium"), "Chrome"), "SpatiMesh", "the Beam Pro's");
         assert_eq!(caller(Some("spatikey"), ""), "SpatiKey");
         assert_eq!(caller(Some(HOST), "Chrome"), "Chrome");
         assert_eq!(caller(Some(HOST), " \n"), "a browser");

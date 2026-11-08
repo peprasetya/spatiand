@@ -76,6 +76,26 @@ mkdir -p $OUT/assets/licences
 cp ../third_party/NOTICES.md $OUT/assets/licences/
 cp "../third_party/ffmpeg/src/ffmpeg-$FFMPEG_VERSION/COPYING.LGPLv3" $OUT/assets/licences/
 cp "../third_party/ffmpeg/src/openssl-$OPENSSL_VERSION/LICENSE.txt" $OUT/assets/licences/OpenSSL-LICENSE.txt
+# SpatiMesh as on the Deck: Chromium's Linux browser built for Android's libc (third_party/chromium,
+# CHROMIUM_TARGET=android, its package step: spatimesh-android.tar.gz, unpacked), when it has been.
+# Its resources and launcher go in the assets, for the app to unpack (MainActivity.unpackSpatiMesh);
+# the program and its own libraries go in beside the others, below. Without it, SpatiMesh here is
+# WPE's.
+CR=${SPATIAND_CHROMIUM_ANDROID:-$HOME/Developer/spatimesh-android}
+if [ -f "$CR/spatimesh" ]; then
+    mkdir -p $OUT/assets/spatimesh-chromium/locales
+    cp "$CR"/*.pak "$CR/icudtl.dat" "$CR/snapshot_blob.bin" $OUT/assets/spatimesh-chromium/
+    # The locales alone, not the build's notes on them (.pak.info).
+    cp "$CR"/locales/*.pak $OUT/assets/spatimesh-chromium/locales/
+    cp ../third_party/chromium/run-android.sh $OUT/assets/spatimesh-chromium/run.sh
+    cp ../third_party/wpe/android/fonts.conf $OUT/assets/spatimesh-chromium/fonts.conf
+    # What this is, so that the app unpacks it again when it changes. Not a dotfile: aapt2 leaves
+    # those out of the assets.
+    echo "$(cat "$CR/RELEASE" 2>/dev/null) $(md5 -q "$CR/spatimesh" 2>/dev/null || md5sum "$CR/spatimesh" | cut -d' ' -f1)" \
+        > $OUT/assets/spatimesh-chromium/version
+else
+    echo "warning: no SpatiMesh Chromium for Android at $CR; SpatiMesh here is WPE's"
+fi
 $BT/aapt2 compile --dir res -o $OUT/res.zip
 $BT/aapt2 link -I $JAR --manifest AndroidManifest.xml -A $OUT/assets -o $OUT/base.apk $OUT/res.zip
 javac --release 17 -Xlint:-options -classpath "$JAR:$CLASSPATH" -d $OUT/classes $(find src -name '*.java')
@@ -99,6 +119,14 @@ if [ -f "$WPE_OUT/lib/libWPEWebProcess.so" ]; then
     find $OUT/apk/lib/arm64-v8a -name 'lib*.so' -type f -exec "$NDK/toolchains/llvm/prebuilt/$(case "$(uname -s)" in (Darwin) echo darwin-x86_64 ;; (*) echo linux-x86_64 ;; esac)/bin/llvm-strip" --strip-unneeded {} \; 2>/dev/null || true
 fi
 [ -f "$STORAGE/libspatiand-storage.so" ] && cp "$STORAGE/libspatiand-storage.so" $OUT/apk/lib/arm64-v8a/
+if [ -f "$CR/spatimesh" ]; then
+    cp "$CR/spatimesh" $OUT/apk/lib/arm64-v8a/libspatimesh_chromium.so
+    # Its own libraries: NSS and NSPR (third_party/chromium/android-libc/deps.sh) and Chromium's
+    # minigbm. The rest it needs (xkbcommon, libffi, SQLite, FFmpeg) are the APK's already.
+    for lib in nspr4 plc4 plds4 nss3 nssutil3 smime3 ssl3 softokn3 freebl3 freeblpriv3 nssckbi minigbm; do
+        cp "$CR/lib$lib.so" $OUT/apk/lib/arm64-v8a/
+    done
+fi
 cp $OUT/dex/classes.dex $OUT/apk/
 (cd $OUT/apk && zip -qr ../base.apk classes.dex lib)
 $BT/zipalign -f -p 4 $OUT/base.apk $OUT/aligned.apk

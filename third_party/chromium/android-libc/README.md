@@ -49,3 +49,5 @@ libnss). With them the Deck's code for certificates and D-Bus is built as it is.
 | 0007 | minigbm without Android's system properties (`cutils/`, the platform's, not the NDK's), as Termux's 2013 does for its log. |
 | 0008 | A dummy HID service, Termux's 1019 placed for 153: no HID devices without udev. |
 | 0009 | The Linux notifications bridge depends on `//components/dbus`, whose headers it includes: without GTK and GLib nothing else brings their path to it. |
+| 0010 | Its resources (`.pak`, ICU's data, V8's snapshot, the locales) from `SPATIMESH_ASSETS` when set: in the APK the program is in the library folder, which holds `lib*.so` alone, and the app unpacks the rest into its files (`run-android.sh` sets it). |
+| 0011 | libc++ linked in whole (`-static-libstdc++`), for Android's processor only: the NDK's Chromium builds with is newer than the r28c one the APK carries for Spatiand's other programs (`std::__hash_memory`); the build's own programs link the build machine's libstdc++, which has no static one. |

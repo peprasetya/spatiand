@@ -10,7 +10,7 @@ and at its end what has been built of it.
 |---|---|---|
 | Mac | **WPE WebKit 2.54.1**, our own port (`third_party/wpe`, the "WPE" section below) | bundled in Spatiand.app, with GStreamer and our FFmpeg |
 | Linux, the Deck | **WPE WebKit 2.54.1**, the bundle `third_party/wpe/build.sh linux` makes in Ubuntu 22.04 (built 2026-10-29) | `wpe/` beside SpatiMesh |
-| Android (Beam Pro) | WPE, once its build gets through (2026-10-29: WebCore against the NDK's C++23 libc++ still fails) | -- |
+| Android (Beam Pro) | **Chromium, the Deck's**, built for Android's libc (2026-11-08; "SpatiMesh for Android" below) | in the APK, `libspatimesh_chromium.so` and its resources |
 
 **Changed on 2026-10-30:** the owner moved SpatiMesh to **Chromium with Cromite's patches and
 ours**, keeping Chrome's own browser layer (Chrome's extensions, as Chrome has them) with
@@ -29,8 +29,8 @@ SpatiMesh; WPE everywhere else until Chromium is ported) and took Spatiand's dat
 Spatiand's data" below.
 
 **SpatiMesh for Android (started 2026-11-08) is the Deck's**, not Chrome's Android application: Chromium's
-Linux browser with every patch here, built for Android's libc and carried in Spatiand's APK as `libspatimesh.so`
-beside the other programs, a Wayland window of the room like them (docs/spatiand-apps.md, "Android processes").
+Linux browser with every patch here, built for Android's libc and carried in Spatiand's APK as
+`libspatimesh_chromium.so` beside the other programs, a Wayland window of the room like them (docs/spatiand-apps.md, "Android processes").
 Android's Spatiand gives its programs the Deck's folders and sockets ($HOME, $XDG_CONFIG_HOME, $XDG_RUNTIME_DIR in
 the APK's own storage), so Spatiand's data, the profile locks and SpatiKey work as they do on the Deck. Termux builds
 Chromium the same way (`x11-packages/chromium-host-tools/cr-patches` in termux-packages: the Linux build pointed at
@@ -48,6 +48,26 @@ Names went by DNS over HTTPS to OpenDNS, Cromite's default, and never to the 8.8
 its libc++ must be the one of the NDK it was built against, Chromium's, newer than the r28c one the APK carries
 (`std::__hash_memory`), so it is to be linked in whole; libdbus looks for a system bus at its build folder's path.
 Not yet: carried in the APK, a window in the room, sound, video, the GPU.
+
+**In the APK (2026-11-08).** `third_party/chromium/build.sh package` (with `CHROMIUM_TARGET=android`) makes
+`spatimesh-android.tar.gz`: the program stripped (283 MB), the NSS and NSPR it brings, Chromium's minigbm, and its
+resources. `android/build.sh` takes it from `~/Developer/spatimesh-android` (or `SPATIAND_CHROMIUM_ANDROID`): the
+program and libraries into the APK's library folder, the resources, `run-android.sh` (as `run.sh`) and the fonts'
+setup into its assets, stamped with the release and the program's checksum. The app unpacks them into
+`files/spatimesh-chromium` at start, again only when the stamp changes, the stamp last; once it is there the
+launcher's SpatiMesh is Chromium (`crates/spatiand/src/own.rs`; the launcher re-reads its applications each time it
+opens, as on the Deck), started through `/system/bin/sh run.sh`, as nothing in the app's files may be run itself.
+Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources by `SPATIMESH_ASSETS`
+(`android-libc/0010`). Different from the Deck, each by what Android has not got, each to be closed:
+
+* **The sandbox is half the Deck's**: Android lets no app make namespaces, so Chromium's first layer is off
+  (`--disable-setuid-sandbox`); the second, the seccomp filter on every tab's process, is on. A page loads so.
+* **It draws without the GPU** (`--disable-gpu`): its pictures go to the room as shared memory. Chromium's ANGLE
+  libraries are not carried yet: named `libEGL.so` and `libGLESv2.so`, they would stand in for Android's own in the
+  app's library folder, which every program the room starts searches first.
+* **No sound**: built without PulseAudio and ALSA, which Android has not got; the room's `spatiand-sound` is next.
+* **Video in software**, by Spatiand's FFmpeg; Android's decoders (MediaCodec, in that FFmpeg) are not yet asked.
+* No D-Bus: libdbus asks for a system bus at its build folder's path and finds none, as there is none to find.
 
 **Changed again on 2026-10-29:** WebKitGTK, Linux's fallback, removed too: WPE is the only engine,
 and where it is not installed SpatiMesh says so rather than falling back.

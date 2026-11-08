@@ -738,6 +738,11 @@ pub fn run(
                     ShellEvent::ForgetHost(address) => remotes.forget(&address, &mut prefs),
                     ShellEvent::Bluetooth(_) => {}
                     ShellEvent::ModeChanged(mode) => {
+                        if mode == Mode::Launcher {
+                            // As on the Deck: what has come since is there (SpatiMesh's
+                            // Chromium, once the app has unpacked it).
+                            crate::own::adopt(&mut shell);
+                        }
                         if mode == Mode::World {
                             scene.forget_anchor();
                         } else {

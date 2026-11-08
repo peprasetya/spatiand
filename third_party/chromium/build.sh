@@ -298,8 +298,8 @@ EOF
 }
 
 package() {
+    [ "$target" = android ] && { package_android; return; }
     O=$work/chromium/src/out/deck; P=$work/package/spatiand-chromium
-    [ "$target" = android ] && { O=$work/chromium/src/out/android; P=$work/package/spatimesh-android; }
     rm -rf "$P"; mkdir -p "$P"
     # What chrome/installer/linux/BUILD.gn packages, with every locale.
     # The program is named as what it is: SpatiKey names who is asking from what is running.
@@ -313,6 +313,26 @@ package() {
     for d in locales MEIPreload PrivacySandboxAttestationsPreloaded; do [ -d "$O/$d" ] && cp -a "$O/$d" "$P/"; done
     cp "$work/chromium/src/chrome/app/theme/chromium/product_logo_256.png" "$P/icon.png"
     cp "$here/run.sh" "$P/run.sh"
+    tar -C "$work/package" -czf "$P.tar.gz" "$(basename "$P")"
+    echo "packaged $(du -sh "$P" | cut -f1) in $P.tar.gz"
+}
+
+# SpatiMesh for Android: what android/build.sh puts in the APK. The program, stripped; the libraries
+# it brings that the APK has not got (NSS and NSPR, android-libc/deps.sh, which load one another by
+# name from the folder they are in; Chromium's minigbm); its resources. Not yet the GPU's libraries:
+# Chromium's libEGL.so and libGLESv2.so would stand in for Android's own in the app's library
+# folder, which every program Spatiand starts there searches first; it draws without the GPU.
+package_android() {
+    O=$work/chromium/src/out/android; P=$work/package/spatimesh-android
+    rm -rf "$P"; mkdir -p "$P"
+    "${SPATIAND_NDK:-/media/shared/Linux/App/android-ndk-r28c}"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip \
+        --strip-unneeded -o "$P/spatimesh" "$O/chrome"
+    cp -a "$O/libminigbm.so" "$P/"
+    for lib in nspr4 plc4 plds4 nss3 nssutil3 smime3 ssl3 softokn3 freebl3 freeblpriv3 nssckbi; do
+        cp -a "$work/android-deps/lib/lib$lib.so" "$P/"
+    done
+    cp -a "$O"/*.pak "$O/icudtl.dat" "$O/snapshot_blob.bin" "$O/RELEASE" "$P/"
+    mkdir -p "$P/locales" && cp -a "$O"/locales/*.pak "$P/locales/"
     tar -C "$work/package" -czf "$P.tar.gz" "$(basename "$P")"
     echo "packaged $(du -sh "$P" | cut -f1) in $P.tar.gz"
 }

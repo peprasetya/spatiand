@@ -1,0 +1,21 @@
+diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
+index f9e0880e77..e4f632cc61 100644
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
+@@ -337,9 +337,15 @@ config("compiler") {
+   defines = []
+   configs = []
+ 
+-  # Spatiand: for what runs on Android, not for the programs the build itself runs.
++  # Spatiand: for what runs on Android, not for the programs the build itself runs. Its libc++ is
++  # linked in whole: it is newer than the one Spatiand's APK carries for its other programs. Only
++  # for Android's processor: the build's own programs that count as the target's here (V8's
++  # snapshot maker, Rust's build scripts) link this machine's libstdc++, which has no static one.
+   if (spatiand_android_libc && is_a_target_toolchain) {
+     defines += [ "__TERMUX__" ]
++    if (current_cpu == target_cpu) {
++      ldflags += [ "-static-libstdc++" ]
++    }
+   }
+ 
+   # System-specific flags. If your compiler flags apply to one of the

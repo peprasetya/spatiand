@@ -106,16 +106,26 @@ fn native_library_dir() -> Option<PathBuf> {
 }
 
 /// SpatiMesh on Linux is Chromium (`third_party/chromium`), installed beside Spatiand's tree at
-/// `~/spatiand-chromium`, or where `SPATIAND_CHROMIUM` says. Elsewhere -- the Mac, the Beam Pro --
-/// it is the WPE program until Chromium draws through the room there too.
-fn chromium_spatimesh() -> Option<PathBuf> {
+/// `~/spatiand-chromium`, or where `SPATIAND_CHROMIUM` says. On the Beam Pro it is the same
+/// browser built for Android's libc, carried in the APK as `libspatimesh_chromium.so`, its
+/// resources and launcher unpacked by the app into its files (android/build.sh) and run through
+/// sh, as nothing there may be run itself. On the Mac it is the WPE program until Chromium draws
+/// through the room there too. What starts it, its switches to follow.
+fn chromium_spatimesh() -> Option<String> {
+    if cfg!(target_os = "android") {
+        let program = native_library_dir()?.join("libspatimesh_chromium.so");
+        // Its resources there whole: the app writes their stamp last.
+        let root = PathBuf::from(std::env::var_os("HOME")?).join("spatimesh-chromium");
+        return (program.is_file() && root.join(".version").is_file())
+            .then(|| format!("/system/bin/sh \"{}\"", root.join("run.sh").display()));
+    }
     if !cfg!(target_os = "linux") {
         return None;
     }
     let dir = std::env::var_os("SPATIAND_CHROMIUM")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join("spatiand-chromium")))?;
-    Some(dir.join("run.sh")).filter(|run| run.is_file())
+    Some(dir.join("run.sh")).filter(|run| run.is_file()).map(|run| format!("\"{}\"", run.display()))
 }
 
 fn program(own: &Own) -> Option<PathBuf> {
@@ -171,7 +181,7 @@ fn carried() -> Vec<AppEntry> {
             // (`spatiand_platform::wayland_arguments`): Chromium heeds only the last of each.
             let chromium = (own.program == "spatimesh").then(chromium_spatimesh).flatten();
             let exec = match (&chromium, program(own)) {
-                (Some(run), _) => format!("\"{}\" --ozone-platform=wayland", run.display()),
+                (Some(start), _) => format!("{start} --ozone-platform=wayland"),
                 // Quoted: a Mac's home folder may have a space in its name, and so then does
                 // the bundle the program is in.
                 (None, Some(program)) => format!("\"{}\"", program.display()),
