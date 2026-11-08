@@ -156,15 +156,10 @@ public class MainActivity extends Activity implements SensorEventListener {
             keys.setIcon(up ? RoundButton.Icon.KEYBOARD_HIDE : RoundButton.Icon.KEYBOARD);
         });
 
-        if (!Settings.canDrawOverlays(this)) {
-            // Once, and kept: what puts the glasses' picture above XREAL's placeholder.
-            Button allow = new Button(this);
-            allow.setText("Allow drawing over XREAL's placeholder");
-            allow.setOnClickListener(v -> startActivity(new Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    android.net.Uri.parse("package:" + getPackageName()))));
-            column.addView(allow, new LinearLayout.LayoutParams(-1, -2));
-        }
+        // A button for each access Android grants only on a Settings page, while it is missing.
+        allows = new LinearLayout(this);
+        allows.setOrientation(LinearLayout.VERTICAL);
+        column.addView(allows, new LinearLayout.LayoutParams(-1, -2));
         setContentView(column);
         fillSoundPickers();
 
@@ -276,6 +271,119 @@ public class MainActivity extends Activity implements SensorEventListener {
     RoundButton keys;
     TextView reminder;
 
+    // ------------------------------------------------- what Android grants only on its own pages
+
+    /**
+     * An access Android has no question for: an app may only open its page in Settings, where
+     * the owner turns it on. android/setup.sh grants them from a computer; a phone set up before
+     * it did (All files access and child processes came in October) was never asked, so the
+     * phone asks for itself: once each, and a button stays for each while it is missing.
+     */
+    static final class Access {
+        /** button: null where the app cannot tell it is done, so it is asked once and no more. */
+        final String name, button, title, message, page;
+        final java.util.function.BooleanSupplier granted;
+
+        Access(String name, String button, String title, String message, String page,
+                java.util.function.BooleanSupplier granted) {
+            this.name = name;
+            this.button = button;
+            this.title = title;
+            this.message = message;
+            this.page = page;
+            this.granted = granted;
+        }
+    }
+
+    /** A system property, as getprop gives it to an app; "" if it cannot be read. */
+    static String systemProperty(String name) {
+        try {
+            Process p = new ProcessBuilder("/system/bin/getprop", name).redirectErrorStream(true).start();
+            byte[] out = p.getInputStream().readAllBytes();
+            p.waitFor();
+            return new String(out).trim();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    LinearLayout allows;
+    android.app.AlertDialog asking;
+
+    Access[] accesses() {
+        return new Access[] {
+            new Access("overlay", "Allow drawing over XREAL's placeholder",
+                    "Let Spatiand draw over XREAL's placeholder",
+                    "XREAL puts a placeholder on the glasses over every other app's picture. "
+                            + "Android lets Spatiand's picture sit above it only if Spatiand may "
+                            + "display over other apps.\n\nOn the next page, turn on \"Allow "
+                            + "display over other apps\".",
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    () -> Settings.canDrawOverlays(this)),
+            new Access("files", "Allow Spatiand's apps to see the phone's files",
+                    "Let Spatiand's apps see the phone's files",
+                    "SpatiMesh saves downloads in the phone's Download folder and its file "
+                            + "chooser shows the phone's storage; SpatiShelf and Spatiand's other "
+                            + "apps open and save the phone's files. Android gives this only on its "
+                            + "own page, with no question an app can ask.\n\nOn the next page, turn "
+                            + "on \"Allow access to manage all files\".",
+                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    android.os.Environment::isExternalStorageManager),
+            // Developer options' switch is a system property any app may read; android/setup.sh's
+            // is a global setting no app may, so done that way it is still asked, once.
+            new Access("child-processes", null,
+                    "Let Spatiand's apps keep their processes",
+                    "Each of Spatiand's apps, and each SpatiMesh tab, is a process of its own, "
+                            + "started by Spatiand. Android stops such processes once there are more "
+                            + "than 32 across all apps: an app or a tab closes.\n\nIn Developer options, "
+                            + "turn on \"Disable child process restrictions\". If android/setup.sh "
+                            + "has been run from a computer since October 14, it is on already.",
+                    Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
+                    () -> "false".equals(systemProperty(
+                            "persist.sys.fflag.override.settings_enable_monitor_phantom_procs"))),
+        };
+    }
+
+    /** Spatiand's own page in Settings for this access, or the list of apps if it has none. */
+    void openAccess(Access a) {
+        try {
+            startActivity(new Intent(a.page, android.net.Uri.parse("package:" + getPackageName())));
+        } catch (android.content.ActivityNotFoundException none) {
+            startActivity(new Intent(a.page.equals(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                    ? Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION : a.page));
+        }
+    }
+
+    /** At every return to the phone: a button for each missing access, the first never asked asked. */
+    void askForAccess() {
+        allows.removeAllViews();
+        android.content.SharedPreferences asked = getSharedPreferences("asked", MODE_PRIVATE);
+        Access ask = null;
+        for (Access a : accesses()) {
+            // One without a button is only ever asked once: nothing to look at after that.
+            if (a.button == null && asked.getBoolean(a.name, false)) continue;
+            if (a.granted.getAsBoolean()) continue;
+            if (a.button != null) {
+                Button b = new Button(this);
+                b.setText(a.button);
+                b.setOnClickListener(v -> openAccess(a));
+                allows.addView(b, new LinearLayout.LayoutParams(-1, -2));
+            }
+            if (ask == null && !asked.getBoolean(a.name, false)) ask = a;
+        }
+        if (ask == null || asking != null) return;
+        Access a = ask;
+        Log.i(TAG, "asking for " + a.name);
+        asked.edit().putBoolean(a.name, true).apply();
+        asking = new android.app.AlertDialog.Builder(this)
+                .setTitle(a.title)
+                .setMessage(a.message)
+                .setPositiveButton("Open Settings", (d, w) -> openAccess(a))
+                .setNegativeButton("Not now", null)
+                .setOnDismissListener(d -> asking = null)
+                .show();
+    }
+
     /** Show the reminder to plug the glasses in while they are not. */
     void showReminder() {
         if (reminder != null) reminder.setVisibility(connection == null ? View.VISIBLE : View.GONE);
@@ -324,6 +432,13 @@ public class MainActivity extends Activity implements SensorEventListener {
             wifiLock.setReferenceCounted(false);
         }
         wifiLock.acquire();
+        askForAccess();
+        // "Display over other apps" allowed just now, on its page: the glasses' picture goes
+        // above XREAL's placeholder at once.
+        if (presentation != null && Settings.canDrawOverlays(this)) {
+            closeGlassesWindow();
+            showOnGlasses();
+        }
         // The game rotation vector: no magnetometer, so no swing near a speaker or a desk lamp;
         // its yaw is its own, which the session aligns with the head at every recentre.
         Sensor rotation = sensors.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);

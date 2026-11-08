@@ -78,8 +78,12 @@ adb logcat -s spike
 
 ## Taking the glasses from Nebula, once — verified 2026-09-26
 
-`android/setup.sh`, run once from a computer with adb, with the glasses plugged in. Each of
-its three steps survives reboots:
+`android/setup.sh`, run from a computer with adb, with the glasses plugged in. Each of its
+steps survives reboots and may be run again; steps 4 ("All files access") and 5 (Android's
+limit on child processes off) came on 2026-10-14, after the owner's phone was set up, and
+never reached it. Since 2026-11-09 the app asks for 2, 4 and 5 itself where they are missing,
+once each, on Android's own pages (`MainActivity.askForAccess`): Android has no question an
+app may ask for them.
 
 1. **Nebula disabled** (`pm disable-user`). While it is enabled, the fixed handler gives it
    the glasses on every plug-in. `android/setup.sh nebula` gives them back.

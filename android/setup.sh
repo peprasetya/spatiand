@@ -1,8 +1,10 @@
 #!/bin/sh
-# The one-time setup that makes the Beam Pro's glasses Spatiand's, from a computer with adb.
-# Everything here survives reboots; none of it needs doing again.
+# The setup that makes the Beam Pro's glasses Spatiand's, from a computer with adb.
+# Every step survives reboots and may be run again: run it again when a step is added here
+# (4 and 5 came on 2026-10-14; a phone set up before then never had them). The app asks for
+# 2 and 4 itself, on Android's own pages, while they are missing; 3 and 5 need adb.
 #
-#   android/setup.sh             with the glasses plugged into the Beam Pro
+#   android/setup.sh             with the glasses plugged into the Beam Pro (for step 3)
 #   android/setup.sh nebula      give the glasses back to Nebula (undoes the first step)
 #
 # 1. Nebula disabled. XREAL's framework hands the glasses to Nebula whatever else is installed
@@ -13,7 +15,8 @@
 # 4. "All files access", for Spatiand's own applications to see shared storage.
 # 5. Android's monitor of "phantom" processes off: Spatiand's applications are programs the
 #    session starts (each SpatiQuill and SpatiShelf tab one more), which Android 14 otherwise
-#    kills beyond 32 of them across all apps.
+#    kills beyond 32 of them across all apps. On the phone, the same switch is Developer
+#    options > "Disable child process restrictions".
 set -eu
 cd "$(dirname "$0")"
 PKG=id.prasetya.spatiand
@@ -32,11 +35,19 @@ $ADB shell appops set $PKG SYSTEM_ALERT_WINDOW allow
 echo "Spatiand may draw over other apps"
 UID_=$($ADB shell pm list packages -U $PKG | sed -n "s/^package:$PKG uid://p" | tr -d '\r' | cut -d, -f1)
 APK=$($ADB shell pm path $PKG | head -1 | cut -d: -f2 | tr -d '\r')
-$ADB shell CLASSPATH="$APK" app_process / $PKG.Setup usb "$UID_"
+# Without the glasses plugged in there is nothing to give a permission for: the rest is done
+# anyway, and this step waits for the next run.
+USB=done
+$ADB shell CLASSPATH="$APK" app_process / $PKG.Setup usb "$UID_" || USB=missing
 $ADB shell appops set --uid $PKG MANAGE_EXTERNAL_STORAGE allow
 echo "Spatiand's applications may see shared storage"
 $ADB shell settings put global settings_enable_monitor_phantom_procs false
 $ADB shell device_config set_sync_disabled_for_tests persistent
 $ADB shell device_config put activity_manager max_phantom_processes 2147483647
 echo "Android leaves Spatiand's applications' processes alone"
+if [ $USB = missing ]; then
+    echo "Done, but for the glasses' USB permission, which needs them plugged in. One given before"
+    echo "still holds; for a new phone or new glasses, plug them in and run this again."
+    exit 0
+fi
 echo "Done. From now on, plugging the glasses in opens Spatiand."

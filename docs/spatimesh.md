@@ -139,11 +139,15 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   may use, carrying one JSON object a line each way (scanning, GATT connections, services, characteristics and
   descriptors read and written, notifications: what Web Bluetooth asks for). Web Bluetooth stays as on the Deck:
   behind "Experimental Web Platform features" (Linux has it as experimental; `--enable-blink-features=WebBluetooth`
-  turns it on alone), and a site may ask only once allowed to (Cromite's site setting, blocked by default). Tried on
-  the Beam Pro: with both, `navigator.bluetooth.getAvailability()` is true, Chromium's adapter is connected to the
-  bridge, and the bridge asks Android for its Bluetooth permission (BLUETOOTH_SCAN and BLUETOOTH_CONNECT, not for
-  location), which the wearer answers on the phone once. Scanning, connecting and reading a device are untried until
-  it is answered.
+  turns it on alone), and a site may ask only once allowed to (Cromite's site setting, blocked by default). **The
+  owner's decision (2026-11-09):** Chromium's default for now; at the next monthly update, Web Bluetooth on by
+  default on all three platforms (stable in Blink on Linux, Cromite's setting asking; the Mac's when its SpatiMesh is
+  Chromium, as WPE has none), noted beside the pinned versions in `third_party/chromium/build.sh`. Tried on the Beam
+  Pro with both on: `navigator.bluetooth.getAvailability()` is true, and the bridge asks Android for its Bluetooth
+  permission (BLUETOOTH_SCAN and BLUETOOTH_CONNECT, not for location), which the wearer answers on the phone once.
+  With it answered, `requestDevice()` scans through Android (its log: a scan started for `id.prasetya.spatiand`)
+  and the chooser lists what is near: twelve devices in 20 s, through DevTools' `DeviceAccess`. Connecting and
+  reading a device are untried: none near is ours to connect to.
 * **Testing in the Beam Pro's room without the glasses**: `tools/beam-stand-in/run.sh start` makes a display from
   adb (the shell may make public ones) that the app takes as the glasses' (`MainActivity.glassesDisplay`, by its
   name): the room draws its world there with a headset that is not there and lets go of the hosts while it lasts,
@@ -161,7 +165,8 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   before writing over a file). Tried in the Mac's snapshot room by script (a file found and taken, a page saved, two
   marked and chosen) and on the Beam Pro from SpatiMesh: its window opened in the room, a choice reached the page,
   closing it was a cancel. Android's own shared storage (Download, Pictures) is offered, and downloads go to its
-  Download folder (`run-android.sh`), only once Spatiand has "All files access", which Android shows declined.
+  Download folder (`run-android.sh`), only once Spatiand has "All files access", which the app asks for on Android's
+  own page (`MainActivity.askForAccess`; android/setup.sh grants it from a computer).
 * **Crashes leave minidumps** (`android-libc/0018`): Chromium's crash handler is carried as `libspatimesh_crashpad.so`;
   a tab crashed on purpose (`chrome://crash`) left its `.dmp` in `$XDG_CONFIG_HOME/chromium/Crash Reports/pending`.
 

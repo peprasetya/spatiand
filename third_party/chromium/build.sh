@@ -15,6 +15,10 @@
 set -e
 
 # Every pinned version, in one place.
+# At the next update (the owner's decision, 2026-11-09): Web Bluetooth on by default on all three
+# platforms. Blink's WebBluetooth is "experimental" on Linux, which the Deck's and the Beam Pro's
+# builds are: make it stable there, and Cromite's bluetooth_guard2 ask instead of block. The
+# Mac's comes when its SpatiMesh is Chromium (WPE has no Web Bluetooth). docs/spatimesh.md.
 CROMITE_COMMIT=3724efc6ede3d2d94611c1fe71d1b090ebbb40a7   # 2026-09-19, Chromium 153.0.8010.37
 DEPOT_TOOLS_COMMIT=7083aadfb
 
