@@ -1,0 +1,71 @@
+diff --git a/third_party/expat/BUILD.gn b/third_party/expat/BUILD.gn
+index 9ad36d41f1..da0ee51617 100644
+--- a/third_party/expat/BUILD.gn
++++ b/third_party/expat/BUILD.gn
+@@ -3,6 +3,7 @@
+ # found in the LICENSE file.
+ 
+ import("//build/config/cast.gni")
++import("//build/config/compiler/compiler.gni")
+ import("//testing/libfuzzer/fuzzer_test.gni")
+ 
+ # New dependencies should use `xml-rs` (potentially via `xml_dom.h`) instead of
+@@ -18,7 +19,9 @@ expat_visibility = [
+ # let's not pull it in twice.
+ # Chromecast doesn't ship expat as a system library.
+ # Libfuzzer and AFL need to build library from sources.
+-if (((is_linux && !is_castos) || is_chromeos) && !use_fuzzing_engine) {
++# Spatiand: Android's libc has no expat of its own, so it is built here, as for Chromecast.
++if (((is_linux && !is_castos) || is_chromeos) && !use_fuzzing_engine &&
++    !spatiand_android_libc) {
+   config("expat_config") {
+     libs = [ "expat" ]
+   }
+diff --git a/third_party/fontconfig/BUILD.gn b/third_party/fontconfig/BUILD.gn
+index 0e9e048380..f7a2b28033 100644
+--- a/third_party/fontconfig/BUILD.gn
++++ b/third_party/fontconfig/BUILD.gn
+@@ -2,6 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
++import("//build/config/compiler/compiler.gni")
+ import("//build/rust/cargo_crate.gni")
+ import("//build/rust/rust_bindgen.gni")
+ import("//third_party/fontconfig/fontconfig.gni")
+@@ -164,7 +165,8 @@ if (use_bundled_fontconfig) {
+       ]
+     }
+ 
+-    if (!is_win) {
++    # Spatiand: this fontconfig only reads .uuid files, and Android's libc has no libuuid.
++    if (!is_win && !spatiand_android_libc) {
+       libs = [ "uuid" ]
+     }
+   }
+diff --git a/third_party/fontconfig/include/meson-config.h b/third_party/fontconfig/include/meson-config.h
+index 3064d6a2f7..38d7f6ecd4 100644
+--- a/third_party/fontconfig/include/meson-config.h
++++ b/third_party/fontconfig/include/meson-config.h
+@@ -11,7 +11,10 @@
+ 
+ #define CONFIGDIR "/etc/fonts/conf.d"
+ 
++/* Spatiand: no gettext in Android's libc. */
++#if !defined(__TERMUX__)
+ #define ENABLE_NLS 1
++#endif
+ 
+ #define EXEEXT 
+ 
+@@ -96,7 +99,10 @@
+ 
+ #define HAVE_RANDOM 1
+ 
++/* Spatiand: random_r is glibc's. */
++#if !defined(__TERMUX__)
+ #define HAVE_RANDOM_R 1
++#endif
+ 
+ #define HAVE_RAND_R 1
+ 

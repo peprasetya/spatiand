@@ -28,6 +28,19 @@ described below until Chromium replaces it.
 SpatiMesh; WPE everywhere else until Chromium is ported) and took Spatiand's data over. See "Chromium on
 Spatiand's data" below.
 
+**SpatiMesh for Android (started 2026-11-08) is the Deck's**, not Chrome's Android application: Chromium's
+Linux browser with every patch here, built for Android's libc and carried in Spatiand's APK as `libspatimesh.so`
+beside the other programs, a Wayland window of the room like them (docs/spatiand-apps.md, "Android processes").
+Android's Spatiand gives its programs the Deck's folders and sockets ($HOME, $XDG_CONFIG_HOME, $XDG_RUNTIME_DIR in
+the APK's own storage), so Spatiand's data, the profile locks and SpatiKey work as they do on the Deck. Termux builds
+Chromium the same way (`x11-packages/chromium-host-tools/cr-patches` in termux-packages: the Linux build pointed at
+Android's libc, `--target=aarch64-linux-android`), which is where its changes for that libc come from. Still to write
+for Android: the sound of each tab to the room's `spatiand-sound` (as the other programs send theirs there), video on
+Spatiand's FFmpeg with Android's decoders in place of VA-API, the drawing through the GPU (software, through `wl_shm`,
+to begin with), and the sandbox (seccomp only: Android lets no program make namespaces). The tree is on deepmagpie,
+`spatiand-chromium-android`, fetched for both targets; Chrome's own Android application (`CHROMIUM_TARGET=android`)
+is not built.
+
 **Changed again on 2026-10-29:** WebKitGTK, Linux's fallback, removed too: WPE is the only engine,
 and where it is not installed SpatiMesh says so rather than falling back.
 

@@ -1,0 +1,15 @@
+diff --git a/v8/src/base/debug/stack_trace_posix.cc b/v8/src/base/debug/stack_trace_posix.cc
+index 39fa8be276..69c0ba688d 100644
+--- a/v8/src/base/debug/stack_trace_posix.cc
++++ b/v8/src/base/debug/stack_trace_posix.cc
+@@ -25,7 +25,9 @@
+ #include <string>
+ #include <vector>
+ 
+-#if V8_LIBC_GLIBC || V8_LIBC_BSD || V8_LIBC_UCLIBC || V8_OS_SOLARIS
++// Spatiand: Android's libc has backtrace() only from API 33, and this is built for 24.
++#if (V8_LIBC_GLIBC || V8_LIBC_BSD || V8_LIBC_UCLIBC || V8_OS_SOLARIS) && \
++    !defined(__TERMUX__)
+ #define HAVE_EXECINFO_H 1
+ #endif
+ 

@@ -1,0 +1,52 @@
+diff --git a/third_party/swiftshader/src/Vulkan/BUILD.gn b/third_party/swiftshader/src/Vulkan/BUILD.gn
+index 852068c..d95f33b 100644
+--- a/third_party/swiftshader/src/Vulkan/BUILD.gn
++++ b/third_party/swiftshader/src/Vulkan/BUILD.gn
+@@ -14,6 +14,7 @@
+ 
+ import("//build/config/ozone.gni")
+ import("//build_overrides/build.gni")
++import("//build/config/compiler/compiler.gni")
+ import("//build_overrides/wayland.gni")
+ import("../swiftshader.gni")
+ import("vulkan.gni")
+@@ -25,7 +26,8 @@ config("swiftshader_libvulkan_private_config") {
+     if (ozone_platform_x11) {
+       defines += [ "VK_USE_PLATFORM_XCB_KHR" ]
+     }
+-    if (ozone_platform_wayland) {
++    # Spatiand: no Wayland surfaces of its own on Android's libc, where it draws only off screen.
++    if (ozone_platform_wayland && !spatiand_android_libc) {
+       defines += [ "VK_USE_PLATFORM_WAYLAND_KHR" ]
+     }
+   } else if (is_chromeos) {
+diff --git a/third_party/swiftshader/src/WSI/BUILD.gn b/third_party/swiftshader/src/WSI/BUILD.gn
+index b86b819..d3b7fee 100644
+--- a/third_party/swiftshader/src/WSI/BUILD.gn
++++ b/third_party/swiftshader/src/WSI/BUILD.gn
+@@ -13,6 +13,7 @@
+ # limitations under the License.
+ 
+ import("../swiftshader.gni")
++import("//build/config/compiler/compiler.gni")
+ import("//build_overrides/wayland.gni")
+ import("//build/config/ozone.gni")
+ 
+@@ -45,7 +46,7 @@ swiftshader_source_set("WSI") {
+       ]
+     }
+ 
+-    if (ozone_platform_wayland) {
++    if (ozone_platform_wayland && !spatiand_android_libc) {
+       sources += [
+         "WaylandSurfaceKHR.cpp",
+         "WaylandSurfaceKHR.hpp",
+@@ -88,7 +89,7 @@ swiftshader_source_set("WSI") {
+   ]
+ 
+   # Do not try to depend on Wayland if the |wayland_gn_dir| is not set.
+-  if (is_linux && ozone_platform_wayland && wayland_gn_dir != "") {
++  if (is_linux && ozone_platform_wayland && wayland_gn_dir != "" && !spatiand_android_libc) {
+     # Use third-party targets
+     deps += [ "$wayland_gn_dir:wayland_client" ]
+   }

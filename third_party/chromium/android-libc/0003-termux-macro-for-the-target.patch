@@ -1,0 +1,33 @@
+diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
+index b833c977dd..f9e0880e77 100644
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
+@@ -337,6 +337,11 @@ config("compiler") {
+   defines = []
+   configs = []
+ 
++  # Spatiand: for what runs on Android, not for the programs the build itself runs.
++  if (spatiand_android_libc && is_a_target_toolchain) {
++    defines += [ "__TERMUX__" ]
++  }
++
+   # System-specific flags. If your compiler flags apply to one of the
+   # categories here, add it to the associated file to keep this shared config
+   # smaller.
+diff --git a/build/config/compiler/compiler.gni b/build/config/compiler/compiler.gni
+index e5bd11e33f..4407ee74a3 100644
+--- a/build/config/compiler/compiler.gni
++++ b/build/config/compiler/compiler.gni
+@@ -33,6 +33,12 @@ declare_args() {
+   }
+ }
+ 
++declare_args() {
++  # Spatiand: Chromium's Linux browser built for Android's libc, with Termux's changes for it, which
++  # are under __TERMUX__ (third_party/chromium/android-libc in Spatiand).
++  spatiand_android_libc = false
++}
++
+ # Disable for host toolchain to prevent all sources from needing to be rebuilt
+ # when toggling between linkers.
+ if (!defined(experimental_linker_path) || !is_a_target_toolchain) {

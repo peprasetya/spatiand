@@ -1,0 +1,23 @@
+diff --git a/third_party/minigbm/src/drv_helpers.c b/third_party/minigbm/src/drv_helpers.c
+index 8ca65c1..666a6a6 100644
+--- a/third_party/minigbm/src/drv_helpers.c
++++ b/third_party/minigbm/src/drv_helpers.c
+@@ -17,7 +17,8 @@
+ #include <unistd.h>
+ #include <xf86drm.h>
+ 
+-#ifdef __ANDROID__
++/* Spatiand: Android's own properties are the platform's, not the NDK's. */
++#if defined(__ANDROID__) && !defined(__TERMUX__)
+ #include <cutils/properties.h>
+ #endif
+ 
+@@ -643,7 +644,7 @@ void drv_resolve_format_and_use_flags_helper(struct driver *drv, uint32_t format
+ const char *drv_get_os_option(const char *name)
+ {
+ 	const char *ret = getenv(name);
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) && !defined(__TERMUX__)
+ 	if (!ret) {
+ 		static char prop[PROPERTY_VALUE_MAX];
+ 		return property_get(name, prop, NULL) > 1 ? prop : NULL;

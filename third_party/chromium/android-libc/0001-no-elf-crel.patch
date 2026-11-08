@@ -1,0 +1,14 @@
+diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
+index 05a2f62648..b833c977dd 100644
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
+@@ -682,7 +682,8 @@ config("compiler") {
+     # TODO(crbug.com/376278218): This causes segfault on Linux ARM builds.
+     # It also causes segfault on Linux s390x:
+     # https://github.com/llvm/llvm-project/issues/149511
+-    if (is_linux && !skip_clangd_unsupported_options && use_lld && current_cpu != "arm" && current_cpu != "s390x") {
++    # Spatiand: not for Android's libc, whose dynamic linker reads no CREL (Termux's 0007).
++    if (is_linux && !skip_clangd_unsupported_options && use_lld && current_cpu != "arm" && current_cpu != "s390x" && false) {
+       cflags += [ "-Wa,--crel,--allow-experimental-crel" ]
+     }
+   }
