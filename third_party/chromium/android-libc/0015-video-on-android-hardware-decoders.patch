@@ -1,0 +1,704 @@
+From a688ce2fc4d8cde9c5bf3544800c22e81e2ffd29 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Sun, 8 Nov 2026 18:39:06 +0700
+Subject: [PATCH] Spatiand: built for Android libc: video decoded by Android's
+ hardware decoders
+
+Chromium's Linux GPU process decodes only with VA-API and V4L2, which Android has not got, so on
+Android's libc its media client is one of Spatiand's: MediaCodec, through the NDK, in the GPU
+process, for the codecs this machine has a hardware decoder for (Android's software ones left to
+Chromium's own), eight bits a sample. Each picture is copied into a frame of memory, which goes to
+the page as shared memory. The renderer asks the GPU process for video decoders here as it does
+with VA-API ("video_decoder" in mojo_media_services, AcceleratedVideoDecoder on by default).
+---
+ media/base/media_switches.cc                  |   3 +-
+ media/media_options.gni                       |   4 +-
+ media/mojo/services/BUILD.gn                  |   9 +
+ .../gpu_mojo_media_client_spatiand_android.cc |  43 ++
+ .../spatiand_media_codec_video_decoder.cc     | 449 ++++++++++++++++++
+ .../spatiand_media_codec_video_decoder.h      | 104 ++++
+ 6 files changed, 610 insertions(+), 2 deletions(-)
+ create mode 100644 media/mojo/services/gpu_mojo_media_client_spatiand_android.cc
+ create mode 100644 media/mojo/services/spatiand_media_codec_video_decoder.cc
+ create mode 100644 media/mojo/services/spatiand_media_codec_video_decoder.h
+
+diff --git a/media/base/media_switches.cc b/media/base/media_switches.cc
+index b55a20b7b3..235316c5cc 100644
+--- a/media/base/media_switches.cc
++++ b/media/base/media_switches.cc
+@@ -1476,7 +1476,8 @@ BASE_FEATURE(kFuchsiaMediacodecVideoEncoder, base::FEATURE_DISABLED_BY_DEFAULT);
+ // on chromeos, but needs an experiment on linux.
+ BASE_FEATURE(kAcceleratedVideoDecodeLinux,
+              "AcceleratedVideoDecoder",
+-#if BUILDFLAG(USE_VAAPI)
++// Spatiand: on Android's libc, Android's hardware decoders (android-libc/0015).
++#if BUILDFLAG(USE_VAAPI) || defined(__TERMUX__)
+              base::FEATURE_ENABLED_BY_DEFAULT);
+ #else
+              base::FEATURE_DISABLED_BY_DEFAULT);
+diff --git a/media/media_options.gni b/media/media_options.gni
+index 5a5b86cd64..238837e4f0 100644
+--- a/media/media_options.gni
++++ b/media/media_options.gni
+@@ -3,6 +3,7 @@
+ # found in the LICENSE file.
+ 
+ import("//build/config/cast.gni")
++import("//build/config/compiler/compiler.gni")
+ import("//build/config/chrome_build.gni")
+ import("//build/config/chromeos/args.gni")
+ import("//build/config/features.gni")
+@@ -332,7 +333,8 @@ if (is_cast_media_device) {
+     "video_decoder",
+   ]
+   _default_mojo_media_host = "gpu"
+-} else if (use_linux_video_acceleration) {
++} else if (use_linux_video_acceleration || spatiand_android_libc) {
++  # Spatiand: on Android's libc, Android's hardware decoders in the GPU process (android-libc/0015).
+   _default_mojo_media_services = [ "video_decoder" ]
+   _default_mojo_media_host = "gpu"
+ }
+diff --git a/media/mojo/services/BUILD.gn b/media/mojo/services/BUILD.gn
+index c5400d9e6f..b9ebebb4a8 100644
+--- a/media/mojo/services/BUILD.gn
++++ b/media/mojo/services/BUILD.gn
+@@ -2,6 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
++import("//build/config/compiler/compiler.gni")
+ import("//build/config/cast.gni")
+ import("//media/gpu/args.gni")
+ import("//media/media_options.gni")
+@@ -113,6 +114,14 @@ component("services") {
+     sources += [ "gpu_mojo_media_client_mac.cc" ]
+   } else if (is_win) {
+     sources += [ "gpu_mojo_media_client_win.cc" ]
++  } else if (spatiand_android_libc) {
++    # Spatiand: video decoded by Android's hardware decoders (android-libc/0015).
++    sources += [
++      "gpu_mojo_media_client_spatiand_android.cc",
++      "spatiand_media_codec_video_decoder.cc",
++      "spatiand_media_codec_video_decoder.h",
++    ]
++    libs = [ "mediandk" ]
+   } else if (use_linux_video_acceleration) {
+     if (is_linux) {
+       sources += [ "gpu_mojo_media_client_linux.cc" ]
+diff --git a/media/mojo/services/gpu_mojo_media_client_spatiand_android.cc b/media/mojo/services/gpu_mojo_media_client_spatiand_android.cc
+new file mode 100644
+index 0000000000..c0735b77ae
+--- /dev/null
++++ b/media/mojo/services/gpu_mojo_media_client_spatiand_android.cc
+@@ -0,0 +1,43 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// Spatiand: the GPU process's media client for SpatiMesh on Android's libc, in place of the stub
++// a Linux build without VA-API has: video decoded by Android's hardware decoders
++// (SpatiandMediaCodecVideoDecoder, android-libc/0015).
++
++#include <memory>
++#include <optional>
++
++#include "media/base/media_log.h"
++#include "media/base/video_decoder.h"
++#include "media/mojo/services/gpu_mojo_media_client.h"
++#include "media/mojo/services/spatiand_media_codec_video_decoder.h"
++
++namespace media {
++
++class GpuMojoMediaClientSpatiandAndroid final : public GpuMojoMediaClient {
++ public:
++  explicit GpuMojoMediaClientSpatiandAndroid(GpuMojoMediaClientTraits& traits)
++      : GpuMojoMediaClient(traits) {}
++  ~GpuMojoMediaClientSpatiandAndroid() final = default;
++
++ protected:
++  std::unique_ptr<VideoDecoder> CreatePlatformVideoDecoder(VideoDecoderTraits& traits) final {
++    return std::make_unique<SpatiandMediaCodecVideoDecoder>(traits.task_runner,
++                                                            std::move(traits.media_log));
++  }
++
++  std::optional<SupportedVideoDecoderConfigs> GetPlatformSupportedVideoDecoderConfigs() final {
++    return SpatiandMediaCodecVideoDecoder::GetSupportedConfigs();
++  }
++
++  VideoDecoderType GetPlatformDecoderImplementationType() final {
++    return VideoDecoderType::kMediaCodec;
++  }
++};
++
++std::unique_ptr<GpuMojoMediaClient> CreateGpuMediaService(GpuMojoMediaClientTraits& traits) {
++  return std::make_unique<GpuMojoMediaClientSpatiandAndroid>(traits);
++}
++
++}  // namespace media
+diff --git a/media/mojo/services/spatiand_media_codec_video_decoder.cc b/media/mojo/services/spatiand_media_codec_video_decoder.cc
+new file mode 100644
+index 0000000000..96c029a50c
+--- /dev/null
++++ b/media/mojo/services/spatiand_media_codec_video_decoder.cc
+@@ -0,0 +1,449 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifdef UNSAFE_BUFFERS_BUILD
++// The decoder's buffers are the NDK's raw pointers and sizes.
++#pragma allow_unsafe_buffers
++#endif
++
++#include "media/mojo/services/spatiand_media_codec_video_decoder.h"
++
++#include <dlfcn.h>
++#include <media/NdkMediaCodec.h>
++#include <media/NdkMediaFormat.h>
++#include <string.h>
++
++#include <algorithm>
++#include <string>
++#include <utility>
++
++#include "base/containers/span.h"
++#include "base/functional/bind.h"
++#include "base/logging.h"
++#include "base/no_destructor.h"
++#include "media/base/media_log.h"
++#include "media/base/video_frame.h"
++
++namespace media {
++
++namespace {
++
++// MediaCodec's colour formats (MediaCodecInfo.CodecCapabilities): the ones read here.
++constexpr int32_t kYUV420Planar = 19;
++constexpr int32_t kYUV420SemiPlanar = 21;
++constexpr int32_t kYUV420Flexible = 0x7F420888;
++constexpr int32_t kQcomYUV420SemiPlanar = 0x7FA30C00;
++constexpr int32_t kQcomYUV420SemiPlanar32m = 0x7FA30C04;
++
++// How soon the codec is looked at again while it holds anything, and for how many looks with
++// nothing given or taken it is still looked at.
++constexpr base::TimeDelta kPumpEvery = base::Milliseconds(2);
++constexpr int kIdlePumps = 100;
++
++const char* MimeFor(VideoCodec codec) {
++  switch (codec) {
++    case VideoCodec::kH264:
++      return "video/avc";
++    case VideoCodec::kHEVC:
++      return "video/hevc";
++    case VideoCodec::kVP8:
++      return "video/x-vnd.on2.vp8";
++    case VideoCodec::kVP9:
++      return "video/x-vnd.on2.vp9";
++    case VideoCodec::kAV1:
++      return "video/av01";
++    default:
++      return nullptr;
++  }
++}
++
++// The codec's name: AMediaCodec_getName() is Android 9's, newer than the NDK this is built for.
++std::string CodecName(AMediaCodec* codec) {
++  using GetName = media_status_t (*)(AMediaCodec*, char**);
++  using ReleaseName = void (*)(AMediaCodec*, char*);
++  static GetName get_name = reinterpret_cast<GetName>(dlsym(RTLD_DEFAULT, "AMediaCodec_getName"));
++  static ReleaseName release_name =
++      reinterpret_cast<ReleaseName>(dlsym(RTLD_DEFAULT, "AMediaCodec_releaseName"));
++  char* name = nullptr;
++  if (!get_name || get_name(codec, &name) != AMEDIA_OK || !name) {
++    return std::string();
++  }
++  std::string result(name);
++  if (release_name) {
++    release_name(codec, name);
++  }
++  return result;
++}
++
++// Android's own software decoders, which Chromium's match.
++bool IsSoftware(const std::string& name) {
++  return name.empty() || name.starts_with("c2.android.") || name.starts_with("OMX.google.") ||
++         name.find(".sw.") != std::string::npos;
++}
++
++bool HasHardwareDecoder(const char* mime) {
++  AMediaCodec* codec = AMediaCodec_createDecoderByType(mime);
++  if (!codec) {
++    return false;
++  }
++  const std::string name = CodecName(codec);
++  AMediaCodec_delete(codec);
++  const bool hardware = !IsSoftware(name);
++  VLOG(1) << "Spatiand: " << mime << " decoder " << name << (hardware ? "" : " (software)");
++  return hardware;
++}
++
++}  // namespace
++
++SpatiandMediaCodecVideoDecoder::Pending::Pending(scoped_refptr<DecoderBuffer> buffer,
++                                                 DecodeCB decode_cb)
++    : buffer(std::move(buffer)), decode_cb(std::move(decode_cb)) {}
++SpatiandMediaCodecVideoDecoder::Pending::Pending(Pending&&) = default;
++SpatiandMediaCodecVideoDecoder::Pending& SpatiandMediaCodecVideoDecoder::Pending::operator=(
++    Pending&&) = default;
++SpatiandMediaCodecVideoDecoder::Pending::~Pending() = default;
++
++// static
++SupportedVideoDecoderConfigs SpatiandMediaCodecVideoDecoder::GetSupportedConfigs() {
++  static const base::NoDestructor<SupportedVideoDecoderConfigs> configs([] {
++    SupportedVideoDecoderConfigs supported;
++    const gfx::Size smallest(16, 16);
++    const gfx::Size largest(4096, 4096);
++    // Eight bits a sample only: ten-bit pictures would come out as P010, not yet read here.
++    if (HasHardwareDecoder("video/avc")) {
++      supported.emplace_back(H264PROFILE_BASELINE, H264PROFILE_HIGH, smallest, largest, false,
++                             false);
++    }
++    if (HasHardwareDecoder("video/hevc")) {
++      supported.emplace_back(HEVCPROFILE_MAIN, HEVCPROFILE_MAIN, smallest, largest, false, false);
++    }
++    if (HasHardwareDecoder("video/x-vnd.on2.vp8")) {
++      supported.emplace_back(VP8PROFILE_ANY, VP8PROFILE_ANY, smallest, largest, false, false);
++    }
++    if (HasHardwareDecoder("video/x-vnd.on2.vp9")) {
++      supported.emplace_back(VP9PROFILE_PROFILE0, VP9PROFILE_PROFILE0, smallest, largest, false,
++                             false);
++    }
++    if (HasHardwareDecoder("video/av01")) {
++      supported.emplace_back(AV1PROFILE_PROFILE_MAIN, AV1PROFILE_PROFILE_MAIN, smallest, largest,
++                             false, false);
++    }
++    return supported;
++  }());
++  return *configs;
++}
++
++SpatiandMediaCodecVideoDecoder::SpatiandMediaCodecVideoDecoder(
++    scoped_refptr<base::SequencedTaskRunner> task_runner,
++    std::unique_ptr<MediaLog> media_log)
++    : task_runner_(std::move(task_runner)), media_log_(std::move(media_log)) {}
++
++SpatiandMediaCodecVideoDecoder::~SpatiandMediaCodecVideoDecoder() {
++  Abort(DecoderStatus::Codes::kAborted);
++  CloseCodec();
++}
++
++void SpatiandMediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config,
++                                                bool low_delay,
++                                                CdmContext* cdm_context,
++                                                InitCB init_cb,
++                                                const OutputCB& output_cb,
++                                                const WaitingCB& waiting_cb) {
++  DCHECK(task_runner_->RunsTasksInCurrentSequence());
++  auto done = [&](DecoderStatus::Codes code) {
++    task_runner_->PostTask(FROM_HERE, base::BindOnce(std::move(init_cb), code));
++  };
++  const char* mime = MimeFor(config.codec());
++  if (!mime || config.is_encrypted() ||
++      !IsVideoDecoderConfigSupported(GetSupportedConfigs(), config)) {
++    done(DecoderStatus::Codes::kUnsupportedConfig);
++    return;
++  }
++  Abort(DecoderStatus::Codes::kAborted);
++  CloseCodec();
++  AMediaCodec* codec = AMediaCodec_createDecoderByType(mime);
++  if (!codec) {
++    done(DecoderStatus::Codes::kFailedToCreateDecoder);
++    return;
++  }
++  if (IsSoftware(CodecName(codec))) {
++    AMediaCodec_delete(codec);
++    done(DecoderStatus::Codes::kUnsupportedConfig);
++    return;
++  }
++  AMediaFormat* format = AMediaFormat_new();
++  AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, mime);
++  AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_WIDTH, config.coded_size().width());
++  AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_HEIGHT, config.coded_size().height());
++  AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, kYUV420Flexible);
++  const media_status_t configured = AMediaCodec_configure(codec, format, nullptr, nullptr, 0);
++  AMediaFormat_delete(format);
++  if (configured != AMEDIA_OK || AMediaCodec_start(codec) != AMEDIA_OK) {
++    LOG(WARNING) << "Spatiand: Android's " << mime << " decoder would not start ("
++                 << configured << ")";
++    AMediaCodec_delete(codec);
++    done(DecoderStatus::Codes::kFailedToCreateDecoder);
++    return;
++  }
++  codec_ = codec;
++  config_ = config;
++  output_cb_ = output_cb;
++  color_format_ = 0;
++  width_ = config.coded_size().width();
++  height_ = config.coded_size().height();
++  stride_ = width_;
++  slice_height_ = height_;
++  crop_ = config.visible_rect();
++  idle_pumps_ = 0;
++  done(DecoderStatus::Codes::kOk);
++}
++
++void SpatiandMediaCodecVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
++                                            DecodeCB decode_cb) {
++  DCHECK(task_runner_->RunsTasksInCurrentSequence());
++  if (!codec_) {
++    task_runner_->PostTask(FROM_HERE, base::BindOnce(std::move(decode_cb),
++                                                     DecoderStatus::Codes::kFailed));
++    return;
++  }
++  pending_.emplace_back(std::move(buffer), std::move(decode_cb));
++  idle_pumps_ = 0;
++  Pump();
++}
++
++void SpatiandMediaCodecVideoDecoder::Reset(base::OnceClosure closure) {
++  DCHECK(task_runner_->RunsTasksInCurrentSequence());
++  timer_.Stop();
++  Abort(DecoderStatus::Codes::kAborted);
++  if (codec_) {
++    AMediaCodec_flush(codec_);
++  }
++  task_runner_->PostTask(FROM_HERE, std::move(closure));
++}
++
++bool SpatiandMediaCodecVideoDecoder::NeedsBitstreamConversion() const {
++  // H.264 and HEVC as Annex B, with their parameter sets before each keyframe.
++  return true;
++}
++
++bool SpatiandMediaCodecVideoDecoder::CanReadWithoutStalling() const {
++  return true;
++}
++
++int SpatiandMediaCodecVideoDecoder::GetMaxDecodeRequests() const {
++  return 4;
++}
++
++VideoDecoderType SpatiandMediaCodecVideoDecoder::GetDecoderType() const {
++  return VideoDecoderType::kMediaCodec;
++}
++
++bool SpatiandMediaCodecVideoDecoder::IsPlatformDecoder() const {
++  return true;
++}
++
++void SpatiandMediaCodecVideoDecoder::Pump() {
++  if (!codec_) {
++    return;
++  }
++  if (!FeedInput() || !DrainOutput()) {
++    LOG(WARNING) << "Spatiand: Android's decoder failed";
++    Abort(DecoderStatus::Codes::kPlatformDecodeFailure);
++    CloseCodec();
++    return;
++  }
++  if (!pending_.empty() || eos_cb_ || ++idle_pumps_ < kIdlePumps) {
++    timer_.Start(FROM_HERE, kPumpEvery,
++                 base::BindOnce(&SpatiandMediaCodecVideoDecoder::Pump,
++                                weak_factory_.GetWeakPtr()));
++  }
++}
++
++bool SpatiandMediaCodecVideoDecoder::FeedInput() {
++  while (!pending_.empty() && !eos_cb_) {
++    const ssize_t index = AMediaCodec_dequeueInputBuffer(codec_, 0);
++    if (index == AMEDIACODEC_INFO_TRY_AGAIN_LATER) {
++      return true;
++    }
++    if (index < 0) {
++      return false;
++    }
++    Pending next = std::move(pending_.front());
++    pending_.pop_front();
++    idle_pumps_ = 0;
++    if (next.buffer->end_of_stream()) {
++      if (AMediaCodec_queueInputBuffer(codec_, index, 0, 0, 0,
++                                       AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) != AMEDIA_OK) {
++        return false;
++      }
++      eos_cb_ = std::move(next.decode_cb);
++      continue;
++    }
++    const base::span<const uint8_t> bytes(*next.buffer);
++    size_t capacity = 0;
++    uint8_t* into = AMediaCodec_getInputBuffer(codec_, index, &capacity);
++    if (!into || capacity < bytes.size()) {
++      return false;
++    }
++    memcpy(into, bytes.data(), bytes.size());
++    if (AMediaCodec_queueInputBuffer(codec_, index, 0, bytes.size(),
++                                     next.buffer->timestamp().InMicroseconds(), 0) != AMEDIA_OK) {
++      return false;
++    }
++    task_runner_->PostTask(FROM_HERE, base::BindOnce(std::move(next.decode_cb),
++                                                     DecoderStatus::Codes::kOk));
++  }
++  return true;
++}
++
++bool SpatiandMediaCodecVideoDecoder::DrainOutput() {
++  for (;;) {
++    AMediaCodecBufferInfo info;
++    const ssize_t index = AMediaCodec_dequeueOutputBuffer(codec_, &info, 0);
++    if (index == AMEDIACODEC_INFO_TRY_AGAIN_LATER) {
++      return true;
++    }
++    if (index == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED) {
++      ReadOutputFormat();
++      continue;
++    }
++    if (index == AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED) {
++      continue;
++    }
++    if (index < 0) {
++      return false;
++    }
++    idle_pumps_ = 0;
++    const bool delivered = info.size <= 0 || DeliverFrame(index, info);
++    AMediaCodec_releaseOutputBuffer(codec_, index, false);
++    if (!delivered) {
++      return false;
++    }
++    if (info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) {
++      // Flushed: it takes input again only after a flush of its own.
++      AMediaCodec_flush(codec_);
++      if (eos_cb_) {
++        task_runner_->PostTask(FROM_HERE, base::BindOnce(std::move(eos_cb_),
++                                                         DecoderStatus::Codes::kOk));
++      }
++      return true;
++    }
++  }
++}
++
++void SpatiandMediaCodecVideoDecoder::ReadOutputFormat() {
++  AMediaFormat* format = AMediaCodec_getOutputFormat(codec_);
++  if (!format) {
++    return;
++  }
++  int32_t value = 0;
++  if (AMediaFormat_getInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, &value)) {
++    color_format_ = value;
++  }
++  if (AMediaFormat_getInt32(format, AMEDIAFORMAT_KEY_WIDTH, &value) && value > 0) {
++    width_ = value;
++  }
++  if (AMediaFormat_getInt32(format, AMEDIAFORMAT_KEY_HEIGHT, &value) && value > 0) {
++    height_ = value;
++  }
++  stride_ = width_;
++  slice_height_ = height_;
++  if (AMediaFormat_getInt32(format, "stride", &value) && value >= width_) {
++    stride_ = value;
++  }
++  if (AMediaFormat_getInt32(format, "slice-height", &value) && value >= height_) {
++    slice_height_ = value;
++  } else if (color_format_ == kQcomYUV420SemiPlanar32m) {
++    slice_height_ = (height_ + 31) & ~31;
++  }
++  int32_t left = 0, top = 0, right = width_ - 1, bottom = height_ - 1;
++  AMediaFormat_getInt32(format, "crop-left", &left);
++  AMediaFormat_getInt32(format, "crop-top", &top);
++  AMediaFormat_getInt32(format, "crop-right", &right);
++  AMediaFormat_getInt32(format, "crop-bottom", &bottom);
++  crop_ = gfx::Rect(left, top, right - left + 1, bottom - top + 1);
++  crop_.Intersect(gfx::Rect(width_, height_));
++  AMediaFormat_delete(format);
++  VLOG(1) << "Spatiand: decoder gives " << width_ << "x" << height_ << " colour " << color_format_
++          << " stride " << stride_ << " planes " << slice_height_ << " crop " << crop_.ToString();
++}
++
++bool SpatiandMediaCodecVideoDecoder::DeliverFrame(size_t index, const AMediaCodecBufferInfo& info) {
++  size_t size = 0;
++  const uint8_t* buffer = AMediaCodec_getOutputBuffer(codec_, index, &size);
++  if (!buffer || info.offset < 0 || static_cast<size_t>(info.offset) + info.size > size) {
++    return false;
++  }
++  const uint8_t* picture = buffer + info.offset;
++  const size_t available = info.size;
++  const bool planar = color_format_ == kYUV420Planar;
++  if (color_format_ && !planar && color_format_ != kYUV420SemiPlanar &&
++      color_format_ != kYUV420Flexible && color_format_ != kQcomYUV420SemiPlanar &&
++      color_format_ != kQcomYUV420SemiPlanar32m) {
++    LOG(WARNING) << "Spatiand: Android's decoder gives colour format " << color_format_
++                 << ", not read here";
++    return false;
++  }
++  const int rows = height_;
++  const int chroma_rows = (height_ + 1) / 2;
++  const size_t luma = static_cast<size_t>(stride_) * slice_height_;
++  const size_t needed = planar ? luma + 2 * static_cast<size_t>(stride_ / 2) * ((slice_height_ + 1) / 2)
++                               : luma + static_cast<size_t>(stride_) * chroma_rows;
++  if (available < needed - (static_cast<size_t>(stride_) - width_)) {
++    LOG(WARNING) << "Spatiand: a picture of " << available << " bytes, " << needed << " expected";
++    return false;
++  }
++  const gfx::Size coded((width_ + 1) & ~1, (height_ + 1) & ~1);
++  auto frame = VideoFrame::CreateFrame(planar ? PIXEL_FORMAT_I420 : PIXEL_FORMAT_NV12, coded,
++                                       crop_, config_.natural_size(),
++                                       base::Microseconds(info.presentationTimeUs));
++  if (!frame) {
++    return false;
++  }
++  for (int y = 0; y < rows; ++y) {
++    memcpy(frame->writable_data(VideoFrame::Plane::kY) + y * frame->stride(VideoFrame::Plane::kY),
++           picture + static_cast<size_t>(y) * stride_, width_);
++  }
++  if (planar) {
++    const int chroma_stride = stride_ / 2;
++    const uint8_t* u = picture + luma;
++    const uint8_t* v = u + static_cast<size_t>(chroma_stride) * ((slice_height_ + 1) / 2);
++    for (int y = 0; y < chroma_rows; ++y) {
++      memcpy(frame->writable_data(VideoFrame::Plane::kU) + y * frame->stride(VideoFrame::Plane::kU),
++             u + static_cast<size_t>(y) * chroma_stride, (width_ + 1) / 2);
++      memcpy(frame->writable_data(VideoFrame::Plane::kV) + y * frame->stride(VideoFrame::Plane::kV),
++             v + static_cast<size_t>(y) * chroma_stride, (width_ + 1) / 2);
++    }
++  } else {
++    const uint8_t* uv = picture + luma;
++    for (int y = 0; y < chroma_rows; ++y) {
++      memcpy(frame->writable_data(VideoFrame::Plane::kUV) + y * frame->stride(VideoFrame::Plane::kUV),
++             uv + static_cast<size_t>(y) * stride_, (width_ + 1) & ~1);
++    }
++  }
++  const gfx::ColorSpace color_space = config_.color_space_info().ToGfxColorSpace();
++  frame->set_color_space(color_space.IsValid() ? color_space : gfx::ColorSpace::CreateREC709());
++  output_cb_.Run(std::move(frame));
++  return true;
++}
++
++void SpatiandMediaCodecVideoDecoder::Abort(DecoderStatus::Codes code) {
++  timer_.Stop();
++  for (Pending& next : pending_) {
++    task_runner_->PostTask(FROM_HERE, base::BindOnce(std::move(next.decode_cb), code));
++  }
++  pending_.clear();
++  if (eos_cb_) {
++    task_runner_->PostTask(FROM_HERE, base::BindOnce(std::move(eos_cb_), code));
++  }
++}
++
++void SpatiandMediaCodecVideoDecoder::CloseCodec() {
++  if (codec_) {
++    AMediaCodec_stop(codec_);
++    AMediaCodec_delete(codec_);
++    codec_ = nullptr;
++  }
++}
++
++}  // namespace media
+diff --git a/media/mojo/services/spatiand_media_codec_video_decoder.h b/media/mojo/services/spatiand_media_codec_video_decoder.h
+new file mode 100644
+index 0000000000..ff819d39f6
+--- /dev/null
++++ b/media/mojo/services/spatiand_media_codec_video_decoder.h
+@@ -0,0 +1,104 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef MEDIA_MOJO_SERVICES_SPATIAND_MEDIA_CODEC_VIDEO_DECODER_H_
++#define MEDIA_MOJO_SERVICES_SPATIAND_MEDIA_CODEC_VIDEO_DECODER_H_
++
++#include <stdint.h>
++
++#include <deque>
++#include <memory>
++
++#include "base/memory/scoped_refptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/timer/timer.h"
++#include "media/base/decoder_buffer.h"
++#include "media/base/supported_video_decoder_config.h"
++#include "media/base/video_decoder.h"
++#include "media/base/video_decoder_config.h"
++#include "ui/gfx/geometry/rect.h"
++
++struct AMediaCodec;
++struct AMediaCodecBufferInfo;
++
++namespace media {
++
++class MediaLog;
++
++// Spatiand: video decoded by Android's own hardware decoders (MediaCodec, through the NDK), in the
++// GPU process, for SpatiMesh on Android's libc: Chromium's Linux GPU process decodes only with
++// VA-API and V4L2, which Android has not got (android-libc/0015). Each picture the decoder gives
++// is copied into a frame of memory, which goes to the page as shared memory: a copy or two more
++// than the Deck's dmabufs, the decoding itself done by the hardware.
++class SpatiandMediaCodecVideoDecoder : public VideoDecoder {
++ public:
++  // What the hardware decoders here take. Android's own software decoders are left out:
++  // Chromium's are as good, and run in the page's sandbox.
++  static SupportedVideoDecoderConfigs GetSupportedConfigs();
++
++  SpatiandMediaCodecVideoDecoder(scoped_refptr<base::SequencedTaskRunner> task_runner,
++                                 std::unique_ptr<MediaLog> media_log);
++  SpatiandMediaCodecVideoDecoder(const SpatiandMediaCodecVideoDecoder&) = delete;
++  SpatiandMediaCodecVideoDecoder& operator=(const SpatiandMediaCodecVideoDecoder&) = delete;
++  ~SpatiandMediaCodecVideoDecoder() override;
++
++  // VideoDecoder:
++  void Initialize(const VideoDecoderConfig& config,
++                  bool low_delay,
++                  CdmContext* cdm_context,
++                  InitCB init_cb,
++                  const OutputCB& output_cb,
++                  const WaitingCB& waiting_cb) override;
++  void Decode(scoped_refptr<DecoderBuffer> buffer, DecodeCB decode_cb) override;
++  void Reset(base::OnceClosure closure) override;
++  bool NeedsBitstreamConversion() const override;
++  bool CanReadWithoutStalling() const override;
++  int GetMaxDecodeRequests() const override;
++  VideoDecoderType GetDecoderType() const override;
++  bool IsPlatformDecoder() const override;
++
++ private:
++  struct Pending {
++    Pending(scoped_refptr<DecoderBuffer> buffer, DecodeCB decode_cb);
++    Pending(Pending&&);
++    Pending& operator=(Pending&&);
++    ~Pending();
++    scoped_refptr<DecoderBuffer> buffer;
++    DecodeCB decode_cb;
++  };
++
++  // Hands the codec what it will take and the page what it has given; again shortly while it
++  // holds anything (the NDK's API of this Android level has no callbacks).
++  void Pump();
++  bool FeedInput();
++  bool DrainOutput();
++  void ReadOutputFormat();
++  bool DeliverFrame(size_t index, const AMediaCodecBufferInfo& info);
++  void Abort(DecoderStatus::Codes code);
++  void CloseCodec();
++
++  scoped_refptr<base::SequencedTaskRunner> task_runner_;
++  std::unique_ptr<MediaLog> media_log_;
++  VideoDecoderConfig config_;
++  OutputCB output_cb_;
++  AMediaCodec* codec_ = nullptr;
++  std::deque<Pending> pending_;
++  // The end of the stream's callback, run once the codec has given its last picture.
++  DecodeCB eos_cb_;
++  // Pumps since the codec was last given or gave anything: after a while it is let be.
++  int idle_pumps_ = 0;
++  // The pictures the codec gives: their colour format, size, rows' stride, planes' height, crop.
++  int32_t color_format_ = 0;
++  int32_t width_ = 0;
++  int32_t height_ = 0;
++  int32_t stride_ = 0;
++  int32_t slice_height_ = 0;
++  gfx::Rect crop_;
++  base::OneShotTimer timer_;
++  base::WeakPtrFactory<SpatiandMediaCodecVideoDecoder> weak_factory_{this};
++};
++
++}  // namespace media
++
++#endif  // MEDIA_MOJO_SERVICES_SPATIAND_MEDIA_CODEC_VIDEO_DECODER_H_
+-- 
+2.53.0
+

@@ -93,7 +93,16 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   through whole under its window's sink, a 7 s tone moved to another window's sink mid-play with nothing lost, and a
   page heard a 440 Hz tone from the stand-in microphone. The room's half (each window's slot) runs only with the
   glasses on, as the room does nothing per frame without them.
-* **Video in software**, by Spatiand's FFmpeg; Android's decoders (MediaCodec, in that FFmpeg) are not yet asked.
+* **Video on Android's hardware decoders** (2026-11-08, `android-libc/0015`): Chromium's Linux GPU process decodes
+  only with VA-API and V4L2, so here its media client is Spatiand's, MediaCodec through the NDK in the GPU process,
+  offering what this machine has a hardware decoder for (on the Beam Pro: H.264 Baseline to High, HEVC Main, VP9
+  profile 0, up to 4096x4096; no AV1, which stays off as on the Deck without one; Android's software decoders are
+  left to Chromium's own). Each picture, NV12 or I420, is copied into a frame of memory, which reaches the page as
+  shared memory and the GPU as a texture: a copy or two more than the Deck's dmabufs. `chrome://gpu` says video
+  decode hardware accelerated; 720p H.264, VP9 and HEVC played 146 frames in 5 s, none dropped, through
+  `c2.qti.avc.decoder` and `c2.qti.hevc.decoder` (Android's log), and the pictures came out right. Ten-bit video
+  (HEVC Main 10, VP9 profile 2) is decoded by Chromium in software. MediaCodec reaches Android's media service by
+  binder, which the GPU process may as it is not yet sandboxed; its sandbox, when it comes, must leave it that.
 * No D-Bus: libdbus asks for a system bus at its build folder's path and finds none, as there is none to find.
 
 **Changed again on 2026-10-29:** WebKitGTK, Linux's fallback, removed too: WPE is the only engine,
