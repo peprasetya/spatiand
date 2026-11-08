@@ -114,6 +114,8 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   emptied page drops about 60% of its frames whichever decoder plays it, software too; on a page with other
   content it drops none.
 * No D-Bus: libdbus asks for a system bus at its build folder's path and finds none, as there is none to find.
+* **Crashes leave minidumps** (`android-libc/0018`): Chromium's crash handler is carried as `libspatimesh_crashpad.so`;
+  a tab crashed on purpose (`chrome://crash`) left its `.dmp` in `$XDG_CONFIG_HOME/chromium/Crash Reports/pending`.
 
 **Changed again on 2026-10-29:** WebKitGTK, Linux's fallback, removed too: WPE is the only engine,
 and where it is not installed SpatiMesh says so rather than falling back.

@@ -122,8 +122,9 @@ fi
 if [ -f "$CR/spatimesh" ]; then
     cp "$CR/spatimesh" $OUT/apk/lib/arm64-v8a/libspatimesh_chromium.so
     # Its own libraries: NSS and NSPR (third_party/chromium/android-libc/deps.sh) and Chromium's
-    # minigbm. The rest it needs (xkbcommon, libffi, SQLite, FFmpeg) are the APK's already.
-    for lib in nspr4 plc4 plds4 nss3 nssutil3 smime3 ssl3 softokn3 freebl3 freeblpriv3 nssckbi minigbm; do
+    # minigbm; and its crash handler, a program. The rest it needs (xkbcommon, libffi, SQLite,
+    # FFmpeg) are the APK's already.
+    for lib in nspr4 plc4 plds4 nss3 nssutil3 smime3 ssl3 softokn3 freebl3 freeblpriv3 nssckbi minigbm spatimesh_crashpad; do
         cp "$CR/lib$lib.so" $OUT/apk/lib/arm64-v8a/
     done
 fi

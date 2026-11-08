@@ -1,0 +1,33 @@
+From 5778d8be89575049599c51c5ea9d9e4beb3b37d2 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Sun, 8 Nov 2026 19:44:58 +0700
+Subject: [PATCH] Spatiand: built for Android libc: the crash handler as
+ libspatimesh_crashpad.so
+
+In the APK's library folder, which holds lib*.so alone, beside the browser: crashes leave their
+minidumps in Crash Reports as on the Deck, where without it every start's handler failed to exec.
+---
+ components/crash/core/app/crashpad_linux.cc | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/components/crash/core/app/crashpad_linux.cc b/components/crash/core/app/crashpad_linux.cc
+index d4d3555891..4223214786 100644
+--- a/components/crash/core/app/crashpad_linux.cc
++++ b/components/crash/core/app/crashpad_linux.cc
+@@ -169,7 +169,13 @@ bool PlatformCrashpadInitialization(
+     if (!base::PathService::Get(base::DIR_EXE, &handler_path)) {
+       return false;
+     }
++#if defined(__TERMUX__)
++    // Spatiand: in the APK's library folder, which holds lib*.so alone, beside the browser
++    // (android-libc/0018).
++    handler_path = handler_path.Append("libspatimesh_crashpad.so");
++#else
+     handler_path = handler_path.Append("chrome_crashpad_handler");
++#endif
+ 
+     // When --use-cros-crash-reporter is set (below), the handler passes dumps
+     // to ChromeOS's /sbin/crash_reporter which in turn passes the dump to
+-- 
+2.53.0
+

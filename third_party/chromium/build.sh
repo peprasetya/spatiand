@@ -331,6 +331,9 @@ package_android() {
     "${SPATIAND_NDK:-/media/shared/Linux/App/android-ndk-r28c}"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip \
         --strip-unneeded -o "$P/spatimesh" "$O/chrome"
     cp -a "$O/libminigbm.so" "$P/"
+    # Its crash handler, under a name the APK's library folder takes (android-libc/0018).
+    "${SPATIAND_NDK:-/media/shared/Linux/App/android-ndk-r28c}"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip \
+        --strip-unneeded -o "$P/libspatimesh_crashpad.so" "$O/chrome_crashpad_handler"
     for lib in nspr4 plc4 plds4 nss3 nssutil3 smime3 ssl3 softokn3 freebl3 freeblpriv3 nssckbi; do
         cp -a "$work/android-deps/lib/lib$lib.so" "$P/"
     done
