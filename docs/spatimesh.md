@@ -84,15 +84,18 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   on either side. ANGLE takes such buffers as EGLImages on Android's libc (its own
   `linux/AHardwareBufferImageSiblingVkSpatiand`, as its Android build does; Vulkan's import from Android's buffers
   turned on); the buffer allocator's mapper is loaded before the GPU sandbox, which keeps the vendor's libraries
-  out; the room's GPU is told nothing to wait for, so a frame goes once its fence has signalled. Where the room
+  out. Each frame's fence (a sync file) goes down the buffer's socket, which the room keeps, just before the frame is
+  committed, and the room's GPU waits for every fence that has come before it draws (`android-libc/0024`,
+  `crates/spatiand-android/src/android/explicit_sync.rs`): Android's buffers carry no fences of their own, and
+  Chromium's Wayland host gives fences only through `wp_linux_drm_syncobj_v1`, which needs DRM. Where the room
   offers no such modifier the frames are read back into shared memory as before (`0014`), now as RGBA through a
   pixel buffer (`0020`): asked for BGRA, ANGLE had converted one pixel at a time, 190 ms a frame. Measured in the
   Beam Pro's room (`tools/beam-stand-in`, below), a full-window canvas animated every frame: 4.6 frames a second
-  read back as at first, 23 read back as RGBA, 55 to 57 in hardware buffers with the room presenting 60; wheel
-  scrolling Wikipedia, about 40. What still holds a scrolled frame back: the fence is looked at on the GPU
-  process's main thread, behind 10 ms of tile raster, as Chromium sends its commits from that thread alone. Telling
-  the room's GPU to wait for the fence instead (`zwp_linux_explicit_synchronization_v1`) would send the frame at
-  once. WebGPU is off as on every platform (Cromite's `Disable-WebGPU`, its runtime feature forced off).
+  read back as at first, 23 read back as RGBA, 55 to 57 in hardware buffers with the room presenting 60. Scrolling
+  Wikipedia by script, 32 frames a second while Chromium waited for its own fence (on its GPU process's main thread,
+  behind 10 ms of tile raster), 52 with the fence handed to the room; by wheel, about 43. What is left is that
+  raster: the Beam Pro's GPU paints new tiles slower than the Deck's. WebGPU is off as on every platform (Cromite's
+  `Disable-WebGPU`, its runtime feature forced off).
 * **The GPU process is sandboxed too** (`android-libc/0016`): Chromium's Linux GPU sandbox gave up because Adreno's
   driver has started threads by then; here the filter goes on every thread at once (TSYNC), the broker is given
   what the driver, Android's Vulkan loader and MediaCodec open as they run, binder (which works only for the process

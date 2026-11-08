@@ -1,0 +1,178 @@
+From ff9c56d65345316c650ee5fc228034e3780d172e Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Mon, 9 Nov 2026 04:23:54 +0700
+Subject: [PATCH] Spatiand: built for Android libc: frames sent at once, their
+ fences down their sockets
+
+Each frame copied into its hardware buffer goes to the room at once, its fence (a sync file, EGL_ANDROID_native_fence_sync) sent just before down the socket the buffer came through, which the room keeps; the room's GPU waits for it before drawing (android/eglshim in Spatiand). The fence was looked at on the GPU main thread, behind tile raster, and a scrolled frame went out up to 13 ms after it was drawn: scrolling Wikipedia by script went from 32 to 52 frames a second on the Beam Pro. Chromium speaks no other way of giving the room a fence here: its Wayland host knows only wp_linux_drm_syncobj_v1, which needs DRM. A buffer whose socket takes no fence waits for its GPU here, as before.
+---
+ .../gpu/gl_surface_egl_readback_wayland.cc    | 73 +++++++++++++++++--
+ .../gpu/gl_surface_egl_readback_wayland.h     | 13 +++-
+ 2 files changed, 75 insertions(+), 11 deletions(-)
+
+diff --git a/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc b/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc
+index 28bedcffca..06d0888538 100644
+--- a/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc
++++ b/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc
+@@ -2,6 +2,11 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#ifdef UNSAFE_BUFFERS_BUILD
++// Spatiand: the control message a fence goes to the room in (SendFence).
++#pragma allow_unsafe_buffers
++#endif
++
+ #include "ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.h"
+ 
+ #include "base/memory/shared_memory_mapping.h"
+@@ -14,10 +19,12 @@
+ #include <algorithm>
+ #include <dlfcn.h>
+ #include <drm_fourcc.h>
++#include <string.h>
+ #include <sys/socket.h>
+ #include <unistd.h>
+ 
+ #include "base/files/scoped_file.h"
++#include "base/posix/eintr_wrapper.h"
+ #include "base/time/time.h"
+ #include "base/task/single_thread_task_runner.h"
+ #include "base/functional/bind.h"
+@@ -185,9 +192,22 @@ void GLSurfaceEglReadbackWayland::SwapBuffersAsync(
+ #if defined(__TERMUX__)
+   if (next_buffer->framebuffer_) {
+     CommitNow();
++    CopyIntoHardwareBuffer(next_buffer);
++    if (SendFence(next_buffer)) {
++      const gfx::Rect bounds(GetSize());
++      constexpr bool enable_blend_for_shadow = true;
++      buffer_manager_->CommitBuffer(widget_, next_buffer->buffer_id_,
++                                    /*frame_id*/ next_buffer->buffer_id_, data,
++                                    bounds, enable_blend_for_shadow,
++                                    gfx::RoundedCornersF(),
++                                    surface_scale_factor_, bounds);
++      return;
++    }
++    EGLSyncKHR fence =
++        eglCreateSyncKHR(GetEGLDisplay(), EGL_SYNC_FENCE_KHR, nullptr);
++    glFlush();
+     pending_commit_ = PendingCommit{next_buffer->buffer_id_, data,
+-                                    gfx::Rect(GetSize()),
+-                                    CopyIntoHardwareBuffer(next_buffer)};
++                                    gfx::Rect(GetSize()), fence};
+     CommitWhenDrawn();
+     return;
+   }
+@@ -350,8 +370,8 @@ bool GLSurfaceEglReadbackWayland::CreateHardwareBuffers(const gfx::Size& size) {
+     if (ok && socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0,
+                          sockets) == 0) {
+       base::ScopedFD reader(sockets[0]);
+-      base::ScopedFD writer(sockets[1]);
+-      ok = calls.send(buffer->hardware_buffer_, writer.get()) == 0;
++      buffer->fence_socket_.reset(sockets[1]);
++      ok = calls.send(buffer->hardware_buffer_, buffer->fence_socket_.get()) == 0;
+       if (ok) {
+         buffer_manager_->CreateDmabufBasedBuffer(
+             std::move(reader), size, {description.stride * 4}, {0},
+@@ -387,7 +407,7 @@ bool GLSurfaceEglReadbackWayland::CreateHardwareBuffers(const gfx::Size& size) {
+   return true;
+ }
+ 
+-void* GLSurfaceEglReadbackWayland::CopyIntoHardwareBuffer(PixelBuffer* buffer) {
++void GLSurfaceEglReadbackWayland::CopyIntoHardwareBuffer(PixelBuffer* buffer) {
+   const gfx::Size size = GetSize();
+   GLint draw_framebuffer = 0;
+   GLint read_framebuffer = 0;
+@@ -406,10 +426,47 @@ void* GLSurfaceEglReadbackWayland::CopyIntoHardwareBuffer(PixelBuffer* buffer) {
+   if (scissor) {
+     glEnable(GL_SCISSOR_TEST);
+   }
+-  EGLSyncKHR fence =
+-      eglCreateSyncKHR(GetEGLDisplay(), EGL_SYNC_FENCE_KHR, nullptr);
++}
++
++bool GLSurfaceEglReadbackWayland::SendFence(PixelBuffer* buffer) {
++  if (!buffer->fence_socket_.is_valid()) {
++    return false;
++  }
++  const EGLint attributes[] = {EGL_SYNC_NATIVE_FENCE_FD_ANDROID,
++                               EGL_NO_NATIVE_FENCE_FD_ANDROID, EGL_NONE};
++  EGLSyncKHR sync = eglCreateSyncKHR(
++      GetEGLDisplay(), EGL_SYNC_NATIVE_FENCE_ANDROID, attributes);
++  if (sync == EGL_NO_SYNC_KHR) {
++    return false;
++  }
+   glFlush();
+-  return fence;
++  base::ScopedFD fence(eglDupNativeFenceFDANDROID(GetEGLDisplay(), sync));
++  eglDestroySyncKHR(GetEGLDisplay(), sync);
++  if (!fence.is_valid()) {
++    return false;
++  }
++  char byte = 'F';
++  struct iovec part = {&byte, 1};
++  alignas(struct cmsghdr) char control[CMSG_SPACE(sizeof(int))] = {};
++  struct msghdr message = {};
++  message.msg_iov = &part;
++  message.msg_iovlen = 1;
++  message.msg_control = control;
++  message.msg_controllen = sizeof(control);
++  struct cmsghdr* header = CMSG_FIRSTHDR(&message);
++  header->cmsg_level = SOL_SOCKET;
++  header->cmsg_type = SCM_RIGHTS;
++  header->cmsg_len = CMSG_LEN(sizeof(int));
++  const int fd = fence.get();
++  memcpy(CMSG_DATA(header), &fd, sizeof(int));
++  if (HANDLE_EINTR(sendmsg(buffer->fence_socket_.get(), &message,
++                           MSG_DONTWAIT | MSG_NOSIGNAL)) != 1) {
++    // Nobody reads this socket (a room without the shim's half): from now on
++    // this buffer's frames wait for their GPU here instead.
++    buffer->fence_socket_.reset();
++    return false;
++  }
++  return true;
+ }
+ 
+ void GLSurfaceEglReadbackWayland::CommitWhenDrawn() {
+diff --git a/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.h b/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.h
+index 20f866afa7..7c4445badf 100644
+--- a/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.h
++++ b/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.h
+@@ -14,6 +14,7 @@
+ #include "ui/ozone/platform/wayland/gpu/wayland_surface_gpu.h"
+ 
+ #if defined(__TERMUX__)
++#include "base/files/scoped_file.h"
+ #include "base/memory/raw_ptr_exclusion.h"
+ #include "ui/gfx/frame_data.h"
+ #include "ui/gfx/geometry/rect.h"
+@@ -88,6 +89,9 @@ class GLSurfaceEglReadbackWayland : public GLSurfaceEglReadback,
+     RAW_PTR_EXCLUSION void* image_ = nullptr;
+     unsigned int texture_ = 0;
+     unsigned int framebuffer_ = 0;
++    // The socket the buffer went to the room through, kept: each frame's fence
++    // goes down it (SendFence).
++    base::ScopedFD fence_socket_;
+ #endif
+   };
+ 
+@@ -110,9 +114,12 @@ class GLSurfaceEglReadbackWayland : public GLSurfaceEglReadback,
+   // socket that stands as the dmabuf's file (android/eglshim in Spatiand).
+   // False where they cannot be had; the frames are then read back as before.
+   bool CreateHardwareBuffers(const gfx::Size& size);
+-  // Copies the frame into the buffer on the GPU; returns the fence that says
+-  // when it is done.
+-  void* CopyIntoHardwareBuffer(PixelBuffer* buffer);
++  // Copies the frame into the buffer on the GPU.
++  void CopyIntoHardwareBuffer(PixelBuffer* buffer);
++  // The fence of the frame just copied, down the buffer's socket to the room,
++  // whose GPU waits for it before drawing (android/eglshim): the frame is then
++  // committed at once. False where it cannot be sent.
++  bool SendFence(PixelBuffer* buffer);
+   void DestroyHardwareBuffer(PixelBuffer* buffer);
+   // A frame copied into its hardware buffer goes to the room once the GPU has
+   // done so (the room's GPU is told nothing to wait for), without holding up
+-- 
+2.53.0
+

@@ -13,6 +13,11 @@
  * renderer, which asks here), and the image Smithay asks for is made from the hardware buffer
  * through EGL_ANDROID_image_native_buffer. Nothing is copied.
  *
+ * The socket stays open, a copy of it here: each frame's fence (a sync file) comes down it, and
+ * before the room draws, spatiand_eglshim_wait_for_clients has the room's GPU wait for every fence
+ * that has come (crates/spatiand-android/src/android/explicit_sync.rs). Android's buffers carry no
+ * fences of their own, as a dmabuf on Linux does.
+ *
  * Only Smithay sees these: the rest of the app reaches Android's EGL by its own name.
  */
 #include <EGL/egl.h>
@@ -21,10 +26,13 @@
 #include <dlfcn.h>
 #include <poll.h>
 #include <pthread.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 /* Spatiand's own modifier: the plane's file is a socket a hardware buffer was sent through.
  * third_party/chromium/android-libc/0020 has the same number. */
@@ -47,12 +55,15 @@ static void *real(const char *name) {
     return egl ? dlsym(egl, name) : NULL;
 }
 
-/* A hardware buffer received, by the socket it came through, and how many images of it live. */
+/* A hardware buffer received, by the socket it came through (a copy of which is kept: the
+ * frames' fences come down it, and while it is open no other socket can take its identity), and
+ * how many images of it live. */
 struct received {
     dev_t device;
     ino_t inode;
     AHardwareBuffer *buffer;
     int images;
+    int socket;
 };
 /* An image made here, and the buffer it holds. */
 struct made {
@@ -72,38 +83,36 @@ static struct received *find_received(dev_t device, ino_t inode) {
 
 static void drop_received(struct received *r) {
     AHardwareBuffer_release(r->buffer);
+    if (r->socket >= 0) close(r->socket);
     *r = receiveds[--received_count];
 }
 
 /* The hardware buffer behind a plane's file, with a reference for the caller; NULL if there is
- * none. The buffer is in the socket once, the first time its client's buffer is imported; it is
- * kept by the socket's identity while images of it live. Called with the lock held. */
+ * none. The buffer is the first message in its socket, read the first time the buffer is
+ * imported; after it come only fences. Called with the lock held. */
 static AHardwareBuffer *hardware_buffer_of(int fd) {
     struct stat st;
     if (fstat(fd, &st) != 0 || !S_ISSOCK(st.st_mode)) return NULL;
-    struct pollfd waiting = {fd, POLLIN, 0};
-    if (poll(&waiting, 1, 0) == 1 && (waiting.revents & POLLIN)) {
-        AHardwareBuffer *buffer = NULL;
-        if (AHardwareBuffer_recvHandleFromUnixSocket(fd, &buffer) == 0 && buffer) {
-            /* An earlier socket of the same identity is gone: this is a new one. */
-            struct received *old = find_received(st.st_dev, st.st_ino);
-            if (old && old->images == 0) drop_received(old);
-            else if (old) old->inode = 0;
-            if (received_count == received_room) {
-                size_t room = received_room ? received_room * 2 : 16;
-                struct received *grown = realloc(receiveds, room * sizeof *grown);
-                if (!grown) {
-                    AHardwareBuffer_release(buffer);
-                    return NULL;
-                }
-                receiveds = grown;
-                received_room = room;
-            }
-            receiveds[received_count++] = (struct received){st.st_dev, st.st_ino, buffer, 0};
-        }
-    }
     struct received *r = find_received(st.st_dev, st.st_ino);
-    if (!r) return NULL;
+    if (!r) {
+        struct pollfd waiting = {fd, POLLIN, 0};
+        if (poll(&waiting, 1, 0) != 1 || !(waiting.revents & POLLIN)) return NULL;
+        AHardwareBuffer *buffer = NULL;
+        if (AHardwareBuffer_recvHandleFromUnixSocket(fd, &buffer) != 0 || !buffer) return NULL;
+        if (received_count == received_room) {
+            size_t room = received_room ? received_room * 2 : 16;
+            struct received *grown = realloc(receiveds, room * sizeof *grown);
+            if (!grown) {
+                AHardwareBuffer_release(buffer);
+                return NULL;
+            }
+            receiveds = grown;
+            received_room = room;
+        }
+        receiveds[received_count++] =
+            (struct received){st.st_dev, st.st_ino, buffer, 0, fcntl(fd, F_DUPFD_CLOEXEC, 0)};
+        r = &receiveds[received_count - 1];
+    }
     AHardwareBuffer_acquire(r->buffer);
     r->images++;
     return r->buffer;
@@ -281,4 +290,53 @@ EXPORT __eglMustCastToProperFunctionPointerType eglGetProcAddress(const char *na
             return (__eglMustCastToProperFunctionPointerType)eglGetProcAddress;
     }
     return get ? get(name) : NULL;
+}
+
+/* Before the room draws, with its context current: its GPU waits for every fence that has come
+ * down the sockets of the buffers it has. Returns how many. */
+EXPORT int spatiand_eglshim_wait_for_clients(void) {
+    static PFNEGLCREATESYNCKHRPROC create_sync;
+    static PFNEGLWAITSYNCKHRPROC wait_sync;
+    static PFNEGLDESTROYSYNCKHRPROC destroy_sync;
+    static EGLDisplay (*current_display)(void);
+    if (!create_sync) create_sync = (PFNEGLCREATESYNCKHRPROC)real("eglCreateSyncKHR");
+    if (!wait_sync) wait_sync = (PFNEGLWAITSYNCKHRPROC)real("eglWaitSyncKHR");
+    if (!destroy_sync) destroy_sync = (PFNEGLDESTROYSYNCKHRPROC)real("eglDestroySyncKHR");
+    if (!current_display) current_display = (EGLDisplay(*)(void))real("eglGetCurrentDisplay");
+    if (!create_sync || !wait_sync || !destroy_sync || !current_display) return 0;
+    EGLDisplay display = current_display();
+    int waited = 0;
+    pthread_mutex_lock(&lock);
+    for (size_t i = 0; i < received_count; i++) {
+        if (receiveds[i].socket < 0) continue;
+        for (;;) {
+            char byte;
+            struct iovec part = {&byte, 1};
+            union {
+                struct cmsghdr header;
+                char space[CMSG_SPACE(sizeof(int))];
+            } control;
+            struct msghdr message = {0};
+            message.msg_iov = &part;
+            message.msg_iovlen = 1;
+            message.msg_control = control.space;
+            message.msg_controllen = sizeof control.space;
+            if (recvmsg(receiveds[i].socket, &message, MSG_DONTWAIT | MSG_CMSG_CLOEXEC) <= 0) break;
+            struct cmsghdr *header = CMSG_FIRSTHDR(&message);
+            if (!header || header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS) continue;
+            int fence;
+            memcpy(&fence, CMSG_DATA(header), sizeof fence);
+            const EGLint attributes[] = {EGL_SYNC_NATIVE_FENCE_FD_ANDROID, fence, EGL_NONE};
+            EGLSyncKHR sync = create_sync(display, EGL_SYNC_NATIVE_FENCE_ANDROID, attributes);
+            if (sync == EGL_NO_SYNC_KHR) {
+                close(fence);
+                continue;
+            }
+            wait_sync(display, sync, 0);
+            destroy_sync(display, sync);
+            waited++;
+        }
+    }
+    pthread_mutex_unlock(&lock);
+    return waited;
 }

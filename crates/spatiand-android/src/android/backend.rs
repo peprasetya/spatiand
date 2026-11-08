@@ -1217,6 +1217,8 @@ pub fn run(
             display.flush_clients()?;
 
             crate::dmabuf::settle(&mut runtime.state, &mut renderer);
+            // Nothing a client's GPU has not finished is drawn: the room's GPU waits for it.
+            super::explicit_sync::wait_for_clients(&mut renderer);
             let sky_from_client = crate::scene::sky_surface(&mut renderer, &runtime.state);
             scene.set_sky_override(sky_from_client);
             let projection = crate::scene::projection_surface(&mut renderer, &runtime.state, crate::pose::eye_fovs(&stereo));

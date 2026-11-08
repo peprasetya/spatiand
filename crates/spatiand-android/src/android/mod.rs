@@ -3,6 +3,7 @@
 
 pub mod backend;
 pub mod egl;
+pub mod explicit_sync;
 mod jni;
 pub mod keys;
 mod logging;
