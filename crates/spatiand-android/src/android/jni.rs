@@ -136,6 +136,13 @@ fn window_of(env: *mut JNIEnv, surface: jobject) -> Option<NativeWindow> {
     (!window.is_null()).then_some(NativeWindow(window))
 }
 
+/// `Native.standIn(on)`: whether the glasses' display about to be drawn into is the stand-in
+/// tools/beam-stand-in makes, with no glasses behind it.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_standIn(_env: *mut JNIEnv, _class: jclass, on: jni_sys::jboolean) {
+    shared().stand_in.store(on, Ordering::SeqCst);
+}
+
 /// `Native.surface(surface)`: draw the room into this, the glasses' window.
 #[no_mangle]
 pub extern "system" fn Java_id_prasetya_spatiand_Native_surface(env: *mut JNIEnv, _class: jclass, surface: jobject) {

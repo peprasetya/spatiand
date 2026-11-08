@@ -704,15 +704,23 @@ public class MainActivity extends Activity implements SensorEventListener {
 
     // ------------------------------------------------------------------ the glasses' display
 
+    /** The name tools/beam-stand-in gives the display it makes in the glasses' place. */
+    static final String STAND_IN = "Spatiand stand-in glasses";
+
     Display glassesDisplay() {
+        Display standIn = null;
         for (Display d : getSystemService(DisplayManager.class)
                 .getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)) {
             if (d.getDeviceProductInfo() != null
                     && String.valueOf(d.getDeviceProductInfo().getManufacturerPnpId()).contains("MRG")) {
                 return d;
             }
+            // A display standing in for the glasses, for testing the room on the Beam Pro with
+            // none plugged in. Only the shell may make a public display, so no app can put one
+            // here under this name; real glasses always win.
+            if (STAND_IN.equals(d.getName())) standIn = d;
         }
-        return null;
+        return standIn;
     }
 
     void showOnGlasses() {
@@ -727,6 +735,7 @@ public class MainActivity extends Activity implements SensorEventListener {
         }
         closeGlassesWindow();
         presentationDisplay = d.getDisplayId();
+        Native.standIn(STAND_IN.equals(d.getName()));
         // Above XREAL's placeholder if Android lets us, as an overlay; as a Presentation, under
         // whatever the placeholder does, if not.
         boolean above = Settings.canDrawOverlays(this);

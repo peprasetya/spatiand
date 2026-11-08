@@ -143,6 +143,8 @@ pub fn run(
     log::info!("renderer ready");
 
     let mut hmd: Option<Box<dyn Hmd>> = None;
+    // Whether `hmd` is the headset that is not there, standing in with the stand-in display.
+    let mut null_stands_in = false;
     let mut had_headset = false;
     let mut text = TextRenderer::new();
     let mut panel: Option<(u32, f32)> = None;
@@ -296,6 +298,7 @@ pub fn run(
                     had_headset = true;
                     stereo_asked = false;
                     hmd = Some(x);
+                    null_stands_in = false;
                     *shared.status.lock().unwrap() = format!("{} connected", info.name);
                 }
                 Err(e) => {
@@ -307,6 +310,38 @@ pub fn run(
 
         glasses = output_for(&shared.glasses, &egl_display, renderer.egl_context(), glasses.take());
         phone = output_for(&shared.phone, &egl_display, renderer.egl_context(), phone.take());
+        // The stand-in for the glasses (tools/beam-stand-in): a display with no glasses behind
+        // it, for testing the room on the phone alone. A headset that is not there stands in
+        // for theirs, so the world is drawn as on the glasses. The hosts are let go of while it
+        // lasts, as a host shows its windows to one viewer at a time and a test is not to take
+        // them from whoever is watching; and nothing is remembered of the sensors, which are
+        // not the glasses'.
+        let standing_in = glasses.is_some() && shared.stand_in.load(std::sync::atomic::Ordering::SeqCst);
+        if standing_in && hmd.is_none() {
+            log::info!("stand-in glasses: the world is drawn with a headset that is not there");
+            hmd = Some(Box::new(spatiand_hmd::NullHmd::new()));
+            null_stands_in = true;
+            // Its samples are made in the head's own frame: no mounting to undo.
+            tracker.set_axes(AxisMap::IDENTITY);
+            sensor_memory = spatiand_track::SensorMemory::new();
+            if remotes_started {
+                log::info!("stand-in glasses: the hosts are let go of while it lasts");
+                let local = remotes.local_clipboard.take();
+                remotes = crate::remote::Remotes::default();
+                remotes.local_clipboard = local;
+                remotes_started = false;
+            }
+        } else if !standing_in && null_stands_in {
+            log::info!("stand-in glasses gone");
+            hmd = None;
+            null_stands_in = false;
+            if !remotes_started && !super::desk_on() {
+                let local = remotes.local_clipboard.take();
+                remotes = crate::remote::Remotes::start(&mut runtime.display_handle, &prefs);
+                remotes.local_clipboard = local;
+                remotes_started = true;
+            }
+        }
         let Some(output) = glasses.as_ref() else {
             // Nowhere to draw the world. Keep the clients answered and the panel drawn -- and on
             // a Mac in 2D mode, the windows shown on its desktop (`super::desk_tick`).
@@ -332,7 +367,7 @@ pub fn run(
             event_loop.dispatch(Some(Duration::from_millis(if desk { 4 } else { 50 })), runtime)?;
             continue;
         };
-        if !remotes_started {
+        if !remotes_started && !null_stands_in {
             let local = remotes.local_clipboard.take();
             remotes = crate::remote::Remotes::start(&mut runtime.display_handle, &prefs);
             remotes.local_clipboard = local;

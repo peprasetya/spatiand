@@ -81,6 +81,9 @@ pub struct Shared {
     /// A line for the phone's screen.
     pub status: Mutex<String>,
     pub running: AtomicBool,
+    /// Whether the glasses' display is the stand-in tools/beam-stand-in makes: a display with no
+    /// glasses behind it, for testing the room on the phone alone.
+    pub stand_in: AtomicBool,
 }
 
 /// The phone's Recenter button, for the session to do as the HUD's Recentre does.

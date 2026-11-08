@@ -33,6 +33,12 @@ final class Native {
     /** Let go of the glasses, putting them back in 2D. */
     static native void stop();
 
+    /**
+     * Whether the glasses' display is the stand-in tools/beam-stand-in makes: the room then draws
+     * its world there with a headset that is not there, and leaves the hosts alone.
+     */
+    static native void standIn(boolean on);
+
     /** Draw the room into the glasses' window. */
     static native void surface(Surface surface);
 
