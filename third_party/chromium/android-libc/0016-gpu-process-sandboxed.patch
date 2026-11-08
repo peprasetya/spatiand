@@ -1,0 +1,170 @@
+From ec79f3368cf6ded1cccd9ca24bf0039498bd5e23 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Sun, 8 Nov 2026 19:00:43 +0700
+Subject: [PATCH] Spatiand: built for Android libc: the GPU process sandboxed
+ too
+
+Chromium's Linux GPU sandbox gives up when the GPU process already has threads, and Android's
+GPU drivers (Adreno's) start theirs as they open: here the filter is put on every thread at once
+(TSYNC, allow_threads_during_sandbox_init). Its broker is given what Android's driver, Vulkan
+loader and MediaCodec open as they run (the kgsl device, binder, the vendor's and system's
+libraries and settings, the driver's shader cache and sysfs); binder, which works only for the
+process that opened it, is opened before the sandbox by one decoder made and let go. What SELinux
+keeps a process from looking at among its open files is not taken for a directory, and the few
+memory and thread calls Android's libc and drivers make that glibc does not (mremap, msync, getcpu,
+membarrier, rt_sigtimedwait, set_tid_address) are allowed as Chrome on Android's baseline allows.
+---
+ content/common/gpu_pre_sandbox_hook_linux.cc  | 30 +++++++++++++++++++
+ content/gpu/gpu_main.cc                       | 25 ++++++++++++++++
+ .../seccomp-bpf-helpers/baseline_policy.cc    | 17 +++++++++++
+ sandbox/linux/services/proc_util.cc           |  8 +++++
+ 4 files changed, 80 insertions(+)
+
+diff --git a/content/common/gpu_pre_sandbox_hook_linux.cc b/content/common/gpu_pre_sandbox_hook_linux.cc
+index 2e53794fa3..a36d20949d 100644
+--- a/content/common/gpu_pre_sandbox_hook_linux.cc
++++ b/content/common/gpu_pre_sandbox_hook_linux.cc
+@@ -603,6 +603,31 @@ void LoadChromecastV4L2Libraries() {
+ 
+ }  // namespace
+ 
++#if defined(__TERMUX__)
++// Spatiand: what, on Android, the GPU's driver (Adreno's), Android's Vulkan loader and MediaCodec
++// open as they run; the driver itself is loaded before the sandbox, which here starts after it
++// (android-libc/0016).
++void AddAndroidGpuPermissions(std::vector<BrokerFilePermission>* permissions) {
++  // The GPU (Qualcomm's kgsl), the memory heaps buffers come from, and binder, by which MediaCodec
++  // reaches Android's media service.
++  for (const char* device : {"/dev/kgsl-3d0", "/dev/ion", "/dev/binder", "/dev/hwbinder",
++                             "/dev/vndbinder"}) {
++    permissions->push_back(BrokerFilePermission::ReadWrite(device));
++  }
++  permissions->push_back(BrokerFilePermission::ReadWriteCreateRecursive("/dev/dma_heap/"));
++  // Libraries and settings, read only: the driver's and the system's, and the linker's map of
++  // them.
++  for (const char* dir : {"/vendor/", "/odm/", "/system/", "/system_ext/", "/product/", "/apex/",
++                          "/linkerconfig/"}) {
++    permissions->push_back(BrokerFilePermission::ReadOnlyRecursive(dir));
++  }
++  // The driver's own: its shader cache, and the GPU as sysfs describes it.
++  permissions->push_back(BrokerFilePermission::ReadWriteCreateRecursive("/data/vendor/gpu/"));
++  permissions->push_back(BrokerFilePermission::ReadOnlyRecursive("/sys/class/kgsl/"));
++  permissions->push_back(BrokerFilePermission::ReadOnlyRecursive("/sys/devices/"));
++}
++#endif
++
+ sandbox::syscall_broker::BrokerCommandSet CommandSetForGPU(
+     const sandbox::policy::SandboxLinux::Options& options) {
+   sandbox::syscall_broker::BrokerCommandSet command_set;
+@@ -628,6 +653,11 @@ std::vector<BrokerFilePermission> FilePermissionsForGpu(
+ 
+   AddVulkanICDPermissions(&permissions);
+ 
++#if defined(__TERMUX__)
++  AddAndroidGpuPermissions(&permissions);
++  return permissions;
++#endif
++
+   if (IsChromeOS()) {
+     // Permissions are additive, there can be multiple GPUs in the system.
+     AddStandardChromeOsPermissions(&permissions);
+diff --git a/content/gpu/gpu_main.cc b/content/gpu/gpu_main.cc
+index 4dafd53f61..076e23b480 100644
+--- a/content/gpu/gpu_main.cc
++++ b/content/gpu/gpu_main.cc
+@@ -2,6 +2,7 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#include <dlfcn.h>
+ #include <fcntl.h>
+ #include <stddef.h>
+ #include <stdlib.h>
+@@ -201,6 +202,24 @@ class ContentSandboxHelper : public gpu::GpuSandboxHelper {
+     // On Linux, reading system memory doesn't work through the GPU sandbox.
+     // This value is cached, so access it here to populate the cache.
+     base::SysInfo::AmountOfTotalPhysicalMemory();
++#if defined(__TERMUX__)
++    // Spatiand: Android's binder, by which MediaCodec reaches the media service, must be opened by
++    // the process that uses it: through the sandbox's broker it would be the broker's. One
++    // decoder made and let go here opens it (and the codec service's) for the process's life
++    // (android-libc/0016).
++    if (void* ndk = dlopen("libmediandk.so", RTLD_NOW)) {
++      using Create = void* (*)(const char*);
++      using Delete = int (*)(void*);
++      auto create =
++          reinterpret_cast<Create>(dlsym(ndk, "AMediaCodec_createDecoderByType"));
++      auto destroy = reinterpret_cast<Delete>(dlsym(ndk, "AMediaCodec_delete"));
++      if (create && destroy) {
++        if (void* codec = create("video/avc")) {
++          destroy(codec);
++        }
++      }
++    }
++#endif
+   }
+ 
+   bool EnsureSandboxInitialized(gpu::GpuWatchdogThread* watchdog_thread,
+@@ -547,6 +566,12 @@ bool StartSandboxLinux(gpu::GpuWatchdogThread* watchdog_thread,
+   }
+   sandbox_options.accelerated_video_decode_enabled =
+       !gpu_prefs.disable_accelerated_video_decode;
++#if defined(__TERMUX__)
++  // Spatiand: Android's GPU drivers (Adreno's) start threads of their own as they open, before
++  // this; the filter is put on them all at once (TSYNC) rather than the sandbox given up
++  // (android-libc/0016).
++  sandbox_options.allow_threads_during_sandbox_init = true;
++#endif
+   sandbox_options.accelerated_video_encode_enabled =
+       !gpu_prefs.disable_accelerated_video_encode;
+ 
+diff --git a/sandbox/linux/seccomp-bpf-helpers/baseline_policy.cc b/sandbox/linux/seccomp-bpf-helpers/baseline_policy.cc
+index 4a7d0aca03..7f6cd0fc04 100644
+--- a/sandbox/linux/seccomp-bpf-helpers/baseline_policy.cc
++++ b/sandbox/linux/seccomp-bpf-helpers/baseline_policy.cc
+@@ -121,6 +121,23 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
+ #endif  // defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER) ||
+         // defined(MEMORY_SANITIZER)
+ 
++#if defined(__TERMUX__)
++  // Spatiand: what Android's libc and GPU drivers do that glibc does not, allowed as Chrome on
++  // Android's baseline allows it (baseline_policy_android.cc); none of it opens a file
++  // (android-libc/0016).
++  switch (sysno) {
++    case __NR_mremap:
++    case __NR_msync:
++    case __NR_getcpu:
++    case __NR_membarrier:
++    case __NR_rt_sigtimedwait:
++    case __NR_set_tid_address:
++      return Allow();
++    default:
++      break;
++  }
++#endif
++
+ #if BUILDFLAG(CLANG_PROFILING_INSIDE_SANDBOX)
+   if (SyscallSets::IsPrctl(sysno)) {
+     return Allow();
+diff --git a/sandbox/linux/services/proc_util.cc b/sandbox/linux/services/proc_util.cc
+index a5a2d543ad..cb68fc68c4 100644
+--- a/sandbox/linux/services/proc_util.cc
++++ b/sandbox/linux/services/proc_util.cc
+@@ -111,6 +111,14 @@ bool ProcUtil::HasOpenDirectory(int proc_fd) {
+         continue;
+       }
+     }
++#if defined(__TERMUX__)
++    // Spatiand: on Android, SELinux keeps a process from looking at some of what it holds open
++    // (the GPU driver's and binder's), and so from opening anything through it either: not a
++    // directory to escape the sandbox by (android-libc/0016).
++    if (stat_res == -1 && errno == EACCES) {
++      continue;
++    }
++#endif
+     PCHECK(stat_res == 0);
+     if (S_ISDIR(s.st_mode)) {
+       return true;
+-- 
+2.53.0
+

@@ -78,9 +78,15 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   Wayland surfaces, so each frame is drawn off screen and handed to the room as shared memory, through Ozone's
   readback surface (upstream's for software GL on Wayland): one copy a frame, where the Deck hands over a dmabuf.
   Handing the room the GPU's own buffer (an `AHardwareBuffer`, which no Wayland protocol carries; the room already
-  shows them for remote video) is the step after. Not yet: the GPU process's own sandbox (`chrome://gpu`:
-  Sandboxed false; Chromium's Linux GPU sandbox knows no `kgsl` device and so is not started; the tabs are
-  sandboxed), WebGPU (Dawn looks for `libvulkan.so.1`).
+  shows them for remote video) is the step after. Not yet: WebGPU (Dawn looks for `libvulkan.so.1`).
+* **The GPU process is sandboxed too** (`android-libc/0016`): Chromium's Linux GPU sandbox gave up because Adreno's
+  driver has started threads by then; here the filter goes on every thread at once (TSYNC), the broker is given
+  what the driver, Android's Vulkan loader and MediaCodec open as they run, binder (which works only for the process
+  that opened it) is opened before the sandbox by one decoder made and let go, and the few calls Android's libc and
+  driver make that glibc does not are allowed as Chrome on Android allows them. On the Beam Pro `chrome://gpu`:
+  Sandboxed true, everything still hardware accelerated, and H.264, VP9 and HEVC decoded by Qualcomm's decoders
+  from inside it. Its first start of a new build once ended in a CHECK (exit 5) right after Adreno's shader compiler
+  loaded, and the next GPU process ran; four further starts did not repeat it.
 * **Sound, as on the Deck, through the room** (2026-11-08, `android-libc/0012`): there is no PulseAudio, so
   Chromium's Linux audio has a backend of Spatiand's own (`media/audio/spatiand`). Every stream goes to the room's
   `spatiand-sound` under the name of the sink its tab is in, `spatiand.window.<slot>`, which patch 0007 makes the
@@ -102,7 +108,7 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   decode hardware accelerated; 720p H.264, VP9 and HEVC played 146 frames in 5 s, none dropped, through
   `c2.qti.avc.decoder` and `c2.qti.hevc.decoder` (Android's log), and the pictures came out right. Ten-bit video
   (HEVC Main 10, VP9 profile 2) is decoded by Chromium in software. MediaCodec reaches Android's media service by
-  binder, which the GPU process may as it is not yet sandboxed; its sandbox, when it comes, must leave it that.
+  binder, opened before the GPU process's sandbox (below).
 * No D-Bus: libdbus asks for a system bus at its build folder's path and finds none, as there is none to find.
 
 **Changed again on 2026-10-29:** WebKitGTK, Linux's fallback, removed too: WPE is the only engine,
