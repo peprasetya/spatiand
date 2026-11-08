@@ -1207,6 +1207,15 @@ pub fn run(
             )?;
             scene.sync_radial(&mut renderer, &mut text, delivery.radial.as_ref(), ppd)?;
 
+            // What clients committed while the last frame waited for the display, taken now so
+            // that this frame shows it. Here that wait is inside eglSwapBuffers, where nothing
+            // is read (the Deck reads its clients every 4 ms while a page flip is pending,
+            // backend_drm.rs); read only after it, a window that takes most of a frame to draw
+            // -- SpatiMesh's Chromium on the Beam Pro, about 12 ms -- was shown every other
+            // frame, at 30 fps.
+            display.dispatch_clients(&mut runtime.state)?;
+            display.flush_clients()?;
+
             crate::dmabuf::settle(&mut runtime.state, &mut renderer);
             let sky_from_client = crate::scene::sky_surface(&mut renderer, &runtime.state);
             scene.set_sky_override(sky_from_client);
