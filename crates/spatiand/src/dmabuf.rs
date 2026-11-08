@@ -122,9 +122,20 @@ pub fn advertise(state: &mut Spatiand, renderer: &GlesRenderer) {
             // Worth shouting about. Without the device name every GL client on the session
             // silently runs on llvmpipe -- see the module docs -- and the only side that can
             // see it happening is this one.
+            //
+            // Not on Android, which has no DRM device to name: its clients find the GPU through
+            // Android's own drivers, and the one kind of dmabuf offered there is an Android
+            // hardware buffer passed through a socket (android/eglshim/eglshim.c).
+            #[cfg(not(target_os = "android"))]
             log::warn!(
                 "no render node for the dmabuf global; falling back to version 3. GL clients \
                  will have no way to find the GPU and will render in software"
+            );
+            #[cfg(target_os = "android")]
+            log::info!(
+                "offering dmabuf v3 to clients: Android hardware buffers, {} format/modifier \
+                 pair(s)",
+                formats.len()
             );
             state
                 .dmabuf_state

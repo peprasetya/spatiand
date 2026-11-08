@@ -1,0 +1,55 @@
+From e46e4ac262f91cddec7846b18411b78b57f9e1e9 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Sun, 8 Nov 2026 23:26:55 +0700
+Subject: [PATCH] Spatiand: built for Android libc: no D-Bus
+
+Android has no D-Bus: libdbus looked for a system bus under the path it was built in, and every
+try and every unanswered call was logged. Connecting to the system or session bus fails at once,
+and calls without a bus are not logged.
+---
+ dbus/bus.cc          | 10 ++++++++++
+ dbus/object_proxy.cc |  7 +++++++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/dbus/bus.cc b/dbus/bus.cc
+index 06ce79c788..9939ef21da 100644
+--- a/dbus/bus.cc
++++ b/dbus/bus.cc
+@@ -385,6 +385,16 @@ bool Bus::Connect() {
+   if (connection_)
+     return true;
+ 
++#if defined(__TERMUX__)
++  // Android has no D-Bus: no system or session bus to connect to (libdbus was
++  // looking for one under the path it was built in), and nothing worth saying
++  // at every try. What would use one here -- the desktop's portal,
++  // notifications, the screen saver, media keys, the battery -- does without.
++  if (bus_type_ != CUSTOM_ADDRESS) {
++    return false;
++  }
++#endif
++
+   internal::ScopedDBusError dbus_error;
+   if (bus_type_ == CUSTOM_ADDRESS) {
+     if (connection_type_ == PRIVATE) {
+diff --git a/dbus/object_proxy.cc b/dbus/object_proxy.cc
+index a29cccd304..b2cb812cfb 100644
+--- a/dbus/object_proxy.cc
++++ b/dbus/object_proxy.cc
+@@ -554,6 +554,13 @@ void ObjectProxy::LogMethodCallFailure(
+     const std::string_view& method_name,
+     const std::string_view& error_name,
+     const std::string_view& error_message) const {
++#if defined(__TERMUX__)
++  // No bus on Android (Bus::Connect): every call fails unanswered, and nothing
++  // is wrong.
++  if (!bus_->IsConnected()) {
++    return;
++  }
++#endif
+   if (ignore_service_unknown_errors_ &&
+       (error_name == kErrorServiceUnknown || error_name == kErrorObjectUnknown))
+     return;
+-- 
+2.53.0
+

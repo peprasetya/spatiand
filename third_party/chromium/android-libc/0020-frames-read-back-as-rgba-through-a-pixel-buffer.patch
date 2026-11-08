@@ -1,0 +1,144 @@
+From 92de6f54b675109ca3a790287e3bbf460f4cd4ab Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Sun, 8 Nov 2026 23:26:55 +0700
+Subject: [PATCH] Spatiand: built for Android libc: frames read back as RGBA,
+ through a pixel buffer
+
+Where a window's frame is read back into shared memory for the room (the readback surface, now
+only where the room takes no hardware buffers): ANGLE on Vulkan draws RGBA, and asked for BGRA it
+converted one pixel at a time through floats, 190 ms a frame for a 1312x842 window on the Beam
+Pro's Adreno, five frames a second; read into memory it also made a staging buffer for every
+frame. Read as it is into a pixel buffer kept from frame to frame, and red and blue swapped by
+libyuv on the way into the window's memory.
+---
+ ui/ozone/common/BUILD.gn                   |  7 +++
+ ui/ozone/common/gl_surface_egl_readback.cc | 53 ++++++++++++++++++++++
+ ui/ozone/common/gl_surface_egl_readback.h  |  7 +++
+ 3 files changed, 67 insertions(+)
+
+diff --git a/ui/ozone/common/BUILD.gn b/ui/ozone/common/BUILD.gn
+index 808b393c4f..e6f9cd30cb 100644
+--- a/ui/ozone/common/BUILD.gn
++++ b/ui/ozone/common/BUILD.gn
+@@ -2,6 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
++import("//build/config/compiler/compiler.gni")
+ import("//build/config/ozone.gni")
+ import("//build/config/ui.gni")
+ import("//ui/gl/features.gni")
+@@ -55,6 +56,12 @@ source_set("common") {
+     deps += [ "//third_party/angle:libGLESv2_thin_static" ]
+   }
+ 
++  # Spatiand: the readback's red and blue swapped on Android's libc
++  # (gl_surface_egl_readback.cc).
++  if (spatiand_android_libc) {
++    deps += [ "//third_party/libyuv" ]
++  }
++
+   data_deps = [ "//third_party/angle:includes" ]
+ 
+   visibility = [
+diff --git a/ui/ozone/common/gl_surface_egl_readback.cc b/ui/ozone/common/gl_surface_egl_readback.cc
+index c8d661c238..839668a8c1 100644
+--- a/ui/ozone/common/gl_surface_egl_readback.cc
++++ b/ui/ozone/common/gl_surface_egl_readback.cc
+@@ -13,6 +13,11 @@
+ #include "ui/gl/gl_implementation.h"
+ #include "ui/ozone/common/egl_util.h"
+ 
++#if defined(__TERMUX__)
++#include "third_party/libyuv/include/libyuv/convert_argb.h"
++#include "ui/gl/gl_context.h"
++#endif
++
+ namespace ui {
+ namespace {
+ 
+@@ -76,6 +81,14 @@ gfx::SurfaceOrigin GLSurfaceEglReadback::GetOrigin() const {
+ }
+ 
+ GLSurfaceEglReadback::~GLSurfaceEglReadback() {
++#if defined(__TERMUX__)
++  // The pixel buffer, while the context it was made in is the current one; otherwise it goes
++  // when that context does.
++  if (pack_buffer_ &&
++      pack_context_ == reinterpret_cast<uintptr_t>(gl::GLContext::GetCurrent())) {
++    glDeleteBuffersARB(1, &pack_buffer_);
++  }
++#endif
+   Destroy();
+ }
+ 
+@@ -101,8 +114,48 @@ void GLSurfaceEglReadback::ReadPixels(base::span<uint8_t> buffer) {
+ 
+   CHECK_GE(buffer.size() / base::checked_cast<size_t>(size.width()),
+            base::checked_cast<size_t>(size.height()));
++#if defined(__TERMUX__)
++  // On Android ANGLE draws on Vulkan into an RGBA picture. Asked for BGRA it converts one pixel
++  // at a time through floats -- 190 ms a frame for a window of 1312x842 on the Beam Pro's
++  // Adreno, so that a page drew five frames a second -- and read into memory it makes a
++  // staging buffer of its own for every frame, which took 6 to 50 ms more. So the picture is
++  // copied as it is on the GPU into a pixel buffer kept from frame to frame, and red and blue
++  // are swapped by libyuv on the way from that buffer into the window's.
++  const size_t needed =
++      base::checked_cast<size_t>(size.GetArea()) * kBytesPerPixelBGRA;
++  const uintptr_t context =
++      reinterpret_cast<uintptr_t>(gl::GLContext::GetCurrent());
++  if (pack_buffer_ &&
++      (pack_buffer_size_ != needed || pack_context_ != context)) {
++    if (pack_context_ == context) {
++      glDeleteBuffersARB(1, &pack_buffer_);
++    }
++    pack_buffer_ = 0;
++  }
++  if (!pack_buffer_) {
++    glGenBuffersARB(1, &pack_buffer_);
++    glBindBuffer(GL_PIXEL_PACK_BUFFER, pack_buffer_);
++    glBufferData(GL_PIXEL_PACK_BUFFER, needed, nullptr, GL_STREAM_READ);
++    pack_buffer_size_ = needed;
++    pack_context_ = context;
++  } else {
++    glBindBuffer(GL_PIXEL_PACK_BUFFER, pack_buffer_);
++  }
++  glReadPixels(0, 0, size.width(), size.height(), GL_RGBA, GL_UNSIGNED_BYTE,
++               nullptr);
++  const void* mapped =
++      glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, needed, GL_MAP_READ_BIT);
++  if (mapped) {
++    const int stride = size.width() * static_cast<int>(kBytesPerPixelBGRA);
++    libyuv::ABGRToARGB(static_cast<const uint8_t*>(mapped), stride,
++                       buffer.data(), stride, size.width(), size.height());
++    glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
++  }
++  glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
++#else
+   glReadPixels(0, 0, size.width(), size.height(), GL_BGRA_EXT, GL_UNSIGNED_BYTE,
+                buffer.data());
++#endif
+ 
+   if (read_fbo)
+     glBindFramebufferEXT(GL_READ_FRAMEBUFFER, read_fbo);
+diff --git a/ui/ozone/common/gl_surface_egl_readback.h b/ui/ozone/common/gl_surface_egl_readback.h
+index 46c0d66e56..35c1cd743a 100644
+--- a/ui/ozone/common/gl_surface_egl_readback.h
++++ b/ui/ozone/common/gl_surface_egl_readback.h
+@@ -54,6 +54,13 @@ class GLSurfaceEglReadback : public gl::PbufferGLSurfaceEGL {
+  private:
+   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+   base::HeapArray<uint8_t> pixels_;
++#if defined(__TERMUX__)
++  // The pixel buffer each frame is read into on the GPU (ReadPixels), kept from frame to frame,
++  // its size and the context it was made in.
++  unsigned int pack_buffer_ = 0;
++  size_t pack_buffer_size_ = 0;
++  uintptr_t pack_context_ = 0;
++#endif
+ };
+ 
+ }  // namespace ui
+-- 
+2.53.0
+

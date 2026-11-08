@@ -1,0 +1,59 @@
+From cdb9a8a0d5bfd108fbd006151da240102a6a1939 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Sun, 8 Nov 2026 23:26:55 +0700
+Subject: [PATCH] Spatiand: built for Android libc: the GPU process knows its
+ path before the sandbox
+
+Dawn's information, collected two minutes after the GPU process starts, asks for the program's
+folder, which comes from /proc/self/exe; the sandbox's broker does not read it there, and an
+unanswered PathProviderPosix ends the process, so every session lost its GPU process once. Asked
+before the sandbox, the answer is remembered.
+---
+ content/gpu/gpu_main.cc | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/content/gpu/gpu_main.cc b/content/gpu/gpu_main.cc
+index bf5b6529e2..4eb0e4b675 100644
+--- a/content/gpu/gpu_main.cc
++++ b/content/gpu/gpu_main.cc
+@@ -15,10 +15,12 @@
+ #include <utility>
+ 
+ #include "base/allocator/partition_alloc_support.h"
++#include "base/base_paths.h"
+ #include "base/byte_size.h"
+ #include "base/check.h"
+ #include "base/command_line.h"
+ #include "base/feature_list.h"
++#include "base/files/file_path.h"
+ #include "base/files/scoped_file.h"
+ #include "base/functional/bind.h"
+ #include "base/memory/raw_ptr.h"
+@@ -26,6 +28,7 @@
+ #include "base/message_loop/message_pump_wakeup_counter.h"
+ #include "base/metrics/histogram_functions.h"
+ #include "base/numerics/clamped_math.h"
++#include "base/path_service.h"
+ #include "base/process/current_process.h"
+ #include "base/process/process_metrics.h"
+ #include "base/rand_util.h"
+@@ -247,6 +250,16 @@ class ContentSandboxHelper : public gpu::GpuSandboxHelper {
+         }
+       }
+     }
++    // And the program's own path, which the GPU process asks for later -- for
++    // Dawn's information, two minutes after it starts -- from /proc/self/exe,
++    // which the sandbox's broker does not read: unanswered, that ends the
++    // process (base_paths_posix.cc, NOTREACHED), so every session lost its GPU
++    // process once. Asked now, the answer is remembered (base::PathService).
++    base::FilePath own_path;
++    base::PathService::Get(base::FILE_EXE, &own_path);
++    base::PathService::Get(base::FILE_MODULE, &own_path);
++    base::PathService::Get(base::DIR_EXE, &own_path);
++    base::PathService::Get(base::DIR_MODULE, &own_path);
+ #endif
+   }
+ 
+-- 
+2.53.0
+

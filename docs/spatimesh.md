@@ -75,18 +75,34 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   Vulkan loader (`angle_use_custom_libvulkan = false`; on Linux ANGLE looks only beside the program for one of
   Chromium's) and so on Adreno's driver: on the Beam Pro `chrome://gpu` says compositing, rasterization and WebGL
   hardware accelerated, `ANGLE (Qualcomm, Vulkan 1.1.128 (Adreno (TM) 710))`. Android's EGL and Vulkan make no
-  Wayland surfaces, so each frame is drawn off screen and handed to the room as shared memory, through Ozone's
-  readback surface (upstream's for software GL on Wayland): one copy a frame, where the Deck hands over a dmabuf.
-  Handing the room the GPU's own buffer (an `AHardwareBuffer`, which no Wayland protocol carries; the room already
-  shows them for remote video) is the step after. Not yet: WebGPU (Dawn looks for `libvulkan.so.1`).
+  Wayland surfaces, so each frame is drawn off screen.
+* **Its frames reach the room without a copy** (`android-libc/0021`, `android/eglshim`): each is copied on the GPU
+  into an Android hardware buffer, the buffer sent once to the room through a socket that stands as a dmabuf's
+  file, under Spatiand's own modifier (`0xf500000000000001`), which no real dmabuf has. The room's dmabuf global
+  offers RGBA and RGBX with that modifier, and when Smithay asks EGL for the image, the room's EGL shim reads the
+  buffer from the socket and makes the image through `EGL_ANDROID_image_native_buffer`: nothing is copied in memory
+  on either side. ANGLE takes such buffers as EGLImages on Android's libc (its own
+  `linux/AHardwareBufferImageSiblingVkSpatiand`, as its Android build does; Vulkan's import from Android's buffers
+  turned on); the buffer allocator's mapper is loaded before the GPU sandbox, which keeps the vendor's libraries
+  out; the room's GPU is told nothing to wait for, so a frame goes once its fence has signalled. Where the room
+  offers no such modifier the frames are read back into shared memory as before (`0014`), now as RGBA through a
+  pixel buffer (`0020`): asked for BGRA, ANGLE had converted one pixel at a time, 190 ms a frame. Measured in the
+  Beam Pro's room (`tools/beam-stand-in`, below), a full-window canvas animated every frame: 4.6 frames a second
+  read back as at first, 23 read back as RGBA, 55 to 57 in hardware buffers with the room presenting 60; wheel
+  scrolling Wikipedia, about 40. What still holds a scrolled frame back: the fence is looked at on the GPU
+  process's main thread, behind 10 ms of tile raster, as Chromium sends its commits from that thread alone. Telling
+  the room's GPU to wait for the fence instead (`zwp_linux_explicit_synchronization_v1`) would send the frame at
+  once. WebGPU is off as on every platform (Cromite's `Disable-WebGPU`, its runtime feature forced off).
 * **The GPU process is sandboxed too** (`android-libc/0016`): Chromium's Linux GPU sandbox gave up because Adreno's
   driver has started threads by then; here the filter goes on every thread at once (TSYNC), the broker is given
   what the driver, Android's Vulkan loader and MediaCodec open as they run, binder (which works only for the process
   that opened it) is opened before the sandbox by one decoder made and let go, and the few calls Android's libc and
   driver make that glibc does not are allowed as Chrome on Android allows them. On the Beam Pro `chrome://gpu`:
   Sandboxed true, everything still hardware accelerated, and H.264, VP9 and HEVC decoded by Qualcomm's decoders
-  from inside it. Its first start of a new build once ended in a CHECK (exit 5) right after Adreno's shader compiler
-  loaded, and the next GPU process ran; four further starts did not repeat it.
+  from inside it. Every session's GPU process ended once, two minutes after it started (exit 5, a CHECK): collecting
+  Dawn's information asked for the program's path of `/proc/self/exe`, which the broker does not read; it is asked
+  before the sandbox now and remembered (`android-libc/0022`). Android has no D-Bus either, and Chromium no longer
+  tries one at every turn (`0023`).
 * **Sound, as on the Deck, through the room** (2026-11-08, `android-libc/0012`): there is no PulseAudio, so
   Chromium's Linux audio has a backend of Spatiand's own (`media/audio/spatiand`). Every stream goes to the room's
   `spatiand-sound` under the name of the sink its tab is in, `spatiand.window.<slot>`, which patch 0007 makes the
@@ -114,6 +130,14 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   emptied page drops about 60% of its frames whichever decoder plays it, software too; on a page with other
   content it drops none.
 * No D-Bus: libdbus asks for a system bus at its build folder's path and finds none, as there is none to find.
+* **Testing in the Beam Pro's room without the glasses**: `tools/beam-stand-in/run.sh start` makes a display from
+  adb (the shell may make public ones) that the app takes as the glasses' (`MainActivity.glassesDisplay`, by its
+  name): the room draws its world there with a headset that is not there and lets go of the hosts while it lasts,
+  as a host shows its windows to one viewer at a time; `run.sh shot` saves what it shows. Its display group sleeps
+  with the phone's screen (a locked phone dozes within the minute and the picture is black; the room goes on
+  presenting, and frame counts in its log hold): wake it (`input -d <id> keyevent KEYCODE_WAKEUP`, which lights the
+  phone's lock screen too) just before a picture. Asleep long enough, Android freezes the app as one in the
+  background; bringing it forward (`am start`) thaws it.
 * **Choosing files** (`android-libc/0019`, `crates/spatiand-choose`): there is no desktop portal on Android to ask, as
   there is on the Deck, so a page's file input, Save as, a folder to upload or an extension to load ask Spatiand's own
   chooser, a window of the room carried as `libspatiand-choose.so` and run as a program that writes what was chosen, a

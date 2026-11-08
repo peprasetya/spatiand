@@ -1,0 +1,1009 @@
+From 241767804bfae439b0c100f1eaa90b94c5199100 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Sun, 8 Nov 2026 23:26:55 +0700
+Subject: [PATCH] Spatiand: built for Android libc: frames to the room in
+ Android hardware buffers
+
+Each window's frame is copied on the GPU into an Android hardware buffer, sent once to Spatiand's
+room through a socket that stands as a dmabuf's file, marked with Spatiand's own modifier, which
+the room's EGL turns back into the buffer (android/eglshim in Spatiand): no copy in memory on
+either side. ANGLE takes such buffers as EGLImages on Android's libc
+(third_party/angle linux/AHardwareBufferImageSiblingVkSpatiand, as its Android build does), with
+Vulkan's import from Android's buffers on. The buffer allocator's mapper is loaded before the
+GPU sandbox. A frame goes to the room once its fence says the GPU has drawn it, looked at every
+millisecond without holding the thread. Frames in flight keep their places through a resize, where
+the queue was read past its end. Where the room offers no such modifier, frames are read back as
+before.
+---
+ content/gpu/gpu_main.cc                       |  28 ++
+ .../gpu/gl_surface_egl_readback_wayland.cc    | 296 ++++++++++++++++++
+ .../gpu/gl_surface_egl_readback_wayland.h     |  48 +++
+ 3 files changed, 372 insertions(+)
+
+diff --git a/content/gpu/gpu_main.cc b/content/gpu/gpu_main.cc
+index 076e23b480..bf5b6529e2 100644
+--- a/content/gpu/gpu_main.cc
++++ b/content/gpu/gpu_main.cc
+@@ -2,6 +2,9 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#if defined(__TERMUX__)
++#include <android/hardware_buffer.h>
++#endif
+ #include <dlfcn.h>
+ #include <fcntl.h>
+ #include <stddef.h>
+@@ -219,6 +222,31 @@ class ContentSandboxHelper : public gpu::GpuSandboxHelper {
+         }
+       }
+     }
++    // And Android's graphics buffers, in which the frames go to the room
++    // (ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc): one
++    // made and let go here loads the buffer mapper, a vendor library the
++    // sandbox keeps out, and reaches the allocator service.
++    if (void* window = dlopen("libnativewindow.so", RTLD_NOW)) {
++      using Allocate = int (*)(const AHardwareBuffer_Desc*, AHardwareBuffer**);
++      using Release = void (*)(AHardwareBuffer*);
++      auto allocate = reinterpret_cast<Allocate>(
++          dlsym(window, "AHardwareBuffer_allocate"));
++      auto release =
++          reinterpret_cast<Release>(dlsym(window, "AHardwareBuffer_release"));
++      if (allocate && release) {
++        AHardwareBuffer_Desc description = {};
++        description.width = 1;
++        description.height = 1;
++        description.layers = 1;
++        description.format = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
++        description.usage = AHARDWAREBUFFER_USAGE_GPU_FRAMEBUFFER |
++                            AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
++        AHardwareBuffer* buffer = nullptr;
++        if (allocate(&description, &buffer) == 0 && buffer) {
++          release(buffer);
++        }
++      }
++    }
+ #endif
+   }
+ 
+diff --git a/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc b/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc
+index 5543b82869..28bedcffca 100644
+--- a/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc
++++ b/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc
+@@ -9,6 +9,25 @@
+ #include "base/numerics/checked_math.h"
+ #include "ui/ozone/platform/wayland/gpu/wayland_buffer_manager_gpu.h"
+ 
++#if defined(__TERMUX__)
++#include <android/hardware_buffer.h>
++#include <algorithm>
++#include <dlfcn.h>
++#include <drm_fourcc.h>
++#include <sys/socket.h>
++#include <unistd.h>
++
++#include "base/files/scoped_file.h"
++#include "base/time/time.h"
++#include "base/task/single_thread_task_runner.h"
++#include "base/functional/bind.h"
++#include "components/viz/common/resources/shared_image_format.h"
++#include "ui/gfx/color_space.h"
++#include "ui/gfx/hdr_metadata.h"
++#include "ui/gl/gl_bindings.h"
++#include "ui/gl/gl_context.h"
++#endif
++
+ namespace ui {
+ 
+ namespace {
+@@ -17,6 +36,48 @@ constexpr size_t kMaxBuffers = 2;
+ 
+ constexpr size_t kBytesPerPixelBGRA = 4;
+ 
++#if defined(__TERMUX__)
++// Spatiand's own modifier: the plane's file is a socket an Android hardware
++// buffer was sent through (AHardwareBuffer_sendHandleToUnixSocket), not a
++// dmabuf. Spatiand's room offers it for RGBA when its EGL takes such buffers
++// (android/eglshim/eglshim.c, which has the same number).
++constexpr uint64_t kSpatiandHardwareBufferModifier = 0xf500000000000001ull;
++
++// Frames in flight in hardware buffers: one the room shows, one it is given,
++// one being drawn.
++constexpr size_t kMaxHardwareBuffers = 3;
++
++// Android's buffer calls, from libnativewindow, which Chromium is not linked
++// with.
++struct HardwareBufferCalls {
++  int (*allocate)(const AHardwareBuffer_Desc*, AHardwareBuffer**) = nullptr;
++  void (*describe)(const AHardwareBuffer*, AHardwareBuffer_Desc*) = nullptr;
++  void (*release)(AHardwareBuffer*) = nullptr;
++  int (*send)(const AHardwareBuffer*, int) = nullptr;
++
++  bool valid() const { return allocate && describe && release && send; }
++};
++
++const HardwareBufferCalls& Calls() {
++  static const HardwareBufferCalls calls = [] {
++    HardwareBufferCalls found;
++    void* library = dlopen("libnativewindow.so", RTLD_NOW);
++    if (library) {
++      found.allocate = reinterpret_cast<decltype(found.allocate)>(
++          dlsym(library, "AHardwareBuffer_allocate"));
++      found.describe = reinterpret_cast<decltype(found.describe)>(
++          dlsym(library, "AHardwareBuffer_describe"));
++      found.release = reinterpret_cast<decltype(found.release)>(
++          dlsym(library, "AHardwareBuffer_release"));
++      found.send = reinterpret_cast<decltype(found.send)>(
++          dlsym(library, "AHardwareBuffer_sendHandleToUnixSocket"));
++    }
++    return found;
++  }();
++  return calls;
++}
++#endif
++
+ }  // namespace
+ 
+ GLSurfaceEglReadbackWayland::PixelBuffer::PixelBuffer(
+@@ -49,11 +110,19 @@ bool GLSurfaceEglReadbackWayland::Resize(const gfx::Size& size,
+                                          bool has_alpha) {
+   DestroyBuffers();
+   surface_scale_factor_ = scale_factor;
++#if !defined(__TERMUX__)
+   pending_frames_ = 0;
++#endif
+ 
+   if (!PbufferGLSurfaceEGL::Resize(size, scale_factor, color_space, has_alpha))
+     return false;
+ 
++#if defined(__TERMUX__)
++  if (CreateHardwareBuffers(size)) {
++    return true;
++  }
++#endif
++
+   for (size_t i = 0; i < kMaxBuffers; ++i) {
+     base::CheckedNumeric<size_t> checked_length(size.width());
+     checked_length *= size.height();
+@@ -113,7 +182,19 @@ void GLSurfaceEglReadbackWayland::SwapBuffersAsync(
+   auto* next_buffer = in_flight_pixel_buffers_.back().get();
+   available_buffers_.erase(available_buffers_.begin());
+ 
++#if defined(__TERMUX__)
++  if (next_buffer->framebuffer_) {
++    CommitNow();
++    pending_commit_ = PendingCommit{next_buffer->buffer_id_, data,
++                                    gfx::Rect(GetSize()),
++                                    CopyIntoHardwareBuffer(next_buffer)};
++    CommitWhenDrawn();
++    return;
++  }
++  ReadPixels(next_buffer->shm_mapping_);
++#else
+   ReadPixels(next_buffer->shm_mapping_);
++#endif
+ 
+   const auto bounds = gfx::Rect(GetSize());
+   constexpr bool enable_blend_for_shadow = true;
+@@ -141,6 +222,11 @@ void GLSurfaceEglReadbackWayland::OnSubmission(
+   DCHECK(release_fence.is_null());
+   --pending_frames_;
+ 
++#if defined(__TERMUX__)
++  if (in_flight_pixel_buffers_.empty() || completion_callbacks_.empty()) {
++    return;
++  }
++#endif
+   if (in_flight_pixel_buffers_.front()) {
+     if (displayed_buffer_)
+       available_buffers_.push_back(std::move(displayed_buffer_));
+@@ -165,17 +251,227 @@ void GLSurfaceEglReadbackWayland::OnPresentation(
+ }
+ 
+ void GLSurfaceEglReadbackWayland::DestroyBuffers() {
++#if defined(__TERMUX__)
++  CommitNow();
++  for (const auto& pixel_buffer : available_buffers_)
++    DestroyHardwareBuffer(pixel_buffer.get());
++  if (displayed_buffer_)
++    DestroyHardwareBuffer(displayed_buffer_.get());
++  // Frames still in flight when the window is resized are answered for later
++  // (OnSubmission), so their places are kept, empty, as OnSubmission expects:
++  // emptied, the queue was read past its end and the GPU process died (seen
++  // on the Beam Pro as the room resized a SpatiMesh window).
++  for (auto& pixel_buffer : in_flight_pixel_buffers_) {
++    if (pixel_buffer) {
++      DestroyHardwareBuffer(pixel_buffer.get());
++      buffer_manager_->DestroyBuffer(pixel_buffer->buffer_id_);
++      pixel_buffer.reset();
++    }
++  }
++#endif
+   for (const auto& pixel_buffer : available_buffers_)
+     buffer_manager_->DestroyBuffer(pixel_buffer->buffer_id_);
++#if !defined(__TERMUX__)
+   for (const auto& pixel_buffer : in_flight_pixel_buffers_)
+     buffer_manager_->DestroyBuffer(pixel_buffer->buffer_id_);
++#endif
+ 
+   if (displayed_buffer_)
+     buffer_manager_->DestroyBuffer(displayed_buffer_->buffer_id_);
+ 
+   available_buffers_.clear();
++#if !defined(__TERMUX__)
+   in_flight_pixel_buffers_.clear();
++#endif
+   displayed_buffer_.reset();
+ }
+ 
++#if defined(__TERMUX__)
++bool GLSurfaceEglReadbackWayland::CreateHardwareBuffers(const gfx::Size& size) {
++  const HardwareBufferCalls& calls = Calls();
++  const std::vector<uint64_t> modifiers =
++      buffer_manager_->GetModifiersForFormat(viz::SinglePlaneFormat::kRGBA_8888);
++  if (!calls.valid() || !gl::GLContext::GetCurrent() ||
++      std::find(modifiers.begin(), modifiers.end(),
++                kSpatiandHardwareBufferModifier) == modifiers.end()) {
++    return false;
++  }
++  GLint draw_framebuffer = 0;
++  GLint read_framebuffer = 0;
++  GLint texture_binding = 0;
++  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw_framebuffer);
++  glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read_framebuffer);
++  glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture_binding);
++
++  std::vector<std::unique_ptr<PixelBuffer>> made;
++  std::vector<uint32_t> sent;
++  bool ok = true;
++  for (size_t i = 0; ok && i < kMaxHardwareBuffers; ++i) {
++    auto buffer = std::make_unique<PixelBuffer>(
++        base::WritableSharedMemoryMapping(), buffer_manager_->AllocateBufferID());
++    AHardwareBuffer_Desc description = {};
++    description.width = size.width();
++    description.height = size.height();
++    description.layers = 1;
++    description.format = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
++    description.usage = AHARDWAREBUFFER_USAGE_GPU_FRAMEBUFFER |
++                        AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
++    if (calls.allocate(&description, &buffer->hardware_buffer_) != 0) {
++      buffer->hardware_buffer_ = nullptr;
++      ok = false;
++      break;
++    }
++    calls.describe(buffer->hardware_buffer_, &description);
++
++    // ANGLE's image of it, and a framebuffer to copy each frame into it.
++    const EGLint attributes[] = {EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE};
++    buffer->image_ = eglCreateImageKHR(
++        GetEGLDisplay(), EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID,
++        reinterpret_cast<EGLClientBuffer>(buffer->hardware_buffer_),
++        attributes);
++    if (buffer->image_ == EGL_NO_IMAGE_KHR) {
++      buffer->image_ = nullptr;
++      made.push_back(std::move(buffer));
++      ok = false;
++      break;
++    }
++    glGenTextures(1, &buffer->texture_);
++    glBindTexture(GL_TEXTURE_2D, buffer->texture_);
++    glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, buffer->image_);
++    glGenFramebuffersEXT(1, &buffer->framebuffer_);
++    glBindFramebufferEXT(GL_FRAMEBUFFER, buffer->framebuffer_);
++    glFramebufferTexture2DEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
++                              GL_TEXTURE_2D, buffer->texture_, 0);
++    ok = glCheckFramebufferStatusEXT(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
++
++    // The room's half: the buffer goes through a socket, which the room's
++    // EGL reads it from when it is given the socket as a dmabuf's file.
++    int sockets[2] = {-1, -1};
++    if (ok && socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0,
++                         sockets) == 0) {
++      base::ScopedFD reader(sockets[0]);
++      base::ScopedFD writer(sockets[1]);
++      ok = calls.send(buffer->hardware_buffer_, writer.get()) == 0;
++      if (ok) {
++        buffer_manager_->CreateDmabufBasedBuffer(
++            std::move(reader), size, {description.stride * 4}, {0},
++            {kSpatiandHardwareBufferModifier}, DRM_FORMAT_ABGR8888, 1,
++            gfx::ColorSpace::CreateSRGB(), gfx::HDRMetadata(),
++            buffer->buffer_id_);
++        sent.push_back(buffer->buffer_id_);
++      }
++    } else {
++      ok = false;
++    }
++    made.push_back(std::move(buffer));
++  }
++
++  glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER, draw_framebuffer);
++  glBindFramebufferEXT(GL_READ_FRAMEBUFFER, read_framebuffer);
++  glBindTexture(GL_TEXTURE_2D, texture_binding);
++
++  if (!ok) {
++    LOG(WARNING) << "Frames go to the room read back into shared memory: no "
++                    "hardware buffer for them";
++    for (auto& buffer : made) {
++      DestroyHardwareBuffer(buffer.get());
++    }
++    for (uint32_t id : sent) {
++      buffer_manager_->DestroyBuffer(id);
++    }
++    return false;
++  }
++  for (auto& buffer : made) {
++    available_buffers_.push_back(std::move(buffer));
++  }
++  return true;
++}
++
++void* GLSurfaceEglReadbackWayland::CopyIntoHardwareBuffer(PixelBuffer* buffer) {
++  const gfx::Size size = GetSize();
++  GLint draw_framebuffer = 0;
++  GLint read_framebuffer = 0;
++  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw_framebuffer);
++  glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read_framebuffer);
++  const bool scissor = glIsEnabled(GL_SCISSOR_TEST);
++  if (scissor) {
++    glDisable(GL_SCISSOR_TEST);
++  }
++  glBindFramebufferEXT(GL_READ_FRAMEBUFFER, 0);
++  glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER, buffer->framebuffer_);
++  glBlitFramebuffer(0, 0, size.width(), size.height(), 0, 0, size.width(),
++                    size.height(), GL_COLOR_BUFFER_BIT, GL_NEAREST);
++  glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER, draw_framebuffer);
++  glBindFramebufferEXT(GL_READ_FRAMEBUFFER, read_framebuffer);
++  if (scissor) {
++    glEnable(GL_SCISSOR_TEST);
++  }
++  EGLSyncKHR fence =
++      eglCreateSyncKHR(GetEGLDisplay(), EGL_SYNC_FENCE_KHR, nullptr);
++  glFlush();
++  return fence;
++}
++
++void GLSurfaceEglReadbackWayland::CommitWhenDrawn() {
++  if (!pending_commit_) {
++    return;
++  }
++  if (pending_commit_->fence &&
++      eglClientWaitSyncKHR(GetEGLDisplay(), pending_commit_->fence, 0, 0) ==
++          EGL_TIMEOUT_EXPIRED_KHR) {
++    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
++        FROM_HERE,
++        base::BindOnce(&GLSurfaceEglReadbackWayland::CommitWhenDrawn,
++                       base::WrapRefCounted(this)),
++        base::Milliseconds(1));
++    return;
++  }
++  CommitNow();
++}
++
++void GLSurfaceEglReadbackWayland::CommitNow() {
++  if (!pending_commit_) {
++    return;
++  }
++  PendingCommit commit = std::move(*pending_commit_);
++  pending_commit_.reset();
++  if (commit.fence) {
++    // A second at most: a GPU that has not finished by then has lost its way,
++    // and the frame goes as it is.
++    eglClientWaitSyncKHR(GetEGLDisplay(), commit.fence, 0,
++                         base::Seconds(1).InNanoseconds());
++    eglDestroySyncKHR(GetEGLDisplay(), commit.fence);
++  } else {
++    glFinish();
++  }
++  constexpr bool enable_blend_for_shadow = true;
++  buffer_manager_->CommitBuffer(widget_, commit.buffer_id,
++                                /*frame_id*/ commit.buffer_id, commit.data,
++                                commit.bounds, enable_blend_for_shadow,
++                                gfx::RoundedCornersF(), surface_scale_factor_,
++                                commit.bounds);
++}
++
++void GLSurfaceEglReadbackWayland::DestroyHardwareBuffer(PixelBuffer* buffer) {
++  if (gl::GLContext::GetCurrent()) {
++    if (buffer->framebuffer_) {
++      glDeleteFramebuffersEXT(1, &buffer->framebuffer_);
++    }
++    if (buffer->texture_) {
++      glDeleteTextures(1, &buffer->texture_);
++    }
++  }
++  buffer->framebuffer_ = 0;
++  buffer->texture_ = 0;
++  if (buffer->image_) {
++    eglDestroyImageKHR(GetEGLDisplay(), buffer->image_);
++    buffer->image_ = nullptr;
++  }
++  if (buffer->hardware_buffer_) {
++    Calls().release(buffer->hardware_buffer_);
++    buffer->hardware_buffer_ = nullptr;
++  }
++}
++#endif
++
+ }  // namespace ui
+diff --git a/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.h b/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.h
+index 9198a18d6b..20f866afa7 100644
+--- a/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.h
++++ b/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.h
+@@ -5,12 +5,22 @@
+ #ifndef UI_OZONE_PLATFORM_WAYLAND_GPU_GL_SURFACE_EGL_READBACK_WAYLAND_H_
+ #define UI_OZONE_PLATFORM_WAYLAND_GPU_GL_SURFACE_EGL_READBACK_WAYLAND_H_
+ 
++#include <optional>
++
+ #include "base/containers/circular_deque.h"
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/shared_memory_mapping.h"
+ #include "ui/ozone/common/gl_surface_egl_readback.h"
+ #include "ui/ozone/platform/wayland/gpu/wayland_surface_gpu.h"
+ 
++#if defined(__TERMUX__)
++#include "base/memory/raw_ptr_exclusion.h"
++#include "ui/gfx/frame_data.h"
++#include "ui/gfx/geometry/rect.h"
++
++struct AHardwareBuffer;
++#endif
++
+ namespace ui {
+ 
+ class WaylandBufferManagerGpu;
+@@ -69,6 +79,16 @@ class GLSurfaceEglReadbackWayland : public GLSurfaceEglReadback,
+     // The buffer id that corresponds to the |wl_buffer| created on the browser
+     // process side.
+     uint32_t buffer_id_ = 0;
++
++#if defined(__TERMUX__)
++    // When the picture goes to Spatiand's room in an Android hardware buffer
++    // instead (see CreateHardwareBuffers): the buffer, ANGLE's image of it,
++    // and the texture and framebuffer each frame is copied into it through.
++    RAW_PTR_EXCLUSION AHardwareBuffer* hardware_buffer_ = nullptr;
++    RAW_PTR_EXCLUSION void* image_ = nullptr;
++    unsigned int texture_ = 0;
++    unsigned int framebuffer_ = 0;
++#endif
+   };
+ 
+   ~GLSurfaceEglReadbackWayland() override;
+@@ -82,6 +102,34 @@ class GLSurfaceEglReadbackWayland : public GLSurfaceEglReadback,
+ 
+   void DestroyBuffers();
+ 
++#if defined(__TERMUX__)
++  // Android's GPU cannot hand Wayland a dmabuf, and reading each frame back
++  // into shared memory costs two copies a frame (here and in the room), so
++  // where Spatiand's room takes them the frames go to it in Android hardware
++  // buffers: each copied into one on the GPU, the buffer passed through a
++  // socket that stands as the dmabuf's file (android/eglshim in Spatiand).
++  // False where they cannot be had; the frames are then read back as before.
++  bool CreateHardwareBuffers(const gfx::Size& size);
++  // Copies the frame into the buffer on the GPU; returns the fence that says
++  // when it is done.
++  void* CopyIntoHardwareBuffer(PixelBuffer* buffer);
++  void DestroyHardwareBuffer(PixelBuffer* buffer);
++  // A frame copied into its hardware buffer goes to the room once the GPU has
++  // done so (the room's GPU is told nothing to wait for), without holding up
++  // this thread meanwhile: its fence is looked at every millisecond.
++  void CommitWhenDrawn();
++  // At once, waiting for the GPU if need be: before buffers go (a resize),
++  // and before another frame.
++  void CommitNow();
++  struct PendingCommit {
++    uint32_t buffer_id = 0;
++    gfx::FrameData data;
++    gfx::Rect bounds;
++    RAW_PTR_EXCLUSION void* fence = nullptr;
++  };
++  std::optional<PendingCommit> pending_commit_;
++#endif
++
+   // Widget of the window that this readback writes pixels to.
+   const gfx::AcceleratedWidget widget_;
+ 
+-- 
+2.53.0
+
+
+ANGLE, a repository of its own (applied with patch -p1 from src):
+
+diff --git a/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.cpp b/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.cpp
+new file mode 100644
+index 0000000..db4443e
+--- /dev/null
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.cpp
+@@ -0,0 +1,305 @@
++//
++// Copyright 2026 The ANGLE Project Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++//
++// AHardwareBufferImageSiblingVkSpatiand.cpp:
++//    An Android hardware buffer as an EGLImage, for ANGLE built for Linux on Android's libc. See
++//    the header. Made as HardwareBufferImageSiblingVkAndroid makes its images, less what only
++//    Android's own build has (external formats, YUV, ANativeWindowBuffer): the buffer is imported
++//    into a Vulkan image owned by the foreign queue, so that ANGLE gives it back to the foreign
++//    queue after every submission that drew into it, and another process (Spatiand's room) can
++//    read what was drawn.
++//
++
++#include "libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.h"
++
++#if defined(__TERMUX__)
++
++#    include <android/hardware_buffer.h>
++#    include <dlfcn.h>
++#    include <vulkan/vulkan_android.h>
++
++#    include "libANGLE/Display.h"
++#    include "libANGLE/renderer/vulkan/DisplayVk.h"
++#    include "libANGLE/renderer/vulkan/vk_renderer.h"
++
++namespace rx
++{
++
++namespace
++{
++// Android's buffer calls, from libnativewindow, which this program is not linked with.
++struct HardwareBufferCalls
++{
++    void (*describe)(const AHardwareBuffer *, AHardwareBuffer_Desc *) = nullptr;
++    void (*acquire)(AHardwareBuffer *)                                = nullptr;
++    void (*release)(AHardwareBuffer *)                                = nullptr;
++
++    bool valid() const { return describe != nullptr && acquire != nullptr && release != nullptr; }
++};
++
++const HardwareBufferCalls &Calls()
++{
++    static const HardwareBufferCalls calls = [] {
++        HardwareBufferCalls found;
++        void *library = dlopen("libnativewindow.so", RTLD_NOW);
++        if (library != nullptr)
++        {
++            found.describe = reinterpret_cast<decltype(found.describe)>(
++                dlsym(library, "AHardwareBuffer_describe"));
++            found.acquire = reinterpret_cast<decltype(found.acquire)>(
++                dlsym(library, "AHardwareBuffer_acquire"));
++            found.release = reinterpret_cast<decltype(found.release)>(
++                dlsym(library, "AHardwareBuffer_release"));
++        }
++        return found;
++    }();
++    return calls;
++}
++
++PFN_vkGetAndroidHardwareBufferPropertiesANDROID GetProperties(VkDevice device)
++{
++    return reinterpret_cast<PFN_vkGetAndroidHardwareBufferPropertiesANDROID>(
++        VK_CALL(vkGetDeviceProcAddr, device, "vkGetAndroidHardwareBufferPropertiesANDROID"));
++}
++
++AHardwareBuffer *HardwareBufferOf(EGLClientBuffer buffer)
++{
++    return reinterpret_cast<AHardwareBuffer *>(buffer);
++}
++}  // anonymous namespace
++
++AHardwareBufferImageSiblingVkSpatiand::AHardwareBufferImageSiblingVkSpatiand(EGLClientBuffer buffer)
++    : mBuffer(buffer),
++      mSize(0, 0, 0),
++      mFormat(GL_NONE),
++      mAcquired(false),
++      mRenderable(false),
++      mTextureable(false),
++      mImage(nullptr)
++{}
++
++AHardwareBufferImageSiblingVkSpatiand::~AHardwareBufferImageSiblingVkSpatiand() {}
++
++// Static
++egl::Error AHardwareBufferImageSiblingVkSpatiand::ValidateHardwareBuffer(
++    vk::Renderer *renderer,
++    EGLClientBuffer buffer,
++    const egl::AttributeMap &attribs)
++{
++    if (buffer == nullptr || !Calls().valid())
++    {
++        return egl::Error(EGL_BAD_PARAMETER, "No hardware buffer, or no libnativewindow.");
++    }
++    if (!renderer->getFeatures().supportsAndroidHardwareBuffer.enabled ||
++        GetProperties(renderer->getDevice()) == nullptr)
++    {
++        return egl::Error(EGL_BAD_PARAMETER, "Vulkan cannot import Android hardware buffers.");
++    }
++    AHardwareBuffer_Desc description = {};
++    Calls().describe(HardwareBufferOf(buffer), &description);
++    if (description.format != AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM &&
++        description.format != AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM)
++    {
++        return egl::Error(EGL_BAD_PARAMETER, "Only RGBA and RGBX hardware buffers.");
++    }
++    if (description.layers != 1 ||
++        (description.usage & (AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE |
++                              AHARDWAREBUFFER_USAGE_GPU_FRAMEBUFFER)) == 0)
++    {
++        return egl::Error(EGL_BAD_PARAMETER,
++                          "The hardware buffer is not one layer the GPU draws or samples.");
++    }
++    if (attribs.get(EGL_PROTECTED_CONTENT_EXT, EGL_FALSE) == EGL_TRUE)
++    {
++        return egl::Error(EGL_BAD_PARAMETER, "No protected content.");
++    }
++    return egl::NoError();
++}
++
++egl::Error AHardwareBufferImageSiblingVkSpatiand::initialize(const egl::Display *display)
++{
++    DisplayVk *displayVk = vk::GetImpl(display);
++    return angle::ToEGL(initImpl(displayVk), EGL_BAD_PARAMETER);
++}
++
++angle::Result AHardwareBufferImageSiblingVkSpatiand::initImpl(DisplayVk *displayVk)
++{
++    vk::Renderer *renderer = displayVk->getRenderer();
++    ANGLE_VK_CHECK(displayVk, Calls().valid(), VK_ERROR_INITIALIZATION_FAILED);
++    PFN_vkGetAndroidHardwareBufferPropertiesANDROID getProperties =
++        GetProperties(renderer->getDevice());
++    ANGLE_VK_CHECK(displayVk, getProperties != nullptr, VK_ERROR_EXTENSION_NOT_PRESENT);
++
++    AHardwareBuffer *hardwareBuffer = HardwareBufferOf(mBuffer);
++    AHardwareBuffer_Desc description = {};
++    Calls().describe(hardwareBuffer, &description);
++    mSize = gl::Extents(static_cast<int>(description.width),
++                        static_cast<int>(description.height), 1);
++    Calls().acquire(hardwareBuffer);
++    mAcquired = true;
++
++    VkAndroidHardwareBufferFormatPropertiesANDROID formatProperties = {};
++    formatProperties.sType = VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_FORMAT_PROPERTIES_ANDROID;
++    VkAndroidHardwareBufferPropertiesANDROID bufferProperties = {};
++    bufferProperties.sType = VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID;
++    bufferProperties.pNext = &formatProperties;
++    ANGLE_VK_TRY(displayVk,
++                 getProperties(renderer->getDevice(), hardwareBuffer, &bufferProperties));
++
++    const vk::Format &vkFormat =
++        renderer->getFormat(description.format == AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM
++                                ? GL_RGBX8_ANGLE
++                                : GL_RGBA8);
++    mFormat = gl::Format(vkFormat.getIntendedGLFormat());
++    const angle::FormatID intendedFormatID = vkFormat.getIntendedFormatID();
++    const angle::FormatID actualFormatID =
++        vkFormat.getActualImageFormatID(vk::ImageFormatSupport::SampleOnly);
++
++    // The usages Android's buffer usages allow (the Vulkan spec's table, as ANGLE's own import).
++    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
++    if ((description.usage & AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE) != 0)
++    {
++        usage |= VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
++    }
++    if ((description.usage & AHARDWAREBUFFER_USAGE_GPU_FRAMEBUFFER) != 0)
++    {
++        usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
++    }
++
++    VkExternalMemoryImageCreateInfo externalMemoryImageCreateInfo = {};
++    externalMemoryImageCreateInfo.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
++    externalMemoryImageCreateInfo.handleTypes =
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
++
++    VkExtent3D vkExtents;
++    gl_vk::GetExtent(mSize, &vkExtents);
++    vkExtents.depth = 1;
++
++    mImage = new vk::ImageHelper();
++    mImage->setTilingMode(VK_IMAGE_TILING_OPTIMAL);
++
++    VkImageCreateFlags imageCreateFlags = 0;
++    const vk::ImageFormatReinterpretability formatReinterpretability =
++        vk::ImageFormatReinterpretability::ColorspaceOverrides;
++    VkImageFormatListCreateInfoKHR imageFormatListInfoStorage;
++    vk::ImageHelper::ImageFormats imageFormats;
++    const void *imageCreateInfoPNext = vk::ImageHelper::DeriveCreateInfoPNext(
++        displayVk, actualFormatID, &externalMemoryImageCreateInfo, &imageFormatListInfoStorage,
++        &imageFormats, formatReinterpretability, &imageCreateFlags);
++
++    vk::YcbcrConversionDesc conversionDesc{};
++    ANGLE_TRY(mImage->initExternal(
++        displayVk, gl::TextureType::_2D, vkExtents, intendedFormatID, actualFormatID, 1, usage,
++        imageCreateFlags, vk::ImageAccess::ExternalPreInitialized, imageCreateInfoPNext,
++        gl::OwnerLevel(0), 1, 1, false, false, vk::TileMemory::Prohibited, conversionDesc,
++        nullptr, formatReinterpretability));
++
++    VkImportAndroidHardwareBufferInfoANDROID importHardwareBufferInfo = {};
++    importHardwareBufferInfo.sType  = VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID;
++    importHardwareBufferInfo.buffer = hardwareBuffer;
++
++    VkMemoryDedicatedAllocateInfo dedicatedAllocInfo = {};
++    dedicatedAllocInfo.sType          = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
++    dedicatedAllocInfo.pNext          = &importHardwareBufferInfo;
++    dedicatedAllocInfo.image          = mImage->getImage().getHandle();
++    dedicatedAllocInfo.buffer         = VK_NULL_HANDLE;
++    const void *dedicatedAllocInfoPtr = &dedicatedAllocInfo;
++
++    VkMemoryRequirements externalMemoryRequirements = {};
++    externalMemoryRequirements.size                 = bufferProperties.allocationSize;
++    externalMemoryRequirements.alignment            = 0;
++    externalMemoryRequirements.memoryTypeBits       = bufferProperties.memoryTypeBits;
++
++    ANGLE_TRY(mImage->initExternalMemory(displayVk, renderer->getMemoryProperties(),
++                                         externalMemoryRequirements, 1, &dedicatedAllocInfoPtr,
++                                         vk::kForeignDeviceQueueIndex,
++                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
++
++    mRenderable  = renderer->hasImageFormatFeatureBits(actualFormatID,
++                                                       VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT);
++    mTextureable = renderer->hasImageFormatFeatureBits(
++        actualFormatID,
++        VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
++    return angle::Result::Continue;
++}
++
++void AHardwareBufferImageSiblingVkSpatiand::onDestroy(const egl::Display *display)
++{
++    if (mAcquired)
++    {
++        Calls().release(HardwareBufferOf(mBuffer));
++        mAcquired = false;
++    }
++    ASSERT(mImage == nullptr);
++}
++
++gl::Format AHardwareBufferImageSiblingVkSpatiand::getFormat() const
++{
++    return mFormat;
++}
++
++bool AHardwareBufferImageSiblingVkSpatiand::isRenderable(const gl::Context *context) const
++{
++    return mRenderable;
++}
++
++bool AHardwareBufferImageSiblingVkSpatiand::isTexturable(const gl::Context *context) const
++{
++    return mTextureable;
++}
++
++bool AHardwareBufferImageSiblingVkSpatiand::isYUV() const
++{
++    return false;
++}
++
++bool AHardwareBufferImageSiblingVkSpatiand::hasFrontBufferUsage() const
++{
++    return false;
++}
++
++bool AHardwareBufferImageSiblingVkSpatiand::isCubeMap() const
++{
++    return false;
++}
++
++bool AHardwareBufferImageSiblingVkSpatiand::hasProtectedContent() const
++{
++    return false;
++}
++
++gl::Extents AHardwareBufferImageSiblingVkSpatiand::getSize() const
++{
++    return mSize;
++}
++
++size_t AHardwareBufferImageSiblingVkSpatiand::getSamples() const
++{
++    return 0;
++}
++
++uint32_t AHardwareBufferImageSiblingVkSpatiand::getLevelCount() const
++{
++    return 1;
++}
++
++vk::ImageHelper *AHardwareBufferImageSiblingVkSpatiand::getImage() const
++{
++    return mImage;
++}
++
++void AHardwareBufferImageSiblingVkSpatiand::release(vk::Renderer *renderer)
++{
++    if (mImage != nullptr)
++    {
++        mImage->releaseImage(renderer);
++        mImage->releaseStagedUpdates(renderer);
++        SafeDelete(mImage);
++    }
++}
++
++}  // namespace rx
++
++#endif  // defined(__TERMUX__)
+diff --git a/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.h b/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.h
+new file mode 100644
+index 0000000..f121d41
+--- /dev/null
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.h
+@@ -0,0 +1,66 @@
++//
++// Copyright 2026 The ANGLE Project Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++//
++// AHardwareBufferImageSiblingVkSpatiand.h:
++//    An Android hardware buffer as an EGLImage, for ANGLE built for Linux on Android's libc
++//    (Spatiand's Chromium on the Beam Pro, __TERMUX__). Its EGLClientBuffer is the
++//    AHardwareBuffer itself. RGBA and RGBX, one layer, one level: the pictures Chromium draws its
++//    windows into and hands to Spatiand's room without a copy.
++//
++
++#ifndef LIBANGLE_RENDERER_VULKAN_LINUX_AHARDWAREBUFFERIMAGESIBLINGVKSPATIAND_H_
++#define LIBANGLE_RENDERER_VULKAN_LINUX_AHARDWAREBUFFERIMAGESIBLINGVKSPATIAND_H_
++
++#include "libANGLE/renderer/vulkan/ImageVk.h"
++
++namespace rx
++{
++
++class AHardwareBufferImageSiblingVkSpatiand : public ExternalImageSiblingVk
++{
++  public:
++    AHardwareBufferImageSiblingVkSpatiand(EGLClientBuffer buffer);
++    ~AHardwareBufferImageSiblingVkSpatiand() override;
++
++    static egl::Error ValidateHardwareBuffer(vk::Renderer *renderer,
++                                             EGLClientBuffer buffer,
++                                             const egl::AttributeMap &attribs);
++
++    egl::Error initialize(const egl::Display *display) override;
++    void onDestroy(const egl::Display *display) override;
++
++    // ExternalImageSiblingImpl interface
++    gl::Format getFormat() const override;
++    bool isRenderable(const gl::Context *context) const override;
++    bool isTexturable(const gl::Context *context) const override;
++    bool isYUV() const override;
++    bool hasFrontBufferUsage() const override;
++    bool isCubeMap() const override;
++    bool hasProtectedContent() const override;
++    gl::Extents getSize() const override;
++    size_t getSamples() const override;
++    uint32_t getLevelCount() const override;
++
++    // ExternalImageSiblingVk interface
++    vk::ImageHelper *getImage() const override;
++
++    void release(vk::Renderer *renderer) override;
++
++  private:
++    angle::Result initImpl(DisplayVk *displayVk);
++
++    EGLClientBuffer mBuffer;
++    gl::Extents mSize;
++    gl::Format mFormat;
++    bool mAcquired;
++    bool mRenderable;
++    bool mTextureable;
++
++    vk::ImageHelper *mImage;
++};
++
++}  // namespace rx
++
++#endif  // LIBANGLE_RENDERER_VULKAN_LINUX_AHARDWAREBUFFERIMAGESIBLINGVKSPATIAND_H_
+diff --git a/third_party/angle/src/libANGLE/renderer/vulkan/linux/DisplayVkLinux.cpp b/third_party/angle/src/libANGLE/renderer/vulkan/linux/DisplayVkLinux.cpp
+index 39c07ae..ab4dcf6 100644
+--- a/third_party/angle/src/libANGLE/renderer/vulkan/linux/DisplayVkLinux.cpp
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/linux/DisplayVkLinux.cpp
+@@ -13,6 +13,9 @@
+ #include "common/linux/dma_buf_utils.h"
+ #include "libANGLE/renderer/vulkan/linux/DeviceVkLinux.h"
+ #include "libANGLE/renderer/vulkan/linux/DmaBufImageSiblingVkLinux.h"
++#if defined(__TERMUX__)
++#    include "libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.h"
++#endif
+ #include "libANGLE/renderer/vulkan/vk_renderer.h"
+ 
+ namespace rx
+@@ -38,11 +41,35 @@ ExternalImageSiblingImpl *DisplayVkLinux::createExternalImageSibling(
+             ASSERT(buffer == nullptr);
+             return new DmaBufImageSiblingVkLinux(attribs);
+ 
++#if defined(__TERMUX__)
++        case EGL_NATIVE_BUFFER_ANDROID:
++            ASSERT(context == nullptr);
++            return new AHardwareBufferImageSiblingVkSpatiand(buffer);
++#endif
++
+         default:
+             return DisplayVk::createExternalImageSibling(context, target, buffer, attribs);
+     }
+ }
+ 
++#if defined(__TERMUX__)
++egl::Error DisplayVkLinux::validateImageClientBuffer(const gl::Context *context,
++                                                     EGLenum target,
++                                                     EGLClientBuffer clientBuffer,
++                                                     const egl::AttributeMap &attribs) const
++{
++    switch (target)
++    {
++        case EGL_NATIVE_BUFFER_ANDROID:
++            return AHardwareBufferImageSiblingVkSpatiand::ValidateHardwareBuffer(
++                getRenderer(), clientBuffer, attribs);
++
++        default:
++            return DisplayVk::validateImageClientBuffer(context, target, clientBuffer, attribs);
++    }
++}
++#endif
++
+ // Returns the list of DRM modifiers that a VkFormat supports
+ std::vector<VkDrmFormatModifierPropertiesEXT> DisplayVkLinux::getDrmModifiers(
+     const DisplayVk *displayVk,
+diff --git a/third_party/angle/src/libANGLE/renderer/vulkan/linux/DisplayVkLinux.h b/third_party/angle/src/libANGLE/renderer/vulkan/linux/DisplayVkLinux.h
+index b83a57a..6b5d288 100644
+--- a/third_party/angle/src/libANGLE/renderer/vulkan/linux/DisplayVkLinux.h
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/linux/DisplayVkLinux.h
+@@ -27,6 +27,14 @@ class DisplayVkLinux : public DisplayVk
+                                                          EGLenum target,
+                                                          EGLClientBuffer buffer,
+                                                          const egl::AttributeMap &attribs) override;
++#if defined(__TERMUX__)
++    // Android hardware buffers as EGLImages, on Android's libc: see
++    // AHardwareBufferImageSiblingVkSpatiand.
++    egl::Error validateImageClientBuffer(const gl::Context *context,
++                                         EGLenum target,
++                                         EGLClientBuffer clientBuffer,
++                                         const egl::AttributeMap &attribs) const override;
++#endif
+     bool supportsDmaBufFormat(EGLint format) override;
+     egl::Error queryDmaBufFormats(EGLint maxFormats, EGLint *formats, EGLint *numFormats) override;
+     egl::Error queryDmaBufModifiers(EGLint format,
+diff --git a/third_party/angle/src/libANGLE/renderer/vulkan/vk_renderer.cpp b/third_party/angle/src/libANGLE/renderer/vulkan/vk_renderer.cpp
+index f0ee39b..7014639 100644
+--- a/third_party/angle/src/libANGLE/renderer/vulkan/vk_renderer.cpp
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/vk_renderer.cpp
+@@ -3931,6 +3931,14 @@ void Renderer::enableDeviceExtensionsNotPromoted(const vk::ExtensionNameList &de
+         mEnabledDeviceExtensions.push_back(
+             VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME);
+     }
++#elif defined(__TERMUX__)
++    // Built for Linux on Android's libc: Android hardware buffers as EGLImages, see
++    // linux/AHardwareBufferImageSiblingVkSpatiand.cpp.
++    if (mFeatures.supportsAndroidHardwareBuffer.enabled)
++    {
++        mEnabledDeviceExtensions.push_back(VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME);
++        mEnabledDeviceExtensions.push_back("VK_ANDROID_external_memory_android_hardware_buffer");
++    }
+ #else
+     ASSERT(!mFeatures.supportsAndroidHardwareBuffer.enabled);
+ #endif
+@@ -5714,6 +5722,12 @@ void Renderer::initFeatures(const vk::ExtensionNameList &deviceExtensionNames,
+             ExtensionFound(VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
+                            deviceExtensionNames) &&
+             ExtensionFound(VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME, deviceExtensionNames));
++#elif defined(__TERMUX__)
++    ANGLE_FEATURE_CONDITION(
++        &mFeatures, supportsAndroidHardwareBuffer,
++        ExtensionFound("VK_ANDROID_external_memory_android_hardware_buffer",
++                       deviceExtensionNames) &&
++            ExtensionFound(VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME, deviceExtensionNames));
+ #endif
+ 
+     ANGLE_FEATURE_CONDITION(
+diff --git a/third_party/angle/src/libANGLE/renderer/vulkan/vulkan_backend.gni b/third_party/angle/src/libANGLE/renderer/vulkan/vulkan_backend.gni
+index f29c808..c06d8fd 100644
+--- a/third_party/angle/src/libANGLE/renderer/vulkan/vulkan_backend.gni
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/vulkan_backend.gni
+@@ -152,6 +152,8 @@ vulkan_backend_dma_buf_sources = [
+   "linux/DisplayVkLinux.h",
+   "linux/DisplayVkOffscreen.cpp",
+   "linux/DisplayVkOffscreen.h",
++  "linux/AHardwareBufferImageSiblingVkSpatiand.cpp",
++  "linux/AHardwareBufferImageSiblingVkSpatiand.h",
+   "linux/DmaBufImageSiblingVkLinux.cpp",
+   "linux/DmaBufImageSiblingVkLinux.h",
+   "linux/display/DisplayVkSimple.cpp",
