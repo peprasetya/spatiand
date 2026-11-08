@@ -132,8 +132,9 @@ the host, and the Deck would see the same.
   front. **Needs Screen Recording to show and Accessibility to click; the click path is untested** (the tool that
   built it is not trusted to post events).
 * Unplugging, quitting, and `kill` all give the glasses their ordinary mode back and the Mac its
-  pointer; unplugging restarts the app so the next plug-in starts clean (HoloFrame's lesson: a
-  vanished display leaves a ghost window in the window server).
+  pointer. Unplugging no longer restarts the app (2026-11-08): the session goes on, its windows
+  put aside (docs/mac.md). HoloFrame's lesson, that a vanished display leaves a ghost window in
+  the window server for the life of the process, is paid as one such window per unplug.
 
 `Spatiand --selftest-room <address> <fingerprint> <app>` draws the room offscreen with no glasses
 (`/tmp/spatiand-room*.png`); `SPATIAND_DEBUG_SNAPSHOT=/tmp/g.png` on the app writes what the glasses

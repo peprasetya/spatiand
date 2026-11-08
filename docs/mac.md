@@ -165,8 +165,12 @@ application's window remembers its frame.
 
 Plugged in, the glasses take the same session: `Room.start` from 2D mode turns `sp_desk` off
 (the Mac windows go), holds the glasses and gives the session the glasses' screen; the
-applications are not restarted and their windows are in the room. Unplugged, the app still
-starts over as a new process (see `Room`), which ends the applications.
+applications are not restarted and their windows are in the room. Unplugged, the session goes
+on without them, as the Deck's does (`Room.leaveGlasses`): the Mac has its pointer, keyboard
+and windows back, the hosts go back to the Mac's own 2D view, and the session's windows wait,
+put aside. The menu lists them ("Waiting for the glasses"), the one in use first; one chosen
+there is brought to the Mac as in 2D mode. An application opened from the menu meanwhile is the
+Mac's at once. Plugged in again, every one of them is in the room.
 
 ## The Mac as a host
 

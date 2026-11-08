@@ -11,9 +11,15 @@
 //!
 //! Plugged in, the glasses take over the same windows: [`sp_desk`] off, and the app hands the
 //! session the glasses' screen, as it would have at the start. Nothing is restarted.
+//!
+//! Unplugged, the other way: the session goes on with nothing to draw into, as the Deck's does,
+//! and its windows wait in it -- put aside ([`sp_desk_park`]), not shown on the Mac, as a room
+//! full of windows arriving on the desktop at once is not what taking the glasses off means.
+//! The app lists them ([`sp_desk_parked`]) and one is brought to the Mac when asked for
+//! ([`sp_desk_pull`]). One opened afterwards is the Mac's at once, as in 2D mode from the start.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, CStr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -29,6 +35,11 @@ use smithay::wayland::seat::WaylandFocus;
 use super::ffi::{self, Asked};
 
 static ON: AtomicBool = AtomicBool::new(false);
+/// The windows there are as 2D mode next comes on are put aside, not shown.
+static PARK: AtomicBool = AtomicBool::new(false);
+/// The windows put aside, as the app may list them: id, title, and whether it was the one the
+/// wearer was using.
+static PARKED: Mutex<Vec<(u32, String, bool)>> = Mutex::new(Vec::new());
 
 /// Whether the session's windows are the Mac's to show.
 pub fn on() -> bool {
@@ -50,6 +61,8 @@ enum Input {
     Resize(u32, i32, i32),
     Close(u32),
     Launch(String),
+    /// A window put aside, brought to the Mac.
+    Pull(u32),
 }
 
 static INPUT: Mutex<Vec<Input>> = Mutex::new(Vec::new());
@@ -79,6 +92,11 @@ struct Desk {
     held: Vec<u32>,
     /// The window the keyboard is on, as the app last said.
     keyboard: Option<u32>,
+    /// Put aside as the glasses went: not the Mac's until pulled.
+    parked: HashSet<u32>,
+    /// The one of them the wearer was using.
+    active: Option<u32>,
+    last_listed: Option<Instant>,
 }
 
 thread_local! {
@@ -87,12 +105,14 @@ thread_local! {
 }
 
 /// Every window this session has that the Mac could show: Wayland's, which Spatiand's own
-/// applications' are. By the layout's id, which is the window's for its whole life.
+/// applications' are. By the layout's id, which is the window's for its whole life. Never one
+/// of this Mac's own, which is on the Mac already.
 fn windows(state: &crate::Spatiand) -> Vec<(u32, smithay::desktop::Window)> {
     state
         .space
         .elements()
         .filter(|w| w.toplevel().is_some())
+        .filter(|w| !state.app_id_of(w).is_some_and(|app| super::is_mac_window(&app)))
         .filter_map(|w| Some((state.layout.id_of(w)? as u32, w.clone())))
         .collect()
 }
@@ -129,6 +149,9 @@ pub fn tick(state: &mut crate::Spatiand) -> bool {
                 }
                 desk.was_on = false;
             }
+            desk.parked.clear();
+            desk.active = None;
+            PARKED.lock().unwrap().clear();
             INPUT.lock().unwrap().clear();
             return;
         }
@@ -137,7 +160,13 @@ pub fn tick(state: &mut crate::Spatiand) -> bool {
             desk.started = Some(Instant::now());
             // One picture: the applications draw for a flat screen.
             state.set_display_stereo(false);
+            if PARK.swap(false, Ordering::SeqCst) {
+                desk.parked = windows(state).into_iter().map(|(id, _)| id).collect();
+                desk.active = state.layout.focused_id().map(|id| id as u32).filter(|id| desk.parked.contains(id));
+                log::info!("the glasses have gone: {} windows put aside", desk.parked.len());
+            }
         }
+        list_parked(state, &mut desk);
         tell(state, &mut desk);
         apply(state, &mut desk);
         // A window's next picture, asked for at the display's pace.
@@ -151,8 +180,28 @@ pub fn tick(state: &mut crate::Spatiand) -> bool {
     on
 }
 
+/// The windows put aside, for the app's menu: a few times a second, and only those still open.
+fn list_parked(state: &crate::Spatiand, desk: &mut Desk) {
+    let now = Instant::now();
+    if desk.last_listed.is_some_and(|t| now.duration_since(t) < Duration::from_millis(250)) {
+        return;
+    }
+    desk.last_listed = Some(now);
+    let open = windows(state);
+    desk.parked.retain(|id| open.iter().any(|(n, _)| n == id));
+    let mut list: Vec<(u32, String, bool)> = open
+        .iter()
+        .filter(|(id, _)| desk.parked.contains(id))
+        .map(|(id, w)| (*id, state.title_of(w).unwrap_or_default(), desk.active == Some(*id)))
+        .collect();
+    // The one in use first.
+    list.sort_by_key(|(_, _, active)| !active);
+    *PARKED.lock().unwrap() = list;
+}
+
 fn tell(state: &mut crate::Spatiand, desk: &mut Desk) {
-    let now = windows(state);
+    let parked = desk.parked.clone();
+    let now: Vec<_> = windows(state).into_iter().filter(|(id, _)| !parked.contains(id)).collect();
     let gone: Vec<u32> = desk.told.keys().filter(|id| !now.iter().any(|(n, _)| n == *id)).copied().collect();
     for id in gone {
         desk.told.remove(&id);
@@ -299,6 +348,12 @@ fn apply(state: &mut crate::Spatiand, desk: &mut Desk) {
                     state.close_window(&window);
                 }
             }
+            Input::Pull(id) => {
+                if desk.parked.remove(&id) {
+                    log::info!("2D: bringing window {id} to the Mac");
+                    desk.last_listed = None;
+                }
+            }
         }
     }
 }
@@ -336,6 +391,44 @@ fn desk_time(started: Option<Instant>) -> u32 {
 #[no_mangle]
 pub extern "C" fn sp_desk(on: bool) {
     ON.store(on, Ordering::SeqCst);
+}
+
+/// The windows the session has as 2D mode next comes on are put aside, not shown on the Mac:
+/// said just before [`sp_desk`] when the glasses go.
+#[no_mangle]
+pub extern "C" fn sp_desk_park() {
+    PARK.store(true, Ordering::SeqCst);
+}
+
+/// Bring a window put aside to the Mac.
+#[no_mangle]
+pub extern "C" fn sp_desk_pull(id: u32) {
+    queue(Input::Pull(id));
+}
+
+/// The windows put aside, one a line: its id, a tab, `*` for the one the wearer was using or
+/// `-`, a tab, its title. As much as fits in `capacity`, with a terminating zero.
+///
+/// # Safety
+/// `buffer` must have room for `capacity` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn sp_desk_parked(buffer: *mut c_char, capacity: usize) {
+    if buffer.is_null() || capacity == 0 {
+        return;
+    }
+    let mut text = String::new();
+    for (id, title, active) in PARKED.lock().unwrap().iter() {
+        let title = title.replace(['\t', '\n'], " ");
+        text.push_str(&format!("{id}\t{}\t{title}\n", if *active { "*" } else { "-" }));
+    }
+    let mut bytes = text.into_bytes();
+    // Whole lines only.
+    while bytes.len() + 1 > capacity {
+        let cut = bytes[..bytes.len() - 1].iter().rposition(|&b| b == b'\n').map_or(0, |at| at + 1);
+        bytes.truncate(cut);
+    }
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer as *mut u8, bytes.len());
+    *buffer.add(bytes.len()) = 0;
 }
 
 /// Open one of Spatiand's own applications by its name (`SpatiMesh`), in whatever mode the

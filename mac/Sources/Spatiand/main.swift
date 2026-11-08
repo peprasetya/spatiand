@@ -108,7 +108,6 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // SpatiKey's service, from launch and whether or not the room is up: the Touch ID panel has
         // to come from this app (docs/spatikey.md).
         SpatiKeyGuard.shared.start()
-        wasPlugged = glasses.isPluggedIn
         pairing.start()
         // With the glasses on and the mouse and keyboard theirs, these are the room's own launcher
         // and settings: the Mac's menu is out of sight. Otherwise they are the Mac's.
@@ -126,7 +125,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The display goes away for a moment whenever the glasses change mode -- which they do as
         // the room starts, going to two eyes -- and comes back: wait for it again. Unplugged for
         // good is the USB going, which `refreshIcon` hears.
-        Room.shared.screen.onLost = { Room.shared.screen.start() }
+        // Only while the room is in the glasses: gone from them, it waits for nothing, and is
+        // given the screen when they are wanted again.
+        Room.shared.screen.onLost = { if Room.shared.inGlasses { Room.shared.screen.start() } }
         chooseWorld()
     }
 
@@ -144,12 +145,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard !Room.shared.inGlasses else { return }
             Model.shared.disconnect()
             Room.shared.start()
-        } else if Room.shared.inGlasses {
-            // One session a process; see `Room`.
-            relaunchForNextPlugIn()
-        } else if Model.shared.host == nil, let last = Hosts.all.first {
-            // Back to the computer this Mac was last using, if there is one.
-            Model.shared.connect(last)
+        } else {
+            // The session goes on without the glasses; see `Room.leaveGlasses`.
+            if Room.shared.inGlasses { Room.shared.leaveGlasses() }
+            // Back to the computer this Mac was last using, if there is one: the session has let
+            // go of its hosts.
+            if Model.shared.host == nil, let last = Hosts.all.first { Model.shared.connect(last) }
         }
     }
 
@@ -159,43 +160,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let listening = MacDictation.shared.listening
         item.button?.appearsDisabled = !glasses.isPluggedIn && !listening
         item.button?.image = NSImage(systemSymbolName: listening ? "mic.fill" : "eyeglasses", accessibilityDescription: "Spatiand")
-        let unplugged = wasPlugged && !glasses.isPluggedIn
-        wasPlugged = glasses.isPluggedIn
-        // A display that has gone leaves a ghost of the glasses' window in the window server for
-        // as long as this process lives, so the next plug-in starts from a fresh one.
-        if unplugged, Room.shared.inGlasses { relaunchForNextPlugIn(); return }
         if glassesWanted() != Room.shared.inGlasses { chooseWorld() }
     }
 
-    private var wasPlugged = false
     /// This Mac's windows, as of the last time the menu opened.
     private var macList: [MacWindowInfo] = []
-
-    /// Start over as a new process, once this one has gone. Through `open`, so macOS treats the
-    /// new one as the app and not as a child of whatever started this.
-    private func relaunchForNextPlugIn() {
-        // Once: stopping the room says things have changed, which must not come back here.
-        guard !leaving else { return }
-        leaving = true
-        Room.shared.onChange = nil
-        glasses.onChange = nil
-        let bundle = Bundle.main.bundleURL
-        guard bundle.pathExtension == "app" else {
-            print("the room has ended; not running from an app, so stopping here")
-            Room.shared.stop()
-            exit(0)
-        }
-        let relauncher = Process()
-        relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
-        // `open` can refuse in the moment after the old one goes (-600); it is asked until it does not.
-        relauncher.arguments = ["-c", "while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done; for i in 1 2 3 4 5 6 7 8; do /usr/bin/open -n \"$1\" && exit 0; sleep 0.5; done", "sh", bundle.path]
-        do { try relauncher.run() } catch { print("could not relaunch: \(error)") }
-        print("the room has ended; restarting so the next one starts clean")
-        Room.shared.stop()
-        exit(0)
-    }
-
-    private var leaving = false
 
     /// Glasses plugged in, and the owner has not said to keep everything on the Mac.
     private func glassesWanted() -> Bool {
@@ -270,6 +239,21 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             buildComputers(menu)
         }
         menu.addItem(.separator())
+
+        // The session's windows waiting while the glasses are off: each brought to the Mac when
+        // asked for, the one that was in use first.
+        let parked = Room.shared.parked
+        if !parked.isEmpty {
+            add(menu, "Waiting for the glasses:", enabled: false)
+            for window in parked {
+                let entry = NSMenuItem(title: (window.active ? "Show \u{201C}\(window.title)\u{201D} on this Mac" : "    \(window.title)"),
+                                       action: #selector(pullToMac(_:)), keyEquivalent: "")
+                entry.target = self
+                entry.representedObject = window.id
+                menu.addItem(entry)
+            }
+            menu.addItem(.separator())
+        }
 
         // Spatiand's own applications: in the room with the glasses, as this Mac's windows without.
         let own = Room.ownApps
@@ -498,6 +482,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openSettings() { settings.show() }
     @objc private func addComputer() { pairing.ask() }
     @objc private func disconnect() { Model.shared.disconnect() }
+    @objc private func pullToMac(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? UInt32 { Room.shared.pullToMac(id) }
+    }
     @objc private func openOwnApp(_ sender: NSMenuItem) {
         if let name = sender.representedObject as? String { Room.shared.openOwn(name) }
     }
@@ -697,6 +684,52 @@ if CommandLine.arguments.contains("--selftest-windows") {
         } else {
             after(10) { Room.shared.stop(); exit(0) }
         }
+    }
+    application.run()
+}
+
+if CommandLine.arguments.contains("--selftest-unplug") {
+    // The glasses taken off and put on again, with stand-in glasses: SpatiQuill opened on the
+    // Mac, taken into the room, put aside as the glasses go, pulled back to the Mac, and in the
+    // room again -- the same process of it all the way. Each step said on standard output and
+    // pictured (~/screenshots); exits 0 if every step was as it should be.
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    func after(_ seconds: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body) }
+    func quill() -> String {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        p.arguments = ["-P", "\(getpid())", "spatiquill"]
+        let out = Pipe()
+        p.standardOutput = out
+        try? p.run()
+        p.waitUntilExit()
+        return String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+    var failed = false
+    var first = ""
+    func check(_ step: String, onMac: Int, parked: Int) {
+        let now = quill(), mac = DeskWindows.shared.all.count, aside = Room.shared.parked.count
+        if first.isEmpty { first = now }
+        let ok = !now.isEmpty && now == first && mac == onMac && aside == parked
+        if !ok { failed = true }
+        print("\(ok ? "ok  " : "FAIL") \(step): SpatiQuill \(now.isEmpty ? "not running" : "pid " + now), \(mac) on the Mac (want \(onMac)), \(aside) put aside (want \(parked))")
+    }
+    DispatchQueue.main.async {
+        Room.shared.openOwn("SpatiQuill")
+        after(6) { check("opened without glasses", onMac: 1, parked: 0) }
+        after(7) { Room.shared.start(preview: true) }
+        after(8.5) { sp_control(3, true); after(0.1) { sp_control(3, false) } }
+        after(12) { sp_screenshot(); check("glasses on", onMac: 0, parked: 0) }
+        after(13) { Room.shared.leaveGlasses() }
+        after(15) { check("glasses off", onMac: 0, parked: 1) }
+        after(16) { if let id = Room.shared.parked.first?.id { Room.shared.pullToMac(id) } }
+        after(18) { check("pulled to the Mac", onMac: 1, parked: 0) }
+        after(19) { Room.shared.start(preview: true) }
+        after(23) { sp_screenshot(); check("glasses on again", onMac: 0, parked: 0) }
+        after(25) { Room.shared.stop(); exit(failed ? 1 : 0) }
     }
     application.run()
 }

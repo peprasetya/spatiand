@@ -308,6 +308,15 @@ pub fn run(
             }
             let desk = super::desk_tick(&mut runtime.state);
             if desk {
+                // The glasses gone from a Mac: its own 2D view has the hosts again (see where
+                // `remotes_started` is set), and has them back when the glasses return.
+                if remotes_started {
+                    log::info!("2D: the hosts are left to the Mac's own view");
+                    let local = remotes.local_clipboard.take();
+                    remotes = crate::remote::Remotes::default();
+                    remotes.local_clipboard = local;
+                    remotes_started = false;
+                }
                 crate::clipboard::exchange(&mut remotes, &mut runtime.state);
             }
             runtime.state.space.refresh();

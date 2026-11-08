@@ -10,7 +10,7 @@
 //  What macOS does with this display was found out the hard way in HoloFrame: it is matched by its
 //  EDID; a window placed on it before AppKit's screen list has caught up lands on the wrong screen;
 //  a window that was on it when it vanished leaves a ghost in the window server until the process
-//  ends (so unplugging restarts the app); macOS puts it back to its remembered one-eye mode when
+//  ends (one more each time, so each display gets a window of its own); macOS puts it back to its remembered one-eye mode when
 //  it feels like it; and nothing is composited over a display that has not been captured.
 
 import AppKit

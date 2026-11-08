@@ -170,6 +170,12 @@ size_t sp_status(char *into, size_t size);
 // SP_DESK_*; what is done to the Mac window comes back here, in the window's own pixels from its
 // top left. Off, the glasses have the same windows.
 void sp_desk(bool on);
+// The glasses have gone: the windows the session has when sp_desk next comes on are put aside,
+// not shown, until one is pulled to the Mac. Listed one a line, "id\t*\ttitle" (* for the one
+// in use, - otherwise), in the buffer; as much as fits, ended by a zero.
+void sp_desk_park(void);
+void sp_desk_pull(uint32_t id);
+void sp_desk_parked(char *buffer, size_t capacity);
 // The picture an application handed over as `number` (SP_DESK_PICTURE's), in private: see
 // crates/spatiand-surfaces. NULL if there is none.
 IOSurfaceRef _Nullable spatiand_surfaces_open(uint32_t number) CF_RETURNS_RETAINED;

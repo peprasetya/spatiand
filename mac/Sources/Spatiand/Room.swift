@@ -11,7 +11,8 @@
 //    * and here, the list of this Mac's applications for its launcher, the computers this Mac
 //      has paired with, and whatever else it asks of a Mac.
 //
-//  One session a process: when the glasses are unplugged the app starts over (see `main.swift`).
+//  One session for the life of the process, as on the Deck: unplugged, it goes on without them
+//  (`leaveGlasses`), and plugged in again it is the room again, with every window still open.
 
 import AppKit
 import CoreAudio
@@ -142,6 +143,49 @@ final class Room {
             RunLoop.main.add(t, forMode: .common)
             soundTimer = t
         }
+    }
+
+    /// The glasses have gone, or the owner wants the windows on the Mac: the session goes on with
+    /// nothing to draw into, the Mac has its pointer, keyboard and windows back, and the
+    /// session's windows wait in it, put aside, to be pulled to the Mac one by one
+    /// (`pullToMac`) or to be in the room again when the glasses are (`start`).
+    ///
+    /// Not a new process, as it was: Spatiand's own applications are the session's, and a new
+    /// one ended them all. What made it one was a window of the glasses' that the window server
+    /// keeps after its display has gone (see `GlassesScreen`); the room comes back on a new
+    /// window, as it already does each time the glasses change mode.
+    func leaveGlasses() {
+        guard inGlasses else { return }
+        soundTimer?.invalidate()
+        soundTimer = nil
+        Notices.shared.stop()
+        soundQueue.sync { sound.stopAll() }
+        RoomTap.shared.remove()
+        RoomWindows.shared.clear()
+        screen.stop()
+        sp_hold_glasses(false)
+        desk = true
+        sp_desk_park()
+        sp_desk(true)
+        print("the glasses have gone; the session goes on, its windows put aside")
+        onChange?()
+    }
+
+    /// The windows put aside when the glasses went, the one in use first.
+    var parked: [(id: UInt32, title: String, active: Bool)] {
+        guard desk else { return [] }
+        var buffer = [CChar](repeating: 0, count: 8192)
+        sp_desk_parked(&buffer, buffer.count)
+        return String(cString: buffer).split(separator: "\n").compactMap { line in
+            let parts = line.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
+            guard parts.count == 3, let id = UInt32(parts[0]) else { return nil }
+            return (id, String(parts[2]), parts[1] == "*")
+        }
+    }
+
+    /// Bring a window put aside to the Mac, as one of its own.
+    func pullToMac(_ id: UInt32) {
+        sp_desk_pull(id)
     }
 
     /// Give everything back: the display, the pointer, the glasses' mode.
