@@ -1,0 +1,36 @@
+From 641cdebee6b0f67fd093ae6fc2da5ab537a750d6 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Sun, 8 Nov 2026 18:12:42 +0700
+Subject: [PATCH] Spatiand: built for Android libc: the GPU draws off screen,
+ each frame to the room as shared memory
+
+Android's EGL and Vulkan make no Wayland surfaces, so with ANGLE on Android's Vulkan the window's
+surface is Ozone's readback one, as for software GL: drawn by the GPU, read back, and handed to the
+compositor as wl_shm. With angle_use_custom_libvulkan = false ANGLE takes Android's own Vulkan
+loader, which reaches the GPU's driver.
+---
+ ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc b/ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc
+index 2605b0e267..14b9d230ea 100644
+--- a/ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc
++++ b/ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc
+@@ -115,7 +115,14 @@ scoped_refptr<gl::GLSurface> GLOzoneEGLWayland::CreateViewGLSurface(
+     gfx::AcceleratedWidget widget) {
+   // If we run with software GL implementation, use GLSurface which will read
+   // pixels back and present via shared memory.
++  // Spatiand: on Android's libc whatever draws: Android's EGL and Vulkan make no Wayland
++  // surfaces, so the GPU (ANGLE on its Vulkan) draws off screen and each frame goes to the
++  // room as shared memory (android-libc/0014).
++#if defined(__TERMUX__)
++  if (true) {
++#else
+   if (gl::IsSoftwareGLImplementation(gl::GetGLImplementationParts())) {
++#endif
+     return gl::InitializeGLSurface(
+         base::MakeRefCounted<GLSurfaceEglReadbackWayland>(
+             display->GetAs<gl::GLDisplayEGL>(), widget, buffer_manager_));
+-- 
+2.53.0
+

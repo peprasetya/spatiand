@@ -256,6 +256,9 @@ angle_enable_vulkan = true
 angle_enable_swiftshader = true
 angle_enable_vulkan_validation_layers = false
 dawn_enable_vulkan_validation_layers = false
+# ANGLE's Vulkan through Android's own loader, which reaches the GPU's driver (Adreno's on the Beam
+# Pro), not a loader of Chromium's beside the program as on Linux (android-libc/0014).
+angle_use_custom_libvulkan = false
 GN
 gn gen out/android
 # The machine also serves spatiand-host: the lowest priority. Everything that fails, not only the first.

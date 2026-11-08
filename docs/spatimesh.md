@@ -71,9 +71,16 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   once before the sandbox and answered from then on (`base/spatiand_main_thread_stack.cc`). `chrome://sandbox` on the
   Beam Pro: Seccomp-BPF yes, with TSYNC; layer 1 none. Tried sandboxed: Wikipedia, BBC, GitHub, YouTube, a WebGL
   page, and a 720p H.264 film (184 frames in 6 s, none dropped).
-* **It draws without the GPU** (`--disable-gpu`): its pictures go to the room as shared memory. Chromium's ANGLE
-  libraries are not carried yet: named `libEGL.so` and `libGLESv2.so`, they would stand in for Android's own in the
-  app's library folder, which every program the room starts searches first.
+* **It draws with the GPU** (2026-11-08, `android-libc/0014`): ANGLE, linked into the program, on Android's own
+  Vulkan loader (`angle_use_custom_libvulkan = false`; on Linux ANGLE looks only beside the program for one of
+  Chromium's) and so on Adreno's driver: on the Beam Pro `chrome://gpu` says compositing, rasterization and WebGL
+  hardware accelerated, `ANGLE (Qualcomm, Vulkan 1.1.128 (Adreno (TM) 710))`. Android's EGL and Vulkan make no
+  Wayland surfaces, so each frame is drawn off screen and handed to the room as shared memory, through Ozone's
+  readback surface (upstream's for software GL on Wayland): one copy a frame, where the Deck hands over a dmabuf.
+  Handing the room the GPU's own buffer (an `AHardwareBuffer`, which no Wayland protocol carries; the room already
+  shows them for remote video) is the step after. Not yet: the GPU process's own sandbox (`chrome://gpu`:
+  Sandboxed false; Chromium's Linux GPU sandbox knows no `kgsl` device and so is not started; the tabs are
+  sandboxed), WebGPU (Dawn looks for `libvulkan.so.1`).
 * **Sound, as on the Deck, through the room** (2026-11-08, `android-libc/0012`): there is no PulseAudio, so
   Chromium's Linux audio has a backend of Spatiand's own (`media/audio/spatiand`). Every stream goes to the room's
   `spatiand-sound` under the name of the sink its tab is in, `spatiand.window.<slot>`, which patch 0007 makes the
