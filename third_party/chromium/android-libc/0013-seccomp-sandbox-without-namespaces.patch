@@ -1,0 +1,247 @@
+From 7d831de8844da2ce58b82357547ba8001b240736 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Sun, 8 Nov 2026 17:33:16 +0700
+Subject: [PATCH] Spatiand: built for Android libc: Chromium's seccomp sandbox,
+ without namespaces
+
+Termux runs Chromium with --no-sandbox; SpatiMesh keeps the seccomp filter on every process,
+files through its broker, as Chrome's second layer: Android lets no app make namespaces, so the
+zygote no longer refuses to start without them. What bionic does that glibc does not is allowed
+as for Chrome on Android (thread clone flags, prctl options, memfd seals, PI futexes, per-thread
+clocks), and the main thread's stack is asked of bionic before the sandbox, as bionic reads
+/proc/self/stat for it on every pthread_getattr_np() and a sandboxed tab may not.
+---
+ base/BUILD.gn                                 |  6 +++
+ base/spatiand_main_thread_stack.cc            | 47 +++++++++++++++++++
+ chrome/app/chrome_main_delegate.cc            |  9 +---
+ .../zygote_host/zygote_host_impl_linux.cc     |  6 +++
+ .../seccomp-bpf-helpers/sigsys_handlers.cc    |  6 +--
+ .../syscall_parameters_restrictions.cc        | 12 ++---
+ sandbox/linux/seccomp-bpf/trap.cc             |  6 +++
+ 7 files changed, 76 insertions(+), 16 deletions(-)
+ create mode 100644 base/spatiand_main_thread_stack.cc
+
+diff --git a/base/BUILD.gn b/base/BUILD.gn
+index 6a9e120bcb..c5706b343e 100644
+--- a/base/BUILD.gn
++++ b/base/BUILD.gn
+@@ -1036,6 +1036,12 @@ component("base") {
+     "vlog.h",
+   ]
+ 
++  # Spatiand: on Android's libc, the main thread's stack asked before the sandbox
++  # (spatiand_main_thread_stack.cc, android-libc/0013).
++  if (spatiand_android_libc) {
++    sources += [ "spatiand_main_thread_stack.cc" ]
++  }
++
+   # Various files that are unused in the Chromium build, but presumably here to
+   # make downstream's life easier. They are not included in the main sources
+   # list to avoid breaking GN formatting's auto-sorting.
+diff --git a/base/spatiand_main_thread_stack.cc b/base/spatiand_main_thread_stack.cc
+new file mode 100644
+index 0000000000..f9aede09b1
+--- /dev/null
++++ b/base/spatiand_main_thread_stack.cc
+@@ -0,0 +1,47 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// Spatiand: the main thread's stack as Android's libc gives it, asked once before the sandbox.
++//
++// bionic finds the main thread's stack by reading /proc/self/stat on every pthread_getattr_np(),
++// which a process under Chromium's seccomp sandbox may not open: in a tab it fails, and Blink, V8,
++// PartitionAlloc and base's profiler, which ask, stop the process (glibc's fallback for this,
++// __libc_stack_end, is not bionic's). The main thread's stack does not move for the life of a
++// process, and a process forked from the zygote has the zygote's: so it is asked as the program
++// starts, before any sandbox, and given from then on. Other threads' are bionic's own, which it
++// keeps in memory. For SpatiMesh on Android (android-libc/0013).
++
++#include <dlfcn.h>
++#include <errno.h>
++#include <pthread.h>
++
++namespace {
++
++using GetAttr = int (*)(pthread_t, pthread_attr_t*);
++
++GetAttr g_libc = nullptr;
++pthread_t g_main_thread;
++pthread_attr_t g_main_attr;
++bool g_have_main = false;
++
++__attribute__((constructor)) void RememberMainThreadStack() {
++  g_libc = reinterpret_cast<GetAttr>(dlsym(RTLD_NEXT, "pthread_getattr_np"));
++  if (!g_libc) {
++    return;
++  }
++  g_main_thread = pthread_self();
++  g_have_main = g_libc(g_main_thread, &g_main_attr) == 0;
++}
++
++}  // namespace
++
++extern "C" int pthread_getattr_np(pthread_t thread, pthread_attr_t* attr) {
++  if (g_have_main && pthread_equal(thread, g_main_thread)) {
++    *attr = g_main_attr;
++    return 0;
++  }
++  if (!g_libc) {
++    g_libc = reinterpret_cast<GetAttr>(dlsym(RTLD_NEXT, "pthread_getattr_np"));
++  }
++  return g_libc ? g_libc(thread, attr) : ENOSYS;
++}
+diff --git a/chrome/app/chrome_main_delegate.cc b/chrome/app/chrome_main_delegate.cc
+index ca7c3787d6..00d74708ef 100644
+--- a/chrome/app/chrome_main_delegate.cc
++++ b/chrome/app/chrome_main_delegate.cc
+@@ -1121,13 +1121,8 @@ std::optional<int> ChromeMainDelegate::BasicStartupComplete() {
+       *base::CommandLine::ForCurrentProcess();
+ #endif  // !defined(BUILDING_CHROME_RENDERER)
+ 
+-// Disable sandbox on Termux.
+-#ifdef __TERMUX__
+-  if (!command_line.HasSwitch(sandbox::policy::switches::kNoSandbox)) {
+-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
+-        sandbox::policy::switches::kNoSandbox);
+-  }
+-#endif
++// Spatiand: Termux disables the sandbox here; SpatiMesh keeps Chromium's seccomp sandbox, without
++// the namespaces Android does not let an app make (android-libc/0013).
+ 
+   // Only allow disabling web security via the command-line flag if the user has
+   // specified a distinct profile directory. This still enables tests to disable
+diff --git a/content/browser/zygote_host/zygote_host_impl_linux.cc b/content/browser/zygote_host/zygote_host_impl_linux.cc
+index 72ad2dedfe..ad6dc24095 100644
+--- a/content/browser/zygote_host/zygote_host_impl_linux.cc
++++ b/content/browser/zygote_host/zygote_host_impl_linux.cc
+@@ -126,6 +126,11 @@ void ZygoteHostImpl::Init(const base::CommandLine& command_line) {
+     // root.
+     use_suid_sandbox_for_adj_oom_score_ = use_suid_sandbox_;
+   } else {
++#if defined(__TERMUX__)
++    // Spatiand: Android lets no app make namespaces and has no setuid helper, so Chromium's
++    // processes are sandboxed by its seccomp filters alone, file access through its broker
++    // (android-libc/0013).
++#else
+     LOG(FATAL)
+         << "No usable sandbox! If you are running on Ubuntu 23.10+ or another "
+            "Linux distro that has disabled unprivileged user namespaces with "
+@@ -138,6 +143,7 @@ void ZygoteHostImpl::Init(const base::CommandLine& command_line) {
+            "If you want to live dangerously and need an immediate workaround, "
+            "you can try using --"
+         << sandbox::policy::switches::kNoSandbox << ".";
++#endif
+   }
+ }
+ 
+diff --git a/sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc b/sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc
+index 3882967d4b..993dd069bd 100644
+--- a/sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc
++++ b/sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.cc
+@@ -28,7 +28,7 @@
+ #include "sandbox/linux/system_headers/linux_stat.h"
+ #include "sandbox/linux/system_headers/linux_syscalls.h"
+ 
+-#if BUILDFLAG(IS_ANDROID)
++#if BUILDFLAG(IS_ANDROID) || defined(__TERMUX__)
+ #include <android/log.h>
+ #endif
+ 
+@@ -49,7 +49,7 @@
+ 
+ namespace {
+ 
+-#if BUILDFLAG(IS_ANDROID)
++#if BUILDFLAG(IS_ANDROID) || defined(__TERMUX__)
+ constexpr char kLogTag[] = "cr_seccomp";
+ #endif
+ 
+@@ -68,7 +68,7 @@ inline bool IsArchitectureX86_64() {
+ // about async-signal safety. |size| is the size to write and should typically
+ // not include a terminating \0.
+ void WriteToStdErr(const char* error_message, size_t size) {
+-#if BUILDFLAG(IS_ANDROID)
++#if BUILDFLAG(IS_ANDROID) || defined(__TERMUX__)
+   // Write to the Android log. When running as an APK, stderr is not typically
+   // sent to the log.
+   __android_log_write(ANDROID_LOG_ERROR, kLogTag, error_message);
+diff --git a/sandbox/linux/seccomp-bpf-helpers/syscall_parameters_restrictions.cc b/sandbox/linux/seccomp-bpf-helpers/syscall_parameters_restrictions.cc
+index 71be492e70..6de1515a63 100644
+--- a/sandbox/linux/seccomp-bpf-helpers/syscall_parameters_restrictions.cc
++++ b/sandbox/linux/seccomp-bpf-helpers/syscall_parameters_restrictions.cc
+@@ -95,7 +95,7 @@ inline bool IsArchitectureI386() {
+ }
+ 
+ inline bool IsAndroid() {
+-#if BUILDFLAG(IS_ANDROID)
++#if BUILDFLAG(IS_ANDROID) || defined(__TERMUX__)
+   return true;
+ #else
+   return false;
+@@ -178,7 +178,7 @@ ResultExpr RestrictPrctl() {
+   const Arg<int> option(0), arg(1);
+   return Switch(option)
+       .Cases({PR_GET_NAME, PR_SET_NAME, PR_GET_DUMPABLE, PR_SET_DUMPABLE
+-#if BUILDFLAG(IS_ANDROID)
++#if BUILDFLAG(IS_ANDROID) || defined(__TERMUX__)
+               , PR_SET_PTRACER, PR_SET_TIMERSLACK
+               , PR_GET_NO_NEW_PRIVS
+ #if defined(ARCH_CPU_ARM64)
+@@ -221,7 +221,7 @@ ResultExpr RestrictPrctl() {
+               , PR_SET_TIMERSLACK_PID_1
+               , PR_SET_TIMERSLACK_PID_2
+               , PR_SET_TIMERSLACK_PID_3
+-#endif  // BUILDFLAG(IS_ANDROID)
++#endif  // BUILDFLAG(IS_ANDROID) || defined(__TERMUX__)
+               },
+              Allow())
+       .Cases({PR_SET_VMA},
+@@ -296,7 +296,7 @@ ResultExpr RestrictFcntlCommands() {
+ 
+   const uint64_t kAllowedMask = O_ACCMODE | O_APPEND | O_NONBLOCK | O_SYNC |
+                                 kOLargeFileFlag | O_CLOEXEC | O_NOATIME;
+-#if BUILDFLAG(IS_ANDROID)
++#if BUILDFLAG(IS_ANDROID) || defined(__TERMUX__)
+   const uint64_t kOsSpecificSeals = F_SEAL_WRITE | F_SEAL_FUTURE_WRITE;
+ #else
+   const uint64_t kOsSpecificSeals = 0;
+@@ -366,7 +366,7 @@ ResultExpr RestrictFutex() {
+       .Cases({FUTEX_WAIT, FUTEX_WAKE, FUTEX_REQUEUE, FUTEX_CMP_REQUEUE,
+               FUTEX_WAKE_OP, FUTEX_WAIT_BITSET, FUTEX_WAKE_BITSET},
+              Allow())
+-#if BUILDFLAG(IS_ANDROID)
++#if BUILDFLAG(IS_ANDROID) || defined(__TERMUX__)
+       // On Android, as per 26Q1, platform code uses PI futexes for system
+       // tracing purposes. See b/501117341.
+       .Cases({FUTEX_LOCK_PI, FUTEX_UNLOCK_PI, FUTEX_TRYLOCK_PI,
+@@ -440,7 +440,7 @@ ResultExpr RestrictClockID() {
+               CLOCK_THREAD_CPUTIME_ID},
+              Allow())
+       .Default(CrashSIGSYS()))
+-#if BUILDFLAG(IS_ANDROID)
++#if BUILDFLAG(IS_ANDROID) || defined(__TERMUX__)
+     // Allow per-pid and per-tid clocks.
+     .ElseIf((clockid & CPUCLOCK_CLOCK_MASK) != CLOCKFD, Allow())
+ #endif
+diff --git a/sandbox/linux/seccomp-bpf/trap.cc b/sandbox/linux/seccomp-bpf/trap.cc
+index 212e80eecc..2cf445f813 100644
+--- a/sandbox/linux/seccomp-bpf/trap.cc
++++ b/sandbox/linux/seccomp-bpf/trap.cc
+@@ -98,7 +98,13 @@ Trap::Trap() {
+     SANDBOX_DIE("Failed to configure SIGSYS handler");
+   }
+ 
++  // Spatiand: on Android the dynamic linker gives every process debuggerd's handler for SIGSYS;
++  // replacing it is expected there, and not worth a line in every process's log.
++#if !defined(__TERMUX__)
+   if (!IsDefaultSignalAction(old_sa)) {
++#else
++  if (false) {
++#endif
+     static const char kExistingSIGSYSMsg[] =
+         "Existing signal handler when trying to install SIGSYS. SIGSYS needs "
+         "to be reserved for seccomp-bpf.";
+-- 
+2.53.0
+

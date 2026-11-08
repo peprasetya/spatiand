@@ -60,10 +60,17 @@ opens, as on the Deck), started through `/system/bin/sh run.sh`, as nothing in t
 Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources by `SPATIMESH_ASSETS`
 (`android-libc/0010`). Different from the Deck, each by what Android has not got, each to be closed:
 
-* **No sandbox yet** (corrected 2026-11-08: this said the seccomp filter was on; it was not). Termux's
-  `1001-chromium-disable-sandbox` appends `--no-sandbox` to every process, so each tab runs with the app's own
-  rights over the app's files. Android lets no app make namespaces, so the Deck's first layer cannot be had; the
-  second, Chromium's seccomp filter with file access through its broker, is being built for it.
+* **The sandbox is Chromium's second layer alone** (`android-libc/0013`, 2026-11-08). Termux runs Chromium with
+  `--no-sandbox` (its 1001; an earlier line here wrongly said the filter was on); SpatiMesh keeps the seccomp filter
+  on every process, a tab reaching files only through the browser's broker, as on the Deck. The Deck's first layer
+  (namespaces, or the setuid helper) Android lets no app have, so the zygote starts without it. What bionic does that
+  glibc does not is allowed as for Chrome on Android (thread clone flags, prctl options, memfd seals, PI futexes,
+  per-thread clocks); Chrome on Android's own baseline is not used, as it lets a tab open files and leaves them to
+  SELinux, which here would be the room's own domain. bionic reads `/proc/self/stat` for the main thread's stack on
+  every `pthread_getattr_np()`, which a sandboxed tab may not, and Blink stops the tab when that fails: it is asked
+  once before the sandbox and answered from then on (`base/spatiand_main_thread_stack.cc`). `chrome://sandbox` on the
+  Beam Pro: Seccomp-BPF yes, with TSYNC; layer 1 none. Tried sandboxed: Wikipedia, BBC, GitHub, YouTube, a WebGL
+  page, and a 720p H.264 film (184 frames in 6 s, none dropped).
 * **It draws without the GPU** (`--disable-gpu`): its pictures go to the room as shared memory. Chromium's ANGLE
   libraries are not carried yet: named `libEGL.so` and `libGLESv2.so`, they would stand in for Android's own in the
   app's library folder, which every program the room starts searches first.
