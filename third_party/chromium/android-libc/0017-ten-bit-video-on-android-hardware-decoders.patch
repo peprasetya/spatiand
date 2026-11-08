@@ -1,0 +1,132 @@
+From b7cd623b29f1e173f4b265b284dbc90cfc2fa73a Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Sun, 8 Nov 2026 19:34:40 +0700
+Subject: [PATCH] Spatiand: built for Android libc: ten-bit video on Android's
+ hardware decoders too
+
+HEVC Main 10 and VP9 profile 2 (HDR) are asked of the decoder as P010, which Chromium's frames
+take as they are, with the stream's colour space and HDR metadata.
+---
+ .../spatiand_media_codec_video_decoder.cc     | 53 +++++++++++++++++--
+ .../spatiand_media_codec_video_decoder.h      |  1 +
+ 2 files changed, 51 insertions(+), 3 deletions(-)
+
+diff --git a/media/mojo/services/spatiand_media_codec_video_decoder.cc b/media/mojo/services/spatiand_media_codec_video_decoder.cc
+index 96c029a50c..74459d86dd 100644
+--- a/media/mojo/services/spatiand_media_codec_video_decoder.cc
++++ b/media/mojo/services/spatiand_media_codec_video_decoder.cc
+@@ -30,6 +30,7 @@ namespace {
+ 
+ // MediaCodec's colour formats (MediaCodecInfo.CodecCapabilities): the ones read here.
+ constexpr int32_t kYUV420Planar = 19;
++constexpr int32_t kYUVP010 = 54;
+ constexpr int32_t kYUV420SemiPlanar = 21;
+ constexpr int32_t kYUV420Flexible = 0x7F420888;
+ constexpr int32_t kQcomYUV420SemiPlanar = 0x7FA30C00;
+@@ -109,13 +110,14 @@ SupportedVideoDecoderConfigs SpatiandMediaCodecVideoDecoder::GetSupportedConfigs
+     SupportedVideoDecoderConfigs supported;
+     const gfx::Size smallest(16, 16);
+     const gfx::Size largest(4096, 4096);
+-    // Eight bits a sample only: ten-bit pictures would come out as P010, not yet read here.
++    // H.264 at eight bits a sample; HEVC and VP9 at ten as well (HDR), which the decoder gives as
++    // P010.
+     if (HasHardwareDecoder("video/avc")) {
+       supported.emplace_back(H264PROFILE_BASELINE, H264PROFILE_HIGH, smallest, largest, false,
+                              false);
+     }
+     if (HasHardwareDecoder("video/hevc")) {
+-      supported.emplace_back(HEVCPROFILE_MAIN, HEVCPROFILE_MAIN, smallest, largest, false, false);
++      supported.emplace_back(HEVCPROFILE_MAIN, HEVCPROFILE_MAIN10, smallest, largest, false, false);
+     }
+     if (HasHardwareDecoder("video/x-vnd.on2.vp8")) {
+       supported.emplace_back(VP8PROFILE_ANY, VP8PROFILE_ANY, smallest, largest, false, false);
+@@ -123,6 +125,8 @@ SupportedVideoDecoderConfigs SpatiandMediaCodecVideoDecoder::GetSupportedConfigs
+     if (HasHardwareDecoder("video/x-vnd.on2.vp9")) {
+       supported.emplace_back(VP9PROFILE_PROFILE0, VP9PROFILE_PROFILE0, smallest, largest, false,
+                              false);
++      supported.emplace_back(VP9PROFILE_PROFILE2, VP9PROFILE_PROFILE2, smallest, largest, false,
++                             false);
+     }
+     if (HasHardwareDecoder("video/av01")) {
+       supported.emplace_back(AV1PROFILE_PROFILE_MAIN, AV1PROFILE_PROFILE_MAIN, smallest, largest,
+@@ -175,7 +179,12 @@ void SpatiandMediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config
+   AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, mime);
+   AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_WIDTH, config.coded_size().width());
+   AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_HEIGHT, config.coded_size().height());
+-  AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, kYUV420Flexible);
++  // Ten bits a sample as P010, which Chromium's frames take as they are; eight as whatever the
++  // decoder gives, NV12 or I420.
++  const bool ten_bit = config.profile() == HEVCPROFILE_MAIN10 ||
++                       config.profile() == VP9PROFILE_PROFILE2;
++  AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT,
++                        ten_bit ? kYUVP010 : kYUV420Flexible);
+   const media_status_t configured = AMediaCodec_configure(codec, format, nullptr, nullptr, 0);
+   AMediaFormat_delete(format);
+   if (configured != AMEDIA_OK || AMediaCodec_start(codec) != AMEDIA_OK) {
+@@ -377,6 +386,9 @@ bool SpatiandMediaCodecVideoDecoder::DeliverFrame(size_t index, const AMediaCode
+   const uint8_t* picture = buffer + info.offset;
+   const size_t available = info.size;
+   const bool planar = color_format_ == kYUV420Planar;
++  if (color_format_ == kYUVP010) {
++    return DeliverP010Frame(picture, available, info);
++  }
+   if (color_format_ && !planar && color_format_ != kYUV420SemiPlanar &&
+       color_format_ != kYUV420Flexible && color_format_ != kQcomYUV420SemiPlanar &&
+       color_format_ != kQcomYUV420SemiPlanar32m) {
+@@ -427,6 +439,41 @@ bool SpatiandMediaCodecVideoDecoder::DeliverFrame(size_t index, const AMediaCode
+   return true;
+ }
+ 
++bool SpatiandMediaCodecVideoDecoder::DeliverP010Frame(const uint8_t* picture,
++                                                      size_t available,
++                                                      const AMediaCodecBufferInfo& info) {
++  // Two bytes a sample, the ten bits in the high ones; the stride in bytes, or (some decoders) in
++  // samples.
++  const size_t row = static_cast<size_t>((width_ + 1) & ~1) * 2;
++  const size_t stride = static_cast<size_t>(stride_) >= row ? stride_ : stride_ * 2;
++  const int chroma_rows = (height_ + 1) / 2;
++  const size_t luma = stride * slice_height_;
++  if (available < luma + stride * (chroma_rows - 1) + row) {
++    LOG(WARNING) << "Spatiand: a ten-bit picture of " << available << " bytes is short";
++    return false;
++  }
++  const gfx::Size coded((width_ + 1) & ~1, (height_ + 1) & ~1);
++  auto frame = VideoFrame::CreateFrame(PIXEL_FORMAT_P010LE, coded, crop_, config_.natural_size(),
++                                       base::Microseconds(info.presentationTimeUs));
++  if (!frame) {
++    return false;
++  }
++  for (int y = 0; y < height_; ++y) {
++    memcpy(frame->writable_data(VideoFrame::Plane::kY) + y * frame->stride(VideoFrame::Plane::kY),
++           picture + y * stride, row);
++  }
++  const uint8_t* uv = picture + luma;
++  for (int y = 0; y < chroma_rows; ++y) {
++    memcpy(frame->writable_data(VideoFrame::Plane::kUV) + y * frame->stride(VideoFrame::Plane::kUV),
++           uv + y * stride, row);
++  }
++  const gfx::ColorSpace color_space = config_.color_space_info().ToGfxColorSpace();
++  frame->set_color_space(color_space.IsValid() ? color_space : gfx::ColorSpace::CreateREC709());
++  frame->set_hdr_metadata(config_.hdr_metadata());
++  output_cb_.Run(std::move(frame));
++  return true;
++}
++
+ void SpatiandMediaCodecVideoDecoder::Abort(DecoderStatus::Codes code) {
+   timer_.Stop();
+   for (Pending& next : pending_) {
+diff --git a/media/mojo/services/spatiand_media_codec_video_decoder.h b/media/mojo/services/spatiand_media_codec_video_decoder.h
+index ff819d39f6..5c66689296 100644
+--- a/media/mojo/services/spatiand_media_codec_video_decoder.h
++++ b/media/mojo/services/spatiand_media_codec_video_decoder.h
+@@ -75,6 +75,7 @@ class SpatiandMediaCodecVideoDecoder : public VideoDecoder {
+   bool DrainOutput();
+   void ReadOutputFormat();
+   bool DeliverFrame(size_t index, const AMediaCodecBufferInfo& info);
++  bool DeliverP010Frame(const uint8_t* picture, size_t available, const AMediaCodecBufferInfo& info);
+   void Abort(DecoderStatus::Codes code);
+   void CloseCodec();
+ 
+-- 
+2.53.0
+

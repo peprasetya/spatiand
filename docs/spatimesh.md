@@ -107,8 +107,12 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   shared memory and the GPU as a texture: a copy or two more than the Deck's dmabufs. `chrome://gpu` says video
   decode hardware accelerated; 720p H.264, VP9 and HEVC played 146 frames in 5 s, none dropped, through
   `c2.qti.avc.decoder` and `c2.qti.hevc.decoder` (Android's log), and the pictures came out right. Ten-bit video
-  (HEVC Main 10, VP9 profile 2) is decoded by Chromium in software. MediaCodec reaches Android's media service by
-  binder, opened before the GPU process's sandbox (below).
+  (HEVC Main 10, VP9 profile 2, HDR) too (`android-libc/0017`): asked of the decoder as P010, which Chromium's frames
+  take as they are, with the stream's colour space and HDR metadata; 720p clips of each played 150 frames in 5 s,
+  none dropped, with the colours of the eight-bit decode. MediaCodec reaches Android's media service by binder,
+  opened before the GPU process's sandbox (below). A trap for whoever measures this headless: a video alone on an
+  emptied page drops about 60% of its frames whichever decoder plays it, software too; on a page with other
+  content it drops none.
 * No D-Bus: libdbus asks for a system bus at its build folder's path and finds none, as there is none to find.
 
 **Changed again on 2026-10-29:** WebKitGTK, Linux's fallback, removed too: WPE is the only engine,
