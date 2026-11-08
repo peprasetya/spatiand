@@ -454,13 +454,17 @@ final class MacHost {
     private var perWindowKbit: Int { max(1_000, kbit / max(1, shared.count)) }
 
     /// A window that is not changing sends nothing; so when a session asks for a picture, encode the last one again.
+    /// Not on the main thread, which must never wait for a window's lock: the lock is held while the window's
+    /// pictures are encoded, and an encoder that stops answering held it for good (see `HostEncoder.invalidate`).
     private func resend(_ s: Shared) {
-        s.lock.lock()
-        defer { s.lock.unlock() }
-        s.wantsKey = true
-        if let pixels = s.lastPixels, let encoder = s.encoder {
-            encoder.encode(pixels, microseconds: UInt64(ProcessInfo.processInfo.systemUptime * 1_000_000), key: true)
-            s.wantsKey = false
+        DispatchQueue.global(qos: .userInitiated).async {
+            s.lock.lock()
+            defer { s.lock.unlock() }
+            s.wantsKey = true
+            if let pixels = s.lastPixels, let encoder = s.encoder {
+                encoder.encode(pixels, microseconds: UInt64(ProcessInfo.processInfo.systemUptime * 1_000_000), key: true)
+                s.wantsKey = false
+            }
         }
     }
 
@@ -526,7 +530,11 @@ final class MacHost {
         case "Bandwidth":
             if let k = (fields["max_kbit"] as? NSNumber)?.intValue {
                 kbit = min(max(k, 2_000), 40_000)
-                for s in shared.values { s.lock.lock(); s.encoder?.setBitrate(perWindowKbit); s.lock.unlock() }
+                // Off the main thread, as `resend` is.
+                let each = perWindowKbit
+                for s in shared.values {
+                    DispatchQueue.global(qos: .utility).async { s.lock.lock(); s.encoder?.setBitrate(each); s.lock.unlock() }
+                }
             }
         default:
             break

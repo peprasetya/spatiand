@@ -8,6 +8,7 @@
 
 import CoreMedia
 import Foundation
+import os
 import VideoToolbox
 
 final class HostEncoder {
@@ -16,6 +17,8 @@ final class HostEncoder {
     private var session: VTCompressionSession?
     /// One finished picture: Annex B bytes, whether it is a keyframe, and its time in microseconds.
     private let output: (Data, Bool, UInt64) -> Void
+    /// Let go of: nothing more is encoded or given out. See `invalidate`.
+    private let retired = OSAllocatedUnfairLock(initialState: false)
 
     init?(width: Int, height: Int, kbit: Int, output: @escaping (Data, Bool, UInt64) -> Void) {
         self.width = width
@@ -41,17 +44,25 @@ final class HostEncoder {
 
     deinit { invalidate() }
 
+    /// Let go of it without waiting. Nothing it finishes from now on is given out, and VideoToolbox is
+    /// told to stop on a thread of its own: its invalidate waits on the encoder's service, and on
+    /// 2026-11-04 that never answered -- inside the window's lock, which the main thread then waited
+    /// for, so the whole app stopped, its menu, Quit and SIGTERM with it.
     func invalidate() {
-        if let session {
+        let first = retired.withLock { was -> Bool in
+            defer { was = true }
+            return !was
+        }
+        guard first, let session else { return }
+        DispatchQueue.global(qos: .utility).async {
             VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
             VTCompressionSessionInvalidate(session)
         }
-        session = nil
     }
 
     /// What this window may use, in kbit/s, with room for a burst of a quarter of a second's worth.
     func setBitrate(_ kbit: Int) {
-        guard let session else { return }
+        guard let session, !retired.withLock({ $0 }) else { return }
         let bits = max(500, kbit) * 1000
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: bits as CFTypeRef)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits,
@@ -59,12 +70,13 @@ final class HostEncoder {
     }
 
     func encode(_ pixels: CVPixelBuffer, microseconds: UInt64, key: Bool) {
-        guard let session else { return }
+        guard let session, !retired.withLock({ $0 }) else { return }
         let time = CMTime(value: CMTimeValue(microseconds), timescale: 1_000_000)
         let options: CFDictionary? = key ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil
         VTCompressionSessionEncodeFrame(session, imageBuffer: pixels, presentationTimeStamp: time, duration: .invalid,
-                                        frameProperties: options, infoFlagsOut: nil) { [output] status, _, sample in
-            guard status == noErr, let sample, let (data, keyframe) = Self.annexB(sample) else { return }
+                                        frameProperties: options, infoFlagsOut: nil) { [output, retired] status, _, sample in
+            // One finished after it was let go would be a picture of the old size after the new.
+            guard status == noErr, !retired.withLock({ $0 }), let sample, let (data, keyframe) = Self.annexB(sample) else { return }
             output(data, keyframe, microseconds)
         }
     }
