@@ -1,0 +1,1575 @@
+From 792c2043b6f678252907b85b067cae050dbfd1be Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Mon, 9 Nov 2026 04:48:13 +0700
+Subject: [PATCH] Spatiand: built for Android libc: Bluetooth through the
+ Spatiand app
+
+Chromium's Linux build reaches Bluetooth through BlueZ on D-Bus, which Android has not got. On Android's libc its adapter is Android's Bluetooth LE instead, reached through the Spatiand app's bridge (android/src/id/prasetya/spatiand/BluetoothBridge.java): an abstract socket, spatiand-bluetooth, for the app's own processes, one JSON object a line each way (device/bluetooth/spatiand). Low energy, central, GATT client: scanning, connecting, services, characteristics and descriptors read and written, notifications; what Web Bluetooth asks for. Web Bluetooth stays as on Linux: behind experimental web platform features, and a site asks only once allowed to (Cromite).
+---
+ device/bluetooth/BUILD.gn                     |   10 +-
+ .../bluetooth/spatiand/bluetooth_spatiand.cc  | 1153 +++++++++++++++++
+ .../bluetooth/spatiand/bluetooth_spatiand.h   |  364 ++++++
+ 3 files changed, 1526 insertions(+), 1 deletion(-)
+ create mode 100644 device/bluetooth/spatiand/bluetooth_spatiand.cc
+ create mode 100644 device/bluetooth/spatiand/bluetooth_spatiand.h
+
+diff --git a/device/bluetooth/BUILD.gn b/device/bluetooth/BUILD.gn
+index 448f1df3e1..a940d531ae 100644
+--- a/device/bluetooth/BUILD.gn
++++ b/device/bluetooth/BUILD.gn
+@@ -2,6 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
++import("//build/config/compiler/compiler.gni")
+ import("//build/buildflag_header.gni")
+ import("//build/config/features.gni")
+ import("//device/bluetooth/cast_bluetooth.gni")
+@@ -337,7 +338,14 @@ component("bluetooth") {
+ 
+   if (is_chromeos || is_linux) {
+     if (use_bluez) {
+-      if (!force_cast_bluetooth) {
++      # Spatiand: on Android's libc the adapter is Android's Bluetooth, reached
++      # through the Spatiand app's bridge (spatiand/), not BlueZ on D-Bus.
++      if (spatiand_android_libc) {
++        sources += [
++          "spatiand/bluetooth_spatiand.cc",
++          "spatiand/bluetooth_spatiand.h",
++        ]
++      } else if (!force_cast_bluetooth) {
+         sources += [ "bluetooth_adapter_chromeos.cc" ]
+       }
+       sources += [
+diff --git a/device/bluetooth/spatiand/bluetooth_spatiand.cc b/device/bluetooth/spatiand/bluetooth_spatiand.cc
+new file mode 100644
+index 0000000000..9d76928818
+--- /dev/null
++++ b/device/bluetooth/spatiand/bluetooth_spatiand.cc
+@@ -0,0 +1,1153 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifdef UNSAFE_BUFFERS_BUILD
++// The socket's bytes, read and written in pieces.
++#pragma allow_unsafe_buffers
++#endif
++
++#include "device/bluetooth/spatiand/bluetooth_spatiand.h"
++
++#include <errno.h>
++#include <poll.h>
++#include <stddef.h>
++#include <string.h>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <unistd.h>
++
++#include <algorithm>
++#include <string_view>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/json/json_reader.h"
++#include "base/json/json_writer.h"
++#include "base/logging.h"
++#include "base/posix/eintr_wrapper.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/task/single_thread_task_runner.h"
++#include "device/bluetooth/bluetooth_advertisement.h"
++#include "device/bluetooth/bluetooth_discovery_filter.h"
++#include "device/bluetooth/bluetooth_discovery_session_outcome.h"
++#include "device/bluetooth/bluetooth_local_gatt_service.h"
++#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
++
++namespace device {
++
++namespace {
++
++constexpr char kSocket[] = "spatiand-bluetooth";
++
++// android.bluetooth.BluetoothGatt's.
++constexpr int kGattSuccess = 0;
++constexpr int kGattFailure = 0x101;
++
++BluetoothGattService::GattErrorCode ErrorOf(int status) {
++  switch (status) {
++    case 0x0d:  // GATT_INVALID_ATTRIBUTE_LENGTH
++      return BluetoothGattService::GattErrorCode::kInvalidLength;
++    case 0x02:  // GATT_READ_NOT_PERMITTED
++    case 0x03:  // GATT_WRITE_NOT_PERMITTED
++      return BluetoothGattService::GattErrorCode::kNotPermitted;
++    case 0x05:  // GATT_INSUFFICIENT_AUTHENTICATION
++    case 0x0f:  // GATT_INSUFFICIENT_ENCRYPTION
++      return BluetoothGattService::GattErrorCode::kNotAuthorized;
++    case 0x06:  // GATT_REQUEST_NOT_SUPPORTED
++      return BluetoothGattService::GattErrorCode::kNotSupported;
++    case kGattFailure:
++      return BluetoothGattService::GattErrorCode::kFailed;
++    default:
++      return BluetoothGattService::GattErrorCode::kUnknown;
++  }
++}
++
++std::vector<uint8_t> Unhex(const std::string* hex) {
++  std::vector<uint8_t> bytes;
++  if (hex) {
++    base::HexStringToBytes(*hex, &bytes);
++  }
++  return bytes;
++}
++
++int8_t ClampToByte(int value) {
++  return static_cast<int8_t>(std::clamp(value, -128, 127));
++}
++
++}  // namespace
++
++// static
++scoped_refptr<BluetoothAdapter> BluetoothAdapter::CreateAdapter() {
++  return BluetoothAdapterSpatiand::Create();
++}
++
++// ---------------------------------------------------------------- the adapter
++
++// static
++scoped_refptr<BluetoothAdapterSpatiand> BluetoothAdapterSpatiand::Create() {
++  return base::WrapRefCounted(new BluetoothAdapterSpatiand());
++}
++
++BluetoothAdapterSpatiand::BluetoothAdapterSpatiand() = default;
++
++BluetoothAdapterSpatiand::~BluetoothAdapterSpatiand() = default;
++
++void BluetoothAdapterSpatiand::Initialize(base::OnceClosure callback) {
++  initialized_callback_ = std::move(callback);
++  base::ScopedFD fd(socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0));
++  struct sockaddr_un where = {};
++  where.sun_family = AF_UNIX;
++  // Abstract: a zero, then the name.
++  memcpy(where.sun_path + 1, kSocket, sizeof(kSocket) - 1);
++  const socklen_t length = static_cast<socklen_t>(
++      offsetof(struct sockaddr_un, sun_path) + 1 + sizeof(kSocket) - 1);
++  if (!fd.is_valid() ||
++      HANDLE_EINTR(connect(fd.get(), reinterpret_cast<struct sockaddr*>(&where),
++                           length)) != 0) {
++    VLOG(1) << "No Bluetooth: the Spatiand app's bridge does not answer";
++    InitializeDone();
++    return;
++  }
++  socket_ = std::move(fd);
++  watch_ = base::FileDescriptorWatcher::WatchReadable(
++      socket_.get(), base::BindRepeating(&BluetoothAdapterSpatiand::OnReadable,
++                                         weak_factory_.GetWeakPtr()));
++  Send(base::DictValue().Set("op", "hello"));
++  // A bridge that says nothing is no adapter: Web Bluetooth is not kept
++  // waiting for it.
++  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
++      FROM_HERE,
++      base::BindOnce(&BluetoothAdapterSpatiand::InitializeDone,
++                     weak_factory_.GetWeakPtr()),
++      base::Seconds(3));
++}
++
++void BluetoothAdapterSpatiand::InitializeDone() {
++  if (initialized_) {
++    return;
++  }
++  initialized_ = true;
++  if (initialized_callback_) {
++    std::move(initialized_callback_).Run();
++  }
++}
++
++void BluetoothAdapterSpatiand::Shutdown() {
++  watch_.reset();
++  socket_.reset();
++}
++
++void BluetoothAdapterSpatiand::Send(base::DictValue message) {
++  if (!socket_.is_valid()) {
++    return;
++  }
++  std::string line;
++  base::JSONWriter::Write(message, &line);
++  line += '\n';
++  size_t sent = 0;
++  while (sent < line.size()) {
++    const ssize_t n = HANDLE_EINTR(send(socket_.get(), line.data() + sent,
++                                        line.size() - sent, MSG_NOSIGNAL));
++    if (n > 0) {
++      sent += static_cast<size_t>(n);
++      continue;
++    }
++    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
++      struct pollfd writable = {socket_.get(), POLLOUT, 0};
++      if (HANDLE_EINTR(poll(&writable, 1, 200)) > 0) {
++        continue;
++      }
++    }
++    Lost();
++    return;
++  }
++}
++
++void BluetoothAdapterSpatiand::OnReadable() {
++  char buffer[4096];
++  for (;;) {
++    const ssize_t n = HANDLE_EINTR(read(socket_.get(), buffer, sizeof(buffer)));
++    if (n > 0) {
++      incoming_.append(buffer, static_cast<size_t>(n));
++      continue;
++    }
++    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
++      break;
++    }
++    Lost();
++    return;
++  }
++  size_t start = 0;
++  for (size_t end = incoming_.find('\n'); end != std::string::npos;
++       end = incoming_.find('\n', start)) {
++    std::optional<base::DictValue> message = base::JSONReader::ReadDict(
++        std::string_view(incoming_).substr(start, end - start),
++        base::JSON_PARSE_RFC);
++    start = end + 1;
++    if (message) {
++      Handle(*message);
++    }
++    if (!socket_.is_valid()) {
++      return;
++    }
++  }
++  incoming_.erase(0, start);
++}
++
++void BluetoothAdapterSpatiand::Lost() {
++  watch_.reset();
++  socket_.reset();
++  incoming_.clear();
++  const bool was_present = present_;
++  const bool was_powered = powered_;
++  present_ = false;
++  powered_ = false;
++  discovering_ = false;
++  InitializeDone();
++  for (auto& [address, device] : devices_) {
++    static_cast<BluetoothDeviceSpatiand*>(device.get())
++        ->OnConnection(false, kGattFailure);
++  }
++  if (was_powered) {
++    NotifyAdapterPoweredChanged(false);
++  }
++  if (was_present) {
++    NotifyAdapterPresentChanged(false);
++  }
++  MarkDiscoverySessionsAsInactive();
++}
++
++void BluetoothAdapterSpatiand::Handle(const base::DictValue& message) {
++  const std::string* ev = message.FindString("ev");
++  if (!ev) {
++    return;
++  }
++  if (*ev == "adapter") {
++    if (const std::string* address = message.FindString("address")) {
++      address_ = *address;
++    }
++    if (const std::string* name = message.FindString("name")) {
++      name_ = *name;
++    }
++    const bool was_present = present_;
++    const bool was_powered = powered_;
++    present_ = message.FindBool("present").value_or(false);
++    powered_ = message.FindBool("powered").value_or(false);
++    if (!initialized_) {
++      InitializeDone();
++      return;
++    }
++    if (present_ != was_present) {
++      NotifyAdapterPresentChanged(present_);
++    }
++    if (powered_ != was_powered) {
++      NotifyAdapterPoweredChanged(powered_);
++      if (!powered_) {
++        discovering_ = false;
++        MarkDiscoverySessionsAsInactive();
++      }
++    }
++    return;
++  }
++  if (*ev == "device") {
++    const std::string* address = message.FindString("address");
++    if (!address) {
++      return;
++    }
++    BluetoothDeviceSpatiand* device = DeviceAt(*address);
++    const bool added = !device;
++    if (added) {
++      auto made = std::make_unique<BluetoothDeviceSpatiand>(this, *address);
++      device = made.get();
++      devices_[*address] = std::move(made);
++    }
++    device->OnAdvertisement(message);
++    if (added) {
++      for (auto& observer : observers_) {
++        observer.DeviceAdded(this, device);
++      }
++    } else {
++      NotifyDeviceChanged(device);
++    }
++    return;
++  }
++  if (*ev == "scanFailed") {
++    discovering_ = false;
++    MarkDiscoverySessionsAsInactive();
++    return;
++  }
++  if (*ev == "connection" || *ev == "services") {
++    const std::string* address = message.FindString("address");
++    BluetoothDeviceSpatiand* device = address ? DeviceAt(*address) : nullptr;
++    if (!device) {
++      return;
++    }
++    if (*ev == "connection") {
++      device->OnConnection(message.FindBool("connected").value_or(false),
++                           message.FindInt("status").value_or(kGattFailure));
++    } else if (const base::ListValue* services =
++                   message.FindList("services")) {
++      device->OnServices(*services);
++    }
++    return;
++  }
++  const std::string* id = message.FindString("id");
++  if (!id) {
++    return;
++  }
++  const int status = message.FindInt("status").value_or(kGattFailure);
++  if (*ev == "descriptorRead" || *ev == "descriptorWrote") {
++    BluetoothRemoteGattDescriptorSpatiand* descriptor = DescriptorOf(*id);
++    if (!descriptor) {
++      return;
++    }
++    if (*ev == "descriptorRead") {
++      descriptor->OnRead(status, Unhex(message.FindString("value")));
++    } else {
++      descriptor->OnWrote(status);
++    }
++    return;
++  }
++  BluetoothRemoteGattCharacteristicSpatiand* characteristic =
++      CharacteristicOf(*id);
++  if (!characteristic) {
++    return;
++  }
++  if (*ev == "read") {
++    characteristic->OnRead(status, Unhex(message.FindString("value")));
++  } else if (*ev == "wrote") {
++    characteristic->OnWrote(status);
++  } else if (*ev == "notifying") {
++    characteristic->OnNotifying(status);
++  } else if (*ev == "changed") {
++    characteristic->OnChanged(Unhex(message.FindString("value")));
++  }
++}
++
++BluetoothDeviceSpatiand* BluetoothAdapterSpatiand::DeviceAt(
++    const std::string& address) const {
++  auto it = devices_.find(address);
++  return it == devices_.end()
++             ? nullptr
++             : static_cast<BluetoothDeviceSpatiand*>(it->second.get());
++}
++
++BluetoothRemoteGattCharacteristicSpatiand*
++BluetoothAdapterSpatiand::CharacteristicOf(const std::string& id) const {
++  // Named by the device's address first: "AA:BB:CC:DD:EE:FF/s0/c1".
++  BluetoothDeviceSpatiand* device = DeviceAt(id.substr(0, id.find('/')));
++  return device ? device->CharacteristicOf(id) : nullptr;
++}
++
++BluetoothRemoteGattDescriptorSpatiand* BluetoothAdapterSpatiand::DescriptorOf(
++    const std::string& id) const {
++  BluetoothDeviceSpatiand* device = DeviceAt(id.substr(0, id.find('/')));
++  return device ? device->DescriptorOf(id) : nullptr;
++}
++
++BluetoothAdapter::UUIDList BluetoothAdapterSpatiand::GetUUIDs() const {
++  return {};
++}
++
++std::string BluetoothAdapterSpatiand::GetAddress() const {
++  return address_;
++}
++
++std::string BluetoothAdapterSpatiand::GetName() const {
++  return name_;
++}
++
++void BluetoothAdapterSpatiand::SetName(const std::string& name,
++                                       base::OnceClosure callback,
++                                       ErrorCallback error_callback) {
++  std::move(error_callback).Run();
++}
++
++bool BluetoothAdapterSpatiand::IsInitialized() const {
++  return initialized_;
++}
++
++bool BluetoothAdapterSpatiand::IsPresent() const {
++  return present_;
++}
++
++bool BluetoothAdapterSpatiand::IsPowered() const {
++  return powered_;
++}
++
++bool BluetoothAdapterSpatiand::IsDiscoverable() const {
++  return false;
++}
++
++void BluetoothAdapterSpatiand::SetDiscoverable(bool discoverable,
++                                               base::OnceClosure callback,
++                                               ErrorCallback error_callback) {
++  std::move(error_callback).Run();
++}
++
++base::TimeDelta BluetoothAdapterSpatiand::GetDiscoverableTimeout() const {
++  return base::TimeDelta();
++}
++
++bool BluetoothAdapterSpatiand::IsDiscovering() const {
++  return discovering_;
++}
++
++std::unordered_map<BluetoothDevice*, BluetoothDevice::UUIDSet>
++BluetoothAdapterSpatiand::RetrieveGattConnectedDevicesWithDiscoveryFilter(
++    const BluetoothDiscoveryFilter& discovery_filter) {
++  return {};
++}
++
++void BluetoothAdapterSpatiand::CreateRfcommService(
++    const BluetoothUUID& uuid,
++    const ServiceOptions& options,
++    CreateServiceCallback callback,
++    CreateServiceErrorCallback error_callback) {
++  std::move(error_callback).Run("Not supported");
++}
++
++void BluetoothAdapterSpatiand::CreateL2capService(
++    const BluetoothUUID& uuid,
++    const ServiceOptions& options,
++    CreateServiceCallback callback,
++    CreateServiceErrorCallback error_callback) {
++  std::move(error_callback).Run("Not supported");
++}
++
++void BluetoothAdapterSpatiand::RegisterAdvertisement(
++    std::unique_ptr<BluetoothAdvertisement::Data> advertisement_data,
++    CreateAdvertisementCallback callback,
++    AdvertisementErrorCallback error_callback) {
++  std::move(error_callback)
++      .Run(BluetoothAdvertisement::ERROR_UNSUPPORTED_PLATFORM);
++}
++
++void BluetoothAdapterSpatiand::SetAdvertisingInterval(
++    const base::TimeDelta& min,
++    const base::TimeDelta& max,
++    base::OnceClosure callback,
++    AdvertisementErrorCallback error_callback) {
++  std::move(error_callback)
++      .Run(BluetoothAdvertisement::ERROR_UNSUPPORTED_PLATFORM);
++}
++
++void BluetoothAdapterSpatiand::ResetAdvertising(
++    base::OnceClosure callback,
++    AdvertisementErrorCallback error_callback) {
++  std::move(error_callback)
++      .Run(BluetoothAdvertisement::ERROR_UNSUPPORTED_PLATFORM);
++}
++
++void BluetoothAdapterSpatiand::ConnectDevice(
++    const std::string& address,
++    const std::optional<BluetoothDevice::AddressType>& address_type,
++    ConnectDeviceCallback callback,
++    ConnectDeviceErrorCallback error_callback) {
++  std::move(error_callback).Run("Not supported");
++}
++
++BluetoothLocalGattService* BluetoothAdapterSpatiand::GetGattService(
++    const std::string& identifier) const {
++  return nullptr;
++}
++
++base::WeakPtr<BluetoothLocalGattService>
++BluetoothAdapterSpatiand::CreateLocalGattService(
++    const BluetoothUUID& uuid,
++    bool is_primary,
++    BluetoothLocalGattService::Delegate* delegate) {
++  return nullptr;
++}
++
++base::WeakPtr<BluetoothAdapter> BluetoothAdapterSpatiand::GetWeakPtr() {
++  return weak_factory_.GetWeakPtr();
++}
++
++bool BluetoothAdapterSpatiand::SetPoweredImpl(bool powered) {
++  // Android's Bluetooth is turned on and off by the wearer, not by a page.
++  return false;
++}
++
++void BluetoothAdapterSpatiand::StartScanWithFilter(
++    std::unique_ptr<BluetoothDiscoveryFilter> discovery_filter,
++    DiscoverySessionResultCallback callback) {
++  if (!powered_) {
++    std::move(callback).Run(
++        /*is_error=*/true,
++        UMABluetoothDiscoverySessionOutcome::ADAPTER_NOT_PRESENT);
++    return;
++  }
++  // Unfiltered: what a page asked for is picked out of what is seen here.
++  Send(base::DictValue().Set("op", "scan"));
++  discovering_ = true;
++  std::move(callback).Run(/*is_error=*/false,
++                          UMABluetoothDiscoverySessionOutcome::SUCCESS);
++}
++
++void BluetoothAdapterSpatiand::UpdateFilter(
++    std::unique_ptr<BluetoothDiscoveryFilter> discovery_filter,
++    DiscoverySessionResultCallback callback) {
++  std::move(callback).Run(/*is_error=*/false,
++                          UMABluetoothDiscoverySessionOutcome::SUCCESS);
++}
++
++void BluetoothAdapterSpatiand::StopScan(DiscoverySessionResultCallback callback) {
++  Send(base::DictValue().Set("op", "stopScan"));
++  discovering_ = false;
++  std::move(callback).Run(/*is_error=*/false,
++                          UMABluetoothDiscoverySessionOutcome::SUCCESS);
++}
++
++void BluetoothAdapterSpatiand::RemovePairingDelegateInternal(
++    BluetoothDevice::PairingDelegate* pairing_delegate) {}
++
++// ---------------------------------------------------------------- a device
++
++BluetoothDeviceSpatiand::BluetoothDeviceSpatiand(
++    BluetoothAdapterSpatiand* adapter,
++    const std::string& address)
++    : BluetoothDevice(adapter), bridge_(adapter), address_(address) {}
++
++BluetoothDeviceSpatiand::~BluetoothDeviceSpatiand() = default;
++
++void BluetoothDeviceSpatiand::OnAdvertisement(const base::DictValue& message) {
++  if (const std::string* name = message.FindString("name")) {
++    name_ = *name;
++  }
++  std::optional<int8_t> tx_power;
++  if (std::optional<int> tx = message.FindInt("txPower")) {
++    tx_power = ClampToByte(*tx);
++  }
++  std::optional<uint8_t> flags;
++  if (std::optional<int> f = message.FindInt("flags"); f && *f >= 0) {
++    flags = static_cast<uint8_t>(*f);
++  }
++  UUIDList uuids;
++  if (const base::ListValue* list = message.FindList("uuids")) {
++    for (const base::Value& uuid : *list) {
++      if (uuid.is_string() && BluetoothUUID(uuid.GetString()).IsValid()) {
++        uuids.push_back(BluetoothUUID(uuid.GetString()));
++      }
++    }
++  }
++  ServiceDataMap service_data;
++  if (const base::DictValue* data = message.FindDict("serviceData")) {
++    for (const auto [key, value] : *data) {
++      if (BluetoothUUID(key).IsValid() && value.is_string()) {
++        service_data[BluetoothUUID(key)] = Unhex(&value.GetString());
++      }
++    }
++  }
++  ManufacturerDataMap manufacturer_data;
++  if (const base::DictValue* data = message.FindDict("manufacturerData")) {
++    for (const auto [key, value] : *data) {
++      int id = 0;
++      if (base::StringToInt(key, &id) && value.is_string()) {
++        manufacturer_data[static_cast<ManufacturerId>(id)] =
++            Unhex(&value.GetString());
++      }
++    }
++  }
++  UpdateAdvertisementData(ClampToByte(message.FindInt("rssi").value_or(-127)),
++                          flags, std::move(uuids), tx_power,
++                          std::move(service_data),
++                          std::move(manufacturer_data));
++}
++
++void BluetoothDeviceSpatiand::CreateGattConnectionImpl(
++    std::optional<BluetoothUUID> service_uuid) {
++  connecting_ = true;
++  bridge_->Send(base::DictValue()
++                    .Set("op", "connect")
++                    .Set("address", address_));
++}
++
++void BluetoothDeviceSpatiand::DisconnectGatt() {
++  bridge_->Send(base::DictValue()
++                    .Set("op", "disconnect")
++                    .Set("address", address_));
++}
++
++void BluetoothDeviceSpatiand::OnConnection(bool connected, int status) {
++  const bool was_connecting = connecting_;
++  connecting_ = false;
++  if (connected) {
++    if (!gatt_connected_) {
++      gatt_connected_ = true;
++      DidConnectGatt(std::nullopt);
++    }
++    return;
++  }
++  const bool was_connected = gatt_connected_;
++  gatt_connected_ = false;
++  for (auto& [id, service] : gatt_services_) {
++    for (BluetoothRemoteGattCharacteristic* characteristic :
++         service->GetCharacteristics()) {
++      auto* c =
++          static_cast<BluetoothRemoteGattCharacteristicSpatiand*>(characteristic);
++      for (BluetoothRemoteGattDescriptor* descriptor : c->GetDescriptors()) {
++        static_cast<BluetoothRemoteGattDescriptorSpatiand*>(descriptor)
++            ->FailPending();
++      }
++      c->FailPending();
++    }
++  }
++  gatt_services_.clear();
++  device_uuids_.ClearServiceUUIDs();
++  services_discovered_ = false;
++  if (was_connected) {
++    DidDisconnectGatt();
++  } else if (was_connecting) {
++    DidConnectGatt(ERROR_FAILED);
++  }
++}
++
++void BluetoothDeviceSpatiand::OnServices(const base::ListValue& services) {
++  gatt_services_.clear();
++  for (const base::Value& s : services) {
++    const base::DictValue* sd = s.GetIfDict();
++    const std::string* sid = sd ? sd->FindString("id") : nullptr;
++    const std::string* suuid = sd ? sd->FindString("uuid") : nullptr;
++    if (!sid || !suuid) {
++      continue;
++    }
++    auto service = std::make_unique<BluetoothRemoteGattServiceSpatiand>(
++        this, *sid, BluetoothUUID(*suuid),
++        sd->FindBool("primary").value_or(true));
++    if (const base::ListValue* characteristics =
++            sd->FindList("characteristics")) {
++      for (const base::Value& c : *characteristics) {
++        const base::DictValue* cd = c.GetIfDict();
++        const std::string* cid = cd ? cd->FindString("id") : nullptr;
++        const std::string* cuuid = cd ? cd->FindString("uuid") : nullptr;
++        if (!cid || !cuuid) {
++          continue;
++        }
++        auto characteristic =
++            std::make_unique<BluetoothRemoteGattCharacteristicSpatiand>(
++                service.get(), bridge_, address_, *cid, BluetoothUUID(*cuuid),
++                cd->FindInt("properties").value_or(0));
++        if (const base::ListValue* descriptors =
++                cd->FindList("descriptors")) {
++          for (const base::Value& d : *descriptors) {
++            const base::DictValue* dd = d.GetIfDict();
++            const std::string* did = dd ? dd->FindString("id") : nullptr;
++            const std::string* duuid = dd ? dd->FindString("uuid") : nullptr;
++            if (!did || !duuid) {
++              continue;
++            }
++            characteristic->AddDescriptor(
++                std::make_unique<BluetoothRemoteGattDescriptorSpatiand>(
++                    characteristic.get(), bridge_, address_, *did,
++                    BluetoothUUID(*duuid)));
++          }
++        }
++        service->AddCharacteristic(std::move(characteristic));
++      }
++    }
++    service->SetDiscoveryComplete(true);
++    gatt_services_[*sid] = std::move(service);
++  }
++  device_uuids_.ReplaceServiceUUIDs(gatt_services_);
++  services_discovered_ = true;
++  bridge_->NotifyGattServicesDiscovered(this);
++  bridge_->NotifyDeviceChanged(this);
++}
++
++BluetoothRemoteGattCharacteristicSpatiand*
++BluetoothDeviceSpatiand::CharacteristicOf(const std::string& id) const {
++  const std::string service_id = id.substr(0, id.find("/c"));
++  auto it = gatt_services_.find(service_id);
++  if (it == gatt_services_.end()) {
++    return nullptr;
++  }
++  return static_cast<BluetoothRemoteGattCharacteristicSpatiand*>(
++      it->second->GetCharacteristic(id.substr(0, id.find("/d"))));
++}
++
++BluetoothRemoteGattDescriptorSpatiand* BluetoothDeviceSpatiand::DescriptorOf(
++    const std::string& id) const {
++  BluetoothRemoteGattCharacteristicSpatiand* characteristic =
++      CharacteristicOf(id);
++  return characteristic ? static_cast<BluetoothRemoteGattDescriptorSpatiand*>(
++                              characteristic->GetDescriptor(id))
++                        : nullptr;
++}
++
++uint32_t BluetoothDeviceSpatiand::GetBluetoothClass() const {
++  return 0;
++}
++
++BluetoothTransport BluetoothDeviceSpatiand::GetType() const {
++  return BLUETOOTH_TRANSPORT_LE;
++}
++
++std::string BluetoothDeviceSpatiand::GetIdentifier() const {
++  return address_;
++}
++
++std::string BluetoothDeviceSpatiand::GetAddress() const {
++  return address_;
++}
++
++BluetoothDevice::AddressType BluetoothDeviceSpatiand::GetAddressType() const {
++  return ADDR_TYPE_UNKNOWN;
++}
++
++BluetoothDevice::VendorIDSource BluetoothDeviceSpatiand::GetVendorIDSource()
++    const {
++  return VENDOR_ID_UNKNOWN;
++}
++
++uint16_t BluetoothDeviceSpatiand::GetVendorID() const {
++  return 0;
++}
++
++uint16_t BluetoothDeviceSpatiand::GetProductID() const {
++  return 0;
++}
++
++uint16_t BluetoothDeviceSpatiand::GetDeviceID() const {
++  return 0;
++}
++
++uint16_t BluetoothDeviceSpatiand::GetAppearance() const {
++  return 0;
++}
++
++std::optional<std::string> BluetoothDeviceSpatiand::GetName() const {
++  return name_;
++}
++
++bool BluetoothDeviceSpatiand::IsPaired() const {
++  return false;
++}
++
++bool BluetoothDeviceSpatiand::IsConnected() const {
++  return gatt_connected_;
++}
++
++bool BluetoothDeviceSpatiand::IsGattConnected() const {
++  return gatt_connected_;
++}
++
++bool BluetoothDeviceSpatiand::IsConnectable() const {
++  return true;
++}
++
++bool BluetoothDeviceSpatiand::IsConnecting() const {
++  return connecting_;
++}
++
++BluetoothDevice::UUIDSet BluetoothDeviceSpatiand::GetUUIDs() const {
++  return device_uuids_.GetUUIDs();
++}
++
++bool BluetoothDeviceSpatiand::ExpectingPinCode() const {
++  return false;
++}
++
++bool BluetoothDeviceSpatiand::ExpectingPasskey() const {
++  return false;
++}
++
++bool BluetoothDeviceSpatiand::ExpectingConfirmation() const {
++  return false;
++}
++
++void BluetoothDeviceSpatiand::GetConnectionInfo(ConnectionInfoCallback callback) {
++  std::move(callback).Run(ConnectionInfo());
++}
++
++void BluetoothDeviceSpatiand::SetConnectionLatency(
++    ConnectionLatency connection_latency,
++    base::OnceClosure callback,
++    ErrorCallback error_callback) {
++  std::move(error_callback).Run();
++}
++
++void BluetoothDeviceSpatiand::Connect(PairingDelegate* pairing_delegate,
++                                      ConnectCallback callback) {
++  std::move(callback).Run(ERROR_UNSUPPORTED_DEVICE);
++}
++
++void BluetoothDeviceSpatiand::SetPinCode(const std::string& pincode) {}
++
++void BluetoothDeviceSpatiand::SetPasskey(uint32_t passkey) {}
++
++void BluetoothDeviceSpatiand::ConfirmPairing() {}
++
++void BluetoothDeviceSpatiand::RejectPairing() {}
++
++void BluetoothDeviceSpatiand::CancelPairing() {}
++
++void BluetoothDeviceSpatiand::Disconnect(base::OnceClosure callback,
++                                         ErrorCallback error_callback) {
++  DisconnectGatt();
++  std::move(callback).Run();
++}
++
++void BluetoothDeviceSpatiand::Forget(base::OnceClosure callback,
++                                     ErrorCallback error_callback) {
++  std::move(error_callback).Run();
++}
++
++void BluetoothDeviceSpatiand::ConnectToService(
++    const BluetoothUUID& uuid,
++    ConnectToServiceCallback callback,
++    ConnectToServiceErrorCallback error_callback) {
++  std::move(error_callback).Run("Not supported");
++}
++
++void BluetoothDeviceSpatiand::ConnectToServiceInsecurely(
++    const BluetoothUUID& uuid,
++    ConnectToServiceCallback callback,
++    ConnectToServiceErrorCallback error_callback) {
++  std::move(error_callback).Run("Not supported");
++}
++
++void BluetoothDeviceSpatiand::Pair(PairingDelegate* pairing_delegate,
++                                   ConnectCallback callback) {
++  std::move(callback).Run(ERROR_UNSUPPORTED_DEVICE);
++}
++
++void BluetoothDeviceSpatiand::SetGattServicesDiscoveryComplete(bool complete) {
++  services_discovered_ = complete;
++}
++
++bool BluetoothDeviceSpatiand::IsGattServicesDiscoveryComplete() const {
++  return services_discovered_;
++}
++
++// ---------------------------------------------------------------- a service
++
++BluetoothRemoteGattServiceSpatiand::BluetoothRemoteGattServiceSpatiand(
++    BluetoothDeviceSpatiand* device,
++    const std::string& identifier,
++    const BluetoothUUID& uuid,
++    bool is_primary)
++    : device_(device),
++      identifier_(identifier),
++      uuid_(uuid),
++      is_primary_(is_primary) {}
++
++BluetoothRemoteGattServiceSpatiand::~BluetoothRemoteGattServiceSpatiand() =
++    default;
++
++std::string BluetoothRemoteGattServiceSpatiand::GetIdentifier() const {
++  return identifier_;
++}
++
++BluetoothUUID BluetoothRemoteGattServiceSpatiand::GetUUID() const {
++  return uuid_;
++}
++
++bool BluetoothRemoteGattServiceSpatiand::IsPrimary() const {
++  return is_primary_;
++}
++
++BluetoothDevice* BluetoothRemoteGattServiceSpatiand::GetDevice() const {
++  return device_;
++}
++
++std::vector<BluetoothRemoteGattService*>
++BluetoothRemoteGattServiceSpatiand::GetIncludedServices() const {
++  return {};
++}
++
++// ---------------------------------------------------------------- a characteristic
++
++BluetoothRemoteGattCharacteristicSpatiand::
++    BluetoothRemoteGattCharacteristicSpatiand(
++        BluetoothRemoteGattServiceSpatiand* service,
++        BluetoothAdapterSpatiand* bridge,
++        const std::string& address,
++        const std::string& identifier,
++        const BluetoothUUID& uuid,
++        int properties)
++    : service_(service),
++      bridge_(bridge),
++      address_(address),
++      identifier_(identifier),
++      uuid_(uuid),
++      properties_(properties) {}
++
++BluetoothRemoteGattCharacteristicSpatiand::
++    ~BluetoothRemoteGattCharacteristicSpatiand() = default;
++
++std::string BluetoothRemoteGattCharacteristicSpatiand::GetIdentifier() const {
++  return identifier_;
++}
++
++BluetoothUUID BluetoothRemoteGattCharacteristicSpatiand::GetUUID() const {
++  return uuid_;
++}
++
++const std::vector<uint8_t>& BluetoothRemoteGattCharacteristicSpatiand::GetValue()
++    const {
++  return value_;
++}
++
++BluetoothRemoteGattService* BluetoothRemoteGattCharacteristicSpatiand::GetService()
++    const {
++  return service_;
++}
++
++BluetoothRemoteGattCharacteristic::Properties
++BluetoothRemoteGattCharacteristicSpatiand::GetProperties() const {
++  // Android's and Chromium's bits are the Bluetooth specification's.
++  return static_cast<Properties>(properties_);
++}
++
++BluetoothRemoteGattCharacteristic::Permissions
++BluetoothRemoteGattCharacteristicSpatiand::GetPermissions() const {
++  return 0;
++}
++
++void BluetoothRemoteGattCharacteristicSpatiand::ReadRemoteCharacteristic(
++    ValueCallback callback) {
++  if (read_callback_) {
++    std::move(callback).Run(BluetoothGattService::GattErrorCode::kInProgress,
++                            {});
++    return;
++  }
++  read_callback_ = std::move(callback);
++  bridge_->Send(base::DictValue()
++                    .Set("op", "read")
++                    .Set("address", address_)
++                    .Set("id", identifier_));
++}
++
++void BluetoothRemoteGattCharacteristicSpatiand::WriteRemoteCharacteristic(
++    base::span<const uint8_t> value,
++    WriteType write_type,
++    base::OnceClosure callback,
++    ErrorCallback error_callback) {
++  Write(value,
++        write_type == WriteType::kWithoutResponse ? "noResponse" : "default",
++        std::move(callback), std::move(error_callback));
++}
++
++void BluetoothRemoteGattCharacteristicSpatiand::
++    DeprecatedWriteRemoteCharacteristic(base::span<const uint8_t> value,
++                                        base::OnceClosure callback,
++                                        ErrorCallback error_callback) {
++  const bool with_response = (properties_ & PROPERTY_WRITE) ||
++                             !(properties_ & PROPERTY_WRITE_WITHOUT_RESPONSE);
++  Write(value, with_response ? "default" : "noResponse", std::move(callback),
++        std::move(error_callback));
++}
++
++void BluetoothRemoteGattCharacteristicSpatiand::Write(
++    base::span<const uint8_t> value,
++    const char* type,
++    base::OnceClosure callback,
++    ErrorCallback error_callback) {
++  if (write_callback_ || write_error_callback_) {
++    std::move(error_callback)
++        .Run(BluetoothGattService::GattErrorCode::kInProgress);
++    return;
++  }
++  write_callback_ = std::move(callback);
++  write_error_callback_ = std::move(error_callback);
++  bridge_->Send(base::DictValue()
++                    .Set("op", "write")
++                    .Set("address", address_)
++                    .Set("id", identifier_)
++                    .Set("value", base::HexEncode(value))
++                    .Set("type", type));
++}
++
++void BluetoothRemoteGattCharacteristicSpatiand::SubscribeToNotifications(
++    BluetoothRemoteGattDescriptor* ccc_descriptor,
++    base::OnceClosure callback,
++    ErrorCallback error_callback) {
++  Notify(true, std::move(callback), std::move(error_callback));
++}
++
++void BluetoothRemoteGattCharacteristicSpatiand::UnsubscribeFromNotifications(
++    BluetoothRemoteGattDescriptor* ccc_descriptor,
++    base::OnceClosure callback,
++    ErrorCallback error_callback) {
++  Notify(false, std::move(callback), std::move(error_callback));
++}
++
++void BluetoothRemoteGattCharacteristicSpatiand::Notify(
++    bool enable,
++    base::OnceClosure callback,
++    ErrorCallback error_callback) {
++  if (notify_callback_ || notify_error_callback_) {
++    std::move(error_callback)
++        .Run(BluetoothGattService::GattErrorCode::kInProgress);
++    return;
++  }
++  notify_callback_ = std::move(callback);
++  notify_error_callback_ = std::move(error_callback);
++  bridge_->Send(base::DictValue()
++                    .Set("op", "notify")
++                    .Set("address", address_)
++                    .Set("id", identifier_)
++                    .Set("enable", enable));
++}
++
++void BluetoothRemoteGattCharacteristicSpatiand::OnRead(
++    int status,
++    std::vector<uint8_t> value) {
++  if (!read_callback_) {
++    return;
++  }
++  if (status != kGattSuccess) {
++    std::move(read_callback_).Run(ErrorOf(status), {});
++    return;
++  }
++  value_ = std::move(value);
++  std::move(read_callback_).Run(std::nullopt, value_);
++}
++
++void BluetoothRemoteGattCharacteristicSpatiand::OnWrote(int status) {
++  base::OnceClosure done = std::move(write_callback_);
++  ErrorCallback failed = std::move(write_error_callback_);
++  if (status == kGattSuccess) {
++    if (done) {
++      std::move(done).Run();
++    }
++  } else if (failed) {
++    std::move(failed).Run(ErrorOf(status));
++  }
++}
++
++void BluetoothRemoteGattCharacteristicSpatiand::OnNotifying(int status) {
++  base::OnceClosure done = std::move(notify_callback_);
++  ErrorCallback failed = std::move(notify_error_callback_);
++  if (status == kGattSuccess) {
++    if (done) {
++      std::move(done).Run();
++    }
++  } else if (failed) {
++    std::move(failed).Run(ErrorOf(status));
++  }
++}
++
++void BluetoothRemoteGattCharacteristicSpatiand::OnChanged(
++    std::vector<uint8_t> value) {
++  value_ = std::move(value);
++  bridge_->NotifyGattCharacteristicValueChanged(this, value_);
++}
++
++void BluetoothRemoteGattCharacteristicSpatiand::FailPending() {
++  if (read_callback_) {
++    std::move(read_callback_)
++        .Run(BluetoothGattService::GattErrorCode::kFailed, {});
++  }
++  OnWrote(kGattFailure);
++  OnNotifying(kGattFailure);
++}
++
++// ---------------------------------------------------------------- a descriptor
++
++BluetoothRemoteGattDescriptorSpatiand::BluetoothRemoteGattDescriptorSpatiand(
++    BluetoothRemoteGattCharacteristicSpatiand* characteristic,
++    BluetoothAdapterSpatiand* bridge,
++    const std::string& address,
++    const std::string& identifier,
++    const BluetoothUUID& uuid)
++    : characteristic_(characteristic),
++      bridge_(bridge),
++      address_(address),
++      identifier_(identifier),
++      uuid_(uuid) {}
++
++BluetoothRemoteGattDescriptorSpatiand::~BluetoothRemoteGattDescriptorSpatiand() =
++    default;
++
++std::string BluetoothRemoteGattDescriptorSpatiand::GetIdentifier() const {
++  return identifier_;
++}
++
++BluetoothUUID BluetoothRemoteGattDescriptorSpatiand::GetUUID() const {
++  return uuid_;
++}
++
++const std::vector<uint8_t>& BluetoothRemoteGattDescriptorSpatiand::GetValue()
++    const {
++  return value_;
++}
++
++BluetoothRemoteGattCharacteristic*
++BluetoothRemoteGattDescriptorSpatiand::GetCharacteristic() const {
++  return characteristic_;
++}
++
++BluetoothRemoteGattCharacteristic::Permissions
++BluetoothRemoteGattDescriptorSpatiand::GetPermissions() const {
++  return 0;
++}
++
++void BluetoothRemoteGattDescriptorSpatiand::ReadRemoteDescriptor(
++    ValueCallback callback) {
++  if (read_callback_) {
++    std::move(callback).Run(BluetoothGattService::GattErrorCode::kInProgress,
++                            {});
++    return;
++  }
++  read_callback_ = std::move(callback);
++  bridge_->Send(base::DictValue()
++                    .Set("op", "readDescriptor")
++                    .Set("address", address_)
++                    .Set("id", identifier_));
++}
++
++void BluetoothRemoteGattDescriptorSpatiand::WriteRemoteDescriptor(
++    base::span<const uint8_t> new_value,
++    base::OnceClosure callback,
++    ErrorCallback error_callback) {
++  if (write_callback_ || write_error_callback_) {
++    std::move(error_callback)
++        .Run(BluetoothGattService::GattErrorCode::kInProgress);
++    return;
++  }
++  write_callback_ = std::move(callback);
++  write_error_callback_ = std::move(error_callback);
++  bridge_->Send(base::DictValue()
++                    .Set("op", "writeDescriptor")
++                    .Set("address", address_)
++                    .Set("id", identifier_)
++                    .Set("value", base::HexEncode(new_value)));
++}
++
++void BluetoothRemoteGattDescriptorSpatiand::OnRead(int status,
++                                                   std::vector<uint8_t> value) {
++  if (!read_callback_) {
++    return;
++  }
++  if (status != kGattSuccess) {
++    std::move(read_callback_).Run(ErrorOf(status), {});
++    return;
++  }
++  value_ = std::move(value);
++  std::move(read_callback_).Run(std::nullopt, value_);
++}
++
++void BluetoothRemoteGattDescriptorSpatiand::OnWrote(int status) {
++  base::OnceClosure done = std::move(write_callback_);
++  ErrorCallback failed = std::move(write_error_callback_);
++  if (status == kGattSuccess) {
++    if (done) {
++      std::move(done).Run();
++    }
++  } else if (failed) {
++    std::move(failed).Run(ErrorOf(status));
++  }
++}
++
++void BluetoothRemoteGattDescriptorSpatiand::FailPending() {
++  if (read_callback_) {
++    std::move(read_callback_)
++        .Run(BluetoothGattService::GattErrorCode::kFailed, {});
++  }
++  OnWrote(kGattFailure);
++}
++
++}  // namespace device
+diff --git a/device/bluetooth/spatiand/bluetooth_spatiand.h b/device/bluetooth/spatiand/bluetooth_spatiand.h
+new file mode 100644
+index 0000000000..f1a6ccb574
+--- /dev/null
++++ b/device/bluetooth/spatiand/bluetooth_spatiand.h
+@@ -0,0 +1,364 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef DEVICE_BLUETOOTH_SPATIAND_BLUETOOTH_SPATIAND_H_
++#define DEVICE_BLUETOOTH_SPATIAND_BLUETOOTH_SPATIAND_H_
++
++// Bluetooth for Chromium built for Linux on Android's libc (Spatiand's SpatiMesh
++// on the Beam Pro): Android's Bluetooth LE, reached through the Spatiand app's
++// bridge (android/src/id/prasetya/spatiand/BluetoothBridge.java), an abstract
++// socket "spatiand-bluetooth" that carries one JSON object a line each way.
++// Chromium's Linux build reaches Bluetooth through BlueZ on D-Bus, which
++// Android has not got. Low energy, central, GATT client: what Web Bluetooth
++// asks for.
++
++#include <memory>
++#include <optional>
++#include <string>
++#include <vector>
++
++#include "base/files/file_descriptor_watcher_posix.h"
++#include "base/files/scoped_file.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/values.h"
++#include "device/bluetooth/bluetooth_adapter.h"
++#include "device/bluetooth/bluetooth_device.h"
++#include "device/bluetooth/bluetooth_remote_gatt_characteristic.h"
++#include "device/bluetooth/bluetooth_remote_gatt_descriptor.h"
++#include "device/bluetooth/bluetooth_remote_gatt_service.h"
++
++namespace device {
++
++class BluetoothDeviceSpatiand;
++class BluetoothRemoteGattCharacteristicSpatiand;
++class BluetoothRemoteGattDescriptorSpatiand;
++
++class BluetoothAdapterSpatiand final : public BluetoothAdapter {
++ public:
++  static scoped_refptr<BluetoothAdapterSpatiand> Create();
++
++  BluetoothAdapterSpatiand(const BluetoothAdapterSpatiand&) = delete;
++  BluetoothAdapterSpatiand& operator=(const BluetoothAdapterSpatiand&) = delete;
++
++  // BluetoothAdapter:
++  void Initialize(base::OnceClosure callback) override;
++  void Shutdown() override;
++  UUIDList GetUUIDs() const override;
++  std::string GetAddress() const override;
++  std::string GetName() const override;
++  void SetName(const std::string& name,
++               base::OnceClosure callback,
++               ErrorCallback error_callback) override;
++  bool IsInitialized() const override;
++  bool IsPresent() const override;
++  bool IsPowered() const override;
++  bool IsDiscoverable() const override;
++  void SetDiscoverable(bool discoverable,
++                       base::OnceClosure callback,
++                       ErrorCallback error_callback) override;
++  base::TimeDelta GetDiscoverableTimeout() const override;
++  bool IsDiscovering() const override;
++  std::unordered_map<BluetoothDevice*, BluetoothDevice::UUIDSet>
++  RetrieveGattConnectedDevicesWithDiscoveryFilter(
++      const BluetoothDiscoveryFilter& discovery_filter) override;
++  void CreateRfcommService(const BluetoothUUID& uuid,
++                           const ServiceOptions& options,
++                           CreateServiceCallback callback,
++                           CreateServiceErrorCallback error_callback) override;
++  void CreateL2capService(const BluetoothUUID& uuid,
++                          const ServiceOptions& options,
++                          CreateServiceCallback callback,
++                          CreateServiceErrorCallback error_callback) override;
++  void RegisterAdvertisement(
++      std::unique_ptr<BluetoothAdvertisement::Data> advertisement_data,
++      CreateAdvertisementCallback callback,
++      AdvertisementErrorCallback error_callback) override;
++  void SetAdvertisingInterval(
++      const base::TimeDelta& min,
++      const base::TimeDelta& max,
++      base::OnceClosure callback,
++      AdvertisementErrorCallback error_callback) override;
++  void ResetAdvertising(base::OnceClosure callback,
++                        AdvertisementErrorCallback error_callback) override;
++  void ConnectDevice(
++      const std::string& address,
++      const std::optional<BluetoothDevice::AddressType>& address_type,
++      ConnectDeviceCallback callback,
++      ConnectDeviceErrorCallback error_callback) override;
++  BluetoothLocalGattService* GetGattService(
++      const std::string& identifier) const override;
++  base::WeakPtr<BluetoothLocalGattService> CreateLocalGattService(
++      const BluetoothUUID& uuid,
++      bool is_primary,
++      BluetoothLocalGattService::Delegate* delegate) override;
++
++  // A request to the bridge, from this adapter's devices and their parts.
++  void Send(base::DictValue message);
++
++  using BluetoothAdapter::NotifyDeviceChanged;
++  using BluetoothAdapter::NotifyGattCharacteristicValueChanged;
++  using BluetoothAdapter::NotifyGattServicesDiscovered;
++
++ protected:
++  ~BluetoothAdapterSpatiand() override;
++
++  // BluetoothAdapter:
++  base::WeakPtr<BluetoothAdapter> GetWeakPtr() override;
++  bool SetPoweredImpl(bool powered) override;
++  void StartScanWithFilter(
++      std::unique_ptr<BluetoothDiscoveryFilter> discovery_filter,
++      DiscoverySessionResultCallback callback) override;
++  void UpdateFilter(std::unique_ptr<BluetoothDiscoveryFilter> discovery_filter,
++                    DiscoverySessionResultCallback callback) override;
++  void StopScan(DiscoverySessionResultCallback callback) override;
++  void RemovePairingDelegateInternal(
++      BluetoothDevice::PairingDelegate* pairing_delegate) override;
++
++ private:
++  BluetoothAdapterSpatiand();
++
++  void InitializeDone();
++  void OnReadable();
++  void Lost();
++  void Handle(const base::DictValue& message);
++  BluetoothDeviceSpatiand* DeviceAt(const std::string& address) const;
++  BluetoothRemoteGattCharacteristicSpatiand* CharacteristicOf(
++      const std::string& id) const;
++  BluetoothRemoteGattDescriptorSpatiand* DescriptorOf(
++      const std::string& id) const;
++
++  base::ScopedFD socket_;
++  std::unique_ptr<base::FileDescriptorWatcher::Controller> watch_;
++  std::string incoming_;
++  base::OnceClosure initialized_callback_;
++  bool initialized_ = false;
++  bool present_ = false;
++  bool powered_ = false;
++  bool discovering_ = false;
++  std::string address_;
++  std::string name_;
++
++  base::WeakPtrFactory<BluetoothAdapterSpatiand> weak_factory_{this};
++};
++
++class BluetoothDeviceSpatiand final : public BluetoothDevice {
++ public:
++  BluetoothDeviceSpatiand(BluetoothAdapterSpatiand* adapter,
++                          const std::string& address);
++  BluetoothDeviceSpatiand(const BluetoothDeviceSpatiand&) = delete;
++  BluetoothDeviceSpatiand& operator=(const BluetoothDeviceSpatiand&) = delete;
++  ~BluetoothDeviceSpatiand() override;
++
++  // BluetoothDevice:
++  uint32_t GetBluetoothClass() const override;
++  BluetoothTransport GetType() const override;
++  std::string GetIdentifier() const override;
++  std::string GetAddress() const override;
++  AddressType GetAddressType() const override;
++  VendorIDSource GetVendorIDSource() const override;
++  uint16_t GetVendorID() const override;
++  uint16_t GetProductID() const override;
++  uint16_t GetDeviceID() const override;
++  uint16_t GetAppearance() const override;
++  std::optional<std::string> GetName() const override;
++  bool IsPaired() const override;
++  bool IsConnected() const override;
++  bool IsGattConnected() const override;
++  bool IsConnectable() const override;
++  bool IsConnecting() const override;
++  UUIDSet GetUUIDs() const override;
++  bool ExpectingPinCode() const override;
++  bool ExpectingPasskey() const override;
++  bool ExpectingConfirmation() const override;
++  void GetConnectionInfo(ConnectionInfoCallback callback) override;
++  void SetConnectionLatency(ConnectionLatency connection_latency,
++                            base::OnceClosure callback,
++                            ErrorCallback error_callback) override;
++  void Connect(PairingDelegate* pairing_delegate,
++               ConnectCallback callback) override;
++  void SetPinCode(const std::string& pincode) override;
++  void SetPasskey(uint32_t passkey) override;
++  void ConfirmPairing() override;
++  void RejectPairing() override;
++  void CancelPairing() override;
++  void Disconnect(base::OnceClosure callback,
++                  ErrorCallback error_callback) override;
++  void Forget(base::OnceClosure callback,
++              ErrorCallback error_callback) override;
++  void ConnectToService(const BluetoothUUID& uuid,
++                        ConnectToServiceCallback callback,
++                        ConnectToServiceErrorCallback error_callback) override;
++  void ConnectToServiceInsecurely(
++      const BluetoothUUID& uuid,
++      ConnectToServiceCallback callback,
++      ConnectToServiceErrorCallback error_callback) override;
++  void Pair(PairingDelegate* pairing_delegate,
++            ConnectCallback callback) override;
++  void SetGattServicesDiscoveryComplete(bool complete) override;
++  bool IsGattServicesDiscoveryComplete() const override;
++
++  // From the bridge.
++  void OnAdvertisement(const base::DictValue& message);
++  void OnConnection(bool connected, int status);
++  void OnServices(const base::ListValue& services);
++  BluetoothRemoteGattCharacteristicSpatiand* CharacteristicOf(
++      const std::string& id) const;
++  BluetoothRemoteGattDescriptorSpatiand* DescriptorOf(
++      const std::string& id) const;
++
++ protected:
++  // BluetoothDevice:
++  void CreateGattConnectionImpl(
++      std::optional<BluetoothUUID> service_uuid) override;
++  void DisconnectGatt() override;
++
++ private:
++  raw_ptr<BluetoothAdapterSpatiand> bridge_;
++  const std::string address_;
++  std::optional<std::string> name_;
++  bool gatt_connected_ = false;
++  bool connecting_ = false;
++  bool services_discovered_ = false;
++};
++
++class BluetoothRemoteGattServiceSpatiand final
++    : public BluetoothRemoteGattService {
++ public:
++  BluetoothRemoteGattServiceSpatiand(BluetoothDeviceSpatiand* device,
++                                     const std::string& identifier,
++                                     const BluetoothUUID& uuid,
++                                     bool is_primary);
++  ~BluetoothRemoteGattServiceSpatiand() override;
++
++  // BluetoothRemoteGattService:
++  std::string GetIdentifier() const override;
++  BluetoothUUID GetUUID() const override;
++  bool IsPrimary() const override;
++  BluetoothDevice* GetDevice() const override;
++  std::vector<BluetoothRemoteGattService*> GetIncludedServices() const override;
++
++  using BluetoothRemoteGattService::AddCharacteristic;
++
++ private:
++  raw_ptr<BluetoothDeviceSpatiand> device_;
++  const std::string identifier_;
++  const BluetoothUUID uuid_;
++  const bool is_primary_;
++};
++
++class BluetoothRemoteGattCharacteristicSpatiand final
++    : public BluetoothRemoteGattCharacteristic {
++ public:
++  BluetoothRemoteGattCharacteristicSpatiand(
++      BluetoothRemoteGattServiceSpatiand* service,
++      BluetoothAdapterSpatiand* bridge,
++      const std::string& address,
++      const std::string& identifier,
++      const BluetoothUUID& uuid,
++      int properties);
++  ~BluetoothRemoteGattCharacteristicSpatiand() override;
++
++  // BluetoothRemoteGattCharacteristic:
++  std::string GetIdentifier() const override;
++  BluetoothUUID GetUUID() const override;
++  const std::vector<uint8_t>& GetValue() const override;
++  BluetoothRemoteGattService* GetService() const override;
++  Properties GetProperties() const override;
++  Permissions GetPermissions() const override;
++  void ReadRemoteCharacteristic(ValueCallback callback) override;
++  void WriteRemoteCharacteristic(base::span<const uint8_t> value,
++                                 WriteType write_type,
++                                 base::OnceClosure callback,
++                                 ErrorCallback error_callback) override;
++  void DeprecatedWriteRemoteCharacteristic(
++      base::span<const uint8_t> value,
++      base::OnceClosure callback,
++      ErrorCallback error_callback) override;
++
++  using BluetoothRemoteGattCharacteristic::AddDescriptor;
++
++  // From the bridge.
++  void OnRead(int status, std::vector<uint8_t> value);
++  void OnWrote(int status);
++  void OnNotifying(int status);
++  void OnChanged(std::vector<uint8_t> value);
++  // The device is gone: whatever waits is answered with a failure.
++  void FailPending();
++
++ protected:
++  void SubscribeToNotifications(BluetoothRemoteGattDescriptor* ccc_descriptor,
++                                base::OnceClosure callback,
++                                ErrorCallback error_callback) override;
++  void UnsubscribeFromNotifications(
++      BluetoothRemoteGattDescriptor* ccc_descriptor,
++      base::OnceClosure callback,
++      ErrorCallback error_callback) override;
++
++ private:
++  void Write(base::span<const uint8_t> value,
++             const char* type,
++             base::OnceClosure callback,
++             ErrorCallback error_callback);
++  void Notify(bool enable,
++              base::OnceClosure callback,
++              ErrorCallback error_callback);
++
++  raw_ptr<BluetoothRemoteGattServiceSpatiand> service_;
++  raw_ptr<BluetoothAdapterSpatiand> bridge_;
++  const std::string address_;
++  const std::string identifier_;
++  const BluetoothUUID uuid_;
++  const int properties_;
++  std::vector<uint8_t> value_;
++  ValueCallback read_callback_;
++  base::OnceClosure write_callback_;
++  ErrorCallback write_error_callback_;
++  base::OnceClosure notify_callback_;
++  ErrorCallback notify_error_callback_;
++};
++
++class BluetoothRemoteGattDescriptorSpatiand final
++    : public BluetoothRemoteGattDescriptor {
++ public:
++  BluetoothRemoteGattDescriptorSpatiand(
++      BluetoothRemoteGattCharacteristicSpatiand* characteristic,
++      BluetoothAdapterSpatiand* bridge,
++      const std::string& address,
++      const std::string& identifier,
++      const BluetoothUUID& uuid);
++  ~BluetoothRemoteGattDescriptorSpatiand() override;
++
++  // BluetoothRemoteGattDescriptor:
++  std::string GetIdentifier() const override;
++  BluetoothUUID GetUUID() const override;
++  const std::vector<uint8_t>& GetValue() const override;
++  BluetoothRemoteGattCharacteristic* GetCharacteristic() const override;
++  BluetoothRemoteGattCharacteristic::Permissions GetPermissions()
++      const override;
++  void ReadRemoteDescriptor(ValueCallback callback) override;
++  void WriteRemoteDescriptor(base::span<const uint8_t> new_value,
++                             base::OnceClosure callback,
++                             ErrorCallback error_callback) override;
++
++  // From the bridge.
++  void OnRead(int status, std::vector<uint8_t> value);
++  void OnWrote(int status);
++  void FailPending();
++
++ private:
++  raw_ptr<BluetoothRemoteGattCharacteristicSpatiand> characteristic_;
++  raw_ptr<BluetoothAdapterSpatiand> bridge_;
++  const std::string address_;
++  const std::string identifier_;
++  const BluetoothUUID uuid_;
++  std::vector<uint8_t> value_;
++  ValueCallback read_callback_;
++  base::OnceClosure write_callback_;
++  ErrorCallback write_error_callback_;
++};
++
++}  // namespace device
++
++#endif  // DEVICE_BLUETOOTH_SPATIAND_BLUETOOTH_SPATIAND_H_
+-- 
+2.53.0
+

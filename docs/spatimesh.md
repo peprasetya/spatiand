@@ -133,6 +133,17 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   emptied page drops about 60% of its frames whichever decoder plays it, software too; on a page with other
   content it drops none.
 * No D-Bus: libdbus asks for a system bus at its build folder's path and finds none, as there is none to find.
+* **Bluetooth** (`android-libc/0025`, `android/src/id/prasetya/spatiand/BluetoothBridge.java`): Chromium's Linux
+  build reaches Bluetooth through BlueZ on D-Bus, which Android has not got. Its adapter here is Android's Bluetooth
+  LE, reached through the Spatiand app: an abstract socket, `spatiand-bluetooth`, that only the app's own processes
+  may use, carrying one JSON object a line each way (scanning, GATT connections, services, characteristics and
+  descriptors read and written, notifications: what Web Bluetooth asks for). Web Bluetooth stays as on the Deck:
+  behind "Experimental Web Platform features" (Linux has it as experimental; `--enable-blink-features=WebBluetooth`
+  turns it on alone), and a site may ask only once allowed to (Cromite's site setting, blocked by default). Tried on
+  the Beam Pro: with both, `navigator.bluetooth.getAvailability()` is true, Chromium's adapter is connected to the
+  bridge, and the bridge asks Android for its Bluetooth permission (BLUETOOTH_SCAN and BLUETOOTH_CONNECT, not for
+  location), which the wearer answers on the phone once. Scanning, connecting and reading a device are untried until
+  it is answered.
 * **Testing in the Beam Pro's room without the glasses**: `tools/beam-stand-in/run.sh start` makes a display from
   adb (the shell may make public ones) that the app takes as the glasses' (`MainActivity.glassesDisplay`, by its
   name): the room draws its world there with a headset that is not there and lets go of the hosts while it lasts,

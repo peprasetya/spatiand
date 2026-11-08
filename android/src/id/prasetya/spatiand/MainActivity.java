@@ -185,6 +185,8 @@ public class MainActivity extends Activity implements SensorEventListener {
             // Asked once; a host only gets the microphone when one of its apps is listening.
             requestPermissions(new String[] {android.Manifest.permission.RECORD_AUDIO}, 1);
         }
+        // Bluetooth for SpatiMesh's pages, through its own socket (BluetoothBridge).
+        BluetoothBridge.start(this);
         InputManager inputs = getSystemService(InputManager.class);
         inputs.registerInputDeviceListener(padsListener, ui);
         for (int id : inputs.getInputDeviceIds()) padsListener.onInputDeviceAdded(id);
@@ -700,6 +702,11 @@ public class MainActivity extends Activity implements SensorEventListener {
         Native.stop();
         if (connection != null) connection.close();
         super.onDestroy();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
+        if (request == BluetoothBridge.PERMISSION_REQUEST) BluetoothBridge.permissionsAnswered();
     }
 
     // ------------------------------------------------------------------ the glasses' display
