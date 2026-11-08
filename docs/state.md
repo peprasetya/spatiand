@@ -28,7 +28,14 @@ nothing in the measurement can catch it.
 **Controller.** Raw hidraw, every button confirmed by pressing it. Both pads point; right pad
 click is left mouse, left pad right mouse, A/B/X duplicate them. The left pad scrolls up and down
 unless it has clearly gone sideways (`spatiand-input/src/scroll.rs`, with a real thumb's swipes in
-its tests). Both pads *pressed* together
+its tests). A thumb only wandering -- the pad's noise, its pulse -- moves neither the pointer nor
+the page: each axis of each pad is held until the thumb has gone 0.004 of a pad from it, 0.008
+once it has rested 100 ms, and then followed that far behind, so a slow scroll never shakes back
+(`spatiand-input/src/steady.rs`; the room's reading only, a game's layout gets the pads as they
+are; the Mac's and the Beam Pro's pads and phone pointer too). Held, a slow wobbling scroll went
+stop and start, so each of its steps goes out over the frames after it, 0.35 of what is owed a
+frame (`ScrollSpread`, about 40 ms on average): from the owner's recorded thumbs, frames sending
+nothing mid-scroll fell from 28% to 10% (`spatiand-input/examples/replay_scroll.rs`). Both pads *pressed* together
 (resting both thumbs is nothing) are a gesture of the window under the pointer, which stays
 put: the thumbs swept sideways are back or forward (a mouse's back and forward buttons), spread
 or drawn together a pinch (the standard Wayland pinch, which Chromium zooms the page by; a

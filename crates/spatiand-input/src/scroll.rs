@@ -306,6 +306,128 @@ impl PadScroll {
     }
 }
 
+/// How much of what is still owed a frame sends. See [`ScrollSpread`].
+///
+/// From five minutes of the owner in the room (2026-11-08), replayed through `SteadyPad` and
+/// [`PadScroll`] (`examples/replay_scroll.rs`): mid-scroll, 28% of frames sent nothing, the page
+/// stopping and starting, and spread at this the frames that send nothing fell to 9% and the
+/// unevenness of the steps from 0.64 to 0.26, with the small turns back no more than before. On
+/// average a step goes out 40 ms later; a quarter would have been smoother, at 55.
+pub const SPREAD: f32 = 0.35;
+
+/// Below this, in pad units, what is owed is let go of: a hundredth of a pixel.
+const OWED_NOTHING: f32 = 0.000_05;
+
+/// A scroll's steps, each spread over the frames after it.
+///
+/// The held thumb ([`crate::steady`]) took the page's shake out and left it stopping and starting:
+/// a slow, wobbling thumb stays inside its band for a frame or several and then moves on, and each
+/// step the page took was the whole of what had built up. Spread, a step goes out a share at a time
+/// -- [`SPREAD`] of what is still owed each frame -- so the page moves on every frame it is moving
+/// at all. Nothing is lost: what goes out adds up to what came in.
+#[derive(Debug, Default)]
+pub struct ScrollSpread {
+    owed: (f32, f32),
+}
+
+impl ScrollSpread {
+    /// This frame's share, with this frame's step added to what is owed.
+    pub fn step(&mut self, dx: f32, dy: f32) -> (f32, f32) {
+        self.owed.0 += dx;
+        self.owed.1 += dy;
+        if self.owed.0.abs() < OWED_NOTHING && self.owed.1.abs() < OWED_NOTHING {
+            self.owed = (0.0, 0.0);
+            return (0.0, 0.0);
+        }
+        let out = (self.owed.0 * SPREAD, self.owed.1 * SPREAD);
+        self.owed.0 -= out.0;
+        self.owed.1 -= out.1;
+        out
+    }
+
+    /// Whether anything is still to go out.
+    pub fn owes(&self) -> bool {
+        self.owed != (0.0, 0.0)
+    }
+
+    /// Everything still owed, at once: before a fling, which a client throws on at the speed of the
+    /// last steps it was given, so they must all have been given.
+    pub fn flush(&mut self) -> (f32, f32) {
+        std::mem::take(&mut self.owed)
+    }
+
+    /// Owe nothing, sending nothing: the pad was taken for something else.
+    pub fn forget(&mut self) {
+        self.owed = (0.0, 0.0);
+    }
+}
+
+#[cfg(test)]
+mod spread_tests {
+    use super::*;
+
+    #[test]
+    fn a_steady_scroll_comes_out_steady() {
+        let mut s = ScrollSpread::default();
+        let mut last = 0.0;
+        for _ in 0..40 {
+            last = s.step(0.0, 0.01).1;
+        }
+        assert!((last - 0.01).abs() < 1e-5, "settled at {last}");
+    }
+
+    #[test]
+    fn a_step_goes_out_over_the_frames_after_it_and_all_of_it() {
+        // One step of 0.02, then nothing: no frame sends it all, every frame sends some, and in the
+        // end all of it has gone.
+        let mut s = ScrollSpread::default();
+        let mut sent = vec![s.step(0.0, 0.02).1];
+        while s.owes() {
+            sent.push(s.step(0.0, 0.0).1);
+        }
+        assert!(sent[0] < 0.02 && sent[0] > 0.0);
+        assert!(sent.windows(2).all(|w| w[1] <= w[0]), "not easing off: {sent:?}");
+        let total: f32 = sent.iter().sum();
+        assert!((total - 0.02).abs() < 2.0 * OWED_NOTHING, "sent {total}");
+        assert!(sent.len() < 30, "took {} frames", sent.len());
+    }
+
+    #[test]
+    fn a_stop_and_start_becomes_a_scroll_on_every_frame() {
+        // The held thumb's way on a slow wobble: nothing for three frames, then all of it at once.
+        let mut s = ScrollSpread::default();
+        let mut sent = vec![];
+        for i in 0..40 {
+            let step = if i % 4 == 3 { 0.012 } else { 0.0 };
+            sent.push(s.step(0.0, step).1);
+        }
+        let moving = &sent[8..];
+        assert!(moving.iter().all(|d| *d > 0.0), "a frame sent nothing: {moving:?}");
+        let (lo, hi) = moving.iter().fold((f32::MAX, 0.0f32), |(lo, hi), d| (lo.min(*d), hi.max(*d)));
+        assert!(hi < 0.012 * 0.6 && lo > 0.0005, "steps from {lo} to {hi}");
+    }
+
+    #[test]
+    fn a_flush_gives_everything_owed_and_leaves_nothing() {
+        let mut s = ScrollSpread::default();
+        let first = s.step(0.004, 0.03);
+        let rest = s.flush();
+        assert!(((first.0 + rest.0) - 0.004).abs() < 1e-6 && ((first.1 + rest.1) - 0.03).abs() < 1e-6);
+        assert!(!s.owes());
+        assert_eq!(s.step(0.0, 0.0), (0.0, 0.0));
+    }
+
+    #[test]
+    fn it_never_turns_a_scroll_back() {
+        // Steps all one way, however uneven, come out all that way.
+        let mut s = ScrollSpread::default();
+        for i in 0..60 {
+            let step = [0.0, 0.03, 0.0, 0.0, 0.001, 0.02][i % 6];
+            assert!(s.step(0.0, step).1 >= 0.0);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

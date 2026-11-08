@@ -242,6 +242,12 @@ pub fn run(
     // The left pad read as a wheel. Absolute positions in, deltas out, and the samples taken
     // across the moment the thumb lifts thrown away rather than scrolled.
     let mut left_scroll = spatiand_input::PadScroll::default();
+    // Its steps, each spread over the frames after it, so the page moves on every frame it moves
+    // at all. See `spatiand_input::ScrollSpread`.
+    let mut left_spread = spatiand_input::ScrollSpread::default();
+    // The room's two thumbs, held still while they only wander. See `spatiand_input::steady`.
+    let mut steady_left = spatiand_input::SteadyPad::default();
+    let mut steady_right = spatiand_input::SteadyPad::default();
     // When the left pad last scrolled, while its gesture has not been ended to the client.
     let mut scrolled_at: Option<std::time::Instant> = None;
     // The triggers read as mouse buttons, the way they are on the desktop: right pulls the left
@@ -1234,6 +1240,15 @@ pub fn run(
                         pressure: 8000,
                     };
                 }
+            }
+            // **The room reads the thumbs held still**: one resting on a button no longer shakes
+            // the pointer on it with every heartbeat, nor one drawn slowly up the pad the page.
+            // The pointer, the wheel, the menus and the keyboard all read these. After `gather`
+            // and the PlayStation pad's: a game's layout reads the pads as they are.
+            if let Some(state) = deck_input.as_mut() {
+                let now = std::time::Instant::now();
+                state.left_pad = steady_left.update(&state.left_pad, now);
+                state.right_pad = steady_right.update(&state.right_pad, now);
             }
             // Rested under a menu, on the waiting screen and through calibration: a game must
             // never be left holding a button that was pressed to work a menu.
@@ -2585,6 +2600,8 @@ pub fn run(
             // every step of the thumb's travel, up revealing what is below as a page does. The
             // pointer reaches only the rows in view.
             if shell.menu_is_open() {
+                // The page's share still owed is not sent once a menu has the wheel.
+                left_spread.forget();
                 match deck_input.as_ref().map(|p| left_scroll.update(&p.left_pad)) {
                     Some(spatiand_input::Scroll::By { dy, .. }) => {
                         menu_scroll += dy;
@@ -2607,6 +2624,7 @@ pub fn run(
                 menu_pad_was = None;
                 if pointers.drag.is_some() {
                     left_scroll.forget();
+                    left_spread.forget();
                 }
             }
 
@@ -2680,6 +2698,7 @@ pub fn run(
                         // The left thumb is half of the gesture, not a wheel. A scroll it was in
                         // the middle of ends as any other does: late, carrying no speed.
                         left_scroll.forget();
+                        left_spread.forget();
                         if scrolled_at.is_some_and(|at| at.elapsed() >= GESTURE_ENDS_AFTER) {
                             pointers.scroll_fling(&mut runtime.state, time_ms);
                             scrolled_at = None;
@@ -2712,6 +2731,7 @@ pub fn run(
                         if gesturing {
                             // A gesture is not a scroll.
                             left_scroll.forget();
+                            left_spread.forget();
                             if let Some(delta) = two_handed {
                                 let focused = runtime
                                     .state
@@ -2775,18 +2795,27 @@ pub fn run(
                             // The left pad is the wheel, and it turns whatever the cursor is
                             // on -- which is the right pad's target when that thumb is down.
                             if let Some(p) = pads.as_ref() {
-                                match left_scroll.update(&p.left_pad) {
-                                    // Natural direction: dragging the thumb up sends the
-                                    // content up, which is what every touchpad does.
-                                    spatiand_input::Scroll::By { dx, dy } => {
-                                        pointers.scroll(
-                                            &mut runtime.state,
-                                            -(dx as f64) * SCROLL_SCALE,
-                                            dy as f64 * SCROLL_SCALE,
-                                            time_ms,
-                                        );
-                                        scrolled_at = Some(std::time::Instant::now());
-                                    }
+                                let scroll = left_scroll.update(&p.left_pad);
+                                // This frame's share of the steps so far; all of it before a
+                                // fling, which is thrown at the speed of the last steps given.
+                                let (dx, dy) = match scroll {
+                                    spatiand_input::Scroll::By { dx, dy } => left_spread.step(dx, dy),
+                                    spatiand_input::Scroll::Fling => left_spread.flush(),
+                                    spatiand_input::Scroll::Idle => left_spread.step(0.0, 0.0),
+                                };
+                                // Natural direction: dragging the thumb up sends the content
+                                // up, which is what every touchpad does.
+                                if dx != 0.0 || dy != 0.0 {
+                                    pointers.scroll(
+                                        &mut runtime.state,
+                                        -(dx as f64) * SCROLL_SCALE,
+                                        dy as f64 * SCROLL_SCALE,
+                                        time_ms,
+                                    );
+                                    scrolled_at = Some(std::time::Instant::now());
+                                }
+                                match scroll {
+                                    spatiand_input::Scroll::By { .. } => {}
                                     // Only ever sent when the thumb left from the rim: the
                                     // client turns this into a kinetic fling, so it is the
                                     // pad saying "carry on", not "settle down".
@@ -2804,6 +2833,7 @@ pub fn run(
                                     // (Chromium gives up after 200 ms, the Mac host after 80).
                                     spatiand_input::Scroll::Idle => {
                                         if !p.left_pad.touched
+                                            && !left_spread.owes()
                                             && scrolled_at.is_some_and(|at| at.elapsed() >= GESTURE_ENDS_AFTER)
                                         {
                                             pointers.scroll_fling(&mut runtime.state, time_ms);

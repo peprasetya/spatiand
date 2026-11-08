@@ -160,6 +160,11 @@ pub fn run(
     let mut right_was_down = false;
     let mut left_was_down = false;
     let mut left_scroll = spatiand_input::PadScroll::default();
+    // Its steps, each spread over the frames after it, as on the Deck. See `spatiand_input::ScrollSpread`.
+    let mut left_spread = spatiand_input::ScrollSpread::default();
+    // The room's two thumbs, held still while they only wander. See `spatiand_input::steady`.
+    let mut steady_left = spatiand_input::SteadyPad::default();
+    let mut steady_right = spatiand_input::SteadyPad::default();
     let mut prefs = crate::prefs::Prefs::load();
     super::adopt_paired_hosts(&mut prefs);
     // A Mac in 2D mode watches no host: its own 2D view has them, and a host shows its windows
@@ -578,6 +583,14 @@ pub fn run(
                 // Pressing the pad clicks where the pointer is, as the phone's tap does.
                 state.right_pad.clicked |= touch.clicked;
                 state.right_pad.touched = true;
+            }
+            // **The room reads the thumbs held still**, as on the Deck: the pointer, whether a
+            // touchpad or the phone moves it, and the wheel. After `gather`, so a game's layout
+            // reads the pads as they are.
+            if let Some(state) = deck_input.as_mut() {
+                let now = Instant::now();
+                state.left_pad = steady_left.update(&state.left_pad, now);
+                state.right_pad = steady_right.update(&state.right_pad, now);
             }
             let layout_resting = shell.menu_is_open() || missing.is_some() || calibration.is_some();
             let delivery = controls.step(&snapshot, layout_resting);
@@ -1439,6 +1452,7 @@ pub fn run(
 
             if shell.menu_is_open() || pointers.drag.is_some() {
                 left_scroll.forget();
+                left_spread.forget();
             }
 
             // Two fingers pinching: on a title bar the window nearer or further; over a window,
@@ -1529,15 +1543,18 @@ pub fn run(
                             // Not while the button is held: the finger that holds it is on the
                             // same glass, and a drag that also scrolled would fight itself.
                             if let Some(p) = pads.as_ref().filter(|p| !p.right_pad.clicked) {
-                                match left_scroll.update(&p.left_pad) {
-                                    spatiand_input::Scroll::By { dx, dy } => pointers.scroll(
-                                        &mut runtime.state,
-                                        -(dx as f64) * SCROLL_SCALE,
-                                        dy as f64 * SCROLL_SCALE,
-                                        time_ms,
-                                    ),
-                                    spatiand_input::Scroll::Fling => pointers.scroll_fling(&mut runtime.state, time_ms),
-                                    spatiand_input::Scroll::Idle => {}
+                                let scroll = left_scroll.update(&p.left_pad);
+                                // This frame's share, as on the Deck; all of it before a fling.
+                                let (dx, dy) = match scroll {
+                                    spatiand_input::Scroll::By { dx, dy } => left_spread.step(dx, dy),
+                                    spatiand_input::Scroll::Fling => left_spread.flush(),
+                                    spatiand_input::Scroll::Idle => left_spread.step(0.0, 0.0),
+                                };
+                                if dx != 0.0 || dy != 0.0 {
+                                    pointers.scroll(&mut runtime.state, -(dx as f64) * SCROLL_SCALE, dy as f64 * SCROLL_SCALE, time_ms);
+                                }
+                                if scroll == spatiand_input::Scroll::Fling {
+                                    pointers.scroll_fling(&mut runtime.state, time_ms);
                                 }
                             }
                         }

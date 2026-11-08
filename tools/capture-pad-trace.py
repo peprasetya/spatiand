@@ -10,6 +10,12 @@ Writes a CSV of raw reports. `tools/analyse-pad-trace.py` reads it back, decimat
 frame rate the compositor actually samples at, and says what the filter would have done.
 
 Both pads are recorded whatever you touch, so one run covers either hand.
+
+    capture-pad-trace.py [out.csv] [--passive SECONDS]
+
+`--passive` records for that long without claiming the controller and without the prompts: for
+while Spatiand's room has it, which already reads the pads in the mode recorded here, so the
+wearer can just use the room (a thumb held on a button, a slow scroll) while this listens.
 """
 import fcntl, glob, os, select, struct, sys, time
 
@@ -40,12 +46,16 @@ def send_feature(fd, payload):
 
 
 def find_node():
-    for path in glob.glob("/sys/class/hidraw/hidraw*"):
+    # The vendor interface, 2, which carries the reports read here and takes the feature reports:
+    # the controller shows three, and which is numbered first changes from boot to boot.
+    for path in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
         try:
-            if VID_PID in open(os.path.join(path, "device", "uevent")).read():
-                return "/dev/" + os.path.basename(path)
+            if VID_PID not in open(os.path.join(path, "device", "uevent")).read():
+                continue
         except OSError:
             continue
+        if os.path.realpath(os.path.join(path, "device")).split("/")[-2].endswith(".2"):
+            return "/dev/" + os.path.basename(path)
     return None
 
 
@@ -59,24 +69,36 @@ def take(fd):
 
 
 def main():
-    out_path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/pad-trace.csv"
+    args = sys.argv[1:]
+    passive = None
+    if "--passive" in args:
+        i = args.index("--passive")
+        passive = float(args[i + 1])
+        del args[i : i + 2]
+    out_path = args[0] if args else "/tmp/pad-trace.csv"
     node = find_node()
     if not node:
         sys.exit("no Valve controller found")
-    fd = os.open(node, os.O_RDWR | os.O_NONBLOCK)
-    take(fd)
-    time.sleep(0.3)
+    if passive is not None:
+        # Read-only: the room has claimed the controller already, and claiming it again would
+        # reset what the room set up.
+        fd = os.open(node, os.O_RDONLY | os.O_NONBLOCK)
+        print(f"reading {node} for {passive:.0f} s, writing {out_path}")
+    else:
+        fd = os.open(node, os.O_RDWR | os.O_NONBLOCK)
+        take(fd)
+        time.sleep(0.3)
 
-    print(f"reading {node}, writing {out_path}\n")
-    print("Do these three things on the LEFT pad, pausing a beat between them:")
-    print("  1. a slow steady swipe up, then lift off cleanly")
-    print("  2. a quick flick, then lift off")
-    print("  3. rest your thumb, press the pad down to click, release, then lift")
-    print("\nRecording for 20 s starting now...")
+        print(f"reading {node}, writing {out_path}\n")
+        print("Do these three things on the LEFT pad, pausing a beat between them:")
+        print("  1. a slow steady swipe up, then lift off cleanly")
+        print("  2. a quick flick, then lift off")
+        print("  3. rest your thumb, press the pad down to click, release, then lift")
+        print("\nRecording for 20 s starting now...")
 
     rows = []
     t0 = time.time()
-    end = t0 + 20.0
+    end = t0 + (passive if passive is not None else 20.0)
     while time.time() < end:
         r, _, _ = select.select([fd], [], [], 0.2)
         if not r:
@@ -116,7 +138,7 @@ def main():
     print(f"\n{len(rows)} reports, {touched} with a thumb down, {clicked} with a click held")
     if touched < 100:
         print("WARNING: very little contact recorded — was a thumb on a pad?")
-    if clicked == 0:
+    if clicked == 0 and passive is None:
         print("WARNING: no click recorded — step 3 is the important one")
     print(f"wrote {out_path}")
 

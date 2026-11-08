@@ -13,6 +13,7 @@
 //! * [`press`] — the pads' clicks: one pressed a mouse button, both a gesture. Also pure.
 //! * [`scroll`] — an absolute pad read as a wheel, including what to do about the thumb
 //!   leaving it. Also a pure state machine.
+//! * [`steady`] — a resting thumb's wander kept off the pointer and the page. Also pure.
 //! * [`trigger`] — an analogue trigger read as a button.
 //! * [`takeover`] — the feature reports that claim the device. The only part that must talk
 //!   to a real controller.
@@ -35,6 +36,7 @@ pub mod report;
 pub mod scroll;
 #[cfg(test)]
 mod scroll_trace;
+pub mod steady;
 pub mod takeover;
 pub mod touch;
 pub mod trigger;
@@ -47,7 +49,8 @@ pub use haptics::{Feel, Pad as HapticPad};
 pub use layout::{Confidence, Control};
 pub use press::{PadClicks, Pressed, Sweep};
 pub use report::{Buttons, ControllerState, Pad};
-pub use scroll::{PadScroll, Scroll};
+pub use scroll::{PadScroll, Scroll, ScrollSpread};
+pub use steady::SteadyPad;
 pub use touch::{Contact, TouchEvent, Touchscreen};
 pub use trigger::Trigger;
 
