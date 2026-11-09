@@ -188,6 +188,20 @@ final class RoomTap {
     }
     static var uptime: Double { Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1e9 }
 
+    /// **The Mac's cursor never on the glasses' display.** Over a window or screen of this Mac's
+    /// the hand moves the cursor itself, and where the glasses' display is next to the screen
+    /// it is on -- the virtual screen on a Mac with no other (MacScreens.leadIfAlone) -- it went
+    /// on across, and macOS drew its arrow over the room. Put back on the nearest edge of the
+    /// main screen; the room's pointer goes on by the hand's travel, as at any edge (`handle`).
+    private func keepOffGlasses(_ location: CGPoint) {
+        guard let glasses = Room.shared.screen.display, CGDisplayBounds(glasses).contains(location) else { return }
+        var main = CGDisplayBounds(CGMainDisplayID())
+        if CGMainDisplayID() == glasses { return }
+        main = main.insetBy(dx: 1, dy: 1)
+        let to = CGPoint(x: min(max(location.x, main.minX), main.maxX), y: min(max(location.y, main.minY), main.maxY))
+        warp(to: to)
+    }
+
     /// Put the cursor back where Spatiand last put it, if macOS has moved it: never on the glasses.
     private func pin(_ location: CGPoint) {
         warpLock.lock()
@@ -614,6 +628,7 @@ final class RoomTap {
         switch type {
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
             let dx = event.getDoubleValueField(.mouseEventDeltaX), dy = event.getDoubleValueField(.mouseEventDeltaY)
+            keepOffGlasses(event.location)
             warpLock.lock(); handMoved = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); warpLock.unlock()
             trace?("\(type.rawValue),\(dx),\(dy),\(event.location.x),\(event.location.y)")
             // A finger on the trackpad has moved the pointer already: this is only macOS's
