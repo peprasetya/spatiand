@@ -10,3 +10,6 @@ glam.workspace = true
 log.workspace = true
 serde.workspace = true
 cosmic-text = "0.19"
+# The room's own symbols, drawn the same on every platform rather than taken from whichever
+# emoji font is installed (src/symbols.rs). The same resvg the room already draws icons with.
+resvg = "0.45"

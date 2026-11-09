@@ -14,7 +14,7 @@ and act.
 
 | | |
 |---|---|
-| Dictation's key | A **mic key on the on-screen keyboard's top strip**, beside the sound toggle. Click to start, click to stop. |
+| Dictation's key | A **mic key on the on-screen keyboard's top strip**, at its right end, opposite the sound toggle (since 2026-11-09). Click to start, click to stop. |
 | Languages | **No switching.** The owner speaks English and Indonesian, often in one sentence. A setting lists the languages spoken (English and Indonesian to start, any of Whisper's); with one listed it is given to Whisper, with several Whisper detects — which kept mixed sentences as spoken in a test, where forcing English *translated* the Indonesian. |
 | Context | What has focus steers Whisper's spelling: a terminal's recent commands and file names, a page's words, a folder's names, a Mac field's text. Spatiand's own apps say it themselves; Mac windows through Accessibility; anything else by its title. |
 | Terminals | Spoken symbols become symbols, then a quick pass of the small model; **never presses Enter**. |
@@ -131,7 +131,10 @@ windows, pressing Enter in a terminal and anything that sends or deletes ask fir
 - **`crates/spatiand-voice`**: phrases cut on the device, hemera's transcription and chat, the
   prompt from the focus, the word list, a terminal's spoken symbols and the clean-up pass.
   `cargo test -p spatiand-voice --test hemera -- --ignored` runs it against hemera end to end.
-- **The mic key** in the right alt's place (room keyboard and the Deck's screen), the microphone
+- **The mic key** (room keyboard and the Deck's screen) -- in the right alt's place until
+  2026-11-09, then at the top strip's right end at the owner's asking, opposite the sound toggle,
+  its microphone drawn by the room's text renderer (`spatiand_render::symbols`) because the Beam
+  Pro had no font that could draw U+1F3A4 and left the key blank -- the microphone
   (`listen.rs`), typing as keystrokes, a terminal's text on the notice card (`dictate.rs`). The
   Mac's menu asks for the microphone. `SPATIAND_LISTEN_WAV` makes a WAV file the microphone; the
   snapshot room's `dictate:` step uses it.

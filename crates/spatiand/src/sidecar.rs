@@ -122,6 +122,14 @@ const DANGER: [f32; 4] = [0.90, 0.32, 0.30, 1.0];
 /// looking like the wrong one was chosen.
 const KEY_GAP: f32 = 0.16;
 
+/// How large the strip's two symbols are set, the speaker and the microphone, as a share of
+/// their cap's height. A label is drawn with its whole line box -- 1.4 em -- fitted to the
+/// size it is given, and both symbols are drawn by the text renderer to ink 0.83 em
+/// (`spatiand_render::symbols`), so at this they ink half the cap. The speaker used to be set
+/// at 1.05, because the Deck's font inked its glyph at barely a third of what was asked for:
+/// with a drawn one that filled the cap.
+const STRIP_SYMBOL: f32 = 0.84;
+
 /// The lowest the brightness slider will go.
 ///
 /// Not a taste decision. At zero the panel is dark, and the control you need in order to
@@ -1551,8 +1559,11 @@ impl Sidecar {
                 let cap = self.cap_rect(area, &rect);
                 let label = keyboard.label(key);
                 // Words are set smaller than letters, so "space" fits its cap without the
-                // letters shrinking to match the longest label on the board.
-                let size = if label.chars().count() > 1 {
+                // letters shrinking to match the longest label on the board. The microphone is
+                // drawn as the speaker beside it is, at the same size: see `STRIP_SYMBOL`.
+                let size = if crate::keyboard_face::is_drawn_symbol(label) {
+                    cap.h * STRIP_SYMBOL
+                } else if label.chars().count() > 1 {
                     cap.h * 0.34
                 } else {
                     cap.h * 0.48
@@ -1576,12 +1587,7 @@ impl Sidecar {
                 });
             }
             let cap = self.cap_rect(area, &spatiand_shell::keyboard::toggle_rect());
-            // Set from the cap's height rather than fitted, and larger than the number alone
-            // suggests: `render` crops a label to its ink horizontally but keeps the full line
-            // box vertically, so a glyph asked for at 62% of the cap inked at barely a third of
-            // it and read as a speck in a long pill. Measured on the Deck's own fonts through
-            // the snapshot backend, the same way the header symbols above were.
-            let size = cap.h * 1.05;
+            let size = cap.h * STRIP_SYMBOL;
             let symbol = crate::keyboard_face::sound_symbol(keyboard);
             if let Some((id, aspect, ink)) = self.label(renderer, text, symbol, size * 1.35) {
                 let width = size * aspect.max(0.01);

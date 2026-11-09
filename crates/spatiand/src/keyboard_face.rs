@@ -42,11 +42,11 @@ const CAP_LATCHED: [f32; 4] = [0.42, 0.68, 1.0, 1.0];
 
 /// The speaker in the strip above the keys, sounding and silent.
 ///
-/// U+1F50A SPEAKER WITH THREE SOUND WAVES and U+1F507 SPEAKER WITH CANCELLATION STROKE. Both
-/// come out of the same font stack the rest of the shell sets its symbols from, monochrome
-/// rather than as colour emoji -- checked by `the_speaker_symbols_are_really_in_the_font`
-/// below, because a missing glyph here is a tofu box on a control with no caption to fall back
-/// on. This is the pair every phone and desktop uses, so it needs no caption.
+/// U+1F50A SPEAKER WITH THREE SOUND WAVES and U+1F507 SPEAKER WITH CANCELLATION STROKE, the
+/// pair every phone and desktop uses, so it needs no caption. Not taken from a font: the text
+/// renderer draws both, and the mic, in the ink colour (`spatiand_render::symbols`). The fonts
+/// had them three different ways -- monochrome on the Deck, coloured emoji on a Mac, and on
+/// the Beam Pro not at all, a blank cap on a control with no caption to fall back on.
 pub const SOUND_ON: &str = "\u{1F50A}";
 pub const SOUND_OFF: &str = "\u{1F507}";
 
@@ -166,6 +166,13 @@ pub fn face(text: &mut TextRenderer, keyboard: &Keyboard, width_px: u32) -> Text
 pub fn is_icon(label: &str) -> bool {
     let mut chars = label.chars();
     matches!((chars.next(), chars.next()), (Some(c), None) if !c.is_ascii())
+}
+
+/// Whether a label is one of the symbols the text renderer draws itself -- the microphone and
+/// the two speakers here (`spatiand_render::symbols`) -- rather than a glyph from a font.
+pub fn is_drawn_symbol(label: &str) -> bool {
+    let mut chars = label.chars();
+    matches!((chars.next(), chars.next()), (Some(c), None) if spatiand_render::symbols::Symbol::of(c).is_some())
 }
 
 /// Which speaker the toggle is showing.
@@ -338,9 +345,10 @@ fn fit_label(
     ink: [u8; 4],
 ) -> TextImage {
     // Room inside the cap. Letters get most of the height; a word has to leave side padding or
-    // it touches the cap's rounded corners.
+    // it touches the cap's rounded corners. A drawn symbol gets a larger em: it is the only
+    // thing on its key, in the strip's shorter caps, and a microphone has to read at a glance.
     let room_w = cap_w * 0.82;
-    let room_h = cap_h * 0.54;
+    let room_h = cap_h * if is_drawn_symbol(label) { 0.62 } else { 0.54 };
     let first = text.render(label, room_h, room_w.max(8.0) as u32, ink);
     let fitted = if first.width as f32 <= room_w || first.width == 0 {
         first
@@ -514,36 +522,70 @@ mod tests {
     }
 
     #[test]
-    fn the_speaker_symbols_are_really_in_the_font() {
-        // The failure this exists to catch is specific: a font stack with neither glyph draws
-        // the same tofu box for both, and the toggle then has two states that look identical
-        // on a control with no caption to fall back on.
+    fn the_speaker_symbols_are_drawn_and_tell_the_two_states_apart() {
+        // On the Beam Pro both used to draw nothing, and a toggle whose two states look the
+        // same -- blank, or the same tofu box -- is a control with no caption to fall back on.
         let mut text = TextRenderer::new();
         let on = text.render(SOUND_ON, 64.0, 256, [255, 255, 255, 255]);
         let off = text.render(SOUND_OFF, 64.0, 256, [255, 255, 255, 255]);
         for (s, image) in [(SOUND_ON, &on), (SOUND_OFF, &off)] {
             assert_eq!(s.chars().count(), 1, "{s:?} is not a single symbol");
             assert!(!s.is_ascii(), "{s:?} should be a symbol, not a letter");
-            assert!(
-                image.width > 0 && image.height > 0,
-                "{s:?} rendered nothing at all"
-            );
+            assert!(image.ink_fraction() > 0.05, "{s:?} drew almost nothing");
         }
         assert!(
             on.width != off.width || on.rgba != off.rgba,
-            "the two speakers draw identically — the font has neither of them"
+            "the two speakers draw identically"
         );
     }
 
     #[test]
-    fn the_microphone_is_really_in_the_font() {
-        // Against a letter of the same size: a tofu box is the same for every missing glyph,
-        // and the mic key has no caption to fall back on.
+    fn the_microphone_is_drawn_and_in_the_keys_ink() {
+        // The owner's report: on the Beam Pro the mic key was a blank cap. Against a missing
+        // glyph too, which is the same box for everything a font lacks.
         let mut text = TextRenderer::new();
-        let mic = text.render(spatiand_shell::keyboard::MIC, 64.0, 256, [255, 255, 255, 255]);
-        let missing = text.render("\u{10FFFD}", 64.0, 256, [255, 255, 255, 255]);
-        assert!(mic.width > 0 && mic.height > 0, "the microphone rendered nothing");
+        let mic = text.render(spatiand_shell::keyboard::MIC, 64.0, 256, INK);
+        let missing = text.render("\u{10FFFD}", 64.0, 256, INK);
+        assert!(mic.ink_fraction() > 0.05, "the microphone drew almost nothing");
         assert!(mic.width != missing.width || mic.rgba != missing.rgba, "the microphone draws as a missing glyph");
+        // In the ink the cap asked for, not in an emoji's own colours.
+        for p in mic.rgba.chunks_exact(4).filter(|p| p[3] > 0) {
+            assert_eq!(&p[..3], &INK[..3], "a pixel of the microphone is {p:?}");
+        }
+    }
+
+    #[test]
+    fn the_mic_key_is_drawn_at_the_top_right_and_lights_there() {
+        // Everything that changes when the microphone opens is inside the mic key's own cell,
+        // at the strip's right end: where the owner asked for it.
+        let mut text = TextRenderer::new();
+        let mut keyboard = Keyboard::default();
+        let off = face(&mut text, &keyboard, 900);
+        keyboard.dictating = spatiand_shell::keyboard::Dictating::Listening;
+        let on = face(&mut text, &keyboard, 900);
+        let cell = cap_rect(&spatiand_shell::keyboard::mic_rect(), on.width, on.height);
+        assert!(cell.0 > on.width as f32 * 0.8 && cell.1 < on.height as f32 * 0.2, "the mic key is at {cell:?}");
+        let (w, h) = (on.width as usize, on.height as usize);
+        let mut changed = 0;
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 4;
+                if on.rgba[i..i + 4] == off.rgba[i..i + 4] {
+                    continue;
+                }
+                changed += 1;
+                let inside = (x as f32) >= cell.0 - 2.0
+                    && (x as f32) <= cell.0 + cell.2 + 2.0
+                    && (y as f32) >= cell.1 - 2.0
+                    && (y as f32) <= cell.1 + cell.3 + 2.0;
+                assert!(inside, "opening the microphone changed the face at ({x}, {y})");
+            }
+        }
+        assert!(changed > 0);
+        // And the microphone is on it: ink unlike its cap, in the middle of the cell.
+        let (cx, cy) = ((cell.0 + cell.2 / 2.0) as usize, (cell.1 + cell.3 / 2.0) as usize);
+        let column: Vec<&[u8]> = (cy - 6..cy + 6).map(|y| &off.rgba[(y * w + cx) * 4..(y * w + cx) * 4 + 4]).collect();
+        assert!(column.windows(2).any(|p| p[0] != p[1]), "the mic key's cap is blank");
     }
 
     #[test]
@@ -646,6 +688,29 @@ mod tests {
         assert!(is_icon(SOUND_ON) && is_icon(SOUND_OFF));
         assert!(!is_icon("space"), "a word is type, however short");
         assert!(!is_icon(""), "nothing at all is not an icon");
+    }
+
+    /// Pictures of the face to look at: `SPATIAND_FACE_PNG=<dir> cargo test --lib -- --ignored
+    /// a_picture_of_the_face`. As it is, listening, and with the sound off, and the mic key
+    /// raised as a pointer over it raises it.
+    #[test]
+    #[ignore]
+    fn a_picture_of_the_face() {
+        let dir = std::path::PathBuf::from(std::env::var("SPATIAND_FACE_PNG").expect("SPATIAND_FACE_PNG=<dir>"));
+        let mut text = TextRenderer::new();
+        let save = |name: &str, image: &TextImage| {
+            image::save_buffer(dir.join(name), &image.rgba, image.width, image.height, image::ExtendedColorType::Rgba8).unwrap();
+        };
+        let mut keyboard = Keyboard::default();
+        save("face.png", &face(&mut text, &keyboard, 1600));
+        keyboard.dictating = spatiand_shell::keyboard::Dictating::Listening;
+        save("face-listening.png", &face(&mut text, &keyboard, 1600));
+        keyboard.dictating = spatiand_shell::keyboard::Dictating::Off;
+        keyboard.click = false;
+        save("face-silent.png", &face(&mut text, &keyboard, 1600));
+        save("mic-raised.png", &cap(&mut text, &keyboard, &spatiand_shell::keyboard::MIC_KEY, 240, Lift::Hover));
+        let line = text.render("\u{1F50A} Songs \u{2014} YouTube \u{00B7} 80%\u{26A1}", 48.0, 1200, INK);
+        save("line.png", &line);
     }
 
     #[test]

@@ -18,11 +18,12 @@
 //!
 //! ## The strip above the keys
 //!
-//! The face is not only keys: a strip along the top carries the sound toggle. It is part of
-//! the face rather than of the resize border because it has to be *hittable* — see
-//! [`CHROME_UNITS`] — and part of the face rather than a thing beside it because the face is
-//! rasterised as one image and hit-tested in one coordinate system, and splitting either of
-//! those is how a control comes to be drawn in one place and pressed in another.
+//! The face is not only rows of keys: a strip along the top carries the sound toggle at its
+//! left end and the dictation key at its right ([`MIC_KEY`]). It is part of the face rather
+//! than of the resize border because it has to be *hittable* — see [`CHROME_UNITS`] — and
+//! part of the face rather than a thing beside it because the face is rasterised as one image
+//! and hit-tested in one coordinate system, and splitting either of those is how a control
+//! comes to be drawn in one place and pressed in another.
 //!
 //! Codes are **evdev** keycodes, the same numbers `/usr/include/linux/input-event-codes.h`
 //! uses. Wayland wants them offset by 8; that offset is applied where the event is sent rather
@@ -144,9 +145,23 @@ pub const KEY_SPACE: u32 = 57;
 /// dictation's -- but it is what keys are told apart by, here and in the caps' cache.
 pub const KEY_VOICECOMMAND: u32 = 0x246;
 
-/// The microphone on the mic key: U+1F3A4, which the shell's font stack has in monochrome
-/// (`keyboard_face`'s test for it).
+/// The microphone on the mic key: U+1F3A4. Not taken from a font: the room's text renderer
+/// draws it, because the Beam Pro's fonts have it only as an emoji it cannot paint and a
+/// Mac's as a coloured picture (`spatiand_render::symbols`).
 pub const MIC: &str = "\u{1F3A4}";
+
+/// The dictation key. In the strip above the rows, at its right end ([`mic_rect`]), rather
+/// than in a row: the owner asked for it at the top right, where it is quicker to reach
+/// (2026-11-09). It is a key like any other to everything that presses, lights and raises
+/// keys -- [`layout`] and [`Keyboard::key_at`] both have it -- so nothing that handles a
+/// [`Role::Dictate`] key had to learn where it went.
+pub const MIC_KEY: Key = Key {
+    label: MIC,
+    shifted: MIC,
+    code: KEY_VOICECOMMAND,
+    width: TOGGLE_UNITS as u8,
+    role: Role::Dictate,
+};
 
 /// The rows, top to bottom.
 pub const ROWS: &[&[Key]] = &[
@@ -214,16 +229,8 @@ pub const ROWS: &[&[Key]] = &[
     &[
         modifier("ctrl", KEY_LEFTCTRL, 6, Modifier::Ctrl),
         modifier("alt", KEY_LEFTALT, 6, Modifier::Alt),
-        wide("space", KEY_SPACE, 26),
-        // Beside the space bar, where a phone has it. In the right alt's place: alt latches,
-        // so one is all a pointer can use, and the left one is still there.
-        Key {
-            label: MIC,
-            shifted: MIC,
-            code: KEY_VOICECOMMAND,
-            width: 6,
-            role: Role::Dictate,
-        },
+        // With the room the mic key had beside it, which moved up into the strip.
+        wide("space", KEY_SPACE, 32),
         wide("←", 105, 4),
         wide("↑", 103, 4),
         wide("↓", 108, 4),
@@ -277,7 +284,8 @@ impl KeyRect {
 /// than the 20% a full row would.
 pub const CHROME_UNITS: u16 = 3;
 
-/// Width of the sound toggle, in quarter-keys: one and a half ordinary keys.
+/// Width of the sound toggle, in quarter-keys: one and a half ordinary keys. The mic key at
+/// the strip's other end is the same size, so the two read as a pair.
 pub const TOGGLE_UNITS: u16 = 6;
 
 fn face_units() -> f64 {
@@ -317,6 +325,24 @@ pub fn toggle_rect() -> KeyRect {
     }
 }
 
+/// Where the mic key sits, in the face's own 0..1 coordinates: the strip's right end, the
+/// toggle's mirror image.
+///
+/// That puts it over `back`, the end [`toggle_rect`] stayed away from because overshooting
+/// backspace there would silence the session without a word. Overshooting it here opens the
+/// microphone, which says so -- the key lights, and the room listens out loud -- and the same
+/// press closes it again.
+pub fn mic_rect() -> KeyRect {
+    let w = MIC_KEY.width as f64 / ROW_UNITS as f64;
+    let h = chrome_fraction();
+    KeyRect {
+        u: 1.0 - w * 0.5,
+        v: h * 0.5,
+        half_u: w * 0.5,
+        half_v: h * 0.5,
+    }
+}
+
 /// Aspect ratio of the whole plate, border included.
 pub fn outer_aspect() -> f64 {
     let face_h = 1.0;
@@ -336,7 +362,7 @@ pub fn face_fraction() -> (f64, f64) {
     (face_w / (face_w + border * 2.0), 1.0 / (1.0 + border * 2.0))
 }
 
-/// Every key with the cell it occupies.
+/// Every key with the cell it occupies: the rows', then the strip's.
 pub fn layout() -> Vec<(&'static Key, KeyRect)> {
     let rows = ROWS.len() as f64;
     let total = ROW_UNITS as f64;
@@ -359,6 +385,7 @@ pub fn layout() -> Vec<(&'static Key, KeyRect)> {
             x += w;
         }
     }
+    out.push((&MIC_KEY, mic_rect()));
     out
 }
 
@@ -427,11 +454,11 @@ impl Keyboard {
         if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
             return None;
         }
-        // The strip above the keys is the one part of the face that is not a key, which is why
-        // `target_at` asks about the toggle before it asks about this.
+        // The strip above the keys has one key, the mic at its right end. The rest of it is
+        // not a key, which is why `target_at` asks about the toggle before it asks about this.
         let top = chrome_fraction();
         if v < top {
-            return None;
+            return mic_rect().contains(u, v).then_some(&MIC_KEY);
         }
         let v = (v - top) / (1.0 - top);
         let rows = ROWS.len();
@@ -597,6 +624,8 @@ mod tests {
         assert_eq!(kb.key_at(0.01, 0.52).unwrap().label, "esc");
         assert_eq!(kb.key_at(0.01, 0.99).unwrap().label, "ctrl");
         assert_eq!(kb.key_at(0.99, 0.99).unwrap().label, "→");
+        // And the top right corner of the face, above the rows, is the mic.
+        assert_eq!(kb.key_at(0.99, 0.01).unwrap().role, Role::Dictate);
     }
 
     #[test]
@@ -638,16 +667,17 @@ mod tests {
 
     #[test]
     fn the_cells_tile_the_face_without_gaps_or_overlap() {
-        // Everything below the strip, and nothing above it.
-        let want = 1.0 - chrome_fraction();
-        let total: f64 = layout()
-            .iter()
-            .map(|(_, r)| r.half_u * 2.0 * r.half_v * 2.0)
-            .sum();
+        // The rows' cells are everything below the strip; the strip holds the mic key alone.
+        let top = chrome_fraction();
+        let (strip, rows): (Vec<_>, Vec<_>) = layout().into_iter().partition(|(_, r)| r.v < top);
+        let want = 1.0 - top;
+        let total: f64 = rows.iter().map(|(_, r)| r.half_u * 2.0 * r.half_v * 2.0).sum();
         assert!(
             (total - want).abs() < 1e-9,
             "cells cover {total} of the face, wanted {want}"
         );
+        assert_eq!(strip.len(), 1);
+        assert_eq!(strip[0].0.role, Role::Dictate);
     }
 
     #[test]
@@ -759,7 +789,7 @@ mod tests {
 
     #[test]
     fn no_two_keys_share_a_code() {
-        let mut codes: Vec<u32> = ROWS.iter().flat_map(|r| r.iter()).map(|k| k.code).collect();
+        let mut codes: Vec<u32> = layout().iter().map(|(k, _)| k.code).collect();
         codes.sort_unstable();
         let before = codes.len();
         codes.dedup();
@@ -839,13 +869,16 @@ mod tests {
     fn the_strip_sits_above_every_key_and_takes_none_of_their_room() {
         let top = chrome_fraction();
         assert!(top > 0.0, "there is no strip to put the toggle in");
-        for (k, rect) in layout() {
+        for (k, rect) in layout().into_iter().filter(|(k, _)| k.role != Role::Dictate) {
             assert!(
                 rect.v - rect.half_v >= top - 1e-9,
                 "{:?} reaches up into the strip",
                 k.label
             );
         }
+        // The mic key is in it, all of it.
+        let m = mic_rect();
+        assert!(m.v + m.half_v <= top + 1e-9, "the mic key overlaps the keys");
         // And the toggle is inside it, not hanging down into the top row of keys.
         let t = toggle_rect();
         assert!(t.v + t.half_v <= top + 1e-9, "the toggle overlaps the keys");
@@ -882,6 +915,33 @@ mod tests {
         // Just below it is the top row of keys, not the toggle again.
         let (ku, kv) = plate(t.u, chrome_fraction() + 0.02);
         assert!(matches!(kb.target_at(ku, kv), Some(Target::Key(_))));
+    }
+
+    #[test]
+    fn the_mic_key_is_at_the_strips_right_end_and_pressable() {
+        // Where the owner asked for it: the top right of the keyboard.
+        let kb = Keyboard::default();
+        let (m, t) = (mic_rect(), toggle_rect());
+        assert!((m.u + m.half_u - 1.0).abs() < 1e-9, "not flush with the right edge");
+        assert!(m.half_v * 2.0 >= t.half_v * 2.0 - 1e-9 && m.half_u * 2.0 >= t.half_u * 2.0 - 1e-9, "smaller than the toggle it mirrors");
+        assert!(m.u - m.half_u > t.u + t.half_u, "it overlaps the toggle");
+        // On the plate it is the mic key, not the frame and not the toggle...
+        let (fw, fh) = face_fraction();
+        let plate = |u: f64, v: f64| (u * fw + (1.0 - fw) * 0.5, v * fh + (1.0 - fh) * 0.5);
+        let (pu, pv) = plate(m.u, m.v);
+        match kb.target_at(pu, pv) {
+            Some(Target::Key(k)) => assert_eq!(k.role, Role::Dictate),
+            other => panic!("the mic key's centre is {other:?}"),
+        }
+        // ...just below it is backspace...
+        let (ku, kv) = plate(m.u, chrome_fraction() + 0.02);
+        assert!(matches!(kb.target_at(ku, kv), Some(Target::Key(k)) if k.code == KEY_BACKSPACE));
+        // ...and the strip between the two controls is nothing anyone pressed.
+        assert!(kb.key_at(0.5, chrome_fraction() * 0.5).is_none());
+        // It is gone from the rows, and the space bar has its room.
+        assert!(ROWS.iter().flat_map(|r| r.iter()).all(|k| k.role != Role::Dictate));
+        let space = ROWS[4].iter().find(|k| k.code == KEY_SPACE).unwrap();
+        assert_eq!(space.width, 32);
     }
 
     #[test]

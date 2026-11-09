@@ -1101,9 +1101,9 @@ pub fn run(
     // hover state without a controller in hand.
     let hovered_keys: Vec<&'static spatiand_shell::keyboard::Key> =
         match std::env::var("SPATIAND_VIEW_HOVER") {
-            Ok(want) if !want.is_empty() => spatiand_shell::keyboard::ROWS
-                .iter()
-                .flat_map(|r| r.iter())
+            Ok(want) if !want.is_empty() => spatiand_shell::keyboard::layout()
+                .into_iter()
+                .map(|(k, _)| k)
                 .find(|k| k.label == want)
                 .into_iter()
                 .collect(),
@@ -1112,9 +1112,9 @@ pub fn run(
     // `SPATIAND_VIEW_PRESS=h` draws that key pressed, the same way.
     let pressed_keys: Vec<&'static spatiand_shell::keyboard::Key> =
         match std::env::var("SPATIAND_VIEW_PRESS") {
-            Ok(want) if !want.is_empty() => spatiand_shell::keyboard::ROWS
-                .iter()
-                .flat_map(|r| r.iter())
+            Ok(want) if !want.is_empty() => spatiand_shell::keyboard::layout()
+                .into_iter()
+                .map(|(k, _)| k)
                 .find(|k| k.label == want)
                 .into_iter()
                 .collect(),

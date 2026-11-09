@@ -11,6 +11,7 @@ pub mod panel;
 pub mod pip;
 pub mod ray;
 pub mod sky;
+pub mod symbols;
 pub mod text;
 
 pub use camera::{eye_for, eyes_for, sbs_viewport, Eye, EyeSide, StereoConfig};
