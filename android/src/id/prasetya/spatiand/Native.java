@@ -101,4 +101,40 @@ final class Native {
 
     /** A line for the phone's screen. */
     static native String status();
+
+    /**
+     * The phone's apps, for the room's launcher (Shell.listApps): a JSON list of objects with
+     * "name", "exec" ("package/activity") and "icon" (a PNG's path).
+     */
+    static native void apps(String json);
+
+    /** Whether Spatiand's shell helper is there, which Android's apps in the room need. */
+    static native void shellReady(boolean ready);
+
+    /** A display the room shows an app on has no app left on it: its window goes. */
+    static native void appGone(int display);
+
+    /** Open one of the phone's apps ("package/activity") in the room, as the launcher does. */
+    static native void openApp(String component, String label);
+
+    /** The helper saw an app begin, or stop, hiding its picture (a FLAG_SECURE window). */
+    static native void appSecure(int display, boolean on);
+
+    /** The glasses lent to one of the phone's apps, flat, or given back to the room. */
+    static native void flat(boolean on);
+
+    /** A click at x,y in the newest of the phone's apps' windows, through the room's own input. */
+    static native void appsTap(int x, int y);
+
+    /** A word for the wearer about the phone's apps: "Android apps", a line break, then what. */
+    static native void appsSay(String text);
+
+    /**
+     * Pair the key at keyPath (PKCS#8 DER) with the phone's Wireless debugging, listed there as
+     * name. Blocks; "" when paired, or what went wrong. crates/spatiand-adb.
+     */
+    static native String adbPair(String host, int port, String code, String keyPath, String name);
+
+    /** Run a command as the shell user through Wireless debugging. Blocks; its output, or "error: ...". */
+    static native String adbRun(String host, int port, String keyPath, String command);
 }

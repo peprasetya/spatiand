@@ -92,9 +92,21 @@ public class MainActivity extends Activity implements SensorEventListener {
     /** Each gamepad's gyro listener, so it can be let go of when the pad goes. */
     final Map<Integer, SensorEventListener> padGyros = new HashMap<>();
 
+    /** The activity while it exists, for what reaches it from the room's threads (Shell). */
+    static volatile MainActivity running;
+
+    /** An app was installed, removed or changed: the launcher's list is made again. */
+    final BroadcastReceiver packagesChanged = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            Shell.listApps(context);
+        }
+    };
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        running = this;
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         Native.configDir(getFilesDir().getPath(), getCacheDir().getPath());
         Native.xkbDir(unpackLayouts());
@@ -103,6 +115,7 @@ public class MainActivity extends Activity implements SensorEventListener {
         File movies = getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES);
         if (movies != null) Native.recordingsDir(movies.getPath());
         Native.begin();
+        openAsked(getIntent());
 
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
@@ -173,6 +186,14 @@ public class MainActivity extends Activity implements SensorEventListener {
         orange.addAction(ORANGE_UP);
         registerReceiver(orangeKey, orange, Context.RECEIVER_EXPORTED);
         getSystemService(DisplayManager.class).registerDisplayListener(displays, ui);
+        // The phone's own apps for the room's launcher, again whenever one comes or goes.
+        Shell.init(this);
+        Shell.listApps(this);
+        IntentFilter packages = new IntentFilter(Intent.ACTION_PACKAGE_ADDED);
+        packages.addAction(Intent.ACTION_PACKAGE_REMOVED);
+        packages.addAction(Intent.ACTION_PACKAGE_CHANGED);
+        packages.addDataScheme("package");
+        registerReceiver(packagesChanged, packages, Context.RECEIVER_EXPORTED);
 
         sensors = getSystemService(SensorManager.class);
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
@@ -371,6 +392,16 @@ public class MainActivity extends Activity implements SensorEventListener {
             }
             if (ask == null && !asked.getBoolean(a.name, false)) ask = a;
         }
+        // The phone's own apps in the room need Spatiand's shell helper, which Spatiand starts
+        // through Wireless debugging once it has paired with it (AdbStarter).
+        if (!AdbStarter.paired(this)) {
+            Button pair = new Button(this);
+            pair.setText("Let Spatiand open the phone's apps in the room");
+            pair.setOnClickListener(v -> AdbStarter.beginPairing(this));
+            allows.addView(pair, new LinearLayout.LayoutParams(-1, -2));
+        } else {
+            AdbStarter.start(this, true);
+        }
         if (ask == null || asking != null) return;
         Access a = ask;
         Log.i(TAG, "asking for " + a.name);
@@ -401,6 +432,19 @@ public class MainActivity extends Activity implements SensorEventListener {
     View pressable(RoundButton.Icon icon, int which) {
         RoundButton b = new RoundButton(this, icon);
         b.setOnTouchListener((v, e) -> {
+            if (flatFrom >= 0) {
+                // Lent flat: ⋯ gives the glasses back to the room, B is the app's Back.
+                if (e.getActionMasked() == MotionEvent.ACTION_UP) {
+                    buzz(0);
+                    if (which == 1) {
+                        endFlat();
+                    } else if (which == 2 && flatOn >= 0) {
+                        Shell.appKey(flatOn, 0, android.view.KeyEvent.KEYCODE_BACK, 0, 0);
+                        Shell.appKey(flatOn, 1, android.view.KeyEvent.KEYCODE_BACK, 0, 0);
+                    }
+                }
+                return true;
+            }
             if (e.getActionMasked() == MotionEvent.ACTION_DOWN) {
                 Native.button(which, true);
                 buzz(0);
@@ -801,10 +845,42 @@ public class MainActivity extends Activity implements SensorEventListener {
         super.onNewIntent(intent);
         // Plugged in again while already running.
         if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(intent.getAction())) takeGlasses(true);
+        openAsked(intent);
+    }
+
+    /** An app to open in the room, as its launcher does: "package/activity". */
+    static final String OPEN_APP = "id.prasetya.spatiand.OPEN_APP";
+
+    /**
+     * Android asking for one of its apps in the room, by an extra on the intent that started or
+     * reached this activity: adb's way to try an app there without the glasses' pointer.
+     *
+     * <pre>  am start -n id.prasetya.spatiand/.MainActivity --es id.prasetya.spatiand.OPEN_APP pkg/activity</pre>
+     */
+    void openAsked(Intent intent) {
+        // A click at x,y in the newest of the phone's apps' windows, in its own pixels: adb's way
+        // to try the room's input to them with the phone locked, when its touch area cannot.
+        String tap = intent == null ? null : intent.getStringExtra(OPEN_APP + "_TAP");
+        if (tap != null && tap.matches("\\d+,\\d+")) {
+            String[] at = tap.split(",");
+            Native.appsTap(Integer.parseInt(at[0]), Integer.parseInt(at[1]));
+        }
+        String component = intent == null ? null : intent.getStringExtra(OPEN_APP);
+        if (component == null || !component.contains("/")) return;
+        String label = component;
+        try {
+            label = getPackageManager().getActivityInfo(android.content.ComponentName.unflattenFromString(component), 0)
+                    .loadLabel(getPackageManager()).toString();
+        } catch (Exception unknown) {
+            // Its name, then.
+        }
+        Native.openApp(component, label);
     }
 
     @Override
     protected void onDestroy() {
+        if (running == this) running = null;
+        endFlat();
         ui.removeCallbacks(refresh);
         ui.removeCallbacks(rumbler);
         getSystemService(InputManager.class).unregisterInputDeviceListener(padsListener);
@@ -813,6 +889,7 @@ public class MainActivity extends Activity implements SensorEventListener {
         unregisterReceiver(usbAttached);
         unregisterReceiver(usbDetached);
         unregisterReceiver(orangeKey);
+        unregisterReceiver(packagesChanged);
         closeGlassesWindow();
         Native.stop();
         if (connection != null) connection.close();
@@ -822,6 +899,105 @@ public class MainActivity extends Activity implements SensorEventListener {
     @Override
     public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
         if (request == BluetoothBridge.PERMISSION_REQUEST) BluetoothBridge.permissionsAnswered();
+        if (request == AdbStarter.NOTIFICATIONS_REQUEST) AdbStarter.notificationsAnswered(this);
+    }
+
+    // ------------------------------------------------------------------ an app, flat
+
+    /**
+     * The app on {@code flatFrom}'s display, lent the glasses flat (its note's button: an app
+     * that hides its picture shows black in the room, and is seen only on a real screen); the
+     * glasses' display it is on, once they are in mono; and its name, for the phone's screen.
+     */
+    int flatFrom = -1, flatOn = -1;
+    String flatLabel = "";
+    /** When the finger lent to the app went down, as its MotionEvents need. */
+    long flatDown;
+
+    /** Lend the glasses to the app on a display: the room lets go of them, they go mono. */
+    void showFlat(int appDisplay, String label) {
+        if (flatFrom >= 0 || glassesDisplay() == null) return;
+        Log.i(TAG, "lending the glasses to " + label + ", flat");
+        flatFrom = appDisplay;
+        flatLabel = label;
+        Native.flat(true);
+        closeGlassesWindow();
+        lendWhenMono();
+    }
+
+    /**
+     * Put the app on the glasses once their display is in mono: the switch takes their display
+     * away and brings it back at 1920 wide, under a new id, and an app moved there before would
+     * be put back on the phone with it. The stand-in display has no modes: at once.
+     */
+    void lendWhenMono() {
+        if (flatFrom < 0 || flatOn >= 0) return;
+        Display d = glassesDisplay();
+        if (d == null) return;
+        boolean standIn = STAND_IN.equals(d.getName());
+        Display.Mode mode = d.getMode();
+        if (!standIn && mode.getPhysicalWidth() >= 2 * mode.getPhysicalHeight()) return;
+        flatOn = d.getDisplayId();
+        Shell.moveApp(flatFrom, flatOn);
+    }
+
+    /** Give the glasses back to the room: the app back on its display, the room side by side. */
+    void endFlat() {
+        if (flatFrom < 0) return;
+        Log.i(TAG, "the glasses are given back to the room");
+        if (flatOn >= 0) Shell.moveApp(flatOn, flatFrom);
+        flatFrom = -1;
+        flatOn = -1;
+        Native.flat(false);
+        showOnGlasses();
+    }
+
+    /** Whether the lent app's finger is down. */
+    boolean flatTouching;
+
+    /**
+     * The touch area as the lent app's touchscreen: the whole area its screen, and the first
+     * finger to touch it its finger, until that one lifts.
+     */
+    boolean flatTouch(MotionEvent e, float w, float h) {
+        if (flatFrom < 0) return false;
+        Display d = flatOn >= 0 ? getSystemService(DisplayManager.class).getDisplay(flatOn) : null;
+        if (d == null) return true;
+        Display.Mode mode = d.getMode();
+        int index = e.getActionIndex();
+        boolean first = e.getPointerId(index) == 0;
+        int action;
+        switch (e.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                flatDown = android.os.SystemClock.uptimeMillis();
+                flatTouching = true;
+                action = MotionEvent.ACTION_DOWN;
+                break;
+            case MotionEvent.ACTION_MOVE:
+                if (!flatTouching || (index = e.findPointerIndex(0)) < 0) return true;
+                action = MotionEvent.ACTION_MOVE;
+                break;
+            case MotionEvent.ACTION_POINTER_UP:
+                if (!flatTouching || !first) return true;
+                flatTouching = false;
+                action = MotionEvent.ACTION_UP;
+                break;
+            case MotionEvent.ACTION_UP:
+                if (!flatTouching) return true;
+                flatTouching = false;
+                action = MotionEvent.ACTION_UP;
+                break;
+            case MotionEvent.ACTION_CANCEL:
+                if (!flatTouching) return true;
+                flatTouching = false;
+                action = MotionEvent.ACTION_CANCEL;
+                break;
+            default:
+                return true;
+        }
+        float x = e.getX(index) / w * mode.getPhysicalWidth(), y = e.getY(index) / h * mode.getPhysicalHeight();
+        Shell.touch(flatOn, action, x, y, flatDown);
+        return true;
     }
 
     // ------------------------------------------------------------------ the glasses' display
@@ -846,6 +1022,11 @@ public class MainActivity extends Activity implements SensorEventListener {
     }
 
     void showOnGlasses() {
+        if (flatFrom >= 0) {
+            // Lent to an app, flat: it goes there once their display is back in mono.
+            lendWhenMono();
+            return;
+        }
         Display d = glassesDisplay();
         if (d == null) {
             Log.i(TAG, "no glasses display yet");
@@ -941,6 +1122,9 @@ public class MainActivity extends Activity implements SensorEventListener {
         @Override
         public void onDisplayRemoved(int id) {
             if (id == presentationDisplay) closeGlassesWindow();
+            // The glasses' display going while lent: the switch to mono, or unplugged. Either
+            // way the app is put on the next one, or comes back with the room.
+            if (id == flatOn) flatOn = -1;
         }
     };
 
@@ -1041,7 +1225,9 @@ public class MainActivity extends Activity implements SensorEventListener {
     final Runnable refresh = new Runnable() {
         @Override
         public void run() {
-            status.setText(Native.status());
+            status.setText(flatFrom >= 0
+                    ? flatLabel + " is on the glasses, flat. Touch here to use it; B is Back, ⋯ returns to the room."
+                    : Native.status());
             String recording = Native.takeRecording();
             if (recording != null) publish(recording);
             ui.postDelayed(this, 1000);

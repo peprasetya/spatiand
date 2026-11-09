@@ -155,10 +155,76 @@ Only what the Deck gets from its hardware is Android's (`crates/spatiand-android
 - The measured head loads.
 
 **Not yet:**
-- Android's own apps as windows.
 - The microphone to a host (the input picker is for show).
 - The Deck's own `crates/spatiand` changes (cfg gates only) have **not been compiled on the
   Deck**.
+
+## Android's own apps in the room — 2026-11-09
+
+The phone's apps are in the room's launcher, with their icons, and each opens in a window of
+its own, framed and moved like any other. What it takes:
+
+- **Spatiand's shell helper** (`ShellHelper.java`, in the APK, run by `app_process` as the
+  shell user) does what only the shell may:
+  - a display per app: TRUSTED, OWN_FOCUS, its own power group and always unlocked, drawing
+    into a surface the room hands it;
+  - the app started there (`IActivityManager.startActivityAsUser` with a launch display);
+  - the room's pointer and keys injected there, as a mouse (`SOURCE_MOUSE`) and a keyboard;
+  - the app's sound taken off the speakers (an `AudioPolicy` loopback mix of its uid) and
+    piped to the room, which places it at the window like a host's;
+  - a screen wake lock on each display while the room draws: a power group of its own keeps
+    its own timeout otherwise, and an app watched without a touch went dark.
+  It hands the app its Binder through `ShellProvider` (a content provider only the shell is
+  answered by) and answers no uid but the app's. One runs at a time.
+- **The room** (`crates/spatiand-android/src/android/apps.rs`) makes each window through the
+  same in-process Wayland client as a host's windows (`crate::remote::client`), the way the
+  Mac shows its own apps. The display draws into an `AImageReader`; its newest buffer reaches
+  the compositor through the window's placeholder token, as a decoded host picture does. A
+  resize gives the display a new reader of the new size. App ids are
+  `remote.android.<package>`, so title bar icons, controller layouts and sound slots key on
+  them as for a host.
+- **Started by Spatiand itself** (`AdbStarter.java`, `crates/spatiand-adb`), as Shizuku starts
+  itself, so no other app is needed:
+  - once, the wearer pairs Spatiand with Wireless debugging: Developer options → Wireless
+    debugging → "Pair device with pairing code", and the six digits typed into Spatiand's
+    notification (Settings closes the code the moment it is left). Spatiand appears under
+    "Paired devices" as `Spatiand`;
+  - then, whenever the helper is missing and Wireless debugging is on, Spatiand connects to
+    the phone's own adbd with that key and starts the helper. Asked from the launcher, the app
+    opens once the helper has come.
+  - `crates/spatiand-adb` is adb's pairing (TLS 1.3, exported keying material, BoringSSL's
+    SPAKE2, HKDF, AES-GCM, `PeerInfo`) and its TLS transport with the `exec:` service. Its
+    SPAKE2 is checked against BoringSSL itself, both roles (`agrees_with_boringssl`, a
+    BoringSSL peer built from Chromium's copy), and its public key against adb's own
+    `adbkey.pub` (`matches_adbs_own`).
+- **An app that hides its picture** (a `FLAG_SECURE` window: banking apps, Authy, incognito
+  tabs) is black in the room: only a SECURE display shows it, and only system apps may make
+  one. The helper reads the windows' flags every two seconds and the room puts a note in the
+  window's place with one button, "Show it on the glasses, flat": the room lets go of the
+  glasses, they go mono, and the app is moved onto their display, where XREAL's placeholder is
+  taken down (`xreal_preview_update`). The phone's touch area is then its touchscreen, B its
+  Back, and ⋯ gives the glasses back to the room. DRM video (a secure layer, not a secure
+  window) is not seen by this yet.
+
+**The helper lives as long as adbd does.** Android stops everything adbd started when adbd
+stops: at a reboot, and when Wireless debugging goes off while USB debugging is off — which
+Android does by itself when the phone leaves its Wi-Fi network, as it did on 2026-11-09 with
+the phone locked and dozing. The shell cannot move out of adbd's cgroup (`/uid_0/pid_<adbd>`;
+`/sys/fs/cgroup/cgroup.procs` is system's), so this cannot be avoided without root. Spatiand
+starts the helper again whenever it is needed and Wireless debugging is on; with "Do that by
+itself" (a notification after the first start) the helper grants Spatiand
+`WRITE_SECURE_SETTINGS`, and Spatiand turns Wireless debugging on itself.
+
+**Kept as Android plays them:** the sound of apps with the system's uid (Settings: taking it
+would take every sound the system makes), of apps that forbid capture
+(`ALLOW_CAPTURE_BY_NONE`), and calls.
+
+**Testing with no glasses and the phone locked:** `tools/beam-stand-in/run.sh start` (it now
+holds its display lit with a wake lock, or it slept seconds after a locked phone did, and
+Android froze Spatiand as hidden); `tools/beam-shell/run.sh start` starts the helper over adb;
+`am start -n id.prasetya.spatiand/.MainActivity --es id.prasetya.spatiand.OPEN_APP
+pkg/activity` opens an app in the room, and `--es id.prasetya.spatiand.OPEN_APP_TAP x,y`
+clicks in the newest app's window through the room's own input path.
 
 ## Consequences for the design
 
@@ -167,5 +233,5 @@ Only what the Deck gets from its hardware is Android's (`crates/spatiand-android
 - **Shell privilege is needed only for** hosting other Android apps (TRUSTED virtual
   displays), injecting input into them and toggling Nebula. The placeholder is drawn
   over instead (above).
-  Android revokes it at every reboot. Getting it back on the device itself (Shizuku) uses
-  wireless debugging, which Android enables only while connected to Wi-Fi.
+  Android revokes it at every reboot. Spatiand gets it back on the device itself through
+  Wireless debugging (above), which Android enables only while connected to Wi-Fi.

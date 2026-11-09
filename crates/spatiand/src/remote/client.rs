@@ -56,6 +56,10 @@ pub struct Window {
     /// On Android, what stands in for the picture: see [`Placeholder`].
     #[cfg(any(target_os = "android", target_os = "macos"))]
     placeholder: Option<Placeholder>,
+    /// A still image of this side's own making shown in place of the picture: see
+    /// [`Client::show_pixels`].
+    #[cfg(any(target_os = "android", target_os = "macos"))]
+    still: Option<wl_buffer::WlBuffer>,
 }
 
 /// A buffer the size of a remote window's picture, carrying a token instead of the picture.
@@ -220,6 +224,8 @@ impl Client {
                 xr: None,
                 #[cfg(any(target_os = "android", target_os = "macos"))]
                 placeholder: None,
+                #[cfg(any(target_os = "android", target_os = "macos"))]
+                still: None,
             },
         );
     }
@@ -554,6 +560,50 @@ impl Client {
             }
         }
         window.surface.commit();
+        if let Some(still) = window.still.take() {
+            still.destroy();
+        }
+        Ok(())
+    }
+
+    /// Show pixels of this side's own making in place of a window's picture: a still image,
+    /// `size` pixels of Xrgb8888 (blue, green, red, unused, in memory). On Android, the note an
+    /// app that hides its picture gets (`spatiand-android`'s `apps`). The next [`Client::show`]
+    /// puts the picture back.
+    #[cfg(any(target_os = "android", target_os = "macos"))]
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    pub fn show_pixels(&mut self, id: u32, size: (u32, u32), pixels: &[u8]) -> Result<(), String> {
+        let handle = self.handle.clone();
+        let shm = self.shm.clone();
+        let Some(window) = self.windows.get_mut(&id) else {
+            return Ok(());
+        };
+        let bytes = (size.0 * size.1 * 4) as usize;
+        if pixels.len() != bytes {
+            return Err(format!("{} bytes for a picture of {}x{}", pixels.len(), size.0, size.1));
+        }
+        let file = shared_memory(pixels)?;
+        let pool = shm.create_pool(std::os::fd::AsFd::as_fd(&file), bytes as i32, &handle, ());
+        let buffer = pool.create_buffer(
+            0,
+            size.0 as i32,
+            size.1 as i32,
+            size.0 as i32 * 4,
+            wl_shm::Format::Xrgb8888,
+            &handle,
+            (id, u32::MAX),
+        );
+        pool.destroy();
+        window.surface.attach(Some(&buffer), 0, 0);
+        window.surface.damage_buffer(0, 0, size.0 as i32, size.1 as i32);
+        window.surface.commit();
+        if let Some(old) = window.placeholder.take() {
+            spatiand_video::placeholder::forget(old.token);
+            old.buffer.destroy();
+        }
+        if let Some(old) = window.still.replace(buffer) {
+            old.destroy();
+        }
         Ok(())
     }
 
@@ -839,6 +889,28 @@ impl Dispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, ()> for Client {
             state.importable.insert((format, modifier));
         }
     }
+}
+
+/// Memory to share with the compositor, holding `pixels`.
+#[cfg(any(target_os = "android", target_os = "macos"))]
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn shared_memory(pixels: &[u8]) -> Result<std::fs::File, String> {
+    use std::io::{Seek, Write};
+    use std::os::fd::FromRawFd;
+    #[cfg(target_os = "android")]
+    let mut file = {
+        let fd = unsafe { libc::memfd_create(c"spatiand-still".as_ptr(), libc::MFD_CLOEXEC) };
+        if fd < 0 {
+            return Err(format!("could not make shared memory: {}", std::io::Error::last_os_error()));
+        }
+        unsafe { std::fs::File::from_raw_fd(fd) }
+    };
+    #[cfg(not(target_os = "android"))]
+    let mut file = tempfile()?;
+    file.write_all(pixels)
+        .and_then(|_| file.rewind())
+        .map_err(|e| format!("could not fill shared memory: {e}"))?;
+    Ok(file)
 }
 
 /// A placeholder's memory: `bytes` of zeroes, except its magic and token at the start.

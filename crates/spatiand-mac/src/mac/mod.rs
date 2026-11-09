@@ -187,6 +187,11 @@ pub fn launch_local(app: &spatiand_shell::AppEntry) {
     local::launch(app);
 }
 
+/// The Mac's list is complete before the session starts, and read then.
+pub fn local_apps_changed() -> Option<Vec<spatiand_shell::AppEntry>> {
+    None
+}
+
 pub fn return_to_desktop() {
     ffi::tell(ffi::Asked::ReturnToDesktop, "");
 }

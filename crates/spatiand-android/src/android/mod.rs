@@ -1,6 +1,7 @@
 //! What is Android's: where the picture goes, where the input comes from, and the JNI calls
 //! that hand both over from the app.
 
+pub mod apps;
 pub mod backend;
 pub mod egl;
 pub mod explicit_sync;
@@ -85,6 +86,9 @@ pub struct Shared {
     /// Whether the glasses' display is the stand-in tools/beam-stand-in makes: a display with no
     /// glasses behind it, for testing the room on the phone alone.
     pub stand_in: AtomicBool,
+    /// The glasses lent to one of the phone's apps, flat (`apps`, `MainActivity.showFlat`): one
+    /// eye's picture, so mono, and the room drawing nothing until they are given back.
+    pub flat: AtomicBool,
 }
 
 /// The phone's Recenter button, for the session to do as the HUD's Recentre does.
@@ -132,13 +136,18 @@ pub const PANELS: spatiand_shell::DesktopPanels = spatiand_shell::DesktopPanels 
     bluetooth: false,
 };
 
-/// The launcher has only remote applications here: Android's own are not windows yet.
+/// The phone's own apps, each opened in a window of its own (`apps`).
 pub fn local_apps() -> Vec<spatiand_shell::AppEntry> {
-    Vec::new()
+    apps::apps()
 }
 
 pub fn launch_local(app: &spatiand_shell::AppEntry) {
-    log::info!("{} is a local application; none run here", app.name);
+    apps::launch(app);
+}
+
+/// The phone's apps arrive after the session has started, and again on every install.
+pub fn local_apps_changed() -> Option<Vec<spatiand_shell::AppEntry>> {
+    apps::changed()
 }
 
 pub fn return_to_desktop() {
@@ -175,8 +184,11 @@ pub fn glasses_waiting(shared: &Shared, _holding: bool) -> bool {
     shared.usb.lock().unwrap().is_some()
 }
 
-/// Every window on the Beam Pro is a host's, and is the size the room gives any window.
-pub fn size_new_windows(_state: &mut crate::Spatiand, _windows: &mut [crate::scene::WindowQuad]) {}
+/// A window on the Beam Pro is a host's or one of the phone's own apps', and is the size the room
+/// gives any window; a phone app's opened again from the launcher is brought out.
+pub fn size_new_windows(state: &mut crate::Spatiand, _windows: &mut [crate::scene::WindowQuad]) {
+    apps::size_new_windows(state);
+}
 
 /// The Mac's 2D mode, which shows the session's windows on its desktop. The Beam Pro has no
 /// desktop of its own to show them on.
@@ -194,9 +206,11 @@ pub fn local_clipboard() -> Option<crate::remote::LocalClipboard> {
 }
 
 /// A notification to show under the status bar: who it is from, then what it says. Android's
-/// are not read yet.
+/// own are not read yet; what is shown is the room's word about the phone's apps.
 pub fn notice() -> String {
-    String::new()
+    apps::notice()
 }
 
-pub fn notice_pressed() {}
+pub fn notice_pressed() {
+    apps::notice_pressed();
+}

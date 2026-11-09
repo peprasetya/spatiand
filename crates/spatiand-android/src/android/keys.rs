@@ -56,6 +56,25 @@ pub fn from_android(code: i32) -> Option<u32> {
     })
 }
 
+/// Android's `KeyEvent` code for an evdev code: [`from_android`] read the other way, for keys
+/// the room sends an Android app's window (`apps`).
+#[cfg(target_os = "android")]
+pub fn to_android(code: u32) -> Option<i32> {
+    static TABLE: std::sync::OnceLock<std::collections::HashMap<u32, i32>> = std::sync::OnceLock::new();
+    TABLE
+        .get_or_init(|| {
+            let mut table = std::collections::HashMap::new();
+            for android in 0..=300 {
+                if let Some(evdev) = from_android(android) {
+                    table.entry(evdev).or_insert(android);
+                }
+            }
+            table
+        })
+        .get(&code)
+        .copied()
+}
+
 /// evdev codes of A to Z.
 const LETTERS: [u32; 26] = [
     30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50, 49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45,

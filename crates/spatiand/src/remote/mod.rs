@@ -160,8 +160,9 @@ pub fn icon_for(app_id: &str) -> Option<std::path::PathBuf> {
     path.exists().then_some(path)
 }
 
-/// Keep an icon a host sent. Returns the path the launcher should load it from.
-fn store_icon(app_id: &str, png: &[u8]) -> Option<String> {
+/// Keep an icon a host sent -- or, on the Beam Pro, an Android app's (`spatiand-android`'s `apps`).
+/// Returns the path the launcher should load it from.
+pub(crate) fn store_icon(app_id: &str, png: &[u8]) -> Option<String> {
     use std::hash::{Hash, Hasher};
     let dir = icon_dir();
     std::fs::create_dir_all(&dir).ok()?;

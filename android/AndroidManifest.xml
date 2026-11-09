@@ -24,7 +24,19 @@
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <!-- The notification the Wireless debugging pairing code is typed into (AdbStarter). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Turning Wireless debugging on when Spatiand's helper is needed after a restart: granted by
+         the helper itself, only when the wearer asks it to (AdbStarter's "Do that by itself"). -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <uses-feature android:glEsVersion="0x00030000" />
+    <!-- The phone's apps the room's launcher lists (Shell.listApps): what the home screen shows. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
     <application
         android:label="Spatiand"
         android:icon="@mipmap/ic_launcher"
@@ -59,5 +71,13 @@
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
             </intent-filter>
         </receiver>
+        <!-- Where Spatiand's shell helper (ShellHelper, run as the shell user) hands the app its
+             Binder. Exported so the shell can reach it; it answers no one else. -->
+        <!-- The pairing code typed into Spatiand's notification, and its other answers. -->
+        <receiver android:name=".AdbStarter$Typed" android:exported="false" />
+        <provider
+            android:name=".ShellProvider"
+            android:authorities="id.prasetya.spatiand.shell"
+            android:exported="true" />
     </application>
 </manifest>

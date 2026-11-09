@@ -8,7 +8,7 @@
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::sync::atomic::Ordering;
 
-use jni_sys::{jboolean, jclass, jfloat, jint, jobject, jstring, JNIEnv, JNI_FALSE, JNI_TRUE};
+use jni_sys::{jboolean, jclass, jfloat, jint, jmethodID, jobject, jstring, JNIEnv, JNI_FALSE, JNI_TRUE};
 use spatiand_input::phone::Phase;
 use spatiand_input::Control;
 
@@ -27,7 +27,7 @@ unsafe fn java_string(env: *mut JNIEnv, text: jstring) -> Option<String> {
 }
 
 /// A Rust string as a Java one.
-unsafe fn new_string(env: *mut JNIEnv, text: &str) -> jstring {
+pub(super) unsafe fn new_string(env: *mut JNIEnv, text: &str) -> jstring {
     let c = std::ffi::CString::new(text.replace('\0', "")).unwrap_or_default();
     ((**env).v1_1.NewStringUTF)(env, c.as_ptr())
 }
@@ -42,6 +42,7 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_configDir(
     cache: jstring,
 ) {
     logging::init();
+    unsafe { remember_java(env) };
     let (Some(files), Some(cache)) = (unsafe { java_string(env, files) }, unsafe { java_string(env, cache) }) else {
         return;
     };
@@ -93,8 +94,12 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_begin(_env: *mut JNIEnv,
                 Ok(d) => d,
                 Err(e) => return log::error!("no wayland display: {e}"),
             };
-            let display_handle = display.handle();
+            let mut display_handle = display.handle();
             let state = crate::Spatiand::new(&mut display, &event_loop.handle());
+            // Android's own apps' windows come through a client of their own.
+            if let Err(e) = super::apps::attach(&mut display_handle) {
+                log::error!("{e}");
+            }
             let mut runtime = crate::Runtime { state, display_handle };
             log::info!("session started");
             if let Err(e) = super::backend::run(&mut event_loop, &mut display, &mut runtime, &shared) {
@@ -435,4 +440,197 @@ pub fn adopt_paired_hosts(prefs: &mut crate::prefs::Prefs) {
         prefs.save();
         let _ = std::fs::rename(&path, path.with_extension("toml.adopted"));
     }
+}
+
+/// `Native.apps(json)`: the phone's apps, for the launcher. See `Shell.listApps`.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_apps(env: *mut JNIEnv, _class: jclass, json: jstring) {
+    if let Some(json) = unsafe { java_string(env, json) } {
+        super::apps::set_apps(&json);
+    }
+}
+
+/// `Native.shellReady(ready)`: Spatiand's shell helper has come, or gone.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_shellReady(_env: *mut JNIEnv, _class: jclass, ready: jboolean) {
+    super::apps::set_ready(ready != JNI_FALSE);
+}
+
+/// `Native.appGone(display)`: an app's display has nothing left on it.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_appGone(_env: *mut JNIEnv, _class: jclass, display: jint) {
+    super::apps::gone(display);
+}
+
+/// `Native.appSecure(display, on)`: the helper saw an app begin, or stop, hiding its picture.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_appSecure(_env: *mut JNIEnv, _class: jclass, display: jint, on: jboolean) {
+    super::apps::protected(display, on != JNI_FALSE);
+}
+
+/// `Native.flat(on)`: the glasses are lent to one of the phone's apps, flat, or given back.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_flat(_env: *mut JNIEnv, _class: jclass, on: jboolean) {
+    shared().flat.store(on != JNI_FALSE, Ordering::SeqCst);
+}
+
+/// `Native.appsTap(x, y)`: a click in the newest of the phone's apps' windows.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_appsTap(_env: *mut JNIEnv, _class: jclass, x: jint, y: jint) {
+    super::apps::tap(x as f64, y as f64);
+}
+
+/// `Native.appsSay(text)`: the app's word about the phone's apps, for the wearer: "Android
+/// apps", a line break, then what is the matter.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_appsSay(env: *mut JNIEnv, _class: jclass, text: jstring) {
+    if let Some(text) = unsafe { java_string(env, text) } {
+        super::apps::tell(&text);
+    }
+}
+
+/// `Native.openApp(component, label)`: one of the phone's apps into the room, as from the launcher.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_openApp(env: *mut JNIEnv, _class: jclass, component: jstring, label: jstring) {
+    let (Some(component), Some(label)) = (unsafe { java_string(env, component) }, unsafe { java_string(env, label) }) else {
+        return;
+    };
+    super::apps::launch(&spatiand_shell::AppEntry { name: label, exec: component, icon: None, categories: Vec::new() });
+}
+
+// --- Wireless debugging: how the app starts its shell helper itself (crates/spatiand-adb) ---
+
+/// `Native.adbPair(host, port, code, keyPath, name)`: pair the key in `keyPath` (PKCS#8 DER)
+/// with the phone's Wireless debugging, listed there as `name`. Blocks for the exchange; "" when
+/// paired, or what went wrong.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_adbPair(
+    env: *mut JNIEnv,
+    _class: jclass,
+    host: jstring,
+    port: jint,
+    code: jstring,
+    key: jstring,
+    name: jstring,
+) -> jstring {
+    let read = |s| unsafe { java_string(env, s) }.unwrap_or_default();
+    let (host, code, key, name) = (read(host), read(code), read(key), read(name));
+    let result = adb_key(&key).and_then(|key| {
+        let address = std::net::SocketAddr::new(host.parse().map_err(|e| format!("{host}: {e}"))?, port as u16);
+        spatiand_adb::pair(address, &code, &key, &name)
+    });
+    let said = match result {
+        Ok(guid) => {
+            log::info!("paired with Wireless debugging ({guid})");
+            String::new()
+        }
+        Err(e) => {
+            log::warn!("pairing: {e}");
+            e
+        }
+    };
+    unsafe { new_string(env, &said) }
+}
+
+/// `Native.adbRun(host, port, keyPath, command)`: run `command` as the shell user through the
+/// phone's Wireless debugging, with the key paired. Blocks until it ends; its output, or
+/// "error: " and what went wrong.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_adbRun(
+    env: *mut JNIEnv,
+    _class: jclass,
+    host: jstring,
+    port: jint,
+    key: jstring,
+    command: jstring,
+) -> jstring {
+    let read = |s| unsafe { java_string(env, s) }.unwrap_or_default();
+    let (host, key, command) = (read(host), read(key), read(command));
+    let result = adb_key(&key).and_then(|key| {
+        let address = std::net::SocketAddr::new(host.parse().map_err(|e| format!("{host}: {e}"))?, port as u16);
+        let mut adb = spatiand_adb::Connection::connect(address, &key)?;
+        log::info!("adb: {}", adb.banner.split(';').next().unwrap_or(""));
+        adb.exec(&command)
+    });
+    let said = match result {
+        Ok(output) => String::from_utf8_lossy(&output).into_owned(),
+        Err(e) => {
+            log::warn!("adb: {e}");
+            format!("error: {e}")
+        }
+    };
+    unsafe { new_string(env, &said) }
+}
+
+fn adb_key(path: &str) -> Result<spatiand_adb::AdbKey, String> {
+    let der = std::fs::read(path).map_err(|e| format!("no key at {path}: {e}"))?;
+    spatiand_adb::AdbKey::from_pkcs8(&der)
+}
+
+// --- calling the app's Java from the compositor's threads ---
+
+static VM: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+static SHELL_CLASS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+
+/// Keep what calling Java back needs, from a call Java made: the VM, and `Shell` found by the
+/// app's own class loader -- a thread the app did not start sees only the system's classes.
+unsafe fn remember_java(env: *mut JNIEnv) {
+    let mut vm: *mut jni_sys::JavaVM = std::ptr::null_mut();
+    if ((**env).v1_1.GetJavaVM)(env, &mut vm) == jni_sys::JNI_OK && !vm.is_null() {
+        let _ = VM.set(vm as usize);
+    }
+    if SHELL_CLASS.get().is_some() {
+        return;
+    }
+    let class = ((**env).v1_1.FindClass)(env, c"id/prasetya/spatiand/Shell".as_ptr());
+    if class.is_null() {
+        ((**env).v1_1.ExceptionClear)(env);
+        return log::warn!("no Shell class: Android's apps cannot be shown");
+    }
+    let global = ((**env).v1_1.NewGlobalRef)(env, class);
+    ((**env).v1_1.DeleteLocalRef)(env, class);
+    let _ = SHELL_CLASS.set(global as usize);
+}
+
+/// Run `f` with this thread's JNI environment and the `Shell` class, attaching the thread to the
+/// VM the first time (as a daemon, so it never has to be let go of). Local references `f` makes
+/// are dropped after it; a Java exception is logged and cleared. `None` before the app has
+/// called in once.
+pub fn with_shell<R>(f: impl FnOnce(*mut JNIEnv, jclass) -> R) -> Option<R> {
+    let vm = *VM.get()? as *mut jni_sys::JavaVM;
+    let class = *SHELL_CLASS.get()? as jclass;
+    unsafe {
+        let mut env: *mut std::ffi::c_void = std::ptr::null_mut();
+        if ((**vm).v1_2.GetEnv)(vm, &mut env, jni_sys::JNI_VERSION_1_6) != jni_sys::JNI_OK
+            && ((**vm).v1_4.AttachCurrentThreadAsDaemon)(vm, &mut env, std::ptr::null_mut()) != jni_sys::JNI_OK
+        {
+            return None;
+        }
+        let env = env as *mut JNIEnv;
+        if ((**env).v1_2.PushLocalFrame)(env, 16) != 0 {
+            ((**env).v1_1.ExceptionClear)(env);
+            return None;
+        }
+        let result = f(env, class);
+        if ((**env).v1_2.ExceptionCheck)(env) != JNI_FALSE {
+            ((**env).v1_1.ExceptionDescribe)(env);
+            ((**env).v1_1.ExceptionClear)(env);
+        }
+        ((**env).v1_2.PopLocalFrame)(env, std::ptr::null_mut());
+        Some(result)
+    }
+}
+
+/// A static method of `Shell`, by name and JNI signature.
+///
+/// # Safety
+/// `env` and `class` must be what [`with_shell`] handed over.
+pub unsafe fn shell_method(env: *mut JNIEnv, class: jclass, name: &std::ffi::CStr, signature: &std::ffi::CStr) -> Option<jmethodID> {
+    let method = ((**env).v1_1.GetStaticMethodID)(env, class, name.as_ptr(), signature.as_ptr());
+    if method.is_null() {
+        ((**env).v1_1.ExceptionClear)(env);
+        log::warn!("no Shell.{}", name.to_string_lossy());
+        return None;
+    }
+    Some(method)
 }

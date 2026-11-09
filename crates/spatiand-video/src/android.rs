@@ -172,6 +172,42 @@ impl Output {
     }
 }
 
+impl Output {
+    /// A reader for a producer other than a decoder -- an Android app's display (see
+    /// `spatiand-android`'s `apps`) -- of exactly `size`: the window to hand the producer, and
+    /// the output the compositor reads its pictures from by a window's placeholder, as a
+    /// decoder's. The window belongs to the reader and goes with it.
+    pub fn for_window(size: (u32, u32)) -> Result<(Arc<Output>, *mut ndk::ANativeWindow)> {
+        let mut reader = ptr::null_mut();
+        let status = unsafe {
+            ndk::AImageReader_newWithUsage(
+                size.0.max(1) as i32,
+                size.1.max(1) as i32,
+                ndk::AIMAGE_FORMATS::AIMAGE_FORMAT_PRIVATE.0 as i32,
+                ndk::AHardwareBuffer_UsageFlags::AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE.0,
+                MAX_IMAGES,
+                &mut reader,
+            )
+        };
+        if status != ndk::media_status_t::AMEDIA_OK || reader.is_null() {
+            return Err(VideoError::new(format!("no image reader: {status:?}")));
+        }
+        let output = Arc::new(Output { reader, latest: Mutex::new(0) });
+        let mut listener = ndk::AImageReader_ImageListener {
+            context: Arc::as_ptr(&output) as *mut std::ffi::c_void,
+            onImageAvailable: Some(on_image),
+        };
+        unsafe { ndk::AImageReader_setImageListener(reader, &mut listener) };
+        let mut window = ptr::null_mut();
+        if unsafe { ndk::AImageReader_getWindow(reader, &mut window) } != ndk::media_status_t::AMEDIA_OK
+            || window.is_null()
+        {
+            return Err(VideoError::new("the image reader has no surface"));
+        }
+        Ok((output, window))
+    }
+}
+
 // --- the registry the compositor finds a window's pictures through ---
 
 fn registry() -> &'static Mutex<HashMap<u32, Arc<Output>>> {
@@ -488,6 +524,20 @@ pub struct Converted {
 }
 
 impl Converted {
+    /// A picture of `size` that is whatever `output` has newest: how a window that is not a
+    /// decoder's is shown (an Android app's display), as the Mac's own windows are.
+    pub fn of(output: Arc<Output>, size: (u32, u32)) -> Converted {
+        Converted {
+            width: size.0,
+            height: size.1,
+            fourcc: 0,
+            modifier: 0,
+            planes: Vec::new(),
+            timestamp: 0,
+            output,
+        }
+    }
+
     /// There are no pixels on this side to read: they never leave the GPU.
     pub fn to_bgra(&self) -> Result<Vec<u8>> {
         Err(VideoError::new("a picture on Android cannot be read back"))

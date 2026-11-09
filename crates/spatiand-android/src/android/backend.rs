@@ -263,6 +263,9 @@ pub fn run(
     // Asked once per pair of glasses, when they are opened: the display then goes away and
     // comes back double-width, which is a rebuild.
     let mut stereo_asked = false;
+    // Whether the glasses are lent to one of the phone's apps, flat: see `Shared::flat`.
+    #[cfg(target_os = "android")]
+    let mut lent = false;
 
     crate::dmabuf::advertise(&mut runtime.state, &renderer);
     runtime.state.set_screen_refresh(REFRESH_MHZ);
@@ -305,6 +308,25 @@ pub fn run(
                     log::warn!("could not open the glasses: {e}");
                     *shared.status.lock().unwrap() = format!("could not open the glasses: {e}");
                 }
+            }
+        }
+
+        // The glasses lent to one of the phone's apps, flat (`apps`): mono for as long, and side
+        // by side asked for again once they are given back and the room's window is there again.
+        #[cfg(target_os = "android")]
+        {
+            let flat = shared.flat.load(std::sync::atomic::Ordering::SeqCst);
+            if flat != lent {
+                lent = flat;
+                if flat {
+                    if let Some(x) = hmd.as_mut() {
+                        match x.set_display_mode(DisplayMode::Mono) {
+                            Ok(m) => log::info!("the glasses are lent flat: display mode -> {m:?}"),
+                            Err(e) => log::warn!("could not put the glasses in mono: {e}"),
+                        }
+                    }
+                }
+                stereo_asked = false;
             }
         }
 
@@ -759,6 +781,11 @@ pub fn run(
             );
 
             shell_events.extend(typed_event.take());
+            // This machine's own applications, when their list has changed: the phone's arrive
+            // after the session has started, and again whenever one is installed or removed.
+            if let Some(apps) = super::local_apps_changed() {
+                shell.set_apps(apps);
+            }
             remotes.tick(&mut runtime.display_handle, &mut prefs, &mut shell);
             runtime.state.quiet_hosts = remotes.quiet();
             crate::clipboard::exchange(&mut remotes, &mut runtime.state);

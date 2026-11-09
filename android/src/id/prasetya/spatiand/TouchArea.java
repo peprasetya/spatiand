@@ -32,6 +32,9 @@ public class TouchArea extends SurfaceView implements SurfaceHolder.Callback {
     public boolean onTouchEvent(MotionEvent e) {
         float w = Math.max(1, getWidth()), h = Math.max(1, getHeight());
         int action = e.getActionMasked();
+        // One of the phone's apps lent the glasses, flat: the touch area is its touchscreen.
+        MainActivity main = MainActivity.running;
+        if (main != null && main.flatTouch(e, w, h)) return true;
         switch (action) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN:
