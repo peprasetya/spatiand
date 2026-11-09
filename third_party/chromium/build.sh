@@ -315,6 +315,9 @@ ARGS=$(sed -e 's/^chrome_pgo_phase=0/chrome_pgo_phase=2/' \
            -e 's/^enable_dav1d_decoder=true/enable_dav1d_decoder=false/' \
            $CR/cromite/build/cromite.gn_args)
 gn gen --args="target_os = \"mac\" $ARGS target_cpu = \"arm64\" enable_pdf = true enable_plugins = true enable_platform_ac3_eac3_audio = true" out/mac
+# A real python3 first: the tools the build runs by "env python3" (the linker's driver) otherwise
+# get macOS's stub, which looks for one in Xcode, and Xcode has none.
+export PATH="$CR/chromium/src/third_party/cpython3/host/bin:$PATH"
 nice -n 10 python3 $CR/depot_tools/siso.py ninja -C out/mac chrome --offline
 cp $CR/cromite/build/RELEASE out/mac/
 EOF
