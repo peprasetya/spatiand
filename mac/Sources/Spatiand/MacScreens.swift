@@ -77,9 +77,8 @@ enum MacScreens {
     }
 
     /// **A Mac with no screen but the glasses** (a Mac mini at a desk with nothing else on it):
-    /// the virtual screen is made and becomes the main one, at the top left, the glasses to its
-    /// right. The menu bar, the Dock and every window the Mac opens are then on a screen nobody
-    /// looks at but the room, which shows them as windows; the glasses show the room alone, and
+    /// the virtual screen is made and becomes the main one, the glasses to its left. The menu
+    /// bar, the Dock and every window the Mac opens are then on a screen nobody looks at but the room, which shows them as windows; the glasses show the room alone, and
     /// the pointer the room has hidden rests there rather than over the room's picture. For this
     /// login only, so a monitor plugged in later is not found arranged around a screen gone.
     /// Nothing is changed while any other display is there. Says whether it did it.
@@ -100,14 +99,18 @@ enum MacScreens {
         // size until the displays are arranged, and taking it then, macOS put the glasses back
         // at the top left as the main screen (an M6 Mac mini, 2026-11-09).
         for attempt in 1...3 {
-            if CGMainDisplayID() == virtual, CGDisplayBounds(glasses).minX >= CGDisplayBounds(virtual).maxX {
+            if CGMainDisplayID() == virtual, CGDisplayBounds(glasses).maxX <= CGDisplayBounds(virtual).minX {
                 if attempt > 1 { print("screens: the glasses are this Mac's only screen; the virtual one is the main screen (\(attempt - 1) arrangement(s))") }
                 return true
             }
             var config: CGDisplayConfigRef?
             guard CGBeginDisplayConfiguration(&config) == .success else { return false }
             CGConfigureDisplayOrigin(config, virtual, 0, 0)
-            CGConfigureDisplayOrigin(config, glasses, Int32(max(CGDisplayBounds(virtual).width, CGFloat(virtualSize.width))), 0)
+            // **The glasses to its left**: macOS draws its arrow to the right of where it points, so
+            // a cursor stopped at the virtual screen's right edge, with the glasses there, had its
+            // arrow drawn over the room (RoomTap.keepOffGlasses). Stopped at the left edge, the
+            // arrow is on the virtual screen.
+            CGConfigureDisplayOrigin(config, glasses, -Int32(CGDisplayBounds(glasses).width), 0)
             guard CGCompleteDisplayConfiguration(config, .forSession) == .success else { break }
             if let screen { settle(screen) }
             usleep(300_000)
