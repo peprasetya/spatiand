@@ -121,6 +121,10 @@ if [ "$CHROMIUM_TARGET" = android ]; then
         patch -p1 -F 3 --no-backup-if-mismatch -s < "$p"
     done
 fi
+# For a Mac, the port's own (mac/, docs/spatimesh-mac-port.md).
+if [ "$CHROMIUM_TARGET" = mac ]; then
+    for p in $CR/mac-patches/0*.patch; do git am -q "$p"; done
+fi
 EOF
 }
 
@@ -285,8 +289,40 @@ cp /cr/cromite/build/RELEASE out/android/
 EOF
 }
 
+build_mac() {
+    # Spatiand's own FFmpeg for the Mac (third_party/ffmpeg, `build.sh mac`, as make-app.sh makes
+    # it): the same as the Deck's and the Beam Pro's, staged where patch 0003 looks for it.
+    ffmpeg=${SPATIAND_FFMPEG:-$here/../ffmpeg/out/mac}
+    staged=$work/chromium/src/third_party/spatiand_ffmpeg
+    rm -rf "$staged"; mkdir -p "$staged/lib"
+    cp -a "$ffmpeg/include" "$staged/"
+    cp -a "$ffmpeg"/lib/libav*.dylib "$ffmpeg"/lib/libsw*.dylib "$staged/lib/"
+    inside bash -s <<'EOF'
+set -e
+cd $CR/chromium/src
+# Programs built here and run during the build find Spatiand's FFmpeg in ffmpeg/ beside them
+# (mac/0001), as on Linux.
+mkdir -p out/mac
+ln -sfn ../../third_party/spatiand_ffmpeg/lib out/mac/ffmpeg
+grep -q spatiand_ffmpeg third_party/ffmpeg/BUILD.gn || python3 build/linux/unbundle/replace_gn_files.py --system-libraries ffmpeg
+# Cromite's arguments as its Linux build has them, for Apple silicon, changed in place (GN refuses a
+# value set twice): Chromium's Mac profile for PGO, no symbols, the PDF viewer; no software AV1 (the
+# owner's choice, as on the Deck: the M6 decodes AV1 itself); Dolby by Spatiand's FFmpeg. Warnings
+# are not errors: Xcode's SDK is newer than this Chromium's.
+ARGS=$(sed -e 's/^chrome_pgo_phase=0/chrome_pgo_phase=2/' \
+           -e 's/^symbol_level=1/symbol_level=0/' \
+           -e 's/^treat_warnings_as_errors=true/treat_warnings_as_errors=false/' \
+           -e 's/^enable_dav1d_decoder=true/enable_dav1d_decoder=false/' \
+           $CR/cromite/build/cromite.gn_args)
+gn gen --args="target_os = \"mac\" $ARGS target_cpu = \"arm64\" enable_pdf = true enable_plugins = true enable_platform_ac3_eac3_audio = true" out/mac
+nice -n 10 python3 $CR/depot_tools/siso.py ninja -C out/mac chrome --offline
+cp $CR/cromite/build/RELEASE out/mac/
+EOF
+}
+
 build() {
     [ "$target" = android ] && { build_android; return; }
+    [ "$target" = mac ] && { build_mac; return; }
     # Spatiand's own FFmpeg (third_party/ffmpeg, `build.sh linux` -- 9.0.2, one copy for every
     # program of Spatiand's): its headers and libraries where build/linux/unbundle/ffmpeg.gn
     # (patch 0003) looks for them. libsw* too: libavcodec needs libswresample to load.
@@ -365,6 +401,7 @@ mkdir -p "$work/spatiand-patches"
 cp "$here"/patches/*.patch "$work/spatiand-patches/"
 rm -rf "$work/android-libc"; cp -a "$here/android-libc" "$work/android-libc"
 cp "$here/mac/first-dashes.pl" "$work/first-dashes.pl"
+rm -rf "$work/mac-patches"; mkdir -p "$work/mac-patches"; cp "$here"/mac/0*.patch "$work/mac-patches/"
 case $step in
     fetch) fetch ;;
     patch) patch_tree ;;

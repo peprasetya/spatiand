@@ -1,0 +1,41 @@
+From 2e00367f8335f27f88aa6f7341865cdba07e446d Mon Sep 17 00:00:00 2001
+From: Spatiand build <spatiand@localhost>
+Date: Mon, 9 Nov 2026 22:44:22 +0700
+Subject: [PATCH] Spatiand: FFmpeg found beside the Mac programs
+
+---
+ build/linux/unbundle/ffmpeg.gn | 18 ++++++++++++++----
+ 1 file changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/build/linux/unbundle/ffmpeg.gn b/build/linux/unbundle/ffmpeg.gn
+index e29b9a7e37..ca8f63c820 100644
+--- a/build/linux/unbundle/ffmpeg.gn
++++ b/build/linux/unbundle/ffmpeg.gn
+@@ -23,10 +23,20 @@ config("system_ffmpeg") {
+ # Linker flags count only where a program is linked, and a source set's public_configs never
+ # reach one: these go to everything that depends on FFmpeg, however far up.
+ config("system_ffmpeg_link") {
+-  ldflags = [
+-    "-Wl,--allow-shlib-undefined",
+-    "-Wl,-rpath=\$ORIGIN/../spatiand/third_party/ffmpeg/out/linux/lib:\$ORIGIN/ffmpeg",
+-  ]
++  if (is_mac) {
++    # A Mac: the libraries in the app beside the framework that links them, or, for a program
++    # built and run here, in ffmpeg/ beside it.
++    ldflags = [
++      "-Wl,-rpath,@loader_path/Libraries",
++      "-Wl,-rpath,@loader_path/../../../../Frameworks",
++      "-Wl,-rpath,@loader_path/ffmpeg",
++    ]
++  } else {
++    ldflags = [
++      "-Wl,--allow-shlib-undefined",
++      "-Wl,-rpath=\$ORIGIN/../spatiand/third_party/ffmpeg/out/linux/lib:\$ORIGIN/ffmpeg",
++    ]
++  }
+ }
+ 
+ buildflag_header("ffmpeg_features") {
+-- 
+2.54.0 (Apple Git-157)
+
