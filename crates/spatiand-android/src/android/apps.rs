@@ -82,12 +82,6 @@ fn listed() -> &'static Mutex<Vec<AppEntry>> {
     APPS.get_or_init(Default::default)
 }
 
-/// When the room last drew a frame, in milliseconds of `uptime_ms`: the apps' displays are held
-/// lit only while it draws (`ShellHelper.awake`), so nothing is lit for glasses not worn.
-static DRAWN: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
-/// How long without a frame before the room counts as not drawing.
-const DRAWING_WITHIN_MS: i64 = 3000;
-
 /// Set when the list has changed and the launcher has not yet been given it.
 static CHANGED: AtomicBool = AtomicBool::new(false);
 /// Whether the shell helper is there.
@@ -297,14 +291,7 @@ fn run(stream: std::os::unix::net::UnixStream, inbox: Receiver<Command>) {
     };
     let mut entries: HashMap<u32, Entry> = HashMap::new();
     let mut next_id = 1u32;
-    // What the helper was last told of the room's drawing.
-    let mut told_drawing = false;
     loop {
-        let drawing = !entries.is_empty() && uptime_ms() - DRAWN.load(Ordering::Relaxed) < DRAWING_WITHIN_MS;
-        if drawing != told_drawing {
-            told_drawing = drawing;
-            java_room_drawing(drawing);
-        }
         // A few milliseconds at most between looks at the compositor: how long a click waits.
         let first = match inbox.recv_timeout(Duration::from_millis(3)) {
             Ok(command) => Some(command),
@@ -726,8 +713,6 @@ fn uptime_ms() -> i64 {
 pub fn size_new_windows(state: &mut crate::Spatiand) {
     use smithay::reexports::wayland_server::Resource;
     use smithay::wayland::seat::WaylandFocus;
-    // Called each frame drawn: the room is drawing.
-    DRAWN.store(uptime_ms(), Ordering::Relaxed);
     let Some(windows) = WINDOWS.get() else { return };
     let wanted: Vec<u32> = {
         let mut shown = windows.shown.lock().unwrap();
@@ -761,14 +746,6 @@ fn java_sound(display: i32, package: &str) -> Option<i32> {
         Some(((**env).v1_1.CallStaticIntMethodA)(env, class, method, args.as_ptr()))
     })??;
     (fd >= 0).then_some(fd)
-}
-
-fn java_room_drawing(drawing: bool) {
-    jni::with_shell(|env, class| unsafe {
-        let Some(method) = jni::shell_method(env, class, c"roomDrawing", c"(Z)V") else { return };
-        let args = [jvalue { z: drawing as jni_sys::jboolean }];
-        ((**env).v1_1.CallStaticVoidMethodA)(env, class, method, args.as_ptr());
-    });
 }
 
 fn java_show_flat(display: i32, label: &str) {

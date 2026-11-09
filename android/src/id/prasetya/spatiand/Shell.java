@@ -245,11 +245,6 @@ final class Shell {
         }, null, 0);
     }
 
-    /** Whether the room is drawing: the apps' displays are held lit only while it is. */
-    static void roomDrawing(boolean drawing) {
-        call(ShellHelper.AWAKE, data -> data.writeInt(drawing ? 1 : 0), null, 0);
-    }
-
     /** The window is closed: the display goes, and the app's activities on it with it. */
     static void closeApp(int display) {
         call(ShellHelper.RELEASE_DISPLAY, data -> data.writeInt(display), reply -> 0, 0);

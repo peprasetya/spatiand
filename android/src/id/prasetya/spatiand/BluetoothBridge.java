@@ -355,7 +355,11 @@ final class BluetoothBridge {
                 sayConnection(connected, status);
                 if (connected) {
                     try {
-                        g.discoverServices();
+                        // As large a packet as the device takes, which BlueZ asks for by itself
+                        // on the Deck: Android keeps ATT's 23 bytes unless asked, and cut a
+                        // notification of more than 20 bytes short. Its services are looked
+                        // for once the device has answered.
+                        if (!g.requestMtu(517)) g.discoverServices();
                     } catch (SecurityException e) {
                         Log.w(TAG, "Bluetooth: " + e);
                     }
@@ -369,6 +373,19 @@ final class BluetoothBridge {
                         // Closing is all that is left.
                     }
                     gatt = null;
+                }
+            });
+        }
+
+        @Override
+        public void onMtuChanged(BluetoothGatt g, int mtu, int status) {
+            handler.post(() -> {
+                Log.i(TAG, "Bluetooth: " + address + " takes " + (mtu - 3) + " bytes a packet");
+                if (!connected) return;
+                try {
+                    g.discoverServices();
+                } catch (SecurityException e) {
+                    Log.w(TAG, "Bluetooth: " + e);
                 }
             });
         }

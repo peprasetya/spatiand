@@ -166,14 +166,18 @@ its own, framed and moved like any other. What it takes:
 
 - **Spatiand's shell helper** (`ShellHelper.java`, in the APK, run by `app_process` as the
   shell user) does what only the shell may:
-  - a display per app: TRUSTED, OWN_FOCUS, its own power group and always unlocked, drawing
-    into a surface the room hands it;
+  - a display per app: TRUSTED and OWN_FOCUS, in the phone's own power group, drawing into a
+    surface the room hands it;
   - the app started there (`IActivityManager.startActivityAsUser` with a launch display);
   - the room's pointer and keys injected there, as a mouse (`SOURCE_MOUSE`) and a keyboard;
   - the app's sound taken off the speakers (an `AudioPolicy` loopback mix of its uid) and
-    piped to the room, which places it at the window like a host's;
-  - a screen wake lock on each display while the room draws: a power group of its own keeps
-    its own timeout otherwise, and an app watched without a touch went dark.
+    piped to the room, which places it at the window like a host's.
+  An app's display is awake while the phone's screen is, which Spatiand keeps on while in use,
+  and so is locked with the phone: a locked phone shows "Unlock your device to continue" in an
+  app's window, as its lock covers the room too. A power group of its own (OWN_DISPLAY_GROUP,
+  which ALWAYS_UNLOCKED needs) slept with the phone and never woke: nothing the shell may call
+  -- user activity on that display, a wake key, a screen wake lock on it with
+  ACQUIRE_CAUSES_WAKEUP -- woke or held it, so the app would have stayed dark.
   It hands the app its Binder through `ShellProvider` (a content provider only the shell is
   answered by) and answers no uid but the app's. One runs at a time.
 - **The room** (`crates/spatiand-android/src/android/apps.rs`) makes each window through the
@@ -219,9 +223,10 @@ itself" (a notification after the first start) the helper grants Spatiand
 would take every sound the system makes), of apps that forbid capture
 (`ALLOW_CAPTURE_BY_NONE`), and calls.
 
-**Testing with no glasses and the phone locked:** `tools/beam-stand-in/run.sh start` (it now
-holds its display lit with a wake lock, or it slept seconds after a locked phone did, and
-Android froze Spatiand as hidden); `tools/beam-shell/run.sh start` starts the helper over adb;
+**Testing with no glasses:** `tools/beam-stand-in/run.sh start` (its display has a power group
+of its own: it sleeps with the phone's screen and does not wake again, and Android then freezes
+Spatiand as hidden -- keep the phone's screen on from before it starts, or make it again); the
+apps themselves need the phone unlocked; `tools/beam-shell/run.sh start` starts the helper over adb;
 `am start -n id.prasetya.spatiand/.MainActivity --es id.prasetya.spatiand.OPEN_APP
 pkg/activity` opens an app in the room, and `--es id.prasetya.spatiand.OPEN_APP_TAP x,y`
 clicks in the newest app's window through the room's own input path.

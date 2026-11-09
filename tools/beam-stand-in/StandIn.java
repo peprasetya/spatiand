@@ -74,27 +74,6 @@ public final class StandIn {
         }
         System.out.println("stand-in glasses: display " + id + ", " + width + "x" + height);
 
-        // Its display has a power group of its own, which goes to sleep with a locked phone a few
-        // seconds after it is made: the room goes on drawing into it, black, and Android then
-        // freezes the app as hidden. Held awake as worn glasses are, by a screen wake lock on
-        // this display alone (the shell may take one), which wakes it now too.
-        try {
-            IBinder power = (IBinder) Class.forName("android.os.ServiceManager")
-                    .getMethod("getService", String.class).invoke(null, "power");
-            Object powerManager = Class.forName("android.os.IPowerManager$Stub")
-                    .getMethod("asInterface", IBinder.class).invoke(null, power);
-            for (Method m : powerManager.getClass().getMethods()) {
-                if (m.getName().equals("acquireWakeLock") && m.getParameterCount() == 8) {
-                    // SCREEN_BRIGHT_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP, for this display.
-                    m.invoke(powerManager, new Binder(), 0x1000000a, "spatiand-stand-in", "com.android.shell",
-                            null, null, id, null);
-                    System.out.println("held awake");
-                }
-            }
-        } catch (Exception e) {
-            System.out.println("not held awake: " + e);
-        }
-
         long since = System.nanoTime();
         int frames = 0;
         while (true) {

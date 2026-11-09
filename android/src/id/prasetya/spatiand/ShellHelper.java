@@ -72,7 +72,6 @@ public final class ShellHelper extends Binder {
     static final int TASKS = 11;
     static final int GRANT_SECURE_SETTINGS = 12;
     static final int SOUND = 14;
-    static final int AWAKE = 15;
     static final int MOVE_TASK = 16;
     static final int TOUCH = 17;
 
@@ -81,23 +80,21 @@ public final class ShellHelper extends Binder {
     static final int TOLD_SECURE = 2;
 
     /**
-     * Every app's display: its own picture, its own touch and focus, its apps closed with it, and
-     * unlocked whatever the phone is -- which Android allows only a display in a power group of
-     * its own (in the phone's, an app showed "Unlock your device to continue" while the phone
-     * was locked).
+     * Every app's display: its own picture, its own touch and focus, and its apps closed with it.
      *
-     * <p>A group of its own also has its own power, which nothing outlasts but a screen wake
-     * lock on it: one is held for each display while the room draws ({@link #awake}), so an app
-     * watched without being touched stays lit, and nothing is lit for glasses not worn.
+     * <p>In the phone's own power group: awake while the phone's screen is, which Spatiand keeps
+     * on while it is in use, and woken with it. A group of its own (OWN_DISPLAY_GROUP, which
+     * ALWAYS_UNLOCKED needs) went to sleep with the phone and never woke again: nothing the
+     * shell may call -- user activity, a wake key, a screen wake lock on that display -- woke or
+     * held it, so an app went dark for good. So a locked phone shows "Unlock your device to
+     * continue" in an app's window, as it puts its lock over the room itself.
      *
      * <p>Not SECURE (4): that needs CAPTURE_SECURE_VIDEO_OUTPUT, which only system apps have, so
      * an app that protects its picture shows black here (see docs/beam-pro.md).
      */
     static final int FLAGS = 1 /* PUBLIC */ | 8 /* OWN_CONTENT_ONLY */ | 64 /* SUPPORTS_TOUCH */
-            | 256 /* DESTROY_CONTENT_ON_REMOVAL */ | 1024 /* TRUSTED */ | 2048 /* OWN_DISPLAY_GROUP */
-            | 4096 /* ALWAYS_UNLOCKED */ | 8192 /* TOUCH_FEEDBACK_DISABLED */ | 16384 /* OWN_FOCUS */;
-    /** SCREEN_BRIGHT_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP: lit, and woken if asleep. */
-    static final int SCREEN_LOCK = 0x1000000a;
+            | 256 /* DESTROY_CONTENT_ON_REMOVAL */ | 1024 /* TRUSTED */ | 8192 /* TOUCH_FEEDBACK_DISABLED */
+            | 16384 /* OWN_FOCUS */;
 
     static final class Display {
         int id;
@@ -106,8 +103,6 @@ public final class ShellHelper extends Binder {
         boolean hadTask;
         /** Whether a window on it is FLAG_SECURE, as last told to the app. */
         boolean secure;
-        /** The screen wake lock that keeps it lit while the room draws, or null. */
-        Binder awake;
         /** Its app's sound, taken off the speakers for the room (see {@link #sound}). */
         Object policy;
         AudioRecord record;
@@ -122,10 +117,6 @@ public final class ShellHelper extends Binder {
     final Object inputManager;
     final Method injectInputEvent;
     final Method setDisplayId;
-    final Object powerManager;
-    Method acquireWakeLock, releaseWakeLock;
-    /** Whether the room is drawing, and so whether the displays are held lit. */
-    boolean roomDrawing;
 
     final KeyCharacterMap characters = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD);
 
@@ -219,12 +210,6 @@ public final class ShellHelper extends Binder {
         inputManager = service("input", "android.hardware.input.IInputManager");
         injectInputEvent = inputManager.getClass().getMethod("injectInputEvent", InputEvent.class, int.class);
         setDisplayId = InputEvent.class.getMethod("setDisplayId", int.class);
-        powerManager = service("power", "android.os.IPowerManager");
-        for (Method m : powerManager.getClass().getMethods()) {
-            // (lock, flags, tag, package, work source, history tag, display, callback)
-            if (m.getName().equals("acquireWakeLock") && m.getParameterCount() == 8) acquireWakeLock = m;
-            if (m.getName().equals("releaseWakeLock") && m.getParameterCount() == 2) releaseWakeLock = m;
-        }
     }
 
     // --- being found by the app ---
@@ -395,9 +380,6 @@ public final class ShellHelper extends Binder {
                     answer(reply, exit);
                     return true;
                 }
-                case AWAKE:
-                    awake(data.readInt() != 0);
-                    return true;
                 case MOVE_TASK: {
                     int from = data.readInt(), to = data.readInt();
                     moveTask(from, to);
@@ -478,15 +460,7 @@ public final class ShellHelper extends Binder {
                         default: return null;
                     }
                 });
-        int id;
-        try {
-            id = makeDisplay(name, width, height, dpi, surface, callback, FLAGS);
-        } catch (java.lang.reflect.InvocationTargetException refused) {
-            // Where this Android will not have them: the display is then locked, and lit, with
-            // the phone.
-            log("display not always unlocked: " + refused.getCause());
-            id = makeDisplay(name, width, height, dpi, surface, callback, FLAGS & ~(2048 | 4096));
-        }
+        int id = makeDisplay(name, width, height, dpi, surface, callback, FLAGS);
         Display d = new Display();
         d.id = id;
         d.callback = callback;
@@ -495,7 +469,6 @@ public final class ShellHelper extends Binder {
         d.dpi = dpi;
         displays.put(id, d);
         log("display " + id + ": " + name + ", " + width + "x" + height + " at " + dpi + " dpi");
-        if (roomDrawing) hold(d);
         return id;
     }
 
@@ -530,45 +503,9 @@ public final class ShellHelper extends Binder {
     synchronized void releaseDisplay(int id) throws Exception {
         Display d = displays.remove(id);
         if (d == null) return;
-        letGo(d);
         stopSound(d);
         releaseVirtualDisplay.invoke(displayManager, d.callback);
         log("display " + id + " released");
-    }
-
-    // --- staying lit ---
-
-    /** The room has begun or stopped drawing: each display is held lit, or let go of. */
-    synchronized void awake(boolean drawing) {
-        if (drawing == roomDrawing) return;
-        roomDrawing = drawing;
-        log(drawing ? "the room is drawing: its displays are held lit" : "the room has stopped drawing");
-        for (Display d : displays.values()) {
-            if (drawing) hold(d);
-            else letGo(d);
-        }
-    }
-
-    void hold(Display d) {
-        if (d.awake != null || acquireWakeLock == null) return;
-        Binder lock = new Binder();
-        try {
-            acquireWakeLock.invoke(powerManager, lock, SCREEN_LOCK, "spatiand display " + d.id, "com.android.shell",
-                    null, null, d.id, null);
-            d.awake = lock;
-        } catch (Exception e) {
-            log("display " + d.id + ": not held lit: " + e);
-        }
-    }
-
-    void letGo(Display d) {
-        if (d.awake == null) return;
-        try {
-            releaseWakeLock.invoke(powerManager, d.awake, 0);
-        } catch (Exception e) {
-            log("display " + d.id + ": " + e);
-        }
-        d.awake = null;
     }
 
     // --- sound ---
