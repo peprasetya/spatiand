@@ -119,6 +119,30 @@ enum MacScreens {
         return false
     }
 
+    /// The glasses the main screen again, the virtual one to their right, once they have gone back
+    /// to one eye -- for macOS's lock screen, which is drawn on the main screen. Only where the
+    /// virtual screen had taken it; tried for a few seconds, as the glasses' display comes back
+    /// from the change of mode (arranged while changing, it did not come back: see `leadIfAlone`).
+    static func yieldToGlasses(tries: Int = 0) {
+        guard let made = virtualDisplay, CGMainDisplayID() == made else { return }
+        func isGlasses(_ id: CGDirectDisplayID) -> Bool { CGDisplayVendorNumber(id) == 0x3647 && CGDisplayModelNumber(id) == 0x3132 }
+        var count: UInt32 = 0
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+        CGGetActiveDisplayList(16, &ids, &count)
+        let glasses = ids.prefix(Int(count)).first(where: isGlasses)
+        // One eye, and seen so for a moment: the room has let them go and they are settling.
+        guard let glasses, (CGDisplayCopyDisplayMode(glasses)?.pixelWidth ?? 0) < 3000, tries >= 3 else {
+            if tries < 40 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { yieldToGlasses(tries: tries + 1) } }
+            return
+        }
+        var config: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&config) == .success else { return }
+        CGConfigureDisplayOrigin(config, glasses, 0, 0)
+        CGConfigureDisplayOrigin(config, made, Int32(CGDisplayBounds(glasses).width), 0)
+        let done = CGCompleteDisplayConfiguration(config, .forSession) == .success
+        print("screens: the glasses are \(done ? "" : "not ")the main screen again")
+    }
+
     /// Its sizes are not there to choose among the moment it exists, and left to itself macOS
     /// settles on the smallest: asked for the largest until it is that. On a Mac with no other
     /// screen it had no mode at all for three seconds and then came up at 896 by 504: waited

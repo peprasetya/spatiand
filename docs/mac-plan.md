@@ -290,3 +290,10 @@ over ssh (`git push littleotter master`, then `make-app.sh` in `~/Developer/Spat
   `SPATIAND_SIGN_KEYCHAIN_PASS` give them to `make-app.sh`. With it, permissions given to Spatiand
   survive rebuilds; signed ad hoc, each rebuild lost Accessibility, and the room covered the screen
   with nothing able to reach it.
+- **Locked, the glasses are macOS's.** Its lock screen is drawn on the main screen, which was the
+  virtual one: the glasses woke from a long sleep to the wallpaper, with nothing to answer
+  (macOS locks 5 minutes after the last input there). On `com.apple.screenIsLocked` the room leaves
+  the glasses (they go back to one eye) and they are made the main screen again
+  (`MacScreens.yieldToGlasses`, retried whenever the screens wake while locked, and on a start
+  while locked); `com.apple.screenIsUnlocked` brings the room back as a plug-in does. A short
+  sleep with no lock the room comes back from by itself (tried: 20 s asleep, back at 60 fps).

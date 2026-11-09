@@ -128,6 +128,24 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Only while the room is in the glasses: gone from them, it waits for nothing, and is
         // given the screen when they are wanted again.
         Room.shared.screen.onLost = { if Room.shared.inGlasses { Room.shared.screen.start() } }
+        // **Locked, the glasses are given back to macOS**, its lock screen on them. Its lock
+        // screen is on the main screen, and where that is the virtual one (MacScreens.leadIfAlone)
+        // nobody could see it: the glasses woke to the wallpaper, and nothing answered
+        // (littleotter, 2026-11-09). Unlocked, the room comes back as it does at a plug-in.
+        let distributed = DistributedNotificationCenter.default()
+        distributed.addObserver(forName: .init("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in self?.locked(true) }
+        distributed.addObserver(forName: .init("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in self?.locked(false) }
+        // And whenever the screens wake while it is locked: asleep, the glasses are not there to
+        // be arranged, and the lock screen came up on the virtual screen again.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            if self?.screenLocked == true { MacScreens.yieldToGlasses() }
+        }
+        // Started with the Mac already locked: as though it had just been.
+        if (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true {
+            screenLocked = true
+            print("screens: started with the Mac locked; the glasses are its lock screen's until it is unlocked")
+            DispatchQueue.main.async { MacScreens.yieldToGlasses() }
+        }
         chooseWorld()
     }
 
@@ -168,7 +186,22 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Glasses plugged in, and the owner has not said to keep everything on the Mac.
     private func glassesWanted() -> Bool {
-        glasses.isPluggedIn && Settings.presentation == .automatic
+        glasses.isPluggedIn && Settings.presentation == .automatic && !screenLocked
+    }
+
+    /// Whether macOS's lock screen is up: the glasses are macOS's then.
+    private var screenLocked = false
+
+    private func locked(_ now: Bool) {
+        guard now != screenLocked else { return }
+        screenLocked = now
+        print("screens: the Mac is \(now ? "locked; the glasses are given its lock screen" : "unlocked")")
+        if now {
+            if Room.shared.inGlasses { Room.shared.leaveGlasses() }
+            MacScreens.yieldToGlasses()
+        } else {
+            chooseWorld()
+        }
     }
 
     // MARK: the menu, rebuilt each time it opens so it is never out of date
