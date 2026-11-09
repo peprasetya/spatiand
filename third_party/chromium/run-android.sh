@@ -25,10 +25,18 @@ if [ -d "$shared" ] && [ -w "$shared" ]; then
 elif [ -f "$XDG_CONFIG_HOME/user-dirs.dirs" ] && grep -q "$shared" "$XDG_CONFIG_HOME/user-dirs.dirs"; then
     rm -f "$XDG_CONFIG_HOME/user-dirs.dirs"
 fi
+# --disable-partial-raster: a workaround, not the fix. Re-rastering only the changed part of a tile
+# into the tile's existing buffer, as Chromium does by default, left those buffers' other parts as
+# whatever the GPU had there on the Beam Pro: black blocks and coloured speckles in pages, the page
+# itself drawn shifted, a dropdown's list drawn into the page -- in the page's own picture, so before
+# any frame reached the room (owner's screenshot of YouTube, 2026-11-09; reproduced with a <select>
+# and gone with this switch). It costs whole tiles re-rastered where part would do. The proper
+# alternative is to find why a tile's buffer does not keep its content on this path (ANGLE on
+# Adreno's Vulkan, Chromium's Linux shared images built for Android's libc) and fix that there.
 exec "$SPATIAND_APPS_DIR/libspatimesh_chromium.so" --ozone-platform=wayland --user-data-dir="$HOME/.config/spatiand-chromium" \
     --class=spatimesh-chromium \
     --password-store=basic --no-first-run --no-default-browser-check \
-    --overscroll-history-navigation=0 --use-angle=vulkan --disable-setuid-sandbox \
+    --overscroll-history-navigation=0 --use-angle=vulkan --disable-setuid-sandbox --disable-partial-raster \
     --enable-features=EnableExtensionAutoupdate,ProfilesReordering,WaylandWindowDecorations \
     --disable-features=SigninPromoOnAvatarPill \
     "$@"

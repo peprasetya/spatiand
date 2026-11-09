@@ -91,7 +91,8 @@ if [ -f "$CR/spatimesh" ]; then
     # The locales alone, not the build's notes on them (.pak.info).
     cp "$CR"/locales/*.pak $OUT/assets/spatimesh-chromium/locales/
     cp ../third_party/chromium/run-android.sh $OUT/assets/spatimesh-chromium/run.sh
-    cp ../third_party/wpe/android/fonts.conf $OUT/assets/spatimesh-chromium/fonts.conf
+    # Its own fonts.conf, set up as a desktop's is (third_party/chromium/android-fonts.conf).
+    cp ../third_party/chromium/android-fonts.conf $OUT/assets/spatimesh-chromium/fonts.conf
     # What this is, so that the app unpacks it again when it changes. Not a dotfile: aapt2 leaves
     # those out of the assets.
     echo "$(cat "$CR/RELEASE" 2>/dev/null) $(md5 -q "$CR/spatimesh" 2>/dev/null || md5sum "$CR/spatimesh" | cut -d' ' -f1)" \

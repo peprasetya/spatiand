@@ -204,6 +204,31 @@ without a reload. Light or dark is `look` in Spatiand's prefs.toml, read every s
 in place of the desktop portal. What the machine's packages put in `/usr/share/chromium/extensions` (KDE's Plasma
 Integration, on a Deck) is not installed.
 
+**The same look on the Beam Pro (patch 0018, 2026-11-09).** The owner found SpatiMesh light there, its
+profile's colour beige, its type small, and black about its windows. Patch 0014 hands Spatiand's look to the
+toolkits' settings providers, and the Beam Pro's build has no toolkit: the look was read every second and went
+nowhere. Where no toolkit is loaded it is now the system's settings itself (a settings provider of its own, in
+`ui/linux/dark_mode_manager_linux.cc`); with one, as on the Deck, nothing changes. The toolkit-less UI's type is 13
+pixels, the size KDE's toolkit gives it on the Deck, where Chromium's own default is 12; and its fontconfig is set up
+as a desktop's (`third_party/chromium/android-fonts.conf`: a pattern naming no family is sans-serif, the families
+pages name are the generic ones, type hinted lightly), where it was WPE's file. The black was of two kinds. The band
+round every window was the room's: Chromium draws its own frame, with a shadow outside the window it declares (16
+pixels each side, 10 above, 32 below), and the room drew whole surfaces opaque. It draws a window's declared geometry
+alone now, its pointer and menus counted from it (`window_part` in `crates/spatiand/src/scene.rs`), on every
+platform. The blocks inside pages were Chromium's own: re-rastering part of a tile into the tile's existing buffer left
+the rest of that buffer as whatever the GPU had there -- black, coloured speckles, the page shifted, a dropdown's list
+in the page, in the page's own picture. `run-android.sh` turns partial raster off (`--disable-partial-raster`), which
+cured it in the same test: **a workaround**, whole tiles re-rastered where part would do; the fix is to find why a
+tile's buffer does not keep its content on this path (ANGLE on Adreno's Vulkan, the Linux shared images built for
+Android's libc).
+
+Still open there: a page believes it sits at the screen's corner (`event.screenX - clientX` is 0, its screen
+1291x685, its window barely taller than its viewport), so a `<select>`'s list opens at the window's top left rather
+than under the element; and YouTube opens, besides its video's routed stream, a short mono one under SpatiMesh's
+default name that the router does not reach -- the room now hears it as the newest window's (`own.rs`
+`sound::route`), which is right when YouTube is in the newest window. The fix for that one is to route a stream when it
+is made, for every frame of the tab, rather than the main frame's every half second.
+
 **Bounce tracking no longer deletes all history (patch 0016).** Cromite's `DATA_TYPE_SKIP_SSL_HOST_STATE` was `1 << 28`, the
 same bit as Chrome's `DATA_TYPE_HISTORY`, and bounce tracking adds it to every clearing of a tracker's state: at most
 hourly, as soon as a site was due, usually just after a start. History has no per-site filter, so each one emptied the
