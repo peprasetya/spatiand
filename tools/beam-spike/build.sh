@@ -2,7 +2,7 @@
 # Builds the Phase 0 spike APK with the bare SDK tools: no Gradle, no AndroidX.
 set -eu
 cd "$(dirname "$0")"
-SDK=${ANDROID_HOME:-$HOME/Library/Android/sdk}
+SDK=${ANDROID_HOME:-$(case "$(uname -s)" in (Darwin) echo "$HOME/Library/Android/sdk" ;; (*) echo "$HOME/Android/Sdk" ;; esac)}
 BT=$SDK/build-tools/36.0.0
 JAR=$SDK/platforms/android-34/android.jar
 OUT=build

@@ -421,7 +421,7 @@ android)
     # The Beam Pro: arm64, Android 14, with the NDK the rest of the APK is built with
     # (android/build.sh). Everything WPE needs that Android has not got is built here for it,
     # shared, each library named lib<name>.so (see the end of this script).
-    SDK=${ANDROID_HOME:-$HOME/Library/Android/sdk}
+    SDK=${ANDROID_HOME:-$(case "$(uname -s)" in (Darwin) echo "$HOME/Library/Android/sdk" ;; (*) echo "$HOME/Android/Sdk" ;; esac)}
     NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
     [ -d "$NDK" ] || { echo "no NDK at $NDK (ANDROID_NDK_HOME)" >&2; exit 1; }
     API=34

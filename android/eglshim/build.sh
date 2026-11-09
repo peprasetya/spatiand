@@ -2,7 +2,7 @@
 # Builds libeglshim.so: see eglshim.c. Run by android/build.sh.
 set -eu
 cd "$(dirname "$0")"
-SDK=${ANDROID_HOME:-$HOME/Library/Android/sdk}
+SDK=${ANDROID_HOME:-$(case "$(uname -s)" in (Darwin) echo "$HOME/Library/Android/sdk" ;; (*) echo "$HOME/Android/Sdk" ;; esac)}
 NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
 # The NDK's tools are in a folder named for the machine building: a Mac's or Linux's.
 HOST_TAG=$(case "$(uname -s)" in (Darwin) echo darwin-x86_64 ;; (*) echo linux-x86_64 ;; esac)

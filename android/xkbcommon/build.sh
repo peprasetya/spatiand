@@ -15,7 +15,7 @@ XKB_VERSION=1.7.0
 XKB_SHA=65782f0a10a4b455af9c6baab7040e2f537520caa2ec2092805cdfd36863b247
 DATA_DEB=xkb-data_2.42-1_all.deb
 DATA_SHA=196ff18533382f64e057ea49df2bb486bd4275a4cc0917361edb560b8756dada
-SDK=${ANDROID_HOME:-$HOME/Library/Android/sdk}
+SDK=${ANDROID_HOME:-$(case "$(uname -s)" in (Darwin) echo "$HOME/Library/Android/sdk" ;; (*) echo "$HOME/Android/Sdk" ;; esac)}
 NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
 API=34
 # The NDK's tools are in a folder named for the machine building: a Mac's or Linux's.

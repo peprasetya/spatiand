@@ -8,7 +8,8 @@
 # (Homebrew's rust has no Android targets). Java libraries come from libs/fetch.sh.
 set -eu
 cd "$(dirname "$0")"
-SDK=${ANDROID_HOME:-$HOME/Library/Android/sdk}
+# The SDK where Android Studio puts it: ~/Library/Android/sdk on a Mac, ~/Android/Sdk on Linux.
+SDK=${ANDROID_HOME:-$(case "$(uname -s)" in (Darwin) echo "$HOME/Library/Android/sdk" ;; (*) echo "$HOME/Android/Sdk" ;; esac)}
 BT=$SDK/build-tools/36.0.0
 JAR=$SDK/platforms/android-34/android.jar
 NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
@@ -85,6 +86,8 @@ cp "../third_party/ffmpeg/src/openssl-$OPENSSL_VERSION/LICENSE.txt" $OUT/assets/
 # the program and its own libraries go in beside the others, below. Without it, SpatiMesh here is
 # WPE's.
 CR=${SPATIAND_CHROMIUM_ANDROID:-$HOME/Developer/spatimesh-android}
+# Or where deepmagpie builds it, beside this repository (third_party/chromium/build.sh, its package step).
+[ -f "$CR/spatimesh" ] || [ -n "${SPATIAND_CHROMIUM_ANDROID:-}" ] || CR=$(cd ../.. && pwd)/spatiand-chromium-android/package/spatimesh-android
 if [ -f "$CR/spatimesh" ]; then
     mkdir -p $OUT/assets/spatimesh-chromium/locales
     cp "$CR"/*.pak "$CR/icudtl.dat" "$CR/snapshot_blob.bin" $OUT/assets/spatimesh-chromium/

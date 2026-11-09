@@ -12,7 +12,7 @@ set -eu
 cd "$(dirname "$0")"
 VERSION=1.3.5
 SHA=f29508c335c83d8703f943ffc9ca783ac39aca84e851357f13a55af0f8143137
-SDK=${ANDROID_HOME:-$HOME/Library/Android/sdk}
+SDK=${ANDROID_HOME:-$(case "$(uname -s)" in (Darwin) echo "$HOME/Library/Android/sdk" ;; (*) echo "$HOME/Android/Sdk" ;; esac)}
 NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
 
 [ -f out/libmysofa.so ] && [ -f out/default.sofa ] && exit 0

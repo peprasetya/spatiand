@@ -12,7 +12,7 @@ set -eu
 # Where a picture asked for goes, said before this script moves to its own folder.
 to=$(cd "$(dirname "${2:-.}")" 2>/dev/null && pwd)/$(basename "${2:-standin.png}")
 cd "$(dirname "$0")"
-SDK=${ANDROID_HOME:-$HOME/Library/Android/sdk}
+SDK=${ANDROID_HOME:-$(case "$(uname -s)" in (Darwin) echo "$HOME/Library/Android/sdk" ;; (*) echo "$HOME/Android/Sdk" ;; esac)}
 ADB="adb ${ANDROID_SERIAL:+-s $ANDROID_SERIAL}"
 # The stand-in's display woken, which lights the phone's lock screen too: Android wakes both.
 wake() {
