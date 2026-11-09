@@ -316,7 +316,11 @@ pub fn run(
         // lasts, as a host shows its windows to one viewer at a time and a test is not to take
         // them from whoever is watching; and nothing is remembered of the sensors, which are
         // not the glasses'.
+        // The Beam Pro's alone: the Mac's glasses are always its own.
+        #[cfg(target_os = "android")]
         let standing_in = glasses.is_some() && shared.stand_in.load(std::sync::atomic::Ordering::SeqCst);
+        #[cfg(not(target_os = "android"))]
+        let standing_in = false;
         if standing_in && hmd.is_none() {
             log::info!("stand-in glasses: the world is drawn with a headset that is not there");
             hmd = Some(Box::new(spatiand_hmd::NullHmd::new()));
@@ -1218,6 +1222,7 @@ pub fn run(
 
             crate::dmabuf::settle(&mut runtime.state, &mut renderer);
             // Nothing a client's GPU has not finished is drawn: the room's GPU waits for it.
+            #[cfg(target_os = "android")]
             super::explicit_sync::wait_for_clients(&mut renderer);
             let sky_from_client = crate::scene::sky_surface(&mut renderer, &runtime.state);
             scene.set_sky_override(sky_from_client);
