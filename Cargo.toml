@@ -38,6 +38,7 @@ members = [
     "crates/spatikey-core",
     "crates/spatikey",
     "crates/spatiand-choose",
+    "crates/spatiand-adb",
 ]
 
 [workspace.package]

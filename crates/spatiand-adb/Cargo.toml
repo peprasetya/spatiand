@@ -1,0 +1,18 @@
+[package]
+name = "spatiand-adb"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Spatiand's own adb client: pairing with an Android phone's Wireless debugging, and running a command there as its shell user"
+
+[dependencies]
+log.workspace = true
+# adb's pairing is BoringSSL's SPAKE2 over edwards25519; dalek has the group, the rest is here.
+curve25519-dalek = "4"
+sha2 = "0.10"
+ring = "0.17"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rcgen = "0.14"
+base64 = "0.22"
+num-bigint = "0.4"
