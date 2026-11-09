@@ -11,9 +11,10 @@
  * The numbers still travel the way they did (a socket, a Wayland buffer's name); they are only
  * names now, worthless to anyone else.
  *
- * Built twice into some processes (SpatiMesh's WPE engine program: Spatiand's own copy, and
- * WebKit's for its processes), so everything is static or prefixed, and each copy has its own
- * variable: SURFACES_ENV and SURFACES_PREFIX are given at build time.
+ * It may be built twice into one process (as it was into SpatiMesh's WPE engine program, until
+ * 2026-11-10: Spatiand's own copy, and WebKit's for its processes), so everything is static or
+ * prefixed, and each copy has its own variable: SURFACES_ENV and SURFACES_PREFIX are given at
+ * build time.
  */
 
 #pragma once

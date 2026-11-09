@@ -33,8 +33,6 @@ members = [
     "crates/spatiand-sync",
     "crates/spatiand-voice",
     "crates/spatimesh",
-    "crates/spatimesh-shim",
-    "crates/spatimesh-wpe",
     "crates/spatikey-core",
     "crates/spatikey",
     "crates/spatiand-choose",

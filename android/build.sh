@@ -38,17 +38,6 @@ PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
     BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/sysroot" \
     RUSTFLAGS="-L native=$(pwd)/xkbcommon/out -L native=$FF/lib -C link-arg=-lc++abi" \
     cargo ndk -t arm64-v8a -P 34 build --release -p spatireel -p spatiloupe -p spatiquill -p spatishelf -p spatimesh -p spatipal -p spatikey -p spatiand-choose
-# SpatiMesh's engine, on WPE WebKit built for Android (third_party/wpe/build.sh android), when
-# it has been: without it SpatiMesh shows no pages here.
-WPE_OUT=${SPATIAND_WPE:-$HOME/Developer/spatiand-wpe/out/android}
-if [ -f "$WPE_OUT/lib/libWPEWebProcess.so" ]; then
-    PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK SPATIAND_WPE=$WPE_OUT PKG_CONFIG_ALLOW_CROSS=1 \
-        PKG_CONFIG_LIBDIR=$WPE_OUT/lib/pkgconfig \
-        RUSTFLAGS="-L native=$(pwd)/xkbcommon/out -L native=$FF/lib -L native=$WPE_OUT/lib -C link-arg=-lc++abi" \
-        cargo ndk -t arm64-v8a -P 34 build --release -p spatimesh-wpe
-else
-    echo "warning: no WPE for Android at $WPE_OUT; SpatiMesh is made without an engine (third_party/wpe/build.sh android)"
-fi
 ../tools/fetch-pdfium.sh android-arm64
 STORAGE=$(pwd)/$OUT-storage
 mkdir -p "$STORAGE"
@@ -83,8 +72,8 @@ cp "../third_party/ffmpeg/src/openssl-$OPENSSL_VERSION/LICENSE.txt" $OUT/assets/
 # SpatiMesh as on the Deck: Chromium's Linux browser built for Android's libc (third_party/chromium,
 # CHROMIUM_TARGET=android, its package step: spatimesh-android.tar.gz, unpacked), when it has been.
 # Its resources and launcher go in the assets, for the app to unpack (MainActivity.unpackSpatiMesh);
-# the program and its own libraries go in beside the others, below. Without it, SpatiMesh here is
-# WPE's.
+# the program and its own libraries go in beside the others, below. Without it, the APK has no
+# web browser.
 CR=${SPATIAND_CHROMIUM_ANDROID:-$HOME/Developer/spatimesh-android}
 # Or where deepmagpie builds it, beside this repository (third_party/chromium/build.sh, its package step).
 [ -f "$CR/spatimesh" ] || [ -n "${SPATIAND_CHROMIUM_ANDROID:-}" ] || CR=$(cd ../.. && pwd)/spatiand-chromium-android/package/spatimesh-android
@@ -103,7 +92,7 @@ if [ -f "$CR/spatimesh" ]; then
     echo "$(cat "$CR/RELEASE" 2>/dev/null) $(sum "$CR/spatimesh") $(sum $OUT/assets/spatimesh-chromium/run.sh) $(sum $OUT/assets/spatimesh-chromium/fonts.conf)" \
         > $OUT/assets/spatimesh-chromium/version
 else
-    echo "warning: no SpatiMesh Chromium for Android at $CR; SpatiMesh here is WPE's"
+    echo "warning: no SpatiMesh Chromium for Android at $CR; the APK is made without a web browser"
 fi
 $BT/aapt2 compile --dir res -o $OUT/res.zip
 $BT/aapt2 link -I $JAR --manifest AndroidManifest.xml -A $OUT/assets -o $OUT/base.apk $OUT/res.zip
@@ -121,21 +110,13 @@ for lib in avcodec avdevice avfilter avformat avutil swresample swscale; do
     cp "$FF/lib/lib$lib.so" $OUT/apk/lib/arm64-v8a/
 done
 cp ../third_party/pdfium/android-arm64/lib/libpdfium.so $OUT/apk/lib/arm64-v8a/
-if [ -f "$WPE_OUT/lib/libWPEWebProcess.so" ]; then
-    cp ../target/aarch64-linux-android/release/spatimesh-wpe $OUT/apk/lib/arm64-v8a/libspatimesh-wpe.so
-    # Its libraries, processes, GIO's TLS module and GStreamer's plugins, flat, as they were
-    # made to be (each a lib*.so); the links between versions of a name are left behind.
-    find "$WPE_OUT/lib" -maxdepth 1 -name 'lib*.so' -type f -exec cp {} $OUT/apk/lib/arm64-v8a/ \;
-    # Without what only a debugger needs: WebKit's library alone is gigabytes with it.
-    find $OUT/apk/lib/arm64-v8a -name 'lib*.so' -type f -exec "$NDK/toolchains/llvm/prebuilt/$(case "$(uname -s)" in (Darwin) echo darwin-x86_64 ;; (*) echo linux-x86_64 ;; esac)/bin/llvm-strip" --strip-unneeded {} \; 2>/dev/null || true
-fi
 [ -f "$STORAGE/libspatiand-storage.so" ] && cp "$STORAGE/libspatiand-storage.so" $OUT/apk/lib/arm64-v8a/
 if [ -f "$CR/spatimesh" ]; then
     cp "$CR/spatimesh" $OUT/apk/lib/arm64-v8a/libspatimesh_chromium.so
-    # Its own libraries: NSS and NSPR (third_party/chromium/android-libc/deps.sh) and Chromium's
-    # minigbm; and its crash handler, a program. The rest it needs (xkbcommon, libffi, SQLite,
-    # FFmpeg) are the APK's already.
-    for lib in nspr4 plc4 plds4 nss3 nssutil3 smime3 ssl3 softokn3 freebl3 freeblpriv3 nssckbi minigbm spatimesh_crashpad; do
+    # Its own libraries: NSS, NSPR, libffi and SQLite (third_party/chromium/android-libc/deps.sh),
+    # xkbcommon (the compositor's, xkbcommon/build.sh, shared) and Chromium's minigbm; and its crash
+    # handler, a program. FFmpeg it shares with the rest of the APK.
+    for lib in nspr4 plc4 plds4 nss3 nssutil3 smime3 ssl3 softokn3 freebl3 freeblpriv3 nssckbi ffi sqlite3 xkbcommon minigbm spatimesh_crashpad; do
         cp "$CR/lib$lib.so" $OUT/apk/lib/arm64-v8a/
     done
 fi

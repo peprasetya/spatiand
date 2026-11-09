@@ -8,9 +8,20 @@ and at its end what has been built of it.
 
 | Platform | Engine | Where it comes from |
 |---|---|---|
-| Mac | **WPE WebKit 2.54.1**, our own port (`third_party/wpe`, the "WPE" section below) | bundled in Spatiand.app, with GStreamer and our FFmpeg |
-| Linux, the Deck | **WPE WebKit 2.54.1**, the bundle `third_party/wpe/build.sh linux` makes in Ubuntu 22.04 (built 2026-10-29) | `wpe/` beside SpatiMesh |
+| Linux, the Deck | **Chromium** with Cromite's patches and ours (`third_party/chromium`) | `~/spatiand-chromium`, packaged on its own |
 | Android (Beam Pro) | **Chromium, the Deck's**, built for Android's libc (2026-11-08; "SpatiMesh for Android" below) | in the APK, `libspatimesh_chromium.so` and its resources |
+| Mac | **Chromium, being ported** (`CHROMIUM_TARGET=mac`, docs/mac-plan.md); none until then | -- |
+
+**WPE WebKit and GStreamer removed on 2026-11-10** (the owner's decision: Chromium has replaced
+WPE on every platform, and GStreamer was WPE's media alone). Gone: `third_party/wpe` (its build,
+WebKit patches and GStreamer sink), `crates/spatimesh-wpe` (the engine program) and
+`crates/spatimesh-shim` (its C interface), WPE's place in the APK, the Mac app and the Linux
+release, and the end-to-end runs that drew pages through it (`tools/spatimesh-e2e.py`,
+`spatimesh-ui-e2e.py`, `spatimesh-sync-e2e.py`). What Chromium for Android had taken from WPE's
+Android build -- libffi, SQLite and xkbcommon -- is built for it now (`android-libc/deps.sh`,
+`android/xkbcommon`). The window program below stays: its stores are the formats Chromium's patches
+keep, and with no engine program it draws pages with the stand-in (`fake`), as the drag-and-drop
+run does (`tools/spatiand-dnd-e2e.py`). The WPE sections below are the record of what it did.
 
 **Changed on 2026-10-30:** the owner moved SpatiMesh to **Chromium with Cromite's patches and
 ours**, keeping Chrome's own browser layer (Chrome's extensions, as Chrome has them) with
@@ -926,7 +937,9 @@ has them forget every visited link and tells them again what is left (`ToHost::F
 the patches (2026-10-27). The distro's WebKitGTK has not got the
 patch, and keeps its links per tab.
 
-## WPE WebKit, SpatiMesh's own engine (from 2026-10-22)
+## WPE WebKit, SpatiMesh's own engine (2026-10-22 to 2026-11-10)
+
+*Removed on 2026-11-10 (see the top): the record of the port, kept for what it found.*
 
 The platform engines (WKWebView, Android's WebView, Steam's Chromium) each draw into their own
 system and are reached around it. WPE WebKit draws into what it is given, so it is to be

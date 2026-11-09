@@ -32,8 +32,9 @@ seccomp alone is still to do), and 1005 gives Chromium no DNS settings of the sy
 then looked up by Android's own resolver -- and, where nameservers are asked for, Google's 8.8.8.8.
 
 **`deps.sh`** builds what Chromium's Linux code takes from the system and Android's libc has not
-got, as termux-packages builds them: NSPR 4.40 and NSS 3.133 (shared, against the WPE build's
-SQLite), and libdbus 1.16.2 (static). `deps-patches/` are Termux's for them (packages/libnspr,
+got, as termux-packages builds them: NSPR 4.40 and NSS 3.133 (shared), libdbus 1.16.2 (static),
+and libffi 3.4.8 (Wayland's) and SQLite 3.50.4 (NSS's database), shared as libffi.so and
+libsqlite3.so, the names an APK carries. xkbcommon is the compositor's (android/xkbcommon). `deps-patches/` are Termux's for them (packages/libnspr,
 libnss). With them the Deck's code for certificates and D-Bus is built as it is.
 
 **Ours**, after Termux's:

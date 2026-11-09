@@ -2,7 +2,9 @@
 # libxkbcommon for Android, and the keyboard layouts it reads: what the compositor's keyboard
 # is made of (smithay links it), which Android does not have.
 #
-#   android/xkbcommon/build.sh      -> out/libxkbcommon.a and out/xkb/ (the layouts)
+#   android/xkbcommon/build.sh      -> out/libxkbcommon.a and out/xkb/ (the layouts), and
+#                                      out/libxkbcommon.so with out/include: SpatiMesh's Chromium's
+#                                      (third_party/chromium/build.sh android), which the APK carries
 #
 # Built with the NDK's clang directly rather than meson: it is thirty C files and one grammar,
 # and this way the Mac needs only bison (Homebrew's; macOS's 2.3 is too old for the grammar).
@@ -20,9 +22,10 @@ NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
 API=34
 # The NDK's tools are in a folder named for the machine building: a Mac's or Linux's.
 HOST_TAG=$(case "$(uname -s)" in (Darwin) echo darwin-x86_64 ;; (*) echo linux-x86_64 ;; esac)
-BISON=${BISON:-/usr/local/opt/bison/bin/bison}
+# A bison new enough for the grammar: Homebrew's on a Mac (macOS's 2.3 is too old), the system's elsewhere.
+BISON=${BISON:-$( [ -x /usr/local/opt/bison/bin/bison ] && echo /usr/local/opt/bison/bin/bison || command -v bison)}
 
-[ -f out/libxkbcommon.a ] && [ -f out/xkb/rules/evdev ] && exit 0
+[ -f out/libxkbcommon.a ] && [ -f out/libxkbcommon.so ] && [ -f out/xkb/rules/evdev ] && exit 0
 
 fetch() { # url sha file
     if [ ! -f "cache/$3" ]; then
@@ -87,9 +90,13 @@ done
 "$CC" -c -O2 -fPIC -std=c11 -include work/config.h -I work -I $SRC -I $SRC/include \
     -I $SRC/src -I $SRC/src/xkbcomp -w -o work/obj/parser.o work/parser.c
 "$AR" rcs out/libxkbcommon.a $OBJECTS work/obj/parser.o
+# The same, shared, with the symbol versions meson gives it (xkbcommon.map: V_0.5.0 and on), which
+# a program linked against a meson-built one asks for by name.
+"$CC" -shared -Wl,-soname,libxkbcommon.so -Wl,--version-script=$SRC/xkbcommon.map -o out/libxkbcommon.so $OBJECTS work/obj/parser.o
+mkdir -p out/include && cp -R $SRC/include/xkbcommon out/include/
 
 # The layouts: rules, keycodes, types, compat and symbols, as the package installs them.
 mkdir -p work/deb && (cd work/deb && ar x "../../cache/$DATA_DEB" && tar -xf data.tar.xz)
 cp -R work/deb/usr/share/X11/xkb out/xkb
 rm -rf work
-echo "built $(pwd)/out/libxkbcommon.a and out/xkb"
+echo "built $(pwd)/out/libxkbcommon.a, out/libxkbcommon.so and out/xkb"

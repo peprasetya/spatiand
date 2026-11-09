@@ -757,7 +757,7 @@ public class MainActivity extends Activity implements SensorEventListener {
      * SpatiMesh's resources -- Chromium's .pak files, ICU's data, V8's snapshot, its fonts and its
      * launcher -- out of the APK into the app's files, again whenever they change (android/build.sh
      * stamps them). The program itself is in the APK's library folder, which holds libraries alone.
-     * Until this is done, and in an APK built without Chromium, the launcher's SpatiMesh is WPE's.
+     * Until this is done, and in an APK built without Chromium, the launcher's SpatiMesh draws no pages.
      */
     void unpackSpatiMesh() {
         File root = new File(getFilesDir(), "spatimesh-chromium");

@@ -1,6 +1,6 @@
 //! The engine host: one profile's web engine, spoken to by the window over a [`Link`].
 //!
-//! Each engine is a program of its own (`spatimesh-wpe`), so that the
+//! Each engine is a program of its own (`spatimesh-wpe` was, until 2026-11-10), so that the
 //! window process links none of them and a system without one engine's libraries can still run
 //! the others. Each program's `main` is [`main`] with its
 //! engine: what to do with the window's messages is the same whatever the engine.

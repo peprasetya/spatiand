@@ -1,7 +1,7 @@
 //! The one interface every web engine is put behind (docs/spatimesh.md).
 //!
-//! An [`Engine`] lives in the engine host, the process that holds one profile's pages: WPE
-//! WebKit, on every platform. The window process never links one; it says the same things over the wire
+//! An [`Engine`] lives in the engine host, the process that holds one profile's pages (WPE
+//! WebKit's, until 2026-11-10; the stand-in, `fake`, now). The window process never links one; it says the same things over the wire
 //! (`wire.rs`) and is told what [`Happened`].
 //!
 //! Each tab's picture is drawn by the engine into a [`Canvas`], which the host keeps in memory
@@ -384,7 +384,7 @@ impl Happened {
 /// engine does not have is ignored, so that a window and an engine host that have just
 /// crossed (a tab closed on one side while the other was busy) do no harm.
 pub trait Engine {
-    /// What it is, for the log and the About page: "WPE WebKit 2.54.1".
+    /// What it is, for the log and the About page: "WPE WebKit 2.54.1" as it was.
     fn name(&self) -> String;
     /// Make a tab and start loading `url` in it.
     fn open(&mut self, tab: TabId, url: &str, view: View) -> Result<(), String>;

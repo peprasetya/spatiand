@@ -7,6 +7,13 @@
 #                   name is already one Android's library folder takes (libnss3.so).
 #   libdbus      -- Chromium's D-Bus client. Android has no bus for it to reach, and it says so;
 #                   static, so its versioned name (libdbus-1.so.3) never has to be carried.
+#   libffi       -- for Wayland's client library, which Chromium's Ozone is built on.
+#   SQLite       -- NSS's certificate and key database (libsoftokn3.so).
+#
+# libffi and SQLite are shared, as libffi.so and libsqlite3.so with no version after the name --
+# the only names an APK's library folder carries -- linked so from their static builds; libffi
+# keeps the symbol versions its own build gives it (LIBFFI_BASE_8.0), which a program asks for.
+# The keyboard's library, xkbcommon, is android/xkbcommon/build.sh's: the compositor's own.
 #
 #   third_party/chromium/android-libc/deps.sh <out folder>
 #
@@ -16,6 +23,11 @@ set -e
 NSPR_VERSION=4.40
 NSS_VERSION=3.133
 DBUS_VERSION=1.16.2
+LIBFFI_VERSION=3.4.8
+LIBFFI_SHA=bc9842a18898bfacb0ed1252c4febcc7e78fa139fd27fdc7a3e30d9d9356119b
+SQLITE_VERSION=3500400
+SQLITE_YEAR=2025
+SQLITE_SHA=a3db587a1b92ee5ddac2f66b3edb41b26f9c867275782d46c3a088977d6a5b18
 
 here=$(cd "$(dirname "$0")" && pwd)
 out=$(mkdir -p "$1" && cd "$1" && pwd)
@@ -48,9 +60,46 @@ if [ ! -f "$out/lib/libnspr4.so" ]; then
     make install
 fi
 
+# A tarball by its checksum, unpacked into the work folder.
+fetch_checked() { # url sha folder
+    [ -d "$work/$3" ] && return
+    curl -fsSL -o "$work/$3.tar.gz" "$1"
+    echo "$2  $work/$3.tar.gz" | sha256sum -c - >/dev/null || { echo "$3: checksum mismatch"; exit 1; }
+    tar -xzf "$work/$3.tar.gz" -C "$work" && rm "$work/$3.tar.gz"
+}
+# A static library, shared under the one name an APK carries.
+shared_as() { # archive name [link options]
+    archive=$1 name=$2; shift 2
+    $CC -shared -Wl,-soname,$name -Wl,--whole-archive "$archive" -Wl,--no-whole-archive "$@" -o "$out/lib/$name"
+}
+
+# --- libffi ---
+if [ ! -f "$out/lib/libffi.so" ]; then
+    fetch_checked "https://github.com/libffi/libffi/releases/download/v$LIBFFI_VERSION/libffi-$LIBFFI_VERSION.tar.gz" $LIBFFI_SHA "libffi-$LIBFFI_VERSION"
+    rm -rf "$work/libffi-build" && mkdir -p "$work/libffi-build" && cd "$work/libffi-build"
+    "$work/libffi-$LIBFFI_VERSION/configure" --host=$TARGET --prefix="$work/libffi-out" --disable-shared --enable-static \
+        --with-pic --disable-docs --disable-multi-os-directory
+    # Its version script, which its Makefile writes only for a shared build.
+    make -j"$jobs" && make install && make libffi.map
+    cp "$work/libffi-out/include/ffi.h" "$work/libffi-out/include/ffitarget.h" "$out/include/"
+    shared_as "$work/libffi-out/lib/libffi.a" libffi.so -Wl,--version-script="$work/libffi-build/libffi.map"
+fi
+
+# --- SQLite ---
+if [ ! -f "$out/lib/libsqlite3.so" ]; then
+    sqlite=sqlite-autoconf-$SQLITE_VERSION
+    fetch_checked "https://sqlite.org/$SQLITE_YEAR/$sqlite.tar.gz" $SQLITE_SHA "$sqlite"
+    cd "$work/$sqlite"
+    ./configure --host=$TARGET --prefix="$work/sqlite-out" --disable-shared --enable-static --disable-readline \
+        --enable-threadsafe CFLAGS="-O2 -fPIC"
+    make -j"$jobs" && make install
+    cp "$work/sqlite-out/include/sqlite3.h" "$work/sqlite-out/include/sqlite3ext.h" "$out/include/"
+    shared_as "$work/sqlite-out/lib/libsqlite3.a" libsqlite3.so -lm -ldl -lz
+fi
+
 # --- NSS ---
-# Its database is SQLite: the WPE build's for Android, which the APK carries.
-SQLITE=${SPATIAND_ANDROID_DEPS:-/media/shared/Linux/App/spatiand-wpe/out/android}
+# Its database is SQLite, above.
+SQLITE=$out
 if [ ! -f "$out/lib/libnss3.so" ]; then
     fetch "https://archive.mozilla.org/pub/security/nss/releases/NSS_${NSS_VERSION//./_}_RTM/src/nss-$NSS_VERSION.tar.gz" "nss-$NSS_VERSION"
     src=$work/nss-$NSS_VERSION/nss

@@ -109,8 +109,8 @@ fn native_library_dir() -> Option<PathBuf> {
 /// `~/spatiand-chromium`, or where `SPATIAND_CHROMIUM` says. On the Beam Pro it is the same
 /// browser built for Android's libc, carried in the APK as `libspatimesh_chromium.so`, its
 /// resources and launcher unpacked by the app into its files (android/build.sh) and run through
-/// sh, as nothing there may be run itself. On the Mac it is the WPE program until Chromium draws
-/// through the room there too. What starts it, its switches to follow.
+/// sh, as nothing there may be run itself. On the Mac, until Chromium draws through the room
+/// there too, it is the window program alone, which has no engine to draw pages with. What starts it, its switches to follow.
 fn chromium_spatimesh() -> Option<String> {
     if cfg!(target_os = "android") {
         let program = native_library_dir()?.join("libspatimesh_chromium.so");

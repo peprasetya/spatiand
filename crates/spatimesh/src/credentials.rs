@@ -2,7 +2,7 @@
 //! extensions use, and SpatiMesh's own relay.
 //!
 //! `webauthn.js` goes into the page's own world: it defines `navigator.credentials` and
-//! `PublicKeyCredential` (our WPE has no WebAuthn of its own) and speaks only through events.
+//! `PublicKeyCredential` (for an engine with no WebAuthn of its own, as WPE was) and speaks only through events.
 //! `forms.js` and `cred-world.js` go into the isolated world `spatimesh-cred`, the only one the
 //! message handler `spatimeshCred` is given: they stamp each message with the frame's origin
 //! as that world sees it, which the page cannot change, and find, fill and watch login forms.

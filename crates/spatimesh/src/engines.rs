@@ -20,44 +20,16 @@ pub enum Program {
     Fake(String),
 }
 
-fn beside(name: &str) -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    let name = if cfg!(target_os = "android") { format!("lib{name}.so") } else { name.to_string() };
-    let path = dir.join(name);
-    path.is_file().then_some(path)
-}
-
-/// Whether Spatiand's own WPE is installed beside SpatiMesh: on Linux the bundle
-/// third_party/wpe/build.sh makes, in `wpe/` (a `spatimesh-wpe` built without it is in every
-/// build folder); on Android its processes, among the app's libraries.
-fn wpe_beside() -> bool {
-    let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())) else { return false };
-    if cfg!(target_os = "android") {
-        dir.join("libWPEWebProcess.so").is_file()
-    } else {
-        dir.join("wpe/lib").is_dir()
-    }
-}
-
-/// The engine program for this platform: WPE WebKit, which Spatiand carries (third_party/wpe),
-/// on every platform. Where it is not installed there is no engine: none other is fallen back on
-/// (WKWebView, Steam's Chromium, Android's WebView and the distros' WebKitGTK all were once).
-/// `SPATIMESH_ENGINE` names another (`fake`, `wpe`, or a path).
+/// The engine program: none of its own. SpatiMesh is Chromium (third_party/chromium), which the
+/// launcher starts in place of this program wherever it is installed (crates/spatiand/src/own.rs);
+/// this program, its window and its stores are what Chromium's are kept in step with, and draw
+/// pages only through an engine named by `SPATIMESH_ENGINE` (a path, or `fake`). WPE WebKit was
+/// the engine here until 2026-11-10.
 pub fn program() -> Program {
-    let wanted = std::env::var("SPATIMESH_ENGINE").unwrap_or_default();
-    let name = match wanted.as_str() {
-        "fake" => return Program::Fake("asked for with SPATIMESH_ENGINE".into()),
-        "" if cfg!(target_os = "macos") => "spatimesh-wpe",
-        "" if wpe_beside() => "spatimesh-wpe",
-        "" if cfg!(target_os = "android") => return Program::Fake("no engine on Android: WPE is not in the app".into()),
-        "" => return Program::Fake("no engine: Spatiand's WPE is not installed beside SpatiMesh (wpe/)".into()),
-        "wpe" => "spatimesh-wpe",
-        path => return Program::Path(PathBuf::from(path)),
-    };
-    match beside(name) {
-        Some(path) => Program::Path(path),
-        None => Program::Fake(format!("{name} is not installed beside SpatiMesh")),
+    match std::env::var("SPATIMESH_ENGINE").unwrap_or_default().as_str() {
+        "fake" => Program::Fake("asked for with SPATIMESH_ENGINE".into()),
+        "" => Program::Fake("no engine: SpatiMesh is Chromium, which is not installed here (third_party/chromium)".into()),
+        path => Program::Path(PathBuf::from(path)),
     }
 }
 

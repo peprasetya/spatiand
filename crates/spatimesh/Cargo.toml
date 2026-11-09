@@ -8,9 +8,10 @@ repository.workspace = true
 description = "SpatiMesh: Spatiand's web browser"
 
 # See docs/spatimesh.md. One process holds the windows and draws the browser around the page;
-# every tab's page is in WPE WebKit's own processes, held by an engine host behind one
-# interface (on every platform the same engine), so that one tab
-# crashing takes nothing else with it.
+# every tab's page is in an engine's own processes, held by an engine host behind one
+# interface, so that one tab crashing takes nothing else with it. Its engine was WPE WebKit
+# until 2026-11-10; SpatiMesh is Chromium now (third_party/chromium), and this program's stores
+# are the formats Chromium's patches keep (patch 0009).
 # `media`: pages' media played by Spatiand's own player, which needs FFmpeg where it is built.
 # Without it, the engine plays them as it always did.
 [features]

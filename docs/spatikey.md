@@ -209,7 +209,7 @@ names the two cures: exclude Spatiand from Tailscale, or turn off its subnet rou
 
 ## SpatiMesh
 
-Our WPE has no WebAuthn of its own (`ENABLE_WEB_AUTHN` is off; there is no `navigator.credentials`
+Our WPE (SpatiMesh's engine until 2026-11-10) had no WebAuthn of its own (`ENABLE_WEB_AUTHN` was off; there was no `navigator.credentials`
 or `PublicKeyCredential`), so the page's half is ours:
 
 * **`webauthn.js`, in the page's world**, defines `navigator.credentials` (`create`, `get`,

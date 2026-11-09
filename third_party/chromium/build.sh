@@ -19,7 +19,7 @@ set -e
 # At the next update (the owner's decision, 2026-11-09): Web Bluetooth on by default on all three
 # platforms. Blink's WebBluetooth is "experimental" on Linux, which the Deck's and the Beam Pro's
 # builds are: make it stable there, and Cromite's bluetooth_guard2 ask instead of block. The
-# Mac's comes when its SpatiMesh is Chromium (WPE has no Web Bluetooth). docs/spatimesh.md.
+# Mac's comes with its Chromium (docs/mac-plan.md). docs/spatimesh.md.
 CROMITE_COMMIT=3724efc6ede3d2d94611c1fe71d1b090ebbb40a7   # 2026-09-19, Chromium 153.0.8010.37
 DEPOT_TOOLS_COMMIT=7083aadfb
 
@@ -136,10 +136,13 @@ build_android() {
     rm -rf "$staged"; mkdir -p "$staged/lib"
     cp -a "$ffmpeg/include" "$staged/"
     cp -a "$ffmpeg"/lib/libav*.so* "$ffmpeg"/lib/libsw*.so* "$staged/lib/"
-    # Android's libc at API 24, which Termux's changes are written for, and the one library Chromium
-    # takes from the system here: xkbcommon, as the WPE build made it for Android (the APK carries it).
-    # Everything else it builds itself (fontconfig, libffi, libwayland, libdrm).
-    deps=${SPATIAND_ANDROID_DEPS:-/media/shared/Linux/App/spatiand-wpe/out/android}
+    # Android's libc at API 24, which Termux's changes are written for, and what Chromium takes from
+    # a Linux system that Android has not got: xkbcommon, the compositor's own (android/xkbcommon,
+    # whose shared library the APK carries), and the rest from android-libc/deps.sh, below.
+    # Everything else it builds itself (fontconfig, libwayland, libdrm).
+    xkb=$here/../../android/xkbcommon
+    ANDROID_NDK_HOME=${SPATIAND_NDK:-/media/shared/Linux/App/android-ndk-r28c} "$xkb/build.sh"
+    xkb=$xkb/out
     ndk=$work/chromium/src/third_party/android_toolchain/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot
     sysroot=$work/sysroot-android
     rm -rf "$sysroot"; mkdir -p "$sysroot/usr/include" "$sysroot/usr/lib/pkgconfig"
@@ -147,25 +150,24 @@ build_android() {
     cp -a "$ndk/usr/include/aarch64-linux-android/." "$sysroot/usr/include/"
     cp -a "$ndk/usr/lib/aarch64-linux-android/24/." "$sysroot/usr/lib/"
     for f in libc++_shared.so libc++_static.a libc++abi.a; do cp -a "$ndk/usr/lib/aarch64-linux-android/$f" "$sysroot/usr/lib/"; done
-    cp -a "$deps/include/xkbcommon" "$sysroot/usr/include/"
-    cp -a "$deps"/lib/libxkbcommon.so* "$sysroot/usr/lib/"
-    sed 's|^prefix=.*|prefix=/usr|' "$deps/lib/pkgconfig/xkbcommon.pc" > "$sysroot/usr/lib/pkgconfig/xkbcommon.pc"
-    # libffi, for Wayland's library: a Linux build links the system's as ffi_pic. The WPE build's is
-    # a shared library (libffi.so, which the APK carries), linked under that name.
-    cp -a "$deps/include/ffi.h" "$deps/include/ffitarget.h" "$sysroot/usr/include/"
-    cp -a "$deps/lib/libffi.so" "$sysroot/usr/lib/"
-    ln -sf libffi.so "$sysroot/usr/lib/libffi_pic.so"
+    cp -a "$xkb/include/xkbcommon" "$sysroot/usr/include/"
+    cp -a "$xkb/libxkbcommon.so" "$sysroot/usr/lib/"
+    printf 'prefix=/usr\nincludedir=${prefix}/include\nlibdir=${prefix}/lib\nName: xkbcommon\nDescription: XKB API common to servers and clients\nVersion: 1.7.0\nCflags: -I${includedir}\nLibs: -L${libdir} -lxkbcommon\n' \
+        > "$sysroot/usr/lib/pkgconfig/xkbcommon.pc"
     # The unwinder and atomics Android's compiler brings with it, which Chromium's clang does not: the
     # NDK's (r28c, the one Spatiand's Android builds use).
     ndk_full=${SPATIAND_NDK:-/media/shared/Linux/App/android-ndk-r28c}
     cp -a "$ndk_full"/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/*/lib/linux/aarch64/libunwind.a \
           "$ndk_full"/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/*/lib/linux/aarch64/libatomic.a "$sysroot/usr/lib/"
-    # NSS, NSPR and libdbus, made for Android here (android-libc/deps.sh): certificates and D-Bus as on
-    # the Deck, rather than Chromium without them, which upstream never builds for Linux.
+    # NSS, NSPR, libdbus, libffi and SQLite, made for Android here (android-libc/deps.sh): certificates
+    # and D-Bus as on the Deck, rather than Chromium without them, which upstream never builds for
+    # Linux. libffi is Wayland's: a Linux build links the system's as ffi_pic, here libffi.so (which
+    # the APK carries) under that name.
     "$here/android-libc/deps.sh" "$work/android-deps"
     adeps=$work/android-deps
     cp -a "$adeps/include/." "$sysroot/usr/include/"
     cp -a "$adeps"/lib/*.so "$adeps/lib/libdbus-1.a" "$adeps/lib/dbus-1.0" "$sysroot/usr/lib/"
+    ln -sf libffi.so "$sysroot/usr/lib/libffi_pic.so"
     for pc in nss nspr dbus-1; do
         sed 's|^prefix=.*|prefix=/usr|' "$adeps/lib/pkgconfig/$pc.pc" > "$sysroot/usr/lib/pkgconfig/$pc.pc"
     done
@@ -393,9 +395,10 @@ package_android() {
     # Its crash handler, under a name the APK's library folder takes (android-libc/0018).
     "${SPATIAND_NDK:-/media/shared/Linux/App/android-ndk-r28c}"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip \
         --strip-unneeded -o "$P/libspatimesh_crashpad.so" "$O/chrome_crashpad_handler"
-    for lib in nspr4 plc4 plds4 nss3 nssutil3 smime3 ssl3 softokn3 freebl3 freeblpriv3 nssckbi; do
+    for lib in nspr4 plc4 plds4 nss3 nssutil3 smime3 ssl3 softokn3 freebl3 freeblpriv3 nssckbi ffi sqlite3; do
         cp -a "$work/android-deps/lib/lib$lib.so" "$P/"
     done
+    cp -a "$here/../../android/xkbcommon/out/libxkbcommon.so" "$P/"
     cp -a "$O"/*.pak "$O/icudtl.dat" "$O/snapshot_blob.bin" "$O/RELEASE" "$P/"
     mkdir -p "$P/locales" && cp -a "$O"/locales/*.pak "$P/locales/"
     tar -C "$work/package" -czf "$P.tar.gz" "$(basename "$P")"
