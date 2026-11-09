@@ -154,6 +154,9 @@ const SIDEWAYS_RATIO: f32 = 3.0;
 enum Lock {
     Vertical,
     Horizontal,
+    /// Both at once, for what the pointer is on said it moves both ways under the hand
+    /// ([`PadScroll::set_free`]).
+    Free,
 }
 
 /// What the pad is asking the pointer to do this frame.
@@ -200,6 +203,8 @@ pub struct PadScroll {
     lock: Option<Lock>,
     /// Vouched for, and waiting for the axis to be chosen.
     undecided: (f32, f32),
+    /// What the pointer is on takes both axes at once. See [`PadScroll::set_free`].
+    free: bool,
 }
 
 impl PadScroll {
@@ -217,6 +222,23 @@ impl PadScroll {
         self.running = false;
         self.lock = None;
         self.undecided = (0.0, 0.0);
+    }
+
+    /// Whether what this pad scrolls moves both ways under the hand -- a picture swiped to the
+    /// next, a map or a zoomed picture panned -- as its window said (`set_scroll_free`,
+    /// Spatiand's protocol). Said by the caller every frame, for whatever the pointer is on.
+    ///
+    /// Then a gesture is not locked to one axis, and least of all leant towards up and down:
+    /// [`VERTICAL_AFTER`]'s lean is right for a page read downwards and is exactly what made a
+    /// sideways swipe through SpatiLoupe's pictures hard -- a third of a pad's width before
+    /// anything moved, and a swipe a little off level not sideways at all (owner, 2026-11-09).
+    /// The window decides for itself which way a gesture goes, if either. Still nothing goes out
+    /// until the thumb has gone [`VERTICAL_AFTER`] in some direction, so that a contact settling
+    /// moves nothing, and what is held back and dropped at a lift is as before. Taken up by the
+    /// next gesture, not the one under way: a thumb does not change what it is doing because the
+    /// pointer crossed into another window.
+    pub fn set_free(&mut self, free: bool) {
+        self.free = free;
     }
 
     /// The fastest this frame is allowed to be, given what the gesture has been doing.
@@ -284,7 +306,11 @@ impl PadScroll {
             // chosen nothing goes out, so that a thumb settling on the pad scrolls nothing.
             if self.lock.is_none() {
                 let (sx, sy) = self.held.iter().fold(self.undecided, |(x, y), (dx, dy)| (x + dx, y + dy));
-                if sx.abs() >= SIDEWAYS_AFTER && sx.abs() >= sy.abs() * SIDEWAYS_RATIO {
+                if self.free {
+                    if sx.hypot(sy) >= VERTICAL_AFTER {
+                        self.lock = Some(Lock::Free);
+                    }
+                } else if sx.abs() >= SIDEWAYS_AFTER && sx.abs() >= sy.abs() * SIDEWAYS_RATIO {
                     self.lock = Some(Lock::Horizontal);
                 } else if sy.abs() >= VERTICAL_AFTER && sy.abs() * SIDEWAYS_RATIO >= sx.abs() {
                     self.lock = Some(Lock::Vertical);
@@ -295,6 +321,7 @@ impl PadScroll {
                 match lock {
                     Lock::Vertical => dx = 0.0,
                     Lock::Horizontal => dy = 0.0,
+                    Lock::Free => {}
                 }
                 if dx != 0.0 || dy != 0.0 {
                     self.running = true;
@@ -457,6 +484,57 @@ mod tests {
     /// Drive a whole swipe and collect what came out.
     fn run(scroll: &mut PadScroll, pads: &[Pad]) -> Vec<Scroll> {
         pads.iter().map(|p| scroll.update(p)).collect()
+    }
+
+    /// A thumb swiping sideways as a thumb does: mostly across, drifting a third as far down.
+    fn across_with_drift(frames: usize) -> Vec<Pad> {
+        (0..=frames).map(|i| at(-0.5 + i as f32 * STEP, i as f32 * STEP / 3.0)).collect()
+    }
+
+    #[test]
+    fn a_free_surface_is_sent_a_sideways_swipe_sideways_and_soon() {
+        // Locked, the drift wins: a third as far down is too much to be called sideways, so the
+        // swipe scrolls down and nothing across -- the owner's "hard to swipe" in SpatiLoupe.
+        let mut locked = PadScroll::default();
+        let out = run(&mut locked, &across_with_drift(16));
+        let across: f32 = out.iter().map(|s| if let Scroll::By { dx, .. } = s { *dx } else { 0.0 }).sum();
+        assert_eq!(across, 0.0, "a page's lean let a sideways swipe through: {out:?}");
+
+        // Free, both ways at once, and from a few frames in rather than a third of the pad.
+        let mut free = PadScroll::default();
+        free.set_free(true);
+        let out = run(&mut free, &across_with_drift(16));
+        let first = out.iter().position(|s| matches!(s, Scroll::By { .. })).expect("it scrolled");
+        assert!(first <= LAG + 2, "the first scroll came at frame {first}");
+        let (across, down) = out.iter().fold((0.0, 0.0), |(x, y), s| match s {
+            Scroll::By { dx, dy } => (x + dx, y + dy),
+            _ => (x, y),
+        });
+        assert!(across > 0.15 && down > 0.05, "across {across}, down {down}");
+        assert!((across / down - 3.0).abs() < 0.01, "not as the thumb went: {across} / {down}");
+    }
+
+    #[test]
+    fn a_free_surface_still_waits_for_the_contact_to_settle() {
+        let mut free = PadScroll::default();
+        free.set_free(true);
+        // Less than VERTICAL_AFTER in all, wandering: a thumb arriving, not moving.
+        let wander: Vec<Pad> = (0..12).map(|i| at(0.1 + (i % 3) as f32 * 0.004, 0.2 + (i % 2) as f32 * 0.004)).collect();
+        assert!(run(&mut free, &wander).iter().all(|s| *s == Scroll::Idle));
+    }
+
+    #[test]
+    fn freedom_is_taken_up_by_the_next_gesture_not_the_one_under_way() {
+        let mut s = PadScroll::default();
+        let up: Vec<Pad> = (0..=12).map(|i| at(0.0, -0.4 + i as f32 * STEP)).collect();
+        run(&mut s, &up);
+        // The pointer crosses into a free window mid-swipe: the swipe stays vertical...
+        s.set_free(true);
+        let on: Vec<Pad> = (1..=8).map(|i| at(i as f32 * STEP, -0.4 + 12.0 * STEP)).collect();
+        assert!(run(&mut s, &on).iter().all(|o| !matches!(o, Scroll::By { dx, .. } if *dx != 0.0)));
+        // ...and the next one, after a lift, is free.
+        s.update(&lifted());
+        assert!(run(&mut s, &across_with_drift(16)).iter().any(|o| matches!(o, Scroll::By { dx, dy } if *dx != 0.0 && *dy != 0.0)));
     }
 
     #[test]

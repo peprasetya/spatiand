@@ -172,7 +172,7 @@ impl Wire {
         let data_devices: Option<wl_data_device_manager::WlDataDeviceManager> = globals.bind(&handle, 1..=3, ()).ok();
         let data_device = data_devices.as_ref().map(|m| m.get_data_device(&seat, &handle, ()));
         let dmabuf = globals.bind(&handle, 3..=3, ()).ok();
-        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=9, ()).ok();
+        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=10, ()).ok();
         // Only a process the room gave its assistant's key to has any business here, and it says
         // the key at once: every question before that is refused.
         let assist: Option<spatiand_assist_v1::SpatiandAssistV1> = match std::env::var("SPATIAND_ASSIST_KEY") {
@@ -384,6 +384,14 @@ impl Wire {
         if let Some(xr) = self.xr_of(id) {
             if xr.version() >= 6 {
                 xr.set_pinch_taken(taken as u32);
+            }
+        }
+    }
+
+    pub(crate) fn set_scroll_free(&mut self, id: WindowId, free: bool) {
+        if let Some(xr) = self.xr_of(id) {
+            if xr.version() >= 10 {
+                xr.set_scroll_free(free as u32);
             }
         }
     }

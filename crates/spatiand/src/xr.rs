@@ -107,6 +107,9 @@ pub struct XrState {
     /// The surface's own alpha is kept: where it draws nothing, the room shows. See
     /// `set_see_through`.
     pub see_through: bool,
+    /// A pad's gesture over this surface is sent both ways at once rather than locked to one.
+    /// See `set_scroll_free`.
+    pub scroll_free: bool,
 }
 
 impl XrState {
@@ -611,6 +614,9 @@ impl Dispatch<spatiand_xr_surface_v1::SpatiandXrSurfaceV1, Mutex<Pending>> for S
             }
             spatiand_xr_surface_v1::Request::SetSeeThrough { enable } => {
                 pending.next.see_through = enable != 0;
+            }
+            spatiand_xr_surface_v1::Request::SetScrollFree { enable } => {
+                pending.next.scroll_free = enable != 0;
             }
             spatiand_xr_surface_v1::Request::SetSoundKey { key } => {
                 // Kept on the surface, not with the rest: a name is not something to copy

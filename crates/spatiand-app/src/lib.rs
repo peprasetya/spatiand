@@ -399,6 +399,15 @@ impl App {
         self.wire.set_pinch_taken(window, taken);
     }
 
+    /// What the window shows moves both ways under the hand -- a picture swiped to the next, a
+    /// map panned -- so a thumb on a pad scrolls it both ways at once, sideways as readily as
+    /// up and down, rather than one way at a time with a lean towards up and down as a page
+    /// is. Which way a gesture goes, if either, is then the window's to decide. From the next
+    /// picture on; ignored by a room older than this.
+    pub fn set_scroll_free(&mut self, window: WindowId, free: bool) {
+        self.wire.set_scroll_free(window, free);
+    }
+
     /// Where the window's pictures are clear (alpha zero), the room shows through: for a
     /// picture shown whole on nothing. Windows are otherwise opaque. From the next picture on.
     /// Name the sound that belongs to this window, for a process with more than one window

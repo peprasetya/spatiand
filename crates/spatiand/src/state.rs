@@ -326,7 +326,7 @@ impl Spatiand {
         // Stereo, head-locked and immersive surfaces. Binding it says nothing and changes
         // nothing: an application that ignores it is an ordinary window, which is the whole
         // design. See `crate::xr` and the protocol XML.
-        dh.create_global::<Self, spatiand_proto::server::spatiand_xr_v1::SpatiandXrV1, _>(9, ());
+        dh.create_global::<Self, spatiand_proto::server::spatiand_xr_v1::SpatiandXrV1, _>(10, ());
         // The assistant's way into the room: bound by anyone, answered for one (`crate::assist`).
         dh.create_global::<Self, spatiand_proto::server::spatiand_assist_v1::SpatiandAssistV1, _>(1, ());
 

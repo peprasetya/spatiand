@@ -1664,6 +1664,9 @@ pub fn run(
                             // Not while the button is held: the finger that holds it is on the
                             // same glass, and a drag that also scrolled would fight itself.
                             if let Some(p) = pads.as_ref().filter(|p| !p.right_pad.clicked) {
+                                // Both ways at once over a window that moves both ways under
+                                // the hand (`set_scroll_free`): SpatiLoupe's pictures.
+                                left_scroll.set_free(pointers.scroll_is_free(&runtime.state));
                                 let scroll = left_scroll.update(&p.left_pad);
                                 // This frame's share, as on the Deck; all of it before a fling.
                                 let (dx, dy) = match scroll {

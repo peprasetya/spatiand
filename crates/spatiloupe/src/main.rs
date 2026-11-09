@@ -287,6 +287,10 @@ impl Loupe {
                 self.ready = true;
                 // A picture, a page or an object zooms when pinched; the window stays as it is.
                 self.app.set_pinch_taken(self.window, true);
+                // And goes both ways under a thumb: sideways to the next picture, as readily as
+                // up or down (swipe.rs decides which a gesture is). Left to the room's pad, a
+                // sideways swipe waited a third of the pad and went up and down a little off level.
+                self.app.set_scroll_free(self.window, true);
             }
             Event::Resized { width, height, .. } => {
                 self.size = ((*width).max(480), (*height).max(320));

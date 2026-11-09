@@ -1150,6 +1150,20 @@ impl PointerState {
         pointer.frame(state);
     }
 
+    /// Whether what a scroll now goes to moves both ways under the hand, as its window said
+    /// (`set_scroll_free`, Spatiand's protocol): then a pad's gesture is not locked to one axis.
+    /// Asked of the window, whichever of its surfaces the pointer is on. See
+    /// `spatiand_input::PadScroll::set_free`.
+    pub fn scroll_is_free(&self, state: &Spatiand) -> bool {
+        let Some(mut surface) = state.seat.get_pointer().and_then(|p| p.current_focus()) else {
+            return false;
+        };
+        while let Some(parent) = smithay::wayland::compositor::get_parent(&surface) {
+            surface = parent;
+        }
+        crate::xr::state_of(&surface).scroll_free
+    }
+
     /// Hand the page on to the client's own inertia.
     ///
     /// The wire event is `axis_stop`, which reads as the opposite of what it does. It reports

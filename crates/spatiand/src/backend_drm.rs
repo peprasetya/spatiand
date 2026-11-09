@@ -2795,6 +2795,9 @@ pub fn run(
                             // The left pad is the wheel, and it turns whatever the cursor is
                             // on -- which is the right pad's target when that thumb is down.
                             if let Some(p) = pads.as_ref() {
+                                // Both ways at once over a window that moves both ways under
+                                // the hand (`set_scroll_free`): SpatiLoupe's pictures.
+                                left_scroll.set_free(pointers.scroll_is_free(&runtime.state));
                                 let scroll = left_scroll.update(&p.left_pad);
                                 // This frame's share of the steps so far; all of it before a
                                 // fling, which is thrown at the speed of the last steps given.
