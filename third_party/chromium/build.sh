@@ -1,7 +1,8 @@
 #!/bin/bash
 # SpatiMesh's Chromium: Chromium at the version Cromite's patches are made for, Cromite's patches,
-# then Spatiand's own (patches/, in order), built as Cromite builds it: for Linux (the Deck), or
-# with CHROMIUM_TARGET=android for Android on arm64 (the Beam Pro).
+# then Spatiand's own (patches/, in order), built as Cromite builds it: for Linux (the Deck), with
+# CHROMIUM_TARGET=android for Android on arm64 (the Beam Pro), or with CHROMIUM_TARGET=mac on a Mac
+# itself, for macOS on Apple silicon (littleotter; the port is docs/spatimesh-mac-port.md).
 #
 #   [CHROMIUM_TARGET=android] third_party/chromium/build.sh <work folder> [fetch|patch|build|package|all]
 #
@@ -26,12 +27,17 @@ work=$(cd "${1:?work folder}" && pwd); step=${2:-all}
 here=$(cd "$(dirname "$0")" && pwd)
 root=${CHROMIUM_ROOT:-/media/shared/Linux/App/SpatiWorld/buildenv-jammy/root}
 target=${CHROMIUM_TARGET:-linux}
-case $target in linux|android) ;; *) echo "unknown target: $target" >&2; exit 2 ;; esac
+case $target in linux|android|mac) ;; *) echo "unknown target: $target" >&2; exit 2 ;; esac
 
-inside() { # command...: run in the 22.04 root, the work folder at /cr
+inside() { # command...: run in the 22.04 root, the work folder at /cr (CR); on a Mac, as it is
+    if [ "$target" = mac ]; then
+        env CR="$work" CHROMIUM_TARGET=mac PATH="$work/depot_tools:$PATH" DEPOT_TOOLS_UPDATE=0 DEPOT_TOOLS_METRICS=0 \
+            bash -c 'cd "$CR" && "$@"' inside "$@"
+        return
+    fi
     bwrap --unshare-user --uid 1000 --gid 1000 --bind "$root" / --dev /dev --tmpfs /dev/shm --proc /proc \
         --bind /tmp /tmp --bind "$work" /cr --ro-bind /etc/resolv.conf /etc/resolv.conf \
-        --setenv HOME /cr/home --setenv USER builder --setenv LOGNAME builder --setenv CHROMIUM_TARGET "$target" \
+        --setenv CR /cr --setenv HOME /cr/home --setenv USER builder --setenv LOGNAME builder --setenv CHROMIUM_TARGET "$target" \
         --setenv PATH /cr/depot_tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
         --setenv DEPOT_TOOLS_UPDATE 0 --setenv DEPOT_TOOLS_METRICS 0 --chdir /cr "$@"
 }
@@ -45,10 +51,10 @@ fetch() {
     git -C "$work/cromite" checkout -q "$CROMITE_COMMIT"
     inside bash -s <<'EOF'
 set -e
-(cd /cr/depot_tools && ./ensure_bootstrap >/dev/null)   # gn and siso want it; DEPOT_TOOLS_UPDATE=0 skips it
-VERSION=$(cat /cr/cromite/build/RELEASE)
+(cd $CR/depot_tools && ./ensure_bootstrap >/dev/null)   # gn and siso want it; DEPOT_TOOLS_UPDATE=0 skips it
+VERSION=$(cat $CR/cromite/build/RELEASE)
 URL=https://chromium.googlesource.com/chromium/src.git
-mkdir -p /cr/chromium/src && cd /cr/chromium/src
+mkdir -p $CR/chromium/src && cd $CR/chromium/src
 [ -d .git ] || git init -q
 git remote get-url origin >/dev/null 2>&1 || git remote add origin $URL
 git fetch --depth 2 origin "+refs/tags/$VERSION:refs/tags/$VERSION"
@@ -59,6 +65,8 @@ if [ "$CHROMIUM_TARGET" = android ]; then
     ANDROID_VARS='"checkout_android_prebuilts_build_tools": True, '
     TARGET_OS='target_os = ["android"]'
 fi
+# A Mac's tree: synced on the Mac itself, for its own clang and tools (none of Linux's).
+if [ "$CHROMIUM_TARGET" = mac ]; then TARGET_OS='target_os = ["mac"]'; fi
 cat > ../.gclient <<G
 solutions = [
   { "name": "src", "url": "$URL@$(git rev-parse HEAD)", "deps_file": "DEPS", "managed": False,
@@ -92,18 +100,18 @@ EOF
 patch_tree() {
     inside bash -s <<'EOF'
 set -e
-cd /cr
+cd "$CR"
 # Cromite's own script (it folds v8, devtools-frontend, skia, perfetto and boringssl into the
 # main repository, which its patches need), without its apt step. gclient cannot sync this tree
 # afterwards: fetch again into a fresh folder for another version.
-sed '/^sudo apt install sed/d' /cr/cromite/tools/images/cromite-source/apply-cromite-patches.sh | bash
-cd /cr/chromium/src
-for p in /cr/spatiand-patches/*.patch; do git am -q "$p"; done
+sed '/^sudo apt install sed/d' $CR/cromite/tools/images/cromite-source/apply-cromite-patches.sh | bash
+cd $CR/chromium/src
+for p in $CR/spatiand-patches/*.patch; do git am -q "$p"; done
 # For Android's libc, what Termux changes and then ours (android-libc/README.md). With patch(1),
 # fuzz and all, as Termux applies them: some reach into dependencies that are repositories of
 # their own, where git am cannot follow.
 if [ "$CHROMIUM_TARGET" = android ]; then
-    for p in /cr/android-libc/termux/*.patch /cr/android-libc/0*.patch; do
+    for p in $CR/android-libc/termux/*.patch $CR/android-libc/0*.patch; do
         patch -p1 -F 3 --no-backup-if-mismatch -s < "$p"
     done
 fi
