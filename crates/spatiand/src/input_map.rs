@@ -125,6 +125,59 @@ mod tests {
         shell
     }
 
+    /// The address page of Remote computers, as the HUD opens it.
+    fn address_page() -> Shell {
+        let mut shell = Shell::new(vec![], spatiand_shell::DesktopPanels::ALL, true);
+        shell.handle(Intent::ToggleHud);
+        while shell.hud().focused().action != spatiand_shell::HudAction::OpenHosts {
+            shell.handle(Intent::Navigate(NavDirection::Down));
+        }
+        shell.handle(Intent::Accept);
+        shell.handle(Intent::Accept);
+        assert!(shell.wants_text());
+        shell
+    }
+
+    #[test]
+    fn a_real_keyboard_types_a_computers_address_and_escape_backs_out() {
+        use spatiand_shell::keyboard as kb;
+        let mut shell = address_page();
+        let mut keys = MenuKeys::default();
+        let mut events = Vec::new();
+        let mut press = |shell: &mut Shell, keys: &mut MenuKeys, code: u32| {
+            assert!(keys.text(shell, code, true, &mut events));
+            assert!(keys.text(shell, code, false, &mut events));
+        };
+        // "box_2": letters, then shift held for an underscore, then a digit taken back for another.
+        for code in [48, 24, 45] {
+            press(&mut shell, &mut keys, code); // b o x
+        }
+        assert!(keys.text(&mut shell, kb::KEY_LEFTSHIFT, true, &mut Vec::new()));
+        press(&mut shell, &mut keys, 12); // _ (shifted -)
+        assert!(keys.text(&mut shell, kb::KEY_LEFTSHIFT, false, &mut Vec::new()));
+        press(&mut shell, &mut keys, 3); // 2
+        press(&mut shell, &mut keys, kb::KEY_BACKSPACE);
+        press(&mut shell, &mut keys, 4); // 3
+        assert_eq!(shell.hosts().typed(), "box_3");
+        // Escape leaves the page, as B does, and the keys are nobody's text any more.
+        let mut out = Vec::new();
+        assert!(keys.text(&mut shell, 1, true, &mut out));
+        assert!(!shell.wants_text());
+        assert!(!keys.text(&mut shell, 24, true, &mut out));
+    }
+
+    #[test]
+    fn a_real_keyboards_enter_sends_the_address() {
+        let mut shell = address_page();
+        let mut keys = MenuKeys::default();
+        let mut events = Vec::new();
+        for code in [17, 24, 19, 37] {
+            keys.text(&mut shell, code, true, &mut events); // w o r k
+        }
+        keys.text(&mut shell, spatiand_shell::keyboard::KEY_ENTER, true, &mut events);
+        assert_eq!(events, [ShellEvent::PairHost("work".into())]);
+    }
+
     #[test]
     fn the_x_and_y_keys_are_the_x_and_y_buttons_on_the_window_list() {
         let mut shell = window_list();
@@ -403,6 +456,37 @@ impl MenuKeys {
                 shell.query_backspace();
             } else if let Some(text) = typed_by(code, self.shift) {
                 shell.type_query(text);
+            }
+        }
+        true
+    }
+
+    /// A real keyboard's key while a menu asks for text ([`Shell::wants_text`]) -- a computer's
+    /// address: its letters are that text, Backspace takes one back, Enter sends it, and Escape
+    /// backs out of it as B does. `true` if the menu took it, which it does with every key while
+    /// it asks: nothing typed there goes on to a window.
+    ///
+    /// Before, only characters reached it (the Beam Pro's phone types characters), and a Mac's
+    /// keyboard, which sends keys, could neither type an address nor get out of the page
+    /// (littleotter, 2026-11-09); a keyboard plugged into the Deck typed into the window behind.
+    pub fn text(&mut self, shell: &mut Shell, code: u32, pressed: bool, events: &mut Vec<ShellEvent>) -> bool {
+        use spatiand_shell::keyboard as kb;
+        if matches!(code, kb::KEY_LEFTSHIFT | 54) {
+            self.shift = pressed;
+        }
+        if !shell.wants_text() {
+            return false;
+        }
+        if pressed {
+            match code {
+                kb::KEY_BACKSPACE => shell.type_backspace(),
+                kb::KEY_ENTER | 96 => events.extend(shell.type_enter()),
+                1 => events.extend(shell.handle(Intent::Back)),
+                _ => {
+                    if let Some(text) = typed_by(code, self.shift) {
+                        shell.type_text(text);
+                    }
+                }
             }
         }
         true

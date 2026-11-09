@@ -714,7 +714,10 @@ pub fn run(
                 send_key_state(&mut runtime.state, *code, *pressed, now);
             }
             if let Some(mut input) = deck_input {
-                if !shell.menu_is_open() {
+                // A menu that wants text is the exception to "a menu takes the pads", as on the
+                // Deck: the pointer is how the keyboard under it is typed on, and without it there
+                // was nothing to aim with (adding a computer, littleotter 2026-11-09).
+                if !shell.menu_is_open() || shell.wants_text() {
                     if !delivery.pointer_clicks[0] {
                         input.left_trigger = 0.0;
                     }
@@ -732,15 +735,14 @@ pub fn run(
             for typed in controller.take_keys() {
                 let now = started.elapsed().as_millis() as u32;
                 if shell.wants_text() {
-                    use spatiand_shell::keyboard as kb;
                     match typed {
                         Typed::Char(c) if c == '\n' => typed_event = typed_event.or(shell.type_enter()),
                         Typed::Char(c) => shell.type_text(&c.to_string()),
-                        Typed::Key { code: kb::KEY_BACKSPACE, pressed: true } => shell.type_backspace(),
-                        Typed::Key { code: kb::KEY_ENTER, pressed: true } => {
-                            typed_event = typed_event.or(shell.type_enter())
+                        // A keyboard's keys -- a Mac's, or one on the phone -- as the Deck's:
+                        // letters, Backspace, Enter, and Escape to leave (input_map).
+                        Typed::Key { code, pressed } => {
+                            menu_keys.text(&mut shell, code, pressed, &mut pointed_events);
                         }
-                        Typed::Key { .. } => {}
                     }
                     continue;
                 }

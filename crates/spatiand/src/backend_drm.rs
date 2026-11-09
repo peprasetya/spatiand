@@ -2223,9 +2223,12 @@ pub fn run(
                                 }
                                 continue;
                             }
-                            // A menu that is open has the keys: arrows, Enter, Escape, and in
-                            // the launcher the letters that narrow it.
-                            if menu_keys.key(&mut shell, code, pressed, &mut pointed_events) {
+                            // A menu asking for text has every key as that text (a computer's
+                            // address); a menu that is open has the keys: arrows, Enter, Escape,
+                            // and in the launcher the letters that narrow it.
+                            if menu_keys.text(&mut shell, code, pressed, &mut pointed_events)
+                                || menu_keys.key(&mut shell, code, pressed, &mut pointed_events)
+                            {
                                 continue;
                             }
                             let now = started.elapsed().as_millis() as u32;
