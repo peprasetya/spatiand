@@ -74,34 +74,85 @@ fn by_name(path: &Path) -> Option<Eyes> {
 
 /// How alike two halves of a small grey copy of the picture are, -1 to 1, in their detail
 /// rather than their light: the sky at the top of both halves of any landscape is alike, and
-/// says nothing. The second half is tried a little to either side of the first, since the
-/// eyes see near things in different places.
+/// says nothing.
+///
+/// **Part by part.** The eyes see near things further apart than far ones, so no one shift of
+/// the second half matches the first everywhere -- and a phone's two lenses differ a little in
+/// exposure, sharpness and how level they sit. Matched whole at its finest detail, the Beam
+/// Pro's own 3D photographs scored as two different pictures. So each of twelve parts of the
+/// first half finds its own place in the second, a little to either side and a pixel or two up
+/// or down, and the middle part's score is the halves'. Detail is taken a step coarser than
+/// the pixel: a little blurred, less much blurred.
 fn alike(grey: &[f32], width: usize, height: usize, a: (usize, usize), b: (usize, usize), size: (usize, usize)) -> f32 {
+    let detail = band(grey, width, height);
     let (w, h) = size;
-    // Detail: each pixel less the average of its neighbours.
-    let detail = |x: usize, y: usize| -> f32 {
-        let at = |x: usize, y: usize| grey[y.min(height - 1) * width + x.min(width - 1)];
-        let around = (at(x.saturating_sub(1), y) + at(x + 1, y) + at(x, y.saturating_sub(1)) + at(x, y + 1)) * 0.25;
-        at(x, y) - around
-    };
-    let reach = (w / 12).max(1) as isize;
-    let mut best = -1.0f32;
-    for shift in (-reach..=reach).step_by(1) {
-        let (mut ab, mut aa, mut bb) = (0.0f64, 0.0f64, 0.0f64);
-        for y in 1..h.saturating_sub(1) {
-            for x in (reach as usize + 1)..(w.saturating_sub(reach as usize + 1)) {
-                let p = detail(a.0 + x, a.1 + y) as f64;
-                let q = detail((b.0 as isize + x as isize + shift) as usize, b.1 + y) as f64;
-                ab += p * q;
-                aa += p * p;
-                bb += q * q;
+    let (across, down) = (4usize, 3usize);
+    let (pw, ph) = (w / across, h / down);
+    if pw < 4 || ph < 4 {
+        return -1.0;
+    }
+    let reach = ((w / 8).max(2) as isize, 2isize);
+    let mut parts = Vec::with_capacity(across * down);
+    for row in 0..down {
+        for col in 0..across {
+            let (ax, ay) = (a.0 + col * pw, a.1 + row * ph);
+            let mut best = -1.0f32;
+            for sy in -reach.1..=reach.1 {
+                for sx in -reach.0..=reach.0 {
+                    let bx = b.0 as isize + (col * pw) as isize + sx;
+                    let by = b.1 as isize + (row * ph) as isize + sy;
+                    // Within the other half: its neighbour is not the other eye.
+                    if bx < b.0 as isize || by < b.1 as isize || bx as usize + pw > b.0 + w || by as usize + ph > b.1 + h {
+                        continue;
+                    }
+                    let (bx, by) = (bx as usize, by as usize);
+                    let (mut ab, mut aa, mut bb) = (0.0f64, 0.0f64, 0.0f64);
+                    for y in 0..ph {
+                        for x in 0..pw {
+                            let p = detail[(ay + y) * width + ax + x] as f64;
+                            let q = detail[(by + y) * width + bx + x] as f64;
+                            ab += p * q;
+                            aa += p * p;
+                            bb += q * q;
+                        }
+                    }
+                    if aa > 1e-9 && bb > 1e-9 {
+                        best = best.max((ab / (aa * bb).sqrt()) as f32);
+                    }
+                }
             }
-        }
-        if aa > 1e-9 && bb > 1e-9 {
-            best = best.max((ab / (aa * bb).sqrt()) as f32);
+            parts.push(best);
         }
     }
-    best
+    parts.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+    parts[parts.len() / 2]
+}
+
+/// The detail parts are matched by: a little blurred, less much blurred.
+fn band(grey: &[f32], width: usize, height: usize) -> Vec<f32> {
+    let near = boxed(grey, width, height, 1);
+    let far = boxed(grey, width, height, 3);
+    near.iter().zip(&far).map(|(n, f)| n - f).collect()
+}
+
+/// Each pixel the average of the square `radius` around it, the edge repeated past the edge.
+fn boxed(grey: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
+    let r = radius as isize;
+    let at = |x: isize, y: isize| grey[(y.clamp(0, height as isize - 1) as usize) * width + x.clamp(0, width as isize - 1) as usize];
+    let mut out = vec![0.0f32; width * height];
+    let n = ((2 * r + 1) * (2 * r + 1)) as f32;
+    for y in 0..height as isize {
+        for x in 0..width as isize {
+            let mut sum = 0.0f32;
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    sum += at(x + dx, y + dy);
+                }
+            }
+            out[y as usize * width + x as usize] = sum / n;
+        }
+    }
+    out
 }
 
 /// The picture as grey, `width` across.
@@ -119,13 +170,21 @@ fn grey(rgba: &[u8], from: (u32, u32), width: usize, height: usize) -> Vec<f32> 
     out
 }
 
-/// How alike two halves must be to be taken for two eyes.
-const ALIKE: f32 = 0.55;
+/// How alike two halves must be to be taken for two eyes. The Beam Pro's 3D photographs score
+/// about 0.9 and an ordinary photograph about 0.15 (2026-11-09).
+const ALIKE: f32 = 0.6;
 
 /// How the picture is packed: by its name if that says, by its halves if not.
 pub fn guess(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Eyes {
     if let Some(eyes) = by_name(path) {
         return eyes;
+    }
+    // The Beam Pro's own camera names its 3D photographs and videos SV_ and writes nothing else
+    // to say so -- not even its own make -- so a wide one named so is taken at its word: a
+    // dark or featureless pair has too little detail to be asked.
+    let name = path.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    if name.starts_with("sv_") && width as f32 >= height as f32 * 1.9 {
+        return Eyes::SideBySide;
     }
     if width < 64 || height < 64 || rgba.len() < (width * height * 4) as usize {
         return Eyes::Mono;

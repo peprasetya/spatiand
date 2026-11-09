@@ -264,3 +264,18 @@ mod tests {
         assert_eq!(&picture.rgba[..4], &[1, 2, 3, 255]);
     }
 }
+
+#[cfg(test)]
+mod a_picture_here {
+    /// A picture on this computer read as SpatiLoupe reads it, and what it makes of its eyes:
+    /// `SPATILOUPE_PICTURE=/path/to/picture cargo test -p spatiloupe -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn eyes_of_a_picture() {
+        let path = std::path::PathBuf::from(std::env::var("SPATILOUPE_PICTURE").expect("SPATILOUPE_PICTURE"));
+        for largest in [super::LARGEST, 384] {
+            let picture = super::read(&path, largest).unwrap();
+            println!("{largest}: {}x{} (was {:?}): {:?}", picture.width, picture.height, picture.original, picture.eyes);
+        }
+    }
+}
