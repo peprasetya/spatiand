@@ -70,6 +70,9 @@ rm -rf $OUT && mkdir -p $OUT/classes $OUT/dex $OUT/apk/lib/arm64-v8a $OUT/assets
 # The keyboard layouts, unpacked into the app's files on first start.
 cp -R xkbcommon/out/xkb $OUT/assets/xkb
 cp mysofa/out/default.sofa $OUT/assets/
+# The two icons the launcher asks an icon theme for -- this machine's and another computer's --
+# which Android has no theme to give: the Mac's (mac/icons), unpacked where the room looks.
+cp -R ../mac/icons $OUT/assets/icons
 # What the licences ask to go with the libraries (third_party/NOTICES.md).
 . ../third_party/ffmpeg/versions.sh
 mkdir -p $OUT/assets/licences

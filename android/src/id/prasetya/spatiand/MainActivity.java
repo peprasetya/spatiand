@@ -110,6 +110,7 @@ public class MainActivity extends Activity implements SensorEventListener {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         Native.configDir(getFilesDir().getPath(), getCacheDir().getPath());
         Native.xkbDir(unpackLayouts());
+        unpackIcons();
         unpackAsset("default.sofa", new File(getFilesDir(), "default.sofa"));
         new Thread(this::unpackSpatiMesh, "unpack-spatimesh").start();
         File movies = getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES);
@@ -725,6 +726,31 @@ public class MainActivity extends Activity implements SensorEventListener {
             Log.e(TAG, "could not unpack the keyboard layouts", e);
         }
         return root.getPath();
+    }
+
+    /** Which of the launcher's icons the app carries (android/build.sh): bumped when they change. */
+    static final String ICONS_VERSION = "computer, network-server 1";
+
+    /**
+     * The launcher's own two icons, this machine's and another computer's, which on the Deck and
+     * the Mac come from an icon theme and on Android from the APK (the Mac's, mac/icons): into
+     * ~/.local/share/icons, which the room searches as every platform's (spatiand-platform's
+     * icons.rs). Without them the launcher drew each computer's initial.
+     */
+    void unpackIcons() {
+        File root = new File(getFilesDir(), ".local/share/icons");
+        File stamp = new File(root, ".version");
+        try {
+            if (stamp.exists() && new String(java.nio.file.Files.readAllBytes(stamp.toPath())).equals(ICONS_VERSION)) {
+                return;
+            }
+            copyAssets("icons", root);
+            try (OutputStream out = new FileOutputStream(stamp)) {
+                out.write(ICONS_VERSION.getBytes());
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "could not unpack the launcher's icons", e);
+        }
     }
 
     /**
