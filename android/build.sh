@@ -94,8 +94,10 @@ if [ -f "$CR/spatimesh" ]; then
     # Its own fonts.conf, set up as a desktop's is (third_party/chromium/android-fonts.conf).
     cp ../third_party/chromium/android-fonts.conf $OUT/assets/spatimesh-chromium/fonts.conf
     # What this is, so that the app unpacks it again when it changes. Not a dotfile: aapt2 leaves
-    # those out of the assets.
-    echo "$(cat "$CR/RELEASE" 2>/dev/null) $(md5 -q "$CR/spatimesh" 2>/dev/null || md5sum "$CR/spatimesh" | cut -d' ' -f1)" \
+    # those out of the assets. The program, its launcher and its fonts.conf: a stamp of the program
+    # alone left a change to run.sh unpacked never (2026-11-09, --disable-partial-raster).
+    sum() { md5 -q "$1" 2>/dev/null || md5sum "$1" | cut -d' ' -f1; }
+    echo "$(cat "$CR/RELEASE" 2>/dev/null) $(sum "$CR/spatimesh") $(sum $OUT/assets/spatimesh-chromium/run.sh) $(sum $OUT/assets/spatimesh-chromium/fonts.conf)" \
         > $OUT/assets/spatimesh-chromium/version
 else
     echo "warning: no SpatiMesh Chromium for Android at $CR; SpatiMesh here is WPE's"
