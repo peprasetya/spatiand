@@ -2,5 +2,6 @@ module CSpatiand {
     header "spatiand_core.h"
     header "spatiand_mac.h"
     header "SPVirtualDisplay.h"
+    header "SPMultitouch.h"
     export *
 }

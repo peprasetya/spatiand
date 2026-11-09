@@ -76,6 +76,59 @@ enum MacScreens {
         return out
     }
 
+    /// **A Mac with no screen but the glasses** (a Mac mini at a desk with nothing else on it):
+    /// the virtual screen is made and becomes the main one, at the top left, the glasses to its
+    /// right. The menu bar, the Dock and every window the Mac opens are then on a screen nobody
+    /// looks at but the room, which shows them as windows; the glasses show the room alone, and
+    /// the pointer the room has hidden rests there rather than over the room's picture. For this
+    /// login only, so a monitor plugged in later is not found arranged around a screen gone.
+    /// Nothing is changed while any other display is there. Says whether it did it.
+    @discardableResult
+    static func leadIfAlone(besides glasses: CGDirectDisplayID) -> Bool {
+        var count: UInt32 = 0
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+        guard CGGetOnlineDisplayList(16, &ids, &count) == .success else { return false }
+        let made = virtualDisplay
+        // The glasses by what they are, not by number: changing to two eyes they come back as
+        // another display, and the one they were is still listed for a moment.
+        func isGlasses(_ id: CGDirectDisplayID) -> Bool { CGDisplayVendorNumber(id) == 0x3647 && CGDisplayModelNumber(id) == 0x3132 }
+        let others = ids.prefix(Int(count)).filter { $0 != glasses && $0 != made && !isGlasses($0) && CGDisplayMirrorsDisplay($0) != glasses }
+        if !others.isEmpty { print("screens: \(others.count) other screen(s) here; the virtual one is not made the main one") }
+        guard others.isEmpty, let virtual = resolve(virtualToBe) else { return false }
+        lock.lock(); let screen = Self.virtual; lock.unlock()
+        // **Arranged, then arranged again once it has its size.** A new virtual screen has no
+        // size until the displays are arranged, and taking it then, macOS put the glasses back
+        // at the top left as the main screen (an M6 Mac mini, 2026-11-09).
+        for attempt in 1...3 {
+            if CGMainDisplayID() == virtual, CGDisplayBounds(glasses).minX >= CGDisplayBounds(virtual).maxX {
+                if attempt > 1 { print("screens: the glasses are this Mac's only screen; the virtual one is the main screen (\(attempt - 1) arrangement(s))") }
+                return true
+            }
+            var config: CGDisplayConfigRef?
+            guard CGBeginDisplayConfiguration(&config) == .success else { return false }
+            CGConfigureDisplayOrigin(config, virtual, 0, 0)
+            CGConfigureDisplayOrigin(config, glasses, Int32(max(CGDisplayBounds(virtual).width, CGFloat(virtualSize.width))), 0)
+            guard CGCompleteDisplayConfiguration(config, .forSession) == .success else { break }
+            if let screen { settle(screen) }
+            usleep(300_000)
+        }
+        print("screens: the virtual screen could not be made the main one")
+        return false
+    }
+
+    /// Its sizes are not there to choose among the moment it exists, and left to itself macOS
+    /// settles on the smallest: asked for the largest until it is that. On a Mac with no other
+    /// screen it had no mode at all for three seconds and then came up at 896 by 504: waited
+    /// for longer, and asked again once it is the main screen.
+    private static func settle(_ made: SPVirtualDisplay) {
+        for _ in 0..<50 {
+            made.selectLargestMode()
+            if Int(made.currentPixelSize.width) >= virtualSize.width { return }
+            usleep(150_000)
+        }
+        print("screens: the virtual screen is \(Int(made.currentPixelSize.width))x\(Int(made.currentPixelSize.height)), not the \(virtualSize.width)x\(virtualSize.height) asked for")
+    }
+
     /// The display a screen really is: itself, or the virtual one, made now if it has not been.
     static func resolve(_ display: CGDirectDisplayID) -> CGDirectDisplayID? {
         guard display == virtualToBe else { return display }
@@ -88,13 +141,7 @@ enum MacScreens {
             return nil
         }
         virtual = made
-        // Its sizes are not there to choose among the moment it exists, and left to itself
-        // macOS settles on the smallest: asked for the largest until it is that.
-        for _ in 0..<20 {
-            usleep(150_000)
-            made.selectLargestMode()
-            if Int(made.currentPixelSize.width) >= virtualSize.width { break }
-        }
+        settle(made)
         // A display that has just appeared is sometimes taken for a copy of another: it is its own.
         if SPVirtualDisplay.anyDisplayIsMirroring() { SPVirtualDisplay.disableAllMirroring() }
         print("screens: a virtual screen, display \(made.displayID), \(Int(made.currentPixelSize.width))x\(Int(made.currentPixelSize.height))")

@@ -189,7 +189,15 @@ WPE_CODE=$(for f in $WPE_CODE; do echo "$dest${f#"$stage_app"}"; done)
 # A signature refuses a bundle with extended attributes on it (a copied binary carries some).
 xattr -cr "$app" 2>/dev/null || true
 IDENTITY_NAME="${SPATIAND_SIGN_NAME:-HoloFrame Dev}"
-IDENTITY=$(security find-identity -p codesigning 2>/dev/null | grep -F "\"$IDENTITY_NAME" \
+# Or from a keychain of its own (SPATIAND_SIGN_KEYCHAIN, its password in the file
+# SPATIAND_SIGN_KEYCHAIN_PASS): a Mac built on over ssh, where the login keychain is locked to
+# that session (littleotter, docs/mac-plan.md).
+KEYCHAIN="${SPATIAND_SIGN_KEYCHAIN:-}"
+if [ -n "$KEYCHAIN" ]; then
+  security unlock-keychain -p "$(cat "$SPATIAND_SIGN_KEYCHAIN_PASS")" "$KEYCHAIN"
+  codesign() { command codesign --keychain "$KEYCHAIN" "$@"; }
+fi
+IDENTITY=$(security find-identity -p codesigning $KEYCHAIN 2>/dev/null | grep -F "\"$IDENTITY_NAME" \
   | sed -E 's/^[[:space:]]*[0-9]+\)[[:space:]]*([0-9A-F]+)[[:space:]]+.*$/\1/' | head -1)
 if [ -n "$IDENTITY" ]; then
   # What is inside is signed first, with the same certificate.

@@ -264,3 +264,29 @@ On the owner's real stream, from the session's own count of frames (`remote <hos
   and stayed there a while; 100 once cool. WindowServer takes 50-65% of a core with nothing captured.
   `loginwindow` holds 80 full-screen windows, two more after a cycle of the glasses, and
   `com.apple.spaces` remembers stale virtual displays: suspected, not proven; a reboot would test it.
+
+## A Mac with no screen but the glasses, built over ssh (littleotter, 2026-11-09)
+
+littleotter is an M6 Mac mini with nothing plugged in but the glasses, built and run from deepmagpie
+over ssh (`git push littleotter master`, then `make-app.sh` in `~/Developer/Spatiand` there).
+
+- **The virtual screen becomes the main screen** when the glasses are the only display
+  (`MacScreens.leadIfAlone`): the menu bar, the Dock and every window go to it, and the room shows it
+  under Screens; the glasses show the room alone. Only once the glasses show two eyes -- rearranged
+  while they were changing to it, their display never came back until Spatiand quit -- and arranged
+  twice, since a new virtual screen has no size until the displays are arranged and macOS put the
+  glasses back as the main screen when it got one. For the login only. `Spatiand --virtual-screen-only
+  [seconds]` makes it alone, for macOS's mirror-or-extend question the first time (choose Extended).
+- **The trackpad is macOS's, even a Bluetooth Magic Trackpad.** Opened "seized" through IOHID, with
+  Input Monitoring allowed, the open succeeds and nothing changes: no reports reach the program and the
+  cursor goes on moving. What can be had is the fingers, frame by frame (about 67 a second from a Magic
+  Trackpad), through MultitouchSupport (`SPMultitouch.c`): handed to the pointer's thread, which is
+  real-time (`sp_thread_realtime`), and made into the room's pointer, scrolls and gestures there
+  (`RoomTap.heard`), never on the main thread. macOS's own gestures are only dropped then. Where the
+  framework is missing, the touches of macOS's gesture events, read on the main thread, as before.
+- **Signing over ssh.** The login keychain is locked to an ssh session, so the "HoloFrame Dev"
+  certificate there lives in a keychain of its own, `~/Developer/spatiand-signing.keychain-db`, its
+  password in `~/Developer/.spatiand-signing-pass`: `SPATIAND_SIGN_KEYCHAIN` and
+  `SPATIAND_SIGN_KEYCHAIN_PASS` give them to `make-app.sh`. With it, permissions given to Spatiand
+  survive rebuilds; signed ad hoc, each rebuild lost Accessibility, and the room covered the screen
+  with nothing able to reach it.

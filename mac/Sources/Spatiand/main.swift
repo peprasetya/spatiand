@@ -633,6 +633,25 @@ if CommandLine.arguments.contains("--selftest-notice") {
     exit(0)
 }
 
+if let at = CommandLine.arguments.firstIndex(of: "--virtual-screen-only") {
+    // The virtual screen alone, as the room makes it on a Mac whose only screen is the glasses
+    // (MacScreens.leadIfAlone), for the given number of seconds (90 if none) and no room over
+    // it: for macOS's question the first time it appears -- mirror it or extend the desktop
+    // onto it, which macOS then remembers -- and to look at the arrangement.
+    let seconds = CommandLine.arguments.dropFirst(at + 1).first.flatMap(Double.init) ?? 90
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    DispatchQueue.main.async {
+        if let glasses = GlassesScreen.findDisplay() {
+            print("screen: the glasses are display \(glasses); made main: \(MacScreens.leadIfAlone(besides: glasses))")
+        } else if let made = MacScreens.resolve(MacScreens.virtualToBe) {
+            print("screen: no glasses; the virtual screen is display \(made)")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { exit(0) }
+    }
+    application.run()
+}
+
 if CommandLine.arguments.contains("--selftest-screen") {
     // The room in a window and a screen of this Mac's brought into it: the first it has, or
     // with --virtual one made for the purpose. A picture is saved (~/screenshots).

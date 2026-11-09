@@ -183,6 +183,12 @@ final class GlassesScreen {
             }
             return
         }
+        // With nothing else to show the Mac's desktop on, a virtual screen takes it (MacScreens):
+        // **once the glasses show two eyes**, not before. Rearranged while they were changing to
+        // it, the glasses' display never came back (an M6 Mac mini, 2026-11-09), until Spatiand quit.
+        if (CGDisplayCopyDisplayMode(id)?.pixelWidth ?? 0) >= 3000, MacScreens.leadIfAlone(besides: id) {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
         // AppKit's screen list lags a display that has just changed; wait until it agrees.
         let expected = Self.appKitFrame(of: id)
         let deadline = Date().addingTimeInterval(6)
