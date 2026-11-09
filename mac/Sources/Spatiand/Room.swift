@@ -156,6 +156,10 @@ final class Room {
     /// window, as it already does each time the glasses change mode.
     func leaveGlasses() {
         guard inGlasses else { return }
+        // Out of the glasses first: what follows tells the menu's icon, which asks the room to
+        // leave the glasses if it is still in them -- and was, so it came here again, for ever,
+        // until the stack ran out (three crashes on 2026-11-08/09, each at an unplug).
+        desk = true
         soundTimer?.invalidate()
         soundTimer = nil
         Notices.shared.stop()
@@ -164,7 +168,6 @@ final class Room {
         RoomWindows.shared.clear()
         screen.stop()
         sp_hold_glasses(false)
-        desk = true
         sp_desk_park()
         sp_desk(true)
         print("the glasses have gone; the session goes on, its windows put aside")

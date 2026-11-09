@@ -717,17 +717,22 @@ if CommandLine.arguments.contains("--selftest-unplug") {
         if !ok { failed = true }
         print("\(ok ? "ok  " : "FAIL") \(step): SpatiQuill \(now.isEmpty ? "not running" : "pid " + now), \(mac) on the Mac (want \(onMac)), \(aside) put aside (want \(parked))")
     }
+    // As the menu's icon does (App.refreshIcon): told of any change, it has the room leave the
+    // glasses when they are not wanted. Without it this test never met the loop that crashed
+    // Spatiand at every unplug, the room telling the icon of its leaving while still in them.
+    var unplugged = false
+    Room.shared.onChange = { if unplugged, Room.shared.inGlasses { Room.shared.leaveGlasses() } }
     DispatchQueue.main.async {
         Room.shared.openOwn("SpatiQuill")
         after(6) { check("opened without glasses", onMac: 1, parked: 0) }
         after(7) { Room.shared.start(preview: true) }
         after(8.5) { sp_control(3, true); after(0.1) { sp_control(3, false) } }
         after(12) { sp_screenshot(); check("glasses on", onMac: 0, parked: 0) }
-        after(13) { Room.shared.leaveGlasses() }
+        after(13) { unplugged = true; Room.shared.leaveGlasses() }
         after(15) { check("glasses off", onMac: 0, parked: 1) }
         after(16) { if let id = Room.shared.parked.first?.id { Room.shared.pullToMac(id) } }
         after(18) { check("pulled to the Mac", onMac: 1, parked: 0) }
-        after(19) { Room.shared.start(preview: true) }
+        after(19) { unplugged = false; Room.shared.start(preview: true) }
         after(23) { sp_screenshot(); check("glasses on again", onMac: 0, parked: 0) }
         after(25) { Room.shared.stop(); exit(failed ? 1 : 0) }
     }
