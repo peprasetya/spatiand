@@ -17,26 +17,38 @@ mod pdf;
 mod picture;
 mod place;
 mod stereo;
+mod swipe;
 mod view;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use std::time::Duration;
 
 use spatiand_app::ui::{look, theme, Input, Painter, Rect};
 use spatiand_app::{App, EyeLayout, Event, Mode, WindowId};
 
-use folder::{Chose, Folder, Kind};
+use folder::{Arrived, Chose, Folder, Kind};
 use model::Eye;
-use view::{View, Want};
+use view::{Seen, View, Want};
 
 pub const WINDOW: (u32, u32) = (1440, 900);
 
 enum Done {
     Listed { ticket: u64, result: Result<Vec<folder::Entry>, String> },
-    Tile { ticket: u64, index: usize, width: u32, height: u32, rgba: Vec<u8>, word: Option<String> },
+    Tile { ticket: u64, tile: Arrived },
     Picture { ticket: u64, result: Result<picture::Picture, String> },
     Model { ticket: u64, result: Result<model::Scene, String> },
+}
+
+/// A picture read before it is looked at: the one the carousel is heading for.
+struct Ahead {
+    /// Its place in the folder.
+    index: usize,
+    ticket: u64,
+    /// Once it has been read.
+    result: Option<Result<picture::Picture, String>>,
 }
 
 type Job = Box<dyn FnOnce() -> Option<Done> + Send>;
@@ -56,11 +68,15 @@ fn worker(name: &str, done: Sender<Done>) -> Sender<Job> {
 }
 
 /// A tile's picture: a picture made small, or a PDF's first page.
-fn tile_picture(path: &Path, kind: Kind) -> Option<(u32, u32, Vec<u8>, Option<String>)> {
+fn tile_picture(path: &Path, kind: Kind, index: usize) -> Option<Arrived> {
     match kind {
         Kind::Picture => {
             let picture = picture::read(path, 360).ok()?;
             let word = picture.eyes.is_stereo().then(|| "3D".to_string());
+            // What one eye of the whole picture sees, from its own size rather than the tile's
+            // rounded one: the tile stands in for the picture as the carousel brings it in.
+            let (w, h) = picture.original;
+            let seen = Seen { aspect: view::eye_aspect(w as f32, h as f32, picture.eyes), stereo: picture.eyes.is_stereo() };
             // A stereo pair's tile is one eye's view, not two pictures squeezed side by side.
             let (left, _) = picture.eyes.halves();
             let (x0, y0) = ((left[0] * picture.width as f32) as u32, (left[1] * picture.height as f32) as u32);
@@ -71,7 +87,7 @@ fn tile_picture(path: &Path, kind: Kind) -> Option<(u32, u32, Vec<u8>, Option<St
                 let from = ((y * picture.width + x0) * 4) as usize;
                 rgba.extend_from_slice(&picture.rgba[from..from + (w * 4) as usize]);
             }
-            Some((w, h, rgba, word))
+            Some(Arrived { index, width: w, height: h, rgba, word, seen: Some(seen) })
         }
         // A page whole, on a square of the window's ground: a tile shows a square's middle,
         // and a page's middle is not what it looks like.
@@ -83,7 +99,7 @@ fn tile_picture(path: &Path, kind: Kind) -> Option<(u32, u32, Vec<u8>, Option<St
                 let to = (((y0 + y) * side + x0) * 4) as usize;
                 square[to..to + (w * 4) as usize].copy_from_slice(&rgba[(y * w * 4) as usize..((y + 1) * w * 4) as usize]);
             }
-            (side, side, square, None)
+            Arrived { index, width: side, height: side, rgba: square, word: None, seen: Some(Seen { aspect: 1.0, stereo: false }) }
         }),
         _ => None,
     }
@@ -91,7 +107,10 @@ fn tile_picture(path: &Path, kind: Kind) -> Option<(u32, u32, Vec<u8>, Option<St
 
 struct Loupe {
     /// The file being opened now: a job for one opened before it is not started at all.
-    current: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    current: Arc<AtomicU64>,
+    /// The picture being read ahead, as `current` is for the one being opened.
+    ahead_ticket: Arc<AtomicU64>,
+    ahead: Option<Ahead>,
     app: App,
     window: WindowId,
     painter: Option<Painter>,
@@ -134,21 +153,42 @@ impl Loupe {
 
     fn open(&mut self, index: usize) {
         let Some(entry) = self.folder.entries.get(index).cloned() else { return };
-        let ticket = self.ticket();
+        // A picture read ahead for this, or being read: that reading, not a second.
+        let ahead = self.ahead.take().filter(|a| a.index == index);
+        let ticket = match &ahead {
+            Some(ahead) => ahead.ticket,
+            None => self.ticket(),
+        };
         let files: Vec<usize> = self.folder.entries.iter().enumerate().filter(|(_, e)| e.kind != Kind::Folder).map(|(i, _)| i).collect();
+        // A throw's glide outlasts the settle that brought this file in: it is let go by here too.
+        let glide = self.view.as_ref().and_then(|v| v.hand_on());
         if let Some(old) = self.view.take() {
             self.left.push(old);
         }
         let mut view = View::new(entry.clone(), index, ticket, files);
         view.set_size(self.size);
+        view.handed(glide);
         let path = entry.path.clone();
-        self.current.store(ticket, std::sync::atomic::Ordering::Relaxed);
+        // This before the reading ahead is forgotten, so that a reading of this ticket that has
+        // not begun is wanted all the while.
+        self.current.store(ticket, Ordering::Relaxed);
+        self.ahead_ticket.store(0, Ordering::Relaxed);
         let current = self.current.clone();
-        let still_wanted = move || current.load(std::sync::atomic::Ordering::Relaxed) == ticket;
+        let still_wanted = move || current.load(Ordering::Relaxed) == ticket;
         match entry.kind {
-            Kind::Picture => {
-                self.calls.send(Box::new(move || still_wanted().then(|| Done::Picture { ticket, result: picture::read(&path, picture::LARGEST) }))).ok();
-            }
+            Kind::Picture => match ahead {
+                Some(Ahead { result: Some(result), .. }) => {
+                    if let Err(e) = &result {
+                        log::warn!("{}: {e}", entry.path.display());
+                    }
+                    view.pictured(result.map_err(|e| format!("This picture would not open: {e}")));
+                }
+                // Still being read, and what it comes to is this view's: the ticket is the same.
+                Some(_) => {}
+                None => {
+                    self.calls.send(Box::new(move || still_wanted().then(|| Done::Picture { ticket, result: picture::read(&path, picture::LARGEST) }))).ok();
+                }
+            },
             Kind::Model => {
                 self.calls.send(Box::new(move || still_wanted().then(|| Done::Model { ticket, result: model::Scene::read(&path) }))).ok();
             }
@@ -160,7 +200,28 @@ impl Loupe {
         self.dirty = true;
     }
 
+    /// Read the picture the carousel is heading for before it gets there, so that it is there,
+    /// or nearly, when it arrives, rather than its tile for as long as it takes to read. One at a
+    /// time, and only a picture: a document or an object is opened as it always is.
+    fn read_ahead(&mut self) {
+        let Some(index) = self.view.as_ref().and_then(|v| v.heading()) else { return };
+        if self.ahead.as_ref().is_some_and(|a| a.index == index) {
+            return;
+        }
+        let Some(entry) = self.folder.entries.get(index).filter(|e| e.kind == Kind::Picture) else { return };
+        let path = entry.path.clone();
+        let ticket = self.ticket();
+        self.ahead_ticket.store(ticket, Ordering::Relaxed);
+        let (current, ahead) = (self.current.clone(), self.ahead_ticket.clone());
+        // Not begun if the carousel has turned for another by then; wanted still if it arrived.
+        let wanted = move || current.load(Ordering::Relaxed) == ticket || ahead.load(Ordering::Relaxed) == ticket;
+        self.calls.send(Box::new(move || wanted().then(|| Done::Picture { ticket, result: picture::read(&path, picture::LARGEST) }))).ok();
+        self.ahead = Some(Ahead { index, ticket, result: None });
+    }
+
     fn leave(&mut self) {
+        self.ahead = None;
+        self.ahead_ticket.store(0, Ordering::Relaxed);
         if let Some(view) = self.view.take() {
             self.folder.point_at(&view.path());
             self.left.push(view);
@@ -193,13 +254,15 @@ impl Loupe {
                         }
                     }
                 }
-                Done::Tile { ticket, index, width, height, rgba, word } => self.folder.pictured(ticket, index, width, height, rgba, word),
+                Done::Tile { ticket, tile } => self.folder.pictured(ticket, tile),
                 Done::Picture { ticket, result } => {
                     if let Some(view) = self.view.as_mut().filter(|v| v.ticket == ticket) {
                         if let Err(e) = &result {
                             log::warn!("{}: {e}", view.entry.path.display());
                         }
                         view.pictured(result.map_err(|e| format!("This picture would not open: {e}")));
+                    } else if let Some(ahead) = self.ahead.as_mut().filter(|a| a.ticket == ticket) {
+                        ahead.result = Some(result);
                     }
                 }
                 Done::Model { ticket, result } => {
@@ -298,15 +361,14 @@ impl Loupe {
         };
         for (index, path, kind) in wanted {
             let ticket = self.folder.ticket;
-            self.pictures
-                .send(Box::new(move || {
-                    let (width, height, rgba, word) = tile_picture(&path, kind)?;
-                    Some(Done::Tile { ticket, index, width, height, rgba, word })
-                }))
-                .ok();
+            self.pictures.send(Box::new(move || Some(Done::Tile { ticket, tile: tile_picture(&path, kind, index)? }))).ok();
         }
         if let Some(view) = self.view.as_mut() {
             self.dirty |= view.tick();
+        }
+        // The carousel has come to rest on another file: that is the one looked at now.
+        if let Some(Want::Open(index)) = self.view.as_mut().map(|v| v.arrival()) {
+            self.open(index);
         }
         let animating = self.view.as_ref().map_or(self.folder.animating(), |v| v.animating());
         if !std::mem::take(&mut self.dirty) && !animating {
@@ -330,6 +392,7 @@ impl Loupe {
                     // The strip's tiles are the folder's: the files only, in order.
                     folder.take_arrived(p, gl);
                     view::TILES.with(|t| *t.borrow_mut() = folder.file_tiles());
+                    view::SEEN.with(|s| *s.borrow_mut() = folder.file_seen());
                     view.settle_turns(gl);
                     // A picture is shown on nothing; the room is its ground.
                     let ground = if view.see_through() { [0.0, 0.0, 0.0, 0.0] } else { theme::ground() };
@@ -366,6 +429,7 @@ impl Loupe {
                 }
             }
             self.answers();
+            self.read_ahead();
             self.draw()?;
         }
     }
@@ -393,6 +457,8 @@ fn main() {
         let (done, answers) = channel();
         let mut loupe = Loupe {
             current: Default::default(),
+            ahead_ticket: Default::default(),
+            ahead: None,
             app,
             window,
             painter: None,

@@ -4,23 +4,91 @@
 //! wearer has been still for a while, coming back at a touch. Everything is drawn by
 //! [`View::paint`] for one eye at a time, so that in the room a stereo photograph or an object
 //! gets two pictures and the controls are the same in both.
+//!
+//! The folder's other files are beside it, a page each, as a phone's photographs are: a picture
+//! at its fitted size goes sideways under the hand to the next or the one before
+//! ([`crate::swipe`]), and the arrow keys and the strip along the foot slide there too. Until a
+//! file is read, its tile from the folder stands in for it -- beside this one as it comes in, and
+//! in its own view while its picture is read.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use spatiand_app::glow::{self, HasContext};
-use spatiand_app::ui::{look, theme, Button, Field, Icon, Input, List, Painter, Rect, Row, Shape, Strip, Texture, Tile, Typed};
+use spatiand_app::ui::{draw_icon, look, theme, Button, Color, Field, Icon, Input, List, Painter, Rect, Row, Shape, Strip, Texture, Tile, Typed};
 use spatiand_app::{Gl, Key};
 
-use crate::folder::{size_words, Entry};
+use crate::folder::{size_words, Entry, Kind};
 use crate::model::{self, Eye, Orbit, Renderer};
 use crate::pdf::{self, Ask, Pdf};
 use crate::picture::Picture;
 use crate::stereo::Eyes;
+use crate::swipe::{Carousel, Glide, Reach, Scrolled};
 
 /// How long the controls stay after the wearer last did anything.
 const CHROME_STAYS: Duration = Duration::from_millis(3200);
+
+/// The gap between the file looked at and the one beside it on the carousel, beyond the window's
+/// own width: with the room a fitted picture leaves around itself, about what a phone leaves
+/// between its photographs.
+const BESIDE_GAP: f32 = 24.0;
+
+/// How long a picture takes to come in over the tile that stood in for it while it was read: a
+/// moment's blending, not a sudden sharpening.
+const FADES_IN: Duration = Duration::from_millis(160);
+
+/// How long a tile stands in for its picture before the dots say that it is still being read.
+const STILL_READING: Duration = Duration::from_millis(600);
+
+/// What a file's tile said of the picture it was made from: what the tile is drawn as when it
+/// stands in for it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Seen {
+    /// The width over the height of what one eye sees.
+    pub aspect: f32,
+    /// Two eyes' worth.
+    pub stereo: bool,
+}
+
+/// The width over the height of what one eye sees, in a picture `width` by `height` whose eyes
+/// are packed as `eyes` says.
+pub fn eye_aspect(width: f32, height: f32, eyes: Eyes) -> f32 {
+    let (w, h) = (width, height.max(1.0));
+    match eyes {
+        Eyes::Mono | Eyes::Pair => w / h,
+        // A pair squeezed into a frame of a film's shape -- sixteen by nine -- is each eye at
+        // half its width (or height); any other shape is two views at their own.
+        Eyes::SideBySide | Eyes::Crossed => {
+            let a = w * 0.5 / h;
+            if squeezed(w / h) { a * 2.0 } else { a }
+        }
+        Eyes::TopBottom => {
+            let a = w / (h * 0.5);
+            if squeezed(w / h) { a * 0.5 } else { a }
+        }
+    }
+}
+
+/// How wide a picture of this shape is when it is fitted to `area`: as large as it goes with a
+/// little room left around it.
+fn fit_width(area: Rect, aspect: f32) -> f32 {
+    (area.w * 0.94).min(area.h * 0.92 * aspect)
+}
+
+/// Where a picture of this shape is drawn fitted to the window `all`: in the middle of the stage.
+fn fitted(all: Rect, aspect: f32) -> Rect {
+    let area = stage(all);
+    let w = fit_width(area, aspect);
+    let h = w / aspect.max(1e-3);
+    Rect::new(area.x + (area.w - w) * 0.5, area.y + (area.h - h) * 0.5, w, h)
+}
+
+/// What two rectangles have in common; nothing, if they do not meet.
+fn overlap(a: Rect, b: Rect) -> Rect {
+    let (x, y) = (a.x.max(b.x), a.y.max(b.y));
+    Rect::new(x, y, (a.right().min(b.right()) - x).max(0.0), (a.bottom().min(b.bottom()) - y).max(0.0))
+}
 
 /// Put a picture on the GPU with smaller copies of itself, so that a large photograph shown
 /// small is not a shimmer of skipped pixels.
@@ -69,6 +137,8 @@ pub struct Shown {
     zoom: Option<f32>,
     /// The point of the picture at the middle of the window, as fractions of it.
     centre: (f32, f32),
+    /// When it was first drawn, for it to come in over the tile that stood in for it.
+    drawn_at: Option<Instant>,
 }
 
 impl Shown {
@@ -78,21 +148,14 @@ impl Shown {
 
     /// The width over the height of what one eye sees.
     fn eye_aspect(&self) -> f32 {
-        let (w, h) = (self.picture.width as f32, self.picture.height.max(1) as f32);
+        let (w, h) = (self.picture.width as f32, self.picture.height as f32);
         let (w, h) = if self.turns % 2 == 1 { (h, w) } else { (w, h) };
-        match self.eyes() {
-            Eyes::Mono | Eyes::Pair => w / h,
-            // A pair squeezed into a frame of a film's shape -- sixteen by nine -- is each eye at
-            // half its width (or height); any other shape is two views at their own.
-            Eyes::SideBySide | Eyes::Crossed => {
-                let a = w * 0.5 / h;
-                if squeezed(w / h) { a * 2.0 } else { a }
-            }
-            Eyes::TopBottom => {
-                let a = w / (h * 0.5);
-                if squeezed(w / h) { a * 0.5 } else { a }
-            }
-        }
+        eye_aspect(w, h, self.eyes())
+    }
+
+    /// How far it has come in over its stand-in, 0 to 1.
+    fn faded_in(&self) -> f32 {
+        self.drawn_at.map_or(0.0, |at| (at.elapsed().as_secs_f32() / FADES_IN.as_secs_f32()).min(1.0))
     }
 
     /// The size, in the picture's own pixels, of what one eye sees.
@@ -112,7 +175,7 @@ impl Shown {
         let area = stage(area);
         let aspect = self.eye_aspect();
         let (pw, _) = self.eye_pixels();
-        let fit_w = (area.w * 0.94).min(area.h * 0.92 * aspect);
+        let fit_w = fit_width(area, aspect);
         let w = match self.zoom {
             None => fit_w,
             Some(z) => pw / z,
@@ -123,10 +186,7 @@ impl Shown {
     }
 
     fn fit_scale(&self, area: Rect) -> f32 {
-        let area = stage(area);
-        let aspect = self.eye_aspect();
-        let fit_w = (area.w * 0.94).min(area.h * 0.92 * aspect);
-        self.eye_pixels().0 / fit_w
+        self.eye_pixels().0 / fit_width(stage(area), self.eye_aspect())
     }
 
     /// Zoom by `by` (more than one is nearer), keeping the point of the picture under
@@ -300,6 +360,23 @@ pub struct View {
     pub ticket: u64,
     /// The folder's files, by their place in the folder, for the strip along the foot.
     files: Vec<usize>,
+    /// Where this one is among them: page 0 of the carousel.
+    place: usize,
+    /// The files beside it as pages, and the hand moving between them.
+    carousel: Carousel,
+    /// Where the carousel is for the frame being drawn: worked out once, in [`View::tick`], so
+    /// that two eyes drawn one after the other see it in the same place.
+    slid: f32,
+    /// A file chosen from the strip, or by Home or End, that is not a neighbour: the page it
+    /// comes in on, beside this one, and its place among the files.
+    jump: Option<(i32, usize)>,
+    /// The file the carousel came to rest on, by its place among the files, for the program to
+    /// open in place of this one.
+    arrived: Option<usize>,
+    /// The drag going on is the carousel's, not a pan or a turn.
+    drag_slides: bool,
+    /// The page the strip was last told the carousel is going to.
+    strip_page: i32,
     strip: Strip,
     back: Button,
     layout: Button,
@@ -323,13 +400,22 @@ impl View {
     pub fn new(entry: Entry, index: usize, ticket: u64, files: Vec<usize>) -> View {
         let mut strip = Strip::default();
         strip.shape = Shape::Square;
-        strip.cursor = files.iter().position(|&i| i == index).unwrap_or(0);
+        let place = files.iter().position(|&i| i == index).unwrap_or(0);
+        strip.cursor = place;
+        let reach = Reach { before: place, after: files.len().saturating_sub(place + 1) };
         View {
             entry,
             index,
             doc: Doc::Loading(Instant::now()),
             ticket,
             files,
+            place,
+            carousel: Carousel::new(reach),
+            slid: 0.0,
+            jump: None,
+            arrived: None,
+            drag_slides: false,
+            strip_page: 0,
             strip,
             back: Button::default(),
             layout: Button::default(),
@@ -387,6 +473,7 @@ impl View {
                 depth: 0.0,
                 zoom: None,
                 centre: (0.5, 0.5),
+                drawn_at: None,
             })),
             Err(e) => Doc::Failed(e),
         };
@@ -416,15 +503,24 @@ impl View {
         self.stir();
     }
 
-    /// Whether the window's ground is to be clear: a picture's, shown whole on nothing.
+    /// Whether the window's ground is to be clear: a picture's, shown whole on nothing -- and one
+    /// still being read, shown by its tile on nothing as it will be, rather than the window going
+    /// opaque between one picture and the next.
     pub fn see_through(&self) -> bool {
-        matches!(self.doc, Doc::Picture(_))
+        match self.doc {
+            Doc::Picture(_) => true,
+            Doc::Loading(_) => self.entry.kind == Kind::Picture,
+            _ => false,
+        }
     }
 
     pub fn has_depth(&self) -> bool {
         match &self.doc {
             Doc::Picture(shown) => shown.eyes().is_stereo(),
             Doc::Model(_) => true,
+            // A stereo picture being read, by what its tile said: the window stays two eyes from
+            // one stereo picture to the next, rather than going to one and back as each is read.
+            Doc::Loading(_) => seen(self.place).is_some_and(|s| s.stereo),
             _ => false,
         }
     }
@@ -451,23 +547,30 @@ impl View {
         let fading = self.chrome() > 0.0 && self.chrome() < 1.0 || self.last_stir.elapsed() < CHROME_STAYS + Duration::from_millis(600);
         let moving = match &self.doc {
             Doc::Loading(_) => true,
-            Doc::Picture(shown) => !shown.picture.frames.is_empty(),
+            Doc::Picture(shown) => !shown.picture.frames.is_empty() || shown.faded_in() < 1.0,
             Doc::Model(object) => object.turning || object.renderer.is_none(),
             Doc::Pdf(paper) => paper.pages.is_empty() || paper.finding,
             Doc::Failed(_) => false,
         };
-        fading || moving
+        let sliding = !self.carousel.resting() || self.carousel.busy();
+        fading || moving || sliding
     }
 
-    /// When the next picture is wanted, for a moving picture's next frame.
+    /// When the next picture is wanted: a moving picture's next frame, or the moment a scroll
+    /// that has stopped coming is over and the carousel lets it go.
     pub fn next_wake(&self) -> Option<Duration> {
-        match &self.doc {
+        let doc = match &self.doc {
             Doc::Picture(shown) if !shown.picture.frames.is_empty() => {
                 let length = if shown.frame == 0 { shown.picture.first } else { shown.picture.frames[shown.frame - 1].1 };
                 Some(length.saturating_sub(shown.frame_since.elapsed()))
             }
             Doc::Model(object) if object.turning => Some(Duration::from_millis(16)),
             _ => None,
+        };
+        let carousel = self.carousel.deadline().map(|at| at.saturating_duration_since(Instant::now()));
+        match (doc, carousel) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
         }
     }
 
@@ -514,8 +617,84 @@ impl View {
         any
     }
 
-    /// Move on a frame of a moving picture, or turn an object, if it is time.
+    /// Move the carousel on, and a frame of a moving picture, or turn an object, if it is time.
     pub fn tick(&mut self) -> bool {
+        let slid = self.slide_on();
+        self.frame_on() || slid
+    }
+
+    /// Move the carousel on to now, and say where it is for the frame about to be drawn.
+    fn slide_on(&mut self) -> bool {
+        if let Some(page) = self.carousel.tick(Instant::now(), self.page()) {
+            self.arrived = self.place_of(page);
+        }
+        let was = std::mem::replace(&mut self.slid, self.carousel.offset());
+        // The strip, and the count in the bar, say where the carousel is going.
+        let going = self.carousel.settling_to().unwrap_or(0);
+        if going != self.strip_page {
+            self.strip_page = going;
+            self.strip.cursor = self.place_of(going).unwrap_or(self.place);
+        }
+        // A file jumped to and not gone to is forgotten once the carousel is back in its place.
+        if self.carousel.resting() {
+            self.jump = None;
+        }
+        was != self.slid
+    }
+
+    /// The file the carousel has come to rest on, if it has: the program opens it in place of
+    /// this one.
+    pub fn arrival(&mut self) -> Want {
+        match self.arrived.take().and_then(|place| self.files.get(place)) {
+            Some(&index) if index != self.index => Want::Open(index),
+            _ => Want::Nothing,
+        }
+    }
+
+    /// The file the carousel is going to, or is being taken towards, by its place in the folder:
+    /// worth reading before it gets there.
+    pub fn heading(&self) -> Option<usize> {
+        let page = self.carousel.heading(self.page())?;
+        self.place_of(page).and_then(|place| self.files.get(place).copied())
+    }
+
+    /// What this view hands on to the one the carousel brings in: a throw's glide, still going.
+    pub fn hand_on(&self) -> Option<Glide> {
+        self.carousel.glide()
+    }
+
+    pub fn handed(&mut self, glide: Option<Glide>) {
+        self.carousel.carry(glide);
+    }
+
+    /// How far one page of the carousel is from the next: the window's width, and a gap.
+    fn page(&self) -> f32 {
+        self.bounds.w + BESIDE_GAP
+    }
+
+    /// Where among the files the carousel's `page` is: the file that many along, or the one
+    /// jumped to on the page it comes in on.
+    fn place_of(&self, page: i32) -> Option<usize> {
+        if let Some((_, place)) = self.jump.filter(|(jumped, _)| *jumped == page) {
+            return Some(place);
+        }
+        let place = self.place as i64 + page as i64;
+        (0..self.files.len() as i64).contains(&place).then_some(place as usize)
+    }
+
+    /// Whether a hand may take what is shown sideways to the next: a picture at its fitted size,
+    /// and one still being read or that would not open. A zoomed picture is moved about in, a
+    /// document's pages scroll, and an object turns.
+    fn slides(&self) -> bool {
+        match &self.doc {
+            Doc::Picture(shown) => shown.zoom.is_none(),
+            Doc::Loading(_) | Doc::Failed(_) => true,
+            Doc::Pdf(_) | Doc::Model(_) => false,
+        }
+    }
+
+    /// The next frame of a moving picture, or an object turned, if it is time.
+    fn frame_on(&mut self) -> bool {
         match &mut self.doc {
             Doc::Picture(shown) if !shown.picture.frames.is_empty() => {
                 let length = if shown.frame == 0 { shown.picture.first } else { shown.picture.frames[shown.frame - 1].1 };
@@ -570,17 +749,37 @@ impl View {
         }
         p.begin_over(gl, size, part, logical);
         let all = p.bounds();
+        // This file's page of the carousel, where the hand or a settle has slid it, and as much
+        // of it as is in the window and no more: in the room each eye's half is its own, and
+        // what ran over the edge of one would be drawn into the other.
+        let here = Rect { x: all.x + self.slid, ..all };
+        let seen_here = overlap(here, all);
+        let own = stand_in(self.place);
         match drawn_object {
             // Drawn by GL, foot first: turned the right way up here.
-            Some(texture) => p.image(gl, texture, all, [0.0, 1.0, 1.0, 0.0], 0.0, [1.0, 1.0, 1.0, 1.0], true),
+            Some(texture) => {
+                p.clip(gl, seen_here);
+                p.image(gl, texture, here, [0.0, 1.0, 1.0, 0.0], 0.0, [1.0, 1.0, 1.0, 1.0], true);
+                p.unclip(gl);
+            }
             // A picture is on nothing: where it does not fill the window, the room shows through.
             None if self.see_through() => {}
             None => look::backdrop(p, gl),
         }
         let chrome = self.chrome();
+        p.clip(gl, seen_here);
         match &mut self.doc {
-            Doc::Loading(since) => look::waiting(p, gl, all, *since),
-            Doc::Failed(why) => look::message(p, gl, all.inset(120.0), why, look::trouble()),
+            // What it will be, where it will be, until it is: its tile, and after a while the dots
+            // that say it is still coming.
+            Doc::Loading(since) => {
+                if let Some(own) = &own {
+                    draw_stand_in(p, gl, here, own);
+                }
+                if own.as_ref().map_or(true, |own| own.picture.is_none()) || since.elapsed() > STILL_READING {
+                    look::waiting(p, gl, here, *since);
+                }
+            }
+            Doc::Failed(why) => look::message(p, gl, here.inset(120.0), why, look::trouble()),
             Doc::Picture(shown) => {
                 if shown.texture.is_none() {
                     shown.texture = upload(gl, &shown.picture.rgba, shown.picture.width, shown.picture.height).ok();
@@ -588,6 +787,8 @@ impl View {
                         shown.right = upload(gl, rgba, *w, *h).ok();
                     }
                     shown.frame = 0;
+                    // Once: put back after a quarter turn, it is not new.
+                    shown.drawn_at.get_or_insert_with(Instant::now);
                 }
                 if let Some(texture) = shown.texture {
                     if !shown.picture.frames.is_empty() && eye != Eye::Right {
@@ -599,21 +800,52 @@ impl View {
                     let use_right = shown.eyes() == Eyes::Pair && (eye == Eye::Right) != shown.swapped;
                     let which = if use_right { shown.right.unwrap_or(texture) } else { texture };
                     let at = shown.placed(all);
+                    let at = Rect { x: at.x + self.slid, ..at };
                     let uv = turned(shown.uv(eye), shown.turns);
-                    p.clip(gl, all);
+                    let fitted = shown.zoom.is_none();
+                    // Come in over the tile that stood in for it, rather than sharpening at once.
+                    let fade = if fitted { shown.faded_in() } else { 1.0 };
+                    if fade < 1.0 {
+                        if let Some(own) = &own {
+                            draw_stand_in(p, gl, here, own);
+                        }
+                    }
                     // A picture with see-through parts is shown on a checkerboard-free dark
                     // ground: the backdrop already is one.
-                    p.image(gl, which, at, uv, if shown.zoom.is_none() { 6.0 } else { 0.0 }, [1.0, 1.0, 1.0, 1.0], false);
-                    p.unclip(gl);
+                    p.image(gl, which, at, uv, if fitted { 6.0 } else { 0.0 }, [1.0, 1.0, 1.0, fade], false);
                 }
             }
-            Doc::Pdf(paper) => draw_paper(p, gl, paper, all),
+            Doc::Pdf(paper) => draw_paper(p, gl, paper, here, seen_here),
             Doc::Model(_) => {}
         }
+        p.unclip(gl);
+        self.draw_neighbours(p, gl, all);
         if chrome > 0.0 {
             self.controls(p, gl, all, chrome);
         }
         p.end(gl);
+    }
+
+    /// The files beside this one on the carousel, wherever it has been slid to: each its tile, on
+    /// its own page, fitted as its picture will be when it is the one looked at. Both eyes are
+    /// shown the same, as a flat picture beside the one with depth.
+    fn draw_neighbours(&self, p: &mut Painter, gl: &Gl, all: Rect) {
+        if self.slid == 0.0 {
+            return;
+        }
+        let page = self.page();
+        let at = -self.slid / page;
+        for k in (at.floor() as i32 - 1)..=(at.ceil() as i32 + 1) {
+            let slot = Rect { x: all.x + self.slid + k as f32 * page, ..all };
+            let seen_there = overlap(slot, all);
+            if k == 0 || seen_there.w <= 0.0 {
+                continue;
+            }
+            let Some(neighbour) = self.place_of(k).and_then(stand_in) else { continue };
+            p.clip(gl, seen_there);
+            draw_stand_in(p, gl, slot, &neighbour);
+            p.unclip(gl);
+        }
     }
 
     fn title_words(&self) -> (String, String) {
@@ -756,12 +988,22 @@ impl View {
         self.chrome() > 0.05 && (self.bar.contains(x, y) || self.foot.contains(x, y) || self.side.contains(x, y))
     }
 
-    fn step(&self, by: isize) -> Want {
-        let at = self.files.iter().position(|&i| i == self.index).unwrap_or(0) as isize + by;
-        match self.files.get(at.clamp(0, self.files.len() as isize - 1) as usize) {
-            Some(&index) if index != self.index => Want::Open(index),
-            _ => Want::Nothing,
-        }
+    /// Slide on `by` files, as the arrow keys do: pressed again on the way, one further. The file
+    /// is opened when the carousel arrives at it ([`View::arrival`]).
+    fn slide_by(&mut self, by: i32) -> Want {
+        self.jump = None;
+        self.carousel.slide(by, Instant::now(), self.page());
+        Want::Nothing
+    }
+
+    /// Slide to the file at `place` among the files, as the strip and Home and End do: a
+    /// neighbour as the keys do, and any other in beside this one, from the side it is on.
+    fn slide_to(&mut self, place: usize) -> Want {
+        let by = place as i64 - self.place as i64;
+        let page = by.clamp(-1, 1) as i32;
+        self.jump = (by.abs() > 1).then_some((page, place));
+        self.carousel.go_to(page, Instant::now(), self.page());
+        Want::Nothing
     }
 
     /// The room says the wearer's hands stirred: the controls come back, and from now on
@@ -773,6 +1015,8 @@ impl View {
 
     pub fn input(&mut self, input: &Input) -> Want {
         let motion = matches!(input, Input::Pointer { .. } | Input::PointerLeft);
+        // Whether the controls were there to be scrolled before this woke them.
+        let controls_were_up = self.chrome() > 0.05;
         if !motion || !self.hands_heard || self.pressed_at.is_some() {
             self.stir();
         }
@@ -783,12 +1027,29 @@ impl View {
             if let Some((px, py, _)) = self.pressed_at {
                 if !self.dragging && ((x - px).abs() > 6.0 || (y - py).abs() > 6.0) {
                     self.dragging = true;
+                    // Mostly sideways over a fitted picture, the drag takes it to the next, from
+                    // where the button went down; and any drag takes hold of a picture on its way.
+                    self.drag_slides = (self.slides() && (x - px).abs() > (y - py).abs()) || !self.carousel.resting();
+                    if self.drag_slides {
+                        let (now, page) = (Instant::now(), self.page());
+                        self.carousel.grab(now, page);
+                        self.carousel.drag(x - px, now, page);
+                        return Want::Nothing;
+                    }
                 }
                 if self.dragging {
-                    self.drag(dx, dy, all);
+                    if self.drag_slides {
+                        self.carousel.drag(dx, Instant::now(), self.page());
+                    } else {
+                        self.drag(dx, dy, all);
+                    }
                     return Want::Nothing;
                 }
             }
+        }
+        // The pointer taken away mid-drag: the picture is let go of, not held for ever.
+        if matches!(input, Input::PointerLeft) && std::mem::take(&mut self.drag_slides) {
+            self.carousel.release(Instant::now(), self.page());
         }
         // The search field, while there is one, has the keys.
         if let Doc::Pdf(paper) = &mut self.doc {
@@ -871,11 +1132,11 @@ impl View {
         }
         if !self.foot.w.eq(&0.0) {
             if let Some(chosen) = self.strip.input(input) {
-                if let Some(&index) = self.files.get(chosen) {
-                    if index != self.index {
-                        return Want::Open(index);
-                    }
-                }
+                return self.slide_to(chosen);
+            }
+            // A scroll that begins over the strip is the strip's, which it has had: it neither
+            // zooms the picture nor slides it.
+            if matches!(input, Input::Scroll { .. }) && controls_were_up && self.foot.contains(self.pointer.0, self.pointer.1) && !self.carousel.busy() {
                 return Want::Nothing;
             }
         }
@@ -889,10 +1150,14 @@ impl View {
             Input::Press { pressed: false } => {
                 let was = self.pressed_at.take();
                 let dragged = std::mem::take(&mut self.dragging);
+                if std::mem::take(&mut self.drag_slides) {
+                    self.carousel.release(Instant::now(), self.page());
+                }
                 if let Some(object) = self.object_mut() {
                     object.turned_at = Instant::now();
                 }
-                if was.is_some() && !dragged {
+                // A picture on its way somewhere is not zoomed by a click on it.
+                if was.is_some() && !dragged && self.carousel.resting() {
                     // Twice quickly: nearer, or back to fitted.
                     let double = self.last_click.is_some_and(|t| t.elapsed() < Duration::from_millis(400));
                     self.last_click = Some(Instant::now());
@@ -937,9 +1202,21 @@ impl View {
 
     fn scrolled(&mut self, dx: f32, dy: f32, all: Rect) {
         let (x, y) = self.pointer;
+        // A scroll the carousel has begun on stays the carousel's whatever comes under it -- a
+        // swipe is not made a pan by the picture it brings in, nor a zoom begun fitted a slide
+        // once it has zoomed in -- and a picture on its way is the carousel's to take hold of.
+        if self.slides() || self.carousel.busy() || !self.carousel.resting() {
+            if let Scrolled::Zoom(dy) = self.carousel.scroll(dx, dy, Instant::now(), self.page()) {
+                if let Doc::Picture(shown) = &mut self.doc {
+                    shown.zoom_by((-dy * 0.004).exp(), all, x, y);
+                }
+            }
+            return;
+        }
         match &mut self.doc {
+            // Zoomed in: across moves about in it, up and down zooms.
             Doc::Picture(shown) => {
-                if shown.zoom.is_some() && dx.abs() > dy.abs() {
+                if dx.abs() > dy.abs() {
                     let at = shown.placed(all);
                     shown.centre.0 += dx / at.w;
                     shown.clamp(all);
@@ -953,9 +1230,13 @@ impl View {
         }
     }
 
-    /// Two fingers spreading or drawing together: what is shown zooms, about the pointer.
+    /// Two fingers spreading or drawing together: what is shown zooms, about the pointer -- but
+    /// not a picture on its way to the next.
     fn pinched(&mut self, scale: f32, all: Rect) {
         let (x, y) = self.pointer;
+        if !self.carousel.resting() {
+            return;
+        }
         match &mut self.doc {
             Doc::Picture(shown) => shown.zoom_by(scale, all, x, y),
             Doc::Pdf(paper) => {
@@ -1017,10 +1298,10 @@ impl View {
                 }
                 return Want::Leave;
             }
-            Key::Left => return self.step(-1),
-            Key::Right => return self.step(1),
-            Key::Home if !matches!(self.doc, Doc::Pdf(_)) => return self.step(-(self.files.len() as isize)),
-            Key::End if !matches!(self.doc, Doc::Pdf(_)) => return self.step(self.files.len() as isize),
+            Key::Left => return self.slide_by(-1),
+            Key::Right => return self.slide_by(1),
+            Key::Home if !matches!(self.doc, Doc::Pdf(_)) => return self.slide_to(0),
+            Key::End if !matches!(self.doc, Doc::Pdf(_)) => return self.slide_to(self.files.len().saturating_sub(1)),
             _ => {}
         }
         if typed == "i" {
@@ -1055,7 +1336,7 @@ impl View {
                 (_, "x") => shown.swapped = !shown.swapped,
                 (_, ",") => shown.depth = (shown.depth - 0.005).max(-0.08),
                 (_, ".") => shown.depth = (shown.depth + 0.005).min(0.08),
-                (Key::Space, _) => return self.step(if shift { -1 } else { 1 }),
+                (Key::Space, _) => return self.slide_by(if shift { -1 } else { 1 }),
                 (Key::Up, _) if shown.zoom.is_some() => {
                     shown.centre.1 -= 0.05;
                     shown.clamp(all);
@@ -1158,6 +1439,49 @@ thread_local! {
     static PENDING: std::cell::RefCell<Vec<(usize, u32, u32, Vec<u8>)>> = const { std::cell::RefCell::new(Vec::new()) };
     /// The folder's tiles, for the strip along the foot: set by the program before drawing.
     pub static TILES: std::cell::RefCell<Vec<Tile>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// What the same tiles said of their pictures, beside them.
+    pub static SEEN: std::cell::RefCell<Vec<Option<Seen>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// What stands in for a file not yet read, or for one beside the file being looked at: its tile
+/// from the folder.
+struct StandIn {
+    picture: Option<Texture>,
+    seen: Option<Seen>,
+    icon: Option<Icon>,
+    tint: Option<(Color, Color)>,
+}
+
+/// The stand-in for the file at `place` among the folder's files, once the folder has its tile.
+fn stand_in(place: usize) -> Option<StandIn> {
+    TILES.with(|tiles| tiles.borrow().get(place).map(|tile| StandIn { picture: tile.picture, seen: seen(place), icon: tile.icon, tint: tile.tint }))
+}
+
+/// What the file at `place`'s tile said of its picture.
+fn seen(place: usize) -> Option<Seen> {
+    SEEN.with(|seen| seen.borrow().get(place).copied().flatten())
+}
+
+/// Draw a stand-in on its `page`: a picture's tile where its picture will be and at the picture's
+/// shape -- a stereo pair's one eye -- or, for anything with no picture of its own yet, what kind
+/// of thing it is, in the middle.
+fn draw_stand_in(p: &mut Painter, gl: &Gl, page: Rect, stand_in: &StandIn) {
+    match stand_in.picture {
+        Some(texture) => {
+            let aspect = stand_in.seen.map_or(texture.width as f32 / texture.height.max(1) as f32, |seen| seen.aspect);
+            p.image(gl, texture, fitted(page, aspect), [0.0, 0.0, 1.0, 1.0], 6.0, [1.0, 1.0, 1.0, 1.0], false);
+        }
+        None => {
+            let area = stage(page);
+            let side = area.w.min(area.h) * 0.4;
+            let at = Rect::new(area.x + (area.w - side) * 0.5, area.y + (area.h - side) * 0.5, side, side);
+            let (top, foot) = stand_in.tint.unwrap_or(([0.36, 0.48, 0.78, 0.26], [0.16, 0.20, 0.36, 0.14]));
+            p.gradient(gl, at, 22.0, top, foot);
+            if let Some(icon) = stand_in.icon {
+                draw_icon(p, gl, icon, at.inset(side * 0.32), [1.0, 1.0, 1.0, 0.82]);
+            }
+        }
+    }
 }
 
 fn short(eyes: Eyes) -> &'static str {
@@ -1182,7 +1506,9 @@ fn turned(uv: [f32; 4], turns: u8) -> [f32; 4] {
     }
 }
 
-fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect) {
+/// The document's pages laid out on `all`, its page of the carousel, and drawn no further out than
+/// `seen`, the part of that page in the window.
+fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect) {
     for texture in paper.stale.drain(..) {
         p.forget(gl, texture);
     }
@@ -1206,7 +1532,7 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect) {
     let layout = paper.layout(all);
     let pixels = (width * p.scale()).round() as u32;
     let mut visible = Vec::new();
-    p.clip(gl, all);
+    p.clip(gl, seen);
     for (index, (y, h)) in layout.iter().enumerate() {
         let top = all.y + y - paper.scroll;
         if top > all.bottom() + all.h || top + h < all.y - all.h {
@@ -1426,6 +1752,7 @@ mod tests {
             depth: 0.0,
             zoom: None,
             centre: (0.5, 0.5),
+            drawn_at: None,
         };
         assert!((shown.eye_aspect() - 16.0 / 9.0).abs() < 0.01);
         shown.picture = picture(3840, 1080);
@@ -1449,6 +1776,7 @@ mod tests {
             depth: 0.0,
             zoom: None,
             centre: (0.5, 0.5),
+            drawn_at: None,
         };
         let area = Rect::new(0.0, 0.0, 1440.0, 900.0);
         let before = shown.placed(area);
@@ -1458,5 +1786,118 @@ mod tests {
         let after = shown.placed(area);
         let now = ((x - after.x) / after.w, (y - after.y) / after.h);
         assert!((under.0 - now.0).abs() < 0.002 && (under.1 - now.1).abs() < 0.002, "{under:?} {now:?}");
+    }
+
+    #[test]
+    fn a_tile_stands_in_where_its_picture_will_be_and_at_its_shape() {
+        let all = Rect::new(0.0, 0.0, 1440.0, 900.0);
+        for (w, h, eyes) in [(4032, 3024, Eyes::Mono), (3024, 4032, Eyes::Mono), (1920, 1080, Eyes::SideBySide), (3840, 1080, Eyes::Crossed), (1920, 2160, Eyes::TopBottom)] {
+            let mut picture = picture(w / 8, h / 8);
+            (picture.width, picture.height, picture.eyes) = (w, h, eyes);
+            let shown = Shown { picture, texture: None, right: None, turns: 0, frame: 0, frame_since: Instant::now(), eyes: None, swapped: false, depth: 0.0, zoom: None, centre: (0.5, 0.5), drawn_at: None };
+            // What the tile's thread works out from the picture's own size, and where the view
+            // puts the picture once it has it.
+            let tile = fitted(all, eye_aspect(w as f32, h as f32, eyes));
+            let picture = shown.placed(all);
+            for (a, b) in [(tile.x, picture.x), (tile.y, picture.y), (tile.w, picture.w), (tile.h, picture.h)] {
+                assert!((a - b).abs() < 0.01, "{w}x{h} {eyes:?}: {tile:?} {picture:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn what_two_rectangles_share() {
+        let window = Rect::new(0.0, 0.0, 1440.0, 900.0);
+        assert_eq!(overlap(Rect::new(-500.0, 0.0, 1440.0, 900.0), window), Rect::new(0.0, 0.0, 940.0, 900.0));
+        assert_eq!(overlap(Rect::new(1000.0, 0.0, 1440.0, 900.0), window), Rect::new(1000.0, 0.0, 440.0, 900.0));
+        assert_eq!(overlap(Rect::new(1464.0, 0.0, 1440.0, 900.0), window).w, 0.0);
+    }
+
+    /// The picture at `at` of `files`, read and fitted.
+    fn viewing(files: usize, at: usize) -> View {
+        let entry = Entry { name: "b.jpg".into(), path: PathBuf::from("/nowhere/b.jpg"), kind: Kind::Picture, size: 1 };
+        let mut view = View::new(entry, at, 1, (0..files).collect());
+        view.pictured(Ok(picture(400, 300)));
+        view
+    }
+
+    fn zoom(view: &View) -> Option<f32> {
+        match &view.doc {
+            Doc::Picture(shown) => shown.zoom,
+            _ => None,
+        }
+    }
+
+    fn key(key: Key, text: &str) -> Input {
+        Input::Key { key, text: Some(text.to_string()).filter(|t| !t.is_empty()), modifiers: spatiand_app::Modifiers::default() }
+    }
+
+    #[test]
+    fn a_sideways_scroll_slides_a_fitted_picture_and_never_zooms_it() {
+        let mut view = viewing(3, 1);
+        for _ in 0..10 {
+            view.input(&Input::Scroll { dx: 6.0, dy: 1.5 });
+            view.tick();
+        }
+        assert!((view.slid + 60.0).abs() < 1.0, "{}", view.slid);
+        assert_eq!(zoom(&view), None);
+        assert_eq!(view.heading(), None, "not far enough yet to read the next ahead");
+        for _ in 0..30 {
+            view.input(&Input::Scroll { dx: 6.0, dy: 0.0 });
+        }
+        view.tick();
+        assert_eq!(view.heading(), Some(2));
+    }
+
+    #[test]
+    fn an_up_and_down_scroll_zooms_and_never_slides() {
+        let mut view = viewing(3, 1);
+        for _ in 0..5 {
+            view.input(&Input::Scroll { dx: 2.0, dy: -30.0 });
+            view.tick();
+        }
+        assert!(zoom(&view).is_some(), "zoomed in");
+        assert_eq!(view.slid, 0.0);
+    }
+
+    #[test]
+    fn a_zoomed_picture_is_moved_about_in_rather_than_slid() {
+        let mut view = viewing(3, 1);
+        view.input(&key(Key::Char('='), "+"));
+        view.input(&key(Key::Char('='), "+"));
+        let centre = |view: &View| match &view.doc {
+            Doc::Picture(shown) => shown.centre,
+            _ => unreachable!(),
+        };
+        let before = centre(&view);
+        view.input(&Input::Scroll { dx: 40.0, dy: 0.0 });
+        view.tick();
+        assert!(centre(&view).0 > before.0, "moved along it");
+        assert_eq!(view.slid, 0.0);
+    }
+
+    #[test]
+    fn the_arrow_keys_slide_and_open_what_they_arrive_at() {
+        let mut view = viewing(3, 1);
+        assert!(matches!(view.input(&key(Key::Right, "")), Want::Nothing), "not at once");
+        view.tick();
+        assert_eq!(view.heading(), Some(2), "read ahead as soon as it is off");
+        assert_eq!(view.strip.cursor, 2, "the strip says where it is going");
+        let until = Instant::now() + Duration::from_secs(2);
+        let opened = loop {
+            std::thread::sleep(Duration::from_millis(10));
+            view.tick();
+            if let Want::Open(index) = view.arrival() {
+                break index;
+            }
+            assert!(view.slid < 0.0 && view.slid > -view.page(), "on its way: {}", view.slid);
+            assert!(Instant::now() < until, "never arrived");
+        };
+        assert_eq!(opened, 2);
+        // At the first, there is nothing before it to go to.
+        let mut first = viewing(3, 0);
+        first.input(&key(Key::Left, ""));
+        first.tick();
+        assert!(first.carousel.resting());
     }
 }
