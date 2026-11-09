@@ -596,6 +596,40 @@ pub mod sound {
         senders().lock().unwrap().iter().filter(|(_, s)| s.slot.is_none()).map(|(a, _)| a.clone()).collect()
     }
 
+    /// Hear sound sent under `feed` as `to`'s, or under its own name again (`None`): what an
+    /// application's own `SPRT` does, done by the room for a name nothing routes -- SpatiMesh's
+    /// tabs before they are routed to their windows (`spatimesh-chromium`), heard as its newest
+    /// window's. Heard *as* that window's, not merely placed at its slot: its sound is then added
+    /// to that window's other tabs' rather than written into the same slot beside them, where
+    /// the two took turns, and it follows when that window goes.
+    pub fn route(feed: &str, to: Option<&str>) {
+        let mut routes = routes().lock().unwrap();
+        let before = routes.get(feed).cloned();
+        match to {
+            Some(to) => {
+                routes.insert(feed.to_string(), to.to_string());
+            }
+            None => {
+                routes.remove(feed);
+            }
+        }
+        if before.as_deref() != to {
+            log::info!("sound from {feed} is heard at {}", to.unwrap_or("its own name"));
+        }
+    }
+
+    /// Only these slots are any window's now: a name placed through any other has lost its window,
+    /// and is placed afresh. Kept, a closed window's slot silenced what went on sounding under it
+    /// -- a SpatiMesh tab not yet routed, after the window it had been placed at closed.
+    pub fn keep_slots(live: &std::collections::HashSet<Slot>) {
+        for (app, named) in senders().lock().unwrap().iter_mut() {
+            if let Some(slot) = named.slot.filter(|s| !live.contains(s)) {
+                log::info!("sound from {app} lost slot {slot} with its window");
+                named.slot = None;
+            }
+        }
+    }
+
     /// Say which slot a sounding application's windows have.
     pub fn assign(app: &str, slot: Slot) {
         if let Some(entry) = senders().lock().unwrap().get_mut(app) {

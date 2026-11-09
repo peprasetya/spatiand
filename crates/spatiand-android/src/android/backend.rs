@@ -1336,21 +1336,12 @@ pub fn run(
             let unplaced = crate::own::sound::waiting();
             if !unplaced.is_empty() {
                 let sinks = spatial_audio.keyed_sinks();
-                // SpatiMesh's windows' slots, newest last: slots are never numbered again.
-                let mut chromium: Vec<_> = sinks
-                    .iter()
-                    .filter(|(key, _)| key.starts_with("wl:"))
-                    .filter_map(|(_, sink)| spatiand_audio::server::slot_of_sink(sink))
-                    .collect();
-                chromium.sort_unstable();
                 for app in unplaced {
                     let slot = sinks
                         .get(&format!("own:{app}"))
                         .and_then(|s| spatiand_audio::server::slot_of_sink(s))
                         // A SpatiMesh tab's, under its window's sink, while that window is here.
-                        .or_else(|| sinks.values().any(|s| *s == app).then(|| spatiand_audio::server::slot_of_sink(&app)).flatten())
-                        // A tab not yet routed to its window: at SpatiMesh's newest.
-                        .or_else(|| (app == crate::audio::CHROMIUM_APP_ID).then(|| chromium.last().copied()).flatten());
+                        .or_else(|| sinks.values().any(|s| *s == app).then(|| spatiand_audio::server::slot_of_sink(&app)).flatten());
                     if let Some(slot) = slot {
                         crate::own::sound::assign(&app, slot);
                     }
@@ -1362,9 +1353,23 @@ pub fn run(
                 sinks_changed = true;
             }
             if sinks_changed {
-                crate::remote::sound::set_sinks(spatial_audio.keyed_sinks());
+                let sinks = spatial_audio.keyed_sinks();
+                crate::remote::sound::set_sinks(sinks.clone());
                 // Where SpatiMesh's windows' sinks are, for its tabs (as on the Deck).
-                crate::audio::write_sink_map(&spatial_audio.keyed_sinks());
+                crate::audio::write_sink_map(&sinks);
+                // A SpatiMesh tab not yet routed to its window is heard as SpatiMesh's newest
+                // window's -- slots are never numbered again, so the highest is the newest --
+                // and with it, again, when that one closes.
+                let newest = sinks
+                    .iter()
+                    .filter(|(key, _)| key.starts_with("wl:"))
+                    .filter_map(|(_, sink)| spatiand_audio::server::slot_of_sink(sink).map(|slot| (slot, sink.clone())))
+                    .max_by_key(|(slot, _)| *slot)
+                    .map(|(_, sink)| sink);
+                crate::own::sound::route(crate::audio::CHROMIUM_APP_ID, newest.as_deref());
+                // A closed window's slot is no one's: what was placed through it is placed again.
+                let live = sinks.values().filter_map(|sink| spatiand_audio::server::slot_of_sink(sink)).collect();
+                crate::own::sound::keep_slots(&live);
             }
 
             // Where every window's sound is, now, and what it is doing. The head has moved
