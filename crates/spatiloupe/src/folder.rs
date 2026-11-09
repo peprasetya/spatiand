@@ -6,6 +6,8 @@ use std::time::Instant;
 use spatiand_app::ui::{look, theme, Button, Icon, Grid, Input, Painter, Rect, Shape, Texture, Tile};
 use spatiand_app::{Gl, Key};
 
+use crate::view::Seen;
+
 /// What a file is, to SpatiLoupe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -150,6 +152,9 @@ pub struct Folder {
     pub path: PathBuf,
     pub entries: Vec<Entry>,
     tiles: Vec<Tile>,
+    /// What each tile's picture said of the one it was made from, once it has come: what a tile
+    /// standing in for its picture is drawn as.
+    seen: Vec<Option<Seen>>,
     asked: Vec<bool>,
     grid: Grid,
     pub state: State,
@@ -157,9 +162,20 @@ pub struct Folder {
     /// The name to put the cursor on when the list comes: the folder come up out of, or the
     /// file just looked at.
     pub cursor_on: Option<PathBuf>,
-    arrived: Vec<(usize, u32, u32, Vec<u8>, Option<String>)>,
+    arrived: Vec<Arrived>,
     left: Vec<Texture>,
     up: Button,
+}
+
+/// A tile's picture, come from the thread that makes them, to go on the GPU.
+pub struct Arrived {
+    pub index: usize,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    /// A word to put under it ("3D").
+    pub word: Option<String>,
+    pub seen: Option<Seen>,
 }
 
 impl Folder {
@@ -167,7 +183,20 @@ impl Folder {
         let mut grid = Grid::default();
         grid.focused = true;
         grid.shape = Shape::Square;
-        Folder { path, entries: Vec::new(), tiles: Vec::new(), asked: Vec::new(), grid, state: State::Loading(Instant::now()), ticket, cursor_on: None, arrived: Vec::new(), left: Vec::new(), up: Button::default() }
+        Folder {
+            path,
+            entries: Vec::new(),
+            tiles: Vec::new(),
+            seen: Vec::new(),
+            asked: Vec::new(),
+            grid,
+            state: State::Loading(Instant::now()),
+            ticket,
+            cursor_on: None,
+            arrived: Vec::new(),
+            left: Vec::new(),
+            up: Button::default(),
+        }
     }
 
     pub fn listed(&mut self, result: Result<Vec<Entry>, String>) {
@@ -187,6 +216,7 @@ impl Folder {
                         Tile { title: e.name.clone(), detail, icon, tint, ..Tile::default() }
                     })
                     .collect();
+                self.seen = vec![None; entries.len()];
                 self.asked = vec![false; entries.len()];
                 let at = self.cursor_on.take().and_then(|p| entries.iter().position(|e| e.path == p));
                 self.grid.cursor = at.unwrap_or(0).min(entries.len().saturating_sub(1));
@@ -201,15 +231,16 @@ impl Folder {
     /// are, or every list indexed by entry runs one short.
     pub fn add(&mut self, entry: Entry) -> usize {
         self.tiles.push(Tile { title: entry.name.clone(), detail: Some(size_words(entry.size)), icon: Some(Icon::Picture), ..Tile::default() });
+        self.seen.push(None);
         self.asked.push(false);
         self.entries.push(entry);
         self.entries.len() - 1
     }
 
-    /// A tile's picture has come, and perhaps a word to put under it ("3D").
-    pub fn pictured(&mut self, ticket: u64, index: usize, width: u32, height: u32, rgba: Vec<u8>, word: Option<String>) {
+    /// A tile's picture has come, for the listing of `ticket`.
+    pub fn pictured(&mut self, ticket: u64, arrived: Arrived) {
         if ticket == self.ticket {
-            self.arrived.push((index, width, height, rgba, word));
+            self.arrived.push(arrived);
         }
     }
 
@@ -264,9 +295,9 @@ impl Folder {
         for old in self.left.drain(..) {
             p.forget(gl, old);
         }
-        for (index, w, h, rgba, word) in self.arrived.drain(..) {
+        for Arrived { index, width, height, rgba, word, seen } in self.arrived.drain(..) {
             if let Some(tile) = self.tiles.get_mut(index) {
-                tile.picture = p.texture(gl, &rgba, w, h).ok();
+                tile.picture = p.texture(gl, &rgba, width, height).ok();
                 if let Some(word) = word {
                     tile.detail = Some(match tile.detail.take() {
                         Some(d) => format!("{word}  \u{b7}  {d}"),
@@ -274,7 +305,16 @@ impl Folder {
                     });
                 }
             }
+            if let Some(kept) = self.seen.get_mut(index) {
+                *kept = seen;
+            }
         }
+    }
+
+    /// What the files' tiles have said of their pictures, in the order of
+    /// [`Folder::file_tiles`]: the files only.
+    pub fn file_seen(&self) -> Vec<Option<Seen>> {
+        self.entries.iter().zip(&self.seen).filter(|(e, _)| e.kind != Kind::Folder).map(|(_, s)| *s).collect()
     }
 
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl) {
