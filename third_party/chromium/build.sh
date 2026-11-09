@@ -308,13 +308,14 @@ grep -q spatiand_ffmpeg third_party/ffmpeg/BUILD.gn || python3 build/linux/unbun
 # Cromite's arguments as its Linux build has them, for Apple silicon, changed in place (GN refuses a
 # value set twice): Chromium's Mac profile for PGO, no symbols, the PDF viewer; no software AV1 (the
 # owner's choice, as on the Deck: the M6 decodes AV1 itself); Dolby by Spatiand's FFmpeg. Warnings
-# are not errors: Xcode's SDK is newer than this Chromium's.
+# are not errors: Xcode's SDK is newer than this Chromium's. Linked by Apple's ld, not Chromium's
+# lld: the macOS 27 SDK's library stubs list arm64e.x1, which this Chromium's lld cannot read.
 ARGS=$(sed -e 's/^chrome_pgo_phase=0/chrome_pgo_phase=2/' \
            -e 's/^symbol_level=1/symbol_level=0/' \
            -e 's/^treat_warnings_as_errors=true/treat_warnings_as_errors=false/' \
            -e 's/^enable_dav1d_decoder=true/enable_dav1d_decoder=false/' \
            $CR/cromite/build/cromite.gn_args)
-gn gen --args="target_os = \"mac\" $ARGS target_cpu = \"arm64\" enable_pdf = true enable_plugins = true enable_platform_ac3_eac3_audio = true" out/mac
+gn gen --args="target_os = \"mac\" $ARGS target_cpu = \"arm64\" enable_pdf = true enable_plugins = true enable_platform_ac3_eac3_audio = true use_lld = false" out/mac
 # A real python3 first: the tools the build runs by "env python3" (the linker's driver) otherwise
 # get macOS's stub, which looks for one in Xcode, and Xcode has none.
 export PATH="$CR/chromium/src/third_party/cpython3/host/bin:$PATH"
