@@ -104,7 +104,13 @@ cd "$CR"
 # Cromite's own script (it folds v8, devtools-frontend, skia, perfetto and boringssl into the
 # main repository, which its patches need), without its apt step. gclient cannot sync this tree
 # afterwards: fetch again into a fresh folder for another version.
-sed '/^sudo apt install sed/d' $CR/cromite/tools/images/cromite-source/apply-cromite-patches.sh | bash
+# On a Mac, its one line of GNU sed by perl (mac/first-dashes.pl): macOS's sed cannot.
+if [ "$CHROMIUM_TARGET" = mac ]; then
+    sed -e '/^sudo apt install sed/d' -e 's#sed \$REPL#perl "$CR/first-dashes.pl" "FILE:$(basename $file)"#' \
+        $CR/cromite/tools/images/cromite-source/apply-cromite-patches.sh | bash
+else
+    sed '/^sudo apt install sed/d' $CR/cromite/tools/images/cromite-source/apply-cromite-patches.sh | bash
+fi
 cd $CR/chromium/src
 for p in $CR/spatiand-patches/*.patch; do git am -q "$p"; done
 # For Android's libc, what Termux changes and then ours (android-libc/README.md). With patch(1),
@@ -358,6 +364,7 @@ package_android() {
 mkdir -p "$work/spatiand-patches"
 cp "$here"/patches/*.patch "$work/spatiand-patches/"
 rm -rf "$work/android-libc"; cp -a "$here/android-libc" "$work/android-libc"
+cp "$here/mac/first-dashes.pl" "$work/first-dashes.pl"
 case $step in
     fetch) fetch ;;
     patch) patch_tree ;;
