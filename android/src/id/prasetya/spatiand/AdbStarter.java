@@ -114,25 +114,30 @@ final class AdbStarter {
         return scope < 0 ? s : s.substring(0, scope);
     }
 
+    /**
+     * Where Android's service discovery calls back: one thread for the life of the app. A thread
+     * stopped when a search ended crashed the app (RejectedExecutionException on Android's
+     * ConnectivityThread, 2026-11-09): discovery goes on calling back a moment after it is told
+     * to stop.
+     */
+    static final ExecutorService DISCOVERY = Executors.newSingleThreadExecutor();
+
     /** The port of this phone's own service of {@code type}, or -1 if none was found in time. */
     static int findPort(Context c, String type, long timeoutMs) {
         NsdManager nsd = c.getSystemService(NsdManager.class);
         Set<String> mine = ownAddresses();
         CompletableFuture<Integer> found = new CompletableFuture<>();
-        ExecutorService on = Executors.newSingleThreadExecutor();
+        java.util.List<NsdManager.ServiceInfoCallback> watching =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         NsdManager.DiscoveryListener listener = new NsdManager.DiscoveryListener() {
             @Override
             public void onServiceFound(NsdServiceInfo service) {
-                nsd.registerServiceInfoCallback(service, on, new NsdManager.ServiceInfoCallback() {
+                if (found.isDone()) return;
+                NsdManager.ServiceInfoCallback watch = new NsdManager.ServiceInfoCallback() {
                     @Override
                     public void onServiceUpdated(NsdServiceInfo resolved) {
                         for (InetAddress a : resolved.getHostAddresses()) {
                             if (mine.contains(plain(a))) found.complete(resolved.getPort());
-                        }
-                        try {
-                            nsd.unregisterServiceInfoCallback(this);
-                        } catch (IllegalArgumentException gone) {
-                            // Already.
                         }
                     }
 
@@ -144,7 +149,13 @@ final class AdbStarter {
 
                     @Override
                     public void onServiceInfoCallbackUnregistered() {}
-                });
+                };
+                try {
+                    nsd.registerServiceInfoCallback(service, DISCOVERY, watch);
+                    watching.add(watch);
+                } catch (IllegalArgumentException refused) {
+                    Log.w(TAG, "could not look up " + service.getServiceName() + ": " + refused);
+                }
             }
 
             @Override
@@ -175,7 +186,15 @@ final class AdbStarter {
             } catch (IllegalArgumentException already) {
                 // Stopped by its failure.
             }
-            on.shutdown();
+            synchronized (watching) {
+                for (NsdManager.ServiceInfoCallback watch : watching) {
+                    try {
+                        nsd.unregisterServiceInfoCallback(watch);
+                    } catch (IllegalArgumentException gone) {
+                        // Not registered any more.
+                    }
+                }
+            }
         }
     }
 
