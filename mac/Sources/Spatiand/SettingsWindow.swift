@@ -4,6 +4,16 @@ import AppKit
 import ServiceManagement
 import SwiftUI
 
+/// What the settings keep only while they are open. Not SwiftUI's `@State`: in the macOS 27 SDK
+/// that is a macro whose plugin comes with Xcode alone, and the app is to build with just the
+/// Command Line Tools too (an M6 Mac mini without Xcode, 2026-11-09).
+final class SettingsLocal: ObservableObject {
+    @Published var atLogin = SMAppService.mainApp.status == .enabled
+    @Published var loginProblem = ""
+    /// Which page is open; a test may say which to begin on.
+    @Published var page = Int(ProcessInfo.processInfo.environment["SPATIAND_SETTINGS_PAGE"] ?? "") ?? 0
+}
+
 struct SettingsView: View {
     @AppStorage("presentation", store: Defaults.store) private var presentation = Presentation.automatic.rawValue
     @AppStorage("audioOutputUID", store: Defaults.store) private var output = ""
@@ -16,15 +26,11 @@ struct SettingsView: View {
     @AppStorage("gamepads", store: Defaults.store) private var gamepads = true
     @AppStorage("notifications", store: Defaults.store) private var notifications = true
     @AppStorage("soundPlacement", store: Defaults.store) private var soundPlacement = true
-    @State private var atLogin = SMAppService.mainApp.status == .enabled
-    @State private var loginProblem = ""
+    @StateObject private var local = SettingsLocal()
     let hotkeyStatus: () -> String
 
     @AppStorage("hostEnabled", store: Defaults.store) private var hostEnabled = false
     @AppStorage("virtualScreen", store: Defaults.store) private var virtualScreen = "1920x1080"
-
-    /// Which page is open; a test may say which to begin on.
-    @State private var page = Int(ProcessInfo.processInfo.environment["SPATIAND_SETTINGS_PAGE"] ?? "") ?? 0
 
     /// The small print under a setting: wrapped, never cut off.
     private func note(_ text: String, colour: Color = .secondary) -> some View {
@@ -32,7 +38,7 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        TabView(selection: $page) {
+        TabView(selection: $local.page) {
             glasses.tabItem { Label("Glasses", systemImage: "eyeglasses") }.tag(0)
             control.tabItem { Label("Control", systemImage: "cursorarrow.rays") }.tag(1)
             sound.tabItem { Label("Sound", systemImage: "speaker.wave.2") }.tag(2)
@@ -137,17 +143,17 @@ struct SettingsView: View {
     private var general: some View {
         Form {
             Section {
-                Toggle("Start Spatiand when I log in", isOn: $atLogin)
-                    .onChange(of: atLogin) { wanted in
+                Toggle("Start Spatiand when I log in", isOn: $local.atLogin)
+                    .onChange(of: local.atLogin) { wanted in
                         do {
                             if wanted { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-                            loginProblem = ""
+                            local.loginProblem = ""
                         } catch {
-                            loginProblem = "Could not change it: \(error.localizedDescription)"
-                            atLogin = SMAppService.mainApp.status == .enabled
+                            local.loginProblem = "Could not change it: \(error.localizedDescription)"
+                            local.atLogin = SMAppService.mainApp.status == .enabled
                         }
                     }
-                if !loginProblem.isEmpty { note(loginProblem, colour: .red) }
+                if !local.loginProblem.isEmpty { note(local.loginProblem, colour: .red) }
             }
             Section("Keys") {
                 Toggle("Control-Space opens the menu, Control-Tab these settings", isOn: $hotkeys)
