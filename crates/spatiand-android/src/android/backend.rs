@@ -1697,7 +1697,8 @@ pub fn run(
                     if let Some(quad) = windows.iter().find(|w| w.focused) {
                         let surface = quad.surface.clone();
                         let size = (quad.pixels.0 as f64, quad.pixels.1 as f64);
-                        pointers.nudge(&mut runtime.state, &surface, size, delivery.motion.0 as f64, delivery.motion.1 as f64, time_ms);
+                        let origin = (quad.origin.0 as f64, quad.origin.1 as f64);
+                        pointers.nudge(&mut runtime.state, &surface, origin, size, delivery.motion.0 as f64, delivery.motion.1 as f64, time_ms);
                         for (code, pressed) in &delivery.mouse_buttons {
                             pointers.button(&mut runtime.state, *code, *pressed, time_ms);
                         }

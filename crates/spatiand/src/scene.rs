@@ -137,6 +137,11 @@ pub struct WindowQuad {
     /// buffer twice as wide so that each eye gets its full width -- and so does a buffer scale.
     /// Reading the texture here drew such a window twice as wide as it asked to be.
     pub pixels: (u32, u32),
+    /// Where the window starts within its surface, in the surface's logical pixels: (0, 0)
+    /// unless the client drew more than its window -- see [`window_part`]. `pixels` and `crop`
+    /// are already the window's own; this is for anything that speaks to the client, whose
+    /// coordinates are its surface's.
+    pub origin: (i32, i32),
     /// The texture's own size, in its pixels: what a test reads back to see the window's own
     /// picture.
     pub buffer: (u32, u32),
@@ -3966,6 +3971,8 @@ pub fn collect_windows(
         if state.layout.is_hidden(&window) {
             continue;
         }
+        // The window, where its surface is more than its window: see `window_part`.
+        let (origin, (width, height), crop) = window_part(&surface, (width, height), crop);
         let Some(placement) = state.layout.get(&window) else {
             // In the space but with nowhere to be. An X11 window adopted before its placement
             // existed would sit here silently for the rest of the session.
@@ -3983,7 +3990,7 @@ pub fn collect_windows(
         // shows is one -- the profile menu, the address bar's suggestions, a login field's list,
         // a permission's question -- and all of them opened unseen.
         let mut popups = Vec::new();
-        push_subsurfaces(renderer, &surface, (0, 0), &mut popups);
+        push_subsurfaces(renderer, &surface, (-origin.0, -origin.1), &mut popups);
 
         // Menus, dropdowns and submenus, in the order the client stacked them. Each is its own
         // surface with its own buffer -- importing the toplevel's tree does not reach them,
@@ -4023,19 +4030,25 @@ pub fn collect_windows(
                 }
                 continue;
             };
+            // `offset` is where the menu's window is from this window's, as the protocol has it;
+            // its surface starts that much less where its own window starts in it, as smithay's
+            // `Window` places it. Taken as the surface's, a menu of a client drawing its own
+            // shadow was off by the shadow (Chromium's: 16 across, 10 down).
+            let mine = popup.geometry().loc;
+            let offset = (offset.x - mine.x, offset.y - mine.y);
             if note_once(5, &popup_surface) {
-                log::info!("menu {pw}x{ph} at ({}, {})", offset.x, offset.y);
+                log::info!("menu {pw}x{ph} at ({}, {})", offset.0, offset.1);
             }
             popups.push(PopupQuad {
                 surface: popup_surface.clone(),
                 texture,
-                offset: (offset.x, offset.y),
+                offset,
                 pixels: (pw, ph),
                 crop,
                 opaque,
                 input: None,
             });
-            push_subsurfaces(renderer, &popup_surface, (offset.x, offset.y), &mut popups);
+            push_subsurfaces(renderer, &popup_surface, offset, &mut popups);
         }
 
         // The same treatment for an X11 application's menus, which are not popups as far as
@@ -4125,6 +4138,7 @@ pub fn collect_windows(
             surface: surface.clone(),
             texture,
             pixels: (width, height),
+            origin,
             buffer: (buffer.0 as u32, buffer.1 as u32),
             crop,
             placement,
@@ -4156,6 +4170,48 @@ pub fn collect_windows(
         crate::pip::lock(&mut out, state.pip, &state.layout, *head, view);
     }
     out
+}
+
+/// The part of a toplevel's surface that is its window: where it starts in the surface, its
+/// size, and which part of the texture it is (as `crop` is the surface's). From the client's
+/// xdg window geometry, which says exactly this.
+///
+/// A client that draws its own frame draws its shadow outside its window, in pixels it leaves
+/// clear, and says where its window is so that nothing takes the shadow for part of it. Windows
+/// here are drawn opaque, so taken whole, Chromium's shadow -- 16 pixels each side, 10 above and
+/// 32 below a 1280x800 window -- was a black border round every SpatiMesh window on the Beam Pro
+/// (owner's screenshot, 2026-11-09). Its shape, the pointer's coordinates in it, the size a
+/// resize asks for (which the protocol measures in this, not in the surface) and where its menus
+/// sit all come from this part alone now.
+///
+/// The whole surface where no geometry is set, as for every X11 window, or where it is not
+/// inside the surface: the protocol allows a window bigger than its picture, and there is nothing
+/// to draw there.
+fn window_part(
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    size: (u32, u32),
+    crop: [f32; 4],
+) -> ((i32, i32), (u32, u32), [f32; 4]) {
+    use smithay::wayland::compositor::with_states;
+    use smithay::wayland::shell::xdg::SurfaceCachedState;
+    let geometry = with_states(surface, |states| states.cached_state.get::<SurfaceCachedState>().current().geometry);
+    window_part_of(geometry.map(|g| (g.loc.x, g.loc.y, g.size.w, g.size.h)), size, crop)
+}
+
+/// [`window_part`]'s arithmetic, on its own: `geometry` as `(x, y, w, h)`.
+fn window_part_of(geometry: Option<(i32, i32, i32, i32)>, size: (u32, u32), crop: [f32; 4]) -> ((i32, i32), (u32, u32), [f32; 4]) {
+    let whole = ((0, 0), size, crop);
+    let Some((x, y, w, h)) = geometry else {
+        return whole;
+    };
+    let (sw, sh) = (size.0 as i32, size.1 as i32);
+    if w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > sw || y + h > sh || (x, y, w, h) == (0, 0, sw, sh) {
+        return whole;
+    }
+    let [u0, u1, v0, v1] = crop;
+    let u = |at: i32| u0 + (u1 - u0) * at as f32 / sw as f32;
+    let v = |at: i32| v0 + (v1 - v0) * at as f32 / sh as f32;
+    ((x, y), (w as u32, h as u32), [u(x), u(x + w), v(y), v(y + h)])
 }
 
 /// `parent`'s subsurfaces and theirs, at `origin` in the window's pixels, as quads like its menus':
@@ -4512,6 +4568,29 @@ pub fn window_quad(placement: &crate::window::Placement, aspect: f64) -> Quad {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn a_window_is_its_geometry_and_not_its_shadow() {
+        // Chromium's own frame on the Beam Pro, from its protocol log: a 1280x800 window in a
+        // 1312x842 surface, its shadow 16 each side, 10 above and 32 below.
+        let whole = [0.0, 1.0, 0.0, 1.0];
+        let (origin, size, crop) = window_part_of(Some((16, 10, 1280, 800)), (1312, 842), whole);
+        assert_eq!((origin, size), ((16, 10), (1280, 800)));
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-6;
+        assert!(near(crop[0], 16.0 / 1312.0) && near(crop[1], 1296.0 / 1312.0), "{crop:?}");
+        assert!(near(crop[2], 10.0 / 842.0) && near(crop[3], 810.0 / 842.0), "{crop:?}");
+        // Within a viewport's crop, the part of that part.
+        let (_, _, half) = window_part_of(Some((16, 10, 1280, 800)), (1312, 842), [0.5, 1.0, 0.0, 1.0]);
+        assert!(near(half[0], 0.5 + 0.5 * 16.0 / 1312.0) && near(half[1], 0.5 + 0.5 * 1296.0 / 1312.0), "{half:?}");
+    }
+
+    #[test]
+    fn a_window_without_a_geometry_or_outside_its_surface_is_its_whole_surface() {
+        let whole = [0.0, 1.0, 0.0, 1.0];
+        for geometry in [None, Some((0, 0, 800, 600)), Some((-5, 0, 800, 600)), Some((10, 10, 800, 600)), Some((0, 0, 0, 600))] {
+            assert_eq!(window_part_of(geometry, (800, 600), whole), ((0, 0), (800, 600), whole), "{geometry:?}");
+        }
+    }
 
     #[test]
     fn a_fitted_panel_stays_inside_both_axes_of_the_field() {

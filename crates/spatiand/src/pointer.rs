@@ -961,7 +961,10 @@ impl PointerState {
                 .hit
                 .and_then(|(index, hit)| {
                     let window = windows.get(index)?;
-                    surface_position(&hit, window.pixels, &window.placement)
+                    // In the window, and the client counts from its surface: where it drew more
+                    // than its window (a shadow), the window starts that far in.
+                    let at = surface_position(&hit, window.pixels, &window.placement)?;
+                    Some(Point::from((at.x + window.origin.0 as f64, at.y + window.origin.1 as f64)))
                 }),
         };
         // **Past every window and every menu, the room.** Only when the ray touched nothing
@@ -1268,6 +1271,7 @@ impl PointerState {
         &mut self,
         state: &mut Spatiand,
         surface: &WlSurface,
+        origin: (f64, f64),
         size: (f64, f64),
         dx: f64,
         dy: f64,
@@ -1291,12 +1295,13 @@ impl PointerState {
             );
         }
         if !locked {
+            // Within the window, which starts `origin` into its surface (`WindowQuad::origin`).
             let (x, y) = self
                 .mapped_cursor
-                .unwrap_or((size.0 / 2.0, size.1 / 2.0));
+                .unwrap_or((origin.0 + size.0 / 2.0, origin.1 + size.1 / 2.0));
             let next = (
-                (x + dx).clamp(0.0, (size.0 - 1.0).max(0.0)),
-                (y + dy).clamp(0.0, (size.1 - 1.0).max(0.0)),
+                (x + dx).clamp(origin.0, origin.0 + (size.0 - 1.0).max(0.0)),
+                (y + dy).clamp(origin.1, origin.1 + (size.1 - 1.0).max(0.0)),
             );
             self.mapped_cursor = Some(next);
             state.cadence.pointed();
