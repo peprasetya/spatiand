@@ -197,6 +197,7 @@ pub fn run(
     // every immersive layer was still placed at world zero -- which is not a picture of
     // anything the session would ever show, and hid exactly the fault this exists to catch.
     runtime.state.spawn_yaw = yaw_deg.to_radians();
+    let mut snap_sound = SnapSound::from_env();
     // Pinned windows are placed from the head, which a snapshot has: the one it is taken from.
     // `SPATIAND_PIN_ALL=1` pins every window, the way to look at one without a hand to press the
     // pin button with.
@@ -636,6 +637,7 @@ pub fn run(
                     display.dispatch_clients(&mut runtime.state)?;
                     display.flush_clients()?;
                     event_loop.dispatch(Some(std::time::Duration::from_millis(16)), runtime)?;
+                    snap_sound.tick(&mut runtime.state);
 
                     crate::dmabuf::settle(&mut runtime.state, &mut renderer);
                     // Noticing a shape change needs to have seen the shape before, so this runs
@@ -842,6 +844,7 @@ pub fn run(
                                 display.dispatch_clients(&mut runtime.state)?;
                                 display.flush_clients()?;
                                 event_loop.dispatch(Some(std::time::Duration::from_millis(16)), runtime)?;
+                                snap_sound.tick(&mut runtime.state);
                                 crate::dmabuf::settle(&mut runtime.state, &mut renderer);
                                 crate::window::apply_resize_anchors(&mut runtime.state);
                                 runtime.state.settle_keyboard_focus();
@@ -2166,4 +2169,49 @@ fn made_up_hosts() -> (Vec<spatiand_shell::HostRow>, Vec<spatiand_shell::HostTab
         },
     ];
     (rows, tabs)
+}
+
+
+/// `SPATIAND_SNAPSHOT_SOUND=1`: the room's sound, as the Mac's and the Beam Pro's rooms have it
+/// -- the spatial audio engine, `$XDG_RUNTIME_DIR/spatiand-sound` for the applications that hand
+/// their sound to the session, and each window's slot (`crate::audio::place_window_sounds`) with
+/// SpatiMesh told where its windows' sinks are (`spatiand-sinks`). So where a page's sound goes
+/// can be tested with no glasses and no one listening: the log says what each feed is heard as.
+/// Give the room an `XDG_RUNTIME_DIR` of its own, or its sockets are the running room's.
+struct SnapSound {
+    #[cfg(any(target_os = "macos", target_os = "android"))]
+    inner: Option<(crate::audio::Audio, Vec<(usize, std::time::Instant, Option<u32>)>)>,
+}
+
+impl SnapSound {
+    fn from_env() -> SnapSound {
+        #[cfg(any(target_os = "macos", target_os = "android"))]
+        {
+            if std::env::var("SPATIAND_SNAPSHOT_SOUND").as_deref() != Ok("1") {
+                return SnapSound { inner: None };
+            }
+            let audio = crate::audio::Audio::new(true, crate::audio::Directness::default());
+            if audio.is_on() {
+                crate::own::sound::listen();
+            }
+            log::info!("snapshot: the room's sound is on (spatial audio {})", audio.is_on());
+            SnapSound { inner: Some((audio, Vec::new())) }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "android")))]
+        {
+            if std::env::var("SPATIAND_SNAPSHOT_SOUND").is_ok() {
+                log::warn!("SPATIAND_SNAPSHOT_SOUND: only where applications hand their sound to the session (the Mac, the Beam Pro)");
+            }
+            SnapSound {}
+        }
+    }
+
+    fn tick(&mut self, state: &mut crate::state::Spatiand) {
+        #[cfg(any(target_os = "macos", target_os = "android"))]
+        if let Some((audio, awaiting)) = self.inner.as_mut() {
+            crate::audio::place_window_sounds(state, audio, awaiting);
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "android")))]
+        let _ = state;
+    }
 }
