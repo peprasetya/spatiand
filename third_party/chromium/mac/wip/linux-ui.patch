@@ -1971,6 +1971,21 @@ index 4657e2fbc5..12e1b7abcd 100644
    if (ui::Clipboard::IsSupportedClipboardBuffer(
            ui::ClipboardBuffer::kSelection)) {
      ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
+diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
+index 4944cd222f..2e58dc6b1a 100644
+--- a/chrome/browser/ui/browser_ui_prefs.cc
++++ b/chrome/browser/ui/browser_ui_prefs.cc
+@@ -192,7 +192,9 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
+   registry->RegisterBooleanPref(
+       prefs::kAllowJavascriptAppleEvents, false,
+       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+-#else
++#endif
++// Spatiand: the Linux UI on macOS reads it as Linux does (BrowserCommandController).
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+   registry->RegisterBooleanPref(prefs::kFullscreenAllowed, true);
+ #endif
+ 
 diff --git a/chrome/browser/ui/browser_view_prefs.cc b/chrome/browser/ui/browser_view_prefs.cc
 index 8c2992ff8a..ff3d05aea4 100644
 --- a/chrome/browser/ui/browser_view_prefs.cc
@@ -6132,6 +6147,21 @@ index 9f7961a8e9..9f8bc5ca73 100644
    // TODO(crbug.com/40239878): Add ScopedOverlayAccess::GetOverlayImage() that
    // works on all platforms.
    gl::OverlayImage overlay_image = access ? access->GetNativePixmap() : nullptr;
+diff --git a/components/viz/service/display_embedder/output_surface_provider_impl.cc b/components/viz/service/display_embedder/output_surface_provider_impl.cc
+index c15bbfb093..7396be67ce 100644
+--- a/components/viz/service/display_embedder/output_surface_provider_impl.cc
++++ b/components/viz/service/display_embedder/output_surface_provider_impl.cc
+@@ -152,7 +152,9 @@ OutputSurfaceProviderImpl::CreateSoftwareOutputDeviceForPlatform(
+     display_client->AddChildWindowToBrowser(child_hwnd);
+   }
+   return device;
+-#elif BUILDFLAG(IS_APPLE)
++#elif BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: on the Linux UI on macOS the window is Wayland's, drawn through
++  // Ozone's canvas (wl_shm) below, not a CALayer.
+   return std::make_unique<SoftwareOutputDeviceMac>(task_runner_);
+ #elif BUILDFLAG(IS_ANDROID)
+   // Android does not do software compositing, so we can't get here.
 diff --git a/components/viz/service/gl/gpu_service_impl.cc b/components/viz/service/gl/gpu_service_impl.cc
 index f892f348b8..596e0ae9bc 100644
 --- a/components/viz/service/gl/gpu_service_impl.cc
@@ -6368,7 +6398,7 @@ index 690e0c0317..51f3f43931 100644
      }
    } else {  # Not aura.
 diff --git a/content/browser/browser_interface_binders.cc b/content/browser/browser_interface_binders.cc
-index 9f0eda1ba4..665c0b593e 100644
+index 9f0eda1ba4..dca379f037 100644
 --- a/content/browser/browser_interface_binders.cc
 +++ b/content/browser/browser_interface_binders.cc
 @@ -247,8 +247,10 @@
@@ -6392,7 +6422,7 @@ index 9f0eda1ba4..665c0b593e 100644
  void BindTextInputHost(
      mojo::PendingReceiver<blink::mojom::TextInputHost> receiver) {
    GetIOThreadTaskRunner({})->PostTask(
-@@ -1322,7 +1324,7 @@ void PopulateBinderMapWithContext(
+@@ -1322,13 +1324,22 @@ void PopulateBinderMapWithContext(
        &BindRenderFrameHostImpl<&RenderFrameHostImpl::GetSmartCardService>);
  #endif
  
@@ -6401,6 +6431,21 @@ index 9f0eda1ba4..665c0b593e 100644
    map->Add<blink::mojom::TextInputHost>(base::BindRepeating(
        [](RenderFrameHost* host,
           mojo::PendingReceiver<blink::mojom::TextInputHost> receiver) {
+         BindTextInputHost(std::move(receiver));
+       }));
+ #endif
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: the renderer is macOS's and asks for Cocoa's text input host,
++  // which only carries its answers to Cocoa's input method -- not there on the
++  // Linux UI, where Wayland's text input types. Taken and let go, so that the
++  // renderer is not ended for asking.
++  map->Add<blink::mojom::TextInputHost>(base::BindRepeating(
++      [](RenderFrameHost* host,
++         mojo::PendingReceiver<blink::mojom::TextInputHost> receiver) {}));
++#endif
+ 
+   map->Add<blink::mojom::RenderAccessibilityHost>(
+       &BindRenderFrameHostImpl<
 diff --git a/content/browser/browser_main_loop.cc b/content/browser/browser_main_loop.cc
 index e2b7ba6d3e..2d0e7f584f 100644
 --- a/content/browser/browser_main_loop.cc
@@ -8560,6 +8605,22 @@ index 1e6a4191b4..5e8e1eaa09 100644
      sources += [
        "global_accelerator_listener_mac.h",
        "global_accelerator_listener_mac.mm",
+diff --git a/ui/base/accelerators/global_accelerator_listener/global_accelerator_listener_ozone.cc b/ui/base/accelerators/global_accelerator_listener/global_accelerator_listener_ozone.cc
+index 94acc1dc03..424a0e6732 100644
+--- a/ui/base/accelerators/global_accelerator_listener/global_accelerator_listener_ozone.cc
++++ b/ui/base/accelerators/global_accelerator_listener/global_accelerator_listener_ozone.cc
+@@ -69,6 +69,11 @@ GlobalAcceleratorListener* GlobalAcceleratorListener::GetInstance() {
+     return linux_instance;
+   }
+   return nullptr;
++#else
++  // Spatiand: the Linux UI on macOS. No desktop portal, and the room keeps no
++  // shortcuts global to every application: no listener, as on Linux without
++  // D-Bus. (Without this the function fell off its end, which traps.)
++  return nullptr;
+ #endif
+ }
+ 
 diff --git a/ui/base/clipboard/BUILD.gn b/ui/base/clipboard/BUILD.gn
 index 3c7a17dbee..56c292dff1 100644
 --- a/ui/base/clipboard/BUILD.gn
