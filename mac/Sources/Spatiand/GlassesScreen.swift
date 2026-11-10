@@ -14,6 +14,7 @@
 //  it feels like it; and nothing is composited over a display that has not been captured.
 
 import AppKit
+import AVFoundation
 import CSpatiand
 import QuartzCore
 
@@ -45,6 +46,8 @@ final class GlassesScreen {
 
     /// XREAL Air identifies itself with EDID vendor 0x3647, product 0x3132.
     static func findDisplay() -> CGDirectDisplayID? {
+        // For the test of glasses whose display never comes (`wait`): their USB alone.
+        if ProcessInfo.processInfo.environment["SPATIAND_TEST_NO_GLASSES_DISPLAY"] != nil { return nil }
         var count: UInt32 = 0
         var ids = [CGDirectDisplayID](repeating: 0, count: 16)
         guard CGGetActiveDisplayList(16, &ids, &count) == .success else { return nil }
@@ -117,14 +120,57 @@ final class GlassesScreen {
         }
     }
 
+    /// **The glasses plugged in and their display never there.** Their USB is, so the room is
+    /// wanted, but macOS has no display for them: the picture's link is down, as it was after a
+    /// night's display sleep on littleotter (2026-11-10), which only unplugging and plugging them in
+    /// again cured. The room used to stop waiting after 30 seconds, saying so only in its menu, which
+    /// nobody could see: blank glasses, and the virtual screen the Mac's only other. It goes on
+    /// waiting now (the display can still come), and says aloud what to do -- the one way to reach
+    /// someone looking at blank glasses -- once the Mac's screens have been awake 30 seconds
+    /// without it: asleep, no display is there, and that is no fault.
+    private static let missingAfter: TimeInterval = 30
+    private var missingSince: Date?
+    private var missingSaid = false
+    private var screensAsleep = false
+    private let voice = AVSpeechSynthesizer()
+
+    init() {
+        screensAsleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
+        let centre = NSWorkspace.shared.notificationCenter
+        centre.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.screensAsleep = true
+        }
+        centre.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            self.screensAsleep = false
+            // Counted from the wake: the display is given a moment to come back as it does.
+            if self.missingSince != nil { self.missingSince = Date() }
+        }
+    }
+
     private func wait(tries: Int) {
-        guard opening else { return }
+        guard opening else { missingSince = nil; return }
         guard let id = Self.findDisplay() else {
-            if tries > 60 { opening = false; say("The glasses' display did not appear"); return }
-            say("Waiting for the glasses' display")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.wait(tries: tries + 1) }
+            if screensAsleep {
+                missingSince = nil
+            } else if missingSince == nil {
+                missingSince = Date()
+            } else if let since = missingSince, Date().timeIntervalSince(since) > Self.missingAfter, !missingSaid {
+                missingSaid = true
+                let text = "The glasses are plugged in, but their screen has not come on. Unplug them, and plug them in again."
+                print("glasses: plugged in (USB) for \(Int(Self.missingAfter)) s awake with no display: \(text)")
+                say("The glasses' display has not come on: unplug them and plug them in again")
+                voice.speak(AVSpeechUtterance(string: text))
+            }
+            if !missingSaid { say("Waiting for the glasses' display") }
+            // Often at first, while it is usually a mode change; then gently, for as long as the
+            // glasses are plugged in (unplugged, the room stops this: `stop`).
+            DispatchQueue.main.asyncAfter(deadline: .now() + (tries < 60 ? 0.5 : 2)) { [weak self] in self?.wait(tries: tries + 1) }
             return
         }
+        if missingSaid { print("glasses: their display came on after all") }
+        missingSince = nil
+        missingSaid = false
         open(on: id)
     }
 
@@ -315,6 +361,8 @@ final class GlassesScreen {
 
     func stop() {
         opening = false
+        missingSince = nil
+        missingSaid = false
         hide()
         if let captured { CGDisplayRelease(captured) }
         captured = nil
