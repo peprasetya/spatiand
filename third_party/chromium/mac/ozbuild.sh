@@ -6,6 +6,11 @@
 cd ~/Developer/spatiand-chromium-mac/chromium/src
 export PATH="$HOME/Developer/spatiand-chromium-mac/depot_tools:$PWD/third_party/cpython3/host/bin:$PATH" DEPOT_TOOLS_UPDATE=0 DEPOT_TOOLS_METRICS=0
 echo "start $(date)"
+# The keyboard's xkbcommon: the room's own (mac/xkbcommon/build.sh), linked into SpatiMesh as the
+# Beam Pro links the compositor's (its headers are kept in the tree: mac/wip).
+X=third_party/spatiand_xkbcommon/lib
+mkdir -p "$X"
+[ -f "$X/libxkbcommon.a" ] || lipo -thin arm64 "$HOME/Developer/Spatiand/mac/xkbcommon/out/libxkbcommon.a" -output "$X/libxkbcommon.a"
 nice -n 10 python3 ../../depot_tools/siso.py ninja -C out/mac-ozone -k 0 chrome --offline
 # Spatiand's FFmpeg and the OpenSSL it links, in the framework's Libraries, where its rpath looks
 # (mac/0001). The bundle step makes that folder again on every build.

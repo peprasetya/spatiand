@@ -26,7 +26,11 @@ ui/ozone/platform/wayland/common/wayland_shm_mapping.h
 ui/ozone/platform/wayland/common/wayland_shm_mapping.cc
 third_party/spatiand_mac
 chrome/browser/shell_integration_linux_ui_mac.cc
-media/audio/spatiand"
+media/audio/spatiand
+ui/ozone/platform/wayland/host/spatiand_iosurface_handover.h
+ui/ozone/platform/wayland/host/spatiand_iosurface_handover.cc
+third_party/spatiand_surfaces
+third_party/spatiand_xkbcommon/include"
 ssh littleotter "cd $MAC && git add -N $(echo $NEW | tr '\n' ' ') && git diff --binary && git reset -q -- $(echo $NEW | tr '\n' ' ')" > wip/linux-ui.patch.new
 mv wip/linux-ui.patch.new wip/linux-ui.patch
 

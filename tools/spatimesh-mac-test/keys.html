@@ -1,0 +1,11 @@
+<!doctype html>
+<title>keys</title>
+<style>body{margin:0;font:24px sans-serif} textarea{width:96vw;height:80vh;font-size:28px}</style>
+<textarea id="t" autofocus></textarea>
+<script>
+const t = document.getElementById('t');
+t.addEventListener('keydown', e => console.log('[key] down ' + JSON.stringify({key: e.key, code: e.code, ctrl: e.ctrlKey, meta: e.metaKey, shift: e.shiftKey})));
+t.addEventListener('keypress', e => console.log('[key] press ' + JSON.stringify(e.key)));
+t.addEventListener('beforeinput', e => console.log('[key] beforeinput ' + JSON.stringify([e.inputType, e.data])));
+t.addEventListener('input', () => console.log('[typed] ' + JSON.stringify(t.value)));
+</script>

@@ -1,7 +1,8 @@
 <html><head><title>codec matrix</title></head><body style="background:#111;color:#eee;font:20px monospace">
 <pre id=out></pre>
 <script>
-const files = ["h264-aac.mp4","hevc-aac.mp4","vp9-opus.webm","av1-opus.mkv","h264-ac3.mkv","h264-aac.ts","hevc-aac.ts","mpeg2-mp2.ts","mpeg2-ac3.vob","divx-mp3.avi","h264-mp3.mp4","plain.mp3","h264-aac-srt.mkv"];
+const files = (new URLSearchParams(location.search).get("f") || "").split(",").filter(Boolean);
+if (!files.length) files.push(...["av1-aac.mp4","av1-only.webm","h264-aac.mp4","hevc-aac.mp4","vp9-opus.webm","av1-opus.mkv","h264-ac3.mkv","h264-aac.ts","hevc-aac.ts","mpeg2-mp2.ts","mpeg2-ac3.vob","divx-mp3.avi","h264-mp3.mp4","plain.mp3","h264-aac-srt.mkv"]);
 const out = document.getElementById("out");
 function one(f) {
   return new Promise(done => {

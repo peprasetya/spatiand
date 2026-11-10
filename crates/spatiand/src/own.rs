@@ -122,12 +122,11 @@ fn chromium_spatimesh() -> Option<String> {
             return None;
         }
         let data = PathBuf::from(std::env::var_os("HOME")?).join(".config/spatiand-chromium");
-        // `--disable-gpu`: a workaround until the GPU's frames reach the room on the Mac (Ozone's
-        // GL surface through ANGLE, then IOSurfaces as the Beam Pro hands AHardwareBuffers); the
-        // page and the UI are drawn in software into shared memory until then.
+        // Drawn by the GPU: each frame an IOSurface, handed to the room as Spatiand's own
+        // applications hand theirs (Chromium's ui/ozone/.../spatiand_iosurface_handover.cc).
         return Some(format!(
             "\"{}\" --user-data-dir=\"{}\" --class=spatimesh-chromium --no-first-run --no-default-browser-check \
-             --overscroll-history-navigation=0 --disable-gpu \
+             --overscroll-history-navigation=0 \
              --enable-features=EnableExtensionAutoupdate,ProfilesReordering,WaylandWindowDecorations \
              --disable-features=SigninPromoOnAvatarPill",
             program.display(),

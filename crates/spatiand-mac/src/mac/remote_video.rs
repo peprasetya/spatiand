@@ -25,6 +25,8 @@ const IOSURFACE_PLANE_ANGLE: i32 = 0x345A;
 const TEXTURE_TYPE_ANGLE: i32 = 0x345C;
 const TEXTURE_INTERNAL_FORMAT_ANGLE: i32 = 0x345D;
 const GL_BGRA_EXT: i32 = 0x80E1;
+/// `IOSurfaceGetPixelFormat`'s 'RGBA'.
+const FORMAT_RGBA: u32 = u32::from_be_bytes(*b"RGBA");
 
 /// How many frames a picture taken off screen is kept before it is let go of, so the GPU has
 /// surely finished reading it.
@@ -141,7 +143,9 @@ unsafe fn pbuffer_of(display: *const c_void, frame: &Frame) -> Option<*const c_v
         egl::HEIGHT as i32, height as i32,
         IOSURFACE_PLANE_ANGLE, 0,
         egl::TEXTURE_TARGET as i32, egl::TEXTURE_2D as i32,
-        TEXTURE_INTERNAL_FORMAT_ANGLE, GL_BGRA_EXT,
+        // As the surface holds its bytes: Spatiand's own and VideoToolbox's are BGRA,
+        // Chromium's GPU draws RGBA.
+        TEXTURE_INTERNAL_FORMAT_ANGLE, if frame.surface.format() == FORMAT_RGBA { ffi::RGBA as i32 } else { GL_BGRA_EXT },
         egl::TEXTURE_FORMAT as i32, egl::TEXTURE_RGBA as i32,
         TEXTURE_TYPE_ANGLE, ffi::UNSIGNED_BYTE as i32,
         egl::NONE as i32,
