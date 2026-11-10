@@ -349,9 +349,24 @@ impl Client {
     }
 
     pub fn close(&mut self, id: u32) {
-        // Nothing needs releasing on a window that has gone, but its entries must not be
-        // left behind to be released against whatever wears that id next.
+        // **The keys held in it are let go of on the host**: its windows share one keyboard,
+        // which still has them down after the window has gone. A window closed by a shortcut --
+        // Command-W from a Mac, sent as Control -- closed with Control held, the room heard no
+        // release for a surface it had destroyed, and the host held Control from then on:
+        // everything typed into its other windows was a shortcut (2026-11-10, littleotter to
+        // deepmagpie). Said against this window's id, which a host lets go of even with the
+        // window gone. Its entries must not be left behind either, to be released against
+        // whatever wears that id next. Buttons are per window, and go with it.
+        let keys: Vec<u32> =
+            self.held_keys.iter().filter(|(window, _)| *window == id).map(|(_, code)| *code).collect();
         self.held_keys.retain(|(window, _)| *window != id);
+        for code in keys {
+            self.told(id, Input::Key { code, pressed: false }, None);
+        }
+        // Nor is it where the keys go now: its surface is destroyed, so no `leave` comes.
+        if self.keyboard_on == Some(id) {
+            self.keyboard_on = None;
+        }
         self.held_buttons.retain(|(window, _)| *window != id);
         if let Some(window) = self.windows.remove(&id) {
             self.ids.remove(&window.surface);

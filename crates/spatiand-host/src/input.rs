@@ -81,6 +81,21 @@ pub fn focus(host: &mut Host, window: Option<WindowId>) {
 pub fn apply(host: &mut Host, window: WindowId, input: Input, time_ms: u32) {
     let Some(target) = host.windows.iter().find(|t| t.id == window).map(|t| t.window.clone())
     else {
+        // **A key let go of is let go of, whatever window it was for.** The keyboard is one for
+        // every window, and a key still down on it after its window closed -- Control, when a
+        // shortcut closed it -- was held for ever, every key after it a shortcut (2026-11-10).
+        if let Input::Key { code, pressed: false } = input {
+            if let Some(keyboard) = host.seat.get_keyboard() {
+                keyboard.input::<(), _>(
+                    host,
+                    smithay::input::keyboard::Keycode::from(code + 8),
+                    KeyState::Released,
+                    SERIAL_COUNTER.next_serial(),
+                    time_ms,
+                    |_, _, _| FilterResult::Forward,
+                );
+            }
+        }
         return;
     };
     let Some(surface) = crate::state::surface_of(&target) else {
