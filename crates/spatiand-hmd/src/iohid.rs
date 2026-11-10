@@ -72,7 +72,7 @@ extern "C" {
     fn CFSetGetCount(set: Ref) -> isize;
     fn CFSetGetValues(set: Ref, values: *mut Ref);
     fn CFRunLoopGetCurrent() -> Ref;
-    fn CFRunLoopRun();
+    fn CFRunLoopRunInMode(mode: Ref, seconds: f64, return_after_source_handled: u8) -> i32;
     fn CFRunLoopStop(run_loop: Ref);
 }
 
@@ -210,13 +210,25 @@ unsafe extern "C" fn removed(context: *mut c_void, _result: i32, _sender: *mut c
 }
 
 /// The run loop both interfaces' callbacks are called on, stopped when the last port goes.
+///
+/// Held retained, and run until `stop`: the glasses unplugged take their devices off the run
+/// loop, which then has nothing in it and returns from running at once. Its thread used to end
+/// there and free the run loop, and stopping it later -- when the glasses' worker let go of its
+/// ports -- was a call on a freed object, which macOS ends the program for (littleotter,
+/// 2026-11-10: the room gone twice in four minutes, the Mac left with the glasses as its only
+/// screen and its "mirror or extend" question on them).
 struct Loop {
     run_loop: Device,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Drop for Loop {
     fn drop(&mut self) {
-        unsafe { CFRunLoopStop(self.run_loop.0) };
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        unsafe {
+            CFRunLoopStop(self.run_loop.0);
+            CFRelease(self.run_loop.0);
+        }
     }
 }
 
@@ -349,10 +361,13 @@ pub fn open_glasses(driver: &str) -> Result<(&'static DeviceSpec, IoHidPort, IoH
         let feeds: Vec<(Device, UnixDatagram)> =
             opened.iter().map(|(d, _, theirs, _)| (*d, theirs.try_clone().unwrap())).collect();
         let (tx, rx) = mpsc::channel::<Device>();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopped = stop.clone();
         std::thread::Builder::new()
             .name("glasses-hid".into())
             .spawn(move || {
-                let run_loop = CFRunLoopGetCurrent();
+                // Retained for `Loop`, which outlives this thread if it must.
+                let run_loop = CFRetain(CFRunLoopGetCurrent());
                 let mut kept: Vec<Box<Feed>> = Vec::new();
                 for (device, into) in feeds {
                     let mut feed = Box::new(Feed { into, buffer: vec![0u8; report_len] });
@@ -369,17 +384,23 @@ pub fn open_glasses(driver: &str) -> Result<(&'static DeviceSpec, IoHidPort, IoH
                     kept.push(feed);
                 }
                 let _ = tx.send(Device(run_loop));
-                CFRunLoopRun();
-                // Stopped: the ports are going. The callbacks are taken off before what they
-                // point at is.
-                // (The devices themselves are closed by their ports.)
+                // Until the ports go, even with the glasses unplugged: the callbacks point at
+                // `kept`, which must last as long as the devices are open.
+                const FINISHED: i32 = 1;
+                while !stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                    if CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.0, 0) == FINISHED {
+                        // Nothing left in it (unplugged): it returns at once, so wait here.
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                }
+                // Stopped: the ports are going, and have closed their devices.
                 drop(kept);
             })
             .map_err(|source| HmdError::Io { path: "glasses-hid thread".into(), source })?;
         let run_loop = rx
             .recv_timeout(Duration::from_secs(2))
             .map_err(|_| HmdError::Protocol("the HID run loop did not start".into()))?;
-        let shared = std::sync::Arc::new(Loop { run_loop });
+        let shared = std::sync::Arc::new(Loop { run_loop, stop });
 
         let mut ports = opened.into_iter().map(|(device, ours, _theirs, name)| IoHidPort {
             device,
