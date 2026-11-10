@@ -2190,7 +2190,7 @@ impl SnapSound {
             if std::env::var("SPATIAND_SNAPSHOT_SOUND").as_deref() != Ok("1") {
                 return SnapSound { inner: None };
             }
-            let audio = crate::audio::Audio::new(true, crate::audio::Directness::default());
+            let audio = crate::audio::Audio::new(true, spatiand_audio::Directness::default());
             if audio.is_on() {
                 crate::own::sound::listen();
             }
