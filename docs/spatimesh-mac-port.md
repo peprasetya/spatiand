@@ -45,3 +45,17 @@ the toolchain, Spatiand's FFmpeg and the patches compile for macOS. It is not Sp
 put in Spatiand.app. The stale Rust SpatiMesh was moved out of littleotter's Spatiand.app
 (`~/Developer/spatimesh-rust-removed-2026-11-10`): until this port, the Mac's launcher has no
 SpatiMesh.
+
+**Later the same day (on littleotter, not yet built):** GN configures the Linux UI on macOS
+(`out/mac-ozone`, 32,458 targets): the guards above widened, the Beam Pro's "Wayland's clipboard
+without D-Bus" applied with its guard widened to the Mac, and AppKit's pasteboard kept for the Cocoa
+UI alone (`is_mac && !use_ozone`, in `ui/base` and `ui/base/clipboard`). The Linux-only sources
+Chromium's DEPS leaves out of a Mac checkout (libwayland, wayland-protocols, libdrm, minigbm, libsync,
+lss, fontconfig, cros_system_api) were copied from the Deck's tree of the same version. Chromium's
+own libwayland (`third_party/wayland`, compiled into the program as on the Deck and the Beam Pro, see
+CLAUDE.md) made to build on macOS, each change behind `__APPLE__`: Chromium's `config.h` says what
+macOS has; sockets made close-on-exec by fcntl and with `SO_NOSIGPIPE` (no `SOCK_CLOEXEC`, no
+`MSG_NOSIGNAL`); `MSG_CMSG_CLOEXEC`'s own fallback; the BSD peer-credentials branch; no epoll (the
+server half's alone). Its source is outside Chromium's git: kept as a diff beside the patches once
+built, as the Beam Pro's ANGLE change is. The build: `~/Developer/spatiand-chromium-mac/ozbuild.sh`
+(siso, `-k 0`), at night when the owner says.
