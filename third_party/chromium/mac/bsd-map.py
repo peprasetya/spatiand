@@ -39,7 +39,9 @@ DIRS = (
 # Keychain's on the Mac; the fonts are fontconfig's on Linux and CoreText's on the Mac. (content/browser is left out whole: its renderer_host holds process
 # management beside the views; it is done by hand.)
 EXCLUDE = (
-    "chrome/browser/ui/webui/certificate_manager/",
+    # WebUI pages are web content, and keep macOS's (as their TypeScript does,
+    # tools/grit/preprocess_if_expr.py): their handlers are the Mac's.
+    "chrome/browser/ui/webui/",
     "ui/gfx/font",
     "ui/gfx/platform_font",
 )

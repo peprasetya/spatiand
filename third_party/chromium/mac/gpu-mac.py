@@ -28,6 +28,9 @@ FILES = [
     "gpu/command_buffer/service/shared_image/shared_image_representation.cc",
     "gpu/command_buffer/service/shared_image/shared_image_manager.h",
     "gpu/command_buffer/service/shared_image/shared_image_manager.cc",
+    # viz: what asks the shared images for native pixmaps
+    "components/viz/service/display/overlay_processor_interface.cc",
+    "components/viz/service/gl/gpu_service_impl.cc",
 ]
 
 OZONE = re.compile(r"(?<!\()BUILDFLAG\(IS_OZONE\)(?! && !BUILDFLAG\(IS_APPLE\))")

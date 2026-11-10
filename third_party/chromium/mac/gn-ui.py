@@ -14,7 +14,8 @@ Line by line, and safe to run again:
   * an assert() keeps plain is_mac: it says where a target may be built, which is not a choice
     of UI (other targets depend on it there);
   * a line under a `# Spatiand:` comment was decided by hand, and is left alone;
-  * the Linux sandbox's page stays Linux's: below the UI the system is macOS's own.
+  * the Linux sandbox's page stays Linux's: below the UI the system is macOS's own;
+  * WebUI pages (chrome/browser/ui/webui) keep macOS's: they are web content.
 
     gn-ui.py <dir>...      (in the Chromium tree's src)
 """
@@ -26,6 +27,8 @@ import sys
 LINUX = re.compile(r"(?<![\w.])is_linux(?!\w)(?! \|\| is_mac_linux_ui)")
 MAC = re.compile(r"(?<![\w.])is_mac(?!\w)(?! && !is_mac_linux_ui)")
 SKIP_FILES = ("chrome/browser/ui/webui/sandbox/BUILD.gn",)
+# WebUI pages are web content and keep macOS's, as their TypeScript does (preprocess_if_expr.py).
+SKIP_DIRS = ("chrome/browser/ui/webui",)
 
 
 def rewrite(lines):
@@ -51,6 +54,8 @@ def main():
     files = changed = 0
     for root in sys.argv[1:]:
         for d, _, names in os.walk(root):
+            if d.startswith(SKIP_DIRS):
+                continue
             for n in names:
                 if n != "BUILD.gn" and not n.endswith(".gni"):
                     continue
