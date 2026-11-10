@@ -95,6 +95,38 @@ the remaining Cocoa sources outside `ui/views`/`chrome/browser/ui` (`content/app
 `components/remote_cocoa`, `chrome/browser/*_mac.mm` beside the UI, `content/browser`'s views by
 hand), and `JavascriptAppModalEventBlockerAura`.
 
+## Evening of 2026-11-10 (passes 5 and 6)
+
+Pass 5 stopped after 17 failures: the UI's strings (GRIT) and the WebUI pages, which everything
+waits on. Fixed:
+
+- **GRIT reads a `.grd` both ways** (`tools/grit/grit/node/{base,misc}.py`, `xtb_reader.py`): what
+  macOS alone takes, plus what the Linux UI adds; where both define the same resource (the same
+  string worded for each system: fonts, proxy settings, the certificate store), macOS's stands. The
+  C++ takes both the `IS_MAC` and the `IS_MAC_LINUX_UI` paths, so it needs both sets of strings.
+- **WebUI pages keep macOS's reading** (`tools/grit/preprocess_if_expr.py`): they are web content,
+  and their handlers are macOS's.
+- **libwayland**: `ppoll()` by `poll()` on macOS. **libffi** is macOS's own (in the SDK, as the
+  Deck's is SteamOS's). **libdrm** builds (no `sysmacros.h`). **GBM off** (`use_wayland_gbm =
+  false`), **no libsync** in the Wayland platform and no dma-buf fences on Apple (as FreeBSD's port).
+- **Fonts stay CoreText**: the map's fontconfig widenings in `ui/gfx` were put back, and
+  `bsd-map.py` now leaves `ui/gfx/font*` out.
+- **The GPU's images stay macOS's** (`gpu-mac.py`): Chromium's shared-image code takes
+  `#elif IS_OZONE` before `#elif IS_APPLE`; on macOS the IOSurface backings win, and the Ozone
+  (dma-buf/Vulkan/Dawn) backings are not built. What the window shows still goes through Ozone.
+- The UI's theme is Aura's (`ui/native_theme`); the Cocoa menus, the Mac's snapshot and the
+  bookmark pasteboard go Aura's way (`gn-ui.py ui/menus ui/snapshot components/bookmarks/browser`).
+- **Workaround, named**: the Aura property holding a view's accessible parent is left out on Apple
+  (macOS's `NativeViewAccessible` is an owning NSAccessibility wrapper a window property cannot
+  hold). So SpatiMesh on the Mac has no accessibility linkage to macOS; the proper alternative is
+  the room's own channel (`describe` in `spatiand_xr_v1`), as on the Deck, where there is no AT-SPI
+  bus in the room either.
+
+**Next**: the rest of pass 6's failures, first `components/remote_cocoa` (Chromium's Cocoa window
+bridge) and who pulls it in: `chrome/browser:core`, `content/browser`, `ui/shell_dialogs`,
+`chrome/browser/ui/cocoa`, `chrome/browser/image_editor`, `components/user_education/views`,
+`components/system_media_controls`. These mix UI and system, so by hand, file by file.
+
 ## Resuming (littleotter is shut down at night)
 
 Everything changed in its tree is kept here: `third_party/chromium/mac/save-wip.sh` (run on

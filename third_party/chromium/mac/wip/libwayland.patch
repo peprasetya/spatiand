@@ -1,6 +1,6 @@
 diff -ru a/src/connection.c b/src/connection.c
---- a/src/connection.c	2026-11-10 18:06:44.021699720 +0700
-+++ b/src/connection.c	2026-11-10 18:06:44.117697226 +0700
+--- a/src/connection.c	2026-11-10 21:22:47.998762434 +0700
++++ b/src/connection.c	2026-11-10 21:22:48.823977422 +0700
 @@ -39,6 +39,11 @@
  #include <unistd.h>
  #include <sys/types.h>
@@ -13,9 +13,29 @@ diff -ru a/src/connection.c b/src/connection.c
  #include <time.h>
  #include <ffi.h>
  
+diff -ru a/src/wayland-client.c b/src/wayland-client.c
+--- a/src/wayland-client.c	2026-11-10 21:22:48.851865660 +0700
++++ b/src/wayland-client.c	2026-11-10 21:22:49.449955305 +0700
+@@ -2056,7 +2056,16 @@
+ 			timespec_sub_saturate(&result, &deadline, &now);
+ 			remaining_timeout = &result;
+ 		}
++#ifdef __APPLE__
++		/* macOS has no ppoll(): poll() with the remaining time in
++		 * milliseconds, rounded up so that it never wakes early. */
++		ret = poll(pfd, 1, remaining_timeout ?
++			   (int)(remaining_timeout->tv_sec * 1000 +
++				 (remaining_timeout->tv_nsec + 999999) / 1000000) :
++			   -1);
++#else
+ 		ret = ppoll(pfd, 1, remaining_timeout, NULL);
++#endif
+ 	} while (ret == -1 && errno == EINTR);
+ 
+ 	return ret;
 diff -ru a/src/wayland-os.c b/src/wayland-os.c
---- a/src/wayland-os.c	2026-11-10 18:06:43.913901673 +0700
-+++ b/src/wayland-os.c	2026-11-10 18:06:44.010700005 +0700
+--- a/src/wayland-os.c	2026-11-10 21:22:47.281557551 +0700
++++ b/src/wayland-os.c	2026-11-10 21:22:47.972007534 +0700
 @@ -33,7 +33,9 @@
  #include <fcntl.h>
  #include <errno.h>

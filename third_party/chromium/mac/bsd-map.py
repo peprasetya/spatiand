@@ -36,10 +36,12 @@ DIRS = (
     "components/eye_dropper/",
 )
 # Inside those, what is the system's, not the UI's: the certificates are NSS's on Linux and the
-# Keychain's on the Mac. (content/browser is left out whole: its renderer_host holds process
+# Keychain's on the Mac; the fonts are fontconfig's on Linux and CoreText's on the Mac. (content/browser is left out whole: its renderer_host holds process
 # management beside the views; it is done by hand.)
 EXCLUDE = (
     "chrome/browser/ui/webui/certificate_manager/",
+    "ui/gfx/font",
+    "ui/gfx/platform_font",
 )
 
 BSD = re.compile(r"\s*(\|\||&&)\s*!?BUILDFLAG\(IS_BSD\)")

@@ -79,6 +79,32 @@ index 7fd20c24e1..bb7e35b4e9 100644
  
  declare_args() {
    # Controls whether the build should use the version of libdrm library shipped
+diff --git a/build/config/linux/libffi/BUILD.gn b/build/config/linux/libffi/BUILD.gn
+index 6e45f4c226..c23686aa04 100644
+--- a/build/config/linux/libffi/BUILD.gn
++++ b/build/config/linux/libffi/BUILD.gn
+@@ -13,7 +13,20 @@ declare_args() {
+   use_system_libffi = default_toolchain == "//build/toolchain/cros:target"
+ }
+ 
+-if (use_system_libffi) {
++if (is_mac) {
++  import("//build/config/mac/mac_sdk.gni")
++
++  # Spatiand: the Linux UI on macOS (Wayland's libffi). macOS's own libffi, part
++  # of the system as the Deck's libffi is of SteamOS; its header is in the SDK's
++  # usr/include/ffi.
++  config("libffi") {
++    libs = [ "ffi" ]
++    cflags = [
++      "-isystem",
++      rebase_path("$mac_sdk_path/usr/include/ffi", root_build_dir),
++    ]
++  }
++} else if (use_system_libffi) {
+   pkg_config("libffi") {
+     packages = [ "libffi" ]
+   }
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
 index 122d85bf51..9e75e0e5c1 100644
 --- a/chrome/browser/BUILD.gn
@@ -4493,6 +4519,111 @@ index 8ae23e1aef..82fe0860b4 100644
  
  source_set("zoom") {
    sources = [
+diff --git a/components/bookmarks/browser/BUILD.gn b/components/bookmarks/browser/BUILD.gn
+index 7c5032ca42..a3e94aaba7 100644
+--- a/components/bookmarks/browser/BUILD.gn
++++ b/components/bookmarks/browser/BUILD.gn
+@@ -92,11 +92,11 @@ static_library("browser") {
+     all_dependent_configs = [ "//ui/views:flags" ]
+   }
+ 
+-  if (toolkit_views && !is_mac) {
++  if (toolkit_views && !(is_mac && !is_mac_linux_ui)) {
+     sources += [ "bookmark_node_data_views.cc" ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [
+       "bookmark_node_data_mac.mm",
+       "bookmark_pasteboard_helper_mac.h",
+@@ -184,13 +184,13 @@ source_set("unit_tests") {
+     sources += [ "bookmark_node_data_unittest.cc" ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [ "bookmark_pasteboard_helper_mac_unittest.mm" ]
+   }
+ }
+ 
+ # The fuzzer depends on code that is not built on Mac.
+-if (!is_mac) {
++if (!(is_mac && !is_mac_linux_ui)) {
+   fuzzer_test("bookmark_node_data_read_fuzzer") {
+     sources = [ "bookmark_node_data_read_fuzzer.cc" ]
+     deps = [
+diff --git a/components/bookmarks/browser/bookmark_node_data.cc b/components/bookmarks/browser/bookmark_node_data.cc
+index d75f84d439..5ca37361f1 100644
+--- a/components/bookmarks/browser/bookmark_node_data.cc
++++ b/components/bookmarks/browser/bookmark_node_data.cc
+@@ -22,7 +22,7 @@ namespace bookmarks {
+ 
+ namespace {
+ 
+-#if !BUILDFLAG(IS_APPLE)
++#if !BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: Aura's clipboard
+ std::unique_ptr<BookmarkNodeData> FromClipboardUrlReadResult(
+     std::unique_ptr<BookmarkNodeData> data,
+     std::u16string title,
+@@ -73,7 +73,7 @@ void OnReadDataFromClipboardComplete(
+ 
+ }  // namespace
+ 
+-#if !BUILDFLAG(IS_APPLE)
++#if !BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: Aura's clipboard
+ namespace {
+ constexpr size_t kMaxBookmarkNestingDepth = 500;
+ constexpr size_t kMaxVectorPreallocateSize = 10000;
+@@ -101,7 +101,7 @@ BookmarkNodeData::Element::Element(const Element& other) = default;
+ 
+ BookmarkNodeData::Element::~Element() {}
+ 
+-#if !BUILDFLAG(IS_APPLE)
++#if !BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: Aura's clipboard
+ void BookmarkNodeData::Element::WriteToLegacyPickle(
+     base::Pickle* pickle) const {
+   pickle->WriteBool(is_url);
+@@ -282,7 +282,7 @@ BookmarkNodeData::BookmarkNodeData(
+ 
+ BookmarkNodeData::~BookmarkNodeData() {}
+ 
+-#if !BUILDFLAG(IS_APPLE)
++#if !BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: Aura's clipboard
+ // static
+ void BookmarkNodeData::ClipboardContainsBookmarks(
+     base::OnceCallback<void(bool)> callback) {
+@@ -335,7 +335,7 @@ bool BookmarkNodeData::ReadFromTuple(const GURL& url,
+   return true;
+ }
+ 
+-#if !BUILDFLAG(IS_APPLE)
++#if !BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: Aura's clipboard
+ void BookmarkNodeData::WriteToClipboard(bool is_off_the_record) {
+   ui::ScopedClipboardWriter scw(ui::ClipboardBuffer::kCopyPaste);
+ 
+diff --git a/components/bookmarks/browser/bookmark_node_data.h b/components/bookmarks/browser/bookmark_node_data.h
+index 5936deb4d8..89ee00f74b 100644
+--- a/components/bookmarks/browser/bookmark_node_data.h
++++ b/components/bookmarks/browser/bookmark_node_data.h
+@@ -90,7 +90,7 @@ struct BookmarkNodeData {
+    private:
+     friend struct BookmarkNodeData;
+ 
+-#if !BUILDFLAG(IS_APPLE)
++#if !BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: Aura's clipboard
+     // For reading/writing this Element.
+     void WriteToLegacyPickle(base::Pickle* pickle) const;
+     bool ReadFromLegacyPickle(base::PickleIterator* iterator, size_t depth = 0);
+@@ -156,7 +156,7 @@ struct BookmarkNodeData {
+   bool Read(const ui::OSExchangeData& data);
+ #endif
+ 
+-#if !BUILDFLAG(IS_APPLE)
++#if !BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: Aura's clipboard
+   // Writes the data for a drag to `pickle`.
+   void WriteToPickle(const base::FilePath& profile_path,
+                      base::Pickle* pickle) const;
 diff --git a/components/constrained_window/constrained_window_views.cc b/components/constrained_window/constrained_window_views.cc
 index cd235694d9..de8232e561 100644
 --- a/components/constrained_window/constrained_window_views.cc
@@ -4540,8 +4671,220 @@ index 8e7df2da72..2c8ea9031a 100644
      frameworks = [
        "AppKit.framework",
        "CoreGraphics.framework",
+diff --git a/content/browser/renderer_host/render_widget_host_view_aura.cc b/content/browser/renderer_host/render_widget_host_view_aura.cc
+index 18f19186a6..e753e51d63 100644
+--- a/content/browser/renderer_host/render_widget_host_view_aura.cc
++++ b/content/browser/renderer_host/render_widget_host_view_aura.cc
+@@ -1210,12 +1210,16 @@ RenderWidgetHostViewAura::GetParentNativeViewAccessible() {
+     return popup_parent_host_view_->GetParentNativeViewAccessible();
+   }
+ 
++#if !BUILDFLAG(IS_APPLE)  // Spatiand: see aura_constants.h
+   if (window_->parent()) {
+     return window_->parent()->GetProperty(
+         aura::client::kParentNativeViewAccessibleKey);
+   }
+ 
+   return nullptr;
++#else
++  return gfx::NativeViewAccessible();
++#endif
+ }
+ 
+ void RenderWidgetHostViewAura::ClearFallbackSurfaceForCommitPending() {
+@@ -1497,12 +1501,16 @@ RenderWidgetHostViewAura::AccessibilityGetNativeViewAccessible() {
+   }
+ #endif
+ 
++#if !BUILDFLAG(IS_APPLE)  // Spatiand: see aura_constants.h
+   if (window_->parent()) {
+     return window_->parent()->GetProperty(
+         aura::client::kParentNativeViewAccessibleKey);
+   }
+ 
+   return nullptr;
++#else
++  return gfx::NativeViewAccessible();
++#endif
+ }
+ 
+ void RenderWidgetHostViewAura::SetMainFrameAXTreeID(ui::AXTreeID id) {
+diff --git a/gpu/command_buffer/service/BUILD.gn b/gpu/command_buffer/service/BUILD.gn
+index 09245d2ddd..f64f8212a1 100644
+--- a/gpu/command_buffer/service/BUILD.gn
++++ b/gpu/command_buffer/service/BUILD.gn
+@@ -414,7 +414,9 @@ target(link_target_type, "gles2_sources") {
+     "//ui/gl/init",
+   ]
+ 
+-  if (use_ozone) {
++  # Spatiand: the Linux UI on macOS keeps macOS's images (IOSurfaces); the Ozone
++  # backings are native pixmaps, Linux's dma-bufs (third_party/chromium/mac/gpu-mac.py).
++  if (use_ozone && !is_mac) {
+     sources += [
+       "shared_image/gl_ozone_image_representation.cc",
+       "shared_image/gl_ozone_image_representation.h",
+@@ -512,7 +514,7 @@ target(link_target_type, "gles2_sources") {
+         "shared_image/dawn_gl_texture_representation.h",
+       ]
+     }
+-    if (use_ozone) {
++    if (use_ozone && !is_mac) {  # Spatiand: as the Ozone backings above
+       sources += [
+         "shared_image/dawn_ozone_image_representation.cc",
+         "shared_image/dawn_ozone_image_representation.h",
+diff --git a/gpu/command_buffer/service/shared_image/shared_image_factory.cc b/gpu/command_buffer/service/shared_image/shared_image_factory.cc
+index e9bdf0efe1..b51cf1def8 100644
+--- a/gpu/command_buffer/service/shared_image/shared_image_factory.cc
++++ b/gpu/command_buffer/service/shared_image/shared_image_factory.cc
+@@ -66,7 +66,7 @@
+ 
+ #endif  // BUILDFLAG(ENABLE_VULKAN)
+ 
+-#if BUILDFLAG(IS_OZONE)
++#if (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+ #include "gpu/command_buffer/service/shared_image/ozone_image_backing_factory.h"
+ #include "ui/ozone/public/gl_ozone.h"
+ #include "ui/ozone/public/ozone_platform.h"
+@@ -313,7 +313,7 @@ SharedImageFactory::SharedImageFactory(
+     ahb_factory_ = ahb_factory.get();
+     factories_.push_back(std::move(ahb_factory));
+   }
+-#elif BUILDFLAG(IS_OZONE)
++#elif (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+   // For all Ozone platforms - Desktop Linux, ChromeOS, Fuchsia, CastOS.
+   if (ui::OzonePlatform::GetInstance()
+           ->GetPlatformRuntimeProperties()
+@@ -460,7 +460,7 @@ bool SharedImageFactory::IsNativeBufferSupported(
+       return false;
+   }
+   NOTREACHED();
+-#elif BUILDFLAG(IS_OZONE)
++#elif (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+   return ui::OzonePlatform::GetInstance()->IsNativePixmapConfigSupported(format,
+                                                                          usage);
+ #elif BUILDFLAG(IS_WIN)
+@@ -749,7 +749,7 @@ SharedImageFactory::CreateNativeGpuMemoryBufferHandle(
+ #if BUILDFLAG(IS_APPLE)
+   return IOSurfaceImageBackingFactory::CreateGpuMemoryBufferHandle(size,
+                                                                    format);
+-#elif BUILDFLAG(IS_OZONE)
++#elif (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+   return OzoneImageBackingFactory::CreateGpuMemoryBufferHandle(
+       shared_image_manager_->vulkan_context_provider(), size, format, usage);
+ #else
+@@ -1218,7 +1218,7 @@ SharedImageRepresentationFactory::ProduceLegacyOverlay(
+ }
+ #endif
+ 
+-#if BUILDFLAG(ENABLE_VULKAN) && BUILDFLAG(IS_OZONE)
++#if BUILDFLAG(ENABLE_VULKAN) && (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+ std::unique_ptr<VulkanImageRepresentation>
+ SharedImageRepresentationFactory::ProduceVulkan(
+     const gpu::Mailbox& mailbox,
+diff --git a/gpu/command_buffer/service/shared_image/shared_image_factory.h b/gpu/command_buffer/service/shared_image/shared_image_factory.h
+index 30d7b88110..db3c64c8cd 100644
+--- a/gpu/command_buffer/service/shared_image/shared_image_factory.h
++++ b/gpu/command_buffer/service/shared_image/shared_image_factory.h
+@@ -315,7 +315,7 @@ class GPU_GLES2_EXPORT SharedImageRepresentationFactory {
+       const Mailbox& mailbox);
+ #endif
+ 
+-#if BUILDFLAG(ENABLE_VULKAN) && BUILDFLAG(IS_OZONE)
++#if BUILDFLAG(ENABLE_VULKAN) && (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+   std::unique_ptr<VulkanImageRepresentation> ProduceVulkan(
+       const Mailbox& mailbox,
+       gpu::VulkanDeviceQueue* vulkan_device_queue,
+diff --git a/gpu/command_buffer/service/shared_image/shared_image_manager.cc b/gpu/command_buffer/service/shared_image/shared_image_manager.cc
+index efa9b5af05..d9b1edddd7 100644
+--- a/gpu/command_buffer/service/shared_image/shared_image_manager.cc
++++ b/gpu/command_buffer/service/shared_image/shared_image_manager.cc
+@@ -35,7 +35,7 @@
+ #include "ui/gl/gl_angle_util_win.h"
+ #endif
+ 
+-#if BUILDFLAG(IS_OZONE)
++#if (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+ #include "components/viz/common/gpu/vulkan_context_provider.h"
+ #include "gpu/config/gpu_finch_features.h"
+ #include "ui/ozone/public/ozone_platform.h"
+@@ -103,7 +103,7 @@ SharedImageManager::SharedImageManager(
+       dxgi_shared_handle_manager_(
+           base::MakeRefCounted<DXGISharedHandleManager>())
+ #endif
+-#if BUILDFLAG(IS_OZONE)
++#if (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+       ,
+       vulkan_context_provider_(vulkan_context_provider)
+ #endif
+diff --git a/gpu/command_buffer/service/shared_image/shared_image_manager.h b/gpu/command_buffer/service/shared_image/shared_image_manager.h
+index 66f83b95d4..958636d4c9 100644
+--- a/gpu/command_buffer/service/shared_image/shared_image_manager.h
++++ b/gpu/command_buffer/service/shared_image/shared_image_manager.h
+@@ -55,7 +55,7 @@ class GPU_GLES2_EXPORT SharedImageManager
+ 
+   ~SharedImageManager() override;
+ 
+-#if BUILDFLAG(IS_OZONE)
++#if (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+   void SetSupportsOverlays(bool supports_overlays) {
+     supports_overlays_on_ozone_ = supports_overlays;
+   }
+@@ -171,7 +171,7 @@ class GPU_GLES2_EXPORT SharedImageManager
+   scoped_refptr<base::SingleThreadTaskRunner> io_runner() { return io_runner_; }
+ #endif
+ 
+-#if BUILDFLAG(IS_OZONE)
++#if (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+   viz::VulkanContextProvider* vulkan_context_provider() {
+     return vulkan_context_provider_.get();
+   }
+@@ -223,7 +223,7 @@ class GPU_GLES2_EXPORT SharedImageManager
+   bool is_texture_sampling_queried_ GUARDED_BY(lock_) = false;
+ #endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
+ 
+-#if BUILDFLAG(IS_OZONE)
++#if (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+   bool supports_overlays_on_ozone_ = false;
+   scoped_refptr<viz::VulkanContextProvider> vulkan_context_provider_;
+ #endif  // BUILDFLAG(IS_OZONE)
+diff --git a/gpu/command_buffer/service/shared_image/shared_image_representation.cc b/gpu/command_buffer/service/shared_image/shared_image_representation.cc
+index 5eb26cc967..946c76c18e 100644
+--- a/gpu/command_buffer/service/shared_image/shared_image_representation.cc
++++ b/gpu/command_buffer/service/shared_image/shared_image_representation.cc
+@@ -919,7 +919,7 @@ std::unique_ptr<base::android::ScopedHardwareBufferFenceSync>
+ OverlayImageRepresentation::GetAHardwareBufferFenceSync() {
+   NOTREACHED();
+ }
+-#elif BUILDFLAG(IS_OZONE)
++#elif (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+ scoped_refptr<gfx::NativePixmap> OverlayImageRepresentation::GetNativePixmap() {
+   return backing()->GetNativePixmap();
+ }
+diff --git a/gpu/command_buffer/service/shared_image/shared_image_representation.h b/gpu/command_buffer/service/shared_image/shared_image_representation.h
+index b0eefdc640..04a670e41d 100644
+--- a/gpu/command_buffer/service/shared_image/shared_image_representation.h
++++ b/gpu/command_buffer/service/shared_image/shared_image_representation.h
+@@ -982,7 +982,7 @@ class GPU_GLES2_EXPORT OverlayImageRepresentation
+     GetAHardwareBufferFenceSync() {
+       return representation()->GetAHardwareBufferFenceSync();
+     }
+-#elif BUILDFLAG(IS_OZONE)
++#elif (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+     scoped_refptr<gfx::NativePixmap> GetNativePixmap() {
+       return representation()->GetNativePixmap();
+     }
+@@ -1038,7 +1038,7 @@ class GPU_GLES2_EXPORT OverlayImageRepresentation
+   virtual AHardwareBuffer* GetAHardwareBuffer();
+   virtual std::unique_ptr<base::android::ScopedHardwareBufferFenceSync>
+   GetAHardwareBufferFenceSync();
+-#elif BUILDFLAG(IS_OZONE)
++#elif (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+   scoped_refptr<gfx::NativePixmap> GetNativePixmap();
+ #elif BUILDFLAG(IS_WIN)
+   virtual std::optional<gl::DCLayerOverlayImage> GetDCLayerOverlayImage();
 diff --git a/third_party/libdrm/BUILD.gn b/third_party/libdrm/BUILD.gn
-index 43cc4de4ef..22c5503d7e 100644
+index 43cc4de4ef..81c8f8b62e 100644
 --- a/third_party/libdrm/BUILD.gn
 +++ b/third_party/libdrm/BUILD.gn
 @@ -1,7 +1,7 @@
@@ -4553,6 +4896,18 @@ index 43cc4de4ef..22c5503d7e 100644
  
  generated_static_table_fourcc_file =
      "$target_gen_dir/src/generated_static_table_fourcc.h"
+@@ -37,7 +37,10 @@ config("libdrm_private_config") {
+   cflags = [ "-Wno-#pragma-messages" ]
+ 
+   # glibc version >= 2.25 explicitly include <sys/sysmacros.h>
+-  cflags += [ "-DMAJOR_IN_SYSMACROS=1" ]
++  # Spatiand: macOS has major()/minor() in <sys/types.h>, and no sysmacros.h.
++  if (!is_mac) {
++    cflags += [ "-DMAJOR_IN_SYSMACROS=1" ]
++  }
+ 
+   if (is_clang) {
+     cflags += [
 diff --git a/third_party/minigbm/BUILD.gn b/third_party/minigbm/BUILD.gn
 index d546ac721c..6efdef1888 100644
 --- a/third_party/minigbm/BUILD.gn
@@ -5619,21 +5974,148 @@ index 5efea7864a..4686dda741 100644
  
  #define PACKAGE_VERSION "1.26.0"
 diff --git a/tools/grit/grit/node/base.py b/tools/grit/grit/node/base.py
-index ca272e73b1..3f314b1470 100644
+index ca272e73b1..c1b8ccecf5 100644
 --- a/tools/grit/grit/node/base.py
 +++ b/tools/grit/grit/node/base.py
-@@ -511,7 +511,10 @@ class Node:
+@@ -18,9 +18,18 @@ from grit.node import brotli_util
+ import grit.format.gzip_string
+ 
+ 
++def IsMacLinuxUi(defs):
++  '''Spatiand: the Linux UI on macOS (grit_args.gni: is_mac_linux_ui).'''
++  return str(defs.get('is_mac_linux_ui', '')).lower() in ('true', '1')
++
++
+ class Node:
+   '''An item in the tree that has children.'''
+ 
++  # Spatiand: true while the macOS-only reading of a .grd is taken (see
++  # misc.IfNode.ActiveChildren); is_linux is then what it is on macOS.
++  mac_only_pass = False
++
+   # Valid content types that can be returned by _ContentType()
+   _CONTENT_TYPE_NONE = 0  # No CDATA content but may have children
+   _CONTENT_TYPE_CDATA = 1  # Only CDATA, no children.
+@@ -511,7 +520,10 @@ class Node:
          value = defs
  
        elif name == 'is_linux':
 -        value = target_platform == 'linux'
 +        # Spatiand: and the Linux UI on macOS (grit_args.gni: is_mac_linux_ui),
 +        # where is_macosx is true as well.
-+        value = target_platform == 'linux' or str(
-+            defs.get('is_mac_linux_ui', '')).lower() in ('true', '1')
++        value = target_platform == 'linux' or (
++            not Node.mac_only_pass and IsMacLinuxUi(defs))
        elif name == 'is_chromeos':
          value = target_platform == 'chromeos'
        elif name == 'is_macosx':
+diff --git a/tools/grit/grit/node/misc.py b/tools/grit/grit/node/misc.py
+index bb5a66ba56..eeda78e1f0 100644
+--- a/tools/grit/grit/node/misc.py
++++ b/tools/grit/grit/node/misc.py
+@@ -304,14 +304,53 @@ class IfNode(SplicingNode):
+         )
+       self.if_then_else = True
+ 
+-  def ActiveChildren(self):
+-    cond = self.EvaluateCondition(self.attrs['expr'])
++  def _Branch(self, cond):
+     if self.if_then_else:
+       return self.children[0 if cond else 1].ActiveChildren()
+     else:
+       # Equivalent to having all children inside <then> with an empty <else>
+       return super().ActiveChildren() if cond else []
+ 
++  def ActiveChildren(self):
++    cond = self.EvaluateCondition(self.attrs['expr'])
++    children = self._Branch(cond)
++    root = self.GetRoot()
++    if base.Node.mac_only_pass or not base.IsMacLinuxUi(
++        getattr(root, 'defines', {})):
++      return children
++    # Spatiand: the Linux UI on macOS takes both readings of the file, as its
++    # C++ takes both the IS_MAC paths and the IS_MAC_LINUX_UI ones: what macOS
++    # alone would take, and what the Linux UI adds. Where both define the same
++    # resource (the same string worded for each system), macOS's stands: below
++    # the UI, the system is macOS's.
++    base.Node.mac_only_pass = True
++    try:
++      mac_cond = self.EvaluateCondition(self.attrs['expr'])
++    finally:
++      base.Node.mac_only_pass = False
++    if mac_cond == cond:
++      return children
++    taken = _MacOnlyIds(root)
++    return self._Branch(mac_cond) + [
++        c for c in children if not set(c.GetTextualIds()) & taken
++    ]
++
++
++def _MacOnlyIds(root):
++  '''Spatiand: the resource names a .grd defines as read for macOS alone.'''
++  key = (getattr(root, 'output_language', ''),
++         getattr(root, 'output_context', ''))
++  cache = root.__dict__.setdefault('_spatiand_mac_ids', {})
++  if key not in cache:
++    base.Node.mac_only_pass = True
++    try:
++      cache[key] = {
++          i for n in root.ActiveDescendants() for i in n.GetTextualIds()
++      }
++    finally:
++      base.Node.mac_only_pass = False
++  return cache[key]
++
+ 
+ class ThenNode(SplicingNode):
+   """A <then> node. Can only appear directly inside an <if> node."""
+diff --git a/tools/grit/grit/xtb_reader.py b/tools/grit/grit/xtb_reader.py
+index 3e0792b32d..d665fa75d1 100644
+--- a/tools/grit/grit/xtb_reader.py
++++ b/tools/grit/grit/xtb_reader.py
+@@ -47,6 +47,10 @@ class XtbContentHandler(xml.sax.handler.ContentHandler):
+     self.language = ''
+     # Keep track of the if block we're inside.  We can't nest ifs.
+     self.if_expr = None
++    # Spatiand: the ids translated so far, and the Linux UI's own translations
++    # waiting for the end of the file (endElement).
++    self.taken = set()
++    self.linux_ui_only = []
+     # Root defines to be used with if expr.
+     if defs:
+       self.defines = defs
+@@ -98,6 +102,22 @@ class XtbContentHandler(xml.sax.handler.ContentHandler):
+         should_run_callback = grit.node.base.Node.EvaluateExpression(
+           self.if_expr, self.defines, self.target_platform
+         )
++        # Spatiand: the Linux UI on macOS (see misc.IfNode.ActiveChildren):
++        # a translation there only for the Linux UI is taken after the file,
++        # and only where macOS's reading gave the message none.
++        if should_run_callback and grit.node.base.IsMacLinuxUi(self.defines):
++          grit.node.base.Node.mac_only_pass = True
++          try:
++            for_mac = grit.node.base.Node.EvaluateExpression(
++              self.if_expr, self.defines, self.target_platform
++            )
++          finally:
++            grit.node.base.Node.mac_only_pass = False
++          if not for_mac:
++            self.linux_ui_only.append((self.current_id, self.current_structure))
++            should_run_callback = False
++      if should_run_callback:
++        self.taken.add(self.current_id)
+       if should_run_callback:
+         self.callback(self.current_id, self.current_structure)
+ 
+@@ -180,5 +200,9 @@ def Parse(
+     target_platform=target_platform,
+   )
+   xml.sax.parse(xtb_file, handler)
++  for msg_id, structure in handler.linux_ui_only:
++    if msg_id not in handler.taken:
++      handler.taken.add(msg_id)
++      callback_function(msg_id, structure)
+   assert handler.language != ''
+   return handler.language
 diff --git a/tools/grit/grit_args.gni b/tools/grit/grit_args.gni
 index 8fc4d9340e..28b9c2b28f 100644
 --- a/tools/grit/grit_args.gni
@@ -5649,6 +6131,21 @@ index 8fc4d9340e..28b9c2b28f 100644
 +
    # Mac wants Title Case strings.
    "use_titlecase=${is_mac}",
+ 
+diff --git a/tools/grit/preprocess_if_expr.py b/tools/grit/preprocess_if_expr.py
+index 54207aa6c7..59e4bef121 100644
+--- a/tools/grit/preprocess_if_expr.py
++++ b/tools/grit/preprocess_if_expr.py
+@@ -121,6 +121,10 @@ def main(argv):
+   out_folder = os.path.normpath(os.path.join(_CWD, args.out_folder))
+ 
+   defines = ParseDefinesArg(args.defines)
++  # Spatiand: the Linux UI on macOS keeps the Mac's WebUI pages: they are web
++  # content, and their handlers below are macOS's (IS_MAC stays true). Only the
++  # native UI's strings take the Linux UI's reading as well (misc.IfNode).
++  grit.node.base.Node.mac_only_pass = True
+ 
+   node = PreprocessIfExprNode.Construct(defines, args.target)
  
 diff --git a/ui/accessibility/accessibility_features.cc b/ui/accessibility/accessibility_features.cc
 index a3c72eb283..b65d51abc0 100644
@@ -5800,6 +6297,47 @@ index 84da6b511e..2540c055d1 100644
    std::unique_ptr<ExtraAnnouncementNodes> extra_announcement_nodes_ = nullptr;
  #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
  };
+diff --git a/ui/aura/client/aura_constants.cc b/ui/aura/client/aura_constants.cc
+index 02e350a018..e5d0ed9c75 100644
+--- a/ui/aura/client/aura_constants.cc
++++ b/ui/aura/client/aura_constants.cc
+@@ -59,9 +59,11 @@ DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(ui::OwnedWindowAnchor, kOwnedWindowAnchor)
+ 
+ DEFINE_UI_CLASS_PROPERTY_KEY(bool, kUseWindowBoundsForShadow, true)
+ 
++#if !BUILDFLAG(IS_APPLE)
+ DEFINE_UI_CLASS_PROPERTY_KEY(gfx::NativeViewAccessible,
+                              kParentNativeViewAccessibleKey,
+                              nullptr)
++#endif
+ DEFINE_UI_CLASS_PROPERTY_KEY(int, kResizeBehaviorKey, kResizeBehaviorCanResize)
+ DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(gfx::Rect, kRestoreBoundsKey)
+ DEFINE_UI_CLASS_PROPERTY_KEY(ui::mojom::WindowShowState,
+diff --git a/ui/aura/client/aura_constants.h b/ui/aura/client/aura_constants.h
+index 0b58687d39..a6ef70a2ac 100644
+--- a/ui/aura/client/aura_constants.h
++++ b/ui/aura/client/aura_constants.h
+@@ -10,6 +10,7 @@
+ #include <string>
+ #include <vector>
+ 
++#include "build/build_config.h"
+ #include "base/memory/weak_ptr.h"
+ #include "third_party/skia/include/core/SkColor.h"
+ #include "ui/aura/aura_export.h"
+@@ -140,8 +141,12 @@ AURA_EXPORT extern const WindowProperty<bool>* const kUseWindowBoundsForShadow;
+ // A property key to store the accessible parent of a native view. This is
+ // used to allow WebContents to access their accessible parents for use in
+ // walking up the accessibility tree via platform APIs.
++// Spatiand: not on macOS (the Linux UI there), where NativeViewAccessible is an
++// owning NSAccessibility wrapper a window property cannot hold.
++#if !BUILDFLAG(IS_APPLE)
+ AURA_EXPORT extern const aura::WindowProperty<gfx::NativeViewAccessible>* const
+     kParentNativeViewAccessibleKey;
++#endif
+ 
+ // A property key to store the resize behavior, which is a bitmask of the
+ // ResizeBehavior values.
 diff --git a/ui/aura/client/drag_drop_client.h b/ui/aura/client/drag_drop_client.h
 index 630226832e..a3f3912ca4 100644
 --- a/ui/aura/client/drag_drop_client.h
@@ -6101,11 +6639,14 @@ index 88f80571b0..eb9cadaae0 100644
  #endif
  #if BUILDFLAG(IS_MAC)
 diff --git a/ui/base/clipboard/clipboard_util_linux.cc b/ui/base/clipboard/clipboard_util_linux.cc
-index df751cb344..91fe06212b 100644
+index df751cb344..7243acb9b1 100644
 --- a/ui/base/clipboard/clipboard_util_linux.cc
 +++ b/ui/base/clipboard/clipboard_util_linux.cc
-@@ -7,7 +7,10 @@
+@@ -5,9 +5,13 @@
+ #include "ui/base/clipboard/clipboard_util_linux.h"
+ 
  #include "base/files/file_path.h"
++#include "base/functional/callback.h"
  #include "base/strings/string_split.h"
  #include "base/strings/string_util.h"
 +#include "build/config/linux/dbus/buildflags.h"
@@ -6115,7 +6656,7 @@ index df751cb344..91fe06212b 100644
  #include "net/base/filename_util.h"
  #include "url/gurl.h"
  
-@@ -57,11 +60,12 @@ void RegisterFilesWithPortal(const std::vector<FileInfo>& filenames,
+@@ -57,11 +61,12 @@ void RegisterFilesWithPortal(const std::vector<FileInfo>& filenames,
  
  void RegisterPathsWithPortal(const std::vector<std::string>& paths,
                               base::OnceCallback<void(std::string)> callback) {
@@ -6129,7 +6670,7 @@ index df751cb344..91fe06212b 100644
    dbus_xdg::FileTransferPortal::IsAvailable(base::BindOnce(
        [](std::vector<std::string> paths,
           base::OnceCallback<void(std::string)> callback, bool available) {
-@@ -73,16 +77,18 @@ void RegisterPathsWithPortal(const std::vector<std::string>& paths,
+@@ -73,16 +78,18 @@ void RegisterPathsWithPortal(const std::vector<std::string>& paths,
                                                      std::move(callback));
        },
        std::move(paths), std::move(callback)));
@@ -6149,7 +6690,7 @@ index df751cb344..91fe06212b 100644
    std::string key(key_data.begin(), key_data.end());
    dbus_xdg::FileTransferPortal::IsAvailable(base::BindOnce(
        [](std::string key,
-@@ -95,6 +101,7 @@ void ExtractPathsFromPortalKey(
+@@ -95,6 +102,7 @@ void ExtractPathsFromPortalKey(
          dbus_xdg::FileTransferPortal::RetrieveFiles(key, std::move(callback));
        },
        std::move(key), std::move(callback)));
@@ -7104,7 +7645,7 @@ index 0000000000..47c195b062
 +
 +#endif  // UI_EVENTS_PLATFORM_WAYLAND_WAYLAND_EVENT_WATCHER_MAC_H_
 diff --git a/ui/gfx/BUILD.gn b/ui/gfx/BUILD.gn
-index 7d565cb844..61b1400a9f 100644
+index 7d565cb844..03f02312bc 100644
 --- a/ui/gfx/BUILD.gn
 +++ b/ui/gfx/BUILD.gn
 @@ -271,13 +271,15 @@ component("gfx") {
@@ -7134,6 +7675,17 @@ index 7d565cb844..61b1400a9f 100644
      sources = [ "native_ui_types_mac.mm" ]
      frameworks = [ "AppKit.framework" ]
    }
+@@ -667,6 +670,10 @@ source_set("memory_buffer_sources") {
+       "native_pixmap_handle.cc",
+       "native_pixmap_handle.h",
+     ]
++    if (is_mac) {
++      # Spatiand: the Linux UI on macOS: drm_fourcc.h, the formats' names.
++      deps += [ "//build/config/linux/libdrm" ]
++    }
+   }
+ 
+   if (enable_vulkan) {
 diff --git a/ui/gfx/canvas_skia.cc b/ui/gfx/canvas_skia.cc
 index 79eadcbe8d..ff7438df4f 100644
 --- a/ui/gfx/canvas_skia.cc
@@ -7147,72 +7699,6 @@ index 79eadcbe8d..ff7438df4f 100644
      // On Linux, eliding really means fading the end of the string. But only
      // for LTR text. RTL text is still elided (on the left) with "...".
      if (elide_text) {
-diff --git a/ui/gfx/font_render_params.h b/ui/gfx/font_render_params.h
-index 95b638a16d..b2344d4a2f 100644
---- a/ui/gfx/font_render_params.h
-+++ b/ui/gfx/font_render_params.h
-@@ -115,7 +115,7 @@ COMPONENT_EXPORT(GFX)
- FontRenderParams GetFontRenderParams(const FontRenderParamsQuery& query,
-                                      std::string* family_out);
- 
--#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
-+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC_LINUX_UI) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC_LINUX_UI)
- // Clears GetFontRenderParams()'s cache.
- COMPONENT_EXPORT(GFX) void ClearFontRenderParamsCache();
- #endif
-@@ -130,7 +130,7 @@ COMPONENT_EXPORT(GFX) bool GetFontRenderParamsSubpixelRenderingEnabled();
- COMPONENT_EXPORT(GFX) float GetFontRenderParamsDeviceScaleFactor();
- 
- #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || \
--    BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA)
-+    BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_MAC_LINUX_UI)
- // Sets the device scale factor for FontRenderParams to decide
- // if it should enable subpixel positioning.
- COMPONENT_EXPORT(GFX)
-diff --git a/ui/gfx/font_render_params_linux.cc b/ui/gfx/font_render_params_linux.cc
-index 84d1d86061..53e225053e 100644
---- a/ui/gfx/font_render_params_linux.cc
-+++ b/ui/gfx/font_render_params_linux.cc
-@@ -24,7 +24,7 @@
- #include "ui/gfx/linux/fontconfig_util.h"
- #include "ui/gfx/switches.h"
- 
--#if BUILDFLAG(IS_LINUX)
-+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)
- #include "ui/linux/linux_ui.h"
- #endif
- 
-@@ -237,7 +237,7 @@ FontRenderParams GetFontRenderParams(const FontRenderParamsQuery& query,
- 
-   // Start with the delegate's settings, but let Fontconfig have the final say.
-   FontRenderParams params;
--#if BUILDFLAG(IS_LINUX)
-+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)
-   if (auto* linux_ui = ui::LinuxUi::instance()) {
-     params = linux_ui->GetDefaultFontRenderParams();
-   }
-diff --git a/ui/gfx/font_util.cc b/ui/gfx/font_util.cc
-index 5c438981b2..687cc0af80 100644
---- a/ui/gfx/font_util.cc
-+++ b/ui/gfx/font_util.cc
-@@ -7,7 +7,7 @@
- #include "build/build_config.h"
- #include "skia/ext/font_utils.h"
- 
--#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC_LINUX_UI)
- #include <fontconfig/fontconfig.h>
- #include "ui/gfx/linux/fontconfig_util.h"
- #endif
-@@ -25,7 +25,7 @@ void InitializeFonts() {
-   // background (resources have not yet been granted to cast) since it prevents
-   // the long delay the user would have seen on first rendering.
- 
--#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC_LINUX_UI)
-   // Early initialize FontConfig.
-   InitializeGlobalFontConfigAsync();
- #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 diff --git a/ui/gfx/gpu_extra_info.h b/ui/gfx/gpu_extra_info.h
 index 709e7db420..b1502d14cb 100644
 --- a/ui/gfx/gpu_extra_info.h
@@ -7339,7 +7825,7 @@ index 28117e1ae6..00f305879b 100644
  
    [EnableIf=is_fuchsia]
 diff --git a/ui/gfx/mojom/native_handle_types_mojom_traits.cc b/ui/gfx/mojom/native_handle_types_mojom_traits.cc
-index 22313e64a5..097db565cf 100644
+index 22313e64a5..b25a26f53d 100644
 --- a/ui/gfx/mojom/native_handle_types_mojom_traits.cc
 +++ b/ui/gfx/mojom/native_handle_types_mojom_traits.cc
 @@ -14,7 +14,7 @@
@@ -7392,9 +7878,22 @@ index 22313e64a5..097db565cf 100644
      case gfx::NATIVE_PIXMAP:
        return Tag::kNativePixmapHandle;
  #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_OZONE)
-@@ -292,7 +292,7 @@ bool UnionTraits<gfx::mojom::GpuMemoryBufferPlatformHandleDataView,
+@@ -269,7 +269,9 @@ bool UnionTraits<gfx::mojom::GpuMemoryBufferPlatformHandleDataView,
+       gmb_handle->type = gfx::SHARED_MEMORY_BUFFER;
+       return data.ReadSharedMemoryHandle(&gmb_handle->region_);
+ #if BUILDFLAG(IS_APPLE)
+-    case Tag::kIoSurfaceHandle:
++    case Tag::kIoSurfaceHandle: {
++      // Spatiand: braced, for the Linux UI on macOS has the native pixmap's
++      // case after it (IS_OZONE).
+       gmb_handle->type = gfx::IO_SURFACE_BUFFER;
+       IOSurfaceHandle io_surface_handle;
+       if (!data.ReadIoSurfaceHandle(&io_surface_handle)) {
+@@ -291,8 +293,9 @@ bool UnionTraits<gfx::mojom::GpuMemoryBufferPlatformHandleDataView,
+       gmb_handle->io_surface_plane_offsets_ = io_surface_handle.plane_offsets;
  #endif
        return true;
++    }
  #endif  // BUILDFLAG(IS_APPLE)
 -#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_OZONE)
 +#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_OZONE) || BUILDFLAG(IS_MAC_LINUX_UI)
@@ -7577,77 +8076,6 @@ index 8c3e860d16..b5485ee42f 100644
  using AcceleratedWidget = uint64_t;
  inline constexpr AcceleratedWidget kNullAcceleratedWidget = 0;
  #elif BUILDFLAG(IS_ANDROID)
-diff --git a/ui/gfx/platform_font_skia.cc b/ui/gfx/platform_font_skia.cc
-index 64f072febc..5f23ac2a14 100644
---- a/ui/gfx/platform_font_skia.cc
-+++ b/ui/gfx/platform_font_skia.cc
-@@ -29,7 +29,7 @@
- #include "ui/gfx/system_fonts_win.h"
- #endif
- 
--#if BUILDFLAG(IS_LINUX)
-+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)
- #include "ui/linux/linux_ui.h"
- #endif
- 
-@@ -170,7 +170,7 @@ void PlatformFontSkia::EnsuresDefaultFontIsInitialized() {
-   weight = system_font.GetWeight();
- #endif  // BUILDFLAG(IS_WIN)
- 
--#if BUILDFLAG(IS_LINUX)
-+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)
-   // On Linux, LinuxUi is used to query the native toolkit (e.g.
-   // GTK) for the default UI font.
-   if (auto* linux_ui = ui::LinuxUi::instance()) {
-@@ -329,7 +329,7 @@ const FontRenderParams& PlatformFontSkia::GetFontRenderParams() {
-   TRACE_EVENT0("fonts", "PlatformFontSkia::GetFontRenderParams");
-   float current_scale_factor = GetFontRenderParamsDeviceScaleFactor();
-   bool force_query = false;
--#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC_LINUX_UI)
-   const bool current_subpixel_rendering_enabled =
-       gfx::GetFontRenderParamsSubpixelRenderingEnabled();
-   if (current_subpixel_rendering_enabled != subpixel_rendering_enabled_) {
-@@ -346,7 +346,7 @@ const FontRenderParams& PlatformFontSkia::GetFontRenderParams() {
-     query.device_scale_factor = current_scale_factor;
-     font_render_params_ = gfx::GetFontRenderParams(query, nullptr);
-     device_scale_factor_ = current_scale_factor;
--#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC_LINUX_UI)
-     subpixel_rendering_enabled_ = current_subpixel_rendering_enabled;
- #endif
-   }
-@@ -399,7 +399,7 @@ void PlatformFontSkia::InitFromDetails(sk_sp<SkTypeface> typeface,
-   style_ = style;
-   weight_ = weight;
-   device_scale_factor_ = GetFontRenderParamsDeviceScaleFactor();
--#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC_LINUX_UI)
-   subpixel_rendering_enabled_ =
-       gfx::GetFontRenderParamsSubpixelRenderingEnabled();
- #endif
-@@ -415,7 +415,7 @@ void PlatformFontSkia::InitFromPlatformFont(const PlatformFontSkia* other) {
-   style_ = other->style_;
-   weight_ = other->weight_;
-   device_scale_factor_ = other->device_scale_factor_;
--#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC_LINUX_UI)
-   subpixel_rendering_enabled_ = other->subpixel_rendering_enabled_;
- #endif
-   font_render_params_ = other->font_render_params_;
-diff --git a/ui/gfx/platform_font_skia.h b/ui/gfx/platform_font_skia.h
-index a75e01d65a..4ba090e4b4 100644
---- a/ui/gfx/platform_font_skia.h
-+++ b/ui/gfx/platform_font_skia.h
-@@ -101,7 +101,7 @@ class COMPONENT_EXPORT(GFX) PlatformFontSkia : public PlatformFont {
-   int font_size_pixels_;
-   int style_;
-   float device_scale_factor_;
--#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC_LINUX_UI)
-   bool subpixel_rendering_enabled_ = true;
- #endif
- 
 diff --git a/ui/gfx/render_text_api_fuzzer.cc b/ui/gfx/render_text_api_fuzzer.cc
 index 1a2cb0d8ca..37d3db2a35 100644
 --- a/ui/gfx/render_text_api_fuzzer.cc
@@ -7885,6 +8313,50 @@ index eaee77fb50..9b2f16cac5 100644
  
  component("linux_ui") {
    defines = [ "IS_LINUX_UI_IMPL" ]
+diff --git a/ui/menus/BUILD.gn b/ui/menus/BUILD.gn
+index dbf5936ff2..00f20495c8 100644
+--- a/ui/menus/BUILD.gn
++++ b/ui/menus/BUILD.gn
+@@ -12,7 +12,7 @@ component("menus") {
+     "simple_menu_model.h",
+   ]
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [
+       "cocoa/menu_controller.h",
+       "cocoa/menu_controller.mm",
+@@ -37,10 +37,10 @@ component("menus") {
+     "//ui/base/interaction",
+   ]
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     public_deps += [ "//ui/strings:ui_strings_grit" ]
+   }
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     frameworks = [
+       "Accelerate.framework",
+       "AppKit.framework",
+@@ -62,7 +62,7 @@ source_set("unit_tests") {
+   testonly = true
+   sources = [ "simple_menu_model_unittest.cc" ]
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [ "cocoa/menu_controller_unittest.mm" ]
+   }
+ 
+@@ -75,7 +75,7 @@ source_set("unit_tests") {
+     "//ui/gfx:test_support",
+   ]
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     deps += [
+       "//base/test:test_support",
+       "//ui/base:test_support",
 diff --git a/ui/message_center/views/message_popup_view.cc b/ui/message_center/views/message_popup_view.cc
 index d6d5c67d5b..820efa4178 100644
 --- a/ui/message_center/views/message_popup_view.cc
@@ -7911,6 +8383,28 @@ index 0a6bceba1d..c994b2b082 100644
    return true;
  #else
    return false;
+diff --git a/ui/native_theme/native_theme.cc b/ui/native_theme/native_theme.cc
+index 7ce83e1a7d..b01692930e 100644
+--- a/ui/native_theme/native_theme.cc
++++ b/ui/native_theme/native_theme.cc
+@@ -46,7 +46,7 @@
+ #include "ui/native_theme/native_theme_observer.h"
+ #include "ui/native_theme/os_settings_provider.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "ui/native_theme/native_theme_aura.h"
+ #include "ui/native_theme/native_theme_mac.h"
+ #elif defined(USE_AURA)
+@@ -63,7 +63,7 @@ namespace ui {
+ 
+ namespace {
+ 
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ using NativeUiTheme = NativeThemeMac;
+ using WebUiTheme = NativeThemeAura;
+ #elif defined(USE_AURA)
 diff --git a/ui/native_theme/native_theme.h b/ui/native_theme/native_theme.h
 index f3c3f48681..454ef030b1 100644
 --- a/ui/native_theme/native_theme.h
@@ -7991,7 +8485,7 @@ index 3ea3134e19..167f05c6d5 100644
        gfx::NativePixmapHandle::kNoModifier) {
      tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
 diff --git a/ui/ozone/platform/wayland/BUILD.gn b/ui/ozone/platform/wayland/BUILD.gn
-index 294975fb47..edf23c6a15 100644
+index 294975fb47..857f768dd9 100644
 --- a/ui/ozone/platform/wayland/BUILD.gn
 +++ b/ui/ozone/platform/wayland/BUILD.gn
 @@ -9,7 +9,7 @@ import("//gpu/vulkan/features.gni")
@@ -8012,13 +8506,25 @@ index 294975fb47..edf23c6a15 100644
      "common/wayland_util.cc",
      "common/wayland_util.h",
      "gpu/gl_surface_egl_readback_wayland.cc",
-@@ -382,6 +384,10 @@ source_set("wayland") {
+@@ -250,7 +252,6 @@ source_set("wayland") {
+     "//mojo/public/cpp/system",
+     "//skia",
+     "//third_party/angle:includes",
+-    "//third_party/libsync",
+     "//third_party/wayland:wayland_client",
+     "//third_party/wayland:wayland_cursor",
+     "//third_party/wayland:wayland_egl",
+@@ -382,6 +383,14 @@ source_set("wayland") {
    # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
    # enable the diagnostic by removing this line.
    configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 +  if (is_mac) {
 +    # Spatiand: the evdev codes Wayland's keys and buttons are.
 +    configs += [ "//third_party/spatiand_mac:linux_input" ]
++  } else {
++    # Sync files are the Linux kernel's fences; macOS has none (as FreeBSD's
++    # port, which leaves libsync out).
++    deps += [ "//third_party/libsync" ]
 +  }
  }
  
@@ -8384,6 +8890,79 @@ index 13b72eea29..f59521725a 100644
  
    // The SkSurface the clients can draw to show the surface on screen.
    sk_sp<SkSurface> sk_surface_;
+diff --git a/ui/ozone/platform/wayland/host/wayland_buffer_manager_host.cc b/ui/ozone/platform/wayland/host/wayland_buffer_manager_host.cc
+index a7506130a0..aaf73718e4 100644
+--- a/ui/ozone/platform/wayland/host/wayland_buffer_manager_host.cc
++++ b/ui/ozone/platform/wayland/host/wayland_buffer_manager_host.cc
+@@ -3,6 +3,7 @@
+ // found in the LICENSE file.
+ 
+ #include "ui/ozone/platform/wayland/host/wayland_buffer_manager_host.h"
++#include "build/build_config.h"
+ 
+ #include <sys/ioctl.h>
+ #include <sys/utsname.h>
+@@ -23,7 +24,9 @@
+ #include "base/trace_event/trace_event.h"
+ #include "ui/gfx/geometry/size.h"
+ #include "ui/gfx/gpu_fence_handle.h"
++#if !BUILDFLAG(IS_APPLE)
+ #include "ui/gfx/linux/dmabuf_uapi.h"
++#endif
+ #include "ui/gfx/linux/drm_util_linux.h"
+ #include "ui/ozone/platform/wayland/common/wayland_overlay_config.h"
+ #include "ui/ozone/platform/wayland/host/drm_syncobj_ioctl_wrapper.h"
+@@ -46,9 +49,14 @@ std::string NumberToString(uint32_t number) {
+ }
+ 
+ bool CheckImportExportFence() {
++#if BUILDFLAG(IS_APPLE)
++  // Spatiand: dma-buf sync files are the Linux kernel's (as FreeBSD's port).
++  return false;
++#else
+   // DMA_BUF_IOCTL_{IMPORT,EXPORT}_SYNC_FILE was added in 6.0
+   return base::SysInfo::KernelVersionNumber::Current() >=
+          base::SysInfo::KernelVersionNumber(6, 0);
++#endif
+ }
+ 
+ }  // namespace
+@@ -464,6 +472,9 @@ void WaylandBufferManagerHost::InsertAcquireFence(uint32_t buffer_id,
+     return;
+   }
+ 
++#if BUILDFLAG(IS_APPLE)
++  NOTREACHED();  // SupportsImplicitSyncInterop() is false on macOS.
++#else
+   struct dma_buf_import_sync_file req;
+   req.flags = DMA_BUF_SYNC_RW;
+   req.fd = sync_fd;
+@@ -471,6 +482,7 @@ void WaylandBufferManagerHost::InsertAcquireFence(uint32_t buffer_id,
+   int rv = HANDLE_EINTR(
+       ioctl(it->second.get(), DMA_BUF_IOCTL_IMPORT_SYNC_FILE, &req));
+   PLOG_IF(ERROR, rv) << "Failed DMA_BUF_IOCTL_IMPORT_SYNC_FILE";
++#endif
+ }
+ 
+ base::ScopedFD WaylandBufferManagerHost::ExtractReleaseFence(
+@@ -481,6 +493,9 @@ base::ScopedFD WaylandBufferManagerHost::ExtractReleaseFence(
+     return base::ScopedFD();
+   }
+ 
++#if BUILDFLAG(IS_APPLE)
++  NOTREACHED();  // SupportsImplicitSyncInterop() is false on macOS.
++#else
+   struct dma_buf_export_sync_file req;
+   req.flags = DMA_BUF_SYNC_RW;
+   req.fd = -1;
+@@ -491,6 +506,7 @@ base::ScopedFD WaylandBufferManagerHost::ExtractReleaseFence(
+   }
+ 
+   return base::ScopedFD(req.fd);
++#endif
+ }
+ 
+ // static
 diff --git a/ui/ozone/platform/wayland/host/wayland_clipboard.cc b/ui/ozone/platform/wayland/host/wayland_clipboard.cc
 index 418cc01f85..c3d2d458d0 100644
 --- a/ui/ozone/platform/wayland/host/wayland_clipboard.cc
@@ -8434,10 +9013,28 @@ index 418cc01f85..c3d2d458d0 100644
          mime_type == ui::kMimeTypePortalFiles) {
        auto it = offered_data_.find(ui::kMimeTypeUriList);
 diff --git a/ui/ozone/platform/wayland/host/wayland_connection.cc b/ui/ozone/platform/wayland/host/wayland_connection.cc
-index adc2a80508..d011f06a82 100644
+index adc2a80508..547a9b2423 100644
 --- a/ui/ozone/platform/wayland/host/wayland_connection.cc
 +++ b/ui/ozone/platform/wayland/host/wayland_connection.cc
-@@ -124,6 +124,10 @@ int64_t ConvertTimespecResultToMicros(uint32_t tv_sec_hi,
+@@ -3,6 +3,7 @@
+ // found in the LICENSE file.
+ 
+ #include "ui/ozone/platform/wayland/host/wayland_connection.h"
++#include "build/build_config.h"
+ 
+ #include <content-type-v1-client-protocol.h>
+ #include <extended-drag-unstable-v1-client-protocol.h>
+@@ -27,7 +28,9 @@
+ #include "ui/events/devices/keyboard_device.h"
+ #include "ui/events/devices/touchscreen_device.h"
+ #include "ui/gfx/geometry/point.h"
++#if !BUILDFLAG(IS_APPLE)
+ #include "ui/gfx/linux/scoped_gbm_device.h"
++#endif
+ #include "ui/ozone/common/features.h"
+ #include "ui/ozone/platform/wayland/common/wayland_util.h"
+ #include "ui/ozone/platform/wayland/host/fractional_scale_manager.h"
+@@ -124,6 +127,10 @@ int64_t ConvertTimespecResultToMicros(uint32_t tv_sec_hi,
  }
  
  bool MinSupportedKernelForLinuxDrmSyncobj() {
@@ -8448,7 +9045,7 @@ index adc2a80508..d011f06a82 100644
    int major, minor, build;
    base::SysInfo::OperatingSystemVersionNumbers(&major, &minor, &build);
    // We use drm_syncobj_eventfd_ioctl and DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE
-@@ -133,6 +137,7 @@ bool MinSupportedKernelForLinuxDrmSyncobj() {
+@@ -133,6 +140,7 @@ bool MinSupportedKernelForLinuxDrmSyncobj() {
    // kernel version to 6.11 to avoid using buggy implementation that may cause
    // stability issues.
    return major > 6 || (major == 6 && minor >= 11);
@@ -8456,7 +9053,7 @@ index adc2a80508..d011f06a82 100644
  }
  
  }  // namespace
-@@ -470,14 +475,16 @@ base::TimeTicks WaylandConnection::ConvertPresentationTime(uint32_t tv_sec_hi,
+@@ -470,14 +478,16 @@ base::TimeTicks WaylandConnection::ConvertPresentationTime(uint32_t tv_sec_hi,
    DCHECK(presentation());
    // base::TimeTicks::Now() uses CLOCK_MONOTONIC, no need to convert clock
    // domain if wp_presentation also uses it.
@@ -8475,6 +9072,20 @@ index adc2a80508..d011f06a82 100644
  
    if (ret < 0) {
      presentation_now.tv_sec = 0;
+@@ -813,8 +823,13 @@ void WaylandConnection::SetRenderNodePath(base::ScopedFD& drm_fd,
+                                           const char* render_node_path) {
+   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+           switches::kRenderNodeOverride)) {
++#if BUILDFLAG(IS_APPLE)
++    // Spatiand: macOS has no DRM render nodes and no GBM.
++    if (false) {
++#else
+     TRACE_EVENT("wayland", "scoped attempt of gbm_create_device");
+     if (drm_fd.is_valid()) {
++#endif
+       ScopedGbmDevice gbm_device(gbm_create_device(drm_fd.get()));
+       if (gbm_device) {
+         base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
 diff --git a/ui/ozone/platform/wayland/host/wayland_data_drag_controller.cc b/ui/ozone/platform/wayland/host/wayland_data_drag_controller.cc
 index ea5b676c9d..9274b0e28f 100644
 --- a/ui/ozone/platform/wayland/host/wayland_data_drag_controller.cc
@@ -8586,6 +9197,47 @@ index f269d3acf0..93d7dc88ae 100644
    std::map<std::string, std::string> additional_data_;
  #endif
  };
+diff --git a/ui/ozone/platform/wayland/host/wayland_frame_manager.cc b/ui/ozone/platform/wayland/host/wayland_frame_manager.cc
+index e84a0c06b8..335011ea1e 100644
+--- a/ui/ozone/platform/wayland/host/wayland_frame_manager.cc
++++ b/ui/ozone/platform/wayland/host/wayland_frame_manager.cc
+@@ -5,7 +5,10 @@
+ #include "ui/ozone/platform/wayland/host/wayland_frame_manager.h"
+ 
+ #include <presentation-time-client-protocol.h>
++#include "build/build_config.h"
++#if !BUILDFLAG(IS_APPLE)
+ #include <sync/sync.h>
++#endif
+ 
+ #include <cstdint>
+ #include <variant>
+@@ -766,8 +769,12 @@ void WaylandFrameManager::OnExplicitBufferRelease(WaylandSurface* surface,
+ 
+       if (fence.is_valid()) {
+         if (frame->merged_release_fence_fd.is_valid()) {
++#if !BUILDFLAG(IS_APPLE)
+           frame->merged_release_fence_fd.reset(sync_merge(
+               "", frame->merged_release_fence_fd.get(), fence.get()));
++#else
++          // Spatiand: no sync files on macOS, so no fence to merge here.
++#endif
+         } else {
+           frame->merged_release_fence_fd = std::move(fence);
+         }
+@@ -805,8 +812,12 @@ void WaylandFrameManager::OnWlBufferRelease(WaylandSurface* surface,
+ 
+         if (fence.is_valid()) {
+           if (frame->merged_release_fence_fd.is_valid()) {
++#if !BUILDFLAG(IS_APPLE)
+             frame->merged_release_fence_fd.reset(sync_merge(
+                 "", frame->merged_release_fence_fd.get(), fence.get()));
++#else
++            // Spatiand: no sync files on macOS, so no fence to merge here.
++#endif
+           } else {
+             frame->merged_release_fence_fd = std::move(fence);
+           }
 diff --git a/ui/ozone/platform/wayland/host/wayland_shm_buffer.cc b/ui/ozone/platform/wayland/host/wayland_shm_buffer.cc
 index d1d36e7657..4b0908468f 100644
 --- a/ui/ozone/platform/wayland/host/wayland_shm_buffer.cc
@@ -8976,6 +9628,51 @@ index 21a542a563..60da127d34 100644
    bool prefer_dark_theme = false;
    raw_ptr<gfx::ImageSkia> icon = nullptr;
    std::optional<SkColor> background_color;
+diff --git a/ui/snapshot/BUILD.gn b/ui/snapshot/BUILD.gn
+index e9dbc8b20e..7242821843 100644
+--- a/ui/snapshot/BUILD.gn
++++ b/ui/snapshot/BUILD.gn
+@@ -17,7 +17,7 @@ component("snapshot") {
+     sources += [ "snapshot_android.cc" ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [
+       "snapshot_mac.h",
+       "snapshot_mac.mm",
+@@ -71,7 +71,7 @@ component("snapshot") {
+     ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     frameworks = [
+       "AppKit.framework",
+       "CoreGraphics.framework",
+@@ -90,7 +90,7 @@ test("snapshot_unittests") {
+ 
+   sources = [ "test/run_all_unittests.cc" ]
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [ "snapshot_mac_unittest.mm" ]
+   }
+ 
+diff --git a/ui/snapshot/snapshot.cc b/ui/snapshot/snapshot.cc
+index dbc2a2cd2e..506c92fdb3 100644
+--- a/ui/snapshot/snapshot.cc
++++ b/ui/snapshot/snapshot.cc
+@@ -57,7 +57,8 @@ void EncodeImageAndScheduleCallback(
+ 
+ }  // namespace
+ 
+-#if BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_WIN)
++// Spatiand: the Linux UI on macOS takes Aura's (snapshot_aura.cc).
++#if (BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_MAC_LINUX_UI)) || BUILDFLAG(IS_WIN)
+ 
+ // Note that Android and Aura versions of this function are in
+ // snapshot_android.cc and snapshot_aura.cc respectively.
 diff --git a/ui/views/BUILD.gn b/ui/views/BUILD.gn
 index 3354c0c505..2441fcbe3b 100644
 --- a/ui/views/BUILD.gn
@@ -9174,6 +9871,78 @@ index 8fe7a551bd..1e4f633385 100644
    return ViewAXPlatformNodeDelegateAuraLinux::CreatePlatformSpecific(view);
  #endif
  }
+diff --git a/ui/views/controls/native/native_view_host_aura.cc b/ui/views/controls/native/native_view_host_aura.cc
+index c28d73f4dc..fb724014f9 100644
+--- a/ui/views/controls/native/native_view_host_aura.cc
++++ b/ui/views/controls/native/native_view_host_aura.cc
+@@ -46,8 +46,10 @@ NativeViewHostAura::~NativeViewHostAura() {
+     } else {
+       host_->native_view()->ClearProperty(views::kHostViewKey);
+     }
++#if !BUILDFLAG(IS_APPLE)  // Spatiand: see aura_constants.h
+     host_->native_view()->ClearProperty(
+         aura::client::kParentNativeViewAccessibleKey);
++#endif
+     if (owned_by_parent_) {
+       host_->native_view()->set_owned_by_parent(*owned_by_parent_);
+     }
+@@ -93,13 +95,19 @@ void NativeViewHostAura::AttachNativeView() {
+ 
+ void NativeViewHostAura::SetParentAccessible(
+     gfx::NativeViewAccessible accessible) {
++#if !BUILDFLAG(IS_APPLE)  // Spatiand: see aura_constants.h
+   host_->native_view()->SetProperty(
+       aura::client::kParentNativeViewAccessibleKey, accessible);
++#endif
+ }
+ 
+ gfx::NativeViewAccessible NativeViewHostAura::GetParentAccessible() {
++#if !BUILDFLAG(IS_APPLE)  // Spatiand: see aura_constants.h
+   return host_->native_view()->GetProperty(
+       aura::client::kParentNativeViewAccessibleKey);
++#else
++  return gfx::NativeViewAccessible();
++#endif
+ }
+ 
+ ui::Layer* NativeViewHostAura::GetUILayer() {
+@@ -130,8 +138,10 @@ void NativeViewHostAura::NativeViewDetaching(bool destroyed) {
+     } else {
+       host_->native_view()->ClearProperty(views::kHostViewKey);
+     }
++#if !BUILDFLAG(IS_APPLE)  // Spatiand: see aura_constants.h
+     host_->native_view()->ClearProperty(
+         aura::client::kParentNativeViewAccessibleKey);
++#endif
+     if (original_transform_changed_) {
+       host_->native_view()->SetTransform(original_transform_);
+     }
+diff --git a/ui/views/controls/native/native_view_host_aura_with_clip_window.cc b/ui/views/controls/native/native_view_host_aura_with_clip_window.cc
+index 0b99a45e06..eb10e3239e 100644
+--- a/ui/views/controls/native/native_view_host_aura_with_clip_window.cc
++++ b/ui/views/controls/native/native_view_host_aura_with_clip_window.cc
+@@ -90,8 +90,10 @@ NativeViewHostAuraWithClipWindow::~NativeViewHostAuraWithClipWindow() {
+     host_->native_view()->RemoveObserver(this);
+     host_->native_view()->ClearProperty(views::kHostViewKey);
+     host_->native_view()->ClearProperty(aura::client::kHostWindowKey);
++#if !BUILDFLAG(IS_APPLE)  // Spatiand: see aura_constants.h
+     host_->native_view()->ClearProperty(
+         aura::client::kParentNativeViewAccessibleKey);
++#endif
+     clipping_window_->ClearProperty(views::kHostViewKey);
+     if (host_->native_view()->parent() == clipping_window_.get()) {
+       clipping_window_->RemoveChild(host_->native_view());
+@@ -151,8 +153,10 @@ void NativeViewHostAuraWithClipWindow::NativeViewDetaching(bool destroyed) {
+     host_->native_view()->RemoveObserver(this);
+     host_->native_view()->ClearProperty(views::kHostViewKey);
+     host_->native_view()->ClearProperty(aura::client::kHostWindowKey);
++#if !BUILDFLAG(IS_APPLE)  // Spatiand: see aura_constants.h
+     host_->native_view()->ClearProperty(
+         aura::client::kParentNativeViewAccessibleKey);
++#endif
+     if (original_transform_changed_) {
+       host_->native_view()->SetTransform(original_transform_);
+     }
 diff --git a/ui/views/controls/prefix_selector.cc b/ui/views/controls/prefix_selector.cc
 index e65a6277cb..58642c839a 100644
 --- a/ui/views/controls/prefix_selector.cc

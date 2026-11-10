@@ -32,7 +32,7 @@ mv wip/linux-ui.patch.new wip/linux-ui.patch
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/a" "$tmp/b"
-for f in src/wayland-os.c src/connection.c; do
+for f in src/wayland-os.c src/connection.c src/wayland-client.c; do
     mkdir -p "$tmp/a/$(dirname $f)" "$tmp/b/$(dirname $f)"
     cp "$DECK/third_party/wayland/src/$f" "$tmp/a/$f"
     scp -q "littleotter:$MAC/third_party/wayland/src/$f" "$tmp/b/$f"
