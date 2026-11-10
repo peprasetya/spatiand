@@ -79,6 +79,184 @@ index 7fd20c24e1..bb7e35b4e9 100644
  
  declare_args() {
    # Controls whether the build should use the version of libdrm library shipped
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 122d85bf51..9e75e0e5c1 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -509,7 +509,8 @@ if (!is_android) {
+   }
+ }
+ 
+-if (is_linux) {
++# Spatiand: and the Linux UI on macOS (is_mac_linux_ui).
++if (is_linux || is_mac_linux_ui) {
+   source_set("shell_integration_linux") {
+     public = [ "shell_integration_linux.h" ]
+     deps = [
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+index eaed07e785..2d24649340 100644
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -197,7 +197,7 @@ if (!is_android) {
+     if (is_chromeos) {
+       deps += [ "//chrome/browser/ui/ash/multi_user" ]
+     }
+-    if (is_win || is_mac || is_linux) {
++    if (is_win || is_mac || (is_linux || is_mac_linux_ui)) {
+       deps += [ "//chrome/browser/ui/startup/default_browser_prompt" ]
+     }
+   }
+@@ -316,7 +316,7 @@ if (!is_android) {
+       "//ui/events:event_constants",
+       "//ui/events:events_base",
+     ]
+-    if (is_mac) {
++    if ((is_mac && !is_mac_linux_ui)) {
+       deps += [ "//chrome/browser:global_keyboard_shortcuts_mac" ]
+     }
+   }
+@@ -1794,7 +1794,7 @@ static_library("ui") {
+       deps += [ "//ui/ozone" ]
+     }
+ 
+-    if (is_linux) {
++    if ((is_linux || is_mac_linux_ui)) {
+       deps += [ "//ui/base/ime/linux" ]
+     }
+ 
+@@ -2184,7 +2184,7 @@ static_library("ui") {
+     }
+   }
+ 
+-  if (is_win || is_mac || is_linux || is_chromeos) {
++  if (is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos) {
+     sources += [
+       "incognito_clear_browsing_data_dialog_interface.h",
+       "views/autofill/payments/webauthn_dialog_view.cc",
+@@ -2225,7 +2225,7 @@ static_library("ui") {
+     deps += [ "//chrome/browser/ui/webui/downloads" ]
+   }
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || is_mac || (is_linux || is_mac_linux_ui)) {
+     sources += [
+       "views/profiles/profile_customization_bubble_sync_controller.cc",
+       "views/profiles/profile_customization_bubble_sync_controller.h",
+@@ -2329,7 +2329,7 @@ static_library("ui") {
+     }
+   }
+ 
+-  if (is_win || is_mac || is_linux || is_chromeos || is_android) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos || is_android) {
+     deps += [ "//components/enterprise/device_trust/core:metrics" ]
+ 
+     if (enterprise_client_certificates) {
+@@ -2355,7 +2355,7 @@ static_library("ui") {
+     }
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [
+       "browser_commands_mac.h",
+       "browser_commands_mac.mm",
+@@ -2458,14 +2458,14 @@ static_library("ui") {
+     libs += [ "crypt32.lib" ]
+   }
+ 
+-  if (is_linux || is_mac) {
++  if ((is_linux || is_mac_linux_ui) || is_mac) {
+     sources += [
+       "views/first_run_dialog.cc",  # Dialog shows only on Linux and macOS.
+       "views/first_run_dialog.h",
+     ]
+   }
+ 
+-  if (is_linux) {
++  if ((is_linux || is_mac_linux_ui)) {
+     sources += [
+       "views/frame/browser_desktop_window_tree_host.h",
+       "views/frame/browser_desktop_window_tree_host_linux.cc",
+@@ -2499,7 +2499,7 @@ static_library("ui") {
+   # Device signals sharing currently only supports win, mac, linux and
+   # chromeos, so the corresponding consent functionality are
+   # limited to the same set of platforms.
+-  if (is_win || is_mac || is_linux || is_chromeos) {
++  if (is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos) {
+     deps += [
+       "//chrome/browser/ui/views/device_signals_consent",
+       "//chrome/browser/ui/views/device_signals_consent:impl",
+@@ -2520,6 +2520,7 @@ static_library("ui") {
+         [ "//chrome/browser/ui/webui/certificate_viewer" ]
+   }
+ 
++  # Spatiand: on macOS fonts are CoreText's, as ui/gfx has them.
+   if (is_linux || is_chromeos) {
+     if (use_aura) {
+       deps += [ "//third_party/fontconfig" ]
+@@ -3411,7 +3412,7 @@ static_library("ui") {
+       "//chrome/browser/ui/views/profiles:avatar_toolbar_button_impl",
+     ]
+ 
+-    if (is_linux) {
++    if ((is_linux || is_mac_linux_ui)) {
+       sources += [
+         "views/chrome_views_delegate_linux.cc",
+         "views/frame/browser_frame_view_layout_linux.cc",
+@@ -3425,7 +3426,7 @@ static_library("ui") {
+       ]
+     }
+ 
+-    if (is_win || is_linux || is_chromeos) {
++    if (is_win || (is_linux || is_mac_linux_ui) || is_chromeos) {
+       sources += [
+         "views/native_widget_factory.cc",
+         "views/native_widget_factory.h",
+@@ -3433,7 +3434,7 @@ static_library("ui") {
+       deps += [ "//chrome/browser/ui/views:bluetooth_dialogs" ]
+     }
+ 
+-    if (is_mac) {
++    if ((is_mac && !is_mac_linux_ui)) {
+       sources += [ "views/chrome_views_delegate_mac.cc" ]
+       deps += [
+         "//chrome/browser/ui/webui/unexportable_keys_internals",
+@@ -3455,7 +3456,7 @@ static_library("ui") {
+       ]
+     }
+ 
+-    if (use_aura && is_linux) {
++    if (use_aura && (is_linux || is_mac_linux_ui)) {
+       # These files can do Gtk+-based theming for builds with gtk enabled.
+       sources += [
+         "views/chrome_browser_main_extra_parts_views_linux.cc",
+@@ -3625,7 +3626,7 @@ static_library("ui") {
+       "views/javascript_app_modal_event_blocker.h",
+     ]
+ 
+-    if (is_mac) {
++    if ((is_mac && !is_mac_linux_ui)) {
+       sources += [ "views/javascript_app_modal_event_blocker_mac.h" ]
+     } else {
+     }
+@@ -3828,7 +3829,7 @@ source_set("url_identity") {
+     "//extensions/buildflags",
+     "//url",
+   ]
+-  if (is_mac || is_win || is_linux || is_chromeos) {
++  if ((is_mac && !is_mac_linux_ui) || is_win || (is_linux || is_mac_linux_ui) || is_chromeos) {
+     deps += [ "//components/webapps/isolated_web_apps:scheme" ]
+   }
+   if (enable_extensions) {
+@@ -3973,7 +3974,7 @@ static_library("test_support") {
+     "//ui/shell_dialogs",
+   ]
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     assert(toolkit_views)
+     sources += [
+       "cocoa/test/cocoa_test_helper.h",
 diff --git a/chrome/browser/ui/accelerator_table.cc b/chrome/browser/ui/accelerator_table.cc
 index 532ec4748b..da083b6b68 100644
 --- a/chrome/browser/ui/accelerator_table.cc
@@ -137,6 +315,85 @@ index 637e84f591..033afedf26 100644
  #define CHROME_PLATFORM_SPECIFIC_ACTION_IDS \
    E(kUseSystemTitleBar, IDC_USE_SYSTEM_TITLE_BAR) \
    E(kRestoreWindow, IDC_RESTORE_WINDOW)
+diff --git a/chrome/browser/ui/ai_overlay_dialog/BUILD.gn b/chrome/browser/ui/ai_overlay_dialog/BUILD.gn
+index 073b67c277..f4cb378ccc 100644
+--- a/chrome/browser/ui/ai_overlay_dialog/BUILD.gn
++++ b/chrome/browser/ui/ai_overlay_dialog/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ import("//build/config/ui.gni")
+ 
+diff --git a/chrome/browser/ui/animation/BUILD.gn b/chrome/browser/ui/animation/BUILD.gn
+index 6ed1b422e3..b8e022542e 100644
+--- a/chrome/browser/ui/animation/BUILD.gn
++++ b/chrome/browser/ui/animation/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("animation") {
+   public = [
+diff --git a/chrome/browser/ui/apps/BUILD.gn b/chrome/browser/ui/apps/BUILD.gn
+index 60282a79f1..63274926c4 100644
+--- a/chrome/browser/ui/apps/BUILD.gn
++++ b/chrome/browser/ui/apps/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//printing/buildflags/buildflags.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("apps") {
+   sources = [
+diff --git a/chrome/browser/ui/autofill/BUILD.gn b/chrome/browser/ui/autofill/BUILD.gn
+index 033a8de753..503569cfbd 100644
+--- a/chrome/browser/ui/autofill/BUILD.gn
++++ b/chrome/browser/ui/autofill/BUILD.gn
+@@ -12,7 +12,7 @@ if (is_android) {
+   import("//build/config/android/rules.gni")
+ }
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ if (is_android) {
+   java_cpp_enum("autofill_ai_ui_java_enums") {
+@@ -321,7 +321,7 @@ source_set("impl") {
+     ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [ "autofill_popup_controller_impl_mac.mm" ]
+     deps += [ "//chrome/browser/ui/cocoa" ]
+   }
+@@ -439,7 +439,7 @@ source_set("unit_tests") {
+     ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [ "autofill_popup_controller_impl_mac_unittest.mm" ]
+   }
+ 
+@@ -482,7 +482,7 @@ source_set("test_support") {
+       "mock_bubble_manager.cc",
+       "mock_bubble_manager.h",
+     ]
+-    if (is_mac) {
++    if ((is_mac && !is_mac_linux_ui)) {
+       sources += [ "autofill_popup_controller_impl_mac_test_api.h" ]
+     }
+     public_deps += [ "//ui/gfx:test_support" ]
 diff --git a/chrome/browser/ui/autofill/chrome_autofill_client.cc b/chrome/browser/ui/autofill/chrome_autofill_client.cc
 index 59f7afe950..3c6db8fb2d 100644
 --- a/chrome/browser/ui/autofill/chrome_autofill_client.cc
@@ -172,6 +429,28 @@ index a346ae7298..66cdfafdb6 100644
    // Triggers the AtMemory promo bubble.
    void ShowAutofillAtMemoryPromo();
  #endif
+diff --git a/chrome/browser/ui/autofill/payments/BUILD.gn b/chrome/browser/ui/autofill/payments/BUILD.gn
+index 60dcee3772..1399f8018b 100644
+--- a/chrome/browser/ui/autofill/payments/BUILD.gn
++++ b/chrome/browser/ui/autofill/payments/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//build/config/ui.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("payments") {
+   sources = [
+@@ -31,7 +31,7 @@ source_set("payments") {
+     "//ui/gfx/geometry",
+   ]
+ 
+-  if (is_linux) {
++  if ((is_linux || is_mac_linux_ui)) {
+     public_deps += [ "//chrome/browser/ui/browser_window" ]
+   }
+ 
 diff --git a/chrome/browser/ui/autofill/payments/desktop_payments_window_manager.cc b/chrome/browser/ui/autofill/payments/desktop_payments_window_manager.cc
 index 609e3f59ad..1c6a2768d3 100644
 --- a/chrome/browser/ui/autofill/payments/desktop_payments_window_manager.cc
@@ -234,6 +513,45 @@ index 8121f9b9bc..72dfcc646a 100644
    base::ScopedObservation<ProfileBrowserCollection, BrowserCollectionObserver>
        scoped_observation_{this};
  #endif  // BUILDFLAG(IS_LINUX)
+diff --git a/chrome/browser/ui/blocked_content/BUILD.gn b/chrome/browser/ui/blocked_content/BUILD.gn
+index fa63afdfc2..4f054e98e5 100644
+--- a/chrome/browser/ui/blocked_content/BUILD.gn
++++ b/chrome/browser/ui/blocked_content/BUILD.gn
+@@ -6,7 +6,7 @@ import("//build/config/chromeos/args.gni")
+ import("//build/config/ozone.gni")
+ import("//extensions/buildflags/buildflags.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("blocked_content") {
+   sources = [
+diff --git a/chrome/browser/ui/bluetooth/BUILD.gn b/chrome/browser/ui/bluetooth/BUILD.gn
+index ebc382e97d..db5aa97ae6 100644
+--- a/chrome/browser/ui/bluetooth/BUILD.gn
++++ b/chrome/browser/ui/bluetooth/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("bluetooth") {
+   sources = [ "bluetooth_dialogs.h" ]
+diff --git a/chrome/browser/ui/bookmarks/BUILD.gn b/chrome/browser/ui/bookmarks/BUILD.gn
+index 2278294752..250ac4c37e 100644
+--- a/chrome/browser/ui/bookmarks/BUILD.gn
++++ b/chrome/browser/ui/bookmarks/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("bookmarks") {
+   sources = [
 diff --git a/chrome/browser/ui/browser_actions.cc b/chrome/browser/ui/browser_actions.cc
 index 09509ddd6a..f77a761a86 100644
 --- a/chrome/browser/ui/browser_actions.cc
@@ -349,6 +667,36 @@ index 8c2992ff8a..ff3d05aea4 100644
    registry->RegisterBooleanPref(prefs::kUseCustomChromeFrame,
                                  GetCustomFramePrefDefault());
  #endif
+diff --git a/chrome/browser/ui/browser_window/internal/BUILD.gn b/chrome/browser/ui/browser_window/internal/BUILD.gn
+index 03bffe23f1..faeda0ebfc 100644
+--- a/chrome/browser/ui/browser_window/internal/BUILD.gn
++++ b/chrome/browser/ui/browser_window/internal/BUILD.gn
+@@ -149,7 +149,7 @@ source_set("internal") {
+       "//components/search",
+     ]
+ 
+-    if (is_win || is_mac) {
++    if (is_win || (is_mac && !is_mac_linux_ui)) {
+       deps += [
+         "//chrome/browser/ui/pdf/infobar",
+         "//chrome/browser/ui/startup/default_browser_prompt/pin_infobar",
+@@ -160,14 +160,14 @@ source_set("internal") {
+       }
+     }
+ 
+-    if (is_win || is_mac || is_linux) {
++    if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+       deps += [
+         "//chrome/browser/download/bubble",
+         "//chrome/browser/ui/views/session_restore_infobar",
+       ]
+     }
+ 
+-    if (is_win || is_mac || is_linux || is_chromeos) {
++    if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos) {
+       deps += [ "//chrome/browser/ui/ai_overlay_dialog" ]
+     }
+ 
 diff --git a/chrome/browser/ui/browser_window/internal/create_browser_window_non_android.cc b/chrome/browser/ui/browser_window/internal/create_browser_window_non_android.cc
 index 8e795d6e42..dbbf69632a 100644
 --- a/chrome/browser/ui/browser_window/internal/create_browser_window_non_android.cc
@@ -388,6 +736,50 @@ index c69cf45c0d..c285ffdceb 100644
                                     || url.SchemeIs(webapps::kIsolatedAppScheme)
  #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
          // BUILDFLAG(IS_CHROMEOS)
+diff --git a/chrome/browser/ui/cocoa/BUILD.gn b/chrome/browser/ui/cocoa/BUILD.gn
+index 4ce5c7aef0..85a52a2ffe 100644
+--- a/chrome/browser/ui/cocoa/BUILD.gn
++++ b/chrome/browser/ui/cocoa/BUILD.gn
+@@ -201,7 +201,7 @@ source_set("cocoa") {
+     ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     # tab_group_menu_bridge.mm includes chrome/browser/ui/chrome_pages.h.
+     deps += [ "//chrome/browser/ui:chrome_pages" ]
+   }
+diff --git a/chrome/browser/ui/color/BUILD.gn b/chrome/browser/ui/color/BUILD.gn
+index f3f7ea8c06..e65ff9597e 100644
+--- a/chrome/browser/ui/color/BUILD.gn
++++ b/chrome/browser/ui/color/BUILD.gn
+@@ -68,7 +68,7 @@ source_set("mixers") {
+     sources += [ "chromeos/native_chrome_color_mixer_chromeos.cc" ]
+   }
+ 
+-  if (is_linux) {
++  if ((is_linux || is_mac_linux_ui)) {
+     sources += [ "linux/native_chrome_color_mixer_linux.cc" ]
+   }
+ 
+@@ -87,7 +87,7 @@ source_set("mixers") {
+     ]
+   }
+ 
+-  if (is_chromeos || is_linux || is_mac || is_win) {
++  if (is_chromeos || (is_linux || is_mac_linux_ui) || is_mac || is_win) {
+     deps += [ "//chrome/browser/themes" ]
+   }
+ }
+@@ -106,7 +106,7 @@ if (!is_android) {
+       "//ui/color:mixers",
+     ]
+ 
+-    if (is_mac) {
++    if ((is_mac && !is_mac_linux_ui)) {
+       sources += [
+         "//chrome/app/chrome_crash_reporter_client.cc",
+         "//chrome/app/chrome_crash_reporter_client_mac.mm",
 diff --git a/chrome/browser/ui/color/native_chrome_color_mixer.cc b/chrome/browser/ui/color/native_chrome_color_mixer.cc
 index 1a9287389f..e7040ff934 100644
 --- a/chrome/browser/ui/color/native_chrome_color_mixer.cc
@@ -401,6 +793,377 @@ index 1a9287389f..e7040ff934 100644
  void AddNativeChromeColorMixer(ui::ColorProvider* provider,
                                 const ui::ColorProviderKey& key) {}
  #endif
+diff --git a/chrome/browser/ui/commerce/BUILD.gn b/chrome/browser/ui/commerce/BUILD.gn
+index 7e0eb7be46..3ae9afc876 100644
+--- a/chrome/browser/ui/commerce/BUILD.gn
++++ b/chrome/browser/ui/commerce/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("commerce") {
+   sources = [
+diff --git a/chrome/browser/ui/content_settings/BUILD.gn b/chrome/browser/ui/content_settings/BUILD.gn
+index c8ab64a1dd..c496036812 100644
+--- a/chrome/browser/ui/content_settings/BUILD.gn
++++ b/chrome/browser/ui/content_settings/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("content_settings") {
+   sources = []
+diff --git a/chrome/browser/ui/contextual_search/BUILD.gn b/chrome/browser/ui/contextual_search/BUILD.gn
+index a84d82d29b..65e28136d4 100644
+--- a/chrome/browser/ui/contextual_search/BUILD.gn
++++ b/chrome/browser/ui/contextual_search/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//pdf/features.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("contextual_search") {
+   sources = [
+diff --git a/chrome/browser/ui/cookie_controls/BUILD.gn b/chrome/browser/ui/cookie_controls/BUILD.gn
+index c4f82f8df1..0b5052b7a8 100644
+--- a/chrome/browser/ui/cookie_controls/BUILD.gn
++++ b/chrome/browser/ui/cookie_controls/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("unit_tests") {
+   testonly = true
+diff --git a/chrome/browser/ui/dialogs/BUILD.gn b/chrome/browser/ui/dialogs/BUILD.gn
+index fc14f76dad..b0cc45073e 100644
+--- a/chrome/browser/ui/dialogs/BUILD.gn
++++ b/chrome/browser/ui/dialogs/BUILD.gn
+@@ -59,7 +59,7 @@ source_set("browser_dialogs") {
+     "//ui/shell_dialogs",
+   ]
+ 
+-  if (is_win || is_linux || is_mac || is_chromeos) {
++  if (is_win || (is_linux || is_mac_linux_ui) || (is_mac && !is_mac_linux_ui) || is_chromeos) {
+     deps += [ "//chrome/browser/ui/bookmarks" ]
+   }
+ 
+@@ -72,7 +72,7 @@ source_set("browser_dialogs") {
+   }
+ }
+ 
+-if (is_linux || is_chromeos) {
++if ((is_linux || is_mac_linux_ui) || is_chromeos) {
+   source_set("process_singleton_dialog_linux") {
+     public = [ "process_singleton_dialog_linux.h" ]
+     sources = [ "process_singleton_dialog_linux.cc" ]
+diff --git a/chrome/browser/ui/digital_credentials/BUILD.gn b/chrome/browser/ui/digital_credentials/BUILD.gn
+index 8295df15d6..abdca3787f 100644
+--- a/chrome/browser/ui/digital_credentials/BUILD.gn
++++ b/chrome/browser/ui/digital_credentials/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("digital_credentials") {
+   sources = []
+diff --git a/chrome/browser/ui/download/BUILD.gn b/chrome/browser/ui/download/BUILD.gn
+index 81933e190d..e24ab95a70 100644
+--- a/chrome/browser/ui/download/BUILD.gn
++++ b/chrome/browser/ui/download/BUILD.gn
+@@ -3,7 +3,7 @@
+ # found in the LICENSE file.
+ 
+ # Download bubble UI is not used on ChromeOS.
+-assert(is_win || is_mac || is_linux)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui))
+ 
+ source_set("download_display") {
+   public = [ "download_display.h" ]
+diff --git a/chrome/browser/ui/exclusive_access/BUILD.gn b/chrome/browser/ui/exclusive_access/BUILD.gn
+index 67ac7b7787..53e722914a 100644
+--- a/chrome/browser/ui/exclusive_access/BUILD.gn
++++ b/chrome/browser/ui/exclusive_access/BUILD.gn
+@@ -6,7 +6,7 @@ import("//build/config/chromeos/args.gni")
+ import("//build/config/ozone.gni")
+ import("//extensions/buildflags/buildflags.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("exclusive_access") {
+   sources = [
+diff --git a/chrome/browser/ui/extensions/BUILD.gn b/chrome/browser/ui/extensions/BUILD.gn
+index e88c10b460..613d74a9c8 100644
+--- a/chrome/browser/ui/extensions/BUILD.gn
++++ b/chrome/browser/ui/extensions/BUILD.gn
+@@ -50,7 +50,7 @@ source_set("extensions") {
+     public_deps += [ "//components/messages/android" ]
+   }
+ 
+-  if (is_win || is_mac || is_linux || is_chromeos) {
++  if (is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos) {
+     sources += [ "extension_install_ui_desktop.h" ]
+   }
+   public_deps += [
+@@ -183,7 +183,7 @@ source_set("impl") {
+     "//ui/strings",
+   ]
+ 
+-  if (is_win || is_mac || is_linux || is_chromeos) {
++  if (is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos) {
+     sources += [ "extension_install_ui_desktop.cc" ]
+     deps += [
+       "//chrome/app:generated_resources",
+@@ -218,7 +218,7 @@ source_set("impl") {
+     sources += [ "extension_dialog_utils_views.cc" ]
+     deps += [ "//chrome/browser/ui/views/frame:toolbar_button_provider" ]
+   }
+-  if (is_win || is_mac) {
++  if (is_win || (is_mac && !is_mac_linux_ui)) {
+     deps += [ "//chrome/browser/ui/views/extensions:settings_overridden_dialog_view_utils" ]
+   }
+ 
+@@ -417,7 +417,7 @@ source_set("browser_tests") {
+       "//ui/native_theme:test_support",
+     ]
+ 
+-    if (is_linux) {
++    if ((is_linux || is_mac_linux_ui)) {
+       deps += [ "//ui/linux:linux_ui" ]
+     }
+ 
+diff --git a/chrome/browser/ui/file_system_access/BUILD.gn b/chrome/browser/ui/file_system_access/BUILD.gn
+index d156143edb..ce026dabc4 100644
+--- a/chrome/browser/ui/file_system_access/BUILD.gn
++++ b/chrome/browser/ui/file_system_access/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//components/safe_browsing/buildflags.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("file_system_access") {
+   sources = [
+diff --git a/chrome/browser/ui/find_bar/BUILD.gn b/chrome/browser/ui/find_bar/BUILD.gn
+index 191396857c..75fd341719 100644
+--- a/chrome/browser/ui/find_bar/BUILD.gn
++++ b/chrome/browser/ui/find_bar/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//build/config/chromeos/args.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("find_bar") {
+   sources = [
+@@ -89,7 +89,7 @@ if (!is_android) {
+       "//chrome/test:test_support",
+     ]
+ 
+-    if (is_mac) {
++    if ((is_mac && !is_mac_linux_ui)) {
+       sources += [ "find_bar_platform_helper_mac_browsertest.mm" ]
+     }
+   }
+@@ -110,7 +110,7 @@ if (!is_android && !is_chromeos_device) {
+       "//chrome/test:test_support",
+     ]
+ 
+-    if (is_mac) {
++    if ((is_mac && !is_mac_linux_ui)) {
+       sources += [ "find_bar_platform_helper_mac_interactive_uitest.mm" ]
+     }
+   }
+diff --git a/chrome/browser/ui/frame/BUILD.gn b/chrome/browser/ui/frame/BUILD.gn
+index 112da4dbc5..4585b714fa 100644
+--- a/chrome/browser/ui/frame/BUILD.gn
++++ b/chrome/browser/ui/frame/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("frame") {
+   public = [ "window_frame_util.h" ]
+diff --git a/chrome/browser/ui/global_error/BUILD.gn b/chrome/browser/ui/global_error/BUILD.gn
+index 03f1e7ec6b..5f54971b6b 100644
+--- a/chrome/browser/ui/global_error/BUILD.gn
++++ b/chrome/browser/ui/global_error/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("global_error") {
+   sources = [
+diff --git a/chrome/browser/ui/global_media_controls/BUILD.gn b/chrome/browser/ui/global_media_controls/BUILD.gn
+index 17609a9bb5..78d17481c0 100644
+--- a/chrome/browser/ui/global_media_controls/BUILD.gn
++++ b/chrome/browser/ui/global_media_controls/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//chrome/common/features.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("global_media_controls") {
+   sources = [
+@@ -115,7 +115,7 @@ source_set("unit_tests") {
+     "presentation_request_notification_producer_unittest.cc",
+   ]
+ 
+-  if (is_linux) {
++  if ((is_linux || is_mac_linux_ui)) {
+     sources += [ "media_notification_device_monitor_unittest.cc" ]
+   }
+ 
+diff --git a/chrome/browser/ui/hats/BUILD.gn b/chrome/browser/ui/hats/BUILD.gn
+index 3d5faaff30..51467d4149 100644
+--- a/chrome/browser/ui/hats/BUILD.gn
++++ b/chrome/browser/ui/hats/BUILD.gn
+@@ -8,7 +8,7 @@ if (is_android) {
+   import("//build/config/android/rules.gni")
+ }
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("hats") {
+   sources = [
+@@ -143,7 +143,7 @@ if (!is_android) {
+       "trust_safety_sentiment_service_factory_unittest.cc",
+     ]
+ 
+-    if (is_win || is_mac || is_linux) {
++    if (is_win || is_mac || (is_linux || is_mac_linux_ui)) {
+       sources += [ "trust_safety_sentiment_service_unittest.cc" ]
+     }
+ 
+diff --git a/chrome/browser/ui/hung_renderer/BUILD.gn b/chrome/browser/ui/hung_renderer/BUILD.gn
+index 09043b4d8e..cc9a9f0899 100644
+--- a/chrome/browser/ui/hung_renderer/BUILD.gn
++++ b/chrome/browser/ui/hung_renderer/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//build/config/chromeos/args.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("hung_renderer") {
+   sources = [
+diff --git a/chrome/browser/ui/infobars/BUILD.gn b/chrome/browser/ui/infobars/BUILD.gn
+index e4897babd2..df27e3ccca 100644
+--- a/chrome/browser/ui/infobars/BUILD.gn
++++ b/chrome/browser/ui/infobars/BUILD.gn
+@@ -27,7 +27,7 @@ source_set("infobars") {
+     "//ui/base",
+   ]
+ 
+-  if (is_win || is_mac) {
++  if (is_win || (is_mac && !is_mac_linux_ui)) {
+     deps += [ "//chrome/browser/ui/startup/default_browser_prompt/pin_infobar" ]
+   }
+ }
+diff --git a/chrome/browser/ui/interventions/BUILD.gn b/chrome/browser/ui/interventions/BUILD.gn
+index 379c4ef148..71ccfc332a 100644
+--- a/chrome/browser/ui/interventions/BUILD.gn
++++ b/chrome/browser/ui/interventions/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("interventions") {
+   sources = [
+diff --git a/chrome/browser/ui/javascript_dialogs/BUILD.gn b/chrome/browser/ui/javascript_dialogs/BUILD.gn
+index 32202a06d8..1c6558458c 100644
+--- a/chrome/browser/ui/javascript_dialogs/BUILD.gn
++++ b/chrome/browser/ui/javascript_dialogs/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("javascript_dialogs") {
+   sources = [
+diff --git a/chrome/browser/ui/lens/BUILD.gn b/chrome/browser/ui/lens/BUILD.gn
+index 2580e47dac..6828afcfca 100644
+--- a/chrome/browser/ui/lens/BUILD.gn
++++ b/chrome/browser/ui/lens/BUILD.gn
+@@ -309,7 +309,7 @@ if (!is_android) {
+       ]
+     }
+ 
+-    if (is_win || is_mac || is_linux || is_chromeos) {
++    if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos) {
+       deps += [ "//chrome/browser/ui/webui:theme_source" ]
+     }
+   }
+diff --git a/chrome/browser/ui/login/BUILD.gn b/chrome/browser/ui/login/BUILD.gn
+index 06c6800a75..e70a060f8f 100644
+--- a/chrome/browser/ui/login/BUILD.gn
++++ b/chrome/browser/ui/login/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("login") {
+   sources = [
+diff --git a/chrome/browser/ui/media_router/BUILD.gn b/chrome/browser/ui/media_router/BUILD.gn
+index 78079abda2..3fe3002495 100644
+--- a/chrome/browser/ui/media_router/BUILD.gn
++++ b/chrome/browser/ui/media_router/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("media_router") {
+   sources = [
+diff --git a/chrome/browser/ui/omnibox/BUILD.gn b/chrome/browser/ui/omnibox/BUILD.gn
+index 26e85070e9..adea826617 100644
+--- a/chrome/browser/ui/omnibox/BUILD.gn
++++ b/chrome/browser/ui/omnibox/BUILD.gn
+@@ -5,7 +5,7 @@
+ import("//build/config/chromeos/args.gni")
+ import("//ui/webui/webui_features.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ # The public interface has no circular dependencies.
+ source_set("omnibox") {
 diff --git a/chrome/browser/ui/omnibox/omnibox_pedal_implementations.cc b/chrome/browser/ui/omnibox/omnibox_pedal_implementations.cc
 index 4357fc482b..d710c64e5f 100644
 --- a/chrome/browser/ui/omnibox/omnibox_pedal_implementations.cc
@@ -414,6 +1177,101 @@ index 4357fc482b..d710c64e5f 100644
    return features::IsRoundedIconsEnabled()
               ? omnibox::kSendIcon
               : omnibox::kShareLinuxChromeRefreshOldIcon;
+diff --git a/chrome/browser/ui/page_action/BUILD.gn b/chrome/browser/ui/page_action/BUILD.gn
+index 3383012e36..d4d13e4ff8 100644
+--- a/chrome/browser/ui/page_action/BUILD.gn
++++ b/chrome/browser/ui/page_action/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("icon_type") {
+   sources = [ "page_action_icon_type.h" ]
+diff --git a/chrome/browser/ui/page_info/BUILD.gn b/chrome/browser/ui/page_info/BUILD.gn
+index c563bf6c51..40bf63974d 100644
+--- a/chrome/browser/ui/page_info/BUILD.gn
++++ b/chrome/browser/ui/page_info/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("page_info") {
+   sources = [
+diff --git a/chrome/browser/ui/passwords/BUILD.gn b/chrome/browser/ui/passwords/BUILD.gn
+index beffc4b78a..7ca492bf8f 100644
+--- a/chrome/browser/ui/passwords/BUILD.gn
++++ b/chrome/browser/ui/passwords/BUILD.gn
+@@ -53,7 +53,7 @@ source_set("passwords") {
+     deps += [ "//chrome/browser/ui/toasts/api:toasts" ]
+   }
+ 
+-  if (is_win || is_mac || is_linux || is_chromeos) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos) {
+     sources += [
+       "password_cross_domain_confirmation_popup_controller_impl.h",
+       "password_cross_domain_confirmation_popup_controller_interface.h",
+@@ -165,7 +165,7 @@ source_set("impl") {
+     ]
+   }
+ 
+-  if (is_win || is_mac || is_linux || is_chromeos) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos) {
+     sources += [ "password_cross_domain_confirmation_popup_controller_impl.cc" ]
+   }
+ 
+diff --git a/chrome/browser/ui/passwords/bubble_controllers/BUILD.gn b/chrome/browser/ui/passwords/bubble_controllers/BUILD.gn
+index 283bf4e28d..f33f748184 100644
+--- a/chrome/browser/ui/passwords/bubble_controllers/BUILD.gn
++++ b/chrome/browser/ui/passwords/bubble_controllers/BUILD.gn
+@@ -34,7 +34,7 @@ source_set("bubble_controllers") {
+     ]
+   }
+ 
+-  if (is_linux || is_mac) {
++  if ((is_linux || is_mac_linux_ui) || is_mac) {
+     sources += [ "relaunch_chrome_bubble_controller.h" ]
+   }
+ }
+@@ -88,14 +88,14 @@ source_set("impl") {
+     ]
+   }
+ 
+-  if (is_win || is_mac || is_chromeos) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || is_chromeos) {
+     sources += [
+       "biometric_authentication_confirmation_bubble_controller.cc",
+       "biometric_authentication_for_filling_bubble_controller.cc",
+     ]
+   }
+ 
+-  if (is_linux || is_mac) {
++  if ((is_linux || is_mac_linux_ui) || (is_mac && !is_mac_linux_ui)) {
+     sources += [ "relaunch_chrome_bubble_controller.cc" ]
+   }
+ 
+@@ -155,14 +155,14 @@ source_set("unit_tests") {
+     ]
+   }
+ 
+-  if (is_win || is_mac || is_chromeos) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || is_chromeos) {
+     sources += [
+       "biometric_authentication_confirmation_bubble_controller_unittest.cc",
+       "biometric_authentication_for_filling_bubble_controller_unittest.cc",
+     ]
+   }
+ 
+-  if (is_mac || is_linux) {
++  if ((is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+     sources += [ "relaunch_chrome_bubble_controller_unittest.cc" ]
+   }
+ }
 diff --git a/chrome/browser/ui/passwords/bubble_controllers/relaunch_chrome_bubble_controller.cc b/chrome/browser/ui/passwords/bubble_controllers/relaunch_chrome_bubble_controller.cc
 index a207b508fa..6c8f1dea56 100644
 --- a/chrome/browser/ui/passwords/bubble_controllers/relaunch_chrome_bubble_controller.cc
@@ -436,6 +1294,41 @@ index a207b508fa..6c8f1dea56 100644
            ? IDS_PASSWORD_MANAGER_RELAUNCH_CHROME_BUBBLE_DESCRIPTION_LINUX_BRANDED
            : IDS_PASSWORD_MANAGER_RELAUNCH_CHROME_BUBBLE_DESCRIPTION_LINUX_NON_BRANDED
  #endif
+diff --git a/chrome/browser/ui/permission_bubble/BUILD.gn b/chrome/browser/ui/permission_bubble/BUILD.gn
+index f5a7b55d91..b522275a1a 100644
+--- a/chrome/browser/ui/permission_bubble/BUILD.gn
++++ b/chrome/browser/ui/permission_bubble/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("permission_bubble") {
+   sources = [ "permission_prompt.h" ]
+diff --git a/chrome/browser/ui/prefs/BUILD.gn b/chrome/browser/ui/prefs/BUILD.gn
+index 32d232e711..d7b3a42b7b 100644
+--- a/chrome/browser/ui/prefs/BUILD.gn
++++ b/chrome/browser/ui/prefs/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//extensions/buildflags/buildflags.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("prefs") {
+   sources = [
+@@ -61,7 +61,7 @@ source_set("impl") {
+     deps += [ "//chrome/browser/themes" ]
+   }
+ 
+-  if (is_linux) {
++  if ((is_linux || is_mac_linux_ui)) {
+     deps += [ "//ui/linux:linux_ui" ]
+   }
+ }
 diff --git a/chrome/browser/ui/prefs/pref_watcher.cc b/chrome/browser/ui/prefs/pref_watcher.cc
 index b6c44caf81..be9d4a0237 100644
 --- a/chrome/browser/ui/prefs/pref_watcher.cc
@@ -480,6 +1373,205 @@ index d97fca41ea..43d6fc462e 100644
    friend class PrimaryPastePrefHelper;
    std::unique_ptr<PrimaryPastePrefHelper> primary_paste_pref_helper_;
  #endif
+diff --git a/chrome/browser/ui/profiles/BUILD.gn b/chrome/browser/ui/profiles/BUILD.gn
+index 9605ec775c..3954c3a573 100644
+--- a/chrome/browser/ui/profiles/BUILD.gn
++++ b/chrome/browser/ui/profiles/BUILD.gn
+@@ -30,7 +30,7 @@ source_set("profiles") {
+     ]
+   }
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+     sources += [
+       "profile_customization_synced_theme_waiter.h",
+       "profile_customization_util.h",
+@@ -90,7 +90,7 @@ source_set("impl") {
+     ]
+   }
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+     sources += [
+       "profile_customization_synced_theme_waiter.cc",
+       "profile_customization_util.cc",
+@@ -173,7 +173,7 @@ source_set("unit_tests") {
+     }
+   }
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+     sources += [
+       "profile_customization_util_unittest.cc",
+       "profile_picker_unittest.cc",
+diff --git a/chrome/browser/ui/qrcode_generator/BUILD.gn b/chrome/browser/ui/qrcode_generator/BUILD.gn
+index fb523b6efa..fcbfd271be 100644
+--- a/chrome/browser/ui/qrcode_generator/BUILD.gn
++++ b/chrome/browser/ui/qrcode_generator/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//build/config/ui.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ assert(toolkit_views)
+ 
+ source_set("qrcode_generator") {
+diff --git a/chrome/browser/ui/read_anything/BUILD.gn b/chrome/browser/ui/read_anything/BUILD.gn
+index dafcb026bb..c293c62367 100644
+--- a/chrome/browser/ui/read_anything/BUILD.gn
++++ b/chrome/browser/ui/read_anything/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ import("//build/config/compiler/compiler.gni")
+ import("//chrome/common/features.gni")
+diff --git a/chrome/browser/ui/safety_hub/BUILD.gn b/chrome/browser/ui/safety_hub/BUILD.gn
+index 11b592c5fa..46c59075a7 100644
+--- a/chrome/browser/ui/safety_hub/BUILD.gn
++++ b/chrome/browser/ui/safety_hub/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//extensions/buildflags/buildflags.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("safety_hub") {
+   sources = [
+diff --git a/chrome/browser/ui/search_engines/BUILD.gn b/chrome/browser/ui/search_engines/BUILD.gn
+index f8ce327c11..5244655f83 100644
+--- a/chrome/browser/ui/search_engines/BUILD.gn
++++ b/chrome/browser/ui/search_engines/BUILD.gn
+@@ -53,7 +53,7 @@ source_set("search_engines") {
+     "//url",
+   ]
+ 
+-  if (is_win || is_mac) {
++  if (is_win || (is_mac && !is_mac_linux_ui)) {
+     if (enable_extensions_core) {
+       public += [ "default_search_extension_controlled_controller.h" ]
+       sources += [ "default_search_extension_controlled_controller.cc" ]
+@@ -84,7 +84,7 @@ source_set("unit_tests") {
+     "//content/test:test_support",
+   ]
+ 
+-  if (is_win || is_mac) {
++  if (is_win || (is_mac && !is_mac_linux_ui)) {
+     if (enable_extensions_core) {
+       sources +=
+           [ "default_search_extension_controlled_controller_unittest.cc" ]
+diff --git a/chrome/browser/ui/send_tab_to_self/BUILD.gn b/chrome/browser/ui/send_tab_to_self/BUILD.gn
+index 036f0b13f2..22da09f9bf 100644
+--- a/chrome/browser/ui/send_tab_to_self/BUILD.gn
++++ b/chrome/browser/ui/send_tab_to_self/BUILD.gn
+@@ -5,7 +5,7 @@
+ import("//build/config/ozone.gni")
+ import("//build/config/ui.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ assert(toolkit_views)
+ 
+ source_set("send_tab_to_self") {
+diff --git a/chrome/browser/ui/shared_highlighting/BUILD.gn b/chrome/browser/ui/shared_highlighting/BUILD.gn
+index e82971c2c7..c57d36fc56 100644
+--- a/chrome/browser/ui/shared_highlighting/BUILD.gn
++++ b/chrome/browser/ui/shared_highlighting/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("shared_highlighting") {
+   sources = [
+diff --git a/chrome/browser/ui/sharing_hub/BUILD.gn b/chrome/browser/ui/sharing_hub/BUILD.gn
+index b5f1bcba77..683c78708c 100644
+--- a/chrome/browser/ui/sharing_hub/BUILD.gn
++++ b/chrome/browser/ui/sharing_hub/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//build/config/ui.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ assert(toolkit_views)
+ 
+ source_set("sharing_hub") {
+@@ -79,7 +79,7 @@ source_set("impl") {
+   public_deps = [ "//chrome/browser:browser_public_dependencies" ]
+ }
+ 
+-if (is_win || is_mac || is_linux) {
++if (is_win || is_mac || (is_linux || is_mac_linux_ui)) {
+   source_set("test_support_ui") {
+     testonly = true
+     sources = [
+diff --git a/chrome/browser/ui/shortcuts/BUILD.gn b/chrome/browser/ui/shortcuts/BUILD.gn
+index f7d200ff40..d7517a62e7 100644
+--- a/chrome/browser/ui/shortcuts/BUILD.gn
++++ b/chrome/browser/ui/shortcuts/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui))
+ 
+ source_set("shortcuts") {
+   sources = [
+diff --git a/chrome/browser/ui/startup/BUILD.gn b/chrome/browser/ui/startup/BUILD.gn
+index 6c9d4df560..a7cfad6856 100644
+--- a/chrome/browser/ui/startup/BUILD.gn
++++ b/chrome/browser/ui/startup/BUILD.gn
+@@ -74,12 +74,12 @@ source_set("startup") {
+     sources += [ "chrome_for_testing_infobar_delegate.h" ]
+   }
+ 
+-  if (is_win || is_mac || is_linux || is_chromeos) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos) {
+     sources += [ "web_app_startup_utils.h" ]
+     public_deps += [ "//components/services/app_service/public/cpp:app_types" ]
+   }
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+     sources += [
+       "first_run_service.h",
+       "web_app_info_recorder_utils.h",
+@@ -292,7 +292,7 @@ source_set("impl") {
+       ]
+     }
+ 
+-    if (is_win || is_mac || is_linux) {
++    if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+       deps += [ "//chrome/browser/ui/views/session_restore_infobar" ]
+     }
+ 
+@@ -326,7 +326,7 @@ source_set("impl") {
+     sources += [ "chrome_for_testing_infobar_delegate.cc" ]
+   }
+ 
+-  if (is_win || is_mac || is_linux || is_chromeos) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos) {
+     sources += [ "web_app_startup_utils.cc" ]
+     deps += [
+       "//chrome/browser/lifetime:termination_notification",
+@@ -334,7 +334,7 @@ source_set("impl") {
+     ]
+   }
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+     sources += [
+       "first_run_service.cc",
+       "web_app_info_recorder_utils.cc",
 diff --git a/chrome/browser/ui/startup/bad_flags_prompt.cc b/chrome/browser/ui/startup/bad_flags_prompt.cc
 index 4247dbf1a3..c2c7df1211 100644
 --- a/chrome/browser/ui/startup/bad_flags_prompt.cc
@@ -493,6 +1585,32 @@ index 4247dbf1a3..c2c7df1211 100644
      // Speech dispatcher is buggy, it can crash and it can make Chrome freeze.
      // http://crbug.com/40078530
      switches::kEnableSpeechDispatcher,
+diff --git a/chrome/browser/ui/startup/default_browser_prompt/BUILD.gn b/chrome/browser/ui/startup/default_browser_prompt/BUILD.gn
+index df168a846a..c05f3d21f7 100644
+--- a/chrome/browser/ui/startup/default_browser_prompt/BUILD.gn
++++ b/chrome/browser/ui/startup/default_browser_prompt/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux,
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui),
+        "Default browser prompts exist only on non-Chromeos desktop platforms")
+ 
+ source_set("default_browser_prompt") {
+diff --git a/chrome/browser/ui/startup/default_browser_prompt/pin_infobar/BUILD.gn b/chrome/browser/ui/startup/default_browser_prompt/pin_infobar/BUILD.gn
+index fb432004e4..9ceaa52780 100644
+--- a/chrome/browser/ui/startup/default_browser_prompt/pin_infobar/BUILD.gn
++++ b/chrome/browser/ui/startup/default_browser_prompt/pin_infobar/BUILD.gn
+@@ -57,7 +57,7 @@ source_set("impl") {
+     ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [ "pin_infobar_mac_util.mm" ]
+     deps += [ "//chrome/browser/mac" ]
+   }
 diff --git a/chrome/browser/ui/startup/startup_browser_creator_impl.cc b/chrome/browser/ui/startup/startup_browser_creator_impl.cc
 index 28c4033534..8cb69e6f92 100644
 --- a/chrome/browser/ui/startup/startup_browser_creator_impl.cc
@@ -542,6 +1660,112 @@ index 28c4033534..8cb69e6f92 100644
    if (!create_new_browser && !startup_id.empty()) {
      base::nix::SetActivationToken(startup_id);
    }
+diff --git a/chrome/browser/ui/sync/BUILD.gn b/chrome/browser/ui/sync/BUILD.gn
+index e642e03194..9b8ff8692a 100644
+--- a/chrome/browser/ui/sync/BUILD.gn
++++ b/chrome/browser/ui/sync/BUILD.gn
+@@ -113,7 +113,7 @@ source_set("unit_tests") {
+       ]
+     }
+ 
+-    if (is_linux || is_mac || is_win) {
++    if ((is_linux || is_mac_linux_ui) || (is_mac && !is_mac_linux_ui) || is_win) {
+       sources += [ "sync_passphrase_dialog_unittest.cc" ]
+       deps += [ "//components/sync:test_support" ]
+     }
+@@ -125,7 +125,7 @@ if (!is_android && !is_chromeos_device) {
+     testonly = true
+     defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
+ 
+-    if (is_mac || is_linux || is_win) {
++    if ((is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_win) {
+       sources = [ "sync_passphrase_dialog_browsertest.cc" ]
+       deps = [
+         ":sync",
+diff --git a/chrome/browser/ui/tab_contents/BUILD.gn b/chrome/browser/ui/tab_contents/BUILD.gn
+index 7f2c5c2262..be63d36903 100644
+--- a/chrome/browser/ui/tab_contents/BUILD.gn
++++ b/chrome/browser/ui/tab_contents/BUILD.gn
+@@ -5,7 +5,7 @@
+ import("//components/enterprise/buildflags/buildflags.gni")
+ import("//extensions/buildflags/buildflags.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("tab_contents") {
+   sources = [
+@@ -14,7 +14,7 @@ source_set("tab_contents") {
+     "tab_contents_iterator.h",
+   ]
+ 
+-  if (is_win || is_mac || is_linux || is_chromeos) {
++  if (is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos) {
+     sources += [
+       "chrome_web_contents_menu_helper.h",
+       "chrome_web_contents_view_handle_drop.h",
+@@ -40,7 +40,7 @@ source_set("impl") {
+     "tab_contents_iterator.cc",
+   ]
+ 
+-  if (is_win || is_mac || is_linux || is_chromeos) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos) {
+     sources += [
+       "chrome_web_contents_menu_helper.cc",
+       "chrome_web_contents_view_handle_drop.cc",
+diff --git a/chrome/browser/ui/tabs/BUILD.gn b/chrome/browser/ui/tabs/BUILD.gn
+index 2e07ee15fe..7150c1b2ba 100644
+--- a/chrome/browser/ui/tabs/BUILD.gn
++++ b/chrome/browser/ui/tabs/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ import("//chrome/common/features.gni")
+ 
+@@ -388,7 +388,7 @@ if (!is_android) {
+       "vertical_tab_strip_state_controller.h",
+     ]
+ 
+-    if (is_win || is_mac || is_linux || is_chromeos) {
++    if (is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos) {
+       sources += [ "inactive_window_mouse_event_controller.h" ]
+     }
+ 
+@@ -457,7 +457,7 @@ if (!is_android) {
+       "vertical_tab_strip_state_controller.cc",
+     ]
+ 
+-    if (is_win || is_mac || is_linux || is_chromeos) {
++    if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos) {
+       sources += [ "inactive_window_mouse_event_controller.cc" ]
+     }
+ 
+@@ -592,7 +592,7 @@ if (!is_android) {
+       ]
+     }
+ 
+-    if (is_win || is_mac || is_linux || is_chromeos) {
++    if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos) {
+       deps += [
+         "//chrome/browser/multistep_filter",
+         "//chrome/browser/multistep_filter/ui",
+diff --git a/chrome/browser/ui/tabs/alert/BUILD.gn b/chrome/browser/ui/tabs/alert/BUILD.gn
+index 8fc0df1563..2724b9375b 100644
+--- a/chrome/browser/ui/tabs/alert/BUILD.gn
++++ b/chrome/browser/ui/tabs/alert/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ import("//chrome/common/features.gni")
+ 
 diff --git a/chrome/browser/ui/tabs/public/tab_features.h b/chrome/browser/ui/tabs/public/tab_features.h
 index 42a1091d60..7edc20aec2 100644
 --- a/chrome/browser/ui/tabs/public/tab_features.h
@@ -573,6 +1797,19 @@ index 42a1091d60..7edc20aec2 100644
    std::unique_ptr<enterprise_reporting::SaasUsageNavigationObserver>
        saas_usage_navigation_observer_;
  #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+diff --git a/chrome/browser/ui/tabs/saved_tab_groups/BUILD.gn b/chrome/browser/ui/tabs/saved_tab_groups/BUILD.gn
+index 05e5c83d11..f09e417f0e 100644
+--- a/chrome/browser/ui/tabs/saved_tab_groups/BUILD.gn
++++ b/chrome/browser/ui/tabs/saved_tab_groups/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ import("//chrome/common/features.gni")
+ 
 diff --git a/chrome/browser/ui/tabs/tab_dialog_manager.cc b/chrome/browser/ui/tabs/tab_dialog_manager.cc
 index 7d55c065d8..91fb37639a 100644
 --- a/chrome/browser/ui/tabs/tab_dialog_manager.cc
@@ -586,6 +1823,19 @@ index 7d55c065d8..91fb37639a 100644
    return true;
  #else
    return false;
+diff --git a/chrome/browser/ui/tabs/tab_drag_api/desktop_tab_drag_impl/BUILD.gn b/chrome/browser/ui/tabs/tab_drag_api/desktop_tab_drag_impl/BUILD.gn
+index bce61ce332..5ebff7a005 100644
+--- a/chrome/browser/ui/tabs/tab_drag_api/desktop_tab_drag_impl/BUILD.gn
++++ b/chrome/browser/ui/tabs/tab_drag_api/desktop_tab_drag_impl/BUILD.gn
+@@ -31,7 +31,7 @@ source_set("desktop_tab_drag_impl") {
+     "//ui/views",
+   ]
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [
+       "tab_drag_session_input_adapter_mac.h",
+       "tab_drag_session_input_adapter_mac.mm",
 diff --git a/chrome/browser/ui/tabs/tab_features.cc b/chrome/browser/ui/tabs/tab_features.cc
 index aa10f77379..e45ade4d5e 100644
 --- a/chrome/browser/ui/tabs/tab_features.cc
@@ -608,6 +1858,19 @@ index aa10f77379..e45ade4d5e 100644
    if (base::FeatureList::IsEnabled(multistep_filter::kMultistepFilter)) {
      filter_ui_controller_ =
          GetUserDataFactory()
+diff --git a/chrome/browser/ui/test/BUILD.gn b/chrome/browser/ui/test/BUILD.gn
+index 99a366ebd9..c88dfa43c9 100644
+--- a/chrome/browser/ui/test/BUILD.gn
++++ b/chrome/browser/ui/test/BUILD.gn
+@@ -38,7 +38,7 @@ if (!is_android) {
+       deps += [ "//ash" ]
+     }
+ 
+-    if (is_mac) {
++    if ((is_mac && !is_mac_linux_ui)) {
+       sources += [
+         "test_browser_dialog_mac.h",
+         "test_browser_dialog_mac.mm",
 diff --git a/chrome/browser/ui/test/popup_browsertest.cc b/chrome/browser/ui/test/popup_browsertest.cc
 index 56fb82ae49..c8637e0c5f 100644
 --- a/chrome/browser/ui/test/popup_browsertest.cc
@@ -643,6 +1906,50 @@ index cbd358e4b3..a82f9b9662 100644
  #define SUPPORTS_PIXEL_TEST
  #endif
  
+diff --git a/chrome/browser/ui/toasts/BUILD.gn b/chrome/browser/ui/toasts/BUILD.gn
+index 141e39b4ce..d0732b4e1b 100644
+--- a/chrome/browser/ui/toasts/BUILD.gn
++++ b/chrome/browser/ui/toasts/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ import("//build/config/chrome_build.gni")
+ import("//build/config/ui.gni")
+diff --git a/chrome/browser/ui/toolbar/BUILD.gn b/chrome/browser/ui/toolbar/BUILD.gn
+index 74a8839903..2099903c58 100644
+--- a/chrome/browser/ui/toolbar/BUILD.gn
++++ b/chrome/browser/ui/toolbar/BUILD.gn
+@@ -252,7 +252,7 @@ source_set("impl") {
+     ]
+   }
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+     deps += [ "//chrome/browser/ui/startup/default_browser_prompt" ]
+   }
+ 
+@@ -353,7 +353,7 @@ if (!is_android) {
+       ]
+     }
+ 
+-    if (is_win || is_mac || is_linux) {
++    if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+       deps += [ "//chrome/browser/ui/startup/default_browser_prompt" ]
+     }
+ 
+@@ -430,7 +430,7 @@ if (!is_android) {
+         "//chromeos/constants",
+       ]
+     }
+-    if (is_win || is_mac || is_linux) {
++    if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+       deps += [ "//chrome/browser/ui/startup/default_browser_prompt" ]
+     }
+   }
 diff --git a/chrome/browser/ui/toolbar/app_menu_model.cc b/chrome/browser/ui/toolbar/app_menu_model.cc
 index 7c3624d660..d97eddf203 100644
 --- a/chrome/browser/ui/toolbar/app_menu_model.cc
@@ -656,6 +1963,115 @@ index 7c3624d660..d97eddf203 100644
      if (enterprise_util::IsBrowserManaged(browser_->GetProfile()) &&
          base::FeatureList::IsEnabled(features::kEnterpriseReleaseNotes)) {
        AddItemWithStringIdAndVectorIcon(
+diff --git a/chrome/browser/ui/toolbar/cast/BUILD.gn b/chrome/browser/ui/toolbar/cast/BUILD.gn
+index 7420939f7c..017aa67d3d 100644
+--- a/chrome/browser/ui/toolbar/cast/BUILD.gn
++++ b/chrome/browser/ui/toolbar/cast/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("cast") {
+   sources = [
+diff --git a/chrome/browser/ui/user_education/BUILD.gn b/chrome/browser/ui/user_education/BUILD.gn
+index 7096993ea8..4eab58d5f6 100644
+--- a/chrome/browser/ui/user_education/BUILD.gn
++++ b/chrome/browser/ui/user_education/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//build/config/chromeos/args.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ # This is the public interface for the user education service.
+ source_set("user_education") {
+diff --git a/chrome/browser/ui/views/BUILD.gn b/chrome/browser/ui/views/BUILD.gn
+index 705635aa31..27b66afa83 100644
+--- a/chrome/browser/ui/views/BUILD.gn
++++ b/chrome/browser/ui/views/BUILD.gn
+@@ -299,7 +299,7 @@ source_set("device_chooser_content_view") {
+   ]
+ }
+ 
+-if (is_win || is_linux || is_chromeos) {
++if (is_win || (is_linux || is_mac_linux_ui) || is_chromeos) {
+   source_set("bluetooth_dialogs") {
+     public = [
+       "bluetooth_device_credentials_view.h",
+@@ -327,7 +327,7 @@ if (is_win || is_linux || is_chromeos) {
+   }
+ }
+ 
+-if (is_win || is_mac || is_linux || is_chromeos) {
++if (is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos) {
+   source_set("close_bubble_on_tab_activation_helper") {
+     public = [ "close_bubble_on_tab_activation_helper.h" ]
+     sources = [ "close_bubble_on_tab_activation_helper.cc" ]
+@@ -540,7 +540,7 @@ source_set("bubble_menu_item_factory") {
+   ]
+ }
+ 
+-if (is_linux) {
++if ((is_linux || is_mac_linux_ui)) {
+   source_set("eula_dialog_linux") {
+     public = [ "eula_dialog_linux.h" ]
+     sources = [ "eula_dialog_linux.cc" ]
+diff --git a/chrome/browser/ui/views/accessibility/BUILD.gn b/chrome/browser/ui/views/accessibility/BUILD.gn
+index f081f54cf3..16311f2128 100644
+--- a/chrome/browser/ui/views/accessibility/BUILD.gn
++++ b/chrome/browser/ui/views/accessibility/BUILD.gn
+@@ -98,7 +98,7 @@ if (!is_android) {
+ 
+     if (is_mac) {
+       sources += [ "dump_accessibility_events_views_browsertest_base_mac.mm" ]
+-    } else if (is_linux) {
++    } else if ((is_linux || is_mac_linux_ui)) {
+       sources +=
+           [ "dump_accessibility_events_views_browsertest_base_auralinux.cc" ]
+     }
+diff --git a/chrome/browser/ui/views/animations/BUILD.gn b/chrome/browser/ui/views/animations/BUILD.gn
+index 32f7cd14b0..e1617fca1f 100644
+--- a/chrome/browser/ui/views/animations/BUILD.gn
++++ b/chrome/browser/ui/views/animations/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("animations") {
+   sources = [
+diff --git a/chrome/browser/ui/views/app_menu/BUILD.gn b/chrome/browser/ui/views/app_menu/BUILD.gn
+index 906f80121d..fe0f7b1415 100644
+--- a/chrome/browser/ui/views/app_menu/BUILD.gn
++++ b/chrome/browser/ui/views/app_menu/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ import("//build/config/ui.gni")
+ 
+diff --git a/chrome/browser/ui/views/apps/BUILD.gn b/chrome/browser/ui/views/apps/BUILD.gn
+index 42322bfa9d..3812d0b381 100644
+--- a/chrome/browser/ui/views/apps/BUILD.gn
++++ b/chrome/browser/ui/views/apps/BUILD.gn
+@@ -121,7 +121,7 @@ source_set("impl") {
+     ]
+   }
+ 
+-  if (is_linux) {
++  if ((is_linux || is_mac_linux_ui)) {
+     sources += [ "chrome_app_window_client_views_aura.cc" ]
+     deps += [
+       "//chrome/browser:shell_integration_linux",
 diff --git a/chrome/browser/ui/views/apps/chrome_native_app_window_views_aura.cc b/chrome/browser/ui/views/apps/chrome_native_app_window_views_aura.cc
 index 56331d6060..92fce77317 100644
 --- a/chrome/browser/ui/views/apps/chrome_native_app_window_views_aura.cc
@@ -678,6 +2094,71 @@ index 56331d6060..92fce77317 100644
    std::string app_name =
        web_app::GenerateApplicationNameFromAppId(app_window()->extension_id());
    // Set up a custom WM_CLASS for app windows. This allows task switchers in
+diff --git a/chrome/browser/ui/views/autofill/BUILD.gn b/chrome/browser/ui/views/autofill/BUILD.gn
+index 6251281e4d..f5c83fc97e 100644
+--- a/chrome/browser/ui/views/autofill/BUILD.gn
++++ b/chrome/browser/ui/views/autofill/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//components/signin/features.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("delete_address_profile_dialog_view") {
+   sources = [ "delete_address_profile_dialog_view.cc" ]
+diff --git a/chrome/browser/ui/views/autofill/autofill_ai/BUILD.gn b/chrome/browser/ui/views/autofill/autofill_ai/BUILD.gn
+index af44bea22a..e4c0a29fdb 100644
+--- a/chrome/browser/ui/views/autofill/autofill_ai/BUILD.gn
++++ b/chrome/browser/ui/views/autofill/autofill_ai/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("autofill_ai") {
+   public = [
+diff --git a/chrome/browser/ui/views/autofill/payments/BUILD.gn b/chrome/browser/ui/views/autofill/payments/BUILD.gn
+index 5e42b93624..0985490737 100644
+--- a/chrome/browser/ui/views/autofill/payments/BUILD.gn
++++ b/chrome/browser/ui/views/autofill/payments/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("dialog_view_ids") {
+   public = [ "dialog_view_ids.h" ]
+diff --git a/chrome/browser/ui/views/autofill/popup/email_verifier/BUILD.gn b/chrome/browser/ui/views/autofill/popup/email_verifier/BUILD.gn
+index 32a050a6f5..d890112352 100644
+--- a/chrome/browser/ui/views/autofill/popup/email_verifier/BUILD.gn
++++ b/chrome/browser/ui/views/autofill/popup/email_verifier/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("email_verifier") {
+   public = [ "email_verification_popup_view.h" ]
+diff --git a/chrome/browser/ui/views/bubble/BUILD.gn b/chrome/browser/ui/views/bubble/BUILD.gn
+index 6d07eef1b6..b38f0eb971 100644
+--- a/chrome/browser/ui/views/bubble/BUILD.gn
++++ b/chrome/browser/ui/views/bubble/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ import("//build/config/ui.gni")
+ 
 diff --git a/chrome/browser/ui/views/chrome_browser_main_extra_parts_views.cc b/chrome/browser/ui/views/chrome_browser_main_extra_parts_views.cc
 index 36aa1f7c16..c8fea759f2 100644
 --- a/chrome/browser/ui/views/chrome_browser_main_extra_parts_views.cc
@@ -748,6 +2229,89 @@ index 5eeed9b87c..3be1bddad9 100644
    // In linux, windows may be clipped to their anchors' bounds,
    // resulting in visual errors, unless they use accelerated rendering. See
    // crbug.com/40912626 for details.
+diff --git a/chrome/browser/ui/views/contextual_tasks/BUILD.gn b/chrome/browser/ui/views/contextual_tasks/BUILD.gn
+index 104de493d3..430bd3a8b5 100644
+--- a/chrome/browser/ui/views/contextual_tasks/BUILD.gn
++++ b/chrome/browser/ui/views/contextual_tasks/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD - style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("contextual_tasks") {
+   sources = [
+diff --git a/chrome/browser/ui/views/data_sharing/BUILD.gn b/chrome/browser/ui/views/data_sharing/BUILD.gn
+index f5149668be..8dcbe0906c 100644
+--- a/chrome/browser/ui/views/data_sharing/BUILD.gn
++++ b/chrome/browser/ui/views/data_sharing/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//build/config/ui.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ assert(toolkit_views)
+ 
+ source_set("data_sharing") {
+diff --git a/chrome/browser/ui/views/desktop_capture/BUILD.gn b/chrome/browser/ui/views/desktop_capture/BUILD.gn
+index 50775c453a..db86cf3ea4 100644
+--- a/chrome/browser/ui/views/desktop_capture/BUILD.gn
++++ b/chrome/browser/ui/views/desktop_capture/BUILD.gn
+@@ -143,7 +143,7 @@ source_set("unit_tests") {
+     "//ui/views:test_support",
+   ]
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [
+       "audio_capture_permission_checker_mac_unittest.mm",
+       "desktop_media_permission_pane_view_mac_unittest.mm",
+diff --git a/chrome/browser/ui/views/download/BUILD.gn b/chrome/browser/ui/views/download/BUILD.gn
+index 249545c270..62a73c87d5 100644
+--- a/chrome/browser/ui/views/download/BUILD.gn
++++ b/chrome/browser/ui/views/download/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD - style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("download") {
+   sources = [
+diff --git a/chrome/browser/ui/views/eye_dropper/BUILD.gn b/chrome/browser/ui/views/eye_dropper/BUILD.gn
+index 17236aafa8..49fded26bc 100644
+--- a/chrome/browser/ui/views/eye_dropper/BUILD.gn
++++ b/chrome/browser/ui/views/eye_dropper/BUILD.gn
+@@ -17,7 +17,7 @@ source_set("eye_dropper") {
+     deps += [ "//content/public/browser" ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     public += [ "eye_dropper_view_mac.h" ]
+     sources += [ "eye_dropper_view_mac.mm" ]
+     public_deps += [
+@@ -39,7 +39,7 @@ source_set("eye_dropper") {
+       "//ui/base:features",
+     ]
+ 
+-    if (use_dbus && is_linux) {
++    if (use_dbus && (is_linux || is_mac_linux_ui)) {
+       public += [ "eye_dropper_portal.h" ]
+       sources += [ "eye_dropper_portal.cc" ]
+       deps += [
+@@ -86,7 +86,7 @@ if (!is_android) {
+     sources = []
+     deps = []
+ 
+-    if (use_aura && use_dbus && is_linux) {
++    if (use_aura && use_dbus && (is_linux || is_mac_linux_ui)) {
+       sources += [ "eye_dropper_portal_unittest.cc" ]
+       deps += [
+         ":eye_dropper",
 diff --git a/chrome/browser/ui/views/eye_dropper/eye_dropper_aura.cc b/chrome/browser/ui/views/eye_dropper/eye_dropper_aura.cc
 index 4204359a66..b0322bbf7c 100644
 --- a/chrome/browser/ui/views/eye_dropper/eye_dropper_aura.cc
@@ -1157,6 +2721,32 @@ index 40f5304063..5721ee4fcc 100644
    bool is_maximized = browser_->GetWindow()->IsMaximized();
    switch (command_id) {
      case IDC_MAXIMIZE_WINDOW:
+diff --git a/chrome/browser/ui/views/global_media_controls/BUILD.gn b/chrome/browser/ui/views/global_media_controls/BUILD.gn
+index f55014cd2a..3013e368be 100644
+--- a/chrome/browser/ui/views/global_media_controls/BUILD.gn
++++ b/chrome/browser/ui/views/global_media_controls/BUILD.gn
+@@ -129,7 +129,7 @@ source_set("unit_tests") {
+     "//ui/views:test_support",
+   ]
+ 
+-  if (is_linux || is_win || is_mac) {
++  if ((is_linux || is_mac_linux_ui) || is_win || is_mac) {
+     sources += [ "media_dialog_view_unittest.cc" ]
+     deps += [ "//chrome/browser/accessibility" ]
+   }
+diff --git a/chrome/browser/ui/views/hats/BUILD.gn b/chrome/browser/ui/views/hats/BUILD.gn
+index 7fc7aa683d..365d6a04ce 100644
+--- a/chrome/browser/ui/views/hats/BUILD.gn
++++ b/chrome/browser/ui/views/hats/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("hats") {
+   public = [ "hats_next_web_dialog.h" ]
 diff --git a/chrome/browser/ui/views/hung_renderer_view.cc b/chrome/browser/ui/views/hung_renderer_view.cc
 index 990d2f17a5..c5e9f9bdfc 100644
 --- a/chrome/browser/ui/views/hung_renderer_view.cc
@@ -1170,6 +2760,206 @@ index 990d2f17a5..c5e9f9bdfc 100644
      // A generic |CrashDumpHungChildProcess()| is not implemented for Linux.
      // Instead we send an explicit IPC to crash on the renderer's IO thread.
      rph->ForceCrash();
+diff --git a/chrome/browser/ui/views/location_bar/BUILD.gn b/chrome/browser/ui/views/location_bar/BUILD.gn
+index d15829cb54..92c69e2b77 100644
+--- a/chrome/browser/ui/views/location_bar/BUILD.gn
++++ b/chrome/browser/ui/views/location_bar/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ import("//build/config/ozone.gni")
+ import("//build/config/ui.gni")
+diff --git a/chrome/browser/ui/views/location_bar/cookie_controls/BUILD.gn b/chrome/browser/ui/views/location_bar/cookie_controls/BUILD.gn
+index 20e22a3110..7f1de73040 100644
+--- a/chrome/browser/ui/views/location_bar/cookie_controls/BUILD.gn
++++ b/chrome/browser/ui/views/location_bar/cookie_controls/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//build/config/ui.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("cookie_controls") {
+   sources = []
+diff --git a/chrome/browser/ui/views/media_preview/BUILD.gn b/chrome/browser/ui/views/media_preview/BUILD.gn
+index f7f10f2e2f..7ab9a07048 100644
+--- a/chrome/browser/ui/views/media_preview/BUILD.gn
++++ b/chrome/browser/ui/views/media_preview/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui))
+ 
+ source_set("media_preview") {
+   public = [
+diff --git a/chrome/browser/ui/views/media_preview/camera_preview/BUILD.gn b/chrome/browser/ui/views/media_preview/camera_preview/BUILD.gn
+index 90f1a6eaf3..b14fc52e14 100644
+--- a/chrome/browser/ui/views/media_preview/camera_preview/BUILD.gn
++++ b/chrome/browser/ui/views/media_preview/camera_preview/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui))
+ 
+ source_set("camera_preview") {
+   public = [
+diff --git a/chrome/browser/ui/views/media_preview/mic_preview/BUILD.gn b/chrome/browser/ui/views/media_preview/mic_preview/BUILD.gn
+index eadb1a1c5c..88fe72d913 100644
+--- a/chrome/browser/ui/views/media_preview/mic_preview/BUILD.gn
++++ b/chrome/browser/ui/views/media_preview/mic_preview/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui))
+ 
+ source_set("mic_preview") {
+   public = [
+diff --git a/chrome/browser/ui/views/media_router/BUILD.gn b/chrome/browser/ui/views/media_router/BUILD.gn
+index 8d7cfeb29e..29e1ffb6d7 100644
+--- a/chrome/browser/ui/views/media_router/BUILD.gn
++++ b/chrome/browser/ui/views/media_router/BUILD.gn
+@@ -109,7 +109,7 @@ source_set("impl") {
+   # edge is the allow_circular_includes_from entry on //chrome/browser/ui:ui.
+   public_deps = [ "//chrome/browser:browser_public_dependencies" ]
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     deps += [ "//chrome/browser:global_keyboard_shortcuts_mac" ]
+   }
+ }
+@@ -213,7 +213,7 @@ if (!is_chromeos_device) {
+ 
+     # media_router_ui_interactive_uitest.cc is desktop-only; it does not build
+     # on ChromeOS or Fuchsia.
+-    if (is_win || is_mac || is_linux) {
++    if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+       sources += [ "media_router_ui_interactive_uitest.cc" ]
+     }
+ 
+diff --git a/chrome/browser/ui/views/omnibox/BUILD.gn b/chrome/browser/ui/views/omnibox/BUILD.gn
+index 155926bfa6..5a1acb91db 100644
+--- a/chrome/browser/ui/views/omnibox/BUILD.gn
++++ b/chrome/browser/ui/views/omnibox/BUILD.gn
+@@ -247,7 +247,7 @@ source_set("test_support") {
+     "//ui/base",
+   ]
+ 
+-  if (is_linux) {
++  if ((is_linux || is_mac_linux_ui)) {
+     deps += [ "//ui/linux:linux_ui" ]
+   }
+ }
+diff --git a/chrome/browser/ui/views/overlay/BUILD.gn b/chrome/browser/ui/views/overlay/BUILD.gn
+index 942c7ad5fe..88e9e8129a 100644
+--- a/chrome/browser/ui/views/overlay/BUILD.gn
++++ b/chrome/browser/ui/views/overlay/BUILD.gn
+@@ -89,7 +89,7 @@ source_set("impl") {
+   # allow_circular_includes_from entry on //chrome/browser/ui:ui.
+   public_deps = [ "//chrome/browser:browser_public_dependencies" ]
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [ "video_overlay_window_native_widget_mac.mm" ]
+     deps += [ "//components/remote_cocoa/common:mojo" ]
+     frameworks = [ "Cocoa.framework" ]
+diff --git a/chrome/browser/ui/views/page_info/BUILD.gn b/chrome/browser/ui/views/page_info/BUILD.gn
+index 75de315765..a683787b72 100644
+--- a/chrome/browser/ui/views/page_info/BUILD.gn
++++ b/chrome/browser/ui/views/page_info/BUILD.gn
+@@ -48,7 +48,7 @@ source_set("page_info") {
+     "//ui/views",
+   ]
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+     # page_info_permission_content_view.h embeds a PageInfoPreviewsCoordinator
+     # (media_preview is unavailable on ChromeOS).
+     public_deps += [ "//chrome/browser/ui/views/media_preview" ]
+diff --git a/chrome/browser/ui/views/passwords/BUILD.gn b/chrome/browser/ui/views/passwords/BUILD.gn
+index e970e50304..8c779edd70 100644
+--- a/chrome/browser/ui/views/passwords/BUILD.gn
++++ b/chrome/browser/ui/views/passwords/BUILD.gn
+@@ -60,7 +60,7 @@ source_set("passwords") {
+     ]
+   }
+ 
+-  if (is_linux || is_mac) {
++  if ((is_linux || is_mac_linux_ui) || is_mac) {
+     # password_relaunch_chrome_view is only shown on Linux and macOS.
+     public += [ "password_relaunch_chrome_view.h" ]
+   }
+@@ -131,14 +131,14 @@ source_set("impl") {
+     "//components/password_manager/core/browser/features:password_features",
+   ]
+ 
+-  if (is_win || is_mac || is_chromeos) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || is_chromeos) {
+     sources += [
+       "biometric_authentication_confirmation_bubble_view.cc",
+       "biometric_authentication_for_filling_bubble_view.cc",
+     ]
+   }
+ 
+-  if (is_linux || is_mac) {
++  if ((is_linux || is_mac_linux_ui) || (is_mac && !is_mac_linux_ui)) {
+     # password_relaunch_chrome_view is only shown on Linux and macOS.
+     sources += [ "password_relaunch_chrome_view.cc" ]
+     deps += [ "//components/os_crypt/async/common" ]
+diff --git a/chrome/browser/ui/views/permissions/BUILD.gn b/chrome/browser/ui/views/permissions/BUILD.gn
+index f780ed13fd..c955b119e2 100644
+--- a/chrome/browser/ui/views/permissions/BUILD.gn
++++ b/chrome/browser/ui/views/permissions/BUILD.gn
+@@ -66,7 +66,7 @@ if (toolkit_views) {
+       # includes with the same #if !BUILDFLAG(IS_CHROMEOS) block:
+       # media_preview/permission_prompt_previews_coordinator.h and
+       # media_effects/media_device_info.h. media_preview itself asserts
+-      # is_win || is_mac || is_linux (a strict subset of !is_chromeos on
++      # is_win || is_mac || (is_linux || is_mac_linux_ui) (a strict subset of !is_chromeos on
+       # the platforms toolkit_views builds for), so this matches.
+       public_deps += [
+         "//chrome/browser/ui/views/media_preview",
+@@ -164,7 +164,7 @@ if (toolkit_views) {
+       ]
+     }
+ 
+-    if (is_mac) {
++    if ((is_mac && !is_mac_linux_ui)) {
+       sources += [ "permission_prompt_notifications_mac.cc" ]
+       deps += [ "//chrome/browser/permissions/system" ]
+     }
+diff --git a/chrome/browser/ui/views/profiles/BUILD.gn b/chrome/browser/ui/views/profiles/BUILD.gn
+index 72a0e6a5f7..2ac7b10cb8 100644
+--- a/chrome/browser/ui/views/profiles/BUILD.gn
++++ b/chrome/browser/ui/views/profiles/BUILD.gn
+@@ -21,7 +21,7 @@ if (is_chromeos) {
+   }
+ }
+ 
+-if (is_win || is_mac || is_linux || is_chromeos) {
++if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos) {
+   source_set("avatar_badge_view") {
+     public = [ "avatar_badge_view.h" ]
+     sources = [ "avatar_badge_view.cc" ]
+@@ -205,7 +205,7 @@ if (toolkit_views) {
+   }
+ }
+ 
+-if (is_win || is_mac || is_linux) {
++if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+   source_set("badged_profile_photo") {
+     public = [ "badged_profile_photo.h" ]
+     sources = [ "badged_profile_photo.cc" ]
 diff --git a/chrome/browser/ui/views/profiles/profile_picker_view.cc b/chrome/browser/ui/views/profiles/profile_picker_view.cc
 index 6b8c4255d0..590667ea45 100644
 --- a/chrome/browser/ui/views/profiles/profile_picker_view.cc
@@ -1205,6 +2995,71 @@ index bf31502de4..79fd278b58 100644
    params.wm_class_name = shell_integration_linux::GetProgramClassName();
    params.wm_class_class = shell_integration_linux::GetProgramClassClass();
    params.wayland_app_id = params.wm_class_class;
+diff --git a/chrome/browser/ui/views/relaunch_notification/BUILD.gn b/chrome/browser/ui/views/relaunch_notification/BUILD.gn
+index 20e98e24d4..edca312f39 100644
+--- a/chrome/browser/ui/views/relaunch_notification/BUILD.gn
++++ b/chrome/browser/ui/views/relaunch_notification/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//chrome/browser/buildflags.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("relaunch_notification") {
+   public = [
+diff --git a/chrome/browser/ui/views/send_tab_to_self/BUILD.gn b/chrome/browser/ui/views/send_tab_to_self/BUILD.gn
+index 5c4ac9e76a..ec3218d1ae 100644
+--- a/chrome/browser/ui/views/send_tab_to_self/BUILD.gn
++++ b/chrome/browser/ui/views/send_tab_to_self/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("send_tab_to_self") {
+   public = [
+diff --git a/chrome/browser/ui/views/sharing_hub/BUILD.gn b/chrome/browser/ui/views/sharing_hub/BUILD.gn
+index 82dc5878d0..c3aaf4c7bd 100644
+--- a/chrome/browser/ui/views/sharing_hub/BUILD.gn
++++ b/chrome/browser/ui/views/sharing_hub/BUILD.gn
+@@ -60,7 +60,7 @@ source_set("impl") {
+   }
+ }
+ 
+-if (is_win || is_mac || is_linux) {
++if (is_win || is_mac || (is_linux || is_mac_linux_ui)) {
+   source_set("unit_tests") {
+     testonly = true
+     sources = [
+diff --git a/chrome/browser/ui/views/side_panel/BUILD.gn b/chrome/browser/ui/views/side_panel/BUILD.gn
+index f090138eb7..f4fbf17174 100644
+--- a/chrome/browser/ui/views/side_panel/BUILD.gn
++++ b/chrome/browser/ui/views/side_panel/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD - style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ import("//chrome/common/features.gni")
+ import("//extensions/buildflags/buildflags.gni")
+diff --git a/chrome/browser/ui/views/status_icons/BUILD.gn b/chrome/browser/ui/views/status_icons/BUILD.gn
+index 43f0df7dd4..8fc56127d0 100644
+--- a/chrome/browser/ui/views/status_icons/BUILD.gn
++++ b/chrome/browser/ui/views/status_icons/BUILD.gn
+@@ -9,7 +9,7 @@ source_set("status_icons") {
+   public_deps = []
+   deps = []
+ 
+-  if (is_linux) {
++  if ((is_linux || is_mac_linux_ui)) {
+     sources += [
+       "status_icon_button_linux.cc",
+       "status_icon_button_linux.h",
 diff --git a/chrome/browser/ui/views/tabs/common/tab_group_header_view.cc b/chrome/browser/ui/views/tabs/common/tab_group_header_view.cc
 index cfaf18f54f..eec5a1bad5 100644
 --- a/chrome/browser/ui/views/tabs/common/tab_group_header_view.cc
@@ -1315,6 +3170,28 @@ index 40b42cb3c1..3a8caca01a 100644
    return kColorTaskManagerSearchBarPlaceholderText;
  #else
    return ui::kColorTextfieldForegroundPlaceholder;
+diff --git a/chrome/browser/ui/views/toolbar/BUILD.gn b/chrome/browser/ui/views/toolbar/BUILD.gn
+index 0f29e63644..ab063e2c60 100644
+--- a/chrome/browser/ui/views/toolbar/BUILD.gn
++++ b/chrome/browser/ui/views/toolbar/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ import("//build/config/ui.gni")
+ import("//ui/webui/webui_features.gni")
+@@ -311,7 +311,7 @@ source_set("impl") {
+     deps += [ "//chrome/browser/ui/views/zoom" ]
+   }
+ 
+-  if (is_win || is_mac || is_linux || is_chromeos) {
++  if (is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos) {
+     deps += [ "//chrome/browser/ui/ai_overlay_dialog" ]
+   }
+ }
 diff --git a/chrome/browser/ui/views/user_education/browser_user_education_service.cc b/chrome/browser/ui/views/user_education/browser_user_education_service.cc
 index 3568a071ff..1bb5de7d0d 100644
 --- a/chrome/browser/ui/views/user_education/browser_user_education_service.cc
@@ -1337,6 +3214,19 @@ index 3568a071ff..1bb5de7d0d 100644
    // kIPHDesktopPWAsLinkCapturingLaunch:
    registry.RegisterFeature(std::move(
        FeaturePromoSpecification::CreateForCustomAction(
+diff --git a/chrome/browser/ui/views/web_apps/BUILD.gn b/chrome/browser/ui/views/web_apps/BUILD.gn
+index 76d3f88e8d..d76a50322d 100644
+--- a/chrome/browser/ui/views/web_apps/BUILD.gn
++++ b/chrome/browser/ui/views/web_apps/BUILD.gn
+@@ -62,7 +62,7 @@ source_set("web_apps") {
+     "//url",
+   ]
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || is_mac || (is_linux || is_mac_linux_ui)) {
+     public += [
+       "deprecated_apps_dialog_view.h",
+       "force_installed_deprecated_apps_dialog_view.h",
 diff --git a/chrome/browser/ui/views/web_apps/web_app_integration_test_driver.cc b/chrome/browser/ui/views/web_apps/web_app_integration_test_driver.cc
 index 4453565f3c..e4716d6cfa 100644
 --- a/chrome/browser/ui/views/web_apps/web_app_integration_test_driver.cc
@@ -1398,6 +3288,173 @@ index f13cbad715..925dd22117 100644
    void ShowIPHPromoForAppsLaunchedViaLinkCapturing(
        BrowserWindowInterface* browser,
        const webapps::AppId& app_id,
+diff --git a/chrome/browser/ui/webui/BUILD.gn b/chrome/browser/ui/webui/BUILD.gn
+index 0148b75f04..ba9d93bfb3 100644
+--- a/chrome/browser/ui/webui/BUILD.gn
++++ b/chrome/browser/ui/webui/BUILD.gn
+@@ -179,7 +179,7 @@ source_set("configs") {
+     deps += [ "//chrome/browser/ui/webui/safe_browsing" ]
+   }
+ 
+-  if (is_win || is_mac || is_linux || is_chromeos) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos) {
+     deps += [
+       "//chrome/browser/ui/lens",
+       "//chrome/browser/ui/views/side_panel",
+@@ -231,7 +231,7 @@ source_set("configs") {
+     deps += [ "//chrome/browser/ui/webui/print_preview" ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     deps += [ "//chrome/browser/ui/webui/unexportable_keys_internals" ]
+   }
+ 
+@@ -239,7 +239,7 @@ source_set("configs") {
+     deps += [ "//chrome/browser/ui/webui/sandbox" ]
+   }
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+     deps += [
+       "//chrome/browser/ui/webui/browser_switch",
+       "//chrome/browser/ui/webui/on_device_translation_internals",
+@@ -285,7 +285,7 @@ source_set("configs") {
+     ]
+   }
+ 
+-  if (is_win || is_mac || is_linux || is_chromeos || is_desktop_android_cromite) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos || is_desktop_android_cromite) {
+     deps += [ "//chrome/browser/ui/webui/discards" ]
+   }
+ 
+@@ -379,7 +379,7 @@ if (enable_extensions_core || enable_webui_ntp ||
+ 
+     # webui_util_desktop.h is included only under #if !BUILDFLAG(IS_ANDROID);
+     # the util target itself is desktop-only.
+-    if (is_win || is_mac || is_linux || is_chromeos) {
++    if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos) {
+       deps += [ "//chrome/browser/ui/webui/util" ]
+     }
+ 
+@@ -650,7 +650,7 @@ source_set("chrome_web_ui_controller_factory") {
+     deps += [ "//chrome/browser/ui/webui/sandbox" ]
+   }
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+     deps += [ "//chrome/browser/ui/webui/whats_new" ]
+   }
+ 
+@@ -706,7 +706,7 @@ if (enable_extensions_core) {
+   }
+ }
+ 
+-if (is_win || is_mac || is_linux) {
++if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+   source_set("profile_helper") {
+     sources = [ "profile_helper.cc" ]
+     public = [ "profile_helper.h" ]
+@@ -1034,7 +1034,7 @@ if (!is_android) {
+       "//url",
+     ]
+ 
+-    if (is_win || is_mac || is_linux) {
++    if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+       sources += [ "profile_helper_browsertest.cc" ]
+       deps += [
+         ":profile_helper",
+diff --git a/chrome/browser/ui/webui/about/BUILD.gn b/chrome/browser/ui/webui/about/BUILD.gn
+index aa17f4f820..6958be0366 100644
+--- a/chrome/browser/ui/webui/about/BUILD.gn
++++ b/chrome/browser/ui/webui/about/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//ui/webui/webui_features.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("about") {
+   sources = [ "about_ui.h" ]
+diff --git a/chrome/browser/ui/webui/accessibility/BUILD.gn b/chrome/browser/ui/webui/accessibility/BUILD.gn
+index 39668e4e30..7f9252c377 100644
+--- a/chrome/browser/ui/webui/accessibility/BUILD.gn
++++ b/chrome/browser/ui/webui/accessibility/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("accessibility") {
+   sources = [ "accessibility_ui.h" ]
+diff --git a/chrome/browser/ui/webui/ai_overlay_dialog/BUILD.gn b/chrome/browser/ui/webui/ai_overlay_dialog/BUILD.gn
+index b6f4b097c2..41736647fe 100644
+--- a/chrome/browser/ui/webui/ai_overlay_dialog/BUILD.gn
++++ b/chrome/browser/ui/webui/ai_overlay_dialog/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ import("//mojo/public/tools/bindings/mojom.gni")
+ 
+diff --git a/chrome/browser/ui/webui/app_home/BUILD.gn b/chrome/browser/ui/webui/app_home/BUILD.gn
+index ded23dc20b..285cbadfb4 100644
+--- a/chrome/browser/ui/webui/app_home/BUILD.gn
++++ b/chrome/browser/ui/webui/app_home/BUILD.gn
+@@ -5,7 +5,7 @@
+ import("//extensions/buildflags/buildflags.gni")
+ import("//mojo/public/tools/bindings/mojom.gni")
+ 
+-assert(is_win || is_mac || is_linux)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui))
+ 
+ mojom("mojo_bindings") {
+   sources = [ "app_home.mojom" ]
+diff --git a/chrome/browser/ui/webui/app_management/BUILD.gn b/chrome/browser/ui/webui/app_management/BUILD.gn
+index 311e433966..a3024da9b8 100644
+--- a/chrome/browser/ui/webui/app_management/BUILD.gn
++++ b/chrome/browser/ui/webui/app_management/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("app_management") {
+   sources = [
+diff --git a/chrome/browser/ui/webui/app_settings/BUILD.gn b/chrome/browser/ui/webui/app_settings/BUILD.gn
+index 09b38a8db7..9415ea6c25 100644
+--- a/chrome/browser/ui/webui/app_settings/BUILD.gn
++++ b/chrome/browser/ui/webui/app_settings/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui))
+ 
+ source_set("app_settings") {
+   sources = [
+diff --git a/chrome/browser/ui/webui/browser_switch/BUILD.gn b/chrome/browser/ui/webui/browser_switch/BUILD.gn
+index 02ab5860b1..31902105e8 100644
+--- a/chrome/browser/ui/webui/browser_switch/BUILD.gn
++++ b/chrome/browser/ui/webui/browser_switch/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-if (is_win || is_mac || is_linux) {
++if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+   source_set("browser_switch") {
+     sources = [ "browser_switch_ui.cc" ]
+     public = [ "browser_switch_ui.h" ]
 diff --git a/chrome/browser/ui/webui/certificate_manager/client_cert_sources.cc b/chrome/browser/ui/webui/certificate_manager/client_cert_sources.cc
 index 4ded5c4f5b..0c0284a4ce 100644
 --- a/chrome/browser/ui/webui/certificate_manager/client_cert_sources.cc
@@ -1538,6 +3595,23 @@ index c08be45afb..f247d1a2f6 100644
    if (page_url.host() == chrome::kChromeUIContextualTasksHost) {
      return ContextualTasksUI::GetFaviconResourceBytes(scale_factor);
    }
+diff --git a/chrome/browser/ui/webui/connectors_internals/BUILD.gn b/chrome/browser/ui/webui/connectors_internals/BUILD.gn
+index 62031d290c..34ca95abdf 100644
+--- a/chrome/browser/ui/webui/connectors_internals/BUILD.gn
++++ b/chrome/browser/ui/webui/connectors_internals/BUILD.gn
+@@ -41,10 +41,10 @@ source_set("connectors_internals") {
+   if (enterprise_client_certificates) {
+     deps += [ "//components/enterprise/client_certificates/core" ]
+   }
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     deps += [ "//chrome/browser/enterprise/connectors/device_trust/key_management/core/mac" ]
+   }
+-  if (is_linux || is_win || is_mac || is_chromeos) {
++  if ((is_linux || is_mac_linux_ui) || is_win || (is_mac && !is_mac_linux_ui) || is_chromeos) {
+     deps += [ "//components/enterprise/device_trust/core:device_trust_connector_service" ]
+   }
+ }
 diff --git a/chrome/browser/ui/webui/connectors_internals/device_trust_utils.cc b/chrome/browser/ui/webui/connectors_internals/device_trust_utils.cc
 index 69362709ca..5075fa1923 100644
 --- a/chrome/browser/ui/webui/connectors_internals/device_trust_utils.cc
@@ -1591,6 +3665,84 @@ index fc81c50215..934d95a62f 100644
    if (icon.name == (features::IsRoundedIconsEnabled()
                          ? omnibox::kSendIcon.name
                          : omnibox::kShareLinuxChromeRefreshOldIcon.name)) {
+diff --git a/chrome/browser/ui/webui/help/BUILD.gn b/chrome/browser/ui/webui/help/BUILD.gn
+index 17d8d3e283..fac5e6787c 100644
+--- a/chrome/browser/ui/webui/help/BUILD.gn
++++ b/chrome/browser/ui/webui/help/BUILD.gn
+@@ -35,7 +35,7 @@ source_set("help") {
+     ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources = [ "version_updater_mac.mm" ]
+     deps += [
+       "//base:i18n",
+@@ -66,7 +66,7 @@ source_set("help") {
+     }
+   }
+ 
+-  if (is_linux) {
++  if ((is_linux || is_mac_linux_ui)) {
+     sources = [ "version_updater_basic.cc" ]
+   }
+ }
+diff --git a/chrome/browser/ui/webui/infobar_internals/BUILD.gn b/chrome/browser/ui/webui/infobar_internals/BUILD.gn
+index 2dee3396b4..640f8bf050 100644
+--- a/chrome/browser/ui/webui/infobar_internals/BUILD.gn
++++ b/chrome/browser/ui/webui/infobar_internals/BUILD.gn
+@@ -78,14 +78,14 @@ source_set("impl") {
+       "//chrome/browser/win/installer_downloader:prefs",
+     ]
+   }
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+     deps += [
+       "//chrome/browser/ui/startup/default_browser_prompt",
+       "//chrome/browser/ui/views/session_restore_infobar",
+     ]
+   }
+ 
+-  if (is_win || is_mac) {
++  if (is_win || (is_mac && !is_mac_linux_ui)) {
+     deps += [ "//chrome/browser/ui/pdf/infobar" ]
+   }
+ 
+@@ -96,7 +96,7 @@ source_set("impl") {
+     ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     deps += [ "//chrome/browser/ui/cocoa" ]
+   }
+ 
+diff --git a/chrome/browser/ui/webui/interstitials/BUILD.gn b/chrome/browser/ui/webui/interstitials/BUILD.gn
+index 2c791b3618..f07ee815ef 100644
+--- a/chrome/browser/ui/webui/interstitials/BUILD.gn
++++ b/chrome/browser/ui/webui/interstitials/BUILD.gn
+@@ -41,7 +41,7 @@ source_set("interstitials") {
+     deps += [ "//chrome/browser/safe_browsing" ]
+   }
+ 
+-  if (is_linux || is_mac || is_win || is_chromeos) {
++  if ((is_linux || is_mac_linux_ui) || (is_mac && !is_mac_linux_ui) || is_win || is_chromeos) {
+     deps += [ "//chrome/browser/supervised_user" ]
+   }
+ }
+diff --git a/chrome/browser/ui/webui/intro/BUILD.gn b/chrome/browser/ui/webui/intro/BUILD.gn
+index b907751a17..72a6110f18 100644
+--- a/chrome/browser/ui/webui/intro/BUILD.gn
++++ b/chrome/browser/ui/webui/intro/BUILD.gn
+@@ -16,7 +16,7 @@ mojom("mojo_bindings") {
+   webui_module_path = "/"
+ }
+ 
+-if (is_win || is_mac || is_linux) {
++if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+   source_set("intro") {
+     sources = [
+       "finish_or_continue_handler.cc",
 diff --git a/chrome/browser/ui/webui/management/management_ui.cc b/chrome/browser/ui/webui/management/management_ui.cc
 index 5a4944773d..5aeaed9e3f 100644
 --- a/chrome/browser/ui/webui/management/management_ui.cc
@@ -1637,6 +3789,54 @@ index 670ab42203..64d587869f 100644
  // Constants defining the IDs for the localized strings sent to the page as
  // load time data.
  extern const char kManagementScreenCaptureEvent[];
+diff --git a/chrome/browser/ui/webui/on_device_translation_internals/BUILD.gn b/chrome/browser/ui/webui/on_device_translation_internals/BUILD.gn
+index 3aa5aff90f..2239c54d6d 100644
+--- a/chrome/browser/ui/webui/on_device_translation_internals/BUILD.gn
++++ b/chrome/browser/ui/webui/on_device_translation_internals/BUILD.gn
+@@ -10,7 +10,7 @@ mojom("mojo_bindings") {
+   webui_module_path = "/"
+ }
+ 
+-if (is_win || is_mac || is_linux) {
++if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+   source_set("on_device_translation_internals") {
+     sources = [
+       "on_device_translation_internals_page_handler_impl.cc",
+diff --git a/chrome/browser/ui/webui/password_manager/BUILD.gn b/chrome/browser/ui/webui/password_manager/BUILD.gn
+index c79e329392..5bd6f98479 100644
+--- a/chrome/browser/ui/webui/password_manager/BUILD.gn
++++ b/chrome/browser/ui/webui/password_manager/BUILD.gn
+@@ -157,7 +157,7 @@ source_set("unit_tests") {
+   ]
+ 
+   # password_manager_ui_handler_unittest historically ran on desktop excluding
+-  # ChromeOS (is_linux || is_mac || is_win).
++  # ChromeOS ((is_linux || is_mac_linux_ui) || (is_mac && !is_mac_linux_ui) || is_win).
+   if (!is_chromeos) {
+     sources += [ "password_manager_ui_handler_unittest.cc" ]
+   }
+diff --git a/chrome/browser/ui/webui/password_manager/notification_cards/BUILD.gn b/chrome/browser/ui/webui/password_manager/notification_cards/BUILD.gn
+index 560efc07c3..93ed854a86 100644
+--- a/chrome/browser/ui/webui/password_manager/notification_cards/BUILD.gn
++++ b/chrome/browser/ui/webui/password_manager/notification_cards/BUILD.gn
+@@ -47,7 +47,7 @@ source_set("notification_cards") {
+     public += [ "move_passwords_promo.h" ]
+   }
+ 
+-  if (is_linux || is_mac) {
++  if ((is_linux || is_mac_linux_ui) || (is_mac && !is_mac_linux_ui)) {
+     sources += [ "relaunch_chrome_banner.cc" ]
+     public += [ "relaunch_chrome_banner.h" ]
+     deps += [ "//components/os_crypt/async/common" ]
+@@ -76,7 +76,7 @@ source_set("unit_tests") {
+     ]
+   }
+ 
+-  if (is_linux || is_mac) {
++  if ((is_linux || is_mac_linux_ui) || (is_mac && !is_mac_linux_ui)) {
+     sources += [ "relaunch_chrome_banner_unittest.cc" ]
+     deps += [ "//components/os_crypt/async/browser:test_support" ]
+   }
 diff --git a/chrome/browser/ui/webui/password_manager/notification_cards/relaunch_chrome_banner.cc b/chrome/browser/ui/webui/password_manager/notification_cards/relaunch_chrome_banner.cc
 index 470a570d20..3798b077fb 100644
 --- a/chrome/browser/ui/webui/password_manager/notification_cards/relaunch_chrome_banner.cc
@@ -1659,6 +3859,19 @@ index 470a570d20..3798b077fb 100644
        IDS_PASSWORD_MANAGER_UI_RELAUNCH_CHROME_PROMO_CARD_DESCRIPTION_LINUX
  #endif
    );
+diff --git a/chrome/browser/ui/webui/safe_browsing/BUILD.gn b/chrome/browser/ui/webui/safe_browsing/BUILD.gn
+index dca19f26e0..ffb9a0ccf4 100644
+--- a/chrome/browser/ui/webui/safe_browsing/BUILD.gn
++++ b/chrome/browser/ui/webui/safe_browsing/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("safe_browsing") {
+   sources = [
 diff --git a/chrome/browser/ui/webui/sanitized_image/sanitized_image_source.cc b/chrome/browser/ui/webui/sanitized_image/sanitized_image_source.cc
 index 5c21f462ac..c283bc6fcf 100644
 --- a/chrome/browser/ui/webui/sanitized_image/sanitized_image_source.cc
@@ -1672,6 +3885,95 @@ index 5c21f462ac..c283bc6fcf 100644
    if (mojo_frames.size() > 1) {
      // The image is animated, re-encode as WebP animated image and send to
      // requester.
+diff --git a/chrome/browser/ui/webui/search_engine_choice/BUILD.gn b/chrome/browser/ui/webui/search_engine_choice/BUILD.gn
+index 250f7472e4..6ea2605ad9 100644
+--- a/chrome/browser/ui/webui/search_engine_choice/BUILD.gn
++++ b/chrome/browser/ui/webui/search_engine_choice/BUILD.gn
+@@ -43,7 +43,7 @@ if (!is_android) {
+   }
+ }
+ 
+-if (is_win || is_linux) {
++if (is_win || (is_linux || is_mac_linux_ui)) {
+   source_set("browser_tests") {
+     testonly = true
+     defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
+diff --git a/chrome/browser/ui/webui/settings/BUILD.gn b/chrome/browser/ui/webui/settings/BUILD.gn
+index 36b791148f..addd347edd 100644
+--- a/chrome/browser/ui/webui/settings/BUILD.gn
++++ b/chrome/browser/ui/webui/settings/BUILD.gn
+@@ -7,7 +7,7 @@ import("//build/config/ui.gni")
+ import("//components/signin/features.gni")
+ import("//components/compose/features.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("settings") {
+   sources = [
+@@ -107,7 +107,7 @@ source_set("settings") {
+     public_deps += [ "//ui/webui/resources/cr_components/signin:mojo_bindings" ]
+   }
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || is_mac || (is_linux || is_mac_linux_ui)) {
+     sources += [
+       "settings_default_browser_handler.h",
+       "settings_manage_profile_handler.h",
+@@ -119,7 +119,7 @@ source_set("settings") {
+     sources += [ "on_device_ai_settings_handler.h" ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [ "mac_system_settings_handler.h" ]
+   }
+ 
+@@ -327,7 +327,7 @@ source_set("impl") {
+     ]
+   }
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+     sources += [
+       "settings_default_browser_handler.cc",
+       "settings_manage_profile_handler.cc",
+@@ -345,7 +345,7 @@ source_set("impl") {
+     sources += [ "on_device_ai_settings_handler.cc" ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [
+       "mac_system_settings_handler.cc",
+       "settings_utils_mac.mm",
+@@ -357,7 +357,7 @@ source_set("impl") {
+     deps += [ "//chrome/browser/win" ]
+   }
+ 
+-  if (is_linux) {
++  if ((is_linux || is_mac_linux_ui)) {
+     sources += [ "settings_utils_linux.cc" ]
+     deps += [
+       "//ui/linux:linux_ui_factory",
+@@ -659,7 +659,7 @@ if (!is_android) {
+       deps += [ "//ui/ozone" ]
+     }
+ 
+-    if (is_win || is_mac || is_linux) {
++    if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+       sources += [
+         "accessibility_main_handler_unittest.cc",
+         "settings_manage_profile_handler_unittest.cc",
+@@ -738,7 +738,7 @@ source_set("interactive_ui_tests") {
+     deps += [ "//chrome/test/base/ash/interactive:test_support" ]
+   }
+ 
+-  if ((is_mac || is_linux || is_win) && enable_dice_support) {
++  if (((is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_win) && enable_dice_support) {
+     sources += [ "sync_settings_interactive_uitest.cc" ]
+     deps += [
+       "//chrome/browser/signin",
 diff --git a/chrome/browser/ui/webui/settings/appearance_handler.cc b/chrome/browser/ui/webui/settings/appearance_handler.cc
 index 3a5d78e018..43ba540650 100644
 --- a/chrome/browser/ui/webui/settings/appearance_handler.cc
@@ -1770,6 +4072,93 @@ index 4ada2bea3c..dde0f86ece 100644
    if (url.is_valid() && url.GetScheme() == webapps::kIsolatedAppScheme) {
      base::expected<web_app::IsolatedWebAppUrlInfo, std::string> iwa_url_info =
          web_app::IsolatedWebAppUrlInfo::Create(url);
+diff --git a/chrome/browser/ui/webui/signin/BUILD.gn b/chrome/browser/ui/webui/signin/BUILD.gn
+index 95fcfcc107..a96483b6f8 100644
+--- a/chrome/browser/ui/webui/signin/BUILD.gn
++++ b/chrome/browser/ui/webui/signin/BUILD.gn
+@@ -147,7 +147,7 @@ source_set("signin") {
+     ]
+   }
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || is_mac || (is_linux || is_mac_linux_ui)) {
+     sources += [
+       "history_sync_optin/history_sync_optin_handler.h",
+       "history_sync_optin/history_sync_optin_ui.h",
+@@ -245,7 +245,7 @@ source_set("signin_impl") {
+     ]
+   }
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || is_mac || (is_linux || is_mac_linux_ui)) {
+     sources += [
+       "history_sync_optin/history_sync_optin_handler.cc",
+       "history_sync_optin/history_sync_optin_ui.cc",
+diff --git a/chrome/browser/ui/webui/signin/history_sync_optin/BUILD.gn b/chrome/browser/ui/webui/signin/history_sync_optin/BUILD.gn
+index 86cb680353..4849ac5ecc 100644
+--- a/chrome/browser/ui/webui/signin/history_sync_optin/BUILD.gn
++++ b/chrome/browser/ui/webui/signin/history_sync_optin/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//mojo/public/tools/bindings/mojom.gni")
+ 
+-assert(is_win || is_mac || is_linux)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui))
+ 
+ mojom("mojo_bindings") {
+   sources = [ "history_sync_optin.mojom" ]
+diff --git a/chrome/browser/ui/webui/tab_search/BUILD.gn b/chrome/browser/ui/webui/tab_search/BUILD.gn
+index ce7c714b11..9aa9181c94 100644
+--- a/chrome/browser/ui/webui/tab_search/BUILD.gn
++++ b/chrome/browser/ui/webui/tab_search/BUILD.gn
+@@ -5,7 +5,7 @@
+ import("//mojo/public/tools/bindings/mojom.gni")
+ import("//ui/webui/webui_features.gni")
+ 
+-assert(is_linux || is_chromeos || is_win || is_mac)
++assert((is_linux || is_mac_linux_ui) || is_chromeos || is_win || is_mac)
+ assert(!is_fuchsia, "Fuchsia shouldn't use anything in //chrome")
+ 
+ mojom("mojo_bindings") {
+diff --git a/chrome/browser/ui/webui/updater/BUILD.gn b/chrome/browser/ui/webui/updater/BUILD.gn
+index 08a836ebfd..32d3b6b924 100644
+--- a/chrome/browser/ui/webui/updater/BUILD.gn
++++ b/chrome/browser/ui/webui/updater/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//mojo/public/tools/bindings/mojom.gni")
+ 
+-assert(is_mac || is_win || is_linux)
++assert(is_mac || is_win || (is_linux || is_mac_linux_ui))
+ 
+ mojom("mojo_bindings") {
+   sources = [ "updater_ui.mojom" ]
+diff --git a/chrome/browser/ui/webui/util/BUILD.gn b/chrome/browser/ui/webui/util/BUILD.gn
+index ec820d7f77..f05faa3673 100644
+--- a/chrome/browser/ui/webui/util/BUILD.gn
++++ b/chrome/browser/ui/webui/util/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//ui/webui/webui_features.gni")
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos)
+ 
+ source_set("util") {
+   public = [
+diff --git a/chrome/browser/ui/webui/version/BUILD.gn b/chrome/browser/ui/webui/version/BUILD.gn
+index 8c207f69b1..d9ca692890 100644
+--- a/chrome/browser/ui/webui/version/BUILD.gn
++++ b/chrome/browser/ui/webui/version/BUILD.gn
+@@ -34,7 +34,7 @@ source_set("version") {
+     "//v8:v8_version",
+   ]
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     if (use_lld) {
+       defines = [ "CHROMIUM_LINKER_NAME=\"lld\"" ]
+     } else if (use_mold) {
 diff --git a/chrome/browser/ui/webui/version/version_ui.cc b/chrome/browser/ui/webui/version/version_ui.cc
 index 4c523d48d8..4a3addc338 100644
 --- a/chrome/browser/ui/webui/version/version_ui.cc
@@ -1783,6 +4172,46 @@ index 4c523d48d8..4a3addc338 100644
  #if defined(ARCH_CPU_X86_64)
    return IDS_VERSION_UI_64BIT_INTEL;
  #elif defined(ARCH_CPU_ARM64)
+diff --git a/chrome/browser/ui/webui/whats_new/BUILD.gn b/chrome/browser/ui/webui/whats_new/BUILD.gn
+index f789527d3a..96eeae06ac 100644
+--- a/chrome/browser/ui/webui/whats_new/BUILD.gn
++++ b/chrome/browser/ui/webui/whats_new/BUILD.gn
+@@ -24,7 +24,7 @@ source_set("whats_new") {
+     "//url",
+   ]
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || is_mac || (is_linux || is_mac_linux_ui)) {
+     sources += [
+       "whats_new_fetcher.h",
+       "whats_new_handler.h",
+@@ -72,7 +72,7 @@ source_set("impl") {
+     "//url",
+   ]
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || is_mac || (is_linux || is_mac_linux_ui)) {
+     sources += [
+       "whats_new_fetcher.cc",
+       "whats_new_handler.cc",
+@@ -98,7 +98,7 @@ source_set("impl") {
+   }
+ }
+ 
+-if (is_linux || is_mac || is_win) {
++if ((is_linux || is_mac_linux_ui) || (is_mac && !is_mac_linux_ui) || is_win) {
+   source_set("unit_tests") {
+     testonly = true
+     sources = [
+@@ -177,7 +177,7 @@ source_set("interactive_ui_tests") {
+     if (use_ozone) {
+       deps += [ "//ui//ozone" ]
+     }
+-    if (is_linux) {
++    if ((is_linux || is_mac_linux_ui)) {
+       deps += [ "//ui/views:test_support" ]
+     }
+   }
 diff --git a/chrome/browser/ui/webui_browser/webui_browser_window.cc b/chrome/browser/ui/webui_browser/webui_browser_window.cc
 index a0771f25f5..102684cdb1 100644
 --- a/chrome/browser/ui/webui_browser/webui_browser_window.cc
@@ -1809,6 +4238,19 @@ index 54369c7b79..8546d88ee5 100644
  // Linux has its own implementation, see WindowSizerLinux.
  // static
  void WindowSizer::GetBrowserWindowBoundsAndShowState(
+diff --git a/chrome/browser/ui/zoom/BUILD.gn b/chrome/browser/ui/zoom/BUILD.gn
+index 8ae23e1aef..82fe0860b4 100644
+--- a/chrome/browser/ui/zoom/BUILD.gn
++++ b/chrome/browser/ui/zoom/BUILD.gn
+@@ -2,7 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
+-assert(is_win || is_mac || is_linux || is_chromeos || is_android)
++assert(is_win || is_mac || (is_linux || is_mac_linux_ui) || is_chromeos || is_android)
+ 
+ source_set("zoom") {
+   sources = [
 diff --git a/components/constrained_window/constrained_window_views.cc b/components/constrained_window/constrained_window_views.cc
 index cd235694d9..de8232e561 100644
 --- a/components/constrained_window/constrained_window_views.cc
@@ -3519,7 +5961,7 @@ index d183769a6b..a3bece31d6 100644
  #endif
  
 diff --git a/ui/base/BUILD.gn b/ui/base/BUILD.gn
-index e3fdc65a70..3882f0dc1c 100644
+index e3fdc65a70..303f0662ad 100644
 --- a/ui/base/BUILD.gn
 +++ b/ui/base/BUILD.gn
 @@ -337,12 +337,18 @@ component("base") {
@@ -3583,6 +6025,15 @@ index e3fdc65a70..3882f0dc1c 100644
      deps += [ "//ui/base/clipboard" ]
    }
  
+@@ -1392,7 +1400,7 @@ if (is_win) {
+   }
+ }
+ 
+-if (is_linux || is_chromeos) {
++if (is_linux || is_chromeos || is_mac_linux_ui) {
+   # This source set defines linux wm role names and must not have any external
+   # dependencies and be kept as minimal as possible.
+   source_set("wm_role_names") {
 diff --git a/ui/base/accelerators/accelerator.cc b/ui/base/accelerators/accelerator.cc
 index 3d8645bd5d..188c1d2739 100644
 --- a/ui/base/accelerators/accelerator.cc
@@ -6623,6 +9074,164 @@ index 21a542a563..60da127d34 100644
    bool prefer_dark_theme = false;
    raw_ptr<gfx::ImageSkia> icon = nullptr;
    std::optional<SkColor> background_color;
+diff --git a/ui/views/BUILD.gn b/ui/views/BUILD.gn
+index 3354c0c505..7b4f2cdc74 100644
+--- a/ui/views/BUILD.gn
++++ b/ui/views/BUILD.gn
+@@ -695,7 +695,7 @@ component("views") {
+     ]
+   }
+ 
+-  if (is_linux) {
++  if ((is_linux || is_mac_linux_ui)) {
+     public_deps += [ "//ui/linux:linux_ui" ]
+     deps += [ "//ui/base/ime/linux" ]
+     public += [
+@@ -968,7 +968,7 @@ component("views") {
+         public += [ "widget/desktop_aura/desktop_screen_ozone.h" ]
+         sources += [ "widget/desktop_aura/desktop_screen_ozone.cc" ]
+       }
+-      if (is_linux) {
++      if ((is_linux || is_mac_linux_ui)) {
+         public += [ "widget/desktop_aura/desktop_window_tree_host_linux.h" ]
+         sources += [
+           "widget/desktop_aura/desktop_window_tree_host_linux.cc",
+@@ -980,7 +980,7 @@ component("views") {
+           "//ui/base:ozone_buildflags",
+         ]
+       }
+-      if (is_linux || is_fuchsia) {
++      if ((is_linux || is_mac_linux_ui) || is_fuchsia) {
+         public += [
+           "widget/desktop_aura/desktop_drag_drop_client_ozone.h",
+           "widget/desktop_aura/desktop_window_tree_host_platform.h",
+@@ -993,7 +993,7 @@ component("views") {
+         ]
+         public_deps += [ "//ui/base/dragdrop/mojom:mojom_shared" ]
+       }
+-      if (is_linux) {
++      if ((is_linux || is_mac_linux_ui)) {
+         sources += [
+           "widget/desktop_aura/desktop_drag_drop_client_ozone_linux.cc",
+           "widget/desktop_aura/desktop_drag_drop_client_ozone_linux.h",
+@@ -1046,7 +1046,7 @@ component("views") {
+   }
+ }
+ 
+-if (is_win || is_mac || is_linux || is_chromeos) {
++if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos) {
+   static_library("view_pixel_diff_test_support") {
+     testonly = true
+     sources = [
+@@ -1219,7 +1219,7 @@ source_set("test_support") {
+       "win/test_support/fake_ipen_device_statics.h",
+     ]
+   }
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [
+       "test/desktop_test_views_delegate_mac.mm",
+       "test/event_generator_delegate_mac.h",
+@@ -1260,7 +1260,7 @@ source_set("test_support") {
+     deps += [ "//ui/ozone" ]
+   }
+ 
+-  if (enable_desktop_aura || is_mac) {
++  if (enable_desktop_aura || (is_mac && !is_mac_linux_ui)) {
+     sources += [
+       "test/mock_activation_controller.cc",
+       "test/mock_activation_controller.h",
+@@ -1502,7 +1502,7 @@ test("views_unittests") {
+     ]
+   }
+ 
+-  if (is_linux) {
++  if ((is_linux || is_mac_linux_ui)) {
+     sources += [
+       "window/frame_view_linux_unittest.cc",
+       "window/native_frame_view_linux_unittest.cc",
+@@ -1534,7 +1534,7 @@ test("views_unittests") {
+     deps += [ "//ui/lottie" ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [
+       "accessibility/view_ax_platform_node_delegate_mac_unittest.cc",
+       "cocoa/bridged_native_widget_unittest.mm",
+@@ -1561,7 +1561,7 @@ test("views_unittests") {
+     ]
+   }
+ 
+-  if (is_mac || enable_desktop_aura) {
++  if ((is_mac && !is_mac_linux_ui) || enable_desktop_aura) {
+     sources += [ "widget/widget_activation_delegate_unittest.cc" ]
+   }
+ 
+@@ -1599,7 +1599,7 @@ test("views_unittests") {
+       "//ui/wm/public",
+     ]
+ 
+-    if (is_mac) {
++    if ((is_mac && !is_mac_linux_ui)) {
+       # views_unittests not yet compiling on Mac. http://crbug.com/378134
+       sources -= [
+         "widget/legacy_window_reorderer_unittest.cc",
+@@ -1622,15 +1622,15 @@ test("views_unittests") {
+         "widget/desktop_aura/desktop_native_widget_aura_unittest.cc",
+         "widget/desktop_widget_unittest.cc",
+       ]
+-      if (is_linux || is_chromeos || is_fuchsia) {
++      if ((is_linux || is_mac_linux_ui) || is_chromeos || is_fuchsia) {
+         sources += [
+           "widget/desktop_aura/desktop_window_tree_host_platform_unittest.cc",
+         ]
+-        if (is_linux || is_chromeos) {
++        if ((is_linux || is_mac_linux_ui) || is_chromeos) {
+           deps += [ "//ui/platform_window/stub" ]
+         }
+       }
+-      if (is_linux || is_chromeos) {
++      if ((is_linux || is_mac_linux_ui) || is_chromeos) {
+         sources += [ "widget/desktop_aura/desktop_window_tree_host_platform_impl_unittest.cc" ]
+       }
+       if (use_ozone) {
+@@ -1641,7 +1641,7 @@ test("views_unittests") {
+     }
+   }
+ 
+-  if (is_linux) {
++  if ((is_linux || is_mac_linux_ui)) {
+     data_deps +=
+         [ "//testing/buildbot/filters:linux_ozone_views_unittests_filters" ]
+   }
+@@ -1659,7 +1659,7 @@ test("views_unittests") {
+     ]
+   }
+ 
+-  if (is_win || is_mac || is_linux || is_chromeos) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui) || is_chromeos) {
+     sources += [ "test/view_skia_gold_pixel_diff_unittest.cc" ]
+     deps += [ "//ui/views:view_pixel_diff_test_support" ]
+   }
+@@ -1721,7 +1721,7 @@ source_set("views_interactive_ui_tests") {
+     ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [
+       "cocoa/bridged_native_widget_interactive_uitest.mm",
+       "controls/native/native_view_host_mac_interactive_uitest.mm",
+@@ -1746,7 +1746,7 @@ source_set("views_interactive_ui_tests") {
+       "//ui/wm/public",
+     ]
+ 
+-    if (is_linux) {
++    if ((is_linux || is_mac_linux_ui)) {
+       sources += [ "widget/desktop_aura/desktop_window_tree_host_platform_impl_interactive_uitest.cc" ]
+     }
+ 
 diff --git a/ui/views/accessibility/view_accessibility.cc b/ui/views/accessibility/view_accessibility.cc
 index 8fe7a551bd..1e4f633385 100644
 --- a/ui/views/accessibility/view_accessibility.cc
@@ -6760,6 +9369,92 @@ index 6aa745b6a9..3fa7267d23 100644
    bool SetCompositionFromExistingText(
        const gfx::Range& range,
        const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override;
+diff --git a/ui/views/controls/webview/BUILD.gn b/ui/views/controls/webview/BUILD.gn
+index e741b52a4d..285c4f1792 100644
+--- a/ui/views/controls/webview/BUILD.gn
++++ b/ui/views/controls/webview/BUILD.gn
+@@ -19,7 +19,7 @@ component("webview") {
+     "webview_export.h",
+   ]
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [ "unhandled_keyboard_event_handler_mac.mm" ]
+   }
+ 
+@@ -29,7 +29,7 @@ component("webview") {
+ 
+   defines = [ "WEBVIEW_IMPLEMENTATION" ]
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     frameworks = [ "CoreFoundation.framework" ]
+   }
+ 
+@@ -56,7 +56,7 @@ component("webview") {
+     "//ui/views",
+   ]
+ 
+-  if (is_linux || is_chromeos || is_android || is_fuchsia) {
++  if ((is_linux || is_mac_linux_ui) || is_chromeos || is_android || is_fuchsia) {
+     if (use_ozone) {
+       sources += [ "unhandled_keyboard_event_handler_ozone.cc" ]
+       deps += [ "//ui/ozone" ]
+diff --git a/ui/views/examples/BUILD.gn b/ui/views/examples/BUILD.gn
+index 7ecb90086e..84fbaad41b 100644
+--- a/ui/views/examples/BUILD.gn
++++ b/ui/views/examples/BUILD.gn
+@@ -7,7 +7,7 @@ import("//testing/test.gni")
+ import("//tools/grit/grit_rule.gni")
+ import("//ui/gl/features.gni")
+ 
+-if (is_mac) {
++if ((is_mac && !is_mac_linux_ui)) {
+   import("//build/apple/tweak_info_plist.gni")
+   import("//build/config/mac/rules.gni")
+ }
+@@ -198,7 +198,7 @@ source_set("views_examples_proc") {
+     "//ui/views:test_support",
+   ]
+ 
+-  if (is_win || is_mac || is_linux) {
++  if (is_win || (is_mac && !is_mac_linux_ui) || (is_linux || is_mac_linux_ui)) {
+     sources += [
+       "examples_skia_gold_pixel_diff.cc",
+       "examples_skia_gold_pixel_diff.h",
+@@ -214,7 +214,7 @@ source_set("views_examples_proc") {
+     deps += [ "//build/win:default_exe_manifest" ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [
+       "examples_main_proc_mac_parts.h",
+       "examples_main_proc_mac_parts.mm",
+@@ -252,12 +252,12 @@ source_set("views_examples_main") {
+     "//base/test:test_support",
+   ]
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     deps += [ ":views_examples_main_mac_support" ]
+   }
+ }
+ 
+-if (is_mac) {
++if ((is_mac && !is_mac_linux_ui)) {
+   source_set("views_examples_main_mac_support") {
+     testonly = true
+     sources = [
+@@ -468,7 +468,7 @@ executable("views_examples_with_content") {
+     configs -= [ "//build/config/win:console" ]
+   }
+ 
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     deps += [ "//sandbox/mac:seatbelt" ]
+   }
+ }
 diff --git a/ui/views/examples/widget_example.cc b/ui/views/examples/widget_example.cc
 index 8a6f5cd7d9..8f75d80922 100644
 --- a/ui/views/examples/widget_example.cc
