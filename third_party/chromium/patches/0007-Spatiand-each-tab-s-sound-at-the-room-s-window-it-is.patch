@@ -3,6 +3,12 @@ From: Spatiand-build <claude@prasetya.id>
 Date: Fri, 30 Oct 2026 12:18:05 +0700
 Subject: [PATCH] Spatiand: each tab's sound at the room's window it is in
 
+Routed only when something changes, never on a timer: the room's map of sinks
+changing (a file watch), a page beginning a sound with no output chosen
+(PreferredAudioOutputDeviceManager::AddSwitcher; covers Chromium forgetting a
+page's output at each main-frame navigation, YouTube's next video among them),
+and a tab moving into another window (WebContentsViewAura).
+
 The room gives every SpatiMesh window a sink of its own, keyed by this process and the window's
 Wayland surface (ui::PlatformWindow::GetSpatiandSurfaceId), and lists them in
 $XDG_RUNTIME_DIR/spatiand-sinks. SpatiandWindowAudio makes each tab's preferred output its
@@ -63,10 +69,10 @@ index 78f29c0e4d..e2b7ba6d3e 100644
  
 diff --git a/content/browser/media/spatiand_window_audio.cc b/content/browser/media/spatiand_window_audio.cc
 new file mode 100644
-index 0000000000..47bfff735a
+index 0000000000..9abb7e851c
 --- /dev/null
 +++ b/content/browser/media/spatiand_window_audio.cc
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,170 @@
 +// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
 +
@@ -82,14 +88,16 @@ index 0000000000..47bfff735a
 +
 +#include "base/environment.h"
 +#include "base/files/file_path.h"
++#include "base/files/file_path_watcher.h"
 +#include "base/files/file_util.h"
 +#include "base/functional/bind.h"
 +#include "base/functional/callback_helpers.h"
++#include "base/logging.h"
 +#include "base/no_destructor.h"
 +#include "base/strings/string_split.h"
 +#include "base/strings/stringprintf.h"
++#include "base/task/sequenced_task_runner.h"
 +#include "base/task/thread_pool.h"
-+#include "base/timer/timer.h"
 +#include "content/browser/renderer_host/media/media_stream_manager.h"
 +#include "content/browser/renderer_host/media/preferred_audio_output_device_manager.h"
 +#include "content/browser/web_contents/web_contents_impl.h"
@@ -97,6 +105,7 @@ index 0000000000..47bfff735a
 +#include "content/public/browser/browser_thread.h"
 +#include "content/public/browser/global_routing_id.h"
 +#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/web_contents.h"
 +#include "ui/aura/window.h"
 +#include "ui/aura/window_tree_host.h"
 +
@@ -104,20 +113,32 @@ index 0000000000..47bfff735a
 +
 +namespace {
 +
-+// How soon a tab's sound follows it into another window (or the room's sink for a new window
-+// appears): twice a second, a file read off the UI thread and a walk over the tabs.
-+constexpr base::TimeDelta kEvery = base::Milliseconds(500);
++// Nothing here runs on a timer. A tab's sound is routed when something changes it: the room's
++// map of sinks changing (a window appearing, going, or given another sink), a page beginning a
++// sound with no output chosen for it (a new page, or one whose output Chromium forgot at a
++// navigation of its main frame, YouTube opening its next video among them), and a tab moving
++// into another window. With nothing playing and nothing changing, it costs nothing.
 +
 +using SinkMap = std::map<std::string, std::string>;
 +
-+// The room's sinks by window key, from `$XDG_RUNTIME_DIR/spatiand-sinks` (`key<TAB>sink` lines,
-+// written by the room as windows come and go).
-+SinkMap ReadSinkMap() {
-+  SinkMap sinks;
++// The map as last read. On the UI thread.
++SinkMap& Sinks() {
++  static base::NoDestructor<SinkMap> sinks;
++  return *sinks;
++}
++
++// `$XDG_RUNTIME_DIR/spatiand-sinks`, where the room writes its map; empty when there is no room.
++base::FilePath SinkMapPath() {
 +  std::unique_ptr<base::Environment> env = base::Environment::Create();
 +  std::optional<std::string> dir = env->GetVar("XDG_RUNTIME_DIR");
++  return dir ? base::FilePath(*dir).Append("spatiand-sinks") : base::FilePath();
++}
++
++// The room's sinks by window key (`key<TAB>sink` lines). May block.
++SinkMap ReadSinkMap(const base::FilePath& path) {
++  SinkMap sinks;
 +  std::string text;
-+  if (!dir || !base::ReadFileToString(base::FilePath(*dir).Append("spatiand-sinks"), &text)) {
++  if (!base::ReadFileToString(path, &text)) {
 +    return sinks;
 +  }
 +  for (std::string_view line :
@@ -131,9 +152,9 @@ index 0000000000..47bfff735a
 +  return sinks;
 +}
 +
-+// Sets the page's preferred output where Chromium does not already hold it. Asked every tick,
-+// not remembered: Chromium forgets a page's preferred output on each navigation of its main
-+// frame, a page's own included (YouTube opening a video is one), while the frame stays the same.
++// Sets the page's preferred output where Chromium does not already hold it: what Chromium holds
++// is asked each time rather than remembered here, because Chromium forgets a page's preferred
++// output at each navigation of its main frame while the frame stays the same.
 +void SetPreferredSinkOnIO(GlobalRenderFrameHostToken frame, std::string sink) {
 +  auto* manager = MediaStreamManager::GetPreferredOutputManagerInstance();
 +  if (!manager || manager->GetPreferredSinkId(frame) == sink) {
@@ -142,34 +163,54 @@ index 0000000000..47bfff735a
 +  manager->SetPreferredSinkId(frame, sink, base::DoNothing());
 +}
 +
-+// Each tab's sound to the sink of the window it is in: its window's key is this process and the
-+// window's surface, as the room keys the sink it gives every SpatiMesh window.
-+void Route(SinkMap sinks) {
-+  for (WebContentsImpl* contents : WebContentsImpl::GetAllWebContents()) {
-+    gfx::NativeWindow window = contents->GetTopLevelNativeWindow();
-+    if (!window || !window->GetHost() || !contents->GetPrimaryMainFrame()) {
-+      continue;
-+    }
-+    std::string sink;
++// One tab to the sink of the window it is in: its window's key is this process and the window's
++// surface, as the room keys the sink it gives every SpatiMesh window. Empty is the default (the
++// sink SpatiMesh was launched with).
++void RouteContents(WebContents* contents) {
++  if (!contents || !contents->GetPrimaryMainFrame()) {
++    return;
++  }
++  std::string sink;
++  gfx::NativeWindow window = contents->GetTopLevelNativeWindow();
++  if (window && window->GetHost()) {
 +    if (const uint32_t surface = window->GetHost()->GetSpatiandSurfaceId()) {
-+      const auto it = sinks.find(base::StringPrintf("wl:%d:%u", getpid(), surface));
-+      if (it != sinks.end()) {
++      const auto it = Sinks().find(base::StringPrintf("wl:%d:%u", getpid(), surface));
++      if (it != Sinks().end()) {
 +        sink = it->second;
 +      }
 +    }
-+    const GlobalRenderFrameHostToken frame =
-+        contents->GetPrimaryMainFrame()->GetGlobalFrameToken();
-+    // Streams playing on the default device switch to it as they play; an empty sink is the
-+    // default again (the sink SpatiMesh was launched with).
-+    GetIOThreadTaskRunner({})->PostTask(FROM_HERE,
-+                                        base::BindOnce(&SetPreferredSinkOnIO, frame, sink));
++  }
++  const GlobalRenderFrameHostToken frame = contents->GetPrimaryMainFrame()->GetGlobalFrameToken();
++  // Streams already playing switch to it as they play.
++  GetIOThreadTaskRunner({})->PostTask(FROM_HERE,
++                                      base::BindOnce(&SetPreferredSinkOnIO, frame, sink));
++}
++
++// The room's map changed: every tab, against the new one.
++void RouteAll(SinkMap sinks) {
++  Sinks() = std::move(sinks);
++  for (WebContentsImpl* contents : WebContentsImpl::GetAllWebContents()) {
++    RouteContents(contents);
 +  }
 +}
 +
-+void Tick() {
-+  base::ThreadPool::PostTaskAndReplyWithResult(
-+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
-+      base::BindOnce(&ReadSinkMap), base::BindOnce(&Route));
++// On the watcher's sequence, which may block.
++void OnSinkMapChanged(const base::FilePath& path, bool error) {
++  if (error) {
++    return;
++  }
++  GetUIThreadTaskRunner({})->PostTask(FROM_HERE, base::BindOnce(&RouteAll, ReadSinkMap(path)));
++}
++
++// On the watcher's sequence: watch the map for good, and read it once now. The room replaces the
++// file by renaming a new one over it, which a watch of the path sees.
++void Watch(const base::FilePath& path) {
++  static base::NoDestructor<base::FilePathWatcher> watcher;
++  if (!watcher->Watch(path, base::FilePathWatcher::Type::kNonRecursive,
++                      base::BindRepeating(&OnSinkMapChanged))) {
++    LOG(WARNING) << "Spatiand: cannot watch " << path << "; tabs keep the sinks they have";
++  }
++  OnSinkMapChanged(path, false);
 +}
 +
 +}  // namespace
@@ -177,32 +218,62 @@ index 0000000000..47bfff735a
 +// static
 +void SpatiandWindowAudio::Start() {
 +  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-+  static base::NoDestructor<base::RepeatingTimer> timer;
-+  timer->Start(FROM_HERE, kEvery, base::BindRepeating(&Tick));
++  const base::FilePath path = SinkMapPath();
++  if (path.empty()) {
++    return;
++  }
++  static base::NoDestructor<scoped_refptr<base::SequencedTaskRunner>> runner(
++      base::ThreadPool::CreateSequencedTaskRunner(
++          {base::MayBlock(), base::TaskPriority::USER_VISIBLE}));
++  (*runner)->PostTask(FROM_HERE, base::BindOnce(&Watch, path));
++}
++
++// static
++void SpatiandWindowAudio::SoundBegins(GlobalRenderFrameHostToken main_frame) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  if (RenderFrameHost* frame = RenderFrameHost::FromFrameToken(main_frame)) {
++    RouteContents(WebContents::FromRenderFrameHost(frame));
++  }
++}
++
++// static
++void SpatiandWindowAudio::MovedWindow(WebContents* contents) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  RouteContents(contents);
 +}
 +
 +}  // namespace content
 diff --git a/content/browser/media/spatiand_window_audio.h b/content/browser/media/spatiand_window_audio.h
 new file mode 100644
-index 0000000000..e88fbb636c
+index 0000000000..62e0e922d2
 --- /dev/null
 +++ b/content/browser/media/spatiand_window_audio.h
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,30 @@
 +// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
 +
 +#ifndef CONTENT_BROWSER_MEDIA_SPATIAND_WINDOW_AUDIO_H_
 +#define CONTENT_BROWSER_MEDIA_SPATIAND_WINDOW_AUDIO_H_
 +
++#include "content/public/browser/global_routing_id.h"
++
 +namespace content {
++
++class WebContents;
 +
 +// Each tab's sound placed at the window it is in, in Spatiand's room: the room gives every
 +// SpatiMesh window a sink of its own and says where they are; each tab plays to its window's
 +// (the page's preferred output device), and follows it to another window as it is dragged there.
++// Routed only when something changes, never on a timer.
 +class SpatiandWindowAudio {
 + public:
-+  // Begins routing, for the life of the browser. On the UI thread.
++  // Begins watching the room's map of sinks, for the life of the browser. On the UI thread.
 +  static void Start();
++  // A page has begun a sound with no output chosen for it (PreferredAudioOutputDeviceManager):
++  // a new page, or one whose output Chromium forgot at a navigation. On the UI thread.
++  static void SoundBegins(GlobalRenderFrameHostToken main_frame);
++  // A tab has moved into another window (WebContentsViewAura). On the UI thread.
++  static void MovedWindow(WebContents* contents);
 +};
 +
 +}  // namespace content
@@ -318,6 +389,61 @@ index e9eb27e497..57c2325dad 100644
    // Informs the window it is going to be destroyed sometime soon. This is only
    // called for specific code paths, for example by Ash, so it shouldn't be
    // assumed this will get called before destruction.
+diff --git a/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc b/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc
+index 5ec0724a8a..536faa11a9 100644
+--- a/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc
++++ b/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc
+@@ -11,6 +11,12 @@
+ #include "content/browser/renderer_host/render_frame_host_impl.h"
+ #include "content/public/common/content_features.h"
+ #include "media/audio/audio_device_description.h"
++
++// Spatiand
++#include "base/functional/bind.h"
++#include "build/build_config.h"
++#include "content/browser/media/spatiand_window_audio.h"
++#include "content/public/browser/browser_task_traits.h"
+ #include "third_party/blink/public/mojom/media/renderer_audio_input_stream_factory.mojom.h"
+ 
+ namespace content {
+@@ -150,6 +156,13 @@ void PreferredAudioOutputDeviceManagerImpl::AddSwitcher(
+     AddNewConfigEntry(main_frame_token,
+                       media::AudioDeviceDescription::kDefaultDeviceId,
+                       device_switcher);
++#if BUILDFLAG(IS_LINUX)
++    // Spatiand: a page begins a sound with no output chosen for it (a new page, or one whose
++    // output was forgotten at a navigation): it is given its window's sink in the room.
++    GetUIThreadTaskRunner({})->PostTask(
++        FROM_HERE,
++        base::BindOnce(&SpatiandWindowAudio::SoundBegins, main_frame_token));
++#endif
+   }
+ }
+ 
+diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
+index 8e9457fe57..144c0c9ce1 100644
+--- a/content/browser/web_contents/web_contents_view_aura.cc
++++ b/content/browser/web_contents/web_contents_view_aura.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "content/browser/web_contents/web_contents_view_aura.h"
+ 
++#include "content/browser/media/spatiand_window_audio.h"
++
+ #include <stddef.h>
+ #include <stdint.h>
+ 
+@@ -565,6 +567,10 @@ class WebContentsViewAura::WindowObserver
+     window->GetHost()->AddObserver(this);
+     if (view_->web_contents_->IsBeingCaptured())
+       view_->video_capture_lock_ = window->GetHost()->CreateVideoCaptureLock();
++#if BUILDFLAG(IS_LINUX)
++    // Spatiand: a tab in another window sounds at that window in the room.
++    SpatiandWindowAudio::MovedWindow(view_->web_contents_);
++#endif
+   }
+ 
+   void OnWindowRemovingFromRootWindow(aura::Window* window,
 -- 
 2.53.0
 
