@@ -144,8 +144,42 @@ waits on. Fixed:
   event-tracking loops) with nothing.
 
 **To come over from the Beam Pro** (its patches that are not bionic's alone): Spatiand's own file
-chooser (`android-libc/0019`; the Linux path has no portal on the Mac) and each window's sound
-handed to the room (`android-libc/0012`).
+chooser (`android-libc/0019`; the Linux path has no portal on the Mac). Each window's sound handed
+to the room (`android-libc/0012`) came over on 2026-11-11, below.
+
+## It runs (2026-11-11, night)
+
+Pass 13 links; from there each fault was found by running it (`tools/spatimesh-mac-test`, the
+snapshot room on littleotter: no glasses, no screen, no unlocked Mac needed):
+
+- FFmpeg and the OpenSSL it links are put in the framework's `Libraries` after every build
+  (`third_party/chromium/mac/ozbuild.sh`).
+- The global-shortcut listener answers none on the Mac (the Ozone one fell off its end and trapped).
+- `fullscreen.allowed` is registered on the Linux UI (BrowserCommandController reads it).
+- The renderer's request for Cocoa's text-input host is taken and let go (it ended the renderer).
+- viz draws through Ozone's canvas (wl_shm), not a CALayer: `output_surface_provider_impl.cc`.
+- A page's Mac scrollbars are painted with macOS's theme (`NativeThemeMac::GetInstanceForWebScrollbars`):
+  the UI's theme is Aura's, which has no Mac scrollbar parts, and a page that grew a scrollbar
+  ended its renderer (SIGABRT, "Aw, Snap! 6").
+
+**Sound**: the Beam Pro's sound manager (`media/audio/spatiand`) in place of CoreAudio; the audio
+service's seatbelt may connect to the room's two sockets (`spatiand-(sound|mic)`) and nothing
+else; patch 0007's routing on events; each window says its sound key (patch 0020), which the room
+uses where it cannot read the client's process. Checked in the snapshot room with its sound on
+(`SPATIAND_SNAPSHOT_SOUND=1`): each window's sound through its own slot; a tab moved into another
+window (the oldest, so not the default) heard there; three media tabs in two windows, each at its
+window.
+
+**Codecs** (`media/matrix.html`, each file 3 s): H.264, HEVC, VP9, MPEG-2 video; AAC, AC-3, MP3,
+Vorbis, FLAC; MP4, WebM, MKV (with SRT), MPEG-2 TS (H.264, HEVC, MPEG-2), AVI (DivX/MP3) all play.
+**Not**: AV1 (no decoder: `enable_dav1d_decoder = false` in the shared args), VOB (no MPEG-PS
+demuxer, as on the Deck), MP2 sound (Chromium has no MP2, as on the Deck: the picture plays
+silent), Opus in a plain file (`<video src>`: FFmpeg's demuxer path rejects the track; Opus through
+MSE, which is YouTube's path, plays and is heard). Probably the same on the Deck; not checked there.
+
+**Not yet**: drawing with the GPU (all of the above is software, `--disable-gpu`); SpatiMesh
+started by Spatiand.app (own.rs) from its bundle; Spatiand's own hooks that are `IS_LINUX`-only
+(profile lock, ProfileServiceFactory, SpatiKey's entry points, the profile menu); the file chooser.
 
 ## Resuming (littleotter is shut down at night)
 

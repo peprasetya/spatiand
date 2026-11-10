@@ -8020,6 +8020,32 @@ index c3af283ccd..2f53c23ebb 100644
 +; ($XDG_RUNTIME_DIR), and nothing else.
 +(allow network-outbound
 +  (remote unix-socket (path-regex #"/spatiand-(sound|mic)$")))
+diff --git a/third_party/blink/renderer/platform/theme/web_theme_engine_mac.cc b/third_party/blink/renderer/platform/theme/web_theme_engine_mac.cc
+index ecb2723266..a6788b3882 100644
+--- a/third_party/blink/renderer/platform/theme/web_theme_engine_mac.cc
++++ b/third_party/blink/renderer/platform/theme/web_theme_engine_mac.cc
+@@ -2,6 +2,8 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#include "build/build_config.h"
++#include "ui/native_theme/native_theme_mac.h"
+ #include "third_party/blink/renderer/platform/theme/web_theme_engine_mac.h"
+ 
+ #include <variant>
+@@ -77,7 +79,12 @@ void WebThemeEngineMac::PaintMacScrollBarParts(
+       break;
+   }
+ 
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: macOS's scrollbars, painted by macOS's theme (the UI's is Aura's).
++  ui::NativeThemeMac::GetInstanceForWebScrollbars()->Paint(
++#else
+   ui::NativeTheme::GetInstanceForNativeUi()->Paint(
++#endif
+       canvas, color_provider, NativeThemePart(part), NativeThemeState(state),
+       rect, ui::NativeTheme::ExtraParams(native_scrollbar_extra), forced_colors,
+       NativeColorScheme(color_scheme));
 diff --git a/third_party/libdrm/BUILD.gn b/third_party/libdrm/BUILD.gn
 index 43cc4de4ef..81c8f8b62e 100644
 --- a/third_party/libdrm/BUILD.gn
@@ -11752,6 +11778,39 @@ index 40cead3829..fb049db60d 100644
      case kFrameTopArea:
        PaintFrameTopArea(canvas, state, rect,
                          std::get<FrameTopAreaExtraParams>(extra_params));
+diff --git a/ui/native_theme/native_theme_mac.h b/ui/native_theme/native_theme_mac.h
+index 69c7f3f86f..3daf7b8a96 100644
+--- a/ui/native_theme/native_theme_mac.h
++++ b/ui/native_theme/native_theme_mac.h
+@@ -28,6 +28,11 @@ class ColorProvider;
+ class COMPONENT_EXPORT(NATIVE_THEME) NativeThemeMac : public NativeThemeBase {
+  public:
+   NativeThemeMac(const NativeThemeMac&) = delete;
++
++  // Spatiand: the Linux UI on macOS. The browser's own UI takes Aura's theme there
++  // (GetInstanceForNativeUi), but a page is drawn by macOS's renderer with macOS's
++  // scrollbars, which only this theme paints (WebThemeEngineMac).
++  static NativeThemeMac* GetInstanceForWebScrollbars();
+   NativeThemeMac& operator=(const NativeThemeMac&) = delete;
+ 
+   // The minimum size in px for the thumb, given device scale factor `scale`.
+diff --git a/ui/native_theme/native_theme_mac.mm b/ui/native_theme/native_theme_mac.mm
+index fdec6944fb..4845610358 100644
+--- a/ui/native_theme/native_theme_mac.mm
++++ b/ui/native_theme/native_theme_mac.mm
+@@ -364,6 +364,12 @@ void PaintMacScrollBarTrackOrCorner(
+   canvas->drawRoundRect(gfx::RectToSkRect(rect), radius, radius, flags);
+ }
+ 
++// static
++NativeThemeMac* NativeThemeMac::GetInstanceForWebScrollbars() {
++  static base::NoDestructor<NativeThemeMac> theme;
++  return theme.get();
++}
++
+ NativeThemeMac::NativeThemeMac() {
+   if (static bool initialized = false; !initialized) {
+     // Observe caption style changes. Technically these notify the web instance
 diff --git a/ui/native_window_tracker/BUILD.gn b/ui/native_window_tracker/BUILD.gn
 index 722ec19156..d421cf8d13 100644
 --- a/ui/native_window_tracker/BUILD.gn
