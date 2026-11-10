@@ -35,6 +35,9 @@ final class GlassesScreen {
     private(set) var status = "Waiting for the glasses"
     /// Said, on the main thread, once the display has gone away.
     var onLost: (() -> Void)?
+    /// The room's picture is on the glasses (true), or no longer (false): what the pointer and
+    /// keys follow (`Room.start`).
+    var onShown: ((Bool) -> Void)?
     /// How wide the window on the glasses is, in the display's own pixels.
     private var pixelWidth: CGFloat = 0
     var onChange: (() -> Void)?
@@ -289,6 +292,7 @@ final class GlassesScreen {
         window = w
         hasHadAWindow = true
         opening = false
+        onShown?(true)
 
         let pixels = (Int32(frame.width * scale), Int32(frame.height * scale))
         pixelWidth = CGFloat(pixels.0)
@@ -347,6 +351,7 @@ final class GlassesScreen {
         watchdog?.invalidate()
         watchdog = nil
         guard window != nil else { return }
+        defer { onShown?(false) }
         sp_glasses_gone()
         // Made nothing before it is put away: the window server has been seen to keep a window
         // whose display changed under it, on the Mac's own screen, black and above everything.

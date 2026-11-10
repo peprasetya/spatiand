@@ -118,7 +118,22 @@ final class Room {
             screen.startPreview()
             if MacWindows.allowed(ask: false) { RoomWindows.shared.start() }
         } else {
-            if Settings.captureInput, RoomTap.allowed(ask: true) { RoomTap.shared.hold(true) }
+            // **The pointer and keys are the room's once the room is on the glasses**, not at the
+            // plug-in: glasses whose USB came back without their display (dropping again and
+            // again, littleotter 2026-11-10) had the room hold the trackpad while the Mac's own
+            // desktop was what was on them -- no two-finger scroll in its windows, a pinch
+            // zooming a room window nobody could see. Given back while the picture is gone (a
+            // change of mode, a display that went), and taken again when it comes unless the
+            // wearer had given them back to the Mac (Control-Option-G).
+            var takeWhenShown = Settings.captureInput
+            screen.onShown = { shown in
+                if shown {
+                    if takeWhenShown, RoomTap.allowed(ask: true) { RoomTap.shared.hold(true) }
+                } else {
+                    takeWhenShown = RoomTap.shared.holding
+                    RoomTap.shared.hold(false)
+                }
+            }
             screen.start()
             // Every window open on this Mac, in the room's list of windows.
             if MacWindows.allowed(ask: true) { RoomWindows.shared.start() }
