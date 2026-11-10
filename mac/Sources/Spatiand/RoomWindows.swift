@@ -55,6 +55,11 @@ final class RoomWindows {
     /// it is told, it is among those `seen`.
     private var untold: [CGWindowID: (since: Date, opened: Bool)] = [:]
     private var focused: UInt32 = 0
+    /// The modifier keys the room has pressed and not yet let go, as this Mac's key codes: the
+    /// real keyboard's, and those the room presses itself -- the on-screen keyboard's shift, the
+    /// shift dictation holds for a capital or a question mark. Each key posted carries them, as
+    /// the Beam Pro's apps' keys carry their meta state (crates/spatiand-android, `meta_after`).
+    private var heldModifiers = Set<UInt16>()
     /// The window the Mac had in front at the last scan.
     private var macFront: CGWindowID?
     /// Where the pointer is in each window, in its pixels, as last said.
@@ -594,6 +599,8 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
     private func topWindow(at p: CGPoint, for pid: pid_t) -> (pid: pid_t, id: CGWindowID)? { MacInput.top(at: p, for: pid) }
 
     private func focus(_ id: UInt32) {
+        // A window that loses the keys is told no more of them, its releases neither.
+        if id != focused { heldModifiers.removeAll() }
         focused = id
         if id != 0 { raise(id) }
     }
@@ -759,13 +766,28 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         post(event)
     }
 
+    /// The flags a key posted now carries: the real keyboard's (caps lock among them), and the
+    /// modifiers the room holds, whoever pressed them. The real keyboard's alone left the
+    /// on-screen keyboard's shift and dictation's off every key (2026-11-10: "?" typed as "/").
+    private func keyFlags() -> CGEventFlags {
+        var flags = RoomTap.shared.flags
+        let held = heldModifiers
+        if held.contains(0x38) || held.contains(0x3C) { flags.insert(.maskShift) }
+        if held.contains(0x3B) || held.contains(0x3E) { flags.insert(.maskControl) }
+        if held.contains(0x3A) || held.contains(0x3D) { flags.insert(.maskAlternate) }
+        if held.contains(0x37) || held.contains(0x36) { flags.insert(.maskCommand) }
+        return flags
+    }
+
     private func key(_ code: UInt16, down: Bool, isRepeat: Bool = false) {
-        // Modifier keys are not posted as keys: they are the flags on the keys that follow, and
-        // the flags are the real keyboard's, which is the one being typed on.
+        // Modifier keys are not posted as keys: they are the flags on the keys that follow.
         if [0x38, 0x3C, 0x3B, 0x3E, 0x3A, 0x3D, 0x37, 0x36, 0x39].contains(code) {
+            if code != 0x39 {
+                if down { heldModifiers.insert(code) } else { heldModifiers.remove(code) }
+            }
             let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(code), keyDown: down)
             event?.type = .flagsChanged
-            event?.flags = RoomTap.shared.flags
+            event?.flags = keyFlags()
             post(event)
             return
         }
@@ -774,10 +796,11 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             raise(focused)
         }
         let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(code), keyDown: down)
-        event?.flags = RoomTap.shared.flags
+        let flags = keyFlags()
+        event?.flags = flags
         if isRepeat { event?.setIntegerValueField(.keyboardEventAutorepeat, value: 1) }
         post(event)
-        if !down, RoomTap.shared.flags.contains(.maskCommand) { rescanSoon() }
+        if !down, flags.contains(.maskCommand) { rescanSoon() }
     }
 
     private func close(_ id: UInt32) {
