@@ -207,6 +207,23 @@ pub trait Hmd: Send {
         None
     }
 
+    /// Run the panel at this refresh rate from the next mode change on, where something other
+    /// than Spatiand composites at its own rate (a Beam Pro's compositor runs every display at
+    /// 60 Hz; a panel at 72 shows one frame in five twice). `false` for a device with no mode
+    /// for it, or no say in it.
+    fn prefer_refresh(&mut self, hz: u32) -> bool {
+        let _ = hz;
+        false
+    }
+
+    /// A headset left in a two-eye mode by whatever had it last, put back in one eye: asked
+    /// for two eyes again it may do nothing, and an OS that learns of the wide picture only at
+    /// a change goes on offering one eye. Returns whether it did, after giving the OS a moment
+    /// to see the change.
+    fn start_from_one_eye(&mut self) -> bool {
+        false
+    }
+
     /// Best effort: leave the device in a state a normal desktop can use. Called on shutdown
     /// and, importantly, on panic paths — glasses left in stereo mode show every desktop
     /// squashed into half the screen, which looks like a broken machine.
@@ -238,9 +255,35 @@ pub fn open_any() -> Result<Box<dyn Hmd>> {
         log::info!("SPATIAND_HMD=null — using the stub headset");
         return Ok(Box::new(NullHmd::new()));
     }
-    match XrealGlasses::open_any() {
-        Ok(g) => Ok(Box::new(g)),
-        Err(HmdError::NotFound) => Err(HmdError::NotFound),
-        Err(e) => Err(e),
+    // **By the table's drivers**, not by one brand: each driver opens the first plugged-in
+    // headset of its rows, and a driver the table names that this build has not is said.
+    for driver in device::drivers() {
+        let opened: Result<Box<dyn Hmd>> = match driver {
+            "xreal" => XrealGlasses::open_any().map(|g| Box::new(g) as Box<dyn Hmd>),
+            other => {
+                log::warn!("devices.toml names the driver {other:?}, which this build has not");
+                continue;
+            }
+        };
+        match opened {
+            Err(HmdError::NotFound) => continue,
+            other => return other,
+        }
+    }
+    Err(HmdError::NotFound)
+}
+
+/// Open the headset a usbfs descriptor is for (what Android's `UsbManager.openDevice` hands an
+/// app), by the driver its row in the table names.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn open_usb(fd: std::os::fd::OwnedFd) -> Result<Box<dyn Hmd>> {
+    let usb = usbfs::UsbDevice::from_fd(fd)?;
+    let spec = device::lookup(usb.vid(), usb.pid()).ok_or(HmdError::NotFound)?;
+    match spec.driver.as_str() {
+        "xreal" => XrealGlasses::open_usb_device(usb, spec).map(|g| Box::new(g) as Box<dyn Hmd>),
+        other => Err(HmdError::Protocol(format!(
+            "{} needs the driver {other:?}, which this build has not",
+            spec.name
+        ))),
     }
 }

@@ -1,11 +1,12 @@
-//  Glasses.swift — is a pair of XREAL glasses plugged in?
+//  Glasses.swift — is a pair of glasses the device table knows plugged in?
 //
 //  Spatiand on the Mac does not need glasses. With none, everything it shows is an ordinary
 //  window on this Mac; with a pair, the same things go into the 3D world. This is the one place
 //  that knows which it is, and it only says *whether*: how the glasses are driven is HoloFrame's
 //  business today (HeadTracker, the virtual display) and will be this app's later.
 //
-//  Detected the way HoloFrame does it: the glasses' own USB HID interface, vendor 0x3318.
+//  Detected the way HoloFrame does it: the glasses' own USB HID interface, by the vendor and
+//  product the device table has for each headset it knows (Headsets.swift).
 
 import Foundation
 import IOKit.hid
@@ -19,8 +20,9 @@ final class GlassesWatcher {
     var isPluggedIn: Bool { count > 0 }
 
     func start() {
-        let match: [String: Any] = [kIOHIDVendorIDKey: 0x3318]
-        IOHIDManagerSetDeviceMatching(manager, match as CFDictionary)
+        // Every headset the device table knows (Headsets.swift, generated from devices.toml).
+        let match: [[String: Any]] = Headsets.usb.map { [kIOHIDVendorIDKey: $0.vendor, kIOHIDProductIDKey: $0.product] }
+        IOHIDManagerSetDeviceMatchingMultiple(manager, match as CFArray)
         let this = Unmanaged.passUnretained(self).toOpaque()
         IOHIDManagerRegisterDeviceMatchingCallback(manager, { context, _, _, _ in
             guard let context else { return }

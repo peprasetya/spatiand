@@ -60,6 +60,10 @@ pub struct DeviceSpec {
     /// a per-user question at all — see [`Mounting`].
     #[serde(default)]
     pub sensor_axes: Option<Mounting>,
+    /// The display's EDID manufacturer ID and product code, if read off real hardware: how a
+    /// platform that sees several screens picks out the glasses' (see devices.toml).
+    #[serde(default)]
+    pub edid: Option<(u16, u16)>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,9 +89,53 @@ pub fn lookup(vid: u16, pid: u16) -> Option<&'static DeviceSpec> {
     all().iter().find(|d| d.vid == vid && d.pid == pid)
 }
 
+/// The headset whose display says it is this EDID manufacturer and product.
+pub fn by_display(edid_vendor: u16, edid_product: u16) -> Option<&'static DeviceSpec> {
+    all().iter().find(|d| d.edid == Some((edid_vendor, edid_product)))
+}
+
+/// Every driver the table names, each once, in the table's order.
+pub fn drivers() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    for d in all() {
+        if !out.contains(&d.driver.as_str()) {
+            out.push(d.driver.as_str());
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Mac's and the Beam Pro's shells have the table as generated files
+    /// (tools/gen-headsets.py): each row there, the same as here.
+    #[test]
+    fn generated_shell_tables_match() {
+        let swift = include_str!("../../../mac/Sources/Spatiand/Headsets.swift");
+        let java = include_str!("../../../android/src/id/prasetya/spatiand/Headsets.java");
+        let xml = include_str!("../../../android/res/xml/glasses.xml");
+        let rerun = "devices.toml changed: run tools/gen-headsets.py";
+        for d in all() {
+            let usb = format!("(vendor: 0x{:04x}, product: 0x{:04x}, name: \"{}\")", d.vid, d.pid, d.name);
+            assert!(swift.contains(&usb), "{rerun} ({} in Headsets.swift)", d.name);
+            assert!(java.contains(&format!("{{0x{:04x}, 0x{:04x}}}, // {}", d.vid, d.pid, d.name)), "{rerun} ({} in Headsets.java)", d.name);
+            assert!(xml.contains(&format!("vendor-id=\"{}\" product-id=\"{}\"", d.vid, d.pid)), "{rerun} ({} in glasses.xml)", d.name);
+            if let Some((vendor, product)) = d.edid {
+                let display = format!("(vendor: 0x{vendor:04x}, product: 0x{product:04x}, name: \"{}\")", d.name);
+                assert!(swift.matches(&display).count() == 1, "{rerun} ({}'s display in Headsets.swift)", d.name);
+            }
+        }
+        assert_eq!(swift.matches("(vendor: 0x").count(), all().len() + all().iter().filter(|d| d.edid.is_some()).count(), "{rerun}");
+        assert_eq!(java.matches(", // ").count(), all().len(), "{rerun}");
+    }
+
+    #[test]
+    fn the_air_s_display_is_known() {
+        assert_eq!(by_display(0x3647, 0x3132).map(|d| d.name.as_str()), Some("XREAL Air"));
+        assert_eq!(drivers(), vec!["xreal"]);
+    }
 
     #[test]
     fn table_parses_and_has_the_verified_device() {

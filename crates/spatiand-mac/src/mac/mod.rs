@@ -264,21 +264,15 @@ pub fn take_glasses(
     if std::env::var("SPATIAND_HMD").as_deref() == Ok("null") {
         return Some(spatiand_hmd::open_any());
     }
-    Some(spatiand_hmd::XrealGlasses::open_any().map(|mut glasses| {
-        use spatiand_hmd::Hmd;
+    // Whichever headset the device table knows is plugged in, by its driver.
+    Some(spatiand_hmd::open_any().map(|mut glasses| {
         log::info!("glasses opened: {}", glasses.info().name);
         glasses.prefer_refresh((REFRESH_MHZ / 1000) as u32);
         // Glasses left in a two-eye mode by whatever had them last do nothing when asked for
         // it again, and macOS, which only learns of the wide picture when they change, goes on
-        // offering one eye. Back to one eye first, and a moment for the Mac to see it.
-        let raw = glasses.raw_display_mode();
-        log::info!("the glasses say they are in mode {:?}", raw.map(|m| format!("{m:#04x}")));
-        if matches!(raw, Some(0x03 | 0x04 | 0x09)) {
-            log::info!("the glasses were left in a two-eye mode; starting them from one eye");
-            let _ = glasses.set_display_mode(spatiand_hmd::DisplayMode::Mono);
-            std::thread::sleep(std::time::Duration::from_millis(3000));
-        }
-        Box::new(glasses) as Box<dyn spatiand_hmd::Hmd>
+        // offering one eye: back to one eye first (`Hmd::start_from_one_eye`).
+        glasses.start_from_one_eye();
+        glasses
     }))
 }
 

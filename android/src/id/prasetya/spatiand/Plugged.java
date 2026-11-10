@@ -20,7 +20,7 @@ public class Plugged extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice.class);
-        if (device == null || device.getVendorId() != MainActivity.VENDOR) return;
+        if (device == null || !Headsets.known(device.getVendorId(), device.getProductId())) return;
         Log.i(MainActivity.TAG, "glasses plugged in; opening Spatiand");
         context.startActivity(new Intent(context, MainActivity.class)
                 .setAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)

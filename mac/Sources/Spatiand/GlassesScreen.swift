@@ -48,7 +48,7 @@ final class GlassesScreen {
     var display: CGDirectDisplayID? { window != nil && displayID != 0 ? displayID : nil }
     var windowNumber: CGWindowID? { window.map { CGWindowID($0.windowNumber) } }
 
-    /// XREAL Air identifies itself with EDID vendor 0x3647, product 0x3132.
+    /// The headset's display, by the EDID the device table has for it (Headsets.swift).
     static func findDisplay() -> CGDirectDisplayID? {
         // For the test of glasses whose display never comes (`wait`): their USB alone.
         if ProcessInfo.processInfo.environment["SPATIAND_TEST_NO_GLASSES_DISPLAY"] != nil { return nil }
@@ -70,7 +70,7 @@ final class GlassesScreen {
     /// their EDID: the stand-in macOS makes for a Mac with no screen at all exists only when
     /// nothing is plugged in, and another screen keeps its own numbers.
     static func isGlasses(_ id: CGDirectDisplayID) -> Bool {
-        if CGDisplayVendorNumber(id) == 0x3647 && CGDisplayModelNumber(id) == 0x3132 { return true }
+        if Headsets.isHeadsetDisplay(vendor: CGDisplayVendorNumber(id), product: CGDisplayModelNumber(id)) { return true }
         guard CGDisplayVendorNumber(id) == 0x756e_6b6e, CGDisplayModelNumber(id) == 0x7669_7274,
               CGDisplayIsBuiltin(id) == 0 else { return false }
         return glassesFramebuffer()
@@ -86,7 +86,8 @@ final class GlassesScreen {
             guard let value = IORegistryEntryCreateCFProperty(entry, "DisplayAttributes" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue(),
                   let attributes = value as? [String: Any],
                   let product = attributes["ProductAttributes"] as? [String: Any] else { continue }
-            if (product["LegacyManufacturerID"] as? Int) == 0x3647, (product["ProductID"] as? Int) == 0x3132 {
+            if let vendor = product["LegacyManufacturerID"] as? Int, let model = product["ProductID"] as? Int,
+               Headsets.isHeadsetDisplay(vendor: UInt32(vendor), product: UInt32(model)) {
                 if !lostIdentitySaid {
                     lostIdentitySaid = true
                     print("glasses: macOS has lost their display's name (it says unkn/virt); known by the framebuffer's EDID")

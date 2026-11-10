@@ -80,11 +80,27 @@ pub fn message(missing: Missing, had_headset: bool, exit_hint: &str) -> String {
         Missing::Headset => format!(
             "Plug in your XR glasses\n\n\
              Spatiand is waiting.\n\n\
-             Connect XREAL Air glasses\n\
-             over USB-C and this screen\n\
-             will hand over to them.{exit_hint}"
+             Connect them over USB-C and\n\
+             this screen will hand over\n\
+             to them.\n\n\
+             {}{exit_hint}",
+            known_glasses()
         ),
     }
+}
+
+/// The glasses this build knows, by the device table's names (spatiand-hmd's devices.toml), a
+/// line each so that none overruns: tried on real hardware first, the rest after them. Not one
+/// brand written into the screen.
+fn known_glasses() -> String {
+    let all = spatiand_hmd::device::all();
+    let mut lines = vec!["Known glasses:".to_string()];
+    let tried = all.iter().filter(|d| d.verified).map(|d| d.name.clone());
+    let others = all.iter().filter(|d| !d.verified).map(|d| format!("{} (untried)", d.name));
+    for name in tried.chain(others) {
+        lines.push(format!("  {name}"));
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -149,7 +165,7 @@ mod tests {
         // plug them in is what makes a wearer conclude the software cannot see them at all.
         let text = message(Missing::Picture, true, "");
         assert!(
-            !text.contains("Plug in") && !text.contains("Connect XREAL"),
+            !text.contains("Plug in") && !text.contains("Known glasses"),
             "the half-connected message tells the wearer to connect glasses that are connected"
         );
         // And it has to name both things that actually fix it. The second one is here

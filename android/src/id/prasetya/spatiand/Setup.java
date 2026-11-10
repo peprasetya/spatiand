@@ -19,7 +19,6 @@ import java.lang.reflect.Method;
  * all. docs/beam-pro.md.
  */
 public final class Setup {
-    static final int XREAL_VENDOR = 0x3318;
 
     public static void main(String[] args) throws Exception {
         if (args.length != 2 || !args[0].equals("usb")) {
@@ -41,7 +40,7 @@ public final class Setup {
         int granted = 0;
         for (String key : devices.keySet()) {
             UsbDevice device = devices.getParcelable(key, UsbDevice.class);
-            if (device == null || device.getVendorId() != XREAL_VENDOR) continue;
+            if (device == null || !Headsets.known(device.getVendorId(), device.getProductId())) continue;
             persist.invoke(usb, device, uid, user, true);
             System.out.println("granted " + device.getProductName() + " ("
                     + Integer.toHexString(device.getVendorId()) + ":"

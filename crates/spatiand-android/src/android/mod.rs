@@ -171,11 +171,12 @@ pub fn take_glasses(
     let fd = shared.usb.lock().unwrap().take()?;
     // Let go of first: two handles on one pair of glasses silence each other.
     *held = None;
-    Some(spatiand_hmd::XrealGlasses::open_usb(fd).map(|mut glasses| {
+    // Whichever headset the device table knows this is, by its driver.
+    Some(spatiand_hmd::open_usb(fd).map(|mut glasses| {
         // The Beam Pro composites every display on the phone's 60 Hz clock; the glasses' own
         // 72 would show one frame in five twice.
         glasses.prefer_refresh((REFRESH_MHZ / 1000) as u32);
-        Box::new(glasses) as Box<dyn spatiand_hmd::Hmd>
+        glasses
     }))
 }
 

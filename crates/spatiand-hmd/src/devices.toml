@@ -1,7 +1,14 @@
 # Supported headsets.
 #
 # Adding a device that speaks a protocol we already implement should be a row here, not a
-# patch to the driver. `driver` selects which module handles it.
+# patch to the driver. `driver` selects which module handles it (spatiand_hmd::open_any). A
+# protocol not implemented yet is a new driver module beside `xreal`, behind the `Hmd` trait,
+# and a name for it here.
+#
+# This table is the one place a headset is described, on every platform: the Rust core reads it
+# at build time, and the Mac's and the Beam Pro's shells get generated copies of what they need
+# from it (tools/gen-headsets.py: mac/Sources/Spatiand/Headsets.swift, android/src/.../Headsets.java),
+# which a test keeps in step with it.
 #
 # Sources: `docs/xreal-air.md` §2 (USB identity) and §6 (display modes). Rows marked
 # unverified come from the driver source rather than from hardware — the interface layout is
@@ -33,6 +40,12 @@ mode_stereo_fallback = 0x03 # 3840x1080 @60
 # the chip is soldered, so it is the same on every Air gen 1 and there is nothing here for a
 # per-user calibration to find.
 sensor_axes = ["left", "back", "up"]
+# The display's EDID: manufacturer ID and product code, as an OS reports them (macOS's
+# CGDisplayVendorNumber/ModelNumber, its framebuffer's LegacyManufacturerID/ProductID). How a
+# platform that sees several screens tells the glasses' from the others. Read off real
+# hardware (littleotter, 2026-11-10: "MRG", "Air"); a row without it has no display a platform
+# can pick out by name, so fill it in from the hardware, not from a guess.
+edid = [0x3647, 0x3132]
 
 # The rows below deliberately omit `sensor_axes`. The Air family very probably shares the Air
 # gen 1's mounting, but "very probably" is exactly the reasoning that produced a world where

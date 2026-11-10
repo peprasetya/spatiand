@@ -82,7 +82,7 @@ pub struct XrealGlasses {
     mcu: mcu::Mcu,
     mode: DisplayMode,
     /// The raw modes asked for, which are the device table's unless
-    /// [`XrealGlasses::prefer_refresh`] said otherwise.
+    /// [`Hmd::prefer_refresh`] said otherwise.
     modes: (u8, u8, Option<u8>),
     /// Scratch buffer sized from the device spec, reused every poll so the ~1 kHz sample path
     /// does no allocation.
@@ -148,6 +148,12 @@ impl XrealGlasses {
         let spec = device::lookup(device.vid(), device.pid())
             .filter(|s| s.driver == "xreal")
             .ok_or(HmdError::NotFound)?;
+        Self::open_usb_device(device, spec)
+    }
+
+    /// The same, for a device already read and its row already found (`crate::open_usb`).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn open_usb_device(device: crate::usbfs::UsbDevice, spec: &'static DeviceSpec) -> Result<Self> {
         let imu = device.claim(spec.imu_interface)?;
         let mcu = device.claim(spec.mcu_interface)?;
         Self::with_ports(spec, Box::new(imu), Box::new(mcu))
@@ -188,23 +194,21 @@ impl XrealGlasses {
         self.mcu_command(MSG_R_DISP_MODE, &[], "display mode (read)").ok()?.get(1).copied()
     }
 
-    /// Run the panel at this refresh rate, in both modes, from the next mode change on.
+    /// The panel's modes at this refresh rate: docs/xreal-air.md §6. Used by
+    /// [`Hmd::prefer_refresh`].
     ///
     /// The device table's modes are the fastest the glasses do well, which is right where
     /// Spatiand drives the panel itself. It is wrong where something else composites at its
     /// own rate: a Beam Pro's compositor runs every display on the phone screen's 60 Hz clock,
     /// so a panel at 72 shows one frame in five twice, and every head turn judders. There the
-    /// panel has to match the compositor. `false` for a rate these glasses have no mode for.
-    pub fn prefer_refresh(&mut self, hz: u32) -> bool {
-        // docs/xreal-air.md §6.
-        let (mono, stereo) = match hz {
-            60 => (0x01, 0x03),
-            72 => (0x05, 0x04),
-            90 => (0x0A, 0x09),
-            _ => return false,
-        };
-        self.modes = (mono, stereo, None);
-        true
+    /// panel has to match the compositor.
+    fn modes_at(hz: u32) -> Option<(u8, u8)> {
+        match hz {
+            60 => Some((0x01, 0x03)),
+            72 => Some((0x05, 0x04)),
+            90 => Some((0x0A, 0x09)),
+            _ => None,
+        }
     }
 
     // --- MCU ---
@@ -388,6 +392,25 @@ impl XrealGlasses {
 impl Hmd for XrealGlasses {
     fn info(&self) -> &HmdInfo {
         &self.info
+    }
+
+    fn prefer_refresh(&mut self, hz: u32) -> bool {
+        let Some((mono, stereo)) = Self::modes_at(hz) else { return false };
+        self.modes = (mono, stereo, None);
+        true
+    }
+
+    fn start_from_one_eye(&mut self) -> bool {
+        let raw = self.raw_display_mode();
+        log::info!("the glasses say they are in mode {:?}", raw.map(|m| format!("{m:#04x}")));
+        // The two-eye modes at 60, 72 and 90 Hz (docs/xreal-air.md §6).
+        if !matches!(raw, Some(0x03 | 0x04 | 0x09)) {
+            return false;
+        }
+        log::info!("the glasses were left in a two-eye mode; starting them from one eye");
+        let _ = self.set_display_mode(DisplayMode::Mono);
+        std::thread::sleep(Duration::from_millis(3000));
+        true
     }
 
     fn set_display_mode(&mut self, mode: DisplayMode) -> Result<DisplayMode> {

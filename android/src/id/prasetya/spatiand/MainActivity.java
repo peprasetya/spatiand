@@ -70,7 +70,6 @@ import java.util.Map;
  */
 public class MainActivity extends Activity implements SensorEventListener {
     static final String TAG = "spatiand";
-    static final int VENDOR = 0x3318, PRODUCT = 0x0424;
     static final String ACTION_USB = "id.prasetya.spatiand.USB";
     /** The Beam Pro's orange key, as the framework rebroadcasts it while glasses are on. */
     static final String ORANGE_DOWN = "XREAL.switchMode.down";
@@ -1158,7 +1157,7 @@ public class MainActivity extends Activity implements SensorEventListener {
 
     UsbDevice glassesDevice() {
         for (UsbDevice d : getSystemService(UsbManager.class).getDeviceList().values()) {
-            if (d.getVendorId() == VENDOR && d.getProductId() == PRODUCT) return d;
+            if (Headsets.known(d.getVendorId(), d.getProductId())) return d;
         }
         return null;
     }
@@ -1216,7 +1215,7 @@ public class MainActivity extends Activity implements SensorEventListener {
         @Override
         public void onReceive(Context c, Intent i) {
             UsbDevice d = i.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice.class);
-            if (d == null || d.getVendorId() != VENDOR || d.getProductId() != PRODUCT) return;
+            if (d == null || !Headsets.known(d.getVendorId(), d.getProductId())) return;
             Log.i(TAG, "glasses unplugged");
             if (connection != null) {
                 Native.stop();
