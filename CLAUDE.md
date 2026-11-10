@@ -23,6 +23,13 @@ The owner, 2026-11-10: **"All app build in this spatiand project is spatiand app
 - Every application this project builds -- SpatiMesh, SpatiQuill, SpatiShelf, SpatiReel,
   SpatiLoupe, SpatiPal, SpatiKey and any to come -- is a **client of Spatiand, speaking Wayland to
   it**, on every platform: the Deck, other Linux, the Beam Pro and the Mac.
+- **They follow the notes of `spatiand_xr_v1`**, the room's own protocol
+  (`crates/spatiand-proto/protocol/spatiand-xr-v1.xml`, its descriptions are the notes): the room's
+  extensions on top of Wayland -- eye layouts, layers, idle fade, resize anchor, see-through, sound
+  key, pinch, scroll, `describe` for dictation and the assistant, the pose channel -- used as they
+  say, the same on every platform. An app does what that protocol offers through it, not by a
+  platform's own means; what it lacks is added to the protocol (and to every client's copy of it,
+  e.g. Chromium's in `third_party/wayland-protocols/spatiand`), not worked around in one app.
 - On the Mac that holds in the room **and on the Mac's desktop** (2D mode): Spatiand shows its
   clients in Mac windows. An app never draws its own native window instead.
 - **SpatiMesh is the Deck's Chromium** -- Chromium's Linux UI, Ozone/Wayland -- everywhere. Never
