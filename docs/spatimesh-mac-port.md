@@ -59,3 +59,33 @@ macOS has; sockets made close-on-exec by fcntl and with `SO_NOSIGPIPE` (no `SOCK
 server half's alone). Its source is outside Chromium's git: kept as a diff beside the patches once
 built, as the Beam Pro's ANGLE change is. The build: `~/Developer/spatiand-chromium-mac/ozbuild.sh`
 (siso, `-k 0`), at night when the owner says.
+
+## The method (2026-11-10, the owner's choice)
+
+**One condition names the port**: `BUILDFLAG(IS_MAC_LINUX_UI)` in C++ (`build/build_config.h`:
+macOS with Ozone) and `is_mac_linux_ui` in GN (`build/config/BUILDCONFIG.gn`, the arg
+`spatiand_mac_linux_ui = true` in `out/mac-ozone/args.gn`). The rule: **the UI follows Linux's
+path, the system below it stays macOS's** (processes, memory, files, sandbox, keychain, fonts
+through CoreText).
+
+Chromium's UI code has thousands of Linux/Mac switches (`chrome/browser` alone: 4,741 `IS_MAC`,
+2,612 `IS_LINUX`). **The FreeBSD port of Chromium is the map** (FreeBSD ports `www/chromium/files`,
+156; fetched to `/media/shared/Linux/App/freebsd-chromium-map`): it builds the Linux UI on a BSD
+kernel, macOS's family, and widens Linux checks to BSD wherever that is the right path there.
+
+- `third_party/chromium/mac/bsd-map.py`: its C++ widenings, in the UI's directories only, made with
+  `IS_MAC_LINUX_UI`, each placed by its hunk's context. First run: 425 in 242 files; 18 behind an
+  earlier Mac branch are reported, not forced (fonts, accessibility, accelerator labels).
+- `third_party/chromium/mac/gn-ui.py`: FreeBSD makes GN's `is_linux` true, which the Mac cannot
+  (`is_mac` drives its toolchain), so the UI's build files (`ui/views`, `chrome/browser/ui`,
+  `apps/ui`) say `is_linux || is_mac_linux_ui` and `is_mac && !is_mac_linux_ui`; asserts keep
+  plain `is_mac`. `content/browser` is done by hand: it holds the Linux zygote and sandbox, which
+  must never come to the Mac.
+
+## Resuming (littleotter is shut down at night)
+
+Everything changed in its tree is kept here: `third_party/chromium/mac/save-wip.sh` (run on
+deepmagpie after each step) writes `mac/wip/linux-ui.patch` and `mac/wip/libwayland.patch`. After a
+shutdown nothing needs restoring: run `ozbuild.sh` again (under `caffeinate -i -s`), and the build
+goes on from what it had. Only if the tree were lost: a fresh Mac checkout, `git apply
+mac/wip/linux-ui.patch`, and `patch -p1` the libwayland one in `third_party/wayland/src`.
