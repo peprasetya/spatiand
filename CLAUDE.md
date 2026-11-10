@@ -1,5 +1,21 @@
 # Spatiand: rules for every session
 
+## Every platform is treated the same
+
+The owner, 2026-11-10: **"all platform shall treated the same... android and mac! same code base for
+core... only need to add platform related!!!"**
+
+- One core codebase for the Deck, Linux, Android (Beam Pro) and the Mac. A port adds only what the
+  platform itself needs (its libc, its windowing to show the room, its GPU buffers, its sound); it
+  never forks, rewrites or substitutes the core, and never picks a platform-native alternative.
+- Before building anything for a platform, check that the plan is the Deck's code plus a platform
+  layer. Long builds are planned so that one build is the right one.
+
+## Compiling on the owner's machines
+
+- littleotter (the Mac mini) compiles only when the owner says so, normally at night; never a long
+  build while the owner is using it. deepmagpie compiles any time.
+
 ## Every app built in this project is a Spatiand app
 
 The owner, 2026-11-10: **"All app build in this spatiand project is spatiand app."**
