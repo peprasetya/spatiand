@@ -47,7 +47,8 @@ crates/spatiand-mac-core/src/key.rs
 crates/spatiand/src/spatikey.rs
                        the service on the Deck and the Beam Pro (it forwards), and the room's
                        half on every platform: typing, the window to type into, the card
-crates/spatimesh/...   the page's half (navigator.credentials, login forms) and the window's
+third_party/chromium   SpatiMesh's half: patch 0010 (Chromium's password store and WebAuthn on the service);
+                       the Rust window program's (crates/spatimesh) was removed on 2026-11-10, and
 extensions/spatikey    the Chrome and Firefox extension, built into dist/ by its build script
 ```
 

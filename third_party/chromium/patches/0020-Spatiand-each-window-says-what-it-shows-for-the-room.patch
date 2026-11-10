@@ -1,0 +1,1326 @@
+From d559bb7ee3e1c1aea8eb673712efe0f20bc774af Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Tue, 10 Nov 2026 09:33:18 +0700
+Subject: [PATCH 20/22] Spatiand: each window says what it shows, for the
+ room's dictation and assistant
+
+The room asks a window what it shows (spatiand_xr_surface_v1.describe, since version 9 of Spatiand's
+own protocol, crates/spatiand-proto in Spatiand): dictation leans its spelling towards a page's words,
+and the assistant reads a window through it. Every toplevel now has the protocol's object
+(ui/ozone/platform/wayland/host/spatiand_xr.cc) and nothing else of it is asked for, so the room treats
+the window as before. The answer is the browser's (chrome/browser/spatiand/describe.cc), as the Rust
+SpatiMesh gave it: the active tab's title and address, its headings, its words, and the field being
+typed in last, the focus followed into frames of the same origin; never what is in a password or
+one-time-code field. An answer by 800 ms, without the page's part if the page has not given it.
+
+The protocol's XML is a copy of Spatiand's (third_party/wayland-protocols/spatiand): copied again
+when that one changes.
+
+Checked in Spatiand's snapshot room (SPATIAND_STEPS `describe`, 2026-11-10): a page with two
+headings, a password field and a message box; with the message box focused the answer ended
+"Message: Hello Wor", its vocabulary the headings then the names (SpatiQuill, SpatiShelf, ...); with
+the password field focused, no field at all and the password nowhere in it.
+---
+ chrome/browser/BUILD.gn                       |   3 +
+ chrome/browser/spatiand/describe.cc           | 219 ++++++
+ chrome/browser/spatiand/describe.h            |  18 +
+ chrome/browser/spatiand/main_parts.cc         |   2 +
+ third_party/wayland-protocols/BUILD.gn        |   5 +
+ .../spatiand/spatiand-xr-v1.xml               | 673 ++++++++++++++++++
+ ui/ozone/platform/wayland/BUILD.gn            |   3 +
+ ui/ozone/platform/wayland/host/spatiand_xr.cc | 102 +++
+ ui/ozone/platform/wayland/host/spatiand_xr.h  |  40 ++
+ .../wayland/host/wayland_connection.cc        |   3 +
+ .../wayland/host/wayland_toplevel_window.cc   |   8 +-
+ ui/platform_window/platform_window.cc         |  18 +
+ ui/platform_window/platform_window.h          |  14 +
+ 13 files changed, 1107 insertions(+), 1 deletion(-)
+ create mode 100644 chrome/browser/spatiand/describe.cc
+ create mode 100644 chrome/browser/spatiand/describe.h
+ create mode 100644 third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml
+ create mode 100644 ui/ozone/platform/wayland/host/spatiand_xr.cc
+ create mode 100644 ui/ozone/platform/wayland/host/spatiand_xr.h
+
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 593573cbd2..08b3c73f2a 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1626,6 +1626,8 @@ source_set("core") {
+       "spatiand/bookmark_sync.h",
+       "spatiand/cookie_sync.cc",
+       "spatiand/cookie_sync.h",
++      "spatiand/describe.cc",
++      "spatiand/describe.h",
+       "spatiand/extension_sync.cc",
+       "spatiand/extension_sync.h",
+       "spatiand/history_sync.cc",
+@@ -1654,6 +1656,7 @@ source_set("core") {
+       "//components/os_crypt/async/browser:posix_key_provider",
+       "//third_party/libxml:xml_writer",
+       "//ui/linux:display_server_utils",
++      "//ui/platform_window",
+     ]
+ 
+     if (use_dbus) {
+diff --git a/chrome/browser/spatiand/describe.cc b/chrome/browser/spatiand/describe.cc
+new file mode 100644
+index 0000000000..a4dcc14b09
+--- /dev/null
++++ b/chrome/browser/spatiand/describe.cc
+@@ -0,0 +1,219 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/describe.h"
++
++#include <algorithm>
++#include <map>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "base/files/file_util.h"
++#include "base/files/scoped_file.h"
++#include "base/functional/bind.h"
++#include "base/json/json_reader.h"
++#include "base/json/json_writer.h"
++#include "base/memory/ref_counted.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/thread_pool.h"
++#include "base/timer/timer.h"
++#include "base/values.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/common/chrome_isolated_world_ids.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/web_contents.h"
++#include "third_party/icu/source/common/unicode/uchar.h"
++#include "ui/aura/window.h"
++#include "ui/aura/window_tree_host.h"
++#include "ui/platform_window/platform_window.h"
++
++namespace spatiand {
++
++namespace {
++
++// The Rust SpatiMesh's PAGE_DESCRIPTION, word for word: the focus followed into frames of the same
++// origin; a password or one-time-code field's value never read.
++constexpr char kPageDescription[] =
++    "(function(){function secret(e){return e.tagName==='INPUT'&&(e.type==='password'||"
++    "/password|one-time-code/i.test(e.autocomplete||''))}"
++    "function go(d){var e=d.activeElement;"
++    "if(e&&(e.tagName==='IFRAME'||e.tagName==='FRAME')){try{if(e.contentDocument)return go(e.contentDocument)}catch(x){}}"
++    "var f='',l='';if(e&&(e.tagName==='INPUT'||e.tagName==='TEXTAREA')){f=secret(e)?'':(e.value||'');"
++    "l=e.getAttribute('aria-label')||e.placeholder||e.name||''}"
++    "else if(e&&e.isContentEditable){f=e.innerText||'';l=e.getAttribute('aria-label')||''}return{f:f.slice(-2000),l:l}}"
++    "var a=go(document);var h=[].slice.call(document.querySelectorAll('h1,h2,h3')).slice(0,40)"
++    ".map(function(x){return(x.innerText||'').trim()}).filter(Boolean);"
++    "var b=document.body?document.body.innerText:'';"
++    "return JSON.stringify({title:document.title,url:location.href,field:a.f,label:a.l,heads:h,text:b.slice(0,8000)})})()";
++
++// What the room waits for is a second; an answer by then, even without the page's part.
++constexpr base::TimeDelta kPatience = base::Milliseconds(800);
++
++bool IsNameChar(UChar32 c) {
++  return u_isalnum(c) || c == '.' || c == '-' || c == '_';
++}
++
++// The words of `text` that look like names -- capitalised, or with a capital or a digit inside
++// (`SpatiQuill`, `v2.3`, `iPhone`) -- most frequent first, at most `n` (the Rust `name_like_words`).
++std::vector<std::string> NameLikeWords(const std::u16string& text, size_t n) {
++  std::map<std::u16string, int> counts;
++  size_t i = 0;
++  while (i < text.size()) {
++    while (i < text.size() && !IsNameChar(text[i])) {
++      ++i;
++    }
++    size_t start = i;
++    while (i < text.size() && IsNameChar(text[i])) {
++      ++i;
++    }
++    std::u16string word = text.substr(start, i - start);
++    base::TrimString(word, u".-_", &word);
++    if (word.size() < 4) {
++      continue;
++    }
++    bool inner_capital = false, digit = false, alpha = false;
++    for (size_t k = 0; k < word.size(); ++k) {
++      inner_capital |= k > 0 && u_isupper(word[k]);
++      digit |= word[k] >= '0' && word[k] <= '9';
++      alpha |= u_isalpha(word[k]);
++    }
++    if (u_isupper(word[0]) || inner_capital || (digit && alpha)) {
++      ++counts[word];
++    }
++  }
++  std::vector<std::pair<std::u16string, int>> words(counts.begin(), counts.end());
++  std::stable_sort(words.begin(), words.end(),
++                   [](const auto& a, const auto& b) { return a.second > b.second; });
++  std::vector<std::string> out;
++  for (size_t k = 0; k < words.size() && k < n; ++k) {
++    out.push_back(base::UTF16ToUTF8(words[k].first));
++  }
++  return out;
++}
++
++// The page's account as the room reads it (the Rust `page_description`): the field typed in at
++// the end of the text, and for vocabulary the headings and the words that look like names.
++std::string Description(const std::string& said, const std::string& title, const std::string& url) {
++  base::DictValue out;
++  out.Set("kind", "web");
++  out.Set("app", "SpatiMesh");
++  out.Set("title", title);
++  out.Set("directory", url);
++  std::optional<base::DictValue> page = base::JSONReader::ReadDict(said, base::JSON_PARSE_RFC);
++  if (page) {
++    auto get = [&page](const char* key) {
++      const std::string* value = page->FindString(key);
++      return value ? *value : std::string();
++    };
++    if (!get("title").empty()) {
++      out.Set("title", get("title"));
++    }
++    if (!get("url").empty()) {
++      out.Set("directory", get("url"));
++    }
++    std::u16string text16 = base::UTF8ToUTF16(get("text"));
++    const std::u16string field = base::UTF8ToUTF16(get("field"));
++    const std::u16string label = base::UTF8ToUTF16(get("label"));
++    std::u16string shown = text16.substr(0, 3000);
++    if (!field.empty() || !label.empty()) {
++      shown += u"\n" + label + u": " + field;
++    }
++    out.Set("text", base::UTF16ToUTF8(shown));
++    base::ListValue vocabulary;
++    if (const base::ListValue* heads = page->FindList("heads")) {
++      for (const base::Value& head : *heads) {
++        if (head.is_string()) {
++          vocabulary.Append(head.GetString());
++        }
++      }
++    }
++    for (std::string& word : NameLikeWords(text16 + u" " + field, 60)) {
++      vocabulary.Append(std::move(word));
++    }
++    out.Set("vocabulary", std::move(vocabulary));
++  }
++  return base::WriteJson(out).value_or("{}");
++}
++
++void WriteAndClose(base::ScopedFD fd, std::string json) {
++  base::WriteFileDescriptor(fd.get(), json);
++}
++
++// One question, answered once: by the page, or by the clock with what is known without it.
++class Asked : public base::RefCounted<Asked> {
++ public:
++  Asked(base::ScopedFD fd, std::string title, std::string url)
++      : fd_(std::move(fd)), title_(std::move(title)), url_(std::move(url)) {}
++
++  void Answer(const std::string& said) {
++    if (!fd_.is_valid()) {
++      return;
++    }
++    timer_.Stop();
++    base::ThreadPool::PostTask(FROM_HERE, {base::MayBlock()},
++                               base::BindOnce(&WriteAndClose, std::move(fd_),
++                                              Description(said, title_, url_)));
++  }
++
++  void Wait() {
++    timer_.Start(FROM_HERE, kPatience,
++                 base::BindOnce(&Asked::Answer, base::WrapRefCounted(this), std::string()));
++  }
++
++ private:
++  friend class base::RefCounted<Asked>;
++  ~Asked() = default;
++
++  base::ScopedFD fd_;
++  const std::string title_;
++  const std::string url_;
++  base::OneShotTimer timer_;
++};
++
++content::WebContents* ShownIn(uint32_t surface_id) {
++  content::WebContents* found = nullptr;
++  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++      [surface_id, &found](BrowserWindowInterface* browser) {
++        TabStripModel* tabs = browser->GetTabStripModel();
++        content::WebContents* contents = tabs ? tabs->GetActiveWebContents() : nullptr;
++        gfx::NativeWindow window = contents ? contents->GetTopLevelNativeWindow() : nullptr;
++        if (window && window->GetHost() && window->GetHost()->GetSpatiandSurfaceId() == surface_id) {
++          found = contents;
++          return false;
++        }
++        return true;
++      });
++  return found;
++}
++
++void Describe(uint32_t surface_id, base::ScopedFD fd) {
++  content::WebContents* contents = surface_id ? ShownIn(surface_id) : nullptr;
++  if (!contents || !contents->GetPrimaryMainFrame()) {
++    // A window with no page in it: a dialog of the browser's own, the profile lock.
++    WriteAndClose(std::move(fd), Description(std::string(), std::string(), std::string()));
++    return;
++  }
++  auto asked = base::MakeRefCounted<Asked>(std::move(fd), base::UTF16ToUTF8(contents->GetTitle()),
++                                           contents->GetLastCommittedURL().spec());
++  asked->Wait();
++  contents->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
++      base::UTF8ToUTF16(std::string_view(kPageDescription)),
++      base::BindOnce(
++          [](scoped_refptr<Asked> asked, base::Value value) {
++            asked->Answer(value.is_string() ? value.GetString() : std::string());
++          },
++          asked),
++      ISOLATED_WORLD_ID_CHROME_INTERNAL);
++}
++
++}  // namespace
++
++void StartDescribe() {
++  ui::SetSpatiandDescribe(base::BindRepeating(&Describe));
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/describe.h b/chrome/browser/spatiand/describe.h
+new file mode 100644
+index 0000000000..d4f37d9dee
+--- /dev/null
++++ b/chrome/browser/spatiand/describe.h
+@@ -0,0 +1,18 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_DESCRIBE_H_
++#define CHROME_BROWSER_SPATIAND_DESCRIBE_H_
++
++namespace spatiand {
++
++// The room's question of a window, what it shows (spatiand_xr_surface_v1.describe), answered for
++// its dictation and its assistant as the Rust SpatiMesh answered it (crates/spatimesh in
++// Spatiand, `PAGE_DESCRIPTION` and `page_description`): the window's page's title and address, its
++// headings, its words, and the field being typed in, last; never what is in a password or one-time
++// code field. Called once, before any window opens.
++void StartDescribe();
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_DESCRIBE_H_
+diff --git a/chrome/browser/spatiand/main_parts.cc b/chrome/browser/spatiand/main_parts.cc
+index c5262fd921..6b535cc7b6 100644
+--- a/chrome/browser/spatiand/main_parts.cc
++++ b/chrome/browser/spatiand/main_parts.cc
+@@ -3,6 +3,7 @@
+ 
+ #include "chrome/browser/spatiand/main_parts.h"
+ 
++#include "chrome/browser/spatiand/describe.h"
+ #include "chrome/browser/spatiand/profiles_sync.h"
+ #include "chrome/browser/spatiand/spatikey_window.h"
+ 
+@@ -10,6 +11,7 @@ namespace spatiand {
+ 
+ void MainParts::PreProfileInit() {
+   ProfilesSync::Start();
++  StartDescribe();
+   ShowSpatiKeyProblems();
+ }
+ 
+diff --git a/third_party/wayland-protocols/BUILD.gn b/third_party/wayland-protocols/BUILD.gn
+index 1ff4af39ff..150b071960 100644
+--- a/third_party/wayland-protocols/BUILD.gn
++++ b/third_party/wayland-protocols/BUILD.gn
+@@ -140,6 +140,11 @@ wayland_protocol("single_pixel_buffer") {
+   sources = [ "src/staging/single-pixel-buffer/single-pixel-buffer-v1.xml" ]
+ }
+ 
++# Spatiand: its room's own protocol (crates/spatiand-proto in Spatiand), for the room's describe.
++wayland_protocol("spatiand_xr_protocol") {
++  sources = [ "spatiand/spatiand-xr-v1.xml" ]
++}
++
+ wayland_protocol("stylus_protocol") {
+   sources = [ "unstable/stylus/stylus-unstable-v2.xml" ]
+ }
+diff --git a/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml b/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml
+new file mode 100644
+index 0000000000..4d5f2052ad
+--- /dev/null
++++ b/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml
+@@ -0,0 +1,673 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<protocol name="spatiand_xr_v1">
++
++  <copyright>
++    Copyright (c) 2026 Spatiand contributors
++    SPDX-License-Identifier: MIT
++  </copyright>
++
++  <description summary="stereoscopic and head-tracked surfaces">
++    This is a protocol about applications, not about video. Any application may
++    want to be stereoscopic -- a modelling tool, a map, a game, a terminal with
++    depth to it -- and the compositor's job is to let it appear the way it means
++    to appear, whatever it draws. A media player is only the first client.
++
++    Three things a Wayland client needs in order to draw for a head, and cannot
++    get any other way:
++
++    1. a way to say how the two eyes' views are packed into its buffer,
++    2. a way to say what the surface *is* in the world -- a panel, something
++       pinned to the view, a pair of eye views, or the sky itself,
++    3. the head and eye poses, before it renders.
++
++    Everything else it already has. A wl_buffer is the swapchain, a frame
++    callback is the frame loop, a wl_surface is the layer. This protocol
++    deliberately adds nothing that Wayland already carries.
++
++    HYBRID CLIENTS
++
++    A client that binds nothing here is an ordinary window, and an ordinary
++    window is what it stays. Every request below is opt-in and every one has a
++    defined meaning on a compositor that is showing the surface flat. The
++    intended shape is one application that runs on a normal desktop, runs as a
++    flat window here, and turns itself stereoscopic or immersive when it finds
++    this global -- not three applications, and not a mode switch.
++
++    COORDINATES
++
++    This protocol's frame is **OpenXR's**, not the compositor's: +X right,
++    +Y up, -Z forward, right-handed, metres, and quaternions in (x, y, z, w)
++    order. The compositor's own frame is different and is not exposed here.
++
++    That is a deliberate choice at the boundary. It makes an OpenXR adapter a
++    memcpy rather than a translation layer, and it means every convention a VR
++    developer already has in their fingers is the right one. The structures in
++    the pose channel are field-compatible with XrPosef and XrFovf for the same
++    reason.
++
++    UNITS ON THE WIRE
++
++    Wayland has no floating point. The rarely-sent values here are signed
++    integers in micro-units: micrometres for distance, microradians for angle.
++    The per-frame values are not on the wire at all -- see the pose channel.
++  </description>
++
++  <interface name="spatiand_xr_v1" version="10">
++    <description summary="stereoscopic and head-tracked surfaces">
++      The factory. Binding it says nothing and changes nothing.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="destroy the factory">
++        Objects already created stay valid.
++      </description>
++    </request>
++
++    <request name="get_xr_surface">
++      <description summary="extend a surface with stereo and layer state">
++        One per wl_surface for its lifetime. Requesting a second is a protocol
++        error, because two objects setting the layout of one surface have no
++        defined resolution.
++      </description>
++      <arg name="id" type="new_id" interface="spatiand_xr_surface_v1"/>
++      <arg name="surface" type="object" interface="wl_surface"/>
++    </request>
++
++    <request name="get_pose_channel">
++      <description summary="ask for the shared-memory pose channel">
++        See spatiand_xr_pose_channel_v1. A client that only shows pre-packed
++        stereo -- a side-by-side film, say -- does not need this and should not
++        ask for it: it is the compositor's head tracking, and asking for it
++        while not using it is the difference between a player and a headset
++        application.
++      </description>
++      <arg name="id" type="new_id" interface="spatiand_xr_pose_channel_v1"/>
++    </request>
++
++    <enum name="error">
++      <entry name="surface_exists" value="0" summary="the surface already has an xr object"/>
++      <entry name="bad_layer" value="1" summary="layer value not in the enum"/>
++      <entry name="bad_layout" value="2" summary="eye layout value not in the enum"/>
++      <entry name="bad_anchor" value="3" summary="resize anchor value not in the enum"/>
++    </enum>
++
++    <event name="display_mode" since="6">
++      <description summary="whether the wearer is being shown one picture or two">
++        Sent once when the global is bound, and again whenever it changes --
++        the glasses unplugged from a Mac, which then shows its windows on its
++        own screen; a headset that has only just gone into its two-eye mode.
++
++        Nothing a client has claimed is taken away by it: an eye layout is
++        still honoured in "flat", by showing one eye's half to both. It is for
++        the client that has a choice -- one that can draw a model once or
++        twice, or that would rather show a film's left eye at full sharpness
++        than have it halved -- to make it at the moment it matters and not
++        from a guess. A flat window that binds this and ignores the event is
++        an ordinary window and stays one.
++      </description>
++      <arg name="mode" type="uint" enum="display_mode"/>
++    </event>
++
++    <event name="hands" since="7">
++      <description summary="the wearer's hands did something">
++        A pad touched or moved, a mouse moved, a button, a scroll, a key:
++        whatever wakes the room's own idle clock (set_idle_fade), and
++        **never the head**. Sent at most a few times a second, whatever the
++        surface under the pointer.
++
++        A pointer's motion over a surface is not this: the pointer is cast
++        from the head, so it sweeps across surfaces whenever the wearer looks
++        about. A client fading controls of its own -- drawn into its own
++        picture, where set_idle_fade cannot reach -- wakes them on this and on
++        a press, and not on motion.
++      </description>
++    </event>
++
++    <enum name="display_mode" since="6">
++      <entry name="flat" value="0" summary="one picture, the same for both eyes or on a screen"/>
++      <entry name="stereo" value="1" summary="each eye is drawn its own picture"/>
++    </enum>
++  </interface>
++
++  <interface name="spatiand_xr_surface_v1" version="10">
++    <description summary="how a surface is drawn for two eyes">
++      All state here is double-buffered: it takes effect on the next
++      wl_surface.commit, like everything else about a surface. Changing layout
++      between frames is expected and costs nothing -- a player showing a
++      side-by-side film with a flat menu over it changes it twice a second.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="stop treating this surface specially">
++        The surface reverts to mono, layer "window", on the next commit.
++      </description>
++    </request>
++
++    <request name="set_eye_layout">
++      <description summary="how the two eyes are packed into the buffer">
++        With "mono" both eyes are shown the same pixels; this is the default
++        and is what a surface that never calls this does.
++
++        For the split layouts the two eyes sample opposite halves of the SAME
++        buffer while the surface keeps ONE position in the world. Full-width
++        and half-width side-by-side are not distinguished, because they are not
++        different: each eye is given its half stretched across the surface, and
++        only the sharpness differs. Send the source as it is.
++      </description>
++      <arg name="layout" type="uint" enum="eye_layout"/>
++    </request>
++
++    <enum name="eye_layout">
++      <entry name="mono" value="0" summary="both eyes see the whole buffer"/>
++      <entry name="side_by_side" value="1" summary="left eye in the left half"/>
++      <entry name="top_bottom" value="2" summary="left eye in the top half"/>
++    </enum>
++
++    <request name="set_eye_swapped">
++      <description summary="the halves are the other way round">
++        Some sources are packed right-eye-first and nothing in the file says
++        so. A viewer needs a control for that which does not mean re-encoding.
++      </description>
++      <arg name="swapped" type="uint" summary="0 or 1"/>
++    </request>
++
++    <request name="set_layer">
++      <description summary="what this surface is in the world">
++        See the layer enum. A compositor that cannot honour a layer -- the sky
++        is already taken, say -- answers with layer_refused and keeps drawing
++        the surface as a window, which is always a valid thing to be.
++
++        THERE IS NO "GRANTED" EVENT, AND SILENCE IS THE YES. A layer is
++        honoured without comment and refused out loud, so a client can never
++        lay itself out for something it is not getting. What that means in
++        practice: send set_layer, then wl_display.sync, and if no layer_refused
++        arrived before the sync callback, the layer is yours. Do not wait for
++        anything else; nothing else is coming.
++      </description>
++      <arg name="layer" type="uint" enum="layer"/>
++    </request>
++
++    <enum name="layer">
++      <entry name="window" value="0">
++        <description summary="an ordinary panel in the room">
++          The default. Moved and resized by the wearer, stays where it is put.
++          The OpenXR quad layer is this.
++        </description>
++      </entry>
++      <entry name="head_locked" value="1">
++        <description summary="a panel that follows the view">
++          Keeps its angular size and position relative to the head. For content
++          that must stay in front of you, and for a client doing its own head
++          tracking -- a nested runtime, say -- where the compositor moving the
++          surface as well would apply tracking twice.
++        </description>
++      </entry>
++      <entry name="projection" value="2">
++        <description summary="the client has rendered the two eye views itself">
++          The buffer is what the eyes should see, drawn by the client from the
++          poses in the pose channel, and is presented filling the view rather
++          than as a panel in it. Requires an eye layout other than mono.
++          The OpenXR projection layer is this.
++        </description>
++      </entry>
++      <entry name="equirect_180" value="3">
++        <description summary="the client is the sky, front hemisphere">
++          Equirectangular, covering 180 degrees of longitude in front of the
++          wearer. Behind them there is no image and the compositor says so
++          rather than smearing the edge.
++
++          "In front of the wearer" is where they were facing when the layer was
++          claimed, and the image then stays put. This matters far more here than
++          for equirect_360, where turning the wrong way merely shows a different
++          part of the picture rather than the absence of one.
++        </description>
++      </entry>
++      <entry name="equirect_360" value="4">
++        <description summary="the client is the sky, all of it"/>
++      </entry>
++    </enum>
++
++    <request name="set_yaw_offset">
++      <description summary="turn an immersive image about the vertical axis">
++        Microradians, positive to the left. Only meaningful for the equirect
++        layers, where it brings the interesting part of a panorama round to face
++        the wearer's forward. Ignored otherwise.
++
++        This is a statement about the IMAGE, not about where the image goes. An
++        immersive layer already arrives centred on the wearer -- the compositor
++        notes which way they are facing when the layer is claimed, exactly as it
++        does when placing a new window, and the image stays there afterwards
++        however they turn. So a client wanting its content in front of the
++        person watching should send nothing at all; this is for the separate
++        case of a panorama whose interesting part is not at its centre.
++
++        Do not compensate for head position here. A client that reads the pose
++        channel and sends the negated heading will find its two rotations adding
++        up against a compositor that is already doing it.
++      </description>
++      <arg name="microradians" type="int"/>
++    </request>
++
++    <event name="layer_refused">
++      <description summary="the compositor will not do that">
++        The surface keeps whatever layer it had. Carries the layer that was
++        asked for, so a client that asked for two things knows which failed,
++        and a human-readable reason which is for a log and not for a user.
++      </description>
++      <arg name="layer" type="uint" enum="layer"/>
++      <arg name="reason" type="string"/>
++    </event>
++
++    <event name="layer_lost">
++      <description summary="an exclusive layer has been taken away">
++        Sent when the wearer or another client takes back something only one
++        surface can have -- the sky. The surface is a window again from the
++        next frame. A client that crashes cannot leave the wearer inside a
++        frozen image, because the same thing happens when its surface dies.
++      </description>
++      <arg name="layer" type="uint" enum="layer"/>
++    </event>
++
++    <request name="set_idle_fade" since="2">
++      <description summary="let the compositor fade this surface out when unattended">
++        For a surface that should get out of the way -- a transport bar over a
++        film, a toolbar over a model -- and come back when the wearer wants it.
++
++        The compositor owns the timer, the threshold and the animation, and
++        that is the point of putting it here rather than leaving it to the
++        client. A client cannot do this correctly even in principle: pointer
++        motion is delivered only to the surface under the ray, so a surface
++        that has faded out cannot see the wearer reaching for it, and has no
++        way to know it should come back. The compositor sees every pointer
++        sample and every head movement, whatever they are pointed at.
++
++        While faded the surface is STILL THE INPUT TARGET, at every alpha
++        including zero. Pressing where an invisible transport bar is will hit
++        it -- but the same motion has already brought it back, so in practice
++        the wearer sees it before they press it.
++
++        The surface keeps rendering; nothing about its buffers, frame callbacks
++        or size changes, and a client need not know whether it is currently
++        faded. It is a compositor-side dimmer on an otherwise ordinary window.
++
++        Off by default. This is double-buffered like everything else here.
++      </description>
++      <arg name="enable" type="uint" summary="0 or 1"/>
++    </request>
++
++    <request name="set_idle_after" since="3">
++      <description summary="how long unattended is long enough">
++        Milliseconds of the wearer doing nothing before this surface starts to
++        fade. Zero means the compositor's own idea, which is also what a surface
++        that never calls this gets.
++
++        The right answer is a property of what the surface IS, not of the
++        session: a toolbar over a model wants to stay while you think, and a
++        transport bar over a film wants to be gone the moment you stop touching
++        it. No single number serves both, which is why this is here rather than
++        being something the compositor decides for everybody.
++
++        Only the threshold is yours. The animation, and what counts as the
++        wearer doing something, stay the compositor's — those are properties of
++        the room and of the input hardware, and a client cannot see either.
++
++        The compositor may clamp this. Below about a second the ramps are longer
++        than the wait, so the surface never reaches full brightness before
++        starting back down, and what a client asking for 200 ms actually gets is
++        a flicker. Ask for what you mean and expect something sensible.
++
++        No effect without set_idle_fade.
++      </description>
++      <arg name="milliseconds" type="uint" summary="0 for the compositor's default"/>
++    </request>
++
++    <request name="set_resize_anchor" since="3">
++      <description summary="which edge stays put when this surface changes shape">
++        A surface has one position in the room and its height follows from its
++        buffer's aspect, so committing a shorter buffer makes it shrink about
++        its middle. For a window becoming a transport bar -- same width, a fifth
++        the height -- that leaves the bar floating in the centre of the view
++        with film above it AND below it, where what was wanted was the bar
++        sitting where the bottom of the window used to be.
++
++        This says which edge means something. "bottom" keeps the bottom edge
++        where it was and takes the height off the top, "top" the other way
++        round, and "centre" is the old behaviour and the default.
++
++        Deliberately an anchor rather than a way to move yourself. A client that
++        can set its own position will set its own position, and then placement
++        stops being one thing the compositor decides -- the wearer moves a
++        window and the application puts it back. An anchor states the intent and
++        leaves the geometry here.
++
++        Applies to the surface's own content. The chrome around it is the
++        compositor's business and may change thickness independently.
++      </description>
++      <arg name="anchor" type="uint" enum="resize_anchor"/>
++    </request>
++
++    <enum name="resize_anchor" since="3">
++      <entry name="centre" value="0" summary="shrink about the middle; the default"/>
++      <entry name="top" value="1" summary="the top edge stays where it is"/>
++      <entry name="bottom" value="2" summary="the bottom edge stays where it is"/>
++    </enum>
++
++    <request name="set_cursor_drawn" since="4">
++      <description summary="this surface draws the pointer itself">
++        While the pointer is over this surface, the compositor draws no reticle
++        and no beam for it; the client draws its own.
++
++        The compositor knows which way the pointer points and nothing about how
++        far away what it points at is. For a window that does not matter: the
++        window is the depth. For a surface that is the room -- a projection
++        layer, where one pixel is a table two metres off and the next is a
++        mountain -- a reticle drawn at the room's depth is at the wrong depth
++        almost everywhere, and seen double against whatever the wearer is
++        actually aiming at. The client drew the room and knows the depth of
++        every pixel of it, so the client draws the cursor.
++
++        Where the pointer is still arrives as ordinary pointer motion, in the
++        surface's own coordinates. Only the drawing moves. Over any other
++        surface, or over none, the compositor draws the pointer as it always
++        does.
++
++        Off by default. Double-buffered like everything else here.
++      </description>
++      <arg name="enable" type="uint" summary="0 or 1"/>
++    </request>
++
++    <request name="set_frame_pose" since="5">
++      <description summary="the head this surface's picture was drawn for">
++        For a `projection` surface: where the head was pointing in the picture
++        attached with the next commit -- the orientation the client rendered
++        its eye views from, which is not where the head is by the time they are
++        shown. Between reading the pose and the picture reaching the glass are
++        the client's rendering and the compositor's own wait for the next
++        display frame, and a picture drawn for one head and shown to another
++        swims against the world when the head moves.
++
++        Told the difference, the compositor turns the picture by it before
++        showing it, so the world stays where it is. Rotation only: a few
++        centimetres of head movement in a few milliseconds is not what anyone
++        sees, and what a rotation cannot fix a translation cannot be asked
++        to.
++
++        The quaternion is the head's orientation in this protocol's frame (see
++        COORDINATES), each component in millionths. A surface that never says
++        is shown as though drawn for the head as it is now. Double-buffered,
++        so the pose and the picture it belongs to arrive together.
++
++        `token` is a number the pose channel's slot carried when the client read
++        it (its `reserved` field, which is otherwise zero), handed back so that a
++        compositor that is only passing the picture on -- to a headset across a
++        network, say -- can say which head it was drawn for without the two ends
++        agreeing on a clock. Zero means none.
++      </description>
++      <arg name="token" type="uint" summary="the slot's reserved field, or zero"/>
++      <arg name="x" type="int" summary="millionths"/>
++      <arg name="y" type="int" summary="millionths"/>
++      <arg name="z" type="int" summary="millionths"/>
++      <arg name="w" type="int" summary="millionths"/>
++    </request>
++
++    <request name="set_pinch_taken" since="6">
++      <description summary="this surface zooms its own content when pinched">
++        Two fingers pinching or spreading over a window ordinarily make the
++        window itself bigger or smaller. A surface that has something of its
++        own to zoom -- a picture, a page -- says so with this, and is sent
++        `pinch` instead while the pointer is over it; the window stays the size
++        it is. Pinching on the window's title bar is the compositor's still.
++
++        Off by default. Double-buffered like everything else here.
++      </description>
++      <arg name="enable" type="uint" summary="0 or 1"/>
++    </request>
++
++    <request name="set_see_through" since="6">
++      <description summary="what this surface leaves clear is clear">
++        A window is drawn opaque whatever its buffer's alpha says: a client's
++        own transparency would let the room through a terminal and make it
++        unreadable. A surface whose content is a thing on nothing -- a picture
++        shown whole, its shape not the window's -- asks with this for its alpha
++        to be kept, so that where it draws nothing the room is seen.
++
++        Off by default. Double-buffered like everything else here.
++      </description>
++      <arg name="enable" type="uint" summary="0 or 1"/>
++    </request>
++
++    <request name="set_sound_key" since="8">
++      <description summary="which sound is this window's">
++        A client that hands its sound to the compositor itself -- rather than
++        playing it where the compositor can see which process made it -- says
++        with what name it hands it over, so that the sound is placed at this
++        window and not at another window of the same application. Each window
++        of a client may have a key of its own (two pages of a browser, three
++        films in three windows of one player) or share one.
++
++        The name is the client's to choose and means nothing else. A window
++        that never says is placed by its application id, as before.
++
++        Double-buffered like everything else here.
++      </description>
++      <arg name="key" type="string" summary="the name its sound is handed over with"/>
++    </request>
++
++    <request name="set_scroll_free" since="10">
++      <description summary="this surface scrolls both ways at once">
++        A thumb on a pad scrolls one way at a time: what its first movements
++        choose, and up or down far more readily than sideways, because a
++        thumb meaning to read down a page drifts sideways as it goes. A
++        surface whose content moves both ways under the hand -- a picture
++        swiped to the next, a map or a zoomed picture panned -- says so with
++        this, and is sent both axes as the thumb moves, from its first
++        movement past where the contact settles; which way that is, if
++        either, is the client's to decide.
++
++        Off by default. Double-buffered like everything else here.
++      </description>
++      <arg name="enable" type="uint" summary="0 or 1"/>
++    </request>
++
++    <event name="pinch" since="6">
++      <description summary="the wearer pinched over this surface">
++        How much the fingers spread since the last `pinch`: a factor, in
++        millionths, above a million for spreading (zoom in) and below for
++        drawing together. Sent only to a surface that asked with
++        `set_pinch_taken`, as the fingers move.
++      </description>
++      <arg name="scale" type="int" summary="factor, in millionths"/>
++    </event>
++
++    <event name="describe" since="9">
++      <description summary="say what this surface shows, for the room's speech">
++        The room asks what this surface is about: dictation leans its spelling
++        towards a terminal's commands and a page's words, and the assistant
++        reads a window through this.
++
++        The client writes one JSON object into the file descriptor and closes
++        it, soon -- the room waits a moment, and then does without. Every field
++        is optional: "kind" (terminal, web, files, video, viewer, chat, text),
++        "app", "title", "text" (what it shows, as text), "vocabulary" (an array
++        of names and words likely to be said: file names, a page's headings),
++        "directory", and "commands" (a terminal's last commands, the last one
++        last). A client with nothing to say closes it at once.
++      </description>
++      <arg name="fd" type="fd" summary="where to write the description"/>
++    </event>
++  </interface>
++
++  <interface name="spatiand_assist_v1" version="1">
++    <description summary="the room's assistant: what is in the room, and doing things in it">
++      The assistant is one of Spatiand's own programs, and through this it sees
++      the room as the wearer does and acts in it as the wearer would: which
++      applications and windows there are, what a window shows (its own account
++      of itself, or a picture of it), and the pointer and keyboard on a window,
++      the room's settings, and its own figure in the room.
++
++      Offered to every client and **refused to all but one**: until a client
++      has said the key the room gave the assistant when it started it
++      (`SPATIAND_ASSIST_KEY`, a secret per session, handed to no other
++      program), every question is answered with an error. A key in the
++      environment is not one a shell in a terminal inherits: the room gives
++      it to the assistant's own process alone.
++
++      Questions and actions are JSON (`{"do": "...", ...}`), small enough for
++      one message; the answer is JSON written into the file descriptor that
++      came with the question, which the room closes when it is done. An answer
++      of `{"error": "..."}` says what went wrong in words fit to show.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="done with the room">
++        The microphone, if it was being given, stops.
++      </description>
++    </request>
++
++    <request name="hello">
++      <description summary="say the key">
++        The key from the environment. Said once, first; a wrong one closes
++        nothing but leaves every question refused.
++      </description>
++      <arg name="key" type="string" summary="SPATIAND_ASSIST_KEY"/>
++    </request>
++
++    <request name="ask">
++      <description summary="a question or an action">
++        One JSON object; the answer is written into `answer` and it is closed.
++      </description>
++      <arg name="json" type="string" summary="what is asked, as JSON"/>
++      <arg name="answer" type="fd" summary="where the answer is written"/>
++    </request>
++
++    <request name="listen">
++      <description summary="the microphone, while the assistant listens">
++        The room writes the microphone into `fd` -- 16 kHz, mono, 16-bit little
++        endian -- until either end closes it or `listen` is asked again. One
++        microphone serves the whole room: dictation and the assistant share it.
++      </description>
++      <arg name="fd" type="fd" summary="where the microphone is written"/>
++    </request>
++
++    <event name="happened">
++      <description summary="something the assistant may want to know">
++        JSON: `{"focus": window}` when the focus moves, `{"wake": true}` when the
++        wearer asks for the assistant by a control (the mic key held, say).
++      </description>
++      <arg name="json" type="string" summary="what happened, as JSON"/>
++    </event>
++  </interface>
++
++  <interface name="spatiand_xr_pose_channel_v1" version="2">
++    <description summary="head and eye poses, in shared memory">
++      Poses are NOT sent as events, and that is the central decision in this
++      protocol.
++
++      A head-tracked client has to know where the head is at the last possible
++      moment before it renders -- that is what makes the world stay still. An
++      event carrying the pose is already stale when it arrives: it costs a
++      round trip, it arrives when the compositor got round to sending it rather
++      than when the client needs it, and it cannot be re-read a millisecond
++      later without another round trip.
++
++      So the compositor writes poses into a small ring in shared memory and
++      hands over a read-only file descriptor. The client maps it once and reads
++      the newest sample whenever it likes, including immediately before
++      submitting a frame. No round trips, no per-frame protocol traffic, and
++      late-latching becomes a memory read.
++
++      The ring also carries a short history, so a client can interpolate to an
++      arbitrary time -- which is exactly what an OpenXR adapter needs to answer
++      xrLocateViews for a predicted display time.
++
++      MEMORY FORMAT
++
++      Little-endian, naturally aligned, and stable for the life of this
++      interface version. All floats are IEEE-754 binary32. Times are
++      CLOCK_MONOTONIC nanoseconds, the same clock a frame callback's time
++      comes from.
++
++        struct spatiand_xr_channel {          // offset 0
++            uint32_t version;                 // 1
++            uint32_t slot_count;              // power of two
++            uint32_t slot_stride;             // bytes
++            uint32_t slots_offset;            // bytes from the start
++            uint64_t write_index;             // total slots ever written
++            uint64_t _reserved;
++        };
++
++        struct spatiand_xr_slot {             // slots_offset + (i * slot_stride)
++            uint64_t seq;                     // odd while being written
++            int64_t  sample_ns;               // when this pose was measured
++            int64_t  predicted_ns;            // when a frame submitted now is expected to be shown
++            int64_t  _reserved;
++            float    head_orientation[4];     // x, y, z, w  -- XrQuaternionf
++            float    head_position[3];        // metres      -- XrVector3f
++            float    _pad0;
++            struct {
++                float orientation[4];         // x, y, z, w
++                float position[3];            // metres, relative to the tracking origin
++                float _pad;
++                float fov[4];                 // angleLeft, angleRight, angleUp, angleDown
++                                              // radians, signed -- XrFovf exactly
++            } eye[2];                         // 0 = left
++        };
++
++      READING IT
++
++      Read `write_index`, take slot `(write_index - 1) modulo slot_count`
++      (the count is a power of two, so this is a mask), read `seq`, read the
++      body, read `seq` again. If either `seq` read is odd
++      or the two differ, the writer was in that slot: step back one slot or try
++      again. This is an ordinary seqlock and it never blocks the compositor.
++
++      The compositor writes at its own rate, which is the display rate. A
++      client that reads faster will see repeats; one that reads slower will
++      miss samples. Neither is an error.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="stop receiving poses">
++        The mapping stays valid until the client unmaps it, but stops being
++        updated.
++      </description>
++    </request>
++
++    <event name="channel">
++      <description summary="here is the shared memory">
++        Sent once, immediately. The descriptor is read-only and sealed; map it
++        with MAP_SHARED and PROT_READ.
++      </description>
++      <arg name="fd" type="fd"/>
++      <arg name="size" type="uint" summary="bytes to map"/>
++    </event>
++
++    <event name="render_size" since="2">
++      <description summary="the size the viewer wants each eye drawn at">
++        Sent when a viewer that is not on this machine -- a headset across a
++        network, being streamed to -- has a size for each eye that is not the one
++        the client would pick for itself, and again whenever it changes. A client
++        that renders to its own idea of "an eye" is stretched to fit, which on a
++        stream is a picture that has been resampled twice for nothing.
++
++        A compositor that drives the display directly has no such preference and
++        never sends this. Dimensions are one eye's, in pixels; the client chooses
++        its layout and multiplies them itself.
++      </description>
++      <arg name="width" type="uint"/>
++      <arg name="height" type="uint"/>
++    </event>
++
++    <event name="unavailable">
++      <description summary="there are no poses to give">
++        Sent instead of `channel` when the session has no head tracking at all
++        -- no headset plugged in, or a nested session on a desktop. A client
++        should carry on as a flat window rather than wait. It is not an error
++        and the object stays alive; `channel` may arrive later if a headset
++        appears.
++      </description>
++      <arg name="reason" type="string"/>
++    </event>
++  </interface>
++
++</protocol>
+diff --git a/ui/ozone/platform/wayland/BUILD.gn b/ui/ozone/platform/wayland/BUILD.gn
+index bb9b85116b..294975fb47 100644
+--- a/ui/ozone/platform/wayland/BUILD.gn
++++ b/ui/ozone/platform/wayland/BUILD.gn
+@@ -71,6 +71,8 @@ source_set("wayland") {
+     "host/single_pixel_buffer.cc",
+     "host/single_pixel_buffer.h",
+     "host/span_style.h",
++    "host/spatiand_xr.cc",
++    "host/spatiand_xr.h",
+     "host/toplevel_icon_manager.cc",
+     "host/toplevel_icon_manager.h",
+     "host/wayland_async_cursor.cc",
+@@ -283,6 +285,7 @@ source_set("wayland") {
+     "//third_party/wayland-protocols:xdg_output_protocol",
+     "//third_party/wayland-protocols:xdg_shell_protocol",
+     "//third_party/wayland-protocols:xdg_toplevel_drag_protocol",
++    "//third_party/wayland-protocols:spatiand_xr_protocol",
+     "//third_party/wayland-protocols:xdg_toplevel_icon_protocol",
+     "//third_party/wayland-protocols:xx_session_management_protocol",
+     "//ui/base",
+diff --git a/ui/ozone/platform/wayland/host/spatiand_xr.cc b/ui/ozone/platform/wayland/host/spatiand_xr.cc
+new file mode 100644
+index 0000000000..a588ebe584
+--- /dev/null
++++ b/ui/ozone/platform/wayland/host/spatiand_xr.cc
+@@ -0,0 +1,102 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "ui/ozone/platform/wayland/host/spatiand_xr.h"
++
++#include <spatiand-xr-v1-client-protocol.h>
++#include <unistd.h>
++
++#include <map>
++
++#include "base/files/scoped_file.h"
++#include "base/logging.h"
++#include "base/no_destructor.h"
++#include "ui/ozone/platform/wayland/host/wayland_surface.h"
++#include "ui/ozone/platform/wayland/host/wayland_window.h"
++#include "ui/platform_window/platform_window.h"
++
++namespace ui {
++
++namespace {
++
++// `describe` came in version 9.
++constexpr uint32_t kMinVersion = 9;
++
++spatiand_xr_v1* g_xr = nullptr;
++
++std::map<WaylandWindow*, spatiand_xr_surface_v1*>& Objects() {
++  static base::NoDestructor<std::map<WaylandWindow*, spatiand_xr_surface_v1*>> objects;
++  return *objects;
++}
++
++void OnDisplayMode(void*, spatiand_xr_v1*, uint32_t) {}
++void OnHands(void*, spatiand_xr_v1*) {}
++constexpr spatiand_xr_v1_listener kXrListener = {
++    .display_mode = &OnDisplayMode,
++    .hands = &OnHands,
++};
++
++void OnLayerRefused(void*, spatiand_xr_surface_v1*, uint32_t, const char*) {}
++void OnLayerLost(void*, spatiand_xr_surface_v1*, uint32_t) {}
++void OnPinch(void*, spatiand_xr_surface_v1*, int32_t) {}
++void OnDescribe(void* data, spatiand_xr_surface_v1*, int32_t fd) {
++  base::ScopedFD owned(fd);
++  auto* window = static_cast<WaylandWindow*>(data);
++  const uint32_t id = window->root_surface() ? window->root_surface()->get_surface_id() : 0u;
++  // The browser writes and closes it when it has its answer; with no one to answer, closed now,
++  // which the room takes for nothing to say.
++  RunSpatiandDescribe(id, std::move(owned));
++}
++constexpr spatiand_xr_surface_v1_listener kSurfaceListener = {
++    .layer_refused = &OnLayerRefused,
++    .layer_lost = &OnLayerLost,
++    .pinch = &OnPinch,
++    .describe = &OnDescribe,
++};
++
++}  // namespace
++
++// static
++void SpatiandXr::Instantiate(WaylandConnection* connection,
++                             wl_registry* registry,
++                             uint32_t name,
++                             const std::string& interface,
++                             uint32_t version) {
++  CHECK_EQ(interface, kInterfaceName);
++  if (g_xr || version < kMinVersion) {
++    return;
++  }
++  g_xr = static_cast<spatiand_xr_v1*>(
++      wl_registry_bind(registry, name, &spatiand_xr_v1_interface, kMinVersion));
++  if (!g_xr) {
++    LOG(ERROR) << "Failed to bind to spatiand_xr_v1";
++    return;
++  }
++  spatiand_xr_v1_add_listener(g_xr, &kXrListener, nullptr);
++}
++
++// static
++void SpatiandXr::Attach(WaylandWindow* window) {
++  if (!g_xr || !window->root_surface() || Objects().contains(window)) {
++    return;
++  }
++  spatiand_xr_surface_v1* object =
++      spatiand_xr_v1_get_xr_surface(g_xr, window->root_surface()->surface());
++  if (!object) {
++    return;
++  }
++  spatiand_xr_surface_v1_add_listener(object, &kSurfaceListener, window);
++  Objects()[window] = object;
++}
++
++// static
++void SpatiandXr::Detach(WaylandWindow* window) {
++  auto it = Objects().find(window);
++  if (it == Objects().end()) {
++    return;
++  }
++  spatiand_xr_surface_v1_destroy(it->second);
++  Objects().erase(it);
++}
++
++}  // namespace ui
+diff --git a/ui/ozone/platform/wayland/host/spatiand_xr.h b/ui/ozone/platform/wayland/host/spatiand_xr.h
+new file mode 100644
+index 0000000000..34a59a4417
+--- /dev/null
++++ b/ui/ozone/platform/wayland/host/spatiand_xr.h
+@@ -0,0 +1,40 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef UI_OZONE_PLATFORM_WAYLAND_HOST_SPATIAND_XR_H_
++#define UI_OZONE_PLATFORM_WAYLAND_HOST_SPATIAND_XR_H_
++
++#include <cstdint>
++#include <string>
++
++#include "ui/ozone/platform/wayland/common/wayland_object.h"
++
++namespace ui {
++
++class WaylandConnection;
++class WaylandWindow;
++
++// Spatiand's room's own protocol, spatiand_xr_v1 (crates/spatiand-proto in Spatiand), as far as
++// SpatiMesh needs it: each toplevel's object, which the room asks what the window shows
++// (`describe`, since 9) for its dictation and its assistant. The answer is the browser's
++// (ui::RunSpatiandDescribe); asked of a window no one answers for, it is closed at once. Nothing
++// else of the protocol is asked for, so the room treats the window as before.
++class SpatiandXr : public wl::GlobalObjectRegistrar<SpatiandXr> {
++ public:
++  static constexpr char kInterfaceName[] = "spatiand_xr_v1";
++
++  static void Instantiate(WaylandConnection* connection,
++                          wl_registry* registry,
++                          uint32_t name,
++                          const std::string& interface,
++                          uint32_t version);
++
++  // A toplevel's object, made once per window (again after a Hide, it is kept), and let go of
++  // before the window's surface is.
++  static void Attach(WaylandWindow* window);
++  static void Detach(WaylandWindow* window);
++};
++
++}  // namespace ui
++
++#endif  // UI_OZONE_PLATFORM_WAYLAND_HOST_SPATIAND_XR_H_
+diff --git a/ui/ozone/platform/wayland/host/wayland_connection.cc b/ui/ozone/platform/wayland/host/wayland_connection.cc
+index 1ab81633d4..adc2a80508 100644
+--- a/ui/ozone/platform/wayland/host/wayland_connection.cc
++++ b/ui/ozone/platform/wayland/host/wayland_connection.cc
+@@ -36,6 +36,7 @@
+ #include "ui/ozone/platform/wayland/host/org_kde_kwin_idle.h"
+ #include "ui/ozone/platform/wayland/host/overlay_prioritizer.h"
+ #include "ui/ozone/platform/wayland/host/proxy/wayland_proxy_impl.h"
++#include "ui/ozone/platform/wayland/host/spatiand_xr.h"
+ #include "ui/ozone/platform/wayland/host/single_pixel_buffer.h"
+ #include "ui/ozone/platform/wayland/host/toplevel_icon_manager.h"
+ #include "ui/ozone/platform/wayland/host/wayland_buffer_factory.h"
+@@ -162,6 +163,8 @@ bool WaylandConnection::Initialize(bool use_threaded_polling) {
+                               &OverlayPrioritizer::Instantiate);
+   RegisterGlobalObjectFactory(SinglePixelBuffer::kInterfaceName,
+                               &SinglePixelBuffer::Instantiate);
++  RegisterGlobalObjectFactory(SpatiandXr::kInterfaceName,
++                              &SpatiandXr::Instantiate);
+   RegisterGlobalObjectFactory(ToplevelIconManager::kInterfaceName,
+                               &ToplevelIconManager::Instantiate);
+   RegisterGlobalObjectFactory(WaylandCursorShape::kInterfaceName,
+diff --git a/ui/ozone/platform/wayland/host/wayland_toplevel_window.cc b/ui/ozone/platform/wayland/host/wayland_toplevel_window.cc
+index af197b3c29..a40f3d4698 100644
+--- a/ui/ozone/platform/wayland/host/wayland_toplevel_window.cc
++++ b/ui/ozone/platform/wayland/host/wayland_toplevel_window.cc
+@@ -2,6 +2,7 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#include "ui/ozone/platform/wayland/host/spatiand_xr.h"
+ #include "ui/ozone/platform/wayland/host/wayland_toplevel_window.h"
+ 
+ #include <string>
+@@ -62,7 +63,10 @@ WaylandToplevelWindow::WaylandToplevelWindow(PlatformWindowDelegate* delegate,
+   SetWmMoveResizeHandler(this, AsWmMoveResizeHandler());
+ }
+ 
+-WaylandToplevelWindow::~WaylandToplevelWindow() = default;
++WaylandToplevelWindow::~WaylandToplevelWindow() {
++  // Spatiand: its room object goes before its surface does.
++  SpatiandXr::Detach(this);
++}
+ 
+ bool WaylandToplevelWindow::CreateXdgToplevel() {
+   if (auto xdg_surface = std::make_unique<XdgSurface>(this, connection())) {
+@@ -99,6 +103,8 @@ bool WaylandToplevelWindow::CreateXdgToplevel() {
+     TriggerStateChanges(GetPlatformWindowState(), display::kInvalidDisplayId);
+   }
+   SetUpShellIntegration();
++  // Spatiand: the room may ask this window what it shows (spatiand_xr.h).
++  SpatiandXr::Attach(this);
+   OnDecorationModeChanged();
+ 
+   // If session management is supported and session data was passed in at
+diff --git a/ui/platform_window/platform_window.cc b/ui/platform_window/platform_window.cc
+index eddababc20..e3bdc92fe8 100644
+--- a/ui/platform_window/platform_window.cc
++++ b/ui/platform_window/platform_window.cc
+@@ -6,6 +6,7 @@
+ 
+ #include <string>
+ 
++#include "base/no_destructor.h"
+ #include "ui/gfx/geometry/rect.h"
+ 
+ namespace ui {
+@@ -80,4 +81,21 @@ uint32_t PlatformWindow::GetSpatiandSurfaceId() const {
+   return 0;
+ }
+ 
++namespace {
++SpatiandDescribeCallback& SpatiandDescribe() {
++  static base::NoDestructor<SpatiandDescribeCallback> callback;
++  return *callback;
++}
++}  // namespace
++
++void SetSpatiandDescribe(SpatiandDescribeCallback callback) {
++  SpatiandDescribe() = std::move(callback);
++}
++
++void RunSpatiandDescribe(uint32_t surface_id, base::ScopedFD fd) {
++  if (SpatiandDescribe()) {
++    SpatiandDescribe().Run(surface_id, std::move(fd));
++  }
++}
++
+ }  // namespace ui
+diff --git a/ui/platform_window/platform_window.h b/ui/platform_window/platform_window.h
+index 57c2325dad..b0ac163d52 100644
+--- a/ui/platform_window/platform_window.h
++++ b/ui/platform_window/platform_window.h
+@@ -10,6 +10,8 @@
+ #include <vector>
+ 
+ #include "base/component_export.h"
++#include "base/files/scoped_file.h"
++#include "base/functional/callback.h"
+ #include "ui/base/class_property.h"
+ #include "ui/base/ui_base_types.h"
+ #include "ui/gfx/native_ui_types.h"
+@@ -208,6 +210,18 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindow
+   virtual void NotifyStartupComplete(const std::string& startup_id);
+ };
+ 
++// Spatiand: the room asking a window what it shows, for its dictation and its assistant
++// (spatiand_xr_surface_v1.describe; ui/ozone/platform/wayland/host/spatiand_xr.cc). The window is
++// named by its surface's protocol id (PlatformWindow::GetSpatiandSurfaceId); the answer is one JSON
++// object written into `fd`, which is closed when it has been. Set once by the browser.
++using SpatiandDescribeCallback =
++    base::RepeatingCallback<void(uint32_t surface_id, base::ScopedFD fd)>;
++COMPONENT_EXPORT(PLATFORM_WINDOW)
++void SetSpatiandDescribe(SpatiandDescribeCallback callback);
++// Asks it; with no one to answer, `fd` is closed at once (nothing to say).
++COMPONENT_EXPORT(PLATFORM_WINDOW)
++void RunSpatiandDescribe(uint32_t surface_id, base::ScopedFD fd);
++
+ }  // namespace ui
+ 
+ #endif  // UI_PLATFORM_WINDOW_PLATFORM_WINDOW_H_
+-- 
+2.53.0
+

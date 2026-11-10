@@ -243,7 +243,8 @@ SpatiShelf), `file:` addresses (to anything; a remote's by its WebDAV address) a
 them onto the folder under the point they are let go of; SpatiMesh takes files and links, opening
 them in a new tab when let go of over its tabs and in the page when over the page. Checked in the
 snapshot compositor: a file dragged from one SpatiShelf's window onto a folder in another's, and
-from SpatiShelf onto SpatiMesh's tabs. Not yet: dragging out of a page (WebKit's own drags), and
+from SpatiShelf onto SpatiMesh's tabs (Chromium's since 2026-11-10: the Rust window was removed;
+`tools/spatiand-dnd-e2e.py` with `SPATIAND_CHROMIUM_BIN`). Not yet: dragging out of a page (WebKit's own drags), and
 into or out of a Mac's or a host's own windows.
 
 ## 2026-10-15: from the owner's first look

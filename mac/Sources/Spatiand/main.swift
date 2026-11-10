@@ -1207,7 +1207,9 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-desk") {
     // The window as the window server shows it is saved after each step (folder, else
     // ~/screenshots). Does not touch the running Spatiand.
     let args = Array(CommandLine.arguments[(at + 1)...])
-    let name = args.first ?? "SpatiMesh"
+    // SpatiQuill unless named: SpatiMesh's steps below are for its window, which the Mac has none of
+    // until its Chromium port (the Rust window program was removed on 2026-11-10).
+    let name = args.first ?? "SpatiQuill"
     let folder = args.count > 1 ? args[1] : NSHomeDirectory() + "/screenshots"
     try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
     let application = NSApplication.shared

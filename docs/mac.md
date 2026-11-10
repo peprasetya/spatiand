@@ -200,7 +200,7 @@ when run from the bundle. **The ones marked ✋ move the Mac's real pointer.**
 | `--selftest-child [--goes] [--tab]` | a window with something beside it, which then goes; or with a second tab chosen |
 | `--selftest-terminal-tabs <title>` | switches the tabs of a real Terminal window |
 | `--selftest-menu <App>` | opens an application's menus as a list, and one level of them |
-| `--selftest-desk <App> [folder]` | 2D mode: one of Spatiand's own applications as a Mac window, in a process of its own (the running Spatiand is not touched). SpatiMesh: an address typed (Command-L), resized, scrolled, then a click and a search typed as AppKit events; the others: opened, resized; then each closed by its close button. The window as the window server shows it is saved after each step |
+| `--selftest-desk <App> [folder]` | 2D mode: one of Spatiand's own applications as a Mac window (SpatiQuill unless named; the Mac has no SpatiMesh until its Chromium port), in a process of its own (the running Spatiand is not touched). SpatiMesh (the Rust window, removed 2026-11-10): an address typed (Command-L), resized, scrolled, then a click and a search typed as AppKit events; the others: opened, resized; then each closed by its close button. The window as the window server shows it is saved after each step |
 | `--selftest-app-sound <App>` | takes a playing application's sound for the room; with `SPATIAND_TEST_TURN=1` turns the head it is placed for and says how loud each ear is |
 | `--selftest-screen [--virtual]` | brings a screen into the room |
 | `--selftest-windows [--and-choose]` | the list of windows |

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Dragging between windows in the room, end to end, with no GPU, no display and no glasses.
 
-The room's compositor (SPATIAND_BACKEND=snapshot) runs two SpatiShelf windows and a SpatiMesh
-one (on its stand-in engine, which paints each page one colour of its address), and SPATIAND_STEPS drags between them, the button held from one window to the
-next as a wearer's would be:
+The room's compositor (SPATIAND_BACKEND=snapshot) runs two SpatiShelf windows and SpatiMesh (the
+Deck's Chromium, third_party/chromium), and SPATIAND_STEPS drags between them, the button held from
+one window to the next as a wearer's would be:
 
     shelf-to-shelf   a file from one SpatiShelf onto a folder in another: moved there (the same
                      disk), the folder under the drop lit while it is over it
@@ -11,6 +11,9 @@ next as a wearer's would be:
     held             a drag still held when the room is photographed: its card in the room
 
     tools/spatiand-dnd-e2e.py [target/debug] [out-folder]
+
+SpatiMesh is the Chromium program SPATIAND_CHROMIUM_BIN names (its FFmpeg found as its build finds
+it, or by LD_LIBRARY_PATH); without one, shelf-to-mesh is left out and says so.
 """
 
 import importlib.util
@@ -30,12 +33,8 @@ SHELF = (1440, 900)
 PAGE = '<!doctype html><title>Dropped page</title><body style="margin:0;background:#8f6bf2">dropped</body>'
 
 
-def page_colour(url):
-    """The colour SpatiMesh's stand-in engine paints a page (crates/spatimesh/src/engine/fake.rs)."""
-    h = 0x811C9DC5
-    for b in url.encode():
-        h = ((h ^ b) * 0x01000193) & 0xFFFFFFFF
-    return ((h >> 16) & 0xFF | 0x20, (h >> 8) & 0xFF | 0x20, h & 0xFF | 0x20)
+# The dropped page's own colour, which Chromium draws it in.
+VIOLET = (0x8F, 0x6B, 0xF2)
 
 
 def shelf_at(x, y):
@@ -91,15 +90,26 @@ def main():
         f"up:{shelf_at(455, 255)}", "wait:3",
     ], os.path.join(out, "room-shelf-to-shelf.png"))
 
-    mesh = f"env -u SPATIAND_APP_FD SPATIMESH_HOME={os.path.join(work, 'mesh')} SPATIMESH_ENGINE=fake {os.path.join(target, 'spatimesh')} &\n"
+    chromium = os.environ.get("SPATIAND_CHROMIUM_BIN", "")
     after = os.path.join(out, "mesh-after.png")
-    log2 = run("shelf-to-mesh", f"{shelf} {a} &\nsleep 2\n{mesh}", [
-        "wait:8", "window:SpatiShelf",
-        # page.html is first now that letter.txt has gone.
-        f"down:{first}", f"move:{shelf_at(470, 260)}", f"move:{shelf_at(520, 280)}", "wait:1",
-        "window:SpatiMesh", "move:0.5,0.5", "move:0.3,0.03", "wait:1",
-        "up:0.3,0.03", "wait:5", f"dump:{after}",
-    ], os.path.join(out, "room-shelf-to-mesh.png"))
+    log2 = None
+    if chromium and os.path.exists(chromium):
+        # Its own profile; no sandbox, which a test machine's AppArmor may not allow it to make.
+        blank = os.path.join(work, "blank.html")
+        open(blank, "w").write("<!doctype html><title>Drop here</title><body style='margin:0;background:#fff'>")
+        mesh = (f"env -u SPATIAND_APP_FD {chromium} --ozone-platform=wayland --no-sandbox --no-first-run "
+                f"--no-default-browser-check --password-store=basic --user-data-dir={os.path.join(work, 'mesh')} "
+                f"file://{blank} 2>{os.path.join(out, 'chromium.log')} &\n")
+        log2 = run("shelf-to-mesh", f"{shelf} {a} &\nsleep 2\n{mesh}", [
+            "wait:12", "window:SpatiShelf",
+            # page.html is first now that letter.txt has gone.
+            f"down:{first}", f"move:{shelf_at(470, 260)}", f"move:{shelf_at(520, 280)}", "wait:1",
+            # Chromium takes a drag only after it has asked the renderer about it, a moment and some
+            # motion after it came in.
+            "window:SpatiMesh", "move:0.5,0.5", "wait:1", "move:0.4,0.04", "wait:1", "move:0.35,0.035", "wait:1",
+            "move:0.3,0.035", "wait:1", "up:0.3,0.035", "wait:6", f"dump:{after}",
+        ], os.path.join(out, "room-shelf-to-mesh.png"))
+        subprocess.run(["pkill", "-f", f"[u]ser-data-dir={os.path.join(work, 'mesh')}"])
 
     held = os.path.join(out, "room-held.png")
     log3 = run("held", two_shelves, [
@@ -126,14 +136,16 @@ def main():
         check(f"shelf-to-shelf: the folder under it lit ({blue} blue pixels)", blue > 4000)
     else:
         check("shelf-to-shelf: photographed while over the folder", False)
-    check("shelf-to-mesh: it was taken", "a drag ended: taken" in log2)
-    if os.path.exists(after):
-        _, _, rows = e2e.read_png(after)
-        colour = page_colour("file://" + os.path.join(a, "page.html"))
-        shown = e2e.count(rows, 100, 300, 1500, 900, lambda p: e2e.near(p, colour, 20))
-        check(f"shelf-to-mesh: the page dropped on the tabs is open ({shown} pixels of it)", shown > 200000)
+    if log2 is None:
+        print("skip  shelf-to-mesh: no SpatiMesh Chromium (SPATIAND_CHROMIUM_BIN)")
     else:
-        check("shelf-to-mesh: photographed after", False)
+        check("shelf-to-mesh: it was taken", "a drag ended: taken" in log2)
+        if os.path.exists(after):
+            w, h, rows = e2e.read_png(after)
+            shown = e2e.count(rows, 0, 0, w, h, lambda p: e2e.near(p, VIOLET, 20))
+            check(f"shelf-to-mesh: the page dropped on the tabs is open ({shown} of {w * h} pixels of it)", shown > w * h // 3)
+        else:
+            check("shelf-to-mesh: photographed after", False)
     if os.path.exists(held):
         w, h, rows = e2e.read_png(held)
         # The card hangs below and right of straight ahead, the middle of the picture: what is

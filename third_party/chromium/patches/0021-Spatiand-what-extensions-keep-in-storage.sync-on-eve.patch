@@ -1,0 +1,432 @@
+From 0fed8cf256f89c2f693c677d9e249941d55cb096 Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Tue, 10 Nov 2026 09:33:18 +0700
+Subject: [PATCH 21/22] Spatiand: what extensions keep in storage.sync, on
+ every machine
+
+Without Google's sync Chrome keeps an extension's storage.sync on the machine alone. It is now kept
+in the shared folder as the Rust SpatiMesh kept it: profiles/<id>/extension-sync/<extension>/<key in
+hex>.json, one file per key holding {"key", "value"}, so that two machines setting two keys while
+apart both keep theirs. Every change to the area is told to SpatiMesh (StorageFrontend, a callback
+of Spatiand's) and written there; every three seconds what another machine wrote is taken in,
+through StorageFrontend, so that the extension's pages hear storage.onChanged. A key gone from the
+folder that was in it was removed elsewhere; one set here before the folder had it goes into it.
+
+Checked headless (2026-11-10) with an extension of a fixed key: storage.sync.set wrote both keys'
+files; a key written into the folder, a value changed there and a file removed came back into the
+extension's storage.sync within seconds, and its onChanged heard all three.
+---
+ chrome/browser/BUILD.gn                       |   2 +
+ chrome/browser/spatiand/profile_service.cc    |   2 +
+ chrome/browser/spatiand/profile_service.h     |   2 +
+ chrome/browser/spatiand/storage_sync.cc       | 210 ++++++++++++++++++
+ chrome/browser/spatiand/storage_sync.h        |  66 ++++++
+ .../browser/api/storage/storage_frontend.cc   |  17 ++
+ .../browser/api/storage/storage_frontend.h    |   6 +
+ 7 files changed, 305 insertions(+)
+ create mode 100644 chrome/browser/spatiand/storage_sync.cc
+ create mode 100644 chrome/browser/spatiand/storage_sync.h
+
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 08b3c73f2a..122d85bf51 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1644,6 +1644,8 @@ source_set("core") {
+       "spatiand/settings_sync.h",
+       "spatiand/shared_folder.cc",
+       "spatiand/spatikey_window.cc",
++      "spatiand/storage_sync.cc",
++      "spatiand/storage_sync.h",
+       "spatiand/spatikey_window.h",
+       "spatiand/shared_folder.h",
+       "fullscreen_linux.cc",
+diff --git a/chrome/browser/spatiand/profile_service.cc b/chrome/browser/spatiand/profile_service.cc
+index 909a380a51..ba7179d7c4 100644
+--- a/chrome/browser/spatiand/profile_service.cc
++++ b/chrome/browser/spatiand/profile_service.cc
+@@ -33,6 +33,7 @@ ProfileService::ProfileService(Profile* profile)
+   cookies_ = std::make_unique<CookieSync>(profile, id, files_);
+   settings_ = std::make_unique<SettingsSync>(profile, id, files_);
+   extensions_ = std::make_unique<ExtensionSync>(profile, id, files_);
++  storage_ = std::make_unique<StorageSync>(profile, id, files_);
+   timer_.Start(FROM_HERE, kEvery,
+                base::BindRepeating(&ProfileService::Poll, base::Unretained(this)));
+ }
+@@ -45,6 +46,7 @@ void ProfileService::Poll() {
+   cookies_->Poll();
+   settings_->Poll();
+   extensions_->Poll();
++  storage_->Poll();
+ }
+ 
+ // static
+diff --git a/chrome/browser/spatiand/profile_service.h b/chrome/browser/spatiand/profile_service.h
+index f5c06ba963..a290fd02e6 100644
+--- a/chrome/browser/spatiand/profile_service.h
++++ b/chrome/browser/spatiand/profile_service.h
+@@ -12,6 +12,7 @@
+ #include "chrome/browser/profiles/profile_keyed_service_factory.h"
+ #include "chrome/browser/spatiand/bookmark_sync.h"
+ #include "chrome/browser/spatiand/cookie_sync.h"
++#include "chrome/browser/spatiand/storage_sync.h"
+ #include "chrome/browser/spatiand/extension_sync.h"
+ #include "chrome/browser/spatiand/history_sync.h"
+ #include "chrome/browser/spatiand/settings_sync.h"
+@@ -40,6 +41,7 @@ class ProfileService : public KeyedService {
+   std::unique_ptr<CookieSync> cookies_;
+   std::unique_ptr<SettingsSync> settings_;
+   std::unique_ptr<ExtensionSync> extensions_;
++  std::unique_ptr<StorageSync> storage_;
+   base::RepeatingTimer timer_;
+ };
+ 
+diff --git a/chrome/browser/spatiand/storage_sync.cc b/chrome/browser/spatiand/storage_sync.cc
+new file mode 100644
+index 0000000000..bde210ac11
+--- /dev/null
++++ b/chrome/browser/spatiand/storage_sync.cc
+@@ -0,0 +1,210 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/storage_sync.h"
++
++#include <utility>
++#include <vector>
++
++#include "base/files/file_enumerator.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/functional/callback_helpers.h"
++#include "base/no_destructor.h"
++#include "base/strings/string_number_conversions.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/spatiand/shared_folder.h"
++#include "extensions/browser/api/storage/storage_area_namespace.h"
++#include "extensions/browser/api/storage/storage_frontend.h"
++#include "extensions/browser/extension_registry.h"
++#include "extensions/common/extension.h"
++
++namespace spatiand {
++
++namespace {
++
++using extensions::StorageAreaNamespace;
++using extensions::StorageFrontend;
++
++// Every profile's, by its browser context: StorageFrontend tells one function of every change.
++std::map<content::BrowserContext*, StorageSync*>& All() {
++  static base::NoDestructor<std::map<content::BrowserContext*, StorageSync*>> all;
++  return *all;
++}
++
++void Tell(content::BrowserContext* context, const std::string& extension_id, const base::Value& changes) {
++  auto it = All().find(context);
++  if (it != All().end()) {
++    it->second->Changed(extension_id, changes);
++  }
++}
++
++std::string FileName(const std::string& key) {
++  return base::HexEncodeLower(base::as_byte_span(key)) + ".json";
++}
++
++StorageSync::Folders ReadFolders(const base::FilePath& dir, std::map<std::string, base::Time> seen, bool all) {
++  StorageSync::Folders folders;
++  base::FileEnumerator each(dir, false, base::FileEnumerator::DIRECTORIES);
++  for (base::FilePath folder = each.Next(); !folder.empty(); folder = each.Next()) {
++    const std::string id = folder.BaseName().value();
++    if (id.empty() || id[0] == '.') {
++      continue;
++    }
++    const base::Time changed = FolderChanged(folder);
++    const auto it = seen.find(id);
++    if (!all && it != seen.end() && it->second >= changed) {
++      continue;
++    }
++    StorageSync::Folder read;
++    read.changed = changed;
++    for (const std::string& name : ListJson(folder)) {
++      std::optional<base::Value> item = ReadJson(folder.Append(name + ".json"));
++      if (!item || !item->is_dict()) {
++        continue;
++      }
++      const std::string* key = item->GetDict().FindString("key");
++      const base::Value* value = item->GetDict().Find("value");
++      if (key && value) {
++        read.items.Set(*key, value->Clone());
++      }
++    }
++    folders[id] = std::move(read);
++  }
++  return folders;
++}
++
++void WriteItem(const base::FilePath& file, std::string key, base::Value value) {
++  base::DictValue item;
++  item.Set("key", std::move(key));
++  item.Set("value", std::move(value));
++  WriteJson(file, base::Value(std::move(item)));
++}
++
++}  // namespace
++
++StorageSync::StorageSync(Profile* profile,
++                         const std::string& id,
++                         scoped_refptr<base::SequencedTaskRunner> files)
++    : profile_(profile), dir_(SharedProfileDir(id).Append("extension-sync")), files_(std::move(files)) {
++  extensions::SetSpatiandSyncChanged(base::BindRepeating(&Tell));
++  All()[profile] = this;
++}
++
++StorageSync::~StorageSync() {
++  All().erase(profile_);
++}
++
++void StorageSync::Poll() {
++  if (reading_) {
++    return;
++  }
++  reading_ = true;
++  files_->PostTaskAndReplyWithResult(
++      FROM_HERE, base::BindOnce(&ReadFolders, dir_, seen_, first_),
++      base::BindOnce(&StorageSync::OnRead, weak_factory_.GetWeakPtr()));
++}
++
++void StorageSync::OnRead(Folders folders) {
++  reading_ = false;
++  extensions::ExtensionRegistry* registry = extensions::ExtensionRegistry::Get(profile_);
++  StorageFrontend* frontend = StorageFrontend::Get(profile_);
++  if (!registry || !frontend) {
++    return;
++  }
++  // The first time, the extensions that have no folder yet too: what they kept before this did
++  // goes into one.
++  if (first_) {
++    first_ = false;
++    for (const auto& extension : registry->enabled_extensions()) {
++      if (!folders.contains(extension->id())) {
++        folders[extension->id()] = Folder();
++      }
++    }
++  }
++  for (auto& [id, folder] : folders) {
++    const extensions::Extension* extension = registry->enabled_extensions().GetByID(id);
++    if (!extension) {
++      // Not here, or not on: taken in when it is (its folder is read again until then).
++      continue;
++    }
++    seen_[id] = folder.changed;
++    frontend->GetValues(
++        base::WrapRefCounted(extension), StorageAreaNamespace::kSync, std::nullopt,
++        base::BindOnce(
++            [](base::WeakPtr<StorageSync> self, std::string id, base::DictValue remote,
++               StorageFrontend::GetResult local) {
++              if (self && local.data) {
++                self->Merge(id, std::move(remote), std::move(*local.data));
++              }
++            },
++            weak_factory_.GetWeakPtr(), id, std::move(folder.items)));
++  }
++}
++
++void StorageSync::Merge(const std::string& extension_id, base::DictValue remote, base::DictValue local) {
++  extensions::ExtensionRegistry* registry = extensions::ExtensionRegistry::Get(profile_);
++  const extensions::Extension* extension = registry->enabled_extensions().GetByID(extension_id);
++  if (!extension) {
++    return;
++  }
++  std::set<std::string>& known = known_[extension_id];
++  base::DictValue to_set;
++  for (const auto [key, value] : remote) {
++    const base::Value* here = local.Find(key);
++    if (!here || *here != value) {
++      to_set.Set(key, value.Clone());
++    }
++  }
++  std::vector<std::string> to_remove;
++  for (const auto [key, value] : local) {
++    if (remote.contains(key)) {
++      continue;
++    }
++    if (known.contains(key)) {
++      // In the folder before and gone from it: removed on another machine.
++      to_remove.push_back(key);
++    } else {
++      // Set here before it was in the folder.
++      files_->PostTask(FROM_HERE, base::BindOnce(&WriteItem, dir_.Append(extension_id).Append(FileName(key)),
++                                                 key, value.Clone()));
++      known.insert(key);
++    }
++  }
++  for (const auto [key, value] : remote) {
++    known.insert(key);
++  }
++  for (const std::string& key : to_remove) {
++    known.erase(key);
++  }
++  StorageFrontend* frontend = StorageFrontend::Get(profile_);
++  // As if the extension had done it, so that its pages hear storage.onChanged.
++  if (!to_set.empty()) {
++    frontend->Set(base::WrapRefCounted(extension), StorageAreaNamespace::kSync, std::move(to_set),
++                  base::DoNothing());
++  }
++  if (!to_remove.empty()) {
++    frontend->Remove(base::WrapRefCounted(extension), StorageAreaNamespace::kSync, to_remove,
++                     base::DoNothing());
++  }
++}
++
++void StorageSync::Changed(const std::string& extension_id, const base::Value& changes) {
++  if (!changes.is_dict()) {
++    return;
++  }
++  const base::FilePath folder = dir_.Append(extension_id);
++  std::set<std::string>& known = known_[extension_id];
++  for (const auto [key, change] : changes.GetDict()) {
++    const base::Value* now = change.is_dict() ? change.GetDict().Find("newValue") : nullptr;
++    if (now) {
++      known.insert(key);
++      files_->PostTask(FROM_HERE, base::BindOnce(&WriteItem, folder.Append(FileName(key)), key, now->Clone()));
++    } else {
++      known.erase(key);
++      files_->PostTask(FROM_HERE, base::BindOnce(&RemovePath, folder.Append(FileName(key))));
++    }
++  }
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/storage_sync.h b/chrome/browser/spatiand/storage_sync.h
+new file mode 100644
+index 0000000000..2b6460a51e
+--- /dev/null
++++ b/chrome/browser/spatiand/storage_sync.h
+@@ -0,0 +1,66 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_STORAGE_SYNC_H_
++#define CHROME_BROWSER_SPATIAND_STORAGE_SYNC_H_
++
++#include <map>
++#include <set>
++#include <string>
++
++#include "base/files/file_path.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/time/time.h"
++#include "base/values.h"
++
++class Profile;
++
++namespace spatiand {
++
++// What an extension keeps in `chrome.storage.sync`, on every machine: the shared folder's
++// `profiles/<id>/extension-sync/<extension>/<key in hex>.json`, one file per key holding
++// `{"key": ..., "value": ...}` -- the Rust SpatiMesh's format (crates/spatimesh in Spatiand,
++// extensions/storage.rs), so that two machines setting two keys while apart both keep theirs.
++// Without Google's sync, Chrome keeps that area on the machine alone.
++class StorageSync {
++ public:
++  StorageSync(Profile* profile, const std::string& id, scoped_refptr<base::SequencedTaskRunner> files);
++  StorageSync(const StorageSync&) = delete;
++  StorageSync& operator=(const StorageSync&) = delete;
++  ~StorageSync();
++
++  void Poll();
++
++  // A key set or removed here (from extensions::StorageFrontend): into the shared folder.
++  void Changed(const std::string& extension_id, const base::Value& changes);
++
++  // An extension's folder as read: its keys and values, and when the folder last changed.
++  struct Folder {
++    base::Time changed;
++    base::DictValue items;
++  };
++  using Folders = std::map<std::string, Folder>;
++
++ private:
++  void OnRead(Folders folders);
++  void Merge(const std::string& extension_id, base::DictValue remote, base::DictValue local);
++
++  const raw_ptr<Profile> profile_;
++  const base::FilePath dir_;
++  scoped_refptr<base::SequencedTaskRunner> files_;
++  // When each extension's folder was last taken in.
++  std::map<std::string, base::Time> seen_;
++  // The keys each extension's folder had: one gone from it was removed on another machine; one
++  // never in it was set here before this kept it.
++  std::map<std::string, std::set<std::string>> known_;
++  bool reading_ = false;
++  bool first_ = true;
++
++  base::WeakPtrFactory<StorageSync> weak_factory_{this};
++};
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_STORAGE_SYNC_H_
+diff --git a/extensions/browser/api/storage/storage_frontend.cc b/extensions/browser/api/storage/storage_frontend.cc
+index 5c70ae2877..201f263247 100644
+--- a/extensions/browser/api/storage/storage_frontend.cc
++++ b/extensions/browser/api/storage/storage_frontend.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "extensions/browser/api/storage/storage_frontend.h"
+ 
++#include "base/no_destructor.h"
++
+ #include <memory>
+ #include <utility>
+ 
+@@ -42,6 +44,17 @@ using value_store::ValueStore;
+ 
+ namespace extensions {
+ 
++namespace {
++SpatiandSyncChanged& SpatiandSync() {
++  static base::NoDestructor<SpatiandSyncChanged> callback;
++  return *callback;
++}
++}  // namespace
++
++void SetSpatiandSyncChanged(SpatiandSyncChanged callback) {
++  SpatiandSync() = std::move(callback);
++}
++
+ namespace {
+ 
+ base::LazyInstance<BrowserContextKeyedAPIFactory<StorageFrontend>>::
+@@ -658,6 +671,10 @@ void StorageFrontend::OnSettingsChanged(
+                 std::size(extension_id_str));
+   base::debug::Alias(extension_id_str);
+ 
++  if (storage_area == StorageAreaNamespace::kSync && SpatiandSync()) {
++    SpatiandSync().Run(browser_context_, extension_id, changes);
++  }
++
+   const std::string namespace_string = StorageAreaToString(storage_area);
+   EventRouter* event_router = EventRouter::Get(browser_context_);
+ 
+diff --git a/extensions/browser/api/storage/storage_frontend.h b/extensions/browser/api/storage/storage_frontend.h
+index 909f9e5daa..79dd162f61 100644
+--- a/extensions/browser/api/storage/storage_frontend.h
++++ b/extensions/browser/api/storage/storage_frontend.h
+@@ -33,6 +33,12 @@ class ValueStoreFactory;
+ namespace extensions {
+ 
+ // The component of the Storage API which runs on the UI thread.
++// Spatiand: every change to an extension's `storage.sync`, told to SpatiMesh, which keeps that
++// area in the shared folder (chrome/browser/spatiand/storage_sync.h). Set once.
++using SpatiandSyncChanged = base::RepeatingCallback<
++    void(content::BrowserContext*, const ExtensionId&, const base::Value& changes)>;
++void SetSpatiandSyncChanged(SpatiandSyncChanged callback);
++
+ class StorageFrontend : public BrowserContextKeyedAPI {
+  public:
+   struct ResultStatus {
+-- 
+2.53.0
+

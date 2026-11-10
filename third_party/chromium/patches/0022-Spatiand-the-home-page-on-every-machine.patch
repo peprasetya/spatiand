@@ -1,0 +1,90 @@
+From 34a1031e3cf8950016ce011adb7234e7c5db837d Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Tue, 10 Nov 2026 09:33:19 +0700
+Subject: [PATCH 22/22] Spatiand: the home page on every machine
+
+The Rust SpatiMesh's `home` setting (settings/home.json in the shared folder, "about:blank" for none
+of its own) is Chrome's home page now, both ways: none is Chrome's new tab page.
+
+Checked headless (2026-11-10): the home page set in Settings was written to home.json; another
+address written there became Chrome's home page, and "about:blank" the new tab page.
+---
+ chrome/browser/spatiand/settings_sync.cc | 28 +++++++++++++++++++++++-
+ chrome/browser/spatiand/settings_sync.h  |  1 +
+ 2 files changed, 28 insertions(+), 1 deletion(-)
+
+diff --git a/chrome/browser/spatiand/settings_sync.cc b/chrome/browser/spatiand/settings_sync.cc
+index 898c55b948..a133651091 100644
+--- a/chrome/browser/spatiand/settings_sync.cc
++++ b/chrome/browser/spatiand/settings_sync.cc
+@@ -52,7 +52,7 @@ SettingsSync::Files ReadFiles(const std::string& id) {
+   SettingsSync::Files files;
+   const base::FilePath shared = SharedDir().Append("settings");
+   for (const char* name : {"search", "custom_search", "zoom", "restore", "bookmarks_bar",
+-                           "developer"}) {
++                           "developer", "home"}) {
+     if (std::optional<base::Value> value = ReadJson(shared.Append(std::string(name) + ".json"))) {
+       files.emplace(name, std::move(*value));
+     }
+@@ -113,6 +113,11 @@ SettingsSync::SettingsSync(Profile* profile,
+                                  prefs::kExtensionsUIDeveloperMode));
+   prefs_.Add(prefs::kRestoreOnStartup,
+              base::BindRepeating(&SettingsSync::LocalRestore, base::Unretained(this)));
++  // The home page: the Rust SpatiMesh's `home`, "about:blank" for none of its own (Chrome's
++  // new tab page).
++  prefs_.Add(prefs::kHomePage, base::BindRepeating(&SettingsSync::LocalHome, base::Unretained(this)));
++  prefs_.Add(prefs::kHomePageIsNewTabPage,
++             base::BindRepeating(&SettingsSync::LocalHome, base::Unretained(this)));
+   if (ChromeZoomLevelPrefs* zoom = profile_->GetZoomLevelPrefs()) {
+     zoom_subscription_ = zoom->RegisterDefaultZoomLevelCallback(
+         base::BindRepeating(&SettingsSync::LocalZoom, base::Unretained(this)));
+@@ -175,6 +180,14 @@ void SettingsSync::OnRead(Files files) {
+   if (const base::Value* value = changed("developer"); value && value->is_bool()) {
+     prefs->SetBoolean(prefs::kExtensionsUIDeveloperMode, value->GetBool());
+   }
++  if (const base::Value* value = changed("home"); value && value->is_string()) {
++    const std::string& home = value->GetString();
++    const bool none = home.empty() || home == "about:blank" || home == "chrome://newtab/";
++    prefs->SetBoolean(prefs::kHomePageIsNewTabPage, none);
++    if (!none) {
++      prefs->SetString(prefs::kHomePage, home);
++    }
++  }
+   const bool search_changed = changed("search") || changed("custom_search") ||
+                               changed("profile/search") || changed("profile/custom_search");
+   for (auto& [name, value] : files) {
+@@ -335,6 +348,19 @@ void SettingsSync::LocalRestore() {
+   }
+ }
+ 
++void SettingsSync::LocalHome() {
++  if (applying_) {
++    return;
++  }
++  PrefService* prefs = profile_->GetPrefs();
++  base::Value value(prefs->GetBoolean(prefs::kHomePageIsNewTabPage)
++                        ? std::string("about:blank")
++                        : prefs->GetString(prefs::kHomePage));
++  if (!Seen("home", value)) {
++    WriteSetting("home", std::move(value));
++  }
++}
++
+ void SettingsSync::LocalZoom() {
+   if (applying_) {
+     return;
+diff --git a/chrome/browser/spatiand/settings_sync.h b/chrome/browser/spatiand/settings_sync.h
+index bdad8719a6..a3607f61e3 100644
+--- a/chrome/browser/spatiand/settings_sync.h
++++ b/chrome/browser/spatiand/settings_sync.h
+@@ -49,6 +49,7 @@ class SettingsSync : public TemplateURLServiceObserver, public ThemeServiceObser
+   void WriteProfileSetting(const std::string& name, base::Value value);
+   void LocalBool(const std::string& name, const char* pref);
+   void LocalRestore();
++  void LocalHome();
+   void LocalZoom();
+   bool Seen(const std::string& key, const base::Value& value);
+ 
+-- 
+2.53.0
+

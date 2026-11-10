@@ -18,8 +18,7 @@ const CHROME = process.env.SPATIKEY_CHROME || '/Applications/Google Chrome.app/C
 
 const FOLDERS = {
   src: path.join(ROOT, 'src'),
-  pages: path.join(__dirname, 'pages'),
-  spatimesh: path.join(REPO, 'crates', 'spatimesh', 'src', 'credentials')
+  pages: path.join(__dirname, 'pages')
 };
 const TYPES = { '.js': 'text/javascript; charset=utf-8', '.html': 'text/html; charset=utf-8', '.json': 'application/json' };
 

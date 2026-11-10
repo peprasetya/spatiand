@@ -19,9 +19,31 @@ WebKit patches and GStreamer sink), `crates/spatimesh-wpe` (the engine program) 
 release, and the end-to-end runs that drew pages through it (`tools/spatimesh-e2e.py`,
 `spatimesh-ui-e2e.py`, `spatimesh-sync-e2e.py`). What Chromium for Android had taken from WPE's
 Android build -- libffi, SQLite and xkbcommon -- is built for it now (`android-libc/deps.sh`,
-`android/xkbcommon`). The window program below stays: its stores are the formats Chromium's patches
-keep, and with no engine program it draws pages with the stand-in (`fake`), as the drag-and-drop
-run does (`tools/spatiand-dnd-e2e.py`). The WPE sections below are the record of what it did.
+`android/xkbcommon`). The WPE sections below are the record of what it did.
+
+**The Rust window program removed too, on 2026-11-10** (the owner: once Chromium does all it did,
+checked). `crates/spatimesh` is gone: without an engine it drew no page anywhere, and everything it
+did is Chromium's now. What it alone still did, Chromium's patches do since that day, each checked:
+
+| The Rust window's | Chromium's | Checked |
+|---|---|---|
+| Profiles, locks, bookmarks, history, logins, settings, extensions on every machine | patches 0008-0016 (below) | the Deck's test room, 2026-10-30 |
+| The `home` setting | patch 0022: Chrome's home page, both ways ("about:blank" is the new tab page) | headless: Settings to `home.json` and back |
+| Extensions' `storage.sync` in the shared folder (`extension-sync/<ext>/<key in hex>.json`) | patch 0021, `chrome/browser/spatiand/storage_sync.cc` through StorageFrontend | headless: set, then changed and removed "elsewhere", `onChanged` heard all three |
+| Answering the room's `describe` for dictation and the assistant | patch 0020: `spatiand_xr_v1` per toplevel (Ozone) and `chrome/browser/spatiand/describe.cc`, the same script and answer | snapshot room (`describe` step): field last, no password |
+| Films in its own player: every container and codec of Spatiand's FFmpeg | patch 0019: AVI, MPEG-TS/PS, FLV, ASF, AIFF, CAF, bare AC-3/E-AC-3/DTS let through; MPEG-4 Part 2, MPEG-2, VC-1, DTS, ALAC decoded; MP3 plays again (it had not since 0003) | headless on deepmagpie, the Deck and the Beam Pro |
+| A page dropped from SpatiShelf on its tabs | Chrome's own | `tools/spatiand-dnd-e2e.py` with `SPATIAND_CHROMIUM_BIN` |
+
+Not yet in Chromium (the Rust player had them; the Rust window had no engine to play them with
+since WPE went): H.264 and HEVC in an MPEG transport stream (no frame decoded; with
+StrictFFmpegCodecs a decode error at the first frame), an MPEG program stream (VOB: "PTS is not
+defined"), MP2 sound, and a film's own subtitle tracks. Firefox add-ons (`.xpi`), which the Rust
+window's own extension runtime took, Chrome does not (the owner: not wanted). The Mac has no
+SpatiMesh until its Chromium port; `tools/spatiand-dnd-e2e.py` drops onto Chromium only where one is
+named. `crates/spatiand-media`'s MediaSource (`mse.rs`) was the Rust window's alone and is unused now.
+The Beam Pro's Chromium had been built without Dolby (`enable_platform_ac3_eac3_audio`, the Deck's);
+it is built with it since. The sections below on the window program, its processes and its engine
+interface are the record of what it was.
 
 **Changed on 2026-10-30:** the owner moved SpatiMesh to **Chromium with Cromite's patches and
 ours**, keeping Chrome's own browser layer (Chrome's extensions, as Chrome has them) with

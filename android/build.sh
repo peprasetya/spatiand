@@ -37,7 +37,7 @@ PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
     FFMPEG_INCLUDE_DIR=$FF/include FFMPEG_LIBS_DIR=$FF/lib FFMPEG_LINK_MODE=dynamic \
     BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/sysroot" \
     RUSTFLAGS="-L native=$(pwd)/xkbcommon/out -L native=$FF/lib -C link-arg=-lc++abi" \
-    cargo ndk -t arm64-v8a -P 34 build --release -p spatireel -p spatiloupe -p spatiquill -p spatishelf -p spatimesh -p spatipal -p spatikey -p spatiand-choose
+    cargo ndk -t arm64-v8a -P 34 build --release -p spatireel -p spatiloupe -p spatiquill -p spatishelf -p spatipal -p spatikey -p spatiand-choose
 ../tools/fetch-pdfium.sh android-arm64
 STORAGE=$(pwd)/$OUT-storage
 mkdir -p "$STORAGE"
@@ -101,7 +101,7 @@ $BT/d8 --release --min-api 34 --lib $JAR --output $OUT/dex $(find $OUT/classes -
 
 # --- the APK ---
 cp jniLibs/arm64-v8a/libspatiand.so eglshim/out/libeglshim.so mysofa/out/libmysofa.so $OUT/apk/lib/arm64-v8a/
-for own in spatireel spatiloupe spatiquill spatishelf spatimesh spatipal spatikey; do
+for own in spatireel spatiloupe spatiquill spatishelf spatipal spatikey; do
     cp ../target/aarch64-linux-android/release/$own $OUT/apk/lib/arm64-v8a/lib$own.so
 done
 # The file chooser SpatiMesh's Chromium asks (crates/spatiand-choose): not one of the launcher's.

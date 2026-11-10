@@ -283,6 +283,9 @@ dawn_enable_vulkan_validation_layers = false
 # ANGLE's Vulkan through Android's own loader, which reaches the GPU's driver (Adreno's on the Beam
 # Pro), not a loader of Chromium's beside the program as on Linux (android-libc/0014).
 angle_use_custom_libvulkan = false
+# Dolby Digital and Dolby Digital Plus, decoded by Spatiand's FFmpeg, as on the Deck (which sets it
+# below): left out here until 2026-11-10, so an AC-3 film played silent on the Beam Pro.
+enable_platform_ac3_eac3_audio = true
 GN
 gn gen out/android
 # The machine also serves spatiand-host: the lowest priority. Everything that fails, not only the first.

@@ -9,8 +9,8 @@
 //!
 //! What was chosen is written to standard output, a path a line, and it exits 0; nothing chosen
 //! (Cancel, Escape, the window closed) and it exits 1 having written nothing. The places, the
-//! folder's own lines and a field to find in it or type a path into, as SpatiMesh's own chooser
-//! has (crates/spatimesh/src/browser/pages.rs, `Picker`).
+//! folder's own lines and a field to find in it or type a path into, as the Rust SpatiMesh's own
+//! chooser had (its `Picker`, until 2026-11-10).
 
 use std::path::{Path, PathBuf};
 

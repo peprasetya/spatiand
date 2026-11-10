@@ -1,5 +1,8 @@
 # SpatiMesh: where the work stopped (handoff notes)
 
+**Record only.** These notes are about the Rust window program and WPE, both removed on 2026-11-10;
+SpatiMesh is Chromium (docs/spatimesh.md).
+
 For the next session picking up SpatiMesh. The full design and status table is
 docs/spatimesh.md; this is what a new session needs on top of it.
 
