@@ -31,6 +31,7 @@ FILES = [
     # viz: what asks the shared images for native pixmaps
     "components/viz/service/display/overlay_processor_interface.cc",
     "components/viz/service/gl/gpu_service_impl.cc",
+    "components/viz/service/display_embedder/output_presenter_gl.cc",
 ]
 
 OZONE = re.compile(r"(?<!\()BUILDFLAG\(IS_OZONE\)(?! && !BUILDFLAG\(IS_APPLE\))")

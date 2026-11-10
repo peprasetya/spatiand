@@ -124,7 +124,7 @@ index 65b9ce9bc4..596258862a 100644
  #endif // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
  
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 122d85bf51..c20d54b30b 100644
+index 122d85bf51..cc1f70bddd 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -509,7 +509,8 @@ if (!is_android) {
@@ -151,7 +151,7 @@ index 122d85bf51..c20d54b30b 100644
        "icon_loader_mac.mm",
        "memory_details_mac.cc",
        "platform_util_mac.mm",
-@@ -1537,22 +1536,16 @@ source_set("core") {
+@@ -1537,22 +1536,15 @@ source_set("core") {
      ]
  
      deps += [
@@ -160,7 +160,7 @@ index 122d85bf51..c20d54b30b 100644
        ":chrome_browser_main_mac",
        ":fullscreen",
 -      ":global_keyboard_shortcuts_mac",
-       "//chrome/app_shim",
+-      "//chrome/app_shim",
        "//chrome/browser/apps/app_shim",
        "//chrome/browser/enterprise/connectors/device_trust/key_management/core/mac",
        "//chrome/browser/mac",
@@ -174,7 +174,7 @@ index 122d85bf51..c20d54b30b 100644
        "//chrome/browser/web_applications/os_integration/mac:web_app_shortcut_copier_lib",
        "//chrome/browser/webshare",
        "//chrome/browser/webshare:impl",
-@@ -1566,7 +1559,6 @@ source_set("core") {
+@@ -1566,7 +1558,6 @@ source_set("core") {
        "//components/metal_util",
        "//components/os_crypt/async/browser:keychain_key_provider",
        "//components/policy/core/common:common_constants",
@@ -182,7 +182,7 @@ index 122d85bf51..c20d54b30b 100644
        "//components/remote_cocoa/app_shim:features",
        "//components/remote_cocoa/browser",
        "//sandbox/mac:seatbelt",
-@@ -1575,6 +1567,24 @@ source_set("core") {
+@@ -1575,6 +1566,27 @@ source_set("core") {
        "//third_party/crashpad/crashpad/client",
      ]
  
@@ -201,13 +201,16 @@ index 122d85bf51..c20d54b30b 100644
 +        "//chrome/browser/renderer_host:history_swiper",
 +        "//chrome/browser/ui/cocoa",
 +        "//components/remote_cocoa/app_shim",
++        # The app shims (web apps as Cocoa applications of their own); on the
++        # Linux UI a web app is a window shown by Spatiand, as on the Deck.
++        "//chrome/app_shim",
 +      ]
 +    }
 +
      frameworks = [
        "Accelerate.framework",
        "AudioUnit.framework",
-@@ -1617,11 +1627,10 @@ source_set("core") {
+@@ -1617,11 +1629,10 @@ source_set("core") {
      }
    }
  
@@ -222,7 +225,7 @@ index 122d85bf51..c20d54b30b 100644
        "spatiand/bookmark_sync.cc",
        "spatiand/bookmark_sync.h",
        "spatiand/cookie_sync.cc",
-@@ -1648,6 +1657,14 @@ source_set("core") {
+@@ -1648,6 +1659,14 @@ source_set("core") {
        "spatiand/storage_sync.h",
        "spatiand/spatikey_window.h",
        "spatiand/shared_folder.h",
@@ -413,6 +416,24 @@ index 20809f42db..e5034d7c97 100644
    }
  
    if (is_linux) {
+diff --git a/chrome/browser/enterprise/platform_auth/extensible_enterprise_sso_entra.mm b/chrome/browser/enterprise/platform_auth/extensible_enterprise_sso_entra.mm
+index a3bd451b79..2ad8692e3a 100644
+--- a/chrome/browser/enterprise/platform_auth/extensible_enterprise_sso_entra.mm
++++ b/chrome/browser/enterprise/platform_auth/extensible_enterprise_sso_entra.mm
+@@ -287,7 +287,13 @@ - (ASPresentationAnchor)presentationAnchorForAuthorizationController:
+     (ASAuthorizationController*)controller {
+   // TODO(https://crbug.com/340868357): Pick the window where the url is being
+   // used.
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
+   return platform_util::GetActiveWindow().GetNativeNSWindow();
++#else
++  // Spatiand: the Linux UI on macOS has no NSWindow to present the system's
++  // sign-in over; macOS then presents it on its own.
++  return nil;
++#endif
+ }
+ 
+ @end
 diff --git a/chrome/browser/image_editor/BUILD.gn b/chrome/browser/image_editor/BUILD.gn
 index eb9ecb29c1..3bac9bd351 100644
 --- a/chrome/browser/image_editor/BUILD.gn
@@ -426,6 +447,39 @@ index eb9ecb29c1..3bac9bd351 100644
      sources += [
        "event_capture_mac.h",
        "event_capture_mac.mm",
+diff --git a/chrome/browser/platform_util_mac.mm b/chrome/browser/platform_util_mac.mm
+index 390d63ffee..1967d047aa 100644
+--- a/chrome/browser/platform_util_mac.mm
++++ b/chrome/browser/platform_util_mac.mm
+@@ -111,6 +111,9 @@ void OpenExternal(const GURL& url) {
+       }];
+ }
+ 
++// Spatiand: the Linux UI on macOS takes Aura's window functions (platform_util_aura.cc);
++// what stays here is the system's (Finder, opening files and URLs).
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
+ gfx::NativeWindow GetTopLevel(gfx::NativeView view) {
+   return gfx::NativeWindow([view.GetNativeNSView() window]);
+ }
+@@ -161,13 +164,18 @@ bool IsVisible(gfx::NativeView native_view) {
+           [view window] &&
+           [[view window] isVisible]);
+ }
++#endif  // !BUILDFLAG(IS_MAC_LINUX_UI)
+ 
+ bool IsSwipeTrackingFromScrollEventsEnabled() {
+   return NSEvent.swipeTrackingFromScrollEventsEnabled;
+ }
+ 
+ gfx::NativeWindow GetActiveWindow() {
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
+   return gfx::NativeWindow(NSApp.keyWindow);
++#else
++  return gfx::NativeWindow();  // Spatiand: no NSWindow of the browser's own
++#endif
+ }
+ 
+ }  // namespace platform_util
 diff --git a/chrome/browser/prefs/BUILD.gn b/chrome/browser/prefs/BUILD.gn
 index 84858cdae5..ec5f36e3f9 100644
 --- a/chrome/browser/prefs/BUILD.gn
@@ -485,6 +539,29 @@ index 1e3789cbe2..e30a882d61 100644
        sources += [
          # This test is for the spelling options submenu that's only for
          # Windows, ChromeOS, and Linux.
+diff --git a/chrome/browser/spatiand/spatikey_window.cc b/chrome/browser/spatiand/spatikey_window.cc
+index f1dbd321f1..9bf1ab841a 100644
+--- a/chrome/browser/spatiand/spatikey_window.cc
++++ b/chrome/browser/spatiand/spatikey_window.cc
+@@ -57,7 +57,18 @@ void Launch() {
+   options.new_process_group = true;
+   base::Process process = base::LaunchProcess(base::CommandLine(program), options);
+   if (process.IsValid()) {
++#if BUILDFLAG(IS_MAC)
++    // macOS has no EnsureProcessGetsReaped: a wait in the background reaps it.
++    base::ThreadPool::PostTask(
++        FROM_HERE,
++        {base::MayBlock(), base::WithBaseSyncPrimitives(),
++         base::TaskPriority::BEST_EFFORT,
++         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
++        base::BindOnce([](base::Process child) { child.WaitForExit(nullptr); },
++                       std::move(process)));
++#else
+     base::EnsureProcessGetsReaped(std::move(process));
++#endif
+   }
+ }
+ 
 diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
 index eaed07e785..265b3c613c 100644
 --- a/chrome/browser/ui/BUILD.gn
@@ -3322,6 +3399,19 @@ index 990d2f17a5..c5e9f9bdfc 100644
      // A generic |CrashDumpHungChildProcess()| is not implemented for Linux.
      // Instead we send an explicit IPC to crash on the renderer's IO thread.
      rph->ForceCrash();
+diff --git a/chrome/browser/ui/views/javascript_app_modal_event_blocker.h b/chrome/browser/ui/views/javascript_app_modal_event_blocker.h
+index 58567d643a..36a204e0df 100644
+--- a/chrome/browser/ui/views/javascript_app_modal_event_blocker.h
++++ b/chrome/browser/ui/views/javascript_app_modal_event_blocker.h
+@@ -7,7 +7,7 @@
+ 
+ #include "build/build_config.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: Aura's on the Linux UI
+ #include "chrome/browser/ui/views/javascript_app_modal_event_blocker_mac.h"
+ 
+ using JavascriptAppModalEventBlocker = JavascriptAppModalEventBlockerMac;
 diff --git a/chrome/browser/ui/views/location_bar/BUILD.gn b/chrome/browser/ui/views/location_bar/BUILD.gn
 index d15829cb54..92c69e2b77 100644
 --- a/chrome/browser/ui/views/location_bar/BUILD.gn
@@ -3941,6 +4031,19 @@ index f13cbad715..925dd22117 100644
    void ShowIPHPromoForAppsLaunchedViaLinkCapturing(
        BrowserWindowInterface* browser,
        const webapps::AppId& app_id,
+diff --git a/chrome/browser/ui/webui/infobar_internals/BUILD.gn b/chrome/browser/ui/webui/infobar_internals/BUILD.gn
+index 2dee3396b4..5485957976 100644
+--- a/chrome/browser/ui/webui/infobar_internals/BUILD.gn
++++ b/chrome/browser/ui/webui/infobar_internals/BUILD.gn
+@@ -96,7 +96,7 @@ source_set("impl") {
+     ]
+   }
+ 
+-  if (is_mac) {
++  if (is_mac && !is_mac_linux_ui) {  # Spatiand: Chromium's Cocoa UI
+     deps += [ "//chrome/browser/ui/cocoa" ]
+   }
+ 
 diff --git a/chrome/browser/ui/webui_browser/BUILD.gn b/chrome/browser/ui/webui_browser/BUILD.gn
 index d21d9c6042..7c2d0b0551 100644
 --- a/chrome/browser/ui/webui_browser/BUILD.gn
@@ -4015,6 +4118,23 @@ index 8ae23e1aef..82fe0860b4 100644
  
  source_set("zoom") {
    sources = [
+diff --git a/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc b/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
+index e3db47f1ba..d28416b643 100644
+--- a/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
++++ b/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
+@@ -1209,10 +1209,12 @@ void ChromeAuthenticatorRequestDelegate::ConfigureNSWindow(
+   const views::Widget* widget = views::Widget::GetTopLevelWidgetForNativeView(
+       web_contents->GetNativeView());
+   if (widget) {
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
+     const gfx::NativeWindow window = widget->GetNativeWindow();
+     if (window) {
+       discovery_factory->set_nswindow(window);
+     }
++#endif  // Spatiand: no NSWindow on the Linux UI to anchor macOS's own prompt to
+   }
+ }
+ void ChromeAuthenticatorRequestDelegate::ConfigureICloudKeychain(
 diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
 index d0111cab3b..5a3fe9ae81 100644
 --- a/chrome/common/pref_names.h
@@ -4230,6 +4350,19 @@ index cc3ef45e8f..ff1dd245e3 100644
  }
  
  }  // namespace remote_cocoa
+diff --git a/components/ui_devtools/views/BUILD.gn b/components/ui_devtools/views/BUILD.gn
+index ad887a60b7..e6835ac524 100644
+--- a/components/ui_devtools/views/BUILD.gn
++++ b/components/ui_devtools/views/BUILD.gn
+@@ -49,7 +49,7 @@ source_set("views") {
+       "//ui/wm",
+     ]
+   }
+-  if (is_mac) {
++  if ((is_mac && !is_mac_linux_ui)) {
+     sources += [
+       "dom_agent_mac.h",
+       "dom_agent_mac.mm",
 diff --git a/components/user_education/views/BUILD.gn b/components/user_education/views/BUILD.gn
 index ab73abecae..a435b2132e 100644
 --- a/components/user_education/views/BUILD.gn
@@ -4305,6 +4438,39 @@ index e75f65de64..2fd016f5e8 100644
    overlay_plane.mailbox = params.overlay_testing_mailbox;
  #endif
  
+diff --git a/components/viz/service/display_embedder/output_presenter_gl.cc b/components/viz/service/display_embedder/output_presenter_gl.cc
+index 9f7961a8e9..9f8bc5ca73 100644
+--- a/components/viz/service/display_embedder/output_presenter_gl.cc
++++ b/components/viz/service/display_embedder/output_presenter_gl.cc
+@@ -24,7 +24,7 @@
+ #include "ui/gl/gl_fence.h"
+ #include "ui/gl/presenter.h"
+ 
+-#if BUILDFLAG(IS_OZONE)
++#if (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+ #include "ui/base/ui_base_features.h"
+ #endif
+ 
+@@ -32,7 +32,7 @@ namespace viz {
+ 
+ namespace {
+ 
+-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_OZONE)
++#if BUILDFLAG(IS_ANDROID) || (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+ // Helper function for moving a GpuFence from a fence handle to a unique_ptr.
+ std::unique_ptr<gfx::GpuFence> TakeGpuFence(gfx::GpuFenceHandle fence) {
+   return fence.is_null() ? nullptr
+@@ -112,8 +112,8 @@ void OutputPresenterGL::ScheduleOverlayPlane(
+   // Note that |overlay_plane_candidate| has different types on different
+   // platforms. On Android, Ozone, and Windows, it is an OverlayCandidate and on
+   // macOS it is a CALayeroverlay.
+-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_OZONE)
+-#if BUILDFLAG(IS_OZONE)
++#if BUILDFLAG(IS_ANDROID) || (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
++#if (BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_APPLE))
+   // TODO(crbug.com/40239878): Add ScopedOverlayAccess::GetOverlayImage() that
+   // works on all platforms.
+   gl::OverlayImage overlay_image = access ? access->GetNativePixmap() : nullptr;
 diff --git a/components/viz/service/gl/gpu_service_impl.cc b/components/viz/service/gl/gpu_service_impl.cc
 index f892f348b8..596e0ae9bc 100644
 --- a/components/viz/service/gl/gpu_service_impl.cc
@@ -4337,7 +4503,7 @@ index f892f348b8..596e0ae9bc 100644
  #endif
    return owned_shared_image_manager_.get();
 diff --git a/content/browser/BUILD.gn b/content/browser/BUILD.gn
-index 690e0c0317..8a94aac4ba 100644
+index 690e0c0317..51f3f43931 100644
 --- a/content/browser/BUILD.gn
 +++ b/content/browser/BUILD.gn
 @@ -2684,33 +2684,8 @@ source_set("browser") {
@@ -4499,7 +4665,39 @@ index 690e0c0317..8a94aac4ba 100644
    } else if (is_ios) {
      sources += [
        "devtools/protocol/native_input_event_builder_ios.mm",
-@@ -3507,7 +3516,7 @@ source_set("browser") {
+@@ -2928,15 +2937,12 @@ source_set("browser") {
+         "media/capture/desktop_capture_util_mac.mm",
+         "media/capture/io_surface_capture_device_base_mac.cc",
+         "media/capture/io_surface_capture_device_base_mac.h",
+-        "media/capture/mouse_cursor_overlay_controller_mac.mm",
+         "media/capture/native_screen_capture_picker_mac.h",
+         "media/capture/native_screen_capture_picker_mac.mm",
+         "media/capture/screen_capture_kit_device_mac.h",
+         "media/capture/screen_capture_kit_device_mac.mm",
+         "media/capture/screen_capture_kit_fullscreen_module.h",
+         "media/capture/screen_capture_kit_fullscreen_module.mm",
+-        "media/capture/views_widget_video_capture_device_mac.cc",
+-        "media/capture/views_widget_video_capture_device_mac.h",
+       ]
+       deps += [
+         "//sandbox/mac:seatbelt",
+@@ -2946,6 +2952,15 @@ source_set("browser") {
+         "CoreMedia.framework",
+         "ScreenCaptureKit.framework",
+       ]
++      if (!is_mac_linux_ui) {
++        # Spatiand: capturing Cocoa views and drawing the cursor over an NSView are
++        # the Cocoa UI's; Aura's (above) are the Linux UI's on macOS.
++        sources += [
++          "media/capture/mouse_cursor_overlay_controller_mac.mm",
++          "media/capture/views_widget_video_capture_device_mac.cc",
++          "media/capture/views_widget_video_capture_device_mac.h",
++        ]
++      }
+     }
+     if (is_chromeos) {
+       sources += [
+@@ -3507,7 +3522,7 @@ source_set("browser") {
        "renderer_host/unbounded_surface_window_aura.h",
      ]
  
@@ -4564,8 +4762,32 @@ index 6ce17b75d1..da0dd1ff90 100644
    ca_transaction_gpu_coordinator_ = CATransactionGPUCoordinator::Create(this);
  #endif
  
+diff --git a/content/browser/media/capture/desktop_capture_util_mac.mm b/content/browser/media/capture/desktop_capture_util_mac.mm
+index 514d33f8a6..42331937c7 100644
+--- a/content/browser/media/capture/desktop_capture_util_mac.mm
++++ b/content/browser/media/capture/desktop_capture_util_mac.mm
+@@ -238,6 +238,11 @@ void GetApplicationAudioCaptureIdInternal(
+ 
+ std::optional<DesktopMediaID::Id> GetNativeWindowIdMac(
+     WebContents& web_contents) {
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: the Linux UI on macOS has no NSWindow of its own: Spatiand shows
++  // its window, so there is no window of this process to name for capture.
++  return std::nullopt;
++#else
+   gfx::NativeView native_view = web_contents.GetNativeView();
+   NSView* ns_view = native_view.GetNativeNSView();
+   if (!ns_view) {
+@@ -253,6 +258,7 @@ void GetApplicationAudioCaptureIdInternal(
+   return window_number > 0 ? std::make_optional(
+                                  static_cast<DesktopMediaID::Id>(window_number))
+                            : std::nullopt;
++#endif
+ }
+ 
+ }  // namespace content
 diff --git a/content/browser/renderer_host/render_widget_host_view_aura.cc b/content/browser/renderer_host/render_widget_host_view_aura.cc
-index 18f19186a6..949b45f7cd 100644
+index 18f19186a6..79a3800b9d 100644
 --- a/content/browser/renderer_host/render_widget_host_view_aura.cc
 +++ b/content/browser/renderer_host/render_widget_host_view_aura.cc
 @@ -588,7 +588,7 @@ gfx::NativeViewAccessible RenderWidgetHostViewAura::GetNativeViewAccessible() {
@@ -4611,6 +4833,81 @@ index 18f19186a6..949b45f7cd 100644
  }
  
  void RenderWidgetHostViewAura::SetMainFrameAXTreeID(ui::AXTreeID id) {
+@@ -2070,7 +2078,8 @@ bool RenderWidgetHostViewAura::ShouldDoLearning() {
+   return host() && host()->delegate() && host()->delegate()->ShouldDoLearning();
+ }
+ 
+-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || \
++    BUILDFLAG(IS_MAC_LINUX_UI)
+ bool RenderWidgetHostViewAura::SetCompositionFromExistingText(
+     const gfx::Range& range,
+     const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) {
+@@ -2085,6 +2094,26 @@ bool RenderWidgetHostViewAura::SetCompositionFromExistingText(
+ 
+ #endif
+ 
++#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI on macOS; see the header.
++bool RenderWidgetHostViewAura::DeleteRange(const gfx::Range& range) {
++  return false;
++}
++
++void RenderWidgetHostViewAura::ShowSharePicker(
++    const std::string& title,
++    const std::string& text,
++    const GURL& url,
++    const std::vector<std::string>& file_paths,
++    blink::mojom::ShareService::ShareCallback callback) {
++  std::move(callback).Run(blink::mojom::ShareError::INTERNAL_ERROR);
++}
++
++uint64_t RenderWidgetHostViewAura::GetNSViewId() const {
++  return 0;
++}
++#endif
++
+ #if BUILDFLAG(IS_CHROMEOS)
+ gfx::Range RenderWidgetHostViewAura::GetAutocorrectRange() const {
+   if (!text_input_manager_ || !text_input_manager_->GetActiveWidget())
+diff --git a/content/browser/renderer_host/render_widget_host_view_aura.h b/content/browser/renderer_host/render_widget_host_view_aura.h
+index 2af8d9638d..78002cdf21 100644
+--- a/content/browser/renderer_host/render_widget_host_view_aura.h
++++ b/content/browser/renderer_host/render_widget_host_view_aura.h
+@@ -286,6 +286,23 @@ class CONTENT_EXPORT RenderWidgetHostViewAura
+   bool GetCompositionTextRange(gfx::Range* range) const override;
+   bool GetEditableSelectionRange(gfx::Range* range) const override;
+   bool SetEditableSelectionRange(const gfx::Range& range) override;
++#if BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI on macOS. Cocoa's IME and window ideas, which Aura's
++  // view (a Wayland window's) answers with nothing; Wayland's text input is
++  // what types here.
++  bool DeleteRange(const gfx::Range& range) override;
++  void SetActive(bool active) override {}
++  void ShowDefinitionForSelection() override {}
++  void SpeakSelection() override {}
++  void SetWindowFrameInScreen(const gfx::Rect& rect) override {}
++  void ShowSharePicker(
++      const std::string& title,
++      const std::string& text,
++      const GURL& url,
++      const std::vector<std::string>& file_paths,
++      blink::mojom::ShareService::ShareCallback callback) override;
++  uint64_t GetNSViewId() const override;
++#endif
+   bool GetTextFromRange(const gfx::Range& range,
+                         std::u16string* text) const override;
+   void OnInputMethodChanged() override;
+@@ -303,7 +320,8 @@ class CONTENT_EXPORT RenderWidgetHostViewAura
+   ukm::SourceId GetClientSourceForMetrics() const override;
+   bool ShouldDoLearning() override;
+ 
+-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || \
++    BUILDFLAG(IS_MAC_LINUX_UI)
+   bool SetCompositionFromExistingText(
+       const gfx::Range& range,
+       const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override;
 diff --git a/content/browser/web_contents/web_contents_view_aura.h b/content/browser/web_contents/web_contents_view_aura.h
 index 98df67ad53..d84267b405 100644
 --- a/content/browser/web_contents/web_contents_view_aura.h
@@ -4801,6 +5098,26 @@ index b0eefdc640..04a670e41d 100644
    scoped_refptr<gfx::NativePixmap> GetNativePixmap();
  #elif BUILDFLAG(IS_WIN)
    virtual std::optional<gl::DCLayerOverlayImage> GetDCLayerOverlayImage();
+diff --git a/printing/printing_context_mac.mm b/printing/printing_context_mac.mm
+index 4f15b217fc..1eac1d2931 100644
+--- a/printing/printing_context_mac.mm
++++ b/printing/printing_context_mac.mm
+@@ -451,6 +451,7 @@ bool IsIppColorModelColorful(mojom::ColorModel color_model) {
+                      NSPrintPanelShowsScaling;
+ 
+     // Set the print job title text.
++#if !BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: no NSWindow to take the title from
+     gfx::NativeView parent_view = delegate_->GetParentView();
+     if (parent_view) {
+       NSString* job_title = parent_view.GetNativeNSView().window.title;
+@@ -462,6 +463,7 @@ bool IsIppColorModelColorful(mojom::ColorModel color_model) {
+         [print_info_ updateFromPMPrintSettings];
+       }
+     }
++#endif
+ 
+     // TODO(stuartmorgan): We really want a tab sheet here, not a modal window.
+     // Will require restructuring the PrintingContext API to use a callback.
 diff --git a/third_party/libdrm/BUILD.gn b/third_party/libdrm/BUILD.gn
 index 43cc4de4ef..81c8f8b62e 100644
 --- a/third_party/libdrm/BUILD.gn
@@ -6235,10 +6552,20 @@ index 84da6b511e..2540c055d1 100644
  #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
  };
 diff --git a/ui/aura/client/aura_constants.cc b/ui/aura/client/aura_constants.cc
-index 02e350a018..e5d0ed9c75 100644
+index 02e350a018..f2ea781e00 100644
 --- a/ui/aura/client/aura_constants.cc
 +++ b/ui/aura/client/aura_constants.cc
-@@ -59,9 +59,11 @@ DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(ui::OwnedWindowAnchor, kOwnedWindowAnchor)
+@@ -18,7 +18,9 @@ DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT, aura::Window*)
+ DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT,
+                                        base::WeakPtr<aura::Window>*)
+ DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT, gfx::ImageSkia*)
++#if !BUILDFLAG(IS_APPLE)  // Spatiand: see aura_constants.h
+ DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT, gfx::NativeViewAccessible)
++#endif
+ DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT, gfx::Rect*)
+ DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT, gfx::Size*)
+ DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT, gfx::SizeF*)
+@@ -59,9 +61,11 @@ DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(ui::OwnedWindowAnchor, kOwnedWindowAnchor)
  
  DEFINE_UI_CLASS_PROPERTY_KEY(bool, kUseWindowBoundsForShadow, true)
  
@@ -8301,6 +8628,19 @@ index dbf5936ff2..00f20495c8 100644
      deps += [
        "//base/test:test_support",
        "//ui/base:test_support",
+diff --git a/ui/message_center/BUILD.gn b/ui/message_center/BUILD.gn
+index 775f63c363..f6d115f960 100644
+--- a/ui/message_center/BUILD.gn
++++ b/ui/message_center/BUILD.gn
+@@ -132,7 +132,7 @@ component("message_center") {
+         "views/relative_time_formatter.cc",
+         "views/relative_time_formatter.h",
+       ]
+-      if (is_mac) {
++      if (is_mac && !is_mac_linux_ui) {  # Spatiand: Aura's on the Linux UI
+         sources += [ "views/message_popup_view_mac.mm" ]
+       }
+       deps += [
 diff --git a/ui/message_center/views/message_popup_view.cc b/ui/message_center/views/message_popup_view.cc
 index d6d5c67d5b..820efa4178 100644
 --- a/ui/message_center/views/message_popup_view.cc
@@ -8375,6 +8715,19 @@ index 40cead3829..fb049db60d 100644
      case kFrameTopArea:
        PaintFrameTopArea(canvas, state, rect,
                          std::get<FrameTopAreaExtraParams>(extra_params));
+diff --git a/ui/native_window_tracker/BUILD.gn b/ui/native_window_tracker/BUILD.gn
+index 722ec19156..d421cf8d13 100644
+--- a/ui/native_window_tracker/BUILD.gn
++++ b/ui/native_window_tracker/BUILD.gn
+@@ -24,7 +24,7 @@ component("native_window_tracker") {
+     deps += [ "//ui/aura" ]
+   }
+ 
+-  if (is_mac) {
++  if (is_mac && !is_mac_linux_ui) {  # Spatiand: Aura's on the Linux UI
+     sources += [
+       "native_window_tracker_cocoa.h",
+       "native_window_tracker_cocoa.mm",
 diff --git a/ui/ozone/platform/headless/headless_surface_factory.cc b/ui/ozone/platform/headless/headless_surface_factory.cc
 index cf1911b0ff..050e40ae3a 100644
 --- a/ui/ozone/platform/headless/headless_surface_factory.cc
@@ -8957,7 +9310,7 @@ index 418cc01f85..c3d2d458d0 100644
          mime_type == ui::kMimeTypePortalFiles) {
        auto it = offered_data_.find(ui::kMimeTypeUriList);
 diff --git a/ui/ozone/platform/wayland/host/wayland_connection.cc b/ui/ozone/platform/wayland/host/wayland_connection.cc
-index adc2a80508..547a9b2423 100644
+index adc2a80508..f23867ab41 100644
 --- a/ui/ozone/platform/wayland/host/wayland_connection.cc
 +++ b/ui/ozone/platform/wayland/host/wayland_connection.cc
 @@ -3,6 +3,7 @@
@@ -9016,20 +9369,25 @@ index adc2a80508..547a9b2423 100644
  
    if (ret < 0) {
      presentation_now.tv_sec = 0;
-@@ -813,8 +823,13 @@ void WaylandConnection::SetRenderNodePath(base::ScopedFD& drm_fd,
+@@ -811,6 +821,10 @@ struct wl_registry* WaylandConnection::GetRegistry() {
+ 
+ void WaylandConnection::SetRenderNodePath(base::ScopedFD& drm_fd,
                                            const char* render_node_path) {
++#if BUILDFLAG(IS_APPLE)
++  // Spatiand: macOS has no DRM render nodes and no GBM.
++  return;
++#else
    if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
            switches::kRenderNodeOverride)) {
-+#if BUILDFLAG(IS_APPLE)
-+    // Spatiand: macOS has no DRM render nodes and no GBM.
-+    if (false) {
-+#else
      TRACE_EVENT("wayland", "scoped attempt of gbm_create_device");
-     if (drm_fd.is_valid()) {
+@@ -822,6 +836,7 @@ void WaylandConnection::SetRenderNodePath(base::ScopedFD& drm_fd,
+       }
+     }
+   }
 +#endif
-       ScopedGbmDevice gbm_device(gbm_create_device(drm_fd.get()));
-       if (gbm_device) {
-         base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
+ }
+ 
+ }  // namespace ui
 diff --git a/ui/ozone/platform/wayland/host/wayland_data_drag_controller.cc b/ui/ozone/platform/wayland/host/wayland_data_drag_controller.cc
 index ea5b676c9d..9274b0e28f 100644
 --- a/ui/ozone/platform/wayland/host/wayland_data_drag_controller.cc
@@ -9947,7 +10305,7 @@ index c28d73f4dc..8ba7e1547f 100644
  
  ui::Cursor NativeViewHostAura::GetCursor(int x, int y) {
 diff --git a/ui/views/controls/native/native_view_host_aura_with_clip_window.cc b/ui/views/controls/native/native_view_host_aura_with_clip_window.cc
-index 0b99a45e06..11c8e9fee2 100644
+index 0b99a45e06..0ca081a00c 100644
 --- a/ui/views/controls/native/native_view_host_aura_with_clip_window.cc
 +++ b/ui/views/controls/native/native_view_host_aura_with_clip_window.cc
 @@ -90,8 +90,10 @@ NativeViewHostAuraWithClipWindow::~NativeViewHostAuraWithClipWindow() {
@@ -9993,6 +10351,15 @@ index 0b99a45e06..11c8e9fee2 100644
      if (original_transform_changed_) {
        host_->native_view()->SetTransform(original_transform_);
      }
+@@ -310,7 +320,7 @@ gfx::NativeView NativeViewHostAuraWithClipWindow::GetNativeViewContainer()
+ 
+ gfx::NativeViewAccessible
+ NativeViewHostAuraWithClipWindow::GetNativeViewAccessible() {
+-  return nullptr;
++  return gfx::NativeViewAccessible();  // Spatiand: "none" on macOS's wrapper too
+ }
+ 
+ ui::Cursor NativeViewHostAuraWithClipWindow::GetCursor(int x, int y) {
 diff --git a/ui/views/controls/prefix_selector.cc b/ui/views/controls/prefix_selector.cc
 index e65a6277cb..58642c839a 100644
 --- a/ui/views/controls/prefix_selector.cc
