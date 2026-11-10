@@ -1,0 +1,2714 @@
+diff --git a/base/task/current_thread.cc b/base/task/current_thread.cc
+index dd959f737c..8f141ca4cf 100644
+--- a/base/task/current_thread.cc
++++ b/base/task/current_thread.cc
+@@ -154,7 +154,8 @@ MessagePumpForUI* CurrentUIThread::GetMessagePumpForUI() const {
+   return static_cast<MessagePumpForUI*>(current_->GetMessagePump());
+ }
+ 
+-#if BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_WIN)
++#if BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_WIN) && \
++    !BUILDFLAG(IS_APPLE)
+ bool CurrentUIThread::WatchFileDescriptor(
+     int fd,
+     bool persistent,
+diff --git a/base/task/current_thread.h b/base/task/current_thread.h
+index 2bf2f919fe..a967740031 100644
+--- a/base/task/current_thread.h
++++ b/base/task/current_thread.h
+@@ -247,7 +247,9 @@ class BASE_EXPORT CurrentUIThread : public CurrentThread {
+ 
+   CurrentUIThread* operator->() { return this; }
+ 
+-#if BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_FUCHSIA)
++#if BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_APPLE)
++  // Spatiand: not on macOS, whose UI pump is a CFRunLoop (see
++  // ui/events/platform/wayland/wayland_event_watcher_mac.h).
+   static_assert(
+       std::is_base_of_v<WatchableIOMessagePumpPosix, MessagePumpForUI>,
+       "CurrentThreadForUI::WatchFileDescriptor is supported only"
+diff --git a/build/build_config.h b/build/build_config.h
+index 0e3bcb4558..0fd394db1c 100644
+--- a/build/build_config.h
++++ b/build/build_config.h
+@@ -273,6 +273,16 @@
+ #define BUILDFLAG_INTERNAL_IS_OZONE() (0)
+ #endif
+ 
++// Spatiand: Chromium's Linux UI -- Ozone with its Wayland platform, Aura, Views
++// -- built for macOS, a client of Spatiand as it is on Linux. The system below
++// it (processes, memory, files, the keychain) stays macOS's (IS_MAC); what is
++// the UI's follows Linux's path. GN's is_mac_linux_ui.
++#if defined(OS_MAC) && defined(USE_OZONE)
++#define BUILDFLAG_INTERNAL_IS_MAC_LINUX_UI() (1)
++#else
++#define BUILDFLAG_INTERNAL_IS_MAC_LINUX_UI() (0)
++#endif
++
+ #if __PTRAUTH__
+ #define BUILDFLAG_INTERNAL_ARCH_CPU_PTRAUTH() (1)
+ #else
+diff --git a/build/config/BUILDCONFIG.gn b/build/config/BUILDCONFIG.gn
+index 401d08d683..ce9e6cf3c6 100644
+--- a/build/config/BUILDCONFIG.gn
++++ b/build/config/BUILDCONFIG.gn
+@@ -340,6 +340,13 @@ is_fuchsia = current_os == "fuchsia"
+ is_ios = current_os == "ios"
+ is_linux = current_os == "linux"
+ is_mac = current_os == "mac"
++
++declare_args() {
++  # Spatiand: Chromium's Linux UI (Ozone/Wayland, Aura, Views) on macOS; see
++  # BUILDFLAG(IS_MAC_LINUX_UI) in build/build_config.h. Needs use_ozone.
++  spatiand_mac_linux_ui = false
++}
++is_mac_linux_ui = is_mac && spatiand_mac_linux_ui
+ is_wasm = current_os == "emscripten"
+ is_watchos = current_os == "watchos"
+ is_win = current_os == "win" || current_os == "winuwp"
+diff --git a/build/config/linux/libdrm/BUILD.gn b/build/config/linux/libdrm/BUILD.gn
+index 7fd20c24e1..bb7e35b4e9 100644
+--- a/build/config/linux/libdrm/BUILD.gn
++++ b/build/config/linux/libdrm/BUILD.gn
+@@ -5,7 +5,7 @@ import("//build/config/cast.gni")
+ import("//build/config/chromeos/args.gni")
+ import("//build/config/linux/pkg_config.gni")
+ 
+-assert(is_linux || is_chromeos)
++assert(is_linux || is_chromeos || is_mac)  # Spatiand: Linux UI on the Mac
+ 
+ declare_args() {
+   # Controls whether the build should use the version of libdrm library shipped
+diff --git a/components/input/BUILD.gn b/components/input/BUILD.gn
+index 8e7df2da72..2c8ea9031a 100644
+--- a/components/input/BUILD.gn
++++ b/components/input/BUILD.gn
+@@ -137,12 +137,15 @@ component("input") {
+       "web_input_event_builders_ios.mm",
+     ]
+   }
+-  if (is_mac) {
++  # Spatiand: the Linux UI on macOS (use_aura) has aura's, above.
++  if (is_mac && !use_aura) {
+     sources += [
+       "native_web_keyboard_event_mac.mm",
+       "web_input_event_builders_mac.h",
+       "web_input_event_builders_mac.mm",
+     ]
++  }
++  if (is_mac) {
+     frameworks = [
+       "AppKit.framework",
+       "CoreGraphics.framework",
+diff --git a/third_party/libdrm/BUILD.gn b/third_party/libdrm/BUILD.gn
+index 43cc4de4ef..22c5503d7e 100644
+--- a/third_party/libdrm/BUILD.gn
++++ b/third_party/libdrm/BUILD.gn
+@@ -1,7 +1,7 @@
+ # Copyright 2016 The Chromium Authors
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+-assert(is_linux || is_chromeos)
++assert(is_linux || is_chromeos || is_mac)  # Spatiand: Linux UI on the Mac
+ 
+ generated_static_table_fourcc_file =
+     "$target_gen_dir/src/generated_static_table_fourcc.h"
+diff --git a/third_party/minigbm/BUILD.gn b/third_party/minigbm/BUILD.gn
+index d546ac721c..6efdef1888 100644
+--- a/third_party/minigbm/BUILD.gn
++++ b/third_party/minigbm/BUILD.gn
+@@ -5,7 +5,7 @@
+ import("//build/config/cast.gni")
+ import("//build/config/linux/pkg_config.gni")
+ 
+-assert(is_linux || is_chromeos)
++assert(is_linux || is_chromeos || is_mac)  # Spatiand: Linux UI on the Mac
+ 
+ declare_args() {
+   # Controls whether the build should use the version of minigbm library shipped
+diff --git a/third_party/spatiand_mac/BUILD.gn b/third_party/spatiand_mac/BUILD.gn
+new file mode 100644
+index 0000000000..bacc263b5b
+--- /dev/null
++++ b/third_party/spatiand_mac/BUILD.gn
+@@ -0,0 +1,12 @@
++# Copyright 2026 The Chromium Authors
++# Use of this source code is governed by a BSD-style license that can be
++# found in the LICENSE file.
++
++# Spatiand: what the Linux UI (Ozone/Wayland) needs on macOS that macOS has not.
++
++assert(is_mac)
++
++# The Linux kernel's input event codes, which Wayland's keys and buttons are.
++config("linux_input") {
++  include_dirs = [ "linux-input" ]
++}
+diff --git a/third_party/spatiand_mac/linux-input/linux/input-event-codes.h b/third_party/spatiand_mac/linux-input/linux/input-event-codes.h
+new file mode 100644
+index 0000000000..575aed9fa5
+--- /dev/null
++++ b/third_party/spatiand_mac/linux-input/linux/input-event-codes.h
+@@ -0,0 +1,975 @@
++/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
++/*
++ * Input event codes
++ *
++ *    *** IMPORTANT ***
++ * This file is not only included from C-code but also from devicetree source
++ * files. As such this file MUST only contain comments and defines.
++ *
++ * Copyright (c) 1999-2002 Vojtech Pavlik
++ * Copyright (c) 2015 Hans de Goede <hdegoede@redhat.com>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 as published by
++ * the Free Software Foundation.
++ */
++#ifndef _INPUT_EVENT_CODES_H
++#define _INPUT_EVENT_CODES_H
++
++/*
++ * Device properties and quirks
++ */
++
++#define INPUT_PROP_POINTER		0x00	/* needs a pointer */
++#define INPUT_PROP_DIRECT		0x01	/* direct input devices */
++#define INPUT_PROP_BUTTONPAD		0x02	/* has button(s) under pad */
++#define INPUT_PROP_SEMI_MT		0x03	/* touch rectangle only */
++#define INPUT_PROP_TOPBUTTONPAD		0x04	/* softbuttons at top of pad */
++#define INPUT_PROP_POINTING_STICK	0x05	/* is a pointing stick */
++#define INPUT_PROP_ACCELEROMETER	0x06	/* has accelerometer */
++
++#define INPUT_PROP_MAX			0x1f
++#define INPUT_PROP_CNT			(INPUT_PROP_MAX + 1)
++
++/*
++ * Event types
++ */
++
++#define EV_SYN			0x00
++#define EV_KEY			0x01
++#define EV_REL			0x02
++#define EV_ABS			0x03
++#define EV_MSC			0x04
++#define EV_SW			0x05
++#define EV_LED			0x11
++#define EV_SND			0x12
++#define EV_REP			0x14
++#define EV_FF			0x15
++#define EV_PWR			0x16
++#define EV_FF_STATUS		0x17
++#define EV_MAX			0x1f
++#define EV_CNT			(EV_MAX+1)
++
++/*
++ * Synchronization events.
++ */
++
++#define SYN_REPORT		0
++#define SYN_CONFIG		1
++#define SYN_MT_REPORT		2
++#define SYN_DROPPED		3
++#define SYN_MAX			0xf
++#define SYN_CNT			(SYN_MAX+1)
++
++/*
++ * Keys and buttons
++ *
++ * Most of the keys/buttons are modeled after USB HUT 1.12
++ * (see http://www.usb.org/developers/hidpage).
++ * Abbreviations in the comments:
++ * AC - Application Control
++ * AL - Application Launch Button
++ * SC - System Control
++ */
++
++#define KEY_RESERVED		0
++#define KEY_ESC			1
++#define KEY_1			2
++#define KEY_2			3
++#define KEY_3			4
++#define KEY_4			5
++#define KEY_5			6
++#define KEY_6			7
++#define KEY_7			8
++#define KEY_8			9
++#define KEY_9			10
++#define KEY_0			11
++#define KEY_MINUS		12
++#define KEY_EQUAL		13
++#define KEY_BACKSPACE		14
++#define KEY_TAB			15
++#define KEY_Q			16
++#define KEY_W			17
++#define KEY_E			18
++#define KEY_R			19
++#define KEY_T			20
++#define KEY_Y			21
++#define KEY_U			22
++#define KEY_I			23
++#define KEY_O			24
++#define KEY_P			25
++#define KEY_LEFTBRACE		26
++#define KEY_RIGHTBRACE		27
++#define KEY_ENTER		28
++#define KEY_LEFTCTRL		29
++#define KEY_A			30
++#define KEY_S			31
++#define KEY_D			32
++#define KEY_F			33
++#define KEY_G			34
++#define KEY_H			35
++#define KEY_J			36
++#define KEY_K			37
++#define KEY_L			38
++#define KEY_SEMICOLON		39
++#define KEY_APOSTROPHE		40
++#define KEY_GRAVE		41
++#define KEY_LEFTSHIFT		42
++#define KEY_BACKSLASH		43
++#define KEY_Z			44
++#define KEY_X			45
++#define KEY_C			46
++#define KEY_V			47
++#define KEY_B			48
++#define KEY_N			49
++#define KEY_M			50
++#define KEY_COMMA		51
++#define KEY_DOT			52
++#define KEY_SLASH		53
++#define KEY_RIGHTSHIFT		54
++#define KEY_KPASTERISK		55
++#define KEY_LEFTALT		56
++#define KEY_SPACE		57
++#define KEY_CAPSLOCK		58
++#define KEY_F1			59
++#define KEY_F2			60
++#define KEY_F3			61
++#define KEY_F4			62
++#define KEY_F5			63
++#define KEY_F6			64
++#define KEY_F7			65
++#define KEY_F8			66
++#define KEY_F9			67
++#define KEY_F10			68
++#define KEY_NUMLOCK		69
++#define KEY_SCROLLLOCK		70
++#define KEY_KP7			71
++#define KEY_KP8			72
++#define KEY_KP9			73
++#define KEY_KPMINUS		74
++#define KEY_KP4			75
++#define KEY_KP5			76
++#define KEY_KP6			77
++#define KEY_KPPLUS		78
++#define KEY_KP1			79
++#define KEY_KP2			80
++#define KEY_KP3			81
++#define KEY_KP0			82
++#define KEY_KPDOT		83
++
++#define KEY_ZENKAKUHANKAKU	85
++#define KEY_102ND		86
++#define KEY_F11			87
++#define KEY_F12			88
++#define KEY_RO			89
++#define KEY_KATAKANA		90
++#define KEY_HIRAGANA		91
++#define KEY_HENKAN		92
++#define KEY_KATAKANAHIRAGANA	93
++#define KEY_MUHENKAN		94
++#define KEY_KPJPCOMMA		95
++#define KEY_KPENTER		96
++#define KEY_RIGHTCTRL		97
++#define KEY_KPSLASH		98
++#define KEY_SYSRQ		99
++#define KEY_RIGHTALT		100
++#define KEY_LINEFEED		101
++#define KEY_HOME		102
++#define KEY_UP			103
++#define KEY_PAGEUP		104
++#define KEY_LEFT		105
++#define KEY_RIGHT		106
++#define KEY_END			107
++#define KEY_DOWN		108
++#define KEY_PAGEDOWN		109
++#define KEY_INSERT		110
++#define KEY_DELETE		111
++#define KEY_MACRO		112
++#define KEY_MUTE		113
++#define KEY_VOLUMEDOWN		114
++#define KEY_VOLUMEUP		115
++#define KEY_POWER		116	/* SC System Power Down */
++#define KEY_KPEQUAL		117
++#define KEY_KPPLUSMINUS		118
++#define KEY_PAUSE		119
++#define KEY_SCALE		120	/* AL Compiz Scale (Expose) */
++
++#define KEY_KPCOMMA		121
++#define KEY_HANGEUL		122
++#define KEY_HANGUEL		KEY_HANGEUL
++#define KEY_HANJA		123
++#define KEY_YEN			124
++#define KEY_LEFTMETA		125
++#define KEY_RIGHTMETA		126
++#define KEY_COMPOSE		127
++
++#define KEY_STOP		128	/* AC Stop */
++#define KEY_AGAIN		129
++#define KEY_PROPS		130	/* AC Properties */
++#define KEY_UNDO		131	/* AC Undo */
++#define KEY_FRONT		132
++#define KEY_COPY		133	/* AC Copy */
++#define KEY_OPEN		134	/* AC Open */
++#define KEY_PASTE		135	/* AC Paste */
++#define KEY_FIND		136	/* AC Search */
++#define KEY_CUT			137	/* AC Cut */
++#define KEY_HELP		138	/* AL Integrated Help Center */
++#define KEY_MENU		139	/* Menu (show menu) */
++#define KEY_CALC		140	/* AL Calculator */
++#define KEY_SETUP		141
++#define KEY_SLEEP		142	/* SC System Sleep */
++#define KEY_WAKEUP		143	/* System Wake Up */
++#define KEY_FILE		144	/* AL Local Machine Browser */
++#define KEY_SENDFILE		145
++#define KEY_DELETEFILE		146
++#define KEY_XFER		147
++#define KEY_PROG1		148
++#define KEY_PROG2		149
++#define KEY_WWW			150	/* AL Internet Browser */
++#define KEY_MSDOS		151
++#define KEY_COFFEE		152	/* AL Terminal Lock/Screensaver */
++#define KEY_SCREENLOCK		KEY_COFFEE
++#define KEY_ROTATE_DISPLAY	153	/* Display orientation for e.g. tablets */
++#define KEY_DIRECTION		KEY_ROTATE_DISPLAY
++#define KEY_CYCLEWINDOWS	154
++#define KEY_MAIL		155
++#define KEY_BOOKMARKS		156	/* AC Bookmarks */
++#define KEY_COMPUTER		157
++#define KEY_BACK		158	/* AC Back */
++#define KEY_FORWARD		159	/* AC Forward */
++#define KEY_CLOSECD		160
++#define KEY_EJECTCD		161
++#define KEY_EJECTCLOSECD	162
++#define KEY_NEXTSONG		163
++#define KEY_PLAYPAUSE		164
++#define KEY_PREVIOUSSONG	165
++#define KEY_STOPCD		166
++#define KEY_RECORD		167
++#define KEY_REWIND		168
++#define KEY_PHONE		169	/* Media Select Telephone */
++#define KEY_ISO			170
++#define KEY_CONFIG		171	/* AL Consumer Control Configuration */
++#define KEY_HOMEPAGE		172	/* AC Home */
++#define KEY_REFRESH		173	/* AC Refresh */
++#define KEY_EXIT		174	/* AC Exit */
++#define KEY_MOVE		175
++#define KEY_EDIT		176
++#define KEY_SCROLLUP		177
++#define KEY_SCROLLDOWN		178
++#define KEY_KPLEFTPAREN		179
++#define KEY_KPRIGHTPAREN	180
++#define KEY_NEW			181	/* AC New */
++#define KEY_REDO		182	/* AC Redo/Repeat */
++
++#define KEY_F13			183
++#define KEY_F14			184
++#define KEY_F15			185
++#define KEY_F16			186
++#define KEY_F17			187
++#define KEY_F18			188
++#define KEY_F19			189
++#define KEY_F20			190
++#define KEY_F21			191
++#define KEY_F22			192
++#define KEY_F23			193
++#define KEY_F24			194
++
++#define KEY_PLAYCD		200
++#define KEY_PAUSECD		201
++#define KEY_PROG3		202
++#define KEY_PROG4		203
++#define KEY_ALL_APPLICATIONS	204	/* AC Desktop Show All Applications */
++#define KEY_DASHBOARD		KEY_ALL_APPLICATIONS
++#define KEY_SUSPEND		205
++#define KEY_CLOSE		206	/* AC Close */
++#define KEY_PLAY		207
++#define KEY_FASTFORWARD		208
++#define KEY_BASSBOOST		209
++#define KEY_PRINT		210	/* AC Print */
++#define KEY_HP			211
++#define KEY_CAMERA		212
++#define KEY_SOUND		213
++#define KEY_QUESTION		214
++#define KEY_EMAIL		215
++#define KEY_CHAT		216
++#define KEY_SEARCH		217
++#define KEY_CONNECT		218
++#define KEY_FINANCE		219	/* AL Checkbook/Finance */
++#define KEY_SPORT		220
++#define KEY_SHOP		221
++#define KEY_ALTERASE		222
++#define KEY_CANCEL		223	/* AC Cancel */
++#define KEY_BRIGHTNESSDOWN	224
++#define KEY_BRIGHTNESSUP	225
++#define KEY_MEDIA		226
++
++#define KEY_SWITCHVIDEOMODE	227	/* Cycle between available video
++					   outputs (Monitor/LCD/TV-out/etc) */
++#define KEY_KBDILLUMTOGGLE	228
++#define KEY_KBDILLUMDOWN	229
++#define KEY_KBDILLUMUP		230
++
++#define KEY_SEND		231	/* AC Send */
++#define KEY_REPLY		232	/* AC Reply */
++#define KEY_FORWARDMAIL		233	/* AC Forward Msg */
++#define KEY_SAVE		234	/* AC Save */
++#define KEY_DOCUMENTS		235
++
++#define KEY_BATTERY		236
++
++#define KEY_BLUETOOTH		237
++#define KEY_WLAN		238
++#define KEY_UWB			239
++
++#define KEY_UNKNOWN		240
++
++#define KEY_VIDEO_NEXT		241	/* drive next video source */
++#define KEY_VIDEO_PREV		242	/* drive previous video source */
++#define KEY_BRIGHTNESS_CYCLE	243	/* brightness up, after max is min */
++#define KEY_BRIGHTNESS_AUTO	244	/* Set Auto Brightness: manual
++					  brightness control is off,
++					  rely on ambient */
++#define KEY_BRIGHTNESS_ZERO	KEY_BRIGHTNESS_AUTO
++#define KEY_DISPLAY_OFF		245	/* display device to off state */
++
++#define KEY_WWAN		246	/* Wireless WAN (LTE, UMTS, GSM, etc.) */
++#define KEY_WIMAX		KEY_WWAN
++#define KEY_RFKILL		247	/* Key that controls all radios */
++
++#define KEY_MICMUTE		248	/* Mute / unmute the microphone */
++
++/* Code 255 is reserved for special needs of AT keyboard driver */
++
++#define BTN_MISC		0x100
++#define BTN_0			0x100
++#define BTN_1			0x101
++#define BTN_2			0x102
++#define BTN_3			0x103
++#define BTN_4			0x104
++#define BTN_5			0x105
++#define BTN_6			0x106
++#define BTN_7			0x107
++#define BTN_8			0x108
++#define BTN_9			0x109
++
++#define BTN_MOUSE		0x110
++#define BTN_LEFT		0x110
++#define BTN_RIGHT		0x111
++#define BTN_MIDDLE		0x112
++#define BTN_SIDE		0x113
++#define BTN_EXTRA		0x114
++#define BTN_FORWARD		0x115
++#define BTN_BACK		0x116
++#define BTN_TASK		0x117
++
++#define BTN_JOYSTICK		0x120
++#define BTN_TRIGGER		0x120
++#define BTN_THUMB		0x121
++#define BTN_THUMB2		0x122
++#define BTN_TOP			0x123
++#define BTN_TOP2		0x124
++#define BTN_PINKIE		0x125
++#define BTN_BASE		0x126
++#define BTN_BASE2		0x127
++#define BTN_BASE3		0x128
++#define BTN_BASE4		0x129
++#define BTN_BASE5		0x12a
++#define BTN_BASE6		0x12b
++#define BTN_DEAD		0x12f
++
++#define BTN_GAMEPAD		0x130
++#define BTN_SOUTH		0x130
++#define BTN_A			BTN_SOUTH
++#define BTN_EAST		0x131
++#define BTN_B			BTN_EAST
++#define BTN_C			0x132
++#define BTN_NORTH		0x133
++#define BTN_X			BTN_NORTH
++#define BTN_WEST		0x134
++#define BTN_Y			BTN_WEST
++#define BTN_Z			0x135
++#define BTN_TL			0x136
++#define BTN_TR			0x137
++#define BTN_TL2			0x138
++#define BTN_TR2			0x139
++#define BTN_SELECT		0x13a
++#define BTN_START		0x13b
++#define BTN_MODE		0x13c
++#define BTN_THUMBL		0x13d
++#define BTN_THUMBR		0x13e
++
++#define BTN_DIGI		0x140
++#define BTN_TOOL_PEN		0x140
++#define BTN_TOOL_RUBBER		0x141
++#define BTN_TOOL_BRUSH		0x142
++#define BTN_TOOL_PENCIL		0x143
++#define BTN_TOOL_AIRBRUSH	0x144
++#define BTN_TOOL_FINGER		0x145
++#define BTN_TOOL_MOUSE		0x146
++#define BTN_TOOL_LENS		0x147
++#define BTN_TOOL_QUINTTAP	0x148	/* Five fingers on trackpad */
++#define BTN_STYLUS3		0x149
++#define BTN_TOUCH		0x14a
++#define BTN_STYLUS		0x14b
++#define BTN_STYLUS2		0x14c
++#define BTN_TOOL_DOUBLETAP	0x14d
++#define BTN_TOOL_TRIPLETAP	0x14e
++#define BTN_TOOL_QUADTAP	0x14f	/* Four fingers on trackpad */
++
++#define BTN_WHEEL		0x150
++#define BTN_GEAR_DOWN		0x150
++#define BTN_GEAR_UP		0x151
++
++#define KEY_OK			0x160
++#define KEY_SELECT		0x161
++#define KEY_GOTO		0x162
++#define KEY_CLEAR		0x163
++#define KEY_POWER2		0x164
++#define KEY_OPTION		0x165
++#define KEY_INFO		0x166	/* AL OEM Features/Tips/Tutorial */
++#define KEY_TIME		0x167
++#define KEY_VENDOR		0x168
++#define KEY_ARCHIVE		0x169
++#define KEY_PROGRAM		0x16a	/* Media Select Program Guide */
++#define KEY_CHANNEL		0x16b
++#define KEY_FAVORITES		0x16c
++#define KEY_EPG			0x16d
++#define KEY_PVR			0x16e	/* Media Select Home */
++#define KEY_MHP			0x16f
++#define KEY_LANGUAGE		0x170
++#define KEY_TITLE		0x171
++#define KEY_SUBTITLE		0x172
++#define KEY_ANGLE		0x173
++#define KEY_FULL_SCREEN		0x174	/* AC View Toggle */
++#define KEY_ZOOM		KEY_FULL_SCREEN
++#define KEY_MODE		0x175
++#define KEY_KEYBOARD		0x176
++#define KEY_ASPECT_RATIO	0x177	/* HUTRR37: Aspect */
++#define KEY_SCREEN		KEY_ASPECT_RATIO
++#define KEY_PC			0x178	/* Media Select Computer */
++#define KEY_TV			0x179	/* Media Select TV */
++#define KEY_TV2			0x17a	/* Media Select Cable */
++#define KEY_VCR			0x17b	/* Media Select VCR */
++#define KEY_VCR2		0x17c	/* VCR Plus */
++#define KEY_SAT			0x17d	/* Media Select Satellite */
++#define KEY_SAT2		0x17e
++#define KEY_CD			0x17f	/* Media Select CD */
++#define KEY_TAPE		0x180	/* Media Select Tape */
++#define KEY_RADIO		0x181
++#define KEY_TUNER		0x182	/* Media Select Tuner */
++#define KEY_PLAYER		0x183
++#define KEY_TEXT		0x184
++#define KEY_DVD			0x185	/* Media Select DVD */
++#define KEY_AUX			0x186
++#define KEY_MP3			0x187
++#define KEY_AUDIO		0x188	/* AL Audio Browser */
++#define KEY_VIDEO		0x189	/* AL Movie Browser */
++#define KEY_DIRECTORY		0x18a
++#define KEY_LIST		0x18b
++#define KEY_MEMO		0x18c	/* Media Select Messages */
++#define KEY_CALENDAR		0x18d
++#define KEY_RED			0x18e
++#define KEY_GREEN		0x18f
++#define KEY_YELLOW		0x190
++#define KEY_BLUE		0x191
++#define KEY_CHANNELUP		0x192	/* Channel Increment */
++#define KEY_CHANNELDOWN		0x193	/* Channel Decrement */
++#define KEY_FIRST		0x194
++#define KEY_LAST		0x195	/* Recall Last */
++#define KEY_AB			0x196
++#define KEY_NEXT		0x197
++#define KEY_RESTART		0x198
++#define KEY_SLOW		0x199
++#define KEY_SHUFFLE		0x19a
++#define KEY_BREAK		0x19b
++#define KEY_PREVIOUS		0x19c
++#define KEY_DIGITS		0x19d
++#define KEY_TEEN		0x19e
++#define KEY_TWEN		0x19f
++#define KEY_VIDEOPHONE		0x1a0	/* Media Select Video Phone */
++#define KEY_GAMES		0x1a1	/* Media Select Games */
++#define KEY_ZOOMIN		0x1a2	/* AC Zoom In */
++#define KEY_ZOOMOUT		0x1a3	/* AC Zoom Out */
++#define KEY_ZOOMRESET		0x1a4	/* AC Zoom */
++#define KEY_WORDPROCESSOR	0x1a5	/* AL Word Processor */
++#define KEY_EDITOR		0x1a6	/* AL Text Editor */
++#define KEY_SPREADSHEET		0x1a7	/* AL Spreadsheet */
++#define KEY_GRAPHICSEDITOR	0x1a8	/* AL Graphics Editor */
++#define KEY_PRESENTATION	0x1a9	/* AL Presentation App */
++#define KEY_DATABASE		0x1aa	/* AL Database App */
++#define KEY_NEWS		0x1ab	/* AL Newsreader */
++#define KEY_VOICEMAIL		0x1ac	/* AL Voicemail */
++#define KEY_ADDRESSBOOK		0x1ad	/* AL Contacts/Address Book */
++#define KEY_MESSENGER		0x1ae	/* AL Instant Messaging */
++#define KEY_DISPLAYTOGGLE	0x1af	/* Turn display (LCD) on and off */
++#define KEY_BRIGHTNESS_TOGGLE	KEY_DISPLAYTOGGLE
++#define KEY_SPELLCHECK		0x1b0   /* AL Spell Check */
++#define KEY_LOGOFF		0x1b1   /* AL Logoff */
++
++#define KEY_DOLLAR		0x1b2
++#define KEY_EURO		0x1b3
++
++#define KEY_FRAMEBACK		0x1b4	/* Consumer - transport controls */
++#define KEY_FRAMEFORWARD	0x1b5
++#define KEY_CONTEXT_MENU	0x1b6	/* GenDesc - system context menu */
++#define KEY_MEDIA_REPEAT	0x1b7	/* Consumer - transport control */
++#define KEY_10CHANNELSUP	0x1b8	/* 10 channels up (10+) */
++#define KEY_10CHANNELSDOWN	0x1b9	/* 10 channels down (10-) */
++#define KEY_IMAGES		0x1ba	/* AL Image Browser */
++#define KEY_NOTIFICATION_CENTER	0x1bc	/* Show/hide the notification center */
++#define KEY_PICKUP_PHONE	0x1bd	/* Answer incoming call */
++#define KEY_HANGUP_PHONE	0x1be	/* Decline incoming call */
++
++#define KEY_DEL_EOL		0x1c0
++#define KEY_DEL_EOS		0x1c1
++#define KEY_INS_LINE		0x1c2
++#define KEY_DEL_LINE		0x1c3
++
++#define KEY_FN			0x1d0
++#define KEY_FN_ESC		0x1d1
++#define KEY_FN_F1		0x1d2
++#define KEY_FN_F2		0x1d3
++#define KEY_FN_F3		0x1d4
++#define KEY_FN_F4		0x1d5
++#define KEY_FN_F5		0x1d6
++#define KEY_FN_F6		0x1d7
++#define KEY_FN_F7		0x1d8
++#define KEY_FN_F8		0x1d9
++#define KEY_FN_F9		0x1da
++#define KEY_FN_F10		0x1db
++#define KEY_FN_F11		0x1dc
++#define KEY_FN_F12		0x1dd
++#define KEY_FN_1		0x1de
++#define KEY_FN_2		0x1df
++#define KEY_FN_D		0x1e0
++#define KEY_FN_E		0x1e1
++#define KEY_FN_F		0x1e2
++#define KEY_FN_S		0x1e3
++#define KEY_FN_B		0x1e4
++#define KEY_FN_RIGHT_SHIFT	0x1e5
++
++#define KEY_BRL_DOT1		0x1f1
++#define KEY_BRL_DOT2		0x1f2
++#define KEY_BRL_DOT3		0x1f3
++#define KEY_BRL_DOT4		0x1f4
++#define KEY_BRL_DOT5		0x1f5
++#define KEY_BRL_DOT6		0x1f6
++#define KEY_BRL_DOT7		0x1f7
++#define KEY_BRL_DOT8		0x1f8
++#define KEY_BRL_DOT9		0x1f9
++#define KEY_BRL_DOT10		0x1fa
++
++#define KEY_NUMERIC_0		0x200	/* used by phones, remote controls, */
++#define KEY_NUMERIC_1		0x201	/* and other keypads */
++#define KEY_NUMERIC_2		0x202
++#define KEY_NUMERIC_3		0x203
++#define KEY_NUMERIC_4		0x204
++#define KEY_NUMERIC_5		0x205
++#define KEY_NUMERIC_6		0x206
++#define KEY_NUMERIC_7		0x207
++#define KEY_NUMERIC_8		0x208
++#define KEY_NUMERIC_9		0x209
++#define KEY_NUMERIC_STAR	0x20a
++#define KEY_NUMERIC_POUND	0x20b
++#define KEY_NUMERIC_A		0x20c	/* Phone key A - HUT Telephony 0xb9 */
++#define KEY_NUMERIC_B		0x20d
++#define KEY_NUMERIC_C		0x20e
++#define KEY_NUMERIC_D		0x20f
++
++#define KEY_CAMERA_FOCUS	0x210
++#define KEY_WPS_BUTTON		0x211	/* WiFi Protected Setup key */
++
++#define KEY_TOUCHPAD_TOGGLE	0x212	/* Request switch touchpad on or off */
++#define KEY_TOUCHPAD_ON		0x213
++#define KEY_TOUCHPAD_OFF	0x214
++
++#define KEY_CAMERA_ZOOMIN	0x215
++#define KEY_CAMERA_ZOOMOUT	0x216
++#define KEY_CAMERA_UP		0x217
++#define KEY_CAMERA_DOWN		0x218
++#define KEY_CAMERA_LEFT		0x219
++#define KEY_CAMERA_RIGHT	0x21a
++
++#define KEY_ATTENDANT_ON	0x21b
++#define KEY_ATTENDANT_OFF	0x21c
++#define KEY_ATTENDANT_TOGGLE	0x21d	/* Attendant call on or off */
++#define KEY_LIGHTS_TOGGLE	0x21e	/* Reading light on or off */
++
++#define BTN_DPAD_UP		0x220
++#define BTN_DPAD_DOWN		0x221
++#define BTN_DPAD_LEFT		0x222
++#define BTN_DPAD_RIGHT		0x223
++
++#define KEY_ALS_TOGGLE		0x230	/* Ambient light sensor */
++#define KEY_ROTATE_LOCK_TOGGLE	0x231	/* Display rotation lock */
++#define KEY_REFRESH_RATE_TOGGLE	0x232	/* Display refresh rate toggle */
++
++#define KEY_BUTTONCONFIG		0x240	/* AL Button Configuration */
++#define KEY_TASKMANAGER		0x241	/* AL Task/Project Manager */
++#define KEY_JOURNAL		0x242	/* AL Log/Journal/Timecard */
++#define KEY_CONTROLPANEL		0x243	/* AL Control Panel */
++#define KEY_APPSELECT		0x244	/* AL Select Task/Application */
++#define KEY_SCREENSAVER		0x245	/* AL Screen Saver */
++#define KEY_VOICECOMMAND		0x246	/* Listening Voice Command */
++#define KEY_ASSISTANT		0x247	/* AL Context-aware desktop assistant */
++#define KEY_KBD_LAYOUT_NEXT	0x248	/* AC Next Keyboard Layout Select */
++#define KEY_EMOJI_PICKER	0x249	/* Show/hide emoji picker (HUTRR101) */
++#define KEY_DICTATE		0x24a	/* Start or Stop Voice Dictation Session (HUTRR99) */
++
++#define KEY_BRIGHTNESS_MIN		0x250	/* Set Brightness to Minimum */
++#define KEY_BRIGHTNESS_MAX		0x251	/* Set Brightness to Maximum */
++
++#define KEY_KBDINPUTASSIST_PREV		0x260
++#define KEY_KBDINPUTASSIST_NEXT		0x261
++#define KEY_KBDINPUTASSIST_PREVGROUP		0x262
++#define KEY_KBDINPUTASSIST_NEXTGROUP		0x263
++#define KEY_KBDINPUTASSIST_ACCEPT		0x264
++#define KEY_KBDINPUTASSIST_CANCEL		0x265
++
++/* Diagonal movement keys */
++#define KEY_RIGHT_UP			0x266
++#define KEY_RIGHT_DOWN			0x267
++#define KEY_LEFT_UP			0x268
++#define KEY_LEFT_DOWN			0x269
++
++#define KEY_ROOT_MENU			0x26a /* Show Device's Root Menu */
++/* Show Top Menu of the Media (e.g. DVD) */
++#define KEY_MEDIA_TOP_MENU		0x26b
++#define KEY_NUMERIC_11			0x26c
++#define KEY_NUMERIC_12			0x26d
++/*
++ * Toggle Audio Description: refers to an audio service that helps blind and
++ * visually impaired consumers understand the action in a program. Note: in
++ * some countries this is referred to as "Video Description".
++ */
++#define KEY_AUDIO_DESC			0x26e
++#define KEY_3D_MODE			0x26f
++#define KEY_NEXT_FAVORITE		0x270
++#define KEY_STOP_RECORD			0x271
++#define KEY_PAUSE_RECORD		0x272
++#define KEY_VOD				0x273 /* Video on Demand */
++#define KEY_UNMUTE			0x274
++#define KEY_FASTREVERSE			0x275
++#define KEY_SLOWREVERSE			0x276
++/*
++ * Control a data application associated with the currently viewed channel,
++ * e.g. teletext or data broadcast application (MHEG, MHP, HbbTV, etc.)
++ */
++#define KEY_DATA			0x277
++#define KEY_ONSCREEN_KEYBOARD		0x278
++/* Electronic privacy screen control */
++#define KEY_PRIVACY_SCREEN_TOGGLE	0x279
++
++/* Select an area of screen to be copied */
++#define KEY_SELECTIVE_SCREENSHOT	0x27a
++
++/* Move the focus to the next or previous user controllable element within a UI container */
++#define KEY_NEXT_ELEMENT               0x27b
++#define KEY_PREVIOUS_ELEMENT           0x27c
++
++/* Toggle Autopilot engagement */
++#define KEY_AUTOPILOT_ENGAGE_TOGGLE    0x27d
++
++/* Shortcut Keys */
++#define KEY_MARK_WAYPOINT              0x27e
++#define KEY_SOS                                0x27f
++#define KEY_NAV_CHART                  0x280
++#define KEY_FISHING_CHART              0x281
++#define KEY_SINGLE_RANGE_RADAR         0x282
++#define KEY_DUAL_RANGE_RADAR           0x283
++#define KEY_RADAR_OVERLAY              0x284
++#define KEY_TRADITIONAL_SONAR          0x285
++#define KEY_CLEARVU_SONAR              0x286
++#define KEY_SIDEVU_SONAR               0x287
++#define KEY_NAV_INFO                   0x288
++#define KEY_BRIGHTNESS_MENU            0x289
++
++/*
++ * Some keyboards have keys which do not have a defined meaning, these keys
++ * are intended to be programmed / bound to macros by the user. For most
++ * keyboards with these macro-keys the key-sequence to inject, or action to
++ * take, is all handled by software on the host side. So from the kernel's
++ * point of view these are just normal keys.
++ *
++ * The KEY_MACRO# codes below are intended for such keys, which may be labeled
++ * e.g. G1-G18, or S1 - S30. The KEY_MACRO# codes MUST NOT be used for keys
++ * where the marking on the key does indicate a defined meaning / purpose.
++ *
++ * The KEY_MACRO# codes MUST also NOT be used as fallback for when no existing
++ * KEY_FOO define matches the marking / purpose. In this case a new KEY_FOO
++ * define MUST be added.
++ */
++#define KEY_MACRO1			0x290
++#define KEY_MACRO2			0x291
++#define KEY_MACRO3			0x292
++#define KEY_MACRO4			0x293
++#define KEY_MACRO5			0x294
++#define KEY_MACRO6			0x295
++#define KEY_MACRO7			0x296
++#define KEY_MACRO8			0x297
++#define KEY_MACRO9			0x298
++#define KEY_MACRO10			0x299
++#define KEY_MACRO11			0x29a
++#define KEY_MACRO12			0x29b
++#define KEY_MACRO13			0x29c
++#define KEY_MACRO14			0x29d
++#define KEY_MACRO15			0x29e
++#define KEY_MACRO16			0x29f
++#define KEY_MACRO17			0x2a0
++#define KEY_MACRO18			0x2a1
++#define KEY_MACRO19			0x2a2
++#define KEY_MACRO20			0x2a3
++#define KEY_MACRO21			0x2a4
++#define KEY_MACRO22			0x2a5
++#define KEY_MACRO23			0x2a6
++#define KEY_MACRO24			0x2a7
++#define KEY_MACRO25			0x2a8
++#define KEY_MACRO26			0x2a9
++#define KEY_MACRO27			0x2aa
++#define KEY_MACRO28			0x2ab
++#define KEY_MACRO29			0x2ac
++#define KEY_MACRO30			0x2ad
++
++/*
++ * Some keyboards with the macro-keys described above have some extra keys
++ * for controlling the host-side software responsible for the macro handling:
++ * -A macro recording start/stop key. Note that not all keyboards which emit
++ *  KEY_MACRO_RECORD_START will also emit KEY_MACRO_RECORD_STOP if
++ *  KEY_MACRO_RECORD_STOP is not advertised, then KEY_MACRO_RECORD_START
++ *  should be interpreted as a recording start/stop toggle;
++ * -Keys for switching between different macro (pre)sets, either a key for
++ *  cycling through the configured presets or keys to directly select a preset.
++ */
++#define KEY_MACRO_RECORD_START		0x2b0
++#define KEY_MACRO_RECORD_STOP		0x2b1
++#define KEY_MACRO_PRESET_CYCLE		0x2b2
++#define KEY_MACRO_PRESET1		0x2b3
++#define KEY_MACRO_PRESET2		0x2b4
++#define KEY_MACRO_PRESET3		0x2b5
++
++/*
++ * Some keyboards have a buildin LCD panel where the contents are controlled
++ * by the host. Often these have a number of keys directly below the LCD
++ * intended for controlling a menu shown on the LCD. These keys often don't
++ * have any labeling so we just name them KEY_KBD_LCD_MENU#
++ */
++#define KEY_KBD_LCD_MENU1		0x2b8
++#define KEY_KBD_LCD_MENU2		0x2b9
++#define KEY_KBD_LCD_MENU3		0x2ba
++#define KEY_KBD_LCD_MENU4		0x2bb
++#define KEY_KBD_LCD_MENU5		0x2bc
++
++#define BTN_TRIGGER_HAPPY		0x2c0
++#define BTN_TRIGGER_HAPPY1		0x2c0
++#define BTN_TRIGGER_HAPPY2		0x2c1
++#define BTN_TRIGGER_HAPPY3		0x2c2
++#define BTN_TRIGGER_HAPPY4		0x2c3
++#define BTN_TRIGGER_HAPPY5		0x2c4
++#define BTN_TRIGGER_HAPPY6		0x2c5
++#define BTN_TRIGGER_HAPPY7		0x2c6
++#define BTN_TRIGGER_HAPPY8		0x2c7
++#define BTN_TRIGGER_HAPPY9		0x2c8
++#define BTN_TRIGGER_HAPPY10		0x2c9
++#define BTN_TRIGGER_HAPPY11		0x2ca
++#define BTN_TRIGGER_HAPPY12		0x2cb
++#define BTN_TRIGGER_HAPPY13		0x2cc
++#define BTN_TRIGGER_HAPPY14		0x2cd
++#define BTN_TRIGGER_HAPPY15		0x2ce
++#define BTN_TRIGGER_HAPPY16		0x2cf
++#define BTN_TRIGGER_HAPPY17		0x2d0
++#define BTN_TRIGGER_HAPPY18		0x2d1
++#define BTN_TRIGGER_HAPPY19		0x2d2
++#define BTN_TRIGGER_HAPPY20		0x2d3
++#define BTN_TRIGGER_HAPPY21		0x2d4
++#define BTN_TRIGGER_HAPPY22		0x2d5
++#define BTN_TRIGGER_HAPPY23		0x2d6
++#define BTN_TRIGGER_HAPPY24		0x2d7
++#define BTN_TRIGGER_HAPPY25		0x2d8
++#define BTN_TRIGGER_HAPPY26		0x2d9
++#define BTN_TRIGGER_HAPPY27		0x2da
++#define BTN_TRIGGER_HAPPY28		0x2db
++#define BTN_TRIGGER_HAPPY29		0x2dc
++#define BTN_TRIGGER_HAPPY30		0x2dd
++#define BTN_TRIGGER_HAPPY31		0x2de
++#define BTN_TRIGGER_HAPPY32		0x2df
++#define BTN_TRIGGER_HAPPY33		0x2e0
++#define BTN_TRIGGER_HAPPY34		0x2e1
++#define BTN_TRIGGER_HAPPY35		0x2e2
++#define BTN_TRIGGER_HAPPY36		0x2e3
++#define BTN_TRIGGER_HAPPY37		0x2e4
++#define BTN_TRIGGER_HAPPY38		0x2e5
++#define BTN_TRIGGER_HAPPY39		0x2e6
++#define BTN_TRIGGER_HAPPY40		0x2e7
++
++/* We avoid low common keys in module aliases so they don't get huge. */
++#define KEY_MIN_INTERESTING	KEY_MUTE
++#define KEY_MAX			0x2ff
++#define KEY_CNT			(KEY_MAX+1)
++
++/*
++ * Relative axes
++ */
++
++#define REL_X			0x00
++#define REL_Y			0x01
++#define REL_Z			0x02
++#define REL_RX			0x03
++#define REL_RY			0x04
++#define REL_RZ			0x05
++#define REL_HWHEEL		0x06
++#define REL_DIAL		0x07
++#define REL_WHEEL		0x08
++#define REL_MISC		0x09
++/*
++ * 0x0a is reserved and should not be used in input drivers.
++ * It was used by HID as REL_MISC+1 and userspace needs to detect if
++ * the next REL_* event is correct or is just REL_MISC + n.
++ * We define here REL_RESERVED so userspace can rely on it and detect
++ * the situation described above.
++ */
++#define REL_RESERVED		0x0a
++#define REL_WHEEL_HI_RES	0x0b
++#define REL_HWHEEL_HI_RES	0x0c
++#define REL_MAX			0x0f
++#define REL_CNT			(REL_MAX+1)
++
++/*
++ * Absolute axes
++ */
++
++#define ABS_X			0x00
++#define ABS_Y			0x01
++#define ABS_Z			0x02
++#define ABS_RX			0x03
++#define ABS_RY			0x04
++#define ABS_RZ			0x05
++#define ABS_THROTTLE		0x06
++#define ABS_RUDDER		0x07
++#define ABS_WHEEL		0x08
++#define ABS_GAS			0x09
++#define ABS_BRAKE		0x0a
++#define ABS_HAT0X		0x10
++#define ABS_HAT0Y		0x11
++#define ABS_HAT1X		0x12
++#define ABS_HAT1Y		0x13
++#define ABS_HAT2X		0x14
++#define ABS_HAT2Y		0x15
++#define ABS_HAT3X		0x16
++#define ABS_HAT3Y		0x17
++#define ABS_PRESSURE		0x18
++#define ABS_DISTANCE		0x19
++#define ABS_TILT_X		0x1a
++#define ABS_TILT_Y		0x1b
++#define ABS_TOOL_WIDTH		0x1c
++
++#define ABS_VOLUME		0x20
++#define ABS_PROFILE		0x21
++
++#define ABS_MISC		0x28
++
++/*
++ * 0x2e is reserved and should not be used in input drivers.
++ * It was used by HID as ABS_MISC+6 and userspace needs to detect if
++ * the next ABS_* event is correct or is just ABS_MISC + n.
++ * We define here ABS_RESERVED so userspace can rely on it and detect
++ * the situation described above.
++ */
++#define ABS_RESERVED		0x2e
++
++#define ABS_MT_SLOT		0x2f	/* MT slot being modified */
++#define ABS_MT_TOUCH_MAJOR	0x30	/* Major axis of touching ellipse */
++#define ABS_MT_TOUCH_MINOR	0x31	/* Minor axis (omit if circular) */
++#define ABS_MT_WIDTH_MAJOR	0x32	/* Major axis of approaching ellipse */
++#define ABS_MT_WIDTH_MINOR	0x33	/* Minor axis (omit if circular) */
++#define ABS_MT_ORIENTATION	0x34	/* Ellipse orientation */
++#define ABS_MT_POSITION_X	0x35	/* Center X touch position */
++#define ABS_MT_POSITION_Y	0x36	/* Center Y touch position */
++#define ABS_MT_TOOL_TYPE	0x37	/* Type of touching device */
++#define ABS_MT_BLOB_ID		0x38	/* Group a set of packets as a blob */
++#define ABS_MT_TRACKING_ID	0x39	/* Unique ID of initiated contact */
++#define ABS_MT_PRESSURE		0x3a	/* Pressure on contact area */
++#define ABS_MT_DISTANCE		0x3b	/* Contact hover distance */
++#define ABS_MT_TOOL_X		0x3c	/* Center X tool position */
++#define ABS_MT_TOOL_Y		0x3d	/* Center Y tool position */
++
++
++#define ABS_MAX			0x3f
++#define ABS_CNT			(ABS_MAX+1)
++
++/*
++ * Switch events
++ */
++
++#define SW_LID			0x00  /* set = lid shut */
++#define SW_TABLET_MODE		0x01  /* set = tablet mode */
++#define SW_HEADPHONE_INSERT	0x02  /* set = inserted */
++#define SW_RFKILL_ALL		0x03  /* rfkill master switch, type "any"
++					 set = radio enabled */
++#define SW_RADIO		SW_RFKILL_ALL	/* deprecated */
++#define SW_MICROPHONE_INSERT	0x04  /* set = inserted */
++#define SW_DOCK			0x05  /* set = plugged into dock */
++#define SW_LINEOUT_INSERT	0x06  /* set = inserted */
++#define SW_JACK_PHYSICAL_INSERT 0x07  /* set = mechanical switch set */
++#define SW_VIDEOOUT_INSERT	0x08  /* set = inserted */
++#define SW_CAMERA_LENS_COVER	0x09  /* set = lens covered */
++#define SW_KEYPAD_SLIDE		0x0a  /* set = keypad slide out */
++#define SW_FRONT_PROXIMITY	0x0b  /* set = front proximity sensor active */
++#define SW_ROTATE_LOCK		0x0c  /* set = rotate locked/disabled */
++#define SW_LINEIN_INSERT	0x0d  /* set = inserted */
++#define SW_MUTE_DEVICE		0x0e  /* set = device disabled */
++#define SW_PEN_INSERTED		0x0f  /* set = pen inserted */
++#define SW_MACHINE_COVER	0x10  /* set = cover closed */
++#define SW_MAX			0x10
++#define SW_CNT			(SW_MAX+1)
++
++/*
++ * Misc events
++ */
++
++#define MSC_SERIAL		0x00
++#define MSC_PULSELED		0x01
++#define MSC_GESTURE		0x02
++#define MSC_RAW			0x03
++#define MSC_SCAN		0x04
++#define MSC_TIMESTAMP		0x05
++#define MSC_MAX			0x07
++#define MSC_CNT			(MSC_MAX+1)
++
++/*
++ * LEDs
++ */
++
++#define LED_NUML		0x00
++#define LED_CAPSL		0x01
++#define LED_SCROLLL		0x02
++#define LED_COMPOSE		0x03
++#define LED_KANA		0x04
++#define LED_SLEEP		0x05
++#define LED_SUSPEND		0x06
++#define LED_MUTE		0x07
++#define LED_MISC		0x08
++#define LED_MAIL		0x09
++#define LED_CHARGING		0x0a
++#define LED_MAX			0x0f
++#define LED_CNT			(LED_MAX+1)
++
++/*
++ * Autorepeat values
++ */
++
++#define REP_DELAY		0x00
++#define REP_PERIOD		0x01
++#define REP_MAX			0x01
++#define REP_CNT			(REP_MAX+1)
++
++/*
++ * Sounds
++ */
++
++#define SND_CLICK		0x00
++#define SND_BELL		0x01
++#define SND_TONE		0x02
++#define SND_MAX			0x07
++#define SND_CNT			(SND_MAX+1)
++
++#endif
+diff --git a/third_party/spatiand_mac/linux-input/linux/input.h b/third_party/spatiand_mac/linux-input/linux/input.h
+new file mode 100644
+index 0000000000..bcef715092
+--- /dev/null
++++ b/third_party/spatiand_mac/linux-input/linux/input.h
+@@ -0,0 +1,10 @@
++/* Spatiand: <linux/input.h> for the Linux UI on macOS. Wayland's key and
++ * button numbers are the Linux kernel's evdev codes on every platform; macOS
++ * has no kernel headers to name them, so this is the event codes alone
++ * (input-event-codes.h, from the Debian bullseye sysroot Chromium's Linux
++ * build compiles against). The kernel's input structures and ioctls, for
++ * reading devices, are not here: nothing on macOS reads evdev devices. */
++#ifndef SPATIAND_MAC_LINUX_INPUT_H
++#define SPATIAND_MAC_LINUX_INPUT_H
++#include <linux/input-event-codes.h>
++#endif
+diff --git a/third_party/wayland/BUILD.gn b/third_party/wayland/BUILD.gn
+index 940313c5e2..c8f13a2d87 100644
+--- a/third_party/wayland/BUILD.gn
++++ b/third_party/wayland/BUILD.gn
+@@ -7,7 +7,7 @@ import("//third_party/wayland/features.gni")
+ import("//third_party/wayland/wayland_protocol.gni")
+ import("//tools/generate_stubs/rules.gni")
+ 
+-assert(is_linux || is_chromeos || target_os == "linux")
++assert(is_linux || is_chromeos || target_os == "linux" || is_mac)  # Spatiand: the Mac's SpatiMesh speaks Wayland to Spatiand
+ 
+ if (!use_system_libwayland) {
+   wayland_protocol("wayland_protocol_c") {
+diff --git a/third_party/wayland/include/config.h b/third_party/wayland/include/config.h
+index 5efea7864a..4686dda741 100644
+--- a/third_party/wayland/include/config.h
++++ b/third_party/wayland/include/config.h
+@@ -29,6 +29,19 @@
+ 
+ #define HAVE_XUCRED_CR_PID 0
+ 
++/* Spatiand: what macOS has, for SpatiMesh on the Mac (docs/spatiand: spatimesh-mac-port.md). */
++#ifdef __APPLE__
++#undef HAVE_ACCEPT4
++#undef HAVE_BROKEN_MSG_CMSG_CLOEXEC
++#define HAVE_BROKEN_MSG_CMSG_CLOEXEC 1
++#undef HAVE_MEMFD_CREATE
++#undef HAVE_MREMAP
++#undef HAVE_POSIX_FALLOCATE
++#undef HAVE_PRCTL
++#undef HAVE_SYS_PRCTL_H
++#define HAVE_SYS_UCRED_H 1
++#endif
++
+ #define PACKAGE "wayland"
+ 
+ #define PACKAGE_VERSION "1.26.0"
+diff --git a/ui/aura/window.h b/ui/aura/window.h
+index d183769a6b..a3bece31d6 100644
+--- a/ui/aura/window.h
++++ b/ui/aura/window.h
+@@ -45,7 +45,8 @@
+ #include "ui/gfx/geometry/rect.h"
+ #include "ui/gfx/native_ui_types.h"
+ 
+-#if BUILDFLAG(IS_APPLE)
++// Spatiand: except the Linux UI on macOS (Ozone/Wayland), which is Aura.
++#if BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_OZONE)
+ #error "This file must not be included on macOS; Chromium Mac doesn't use Aura."
+ #endif
+ 
+diff --git a/ui/base/BUILD.gn b/ui/base/BUILD.gn
+index e3fdc65a70..3882f0dc1c 100644
+--- a/ui/base/BUILD.gn
++++ b/ui/base/BUILD.gn
+@@ -337,12 +337,18 @@ component("base") {
+       "cocoa/user_interface_item_command_handler.h",
+       "cocoa/views_hostable.h",
+       "cocoa/window_size_constants.h",
+-      "dragdrop/os_exchange_data_provider_builder_mac.h",
+-      "dragdrop/os_exchange_data_provider_builder_mac.mm",
+-      "dragdrop/os_exchange_data_provider_mac.h",
+-      "dragdrop/os_exchange_data_provider_mac.mm",
+-      "resource/resource_bundle_mac.mm",
+     ]
++    # Spatiand: the Linux UI on macOS (use_aura) drags and loads its resources
++    # as Linux does (below).
++    if (!use_aura) {
++      sources += [
++        "dragdrop/os_exchange_data_provider_builder_mac.h",
++        "dragdrop/os_exchange_data_provider_builder_mac.mm",
++        "dragdrop/os_exchange_data_provider_mac.h",
++        "dragdrop/os_exchange_data_provider_mac.mm",
++        "resource/resource_bundle_mac.mm",
++      ]
++    }
+   }
+ 
+   if (is_apple) {
+@@ -422,7 +428,8 @@ component("base") {
+       ]
+     }
+ 
+-    if (is_mac) {
++    # Spatiand: NSMenu key equivalents and NSWindow bubbles: the Cocoa UI's.
++    if (is_mac && !use_aura) {
+       sources += [
+         "accelerators/platform_accelerator_cocoa.h",
+         "accelerators/platform_accelerator_cocoa.mm",
+@@ -565,7 +572,7 @@ component("base") {
+     deps += [ "//ui/events" ]
+   }
+ 
+-  if (use_aura && (is_linux || is_chromeos)) {
++  if (use_aura && (is_linux || is_chromeos || is_mac)) {
+     sources += [ "resource/resource_bundle_auralinux.cc" ]
+   }
+ 
+@@ -577,14 +584,15 @@ component("base") {
+     public_deps += [ "//ui/base/glib" ]
+   }
+ 
+-  if (is_chromeos || (use_aura && is_linux) || is_fuchsia) {
++  if (is_chromeos || (use_aura && (is_linux || is_mac)) || is_fuchsia) {
+     sources += [
+       "dragdrop/os_exchange_data_provider_non_backed.cc",
+       "dragdrop/os_exchange_data_provider_non_backed.h",
+     ]
+   }
+ 
+-  if (is_mac || is_win) {
++  # Spatiand: not where the Mac has the Linux UI (use_ozone): its clipboard is Ozone's then.
++  if ((is_mac && !use_ozone) || is_win) {
+     deps += [ "//ui/base/clipboard" ]
+   }
+ 
+diff --git a/ui/base/clipboard/BUILD.gn b/ui/base/clipboard/BUILD.gn
+index 3c7a17dbee..56c292dff1 100644
+--- a/ui/base/clipboard/BUILD.gn
++++ b/ui/base/clipboard/BUILD.gn
+@@ -33,11 +33,12 @@ component("clipboard_types") {
+     sources += [ "clipboard_format_type_android.cc" ]
+   }
+ 
+-  if (is_mac) {
++  # Spatiand: the Linux UI on macOS (use_aura) has aura's below.
++  if (is_mac && !use_aura) {
+     sources += [ "clipboard_format_type_mac.mm" ]
+   }
+ 
+-  if (is_apple) {
++  if (is_apple && !(is_mac && use_aura)) {
+     sources += [ "clipboard_constants_mac.mm" ]
+   }
+ 
+@@ -65,7 +66,7 @@ component("clipboard_types") {
+   }
+ }
+ 
+-if (is_linux && use_dbus) {
++if (is_linux || is_mac) {  # Spatiand: the Mac's SpatiMesh is the Linux browser
+   source_set("clipboard_util_linux") {
+     sources = [
+       "clipboard_util_linux.cc",
+@@ -75,10 +76,16 @@ if (is_linux && use_dbus) {
+     deps = [
+       ":file_info",
+       "//base",
+-      "//components/dbus",
++      "//build/config/linux/dbus:buildflags",
+       "//net",
+       "//url",
+     ]
++
++    # Spatiand: without D-Bus too, as on Android's libc, where there is no portal and files go
++    # between windows by their paths alone.
++    if (use_dbus) {
++      deps += [ "//components/dbus" ]
++    }
+   }
+ }
+ 
+@@ -144,7 +151,8 @@ component("clipboard") {
+     ]
+   }
+ 
+-  if (is_mac) {
++  # Spatiand: AppKit's pasteboard only for the Cocoa UI; with the Linux UI, Ozone's Wayland one.
++  if (is_mac && !use_ozone) {
+     sources += [
+       "clipboard_mac.h",
+       "clipboard_mac.mm",
+diff --git a/ui/base/clipboard/clipboard_constants.h b/ui/base/clipboard/clipboard_constants.h
+index 9446485192..010dbbaf11 100644
+--- a/ui/base/clipboard/clipboard_constants.h
++++ b/ui/base/clipboard/clipboard_constants.h
+@@ -44,7 +44,10 @@ inline constexpr char kMimeTypeWindowDrag[] = "chromium/x-window-drag";
+ 
+ // ----- LINUX & CHROMEOS & FUCHSIA MIME TYPES -----
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
++// Spatiand: and the Linux UI on macOS (Ozone/Wayland), whose clipboard is
++// Wayland's, MIME-typed as on Linux.
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA) || \
++    (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+ inline constexpr char kMimeTypeLinuxUtf8String[] = "UTF8_STRING";
+ inline constexpr char kMimeTypeLinuxString[] = "STRING";
+ inline constexpr char kMimeTypeLinuxText[] = "TEXT";
+@@ -57,14 +60,14 @@ inline constexpr char kMimeTypePortalFiles[] = "application/vnd.portal.files";
+         // BUILDFLAG(IS_FUCHSIA)
+ 
+ #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA) || \
+-    BUILDFLAG(IS_ANDROID)
++    BUILDFLAG(IS_ANDROID) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+ inline constexpr char kMimeTypeSourceUrl[] = "chromium/x-source-url";
+ #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) ||
+         // BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_ANDROID)
+ 
+ // ----- EVERYTHING EXCEPT FOR APPLE MIME TYPES -----
+ 
+-#if !BUILDFLAG(IS_APPLE)
++#if !BUILDFLAG(IS_APPLE) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+ 
+ // TODO(dcheng): This name is temporary. See https://crbug.com/40123727.
+ // LINT.IfChange(kMimeTypeDataTransferCustomData)
+diff --git a/ui/base/clipboard/clipboard_format_type.h b/ui/base/clipboard/clipboard_format_type.h
+index 7f278ce17a..b251754f02 100644
+--- a/ui/base/clipboard/clipboard_format_type.h
++++ b/ui/base/clipboard/clipboard_format_type.h
+@@ -135,7 +135,8 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD_TYPES) ClipboardFormatType {
+   std::string GetName() const;
+ #if BUILDFLAG(IS_WIN)
+   const FORMATETC& ToFormatEtc() const { return *ChromeToWindowsType(&data_); }
+-#elif BUILDFLAG(IS_APPLE)
++#elif BUILDFLAG(IS_APPLE) && !defined(USE_AURA)
++  // (Spatiand: the Linux UI on macOS, use_aura, has aura's MIME-typed formats.)
+ #if __OBJC__
+   NSString* ToNSString() const;
+ #endif  // __OBJC__
+diff --git a/ui/base/clipboard/clipboard_util_linux.cc b/ui/base/clipboard/clipboard_util_linux.cc
+index df751cb344..91fe06212b 100644
+--- a/ui/base/clipboard/clipboard_util_linux.cc
++++ b/ui/base/clipboard/clipboard_util_linux.cc
+@@ -7,7 +7,10 @@
+ #include "base/files/file_path.h"
+ #include "base/strings/string_split.h"
+ #include "base/strings/string_util.h"
++#include "build/config/linux/dbus/buildflags.h"
++#if BUILDFLAG(USE_DBUS)
+ #include "components/dbus/xdg/file_transfer_portal.h"
++#endif
+ #include "net/base/filename_util.h"
+ #include "url/gurl.h"
+ 
+@@ -57,11 +60,12 @@ void RegisterFilesWithPortal(const std::vector<FileInfo>& filenames,
+ 
+ void RegisterPathsWithPortal(const std::vector<std::string>& paths,
+                              base::OnceCallback<void(std::string)> callback) {
+-  if (paths.empty()) {
++  if (paths.empty() || !BUILDFLAG(USE_DBUS)) {
+     std::move(callback).Run("");
+     return;
+   }
+ 
++#if BUILDFLAG(USE_DBUS)
+   dbus_xdg::FileTransferPortal::IsAvailable(base::BindOnce(
+       [](std::vector<std::string> paths,
+          base::OnceCallback<void(std::string)> callback, bool available) {
+@@ -73,16 +77,18 @@ void RegisterPathsWithPortal(const std::vector<std::string>& paths,
+                                                     std::move(callback));
+       },
+       std::move(paths), std::move(callback)));
++#endif
+ }
+ 
+ void ExtractPathsFromPortalKey(
+     base::span<const uint8_t> key_data,
+     base::OnceCallback<void(std::vector<std::string>)> callback) {
+-  if (key_data.empty()) {
++  if (key_data.empty() || !BUILDFLAG(USE_DBUS)) {
+     std::move(callback).Run({});
+     return;
+   }
+ 
++#if BUILDFLAG(USE_DBUS)
+   std::string key(key_data.begin(), key_data.end());
+   dbus_xdg::FileTransferPortal::IsAvailable(base::BindOnce(
+       [](std::string key,
+@@ -95,6 +101,7 @@ void ExtractPathsFromPortalKey(
+         dbus_xdg::FileTransferPortal::RetrieveFiles(key, std::move(callback));
+       },
+       std::move(key), std::move(callback)));
++#endif
+ }
+ 
+ }  // namespace ui::clipboard_util
+diff --git a/ui/base/cursor/cursor_factory.cc b/ui/base/cursor/cursor_factory.cc
+index ddba1a970c..1cd1018101 100644
+--- a/ui/base/cursor/cursor_factory.cc
++++ b/ui/base/cursor/cursor_factory.cc
+@@ -98,7 +98,7 @@ void CursorFactory::ObserveThemeChanges() {
+   NOTIMPLEMENTED();
+ }
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+ 
+ bool IsValidCursorThemeName(std::string_view name) {
+   if (name.empty() || name == ".") {
+diff --git a/ui/base/cursor/cursor_factory.h b/ui/base/cursor/cursor_factory.h
+index 3fcfcdf372..eb74487c90 100644
+--- a/ui/base/cursor/cursor_factory.h
++++ b/ui/base/cursor/cursor_factory.h
+@@ -94,7 +94,7 @@ class COMPONENT_EXPORT(UI_BASE_CURSOR) CursorFactory {
+   base::ObserverList<CursorFactoryObserver>::Unchecked observers_;
+ };
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+ COMPONENT_EXPORT(UI_BASE_CURSOR)
+ std::vector<std::string> CursorNamesFromType(mojom::CursorType type);
+ 
+diff --git a/ui/base/dragdrop/os_exchange_data_provider_factory.cc b/ui/base/dragdrop/os_exchange_data_provider_factory.cc
+index 4f3f3f5398..c7405adca9 100644
+--- a/ui/base/dragdrop/os_exchange_data_provider_factory.cc
++++ b/ui/base/dragdrop/os_exchange_data_provider_factory.cc
+@@ -7,7 +7,7 @@
+ #include "base/notreached.h"
+ #include "build/build_config.h"
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+ #include "ui/base/dragdrop/os_exchange_data_provider_factory_ozone.h"
+ #include "ui/base/dragdrop/os_exchange_data_provider_non_backed.h"
+ #elif BUILDFLAG(IS_APPLE)
+@@ -21,7 +21,7 @@ namespace ui {
+ // static
+ std::unique_ptr<OSExchangeDataProvider>
+ OSExchangeDataProviderFactory::CreateProvider() {
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+   // The instance can be nullptr in tests that do not instantiate the platform,
+   // or on platforms that do not implement specific drag'n'drop.  For them,
+   // falling back to the Aura provider should be fine.
+diff --git a/ui/base/ime/linux/BUILD.gn b/ui/base/ime/linux/BUILD.gn
+index aa6e9f2437..951e8ea434 100644
+--- a/ui/base/ime/linux/BUILD.gn
++++ b/ui/base/ime/linux/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//build/config/linux/pangocairo/pangocairo.gni")
+ 
+-assert(is_linux)
++assert(is_linux || is_mac)  # Spatiand: Linux UI on the Mac
+ 
+ component("linux") {
+   output_name = "ui_base_ime_linux"
+diff --git a/ui/display/BUILD.gn b/ui/display/BUILD.gn
+index c09f41bea0..8eee92e398 100644
+--- a/ui/display/BUILD.gn
++++ b/ui/display/BUILD.gn
+@@ -76,14 +76,20 @@ component("display") {
+       "mac/display_link_mac.mm",
+       "mac/external_display_link_mac.h",
+       "mac/external_display_link_mac.mm",
+-      "mac/screen_mac.mm",
+-      "mac/screen_mac_headless.h",
+-      "mac/screen_mac_headless.mm",
+       "mac/screen_utils_mac.h",
+       "mac/screen_utils_mac.mm",
+       "mac/vsync_provider_mac.cc",
+       "mac/vsync_provider_mac.h",
+     ]
++    # Spatiand: the Linux UI on macOS (use_ozone) has Ozone's screen, the
++    # outputs the Wayland compositor gives.
++    if (!use_ozone) {
++      sources += [
++        "mac/screen_mac.mm",
++        "mac/screen_mac_headless.h",
++        "mac/screen_mac_headless.mm",
++      ]
++    }
+   }
+ 
+   if (is_win) {
+diff --git a/ui/events/BUILD.gn b/ui/events/BUILD.gn
+index 66e874a224..2e92eced1c 100644
+--- a/ui/events/BUILD.gn
++++ b/ui/events/BUILD.gn
+@@ -37,6 +37,10 @@ static_library("dom_keycode_converter") {
+   if (!is_ios) {
+     deps += [ "//ipc:param_traits" ]
+   }
++  if (is_mac && use_ozone) {
++    # Spatiand: the evdev codes Wayland's keys are.
++    configs += [ "//third_party/spatiand_mac:linux_input" ]
++  }
+ }
+ 
+ static_library("dom_keyboard_layout") {
+@@ -303,7 +307,9 @@ component("events") {
+     ]
+   }
+ 
+-  if (is_mac) {
++  # Spatiand: the Linux UI on macOS (use_ozone) has Ozone's events, not
++  # NSEvents.
++  if (is_mac && !use_ozone) {
+     public += [ "gestures/gesture_recognizer_impl_mac.h" ]
+ 
+     sources += [
+diff --git a/ui/events/keycodes/dom/keycode_converter.cc b/ui/events/keycodes/dom/keycode_converter.cc
+index c69dd14536..126b5eac31 100644
+--- a/ui/events/keycodes/dom/keycode_converter.cc
++++ b/ui/events/keycodes/dom/keycode_converter.cc
+@@ -15,7 +15,7 @@
+ #include "ui/events/keycodes/dom/dom_code.h"
+ #include "ui/events/keycodes/dom/dom_key.h"
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+ #include <linux/input.h>
+ #endif
+ 
+@@ -28,7 +28,9 @@ namespace {
+ #if BUILDFLAG(IS_WIN)
+ #define DOM_CODE(usb, evdev, xkb, win, mac, code, id) \
+   { usb, win, code }
+-#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || \
++    (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
++// Spatiand: the Linux UI on macOS (Ozone/Wayland) has XKB native keycodes.
+ #define DOM_CODE(usb, evdev, xkb, win, mac, code, id) \
+   { usb, xkb, code }
+ #elif BUILDFLAG(IS_APPLE)
+@@ -67,7 +69,7 @@ struct DomKeyMapEntry {
+ #undef DOM_KEY_UNI
+ #undef DOM_KEY_MAP_DECLARATION_END
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+ 
+ // The offset between XKB Keycode and evdev code.
+ constexpr int kXkbKeycodeOffset = 8;
+@@ -188,7 +190,7 @@ int KeycodeConverter::DomCodeToNativeKeycode(DomCode code) {
+   return UsbKeycodeToNativeKeycode(static_cast<uint32_t>(code));
+ }
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+ // static
+ DomCode KeycodeConverter::XkbKeycodeToDomCode(uint32_t xkb_keycode) {
+   // Currently XKB keycode is the native keycode.
+diff --git a/ui/events/keycodes/dom/keycode_converter.h b/ui/events/keycodes/dom/keycode_converter.h
+index b8f3df6133..f988009657 100644
+--- a/ui/events/keycodes/dom/keycode_converter.h
++++ b/ui/events/keycodes/dom/keycode_converter.h
+@@ -65,7 +65,7 @@ class KeycodeConverter {
+   // Convert a DomCode into a native keycode.
+   static int DomCodeToNativeKeycode(DomCode code);
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+   // Convert a XKB keycode into a DomCode.
+   static DomCode XkbKeycodeToDomCode(uint32_t xkb_keycode);
+ 
+diff --git a/ui/events/platform/wayland/BUILD.gn b/ui/events/platform/wayland/BUILD.gn
+index 42849a1cc2..b1d1593b1b 100644
+--- a/ui/events/platform/wayland/BUILD.gn
++++ b/ui/events/platform/wayland/BUILD.gn
+@@ -26,6 +26,13 @@ source_set("wayland_event_watcher") {
+       "wayland_event_watcher_glib.h",
+     ]
+     configs += [ "//build/config/linux:glib" ]
++  } else if (is_mac) {
++    # Spatiand: the UI thread runs a CFRunLoop on macOS.
++    sources += [
++      "wayland_event_watcher_mac.cc",
++      "wayland_event_watcher_mac.h",
++    ]
++    frameworks = [ "CoreFoundation.framework" ]
+   } else {
+     sources += [
+       "wayland_event_watcher_fdwatch.cc",
+diff --git a/ui/events/platform/wayland/wayland_event_watcher_mac.cc b/ui/events/platform/wayland/wayland_event_watcher_mac.cc
+new file mode 100644
+index 0000000000..2cf29f8147
+--- /dev/null
++++ b/ui/events/platform/wayland/wayland_event_watcher_mac.cc
+@@ -0,0 +1,89 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "ui/events/platform/wayland/wayland_event_watcher_mac.h"
++
++#include "base/check.h"
++#include "base/task/current_thread.h"
++
++namespace ui {
++
++namespace {
++
++void OnFileDescriptorEvent(CFFileDescriptorRef fd_ref,
++                           CFOptionFlags callback_types,
++                           void* info) {
++  static_cast<WaylandEventWatcherMac*>(info)->OnReadable();
++}
++
++}  // namespace
++
++WaylandEventWatcherMac::WaylandEventWatcherMac(wl_display* display,
++                                               wl_event_queue* event_queue,
++                                               bool use_threaded_polling)
++    : WaylandEventWatcher(display, event_queue, use_threaded_polling) {}
++
++WaylandEventWatcherMac::~WaylandEventWatcherMac() {
++  StopProcessingEvents();
++}
++
++bool WaylandEventWatcherMac::StartWatchingFD(int fd) {
++  DCHECK(base::CurrentUIThread::IsSet());
++  if (fd_ref_) {
++    return true;
++  }
++  CFFileDescriptorContext context = {0, this, nullptr, nullptr, nullptr};
++  fd_ref_ = CFFileDescriptorCreate(kCFAllocatorDefault, fd,
++                                   /*closeOnInvalidate=*/false,
++                                   OnFileDescriptorEvent, &context);
++  if (!fd_ref_) {
++    return false;
++  }
++  source_ =
++      CFFileDescriptorCreateRunLoopSource(kCFAllocatorDefault, fd_ref_, 0);
++  run_loop_ = CFRunLoopGetCurrent();
++  CFRetain(run_loop_);
++  CFRunLoopAddSource(run_loop_, source_, kCFRunLoopCommonModes);
++  WlDisplayPrepareToRead();
++  CFFileDescriptorEnableCallBacks(fd_ref_, kCFFileDescriptorReadCallBack);
++  return true;
++}
++
++void WaylandEventWatcherMac::StopWatchingFD() {
++  if (!fd_ref_) {
++    return;
++  }
++  CFRunLoopRemoveSource(run_loop_, source_, kCFRunLoopCommonModes);
++  CFFileDescriptorInvalidate(fd_ref_);
++  CFRelease(source_);
++  CFRelease(fd_ref_);
++  CFRelease(run_loop_);
++  source_ = nullptr;
++  fd_ref_ = nullptr;
++  run_loop_ = nullptr;
++}
++
++void WaylandEventWatcherMac::OnReadable() {
++  // As WaylandEventWatcherFdWatch::OnFileCanReadWithoutBlocking.
++  WlDisplayReadEvents();
++  WlDisplayDispatchPendingQueue();
++  if (!WlDisplayPrepareToRead()) {
++    WlDisplayDispatchPendingQueue();
++  }
++  // A CFFileDescriptor's callbacks fire once each time they are enabled.
++  if (fd_ref_) {
++    CFFileDescriptorEnableCallBacks(fd_ref_, kCFFileDescriptorReadCallBack);
++  }
++}
++
++// static
++std::unique_ptr<WaylandEventWatcher>
++WaylandEventWatcher::CreateWaylandEventWatcher(wl_display* display,
++                                               wl_event_queue* event_queue,
++                                               bool use_threaded_polling) {
++  return std::make_unique<WaylandEventWatcherMac>(display, event_queue,
++                                                  use_threaded_polling);
++}
++
++}  // namespace ui
+diff --git a/ui/events/platform/wayland/wayland_event_watcher_mac.h b/ui/events/platform/wayland/wayland_event_watcher_mac.h
+new file mode 100644
+index 0000000000..47c195b062
+--- /dev/null
++++ b/ui/events/platform/wayland/wayland_event_watcher_mac.h
+@@ -0,0 +1,42 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef UI_EVENTS_PLATFORM_WAYLAND_WAYLAND_EVENT_WATCHER_MAC_H_
++#define UI_EVENTS_PLATFORM_WAYLAND_WAYLAND_EVENT_WATCHER_MAC_H_
++
++#include <CoreFoundation/CoreFoundation.h>
++
++#include "ui/events/platform/wayland/wayland_event_watcher.h"
++
++namespace ui {
++
++// Spatiand: WaylandEventWatcher for macOS, where the UI thread runs a CFRunLoop
++// (MessagePumpNSApplication / MessagePumpNSRunLoop) rather than glib or epoll.
++// The Wayland display's fd is a CFFileDescriptor source on that run loop; it
++// reads and dispatches as WaylandEventWatcherFdWatch does.
++class WaylandEventWatcherMac : public WaylandEventWatcher {
++ public:
++  WaylandEventWatcherMac(wl_display* display,
++                         wl_event_queue* event_queue,
++                         bool use_threaded_polling);
++  WaylandEventWatcherMac(const WaylandEventWatcherMac&) = delete;
++  WaylandEventWatcherMac& operator=(const WaylandEventWatcherMac&) = delete;
++  ~WaylandEventWatcherMac() override;
++
++  // Called by the CFFileDescriptor when the fd is readable.
++  void OnReadable();
++
++ private:
++  // WaylandEventWatcher overrides:
++  bool StartWatchingFD(int fd) override;
++  void StopWatchingFD() override;
++
++  CFFileDescriptorRef fd_ref_ = nullptr;
++  CFRunLoopSourceRef source_ = nullptr;
++  CFRunLoopRef run_loop_ = nullptr;
++};
++
++}  // namespace ui
++
++#endif  // UI_EVENTS_PLATFORM_WAYLAND_WAYLAND_EVENT_WATCHER_MAC_H_
+diff --git a/ui/gfx/BUILD.gn b/ui/gfx/BUILD.gn
+index 7d565cb844..61b1400a9f 100644
+--- a/ui/gfx/BUILD.gn
++++ b/ui/gfx/BUILD.gn
+@@ -271,13 +271,15 @@ component("gfx") {
+       "mac/nswindow_frame_controls.mm",
+       "mac/scoped_cocoa_disable_screen_updates.h",
+       "mac/scoped_cocoa_disable_screen_updates.mm",
+-      "native_ui_util_mac.mm",
+       "platform_font_mac.h",
+       "platform_font_mac.mm",
+       "scoped_cg_context_save_gstate_mac.h",
+       "scoped_ns_graphics_context_save_gstate_mac.h",
+       "scoped_ns_graphics_context_save_gstate_mac.mm",
+     ]
++    if (!use_aura) {
++      sources += [ "native_ui_util_mac.mm" ]
++    }
+     frameworks += [
+       "AppKit.framework",
+       "CoreFoundation.framework",
+@@ -520,7 +522,8 @@ source_set("native_ui_types_sources") {
+ 
+   deps = [ "//build:blink_buildflags" ]
+ 
+-  if (is_mac) {
++  # Spatiand: with the Linux UI on macOS (use_aura) native views are aura's.
++  if (is_mac && !use_aura) {
+     sources = [ "native_ui_types_mac.mm" ]
+     frameworks = [ "AppKit.framework" ]
+   }
+diff --git a/ui/gfx/gpu_memory_buffer_handle.cc b/ui/gfx/gpu_memory_buffer_handle.cc
+index 42aac69fdc..c60509a4e2 100644
+--- a/ui/gfx/gpu_memory_buffer_handle.cc
++++ b/ui/gfx/gpu_memory_buffer_handle.cc
+@@ -146,7 +146,8 @@ GpuMemoryBufferHandle GpuMemoryBufferHandle::Clone() const {
+   handle.stride = stride;
+ #if BUILDFLAG(IS_OZONE)
+   handle.native_pixmap_handle_ = CloneHandleForIPC(native_pixmap_handle_);
+-#elif BUILDFLAG(IS_APPLE)
++#endif
++#if BUILDFLAG(IS_APPLE)
+   handle.io_surface_ = io_surface_;
+ #if BUILDFLAG(IS_IOS)
+   handle.io_surface_mach_port_ = io_surface_mach_port_;
+diff --git a/ui/gfx/gpu_memory_buffer_handle.h b/ui/gfx/gpu_memory_buffer_handle.h
+index 413f63b35e..f2b060a67a 100644
+--- a/ui/gfx/gpu_memory_buffer_handle.h
++++ b/ui/gfx/gpu_memory_buffer_handle.h
+@@ -18,7 +18,10 @@
+ 
+ #if BUILDFLAG(IS_OZONE)
+ #include "ui/gfx/native_pixmap_handle.h"
+-#elif BUILDFLAG(IS_APPLE)
++#endif
++// Spatiand: the Linux UI on macOS has both, IOSurfaces for the Mac's GPU and
++// native pixmaps for Ozone's Wayland.
++#if BUILDFLAG(IS_APPLE)
+ #include "ui/gfx/mac/io_surface.h"
+ #elif BUILDFLAG(IS_WIN)
+ #include <optional>
+@@ -47,7 +50,8 @@ enum GpuMemoryBufferType {
+   SHARED_MEMORY_BUFFER,
+ #if BUILDFLAG(IS_APPLE)
+   IO_SURFACE_BUFFER,
+-#elif BUILDFLAG(IS_OZONE)
++#endif
++#if BUILDFLAG(IS_OZONE)
+   NATIVE_PIXMAP,
+ #elif BUILDFLAG(IS_WIN)
+   DXGI_SHARED_HANDLE,
+@@ -134,10 +138,11 @@ class COMPONENT_EXPORT(GFX) DXGIHandle {
+ struct COMPONENT_EXPORT(GFX) GpuMemoryBufferHandle {
+   GpuMemoryBufferHandle();
+   explicit GpuMemoryBufferHandle(base::UnsafeSharedMemoryRegion region);
++#if BUILDFLAG(IS_OZONE)
++  explicit GpuMemoryBufferHandle(gfx::NativePixmapHandle native_pixmap_handle);
++#endif
+ #if BUILDFLAG(IS_WIN)
+   explicit GpuMemoryBufferHandle(DXGIHandle handle);
+-#elif BUILDFLAG(IS_OZONE)
+-  explicit GpuMemoryBufferHandle(gfx::NativePixmapHandle native_pixmap_handle);
+ #elif BUILDFLAG(IS_ANDROID)
+   explicit GpuMemoryBufferHandle(
+       base::android::ScopedHardwareBufferHandle handle);
+diff --git a/ui/gfx/linux/BUILD.gn b/ui/gfx/linux/BUILD.gn
+index 142b78b458..384622e366 100644
+--- a/ui/gfx/linux/BUILD.gn
++++ b/ui/gfx/linux/BUILD.gn
+@@ -5,7 +5,7 @@
+ import("//build/config/ozone.gni")
+ import("//build/config/ui.gni")
+ 
+-assert(is_linux || is_chromeos)
++assert(is_linux || is_chromeos || is_mac)  # Spatiand: Linux UI on the Mac
+ 
+ source_set("drm") {
+   sources = [
+diff --git a/ui/gfx/mojom/BUILD.gn b/ui/gfx/mojom/BUILD.gn
+index 61b50307f9..554a92e458 100644
+--- a/ui/gfx/mojom/BUILD.gn
++++ b/ui/gfx/mojom/BUILD.gn
+@@ -385,6 +385,10 @@ mojom("native_handle_types") {
+ 
+   if (supports_native_pixmap) {
+     enabled_features = [ "supports_native_pixmap" ]
++    if (is_mac) {
++      # Spatiand: the Linux UI on macOS carries pixmaps by fd, as Linux does.
++      enabled_features += [ "is_mac_ozone" ]
++    }
+   }
+ 
+   public_deps = [ "//mojo/public/mojom/base" ]
+diff --git a/ui/gfx/mojom/native_handle_types.mojom b/ui/gfx/mojom/native_handle_types.mojom
+index 28117e1ae6..00f305879b 100644
+--- a/ui/gfx/mojom/native_handle_types.mojom
++++ b/ui/gfx/mojom/native_handle_types.mojom
+@@ -23,10 +23,10 @@ struct NativePixmapPlane {
+ struct NativePixmapHandle {
+   array<NativePixmapPlane> planes;
+ 
+-  [EnableIf=is_chromeos|is_linux]
++  [EnableIf=is_chromeos|is_linux|is_mac_ozone]
+   uint64 modifier;
+ 
+-  [EnableIf=is_chromeos|is_linux]
++  [EnableIf=is_chromeos|is_linux|is_mac_ozone]
+   bool supports_zero_copy_webgpu_import;
+ 
+   [EnableIf=is_fuchsia]
+diff --git a/ui/gfx/mojom/native_handle_types_mojom_traits.cc b/ui/gfx/mojom/native_handle_types_mojom_traits.cc
+index 22313e64a5..ef9214e44c 100644
+--- a/ui/gfx/mojom/native_handle_types_mojom_traits.cc
++++ b/ui/gfx/mojom/native_handle_types_mojom_traits.cc
+@@ -84,7 +84,7 @@ bool StructTraits<gfx::mojom::AHardwareBufferHandleDataView,
+ mojo::PlatformHandle StructTraits<
+     gfx::mojom::NativePixmapPlaneDataView,
+     gfx::NativePixmapPlane>::buffer_handle(gfx::NativePixmapPlane& plane) {
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+   return mojo::PlatformHandle(std::move(plane.fd));
+ #elif BUILDFLAG(IS_FUCHSIA)
+   return mojo::PlatformHandle(std::move(plane.vmo));
+@@ -100,7 +100,7 @@ bool StructTraits<
+   out->size = data.size();
+ 
+   mojo::PlatformHandle handle = data.TakeBufferHandle();
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+   if (!handle.is_fd())
+     return false;
+   out->fd = handle.TakeFD();
+@@ -126,7 +126,7 @@ bool StructTraits<
+     gfx::mojom::NativePixmapHandleDataView,
+     gfx::NativePixmapHandle>::Read(gfx::mojom::NativePixmapHandleDataView data,
+                                    gfx::NativePixmapHandle* out) {
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+   out->modifier = data.modifier();
+   out->supports_zero_copy_webgpu_import =
+       data.supports_zero_copy_webgpu_import();
+diff --git a/ui/gfx/mojom/native_handle_types_mojom_traits.h b/ui/gfx/mojom/native_handle_types_mojom_traits.h
+index 6101c5b0e0..e66b3822cc 100644
+--- a/ui/gfx/mojom/native_handle_types_mojom_traits.h
++++ b/ui/gfx/mojom/native_handle_types_mojom_traits.h
+@@ -77,13 +77,13 @@ struct COMPONENT_EXPORT(GFX_NATIVE_HANDLE_TYPES_SHARED_MOJOM_TRAITS)
+     return pixmap_handle.planes;
+   }
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+   static uint64_t modifier(const gfx::NativePixmapHandle& pixmap_handle) {
+     return pixmap_handle.modifier;
+   }
+ #endif
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+   static bool supports_zero_copy_webgpu_import(
+       const gfx::NativePixmapHandle& pixmap_handle) {
+     return pixmap_handle.supports_zero_copy_webgpu_import;
+diff --git a/ui/gfx/native_pixmap_handle.cc b/ui/gfx/native_pixmap_handle.cc
+index 283d48686a..3afbb78b22 100644
+--- a/ui/gfx/native_pixmap_handle.cc
++++ b/ui/gfx/native_pixmap_handle.cc
+@@ -11,7 +11,7 @@
+ #include "components/viz/common/resources/shared_image_format_utils.h"
+ #include "ui/gfx/geometry/size.h"
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+ #include <drm_fourcc.h>
+ #include <unistd.h>
+ 
+@@ -25,7 +25,7 @@
+ 
+ namespace gfx {
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+ static_assert(NativePixmapHandle::kNoModifier == DRM_FORMAT_MOD_INVALID,
+               "gfx::NativePixmapHandle::kNoModifier should be an alias for"
+               "DRM_FORMAT_MOD_INVALID");
+@@ -36,7 +36,7 @@ NativePixmapPlane::NativePixmapPlane() : stride(0), offset(0), size(0) {}
+ NativePixmapPlane::NativePixmapPlane(uint32_t stride,
+                                      uint64_t offset,
+                                      uint64_t size
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+                                      ,
+                                      base::ScopedFD fd
+ #elif BUILDFLAG(IS_FUCHSIA)
+@@ -47,7 +47,7 @@ NativePixmapPlane::NativePixmapPlane(uint32_t stride,
+     : stride(stride),
+       offset(offset),
+       size(size)
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+       ,
+       fd(std::move(fd))
+ #elif BUILDFLAG(IS_FUCHSIA)
+@@ -75,7 +75,7 @@ NativePixmapHandle& NativePixmapHandle::operator=(NativePixmapHandle&& other) =
+ NativePixmapHandle CloneHandleForIPC(const NativePixmapHandle& handle) {
+   NativePixmapHandle clone;
+   for (auto& plane : handle.planes) {
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+     DCHECK(plane.fd.is_valid());
+     // Combining the HANDLE_EINTR and ScopedFD's constructor causes the compiler
+     // to emit some very strange assembly that tends to cause FD ownership
+@@ -113,7 +113,7 @@ NativePixmapHandle CloneHandleForIPC(const NativePixmapHandle& handle) {
+ #endif
+   }
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+   clone.modifier = handle.modifier;
+   clone.supports_zero_copy_webgpu_import =
+       handle.supports_zero_copy_webgpu_import;
+diff --git a/ui/gfx/native_pixmap_handle.h b/ui/gfx/native_pixmap_handle.h
+index a0f06338cd..7b4fa6ec7d 100644
+--- a/ui/gfx/native_pixmap_handle.h
++++ b/ui/gfx/native_pixmap_handle.h
+@@ -14,7 +14,7 @@
+ #include "build/build_config.h"
+ #include "components/viz/common/resources/shared_image_format.h"
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+ #include "base/files/scoped_file.h"
+ #endif
+ 
+@@ -34,7 +34,7 @@ struct COMPONENT_EXPORT(GFX) NativePixmapPlane {
+   NativePixmapPlane(uint32_t stride,
+                     uint64_t offset,
+                     uint64_t size
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+                     ,
+                     base::ScopedFD fd
+ #elif BUILDFLAG(IS_FUCHSIA)
+@@ -55,7 +55,7 @@ struct COMPONENT_EXPORT(GFX) NativePixmapPlane {
+   // This is necessary to map the buffers.
+   uint64_t size;
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+   // File descriptor for the underlying memory object (usually dmabuf).
+   base::ScopedFD fd;
+ #elif BUILDFLAG(IS_FUCHSIA)
+@@ -78,7 +78,7 @@ struct COMPONENT_EXPORT(GFX) NativePixmapHandle {
+ 
+   std::vector<NativePixmapPlane> planes;
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+   // The modifier is retrieved from GBM library and passed to EGL driver.
+   // Generally it's platform specific, and we don't need to modify it in
+   // Chromium code. Also one per plane per entry.
+diff --git a/ui/gfx/native_ui_types.h b/ui/gfx/native_ui_types.h
+index 8c3e860d16..8fa681044d 100644
+--- a/ui/gfx/native_ui_types.h
++++ b/ui/gfx/native_ui_types.h
+@@ -226,7 +226,7 @@ inline constexpr AcceleratedWidget kNullAcceleratedWidget = nullptr;
+ #elif BUILDFLAG(IS_IOS)
+ using AcceleratedWidget = uint64_t;
+ inline constexpr AcceleratedWidget kNullAcceleratedWidget = 0;
+-#elif BUILDFLAG(IS_MAC)
++#elif BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_OZONE)
+ using AcceleratedWidget = uint64_t;
+ inline constexpr AcceleratedWidget kNullAcceleratedWidget = 0;
+ #elif BUILDFLAG(IS_ANDROID)
+diff --git a/ui/linux/BUILD.gn b/ui/linux/BUILD.gn
+index eaee77fb50..9b2f16cac5 100644
+--- a/ui/linux/BUILD.gn
++++ b/ui/linux/BUILD.gn
+@@ -6,7 +6,7 @@ import("//build/config/features.gni")
+ import("//build/config/linux/gtk/gtk.gni")
+ import("//ui/qt/qt.gni")
+ 
+-assert(is_linux)
++assert(is_linux || is_mac)  # Spatiand: Linux UI on the Mac
+ 
+ component("linux_ui") {
+   defines = [ "IS_LINUX_UI_IMPL" ]
+diff --git a/ui/ozone/platform/wayland/BUILD.gn b/ui/ozone/platform/wayland/BUILD.gn
+index 294975fb47..edf23c6a15 100644
+--- a/ui/ozone/platform/wayland/BUILD.gn
++++ b/ui/ozone/platform/wayland/BUILD.gn
+@@ -9,7 +9,7 @@ import("//gpu/vulkan/features.gni")
+ import("//testing/libfuzzer/fuzzer_test.gni")
+ import("//ui/ozone/platform/wayland/wayland.gni")
+ 
+-assert(is_linux)
++assert(is_linux || is_mac)  # Spatiand: the Deck's browser on the Mac, a client of Spatiand (docs/spatimesh-mac-port.md)
+ 
+ source_set("common") {
+   sources = [
+@@ -28,6 +28,8 @@ source_set("wayland") {
+     "common/wayland.h",
+     "common/wayland_object.cc",
+     "common/wayland_object.h",
++    "common/wayland_shm_mapping.cc",
++    "common/wayland_shm_mapping.h",
+     "common/wayland_util.cc",
+     "common/wayland_util.h",
+     "gpu/gl_surface_egl_readback_wayland.cc",
+@@ -382,6 +384,10 @@ source_set("wayland") {
+   # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+   # enable the diagnostic by removing this line.
+   configs += [ "//build/config/compiler:no_exit_time_destructors" ]
++  if (is_mac) {
++    # Spatiand: the evdev codes Wayland's keys and buttons are.
++    configs += [ "//third_party/spatiand_mac:linux_input" ]
++  }
+ }
+ 
+ source_set("test_support") {
+diff --git a/ui/ozone/platform/wayland/common/wayland_shm_mapping.cc b/ui/ozone/platform/wayland/common/wayland_shm_mapping.cc
+new file mode 100644
+index 0000000000..0c65ace6ac
+--- /dev/null
++++ b/ui/ozone/platform/wayland/common/wayland_shm_mapping.cc
+@@ -0,0 +1,120 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "ui/ozone/platform/wayland/common/wayland_shm_mapping.h"
++
++#include <errno.h>
++
++#include <string>
++#include <utility>
++
++#include "base/compiler_specific.h"
++#include "base/logging.h"
++
++#if BUILDFLAG(IS_APPLE)
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <unistd.h>
++
++#include <atomic>
++
++#include "base/posix/eintr_wrapper.h"
++#include "base/strings/stringprintf.h"
++#else
++#include "base/memory/platform_shared_memory_region.h"
++#include "base/memory/unsafe_shared_memory_region.h"
++#endif
++
++namespace wl {
++
++ShmMapping::ShmMapping() = default;
++
++ShmMapping::ShmMapping(ShmMapping&& other) {
++  *this = std::move(other);
++}
++
++ShmMapping& ShmMapping::operator=(ShmMapping&& other) {
++  if (this != &other) {
++    Reset();
++    span_ = std::exchange(other.span_, base::span<uint8_t>());
++#if !BUILDFLAG(IS_APPLE)
++    mapping_ = std::move(other.mapping_);
++#endif
++  }
++  return *this;
++}
++
++ShmMapping::~ShmMapping() {
++  Reset();
++}
++
++void ShmMapping::Reset() {
++#if BUILDFLAG(IS_APPLE)
++  if (!span_.empty()) {
++    munmap(span_.data(), span_.size());
++  }
++#else
++  mapping_ = base::WritableSharedMemoryMapping();
++#endif
++  span_ = base::span<uint8_t>();
++}
++
++// static
++ShmMapping ShmMapping::Create(size_t size, base::ScopedFD* fd) {
++  ShmMapping shm;
++  if (!size) {
++    return shm;
++  }
++#if BUILDFLAG(IS_APPLE)
++  // A name only for as long as it takes to open it: macOS has no memfd. Its
++  // names are at most 31 bytes (PSHMNAMLEN).
++  static std::atomic<uint32_t> counter{0};
++  for (int attempt = 0; attempt < 16 && !fd->is_valid(); ++attempt) {
++    std::string name = base::StringPrintf(
++        "/cr-wl-%d-%u", getpid(), counter.fetch_add(1) & 0xffffff);
++    fd->reset(shm_open(name.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600));
++    if (fd->is_valid()) {
++      shm_unlink(name.c_str());
++    } else if (errno != EEXIST) {
++      PLOG(ERROR) << "shm_open";
++      return shm;
++    }
++  }
++  if (!fd->is_valid()) {
++    return shm;
++  }
++  if (HANDLE_EINTR(ftruncate(fd->get(), static_cast<off_t>(size))) != 0) {
++    PLOG(ERROR) << "ftruncate";
++    fd->reset();
++    return shm;
++  }
++  void* memory =
++      mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd->get(), 0);
++  if (memory == MAP_FAILED) {
++    PLOG(ERROR) << "mmap";
++    fd->reset();
++    return shm;
++  }
++  // SAFETY: mmap mapped |size| bytes at |memory|.
++  shm.span_ = UNSAFE_BUFFERS(base::span(static_cast<uint8_t*>(memory), size));
++#else
++  base::UnsafeSharedMemoryRegion region =
++      base::UnsafeSharedMemoryRegion::Create(size);
++  if (!region.IsValid()) {
++    return shm;
++  }
++  shm.mapping_ = region.Map();
++  if (!shm.mapping_.IsValid()) {
++    return shm;
++  }
++  base::subtle::PlatformSharedMemoryRegion platform_region =
++      base::UnsafeSharedMemoryRegion::TakeHandleForSerialization(
++          std::move(region));
++  *fd = std::move(platform_region.PassPlatformHandle().fd);
++  shm.span_ = base::span(shm.mapping_);
++#endif
++  return shm;
++}
++
++}  // namespace wl
+diff --git a/ui/ozone/platform/wayland/common/wayland_shm_mapping.h b/ui/ozone/platform/wayland/common/wayland_shm_mapping.h
+new file mode 100644
+index 0000000000..6648ae42cd
+--- /dev/null
++++ b/ui/ozone/platform/wayland/common/wayland_shm_mapping.h
+@@ -0,0 +1,61 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef UI_OZONE_PLATFORM_WAYLAND_COMMON_WAYLAND_SHM_MAPPING_H_
++#define UI_OZONE_PLATFORM_WAYLAND_COMMON_WAYLAND_SHM_MAPPING_H_
++
++#include <stddef.h>
++#include <stdint.h>
++
++#include "base/containers/span.h"
++#include "base/files/scoped_file.h"
++#include "base/memory/raw_ptr_exclusion.h"
++#include "build/build_config.h"
++
++#if !BUILDFLAG(IS_APPLE)
++#include "base/memory/shared_memory_mapping.h"
++#endif
++
++namespace wl {
++
++// Spatiand: writable shared memory with an fd that a Wayland compositor maps
++// (wl_shm). On Linux it is base's shared memory, as Chromium has always made
++// it here; on macOS, whose base shared memory is a Mach memory object with no
++// fd, it is POSIX shared memory (shm_open, unlinked at once) mapped here.
++class ShmMapping {
++ public:
++  ShmMapping();
++  ShmMapping(ShmMapping&& other);
++  ShmMapping& operator=(ShmMapping&& other);
++  ShmMapping(const ShmMapping&) = delete;
++  ShmMapping& operator=(const ShmMapping&) = delete;
++  ~ShmMapping();
++
++  // |size| bytes, and the fd of them in |fd|. Not valid if that failed.
++  static ShmMapping Create(size_t size, base::ScopedFD* fd);
++
++  bool IsValid() const { return !span_.empty(); }
++  void* memory() const { return span_.data(); }
++  uint8_t* data() const { return span_.data(); }
++  size_t size() const { return span_.size(); }
++  base::span<uint8_t>::iterator begin() const { return span_.begin(); }
++  base::span<uint8_t>::iterator end() const { return span_.end(); }
++  template <typename T>
++  T* GetMemoryAs() const {
++    return reinterpret_cast<T*>(span_.data());
++  }
++
++ private:
++  void Reset();
++
++  // The mapping's memory: owned by |mapping_| on Linux, by this on macOS.
++  RAW_PTR_EXCLUSION base::span<uint8_t> span_;
++#if !BUILDFLAG(IS_APPLE)
++  base::WritableSharedMemoryMapping mapping_;
++#endif
++};
++
++}  // namespace wl
++
++#endif  // UI_OZONE_PLATFORM_WAYLAND_COMMON_WAYLAND_SHM_MAPPING_H_
+diff --git a/ui/ozone/platform/wayland/common/wayland_util.cc b/ui/ozone/platform/wayland/common/wayland_util.cc
+index 193888cefc..40f3a70695 100644
+--- a/ui/ozone/platform/wayland/common/wayland_util.cc
++++ b/ui/ozone/platform/wayland/common/wayland_util.cc
+@@ -6,6 +6,10 @@
+ #include "ui/ozone/platform/wayland/common/wayland_util.h"
+ 
+ #include <sys/socket.h>
++#if BUILDFLAG(IS_APPLE)
++#include <libproc.h>
++#include <sys/un.h>
++#endif
+ #include <xdg-shell-client-protocol.h>
+ 
+ #include "base/files/file_util.h"
+@@ -422,6 +426,20 @@ void RecordConnectionMetrics(wl_display* display) {
+       return WaylandCompositor::kUnknown;
+     }
+ 
++#if BUILDFLAG(IS_APPLE)
++    // Spatiand: macOS names a socket's peer by LOCAL_PEERPID, and a process
++    // by proc_name; it has no /proc.
++    pid_t pid = 0;
++    socklen_t size = sizeof(pid);
++    if (getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &size) == -1) {
++      return WaylandCompositor::kUnknown;
++    }
++    char comm[2 * MAXCOMLEN + 1] = {};
++    if (proc_name(pid, comm, sizeof(comm)) <= 0) {
++      return WaylandCompositor::kUnknown;
++    }
++    std::string name(comm);
++#else
+     ucred credentials{.pid = 0};
+     socklen_t size = sizeof(ucred);
+     if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credentials, &size) == -1) {
+@@ -435,6 +453,7 @@ void RecordConnectionMetrics(wl_display* display) {
+             &name)) {
+       return WaylandCompositor::kUnknown;
+     }
++#endif
+ 
+     for (const auto& [name_key, compositor] : kCompositors) {
+       if (base::StartsWith(name, name_key,
+diff --git a/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc b/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc
+index 5543b82869..fd344a7d15 100644
+--- a/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc
++++ b/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc
+@@ -20,7 +20,7 @@ constexpr size_t kBytesPerPixelBGRA = 4;
+ }  // namespace
+ 
+ GLSurfaceEglReadbackWayland::PixelBuffer::PixelBuffer(
+-    base::WritableSharedMemoryMapping shm_mapping,
++    wl::ShmMapping shm_mapping,
+     uint32_t buffer_id)
+     : shm_mapping_(std::move(shm_mapping)), buffer_id_(buffer_id) {}
+ 
+@@ -61,26 +61,18 @@ bool GLSurfaceEglReadbackWayland::Resize(const gfx::Size& size,
+     if (!checked_length.IsValid())
+       return false;
+ 
+-    base::UnsafeSharedMemoryRegion shm_region =
+-        base::UnsafeSharedMemoryRegion::Create(checked_length.ValueOrDie());
+-    if (!shm_region.IsValid())
+-      return false;
+-
+-    auto shm_mapping = shm_region.Map();
++    base::ScopedFD fd;
++    auto shm_mapping =
++        wl::ShmMapping::Create(checked_length.ValueOrDie(), &fd);
+     if (!shm_mapping.IsValid())
+       return false;
+ 
+-    base::subtle::PlatformSharedMemoryRegion platform_shm =
+-        base::UnsafeSharedMemoryRegion::TakeHandleForSerialization(
+-            std::move(shm_region));
+-    base::subtle::ScopedFDPair fd_pair = platform_shm.PassPlatformHandle();
+-
+     auto buffer_id = buffer_manager_->AllocateBufferID();
+     available_buffers_.push_back(
+         std::make_unique<PixelBuffer>(std::move(shm_mapping), buffer_id));
+ 
+     buffer_manager_->CreateShmBasedBuffer(
+-        std::move(fd_pair.fd), checked_length.ValueOrDie(), size, buffer_id);
++        std::move(fd), checked_length.ValueOrDie(), size, buffer_id);
+   }
+ 
+   return true;
+diff --git a/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.h b/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.h
+index 9198a18d6b..aed47101c8 100644
+--- a/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.h
++++ b/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.h
+@@ -7,7 +7,7 @@
+ 
+ #include "base/containers/circular_deque.h"
+ #include "base/memory/raw_ptr.h"
+-#include "base/memory/shared_memory_mapping.h"
++#include "ui/ozone/platform/wayland/common/wayland_shm_mapping.h"
+ #include "ui/ozone/common/gl_surface_egl_readback.h"
+ #include "ui/ozone/platform/wayland/gpu/wayland_surface_gpu.h"
+ 
+@@ -56,7 +56,7 @@ class GLSurfaceEglReadbackWayland : public GLSurfaceEglReadback,
+ 
+  private:
+   struct PixelBuffer {
+-    PixelBuffer(base::WritableSharedMemoryMapping shm_mapping,
++    PixelBuffer(wl::ShmMapping shm_mapping,
+                 uint32_t buffer_id);
+     ~PixelBuffer();
+     PixelBuffer(const PixelBuffer&) = delete;
+@@ -64,7 +64,7 @@ class GLSurfaceEglReadbackWayland : public GLSurfaceEglReadback,
+ 
+     // Shared memory mapping that readback pixels are written to so that Wayland
+     // is able to turn them in light.
+-    base::WritableSharedMemoryMapping shm_mapping_;
++    wl::ShmMapping shm_mapping_;
+ 
+     // The buffer id that corresponds to the |wl_buffer| created on the browser
+     // process side.
+diff --git a/ui/ozone/platform/wayland/gpu/wayland_canvas_surface.cc b/ui/ozone/platform/wayland/gpu/wayland_canvas_surface.cc
+index 13b72eea29..f59521725a 100644
+--- a/ui/ozone/platform/wayland/gpu/wayland_canvas_surface.cc
++++ b/ui/ozone/platform/wayland/gpu/wayland_canvas_surface.cc
+@@ -11,6 +11,7 @@
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/shared_memory_mapping.h"
+ #include "base/memory/unsafe_shared_memory_region.h"
++#include "ui/ozone/platform/wayland/common/wayland_shm_mapping.h"
+ #include "base/numerics/checked_math.h"
+ #include "base/posix/eintr_wrapper.h"
+ #include "base/process/memory.h"
+@@ -70,23 +71,13 @@ class WaylandCanvasSurface::SharedMemoryBuffer {
+                                viz::SinglePlaneFormat::kRGBA_8888, size)
+                                .value();
+ 
+-    base::UnsafeSharedMemoryRegion shm_region =
+-        base::UnsafeSharedMemoryRegion::Create(size_in_bytes);
+-    if (!shm_region.IsValid()) {
+-      base::TerminateBecauseOutOfMemory(size_in_bytes);
+-    }
+-
+-    shm_mapping_ = shm_region.Map();
++    base::ScopedFD fd;
++    shm_mapping_ = wl::ShmMapping::Create(size_in_bytes, &fd);
+     if (!shm_mapping_.IsValid()) {
+       base::TerminateBecauseOutOfMemory(size_in_bytes);
+     }
+-
+-    base::subtle::PlatformSharedMemoryRegion platform_shm =
+-        base::UnsafeSharedMemoryRegion::TakeHandleForSerialization(
+-            std::move(shm_region));
+-    base::subtle::ScopedFDPair fd_pair = platform_shm.PassPlatformHandle();
+-    buffer_manager_->CreateShmBasedBuffer(std::move(fd_pair.fd), size_in_bytes,
+-                                          size, buffer_id_);
++    buffer_manager_->CreateShmBasedBuffer(std::move(fd), size_in_bytes, size,
++                                          buffer_id_);
+ 
+     SkSurfaceProps props = skia::LegacyDisplayGlobals::GetSkSurfaceProps();
+     sk_surface_ = SkSurfaces::WrapPixels(
+@@ -154,7 +145,7 @@ class WaylandCanvasSurface::SharedMemoryBuffer {
+   const raw_ptr<WaylandBufferManagerGpu> buffer_manager_;
+ 
+   // Shared memory for the buffer.
+-  base::WritableSharedMemoryMapping shm_mapping_;
++  wl::ShmMapping shm_mapping_;
+ 
+   // The SkSurface the clients can draw to show the surface on screen.
+   sk_sp<SkSurface> sk_surface_;
+diff --git a/ui/ozone/platform/wayland/host/wayland_connection.cc b/ui/ozone/platform/wayland/host/wayland_connection.cc
+index adc2a80508..d011f06a82 100644
+--- a/ui/ozone/platform/wayland/host/wayland_connection.cc
++++ b/ui/ozone/platform/wayland/host/wayland_connection.cc
+@@ -124,6 +124,10 @@ int64_t ConvertTimespecResultToMicros(uint32_t tv_sec_hi,
+ }
+ 
+ bool MinSupportedKernelForLinuxDrmSyncobj() {
++#if BUILDFLAG(IS_APPLE)
++  // Spatiand: no DRM on macOS (and its version numbers are not Linux's).
++  return false;
++#else
+   int major, minor, build;
+   base::SysInfo::OperatingSystemVersionNumbers(&major, &minor, &build);
+   // We use drm_syncobj_eventfd_ioctl and DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE
+@@ -133,6 +137,7 @@ bool MinSupportedKernelForLinuxDrmSyncobj() {
+   // kernel version to 6.11 to avoid using buggy implementation that may cause
+   // stability issues.
+   return major > 6 || (major == 6 && minor >= 11);
++#endif
+ }
+ 
+ }  // namespace
+@@ -470,14 +475,16 @@ base::TimeTicks WaylandConnection::ConvertPresentationTime(uint32_t tv_sec_hi,
+   DCHECK(presentation());
+   // base::TimeTicks::Now() uses CLOCK_MONOTONIC, no need to convert clock
+   // domain if wp_presentation also uses it.
+-  if (presentation_clk_id_ == CLOCK_MONOTONIC) {
++  // Spatiand: on macOS TimeTicks is mach_absolute_time, not CLOCK_MONOTONIC.
++  if (!BUILDFLAG(IS_APPLE) && presentation_clk_id_ == CLOCK_MONOTONIC) {
+     return base::TimeTicks() + base::Microseconds(ConvertTimespecResultToMicros(
+                                    tv_sec_hi, tv_sec_lo, tv_nsec));
+   }
+ 
+   struct timespec presentation_now;
+   base::TimeTicks now = base::TimeTicks::Now();
+-  int ret = clock_gettime(presentation_clk_id_, &presentation_now);
++  int ret = clock_gettime(static_cast<clockid_t>(presentation_clk_id_),
++                          &presentation_now);
+ 
+   if (ret < 0) {
+     presentation_now.tv_sec = 0;
+diff --git a/ui/ozone/platform/wayland/host/wayland_shm_buffer.cc b/ui/ozone/platform/wayland/host/wayland_shm_buffer.cc
+index d1d36e7657..4b0908468f 100644
+--- a/ui/ozone/platform/wayland/host/wayland_shm_buffer.cc
++++ b/ui/ozone/platform/wayland/host/wayland_shm_buffer.cc
+@@ -34,23 +34,15 @@ void WaylandShmBuffer::Initialize(WaylandBufferFactory* buffer_factory) {
+   if (buffer_size == SIZE_MAX)
+     return;
+ 
+-  base::UnsafeSharedMemoryRegion shared_memory_region =
+-      base::UnsafeSharedMemoryRegion::Create(buffer_size);
+-  shared_memory_mapping_ = shared_memory_region.Map();
++  base::ScopedFD fd;
++  shared_memory_mapping_ = wl::ShmMapping::Create(buffer_size, &fd);
+   if (!shared_memory_mapping_.IsValid()) {
+     PLOG(ERROR) << "Create and mmap failed.";
+     return;
+   }
+-  base::subtle::PlatformSharedMemoryRegion platform_shared_memory =
+-      base::UnsafeSharedMemoryRegion::TakeHandleForSerialization(
+-          std::move(shared_memory_region));
+-
+-  base::subtle::ScopedFDPair fd_pair =
+-      platform_shared_memory.PassPlatformHandle();
+-  buffer_ = buffer_factory->CreateShmBuffer(std::move(fd_pair.fd), buffer_size,
+-                                            size_);
++  buffer_ = buffer_factory->CreateShmBuffer(std::move(fd), buffer_size, size_);
+   if (!buffer_) {
+-    shared_memory_mapping_ = base::WritableSharedMemoryMapping();
++    shared_memory_mapping_ = wl::ShmMapping();
+     return;
+   }
+ 
+diff --git a/ui/ozone/platform/wayland/host/wayland_shm_buffer.h b/ui/ozone/platform/wayland/host/wayland_shm_buffer.h
+index 93284cfc3b..d4306b474b 100644
+--- a/ui/ozone/platform/wayland/host/wayland_shm_buffer.h
++++ b/ui/ozone/platform/wayland/host/wayland_shm_buffer.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_SHM_BUFFER_H_
+ #define UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_SHM_BUFFER_H_
+ 
+-#include "base/memory/shared_memory_mapping.h"
++#include "ui/ozone/platform/wayland/common/wayland_shm_mapping.h"
+ #include "third_party/skia/include/core/SkCanvas.h"
+ #include "third_party/skia/include/core/SkSurface.h"
+ #include "ui/gfx/geometry/size.h"
+@@ -55,7 +55,7 @@ class WaylandShmBuffer {
+   gfx::Size size_;
+   int stride_;
+   wl::Object<wl_buffer> buffer_;
+-  base::WritableSharedMemoryMapping shared_memory_mapping_;
++  wl::ShmMapping shared_memory_mapping_;
+ };
+ 
+ }  // namespace ui
+diff --git a/ui/ozone/platform/wayland/host/wayland_syncobj_timeline.cc b/ui/ozone/platform/wayland/host/wayland_syncobj_timeline.cc
+index f0c9445936..29b94424b9 100644
+--- a/ui/ozone/platform/wayland/host/wayland_syncobj_timeline.cc
++++ b/ui/ozone/platform/wayland/host/wayland_syncobj_timeline.cc
+@@ -5,7 +5,9 @@
+ #include "ui/ozone/platform/wayland/host/wayland_syncobj_timeline.h"
+ 
+ #include <linux-drm-syncobj-v1-client-protocol.h>
++#if !BUILDFLAG(IS_APPLE)
+ #include <sys/eventfd.h>
++#endif
+ #include <xf86drm.h>
+ 
+ #include "base/logging.h"
+@@ -144,8 +146,13 @@ WaylandSyncobjReleaseTimeline::WaylandSyncobjReleaseTimeline(
+     DrmSyncobjIoctlWrapper* drm,
+     std::unique_ptr<DrmSyncobj> syncobj,
+     wp_linux_drm_syncobj_timeline_v1* timeline)
+-    : WaylandSyncobjTimeline(drm, std::move(syncobj), timeline),
+-      controller_(FROM_HERE) {}
++    : WaylandSyncobjTimeline(drm, std::move(syncobj), timeline)
++#if !BUILDFLAG(IS_APPLE)
++      ,
++      controller_(FROM_HERE)
++#endif
++{
++}
+ 
+ WaylandSyncobjReleaseTimeline::~WaylandSyncobjReleaseTimeline() = default;
+ 
+@@ -184,6 +191,7 @@ base::ScopedFD WaylandSyncobjReleaseTimeline::ExportCurrentSyncPointToSyncFd() {
+   return base::ScopedFD(sync_fd);
+ }
+ 
++#if !BUILDFLAG(IS_APPLE)
+ void WaylandSyncobjReleaseTimeline::OnFileCanReadWithoutBlocking(int fd) {
+   DVLOG(3) << "Fence available for syncobj=" << syncobj_->handle
+            << " sync point=" << sync_point_;
+@@ -200,6 +208,7 @@ void WaylandSyncobjReleaseTimeline::OnFileCanReadWithoutBlocking(int fd) {
+ void WaylandSyncobjReleaseTimeline::OnFileCanWriteWithoutBlocking(int fd) {
+   NOTREACHED() << "Unexpected notification about fd being ready for writing";
+ }
++#endif  // !BUILDFLAG(IS_APPLE)
+ 
+ void WaylandSyncobjReleaseTimeline::WaitForFenceAvailableAtCurrentSyncPoint(
+     FenceAvailableCallback callback) {
+@@ -216,6 +225,9 @@ void WaylandSyncobjReleaseTimeline::WaitForFenceAvailableAtCurrentSyncPoint(
+   // previous call is run.
+   CHECK(fence_available_callback_.is_null());
+   fence_available_callback_ = std::move(callback);
++#if BUILDFLAG(IS_APPLE)
++  NOTREACHED() << "no DRM syncobj on macOS";
++#else
+   if (!event_fd_.is_valid()) {
+     event_fd_.reset(eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC));
+     base::CurrentUIThread::Get()->WatchFileDescriptor(
+@@ -230,6 +242,7 @@ void WaylandSyncobjReleaseTimeline::WaitForFenceAvailableAtCurrentSyncPoint(
+     // fails for any reason.
+     std::move(fence_available_callback_).Run(ExportCurrentSyncPointToSyncFd());
+   }
++#endif  // BUILDFLAG(IS_APPLE)
+ }
+ 
+ }  // namespace ui
+diff --git a/ui/ozone/platform/wayland/host/wayland_syncobj_timeline.h b/ui/ozone/platform/wayland/host/wayland_syncobj_timeline.h
+index 05a2f95557..46da98d4a5 100644
+--- a/ui/ozone/platform/wayland/host/wayland_syncobj_timeline.h
++++ b/ui/ozone/platform/wayland/host/wayland_syncobj_timeline.h
+@@ -5,6 +5,7 @@
+ #ifndef UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_SYNCOBJ_TIMELINE_H_
+ #define UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_SYNCOBJ_TIMELINE_H_
+ 
++#include "build/build_config.h"
+ #include "base/files/scoped_file.h"
+ #include "base/functional/callback.h"
+ #include "base/gtest_prod_util.h"
+@@ -71,8 +72,15 @@ class WaylandSyncobjAcquireTimeline : public WaylandSyncobjTimeline {
+                                 wp_linux_drm_syncobj_timeline_v1* timeline);
+ };
+ 
+-class WaylandSyncobjReleaseTimeline : public WaylandSyncobjTimeline,
+-                                      public base::MessagePumpForUI::FdWatcher {
++// Spatiand: macOS has no DRM, so a compositor there never offers
++// wp_linux_drm_syncobj_manager_v1 (WaylandConnection does not bind it); the
++// release timeline is compiled without its eventfd watch.
++class WaylandSyncobjReleaseTimeline : public WaylandSyncobjTimeline
++#if !BUILDFLAG(IS_APPLE)
++    ,
++                                      public base::MessagePumpForUI::FdWatcher
++#endif
++{
+  public:
+   using FenceAvailableCallback = base::OnceCallback<void(base::ScopedFD)>;
+ 
+@@ -111,10 +119,12 @@ class WaylandSyncobjReleaseTimeline : public WaylandSyncobjTimeline,
+       WaylandSyncobjTimelineTest,
+       ExportCurrentSyncPointToSyncFd_FailOnSyncobjExportSyncFile);
+ 
++#if !BUILDFLAG(IS_APPLE)
+   // base::MessagePumpForUI::FdWatcher:
+   void OnFileCanReadWithoutBlocking(int fd) override;
+   void OnFileCanWriteWithoutBlocking(int fd) override;
+   base::MessagePumpForUI::FdWatchController controller_;
++#endif
+   base::ScopedFD event_fd_;
+   FenceAvailableCallback fence_available_callback_;
+ };
+diff --git a/ui/platform_window/platform_window_delegate.cc b/ui/platform_window/platform_window_delegate.cc
+index 52d4ae6242..b49a6f3e34 100644
+--- a/ui/platform_window/platform_window_delegate.cc
++++ b/ui/platform_window/platform_window_delegate.cc
+@@ -58,7 +58,7 @@ gfx::Insets PlatformWindowDelegate::CalculateInsetsInDIP(
+   return gfx::Insets();
+ }
+ 
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+ void PlatformWindowDelegate::OnWindowTiledStateChanged(
+     WindowTiledEdges new_tiled_edges) {}
+ #endif
+diff --git a/ui/platform_window/platform_window_delegate.h b/ui/platform_window/platform_window_delegate.h
+index 2ba67bf9f9..9dfa2cb5ba 100644
+--- a/ui/platform_window/platform_window_delegate.h
++++ b/ui/platform_window/platform_window_delegate.h
+@@ -146,7 +146,7 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindowDelegate {
+   virtual void OnWindowStateChanged(PlatformWindowState old_state,
+                                     PlatformWindowState new_state) = 0;
+ 
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+   // Notifies the delegate that the tiled state of the window edges has changed.
+   virtual void OnWindowTiledStateChanged(WindowTiledEdges new_tiled_edges);
+ #endif
+diff --git a/ui/platform_window/platform_window_init_properties.h b/ui/platform_window/platform_window_init_properties.h
+index 21a542a563..311394ddc8 100644
+--- a/ui/platform_window/platform_window_init_properties.h
++++ b/ui/platform_window/platform_window_init_properties.h
+@@ -56,7 +56,7 @@ class WorkspaceExtensionDelegate;
+ class ScenicWindowDelegate;
+ #endif
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+ class X11ExtensionDelegate;
+ #endif
+ 
+@@ -120,7 +120,7 @@ struct COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindowInitProperties {
+ 
+   PlatformWindowShadowType shadow_type = PlatformWindowShadowType::kDefault;
+ 
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && BUILDFLAG(IS_OZONE))
+   bool prefer_dark_theme = false;
+   raw_ptr<gfx::ImageSkia> icon = nullptr;
+   std::optional<SkColor> background_color;
+diff --git a/ui/views/widget/native_widget_aura.h b/ui/views/widget/native_widget_aura.h
+index 1ceb3af515..1bbf3a1fa1 100644
+--- a/ui/views/widget/native_widget_aura.h
++++ b/ui/views/widget/native_widget_aura.h
+@@ -26,7 +26,8 @@
+ #include "ui/wm/public/activation_change_observer.h"
+ #include "ui/wm/public/activation_delegate.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: except the Linux UI on macOS (Ozone/Wayland), which is Aura.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_OZONE)
+ #error "This file must not be included on macOS; Chromium Mac doesn't use Aura."
+ #endif
+ 

@@ -1,0 +1,91 @@
+diff -ru a/src/connection.c b/src/connection.c
+--- a/src/connection.c	2026-11-10 16:17:48.767603611 +0700
++++ b/src/connection.c	2026-11-10 16:17:48.885624898 +0700
+@@ -39,6 +39,11 @@
+ #include <unistd.h>
+ #include <sys/types.h>
+ #include <sys/socket.h>
++
++/* Spatiand: macOS has no MSG_NOSIGNAL; its sockets are made with SO_NOSIGPIPE (wayland-os.c). */
++#ifndef MSG_NOSIGNAL
++#define MSG_NOSIGNAL 0
++#endif
+ #include <time.h>
+ #include <ffi.h>
+ 
+diff -ru a/src/wayland-os.c b/src/wayland-os.c
+--- a/src/wayland-os.c	2026-11-10 16:17:48.625358277 +0700
++++ b/src/wayland-os.c	2026-11-10 16:17:48.756628304 +0700
+@@ -33,7 +33,9 @@
+ #include <fcntl.h>
+ #include <errno.h>
+ #include <string.h>
++#ifndef __APPLE__
+ #include <sys/epoll.h>
++#endif
+ #include <sys/mman.h>
+ #include <sys/un.h>
+ #ifdef HAVE_SYS_UCRED_H
+@@ -46,7 +48,9 @@
+ int (*wl_fcntl)(int fildes, int cmd, ...) = fcntl;
+ int (*wl_socket)(int domain, int type, int protocol) = socket;
+ ssize_t (*wl_recvmsg)(int socket, struct msghdr *message, int flags) = recvmsg;
++#ifndef __APPLE__
+ int (*wl_epoll_create1)(int flags) = epoll_create1;
++#endif
+ 
+ static int
+ set_cloexec_or_close(int fd)
+@@ -75,6 +79,16 @@
+ {
+ 	int fd;
+ 
++#ifdef __APPLE__
++	/* Spatiand: macOS has no SOCK_CLOEXEC, and no MSG_NOSIGNAL: a write to a closed socket
++	 * raises no SIGPIPE by SO_NOSIGPIPE instead (connection.c). */
++	fd = set_cloexec_or_close(wl_socket(domain, type, protocol));
++	if (fd >= 0) {
++		int one = 1;
++		setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
++	}
++	return fd;
++#else
+ 	fd = wl_socket(domain, type | SOCK_CLOEXEC, protocol);
+ 	if (fd >= 0)
+ 		return fd;
+@@ -83,9 +97,10 @@
+ 
+ 	fd = wl_socket(domain, type, protocol);
+ 	return set_cloexec_or_close(fd);
++#endif
+ }
+ 
+-#if defined(__FreeBSD__)
++#if defined(__FreeBSD__) || defined(__APPLE__)
+ int
+ wl_os_socket_peercred(int sockfd, uid_t *uid, gid_t *gid, pid_t *pid)
+ {
+@@ -203,6 +218,12 @@
+ {
+ 	int fd;
+ 
++#ifdef __APPLE__
++	/* Spatiand: the server half alone uses it; there is no epoll on macOS. */
++	errno = ENOSYS;
++	return -1;
++#endif
++
+ #ifdef EPOLL_CLOEXEC
+ 	fd = wl_epoll_create1(EPOLL_CLOEXEC);
+ 	if (fd >= 0)
+@@ -211,8 +232,10 @@
+ 		return -1;
+ #endif
+ 
++#ifndef __APPLE__
+ 	fd = epoll_create(1);
+ 	return set_cloexec_or_close(fd);
++#endif
+ }
+ 
+ int
