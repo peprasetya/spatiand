@@ -537,11 +537,18 @@ impl Spatiand {
     /// The key a SpatiMesh window's own sink is kept under: its client's process and its
     /// surface's protocol id, which Chromium knows of its own window too and routes each tab's
     /// sound by (`crate::audio::CHROMIUM_APP_ID`).
+    ///
+    /// Where the client's process cannot be read -- on the Mac, a Wayland client's socket says
+    /// no process to the compositor -- the window's own word stands: Chromium says the same key
+    /// with `spatiand_xr_surface_v1.set_sound_key` (patch 0020).
     pub fn window_sound_key_of_id(&self, id: usize, pid: Option<u32>) -> Option<String> {
         use smithay::reexports::wayland_server::Resource;
         let window = self.space.elements().find(|w| self.layout.id_of(w) == Some(id))?.clone();
         let surface = window.toplevel()?.wl_surface().clone();
-        Some(format!("wl:{}:{}", pid?, surface.id().protocol_id()))
+        match pid {
+            Some(pid) => Some(format!("wl:{}:{}", pid, surface.id().protocol_id())),
+            None => crate::xr::sound_key_of(&surface).filter(|key| key.starts_with("wl:")),
+        }
     }
 
     pub fn instance_of_id(&self, id: usize) -> Option<String> {

@@ -1297,6 +1297,10 @@ pub fn run(
                         if let Some(key) = runtime.state.window_sound_key_of_id(id, pid) {
                             spatial_audio.adopt_keyed(id, &key, spatiand_audio::server::Width::Full);
                             sinks_changed = true;
+                        } else {
+                            // On the Mac the key is the window's own word, which comes with
+                            // its next commit: looked for again below.
+                            awaiting_app_id.push((id, Instant::now(), pid));
                         }
                     }
                     Some(app_id) if own_app(&app_id) => {
@@ -1315,9 +1319,14 @@ pub fn run(
                         spatial_audio.adopt_keyed(*id, &app_id, crate::remote::sound_width(&app_id));
                         sinks_changed = true;
                     } else if app_id == crate::audio::CHROMIUM_APP_ID {
-                        if let Some(key) = runtime.state.window_sound_key_of_id(*id, *pid) {
-                            spatial_audio.adopt_keyed(*id, &key, spatiand_audio::server::Width::Full);
-                            sinks_changed = true;
+                        match runtime.state.window_sound_key_of_id(*id, *pid) {
+                            Some(key) => {
+                                spatial_audio.adopt_keyed(*id, &key, spatiand_audio::server::Width::Full);
+                                sinks_changed = true;
+                            }
+                            // Its key not said yet: a while longer, then by its process as any.
+                            None if since.elapsed() < Duration::from_secs(10) => return true,
+                            None => spatial_audio.adopt(*id, *pid),
                         }
                     } else if own_app(&app_id) {
                         let key = runtime.state.sound_key_of_id(*id).unwrap_or(app_id);
