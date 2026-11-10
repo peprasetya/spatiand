@@ -114,6 +114,7 @@ impl Mcu {
             // the answer before going on.
             next_read: Instant::now() + timing.read_every,
             finished: false,
+            unknown: std::collections::HashMap::new(),
         };
         let thread = std::thread::Builder::new()
             .name("glasses-mcu".into())
@@ -211,6 +212,9 @@ struct Worker<P> {
     next_read: Instant,
     /// The owner has gone, noticed in the middle of a command.
     finished: bool,
+    /// The last payload of each event the glasses pushed that is not understood here, so that
+    /// each is said once when it changes (`unprompted`).
+    unknown: std::collections::HashMap<u16, Vec<u8>>,
 }
 
 /// What a [`Worker::wait`] ended on.
@@ -459,7 +463,20 @@ impl<P: Port> Worker<P> {
         }
         let msgid = u16::from_le_bytes([packet[MCU_MSGID_OFFSET], packet[MCU_MSGID_OFFSET + 1]]);
         let Some(event) = XrealGlasses::decode_async(msgid, packet) else {
-            log::trace!("MCU async push {msgid:#06x}");
+            // **Said, not only traced**, each kind when its payload changes: what the glasses push
+            // when they are taken off and put back on (their proximity sensor) is not known yet,
+            // and the panel came back from it black, the last picture fading, the room drawing
+            // on (littleotter, 2026-11-10). The heartbeats are left out: they are many and say
+            // nothing new.
+            const HEARTBEATS: [u16; 2] = [0x6C02, 0x6C12];
+            let payload = packet.get(MCU_DATA_OFFSET..).unwrap_or(&[]);
+            let payload = &payload[..payload.len().min(16)];
+            if !HEARTBEATS.contains(&msgid) && self.unknown.get(&msgid).map(Vec::as_slice) != Some(payload) {
+                log::info!("the glasses pushed an event not understood here: {msgid:#06x} {payload:02x?}");
+                self.unknown.insert(msgid, payload.to_vec());
+            } else {
+                log::trace!("MCU async push {msgid:#06x}");
+            }
             return;
         };
         // The temple buttons step the brightness themselves, and a mode change re-lights the
