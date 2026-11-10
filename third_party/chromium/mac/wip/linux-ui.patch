@@ -500,7 +500,7 @@ index 84858cdae5..ec5f36e3f9 100644
  
    if (enable_webui_ntp) {
 diff --git a/chrome/browser/renderer_context_menu/BUILD.gn b/chrome/browser/renderer_context_menu/BUILD.gn
-index 1e3789cbe2..e30a882d61 100644
+index 1e3789cbe2..857e3ea433 100644
 --- a/chrome/browser/renderer_context_menu/BUILD.gn
 +++ b/chrome/browser/renderer_context_menu/BUILD.gn
 @@ -29,7 +29,7 @@ source_set("bubble_models") {
@@ -521,24 +521,22 @@ index 1e3789cbe2..e30a882d61 100644
        public_deps += [ "//chrome/browser/ui/cocoa" ]
      }
  
-@@ -212,7 +212,7 @@ source_set("impl") {
+@@ -212,6 +212,7 @@ source_set("impl") {
      ]
    }
  
--  if (is_linux || is_chromeos || is_win) {
-+  if ((is_linux || is_mac_linux_ui) || is_chromeos || is_win) {
++  # Spatiand: hunspell's languages; macOS's own spellchecker stays on the Linux UI.
+   if (is_linux || is_chromeos || is_win) {
      public += [ "spelling_options_submenu_observer.h" ]
      sources += [ "spelling_options_submenu_observer.cc" ]
-   }
-@@ -411,7 +411,7 @@ if (!is_android) {
+@@ -411,6 +412,7 @@ if (!is_android) {
        "//url",
      ]
  
--    if (is_linux || is_chromeos || is_win) {
-+    if ((is_linux || is_mac_linux_ui) || is_chromeos || is_win) {
++    # Spatiand: as the submenu above.
+     if (is_linux || is_chromeos || is_win) {
        sources += [
          # This test is for the spelling options submenu that's only for
-         # Windows, ChromeOS, and Linux.
 diff --git a/chrome/browser/spatiand/spatikey_window.cc b/chrome/browser/spatiand/spatikey_window.cc
 index f1dbd321f1..9bf1ab841a 100644
 --- a/chrome/browser/spatiand/spatikey_window.cc
