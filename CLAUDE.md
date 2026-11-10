@@ -39,3 +39,20 @@ The owner, 2026-11-10: **"All app build in this spatiand project is spatiand app
 - A port follows the Deck's build: the same code and the same protocol, carried to the other
   system. Nothing borrowed from another build's output as a shortcut, and no platform-native
   substitute. Where a workaround is unavoidable, it is named at once with the proper alternative.
+
+## How each app speaks Wayland (the same on every platform)
+
+Every app is a Wayland client of Spatiand; what differs is only the language its Wayland code is in,
+and on every platform that code is built into the program -- nothing is installed on the machine:
+
+| App | Wayland client code | Language |
+|---|---|---|
+| SpatiReel, SpatiLoupe, SpatiQuill, SpatiShelf, SpatiPal, SpatiKey, ... | `wayland-backend`'s own implementation (`src/rs`, the `client_system` feature off), through Spatiand's SDK `crates/spatiand-app` | Rust |
+| SpatiMesh (Chromium) | Chromium's own libwayland (`third_party/wayland`, `use_system_libwayland = false`), compiled into the program | C |
+
+Checked 2026-11-10: on the Deck `spatireel` links no libwayland, and `spatimesh` links none from the
+system but carries Chromium's (`wl_display_connect_to_fd` inside it); the Beam Pro's
+`libspatimesh_chromium.so` likewise. The Mac's SpatiMesh compiles the same `third_party/wayland` (its
+checkout lacked the sources only because Chromium's DEPS marks them Linux-only; copied from the Deck's
+tree of the same version). Chromium cannot use the Rust crate: its Ozone/Wayland is C++ against
+libwayland's C API. Both speak the same protocol, `spatiand_xr_v1` included, on the same socket.
