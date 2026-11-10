@@ -350,8 +350,11 @@ pub fn size_new_windows(state: &mut crate::Spatiand, _windows: &mut [crate::scen
         }
         let Some(surface) = window.wl_surface() else { continue };
         let Some((mac_id, wanted)) = local::wanted(surface.id().protocol_id()) else { continue };
-        if wanted.hide {
+        if wanted.hide || wanted.put_away {
             state.hide_window(&window);
+        }
+        if wanted.restore {
+            state.show_window(&window);
         }
         if wanted.show {
             // In front of the wearer, as a window chosen from the list is: turned there first,

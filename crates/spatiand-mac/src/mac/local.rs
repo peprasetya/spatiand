@@ -79,6 +79,10 @@ struct Entry {
     start_hidden: bool,
     /// The app has asked for it to be on show.
     show: bool,
+    /// The app has asked for it to be put away (the screen it is on is in the room itself).
+    put_away: bool,
+    /// The app has asked for it back where it was, not brought in front of the wearer.
+    restore: bool,
 }
 
 struct Windows {
@@ -128,9 +132,32 @@ pub fn open(id: u32, bundle: &str, title: &str, size: (u32, u32), hidden: bool) 
     let Some(windows) = WINDOWS.get() else { return };
     windows.entries.lock().unwrap().insert(
         id,
-        Entry { output: Output::new(), size, surface: None, start_hidden: hidden, show: false },
+        Entry { output: Output::new(), size, surface: None, start_hidden: hidden, show: false, put_away: false, restore: false },
     );
     send(Command::Open { id, bundle: bundle.to_string(), title: title.to_string(), size });
+}
+
+/// Put a window on show away into the list, as the wearer can: the app does when the screen the
+/// window is on is in the room itself, where it already is.
+pub fn put_away(id: u32) {
+    if let Some(entries) = WINDOWS.get().and_then(|w| w.entries.lock().ok()) {
+        let mut entries = entries;
+        if let Some(e) = entries.get_mut(&id) {
+            e.put_away = true;
+            e.restore = false;
+        }
+    }
+}
+
+/// Bring a window the app had put away back on show where it was, not in front of the wearer.
+pub fn restore(id: u32) {
+    if let Some(entries) = WINDOWS.get().and_then(|w| w.entries.lock().ok()) {
+        let mut entries = entries;
+        if let Some(e) = entries.get_mut(&id) {
+            e.restore = true;
+            e.put_away = false;
+        }
+    }
 }
 
 /// Bring a window that is listed out onto show, in front of the wearer.
@@ -276,6 +303,10 @@ pub struct Wanted {
     pub hide: bool,
     /// Bring it out, in front of the wearer.
     pub show: bool,
+    /// Put it away (`put_away`).
+    pub put_away: bool,
+    /// Back on show where it was (`restore`).
+    pub restore: bool,
 }
 
 /// Which of this Mac's windows a surface is, by its number on this client's connection, and
@@ -287,6 +318,8 @@ pub fn wanted(surface: u32) -> Option<(u32, Wanted)> {
     let wanted = Wanted {
         hide: std::mem::take(&mut entry.start_hidden),
         show: std::mem::take(&mut entry.show),
+        put_away: std::mem::take(&mut entry.put_away),
+        restore: std::mem::take(&mut entry.restore),
     };
     Some((*id, wanted))
 }

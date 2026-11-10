@@ -553,6 +553,18 @@ pub extern "C" fn sp_window_show(id: u32) {
     local::show(id);
 }
 
+/// Put a window on show away into the room's list; SP_WINDOW_HIDDEN follows.
+#[no_mangle]
+pub extern "C" fn sp_window_hide(id: u32) {
+    local::put_away(id);
+}
+
+/// Bring a window put away with sp_window_hide back on show where it was; SP_WINDOW_SHOWN follows.
+#[no_mangle]
+pub extern "C" fn sp_window_restore(id: u32) {
+    local::restore(id);
+}
+
 /// A window's newest picture, as an `IOSurfaceRef`, which is held for as long as it is shown.
 ///
 /// # Safety

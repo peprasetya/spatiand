@@ -37,6 +37,18 @@ final class RoomWindows {
     private var nextID: UInt32 = 1
     /// Applications whose windows are brought in as they open.
     private var following: Set<String> = []
+    /// **A screen in the room stands for the windows on it.** Pulled in, it is the Mac's
+    /// desktop as it is, every window where the Mac has it; and there a window covered by
+    /// another, or moved off the screen, can be got at, which in the room on its own it often
+    /// could not (the owner, 2026-11-10). So while a screen is on show its windows are not in
+    /// the room twice: those on show are put away into the list, new ones do not come out, and
+    /// when the screen goes back those put away come back where they were. One chosen from the
+    /// list by hand still comes out.
+    ///
+    /// The screens on show, by their entry, and the display each is.
+    private var screensOnShow: [UInt32: CGDirectDisplayID] = [:]
+    /// The windows put away because a screen they are on came out.
+    private var putAwayForScreen: Set<UInt32> = []
     private var scan: Timer?
     /// Whether the windows open when the room began have been listed: from then on a new one is shown.
     private var scanned = false
@@ -274,7 +286,9 @@ final class RoomWindows {
                     // whether or not it was there when the room began: it waits on an answer,
                     // and the Mac's own screen is not seen from the glasses.
                     if info.prompt {
-                        sp_window_show(announce(info, hidden: true))
+                        let id = announce(info, hidden: true)
+                        // On a screen that is in the room it is there already.
+                        if !onScreenInRoom(info) { sp_window_show(id) }
                         continue
                     }
                     // Only windows in their own right; see `MacWindows.isOrdinary`.
@@ -324,7 +338,8 @@ final class RoomWindows {
                     // Never a crowd at once: what macOS lists can come back short for a scan
                     // and whole the next, and a burst of windows each being captured has
                     // brought the Mac to its knees. Two a scan; the rest wait in the list.
-                    if (opened && broughtThisScan < 2) || following.contains(info.bundle) {
+                    // Not while it is on a screen that is in the room: it is there already.
+                    if ((opened && broughtThisScan < 2) || following.contains(info.bundle)) && !onScreenInRoom(info) {
                         broughtThisScan += 1
                         sp_window_show(id)
                     }
@@ -469,9 +484,53 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
     }
 
     /// The window is on show in the room: capture it.
+    /// Which display a window is on now: the one under its middle.
+    private func displayOf(_ info: MacWindowInfo) -> CGDirectDisplayID? {
+        let frame = MacWindows.bounds(info.windowID) ?? info.frame
+        var found: CGDirectDisplayID = 0
+        var count: UInt32 = 0
+        guard CGGetDisplaysWithPoint(CGPoint(x: frame.midX, y: frame.midY), 1, &found, &count) == .success, count > 0 else { return nil }
+        return found
+    }
+
+    /// Whether a window is on a screen that is on show in the room.
+    private func onScreenInRoom(_ info: MacWindowInfo) -> Bool {
+        guard info.display == nil, !screensOnShow.isEmpty, let display = displayOf(info) else { return false }
+        return screensOnShow.values.contains(display)
+    }
+
+    /// A screen has come out: the windows on show that are on it are put away.
+    private func screenOut(_ id: UInt32, _ info: MacWindowInfo) {
+        guard let wanted = info.display, let display = MacScreens.resolve(wanted) else { return }
+        screensOnShow[id] = display
+        var put = 0
+        for (other, entry) in entries where other != id && entry.capture != nil && entry.info.display == nil && displayOf(entry.info) == display {
+            putAwayForScreen.insert(other)
+            sp_window_hide(other)
+            put += 1
+        }
+        print("windows: the screen \(info.title) is in the room; \(put) window(s) on it put away until it goes")
+    }
+
+    /// A screen has gone back (or away): the windows put away for it come back where they were.
+    private func screenIn(_ id: UInt32) {
+        guard screensOnShow.removeValue(forKey: id) != nil else { return }
+        let stillOut = Set(screensOnShow.values)
+        var back = 0
+        for other in putAwayForScreen {
+            guard let entry = entries[other] else { putAwayForScreen.remove(other); continue }
+            if let display = displayOf(entry.info), stillOut.contains(display) { continue }
+            putAwayForScreen.remove(other)
+            sp_window_restore(other)
+            back += 1
+        }
+        print("windows: a screen has left the room; \(back) window(s) back where they were")
+    }
+
     private func shown(_ id: UInt32) {
         guard var entry = entries[id], entry.capture == nil else { return }
         let info = entry.info
+        if info.display != nil { screenOut(id, info) } else { putAwayForScreen.remove(id) }
         let capture = MacCapture(info)
         var seenThrough = false
         capture.onFrame = { [weak capture] pixels, _ in
@@ -500,6 +559,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
 
     /// Put away: nothing needs its picture.
     private func hidden(_ id: UInt32) {
+        screenIn(id)
         guard let capture = entries[id]?.capture else { return }
         capture.invalidate()
         entries[id]?.capture = nil
@@ -510,6 +570,8 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
 
     private func gone(_ id: UInt32) {
         queue.async { [self] in
+            screenIn(id)
+            putAwayForScreen.remove(id)
             guard let entry = entries.removeValue(forKey: id) else { return }
             entry.capture?.invalidate()
             publish()

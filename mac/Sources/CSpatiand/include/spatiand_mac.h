@@ -135,6 +135,11 @@ void sp_dictation_free(char *words);
 void sp_window_open(uint32_t id, const char *bundle, const char *title, uint32_t width,
                     uint32_t height, bool hidden);
 void sp_window_show(uint32_t id);
+// Put a window on show away into the room's list (SP_WINDOW_HIDDEN follows), or bring one put
+// away so back where it was (SP_WINDOW_SHOWN follows): the app does while a screen the window is
+// on is in the room.
+void sp_window_hide(uint32_t id);
+void sp_window_restore(uint32_t id);
 // Its newest picture, an IOSurfaceRef, held for as long as it is shown.
 // x, y, width, height: the part of the surface that is the window, in pixels; a width of 0 is all of it.
 void sp_window_picture(uint32_t id, const void *surface, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
