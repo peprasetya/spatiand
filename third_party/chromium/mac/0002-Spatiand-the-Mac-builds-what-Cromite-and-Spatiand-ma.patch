@@ -1,0 +1,177 @@
+From 9e29793505f69320fac7566a74ae4e14d3a7b558 Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Tue, 10 Nov 2026 10:35:56 +0700
+Subject: [PATCH] Spatiand: the Mac builds what Cromite and Spatiand made for
+ other systems
+
+Cromite builds for Android, Windows and Linux, and Spatiand's patches for Linux; on a Mac five
+places failed, each now as it is where it builds:
+- SpatiKey's socket (patch 0010) is made with SOCK_CLOEXEC, which macOS has not got: closed on
+  exec by fcntl instead.
+- Cromite's "Add bookmark import/export actions" makes SelectFileDialog::ShowToast abstract and
+  gives it to Android, Windows and Linux: the Mac's does nothing, as Linux's does.
+- The unexportable-key flag and its debug page need bound session credentials, which Cromite
+  turns off: both left out without them, as the feature itself is.
+- On-device translation is off in Cromite: the Mac's sandbox no longer asks for its component.
+- The profile menu's lock buttons (patch 0012) call Spatiand's profiles, which are Linux's only as
+  yet (chrome/browser/spatiand): left out elsewhere, as every other Spatiand hook is. The proper
+  way is that layer built on the Mac too.
+
+Built on littleotter (2026-11-10): SpatiMesh.app links and loads a page headless.
+---
+ chrome/browser/about_flags.cc                              | 3 ++-
+ chrome/browser/chrome_content_browser_client.cc            | 3 +++
+ chrome/browser/ui/views/profiles/profile_menu_view.cc      | 7 +++++++
+ .../unexportable_keys_internals_ui.cc                      | 5 +++++
+ components/spatikey/client.cc                              | 7 ++++++-
+ ui/shell_dialogs/select_file_dialog_mac.h                  | 2 ++
+ 6 files changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
+index 76ff558c82..07ae85ff98 100644
+--- a/chrome/browser/about_flags.cc
++++ b/chrome/browser/about_flags.cc
+@@ -12550,7 +12550,8 @@ const FeatureEntry kFeatureEntries[] = {
+      FEATURE_VALUE_TYPE(features::kReadAnythingOmniboxChip)},
+ #endif
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: its feature is declared only with bound session credentials, which Cromite turns off.
++#if BUILDFLAG(IS_MAC) && BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+     {"unexportable-key-deletion",
+      flag_descriptions::kUnexportableKeyDeletionName,
+      flag_descriptions::kUnexportableKeyDeletionDescription, kOsMac,
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index 03a7d641e8..806725d35c 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -8390,6 +8390,8 @@ bool ChromeContentBrowserClient::SetupEmbedderSandboxParameters(
+         sandbox::policy::kParamScreenAiComponentPath,
+         screen_ai_binary_path.value());
+   }
++  // Spatiand: on-device translation is off in Cromite (enable_on_device_translation).
++#if BUILDFLAG(ENABLE_ON_DEVICE_TRANSLATION)
+   if (sandbox_type == sandbox::mojom::Sandbox::kOnDeviceTranslation) {
+     auto translatekit_binary_path =
+         on_device_translation::ComponentManager::GetInstance()
+@@ -8402,6 +8404,7 @@ bool ChromeContentBrowserClient::SetupEmbedderSandboxParameters(
+         sandbox::policy::kParamTranslatekitComponentPath,
+         translatekit_binary_path.value());
+   }
++#endif  // BUILDFLAG(ENABLE_ON_DEVICE_TRANSLATION)
+ 
+   return false;
+ }
+diff --git a/chrome/browser/ui/views/profiles/profile_menu_view.cc b/chrome/browser/ui/views/profiles/profile_menu_view.cc
+index 176f91baee..20ccf02b44 100644
+--- a/chrome/browser/ui/views/profiles/profile_menu_view.cc
++++ b/chrome/browser/ui/views/profiles/profile_menu_view.cc
+@@ -4,7 +4,10 @@
+ 
+ #include "chrome/browser/ui/views/profiles/profile_menu_view.h"
+ 
++// Spatiand: its profiles are Linux's only as yet (chrome/browser/spatiand), as everywhere else they are used.
++#if BUILDFLAG(IS_LINUX)
+ #include "chrome/browser/spatiand/profiles_sync.h"
++#endif
+ 
+ #include <algorithm>
+ #include <optional>
+@@ -1268,6 +1271,7 @@ void ProfileMenuView::BuildFeatureButtons() {
+   BuildAutofillSettingsButton();
+   MaybeBuildManageGoogleAccountButton();
+   BuildCustomizeProfileButton();
++#if BUILDFLAG(IS_LINUX)
+   if (spatiand::ProfilesSync* profiles = spatiand::ProfilesSync::Get()) {
+     const base::FilePath path = profile().GetPath();
+     AddFeatureButton(
+@@ -1282,6 +1286,7 @@ void ProfileMenuView::BuildFeatureButtons() {
+             base::Unretained(this), path),
+         vector_icons::kLockIcon);
+   }
++#endif
+   (syncer::IsReplaceSyncPromosWithSignInPromosEnabled() &&
+    (!identity_manager ||
+     !identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync)))
+@@ -1442,6 +1447,7 @@ void ProfileMenuView::BuildProfileManagementFeatureButtons() {
+       base::BindRepeating(&ProfileMenuView::OnManageProfilesButtonClicked,
+                           base::Unretained(this)));
+ 
++#if BUILDFLAG(IS_LINUX)
+   if (spatiand::ProfilesSync* profiles = spatiand::ProfilesSync::Get();
+       profiles && profiles->AnyLock()) {
+     AddProfileManagementFeatureButton(
+@@ -1455,4 +1461,5 @@ void ProfileMenuView::BuildProfileManagementFeatureButtons() {
+             },
+             base::Unretained(this)));
+   }
++#endif
+ }
+diff --git a/chrome/browser/ui/webui/unexportable_keys_internals/unexportable_keys_internals_ui.cc b/chrome/browser/ui/webui/unexportable_keys_internals/unexportable_keys_internals_ui.cc
+index ab10831503..5607937bfc 100644
+--- a/chrome/browser/ui/webui/unexportable_keys_internals/unexportable_keys_internals_ui.cc
++++ b/chrome/browser/ui/webui/unexportable_keys_internals/unexportable_keys_internals_ui.cc
+@@ -9,6 +9,7 @@
+ 
+ #include "base/check_deref.h"
+ #include "base/feature_list.h"
++#include "components/signin/public/base/signin_buildflags.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/signin/bound_session_credentials/unexportable_key_provider_config.h"
+ #include "chrome/browser/signin/bound_session_credentials/unexportable_key_service_factory.h"
+@@ -48,10 +49,14 @@ void UnexportableKeysInternalsUI::BindInterface(
+ void UnexportableKeysInternalsUI::CreateUnexportableKeysInternalsHandler(
+     mojo::PendingReceiver<unexportable_keys_internals::mojom::PageHandler>
+         receiver) {
++  // Spatiand: the key service is built only with bound session credentials, which Cromite turns
++  // off; without it this page has nothing to show.
++#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+   page_handler_ = std::make_unique<UnexportableKeysInternalsHandler>(
+       std::move(receiver),
+       UnexportableKeyServiceFactory::CreateForGarbageCollection(
+           unexportable_keys::GetDefaultConfig()));
++#endif
+ }
+ 
+ WEB_UI_CONTROLLER_TYPE_IMPL(UnexportableKeysInternalsUI)
+diff --git a/components/spatikey/client.cc b/components/spatikey/client.cc
+index aeda57df2b..6608c71476 100644
+--- a/components/spatikey/client.cc
++++ b/components/spatikey/client.cc
+@@ -3,6 +3,7 @@
+ 
+ #include "components/spatikey/client.h"
+ 
++#include <fcntl.h>
+ #include <sys/socket.h>
+ #include <sys/un.h>
+ #include <unistd.h>
+@@ -71,7 +72,11 @@ Answer AskOnWorker(std::string request) {
+     return base::unexpected(Unreachable("its socket's path is too long"));
+   }
+   UNSAFE_BUFFERS(strncpy(address.sun_path, path.value().c_str(), sizeof(address.sun_path) - 1));
+-  base::ScopedFD socket_fd(socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
++  // macOS has no SOCK_CLOEXEC: closed on exec by fcntl, as soon as it is made.
++  base::ScopedFD socket_fd(socket(AF_UNIX, SOCK_STREAM, 0));
++  if (socket_fd.is_valid()) {
++    fcntl(socket_fd.get(), F_SETFD, FD_CLOEXEC);
++  }
+   if (!socket_fd.is_valid()) {
+     return base::unexpected(Unreachable("no socket"));
+   }
+diff --git a/ui/shell_dialogs/select_file_dialog_mac.h b/ui/shell_dialogs/select_file_dialog_mac.h
+index 6e34041a4c..058ec53916 100644
+--- a/ui/shell_dialogs/select_file_dialog_mac.h
++++ b/ui/shell_dialogs/select_file_dialog_mac.h
+@@ -37,6 +37,8 @@ class SHELL_DIALOGS_EXPORT SelectFileDialogImpl : public ui::SelectFileDialog {
+   // BaseShellDialog implementation.
+   bool IsRunning(gfx::NativeWindow parent_window) const override;
+   void ListenerDestroyed() override;
++  // Cromite asks every platform for this; used only on Android.
++  void ShowToast(const std::string& message) override {}
+ 
+  protected:
+   // SelectFileDialog implementation.
+-- 
+2.54.0 (Apple Git-157)
+
