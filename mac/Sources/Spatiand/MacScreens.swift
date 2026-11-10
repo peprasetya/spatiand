@@ -40,6 +40,26 @@ enum MacScreens {
 
     private static let lock = NSLock()
     private static var virtual: SPVirtualDisplay?
+    /// The virtual screen is there for the glasses alone (`leadIfAlone`), not one asked for.
+    private static var leading = false
+
+    /// **Locked, the glasses are the Mac's only screen**: the virtual screen made for them is let
+    /// go of, to be made again when the room comes back (`leadIfAlone`). Made the main screen
+    /// again only by arranging (`yieldToGlasses`, which knows the glasses by their EDID), the
+    /// glasses came back from a night's display sleep naming no maker, and macOS, finding a
+    /// second screen, put its "mirror or extend" question on them over the lock screen: nothing
+    /// there to answer it with (littleotter, 2026-11-10). A virtual screen asked for in the menu,
+    /// or one beside another display, is kept.
+    static func letGoForLock() {
+        lock.lock()
+        let made = leading ? virtual : nil
+        if made != nil {
+            virtual = nil
+            leading = false
+        }
+        lock.unlock()
+        if made != nil { print("screens: locked; the virtual screen made for the glasses is let go of, the glasses the only screen") }
+    }
 
     /// The number a screen goes by among windows: clear of any window's.
     static func windowID(for display: CGDirectDisplayID) -> CGWindowID { 0xD000_0000 | (display & 0x0FFF_FFFF) }
@@ -101,6 +121,7 @@ enum MacScreens {
         for attempt in 1...3 {
             if CGMainDisplayID() == virtual, CGDisplayBounds(glasses).maxX <= CGDisplayBounds(virtual).minX {
                 if attempt > 1 { print("screens: the glasses are this Mac's only screen; the virtual one is the main screen (\(attempt - 1) arrangement(s))") }
+                lock.lock(); leading = true; lock.unlock()
                 return true
             }
             var config: CGDisplayConfigRef?

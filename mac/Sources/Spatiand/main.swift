@@ -138,13 +138,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // And whenever the screens wake while it is locked: asleep, the glasses are not there to
         // be arranged, and the lock screen came up on the virtual screen again.
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            if self?.screenLocked == true { MacScreens.yieldToGlasses() }
+            if self?.screenLocked == true { MacScreens.letGoForLock(); MacScreens.yieldToGlasses() }
         }
         // Started with the Mac already locked: as though it had just been.
         if (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true {
             screenLocked = true
             print("screens: started with the Mac locked; the glasses are its lock screen's until it is unlocked")
-            DispatchQueue.main.async { MacScreens.yieldToGlasses() }
+            DispatchQueue.main.async { MacScreens.letGoForLock(); MacScreens.yieldToGlasses() }
         }
         chooseWorld()
     }
@@ -198,6 +198,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         print("screens: the Mac is \(now ? "locked; the glasses are given its lock screen" : "unlocked")")
         if now {
             if Room.shared.inGlasses { Room.shared.leaveGlasses() }
+            MacScreens.letGoForLock()
             MacScreens.yieldToGlasses()
         } else {
             chooseWorld()
