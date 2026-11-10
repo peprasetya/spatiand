@@ -14,11 +14,11 @@
 //!
 //! ```text
 //! → pair
-//! ← open 120                        the gate is open for this many seconds
-//! ← code 3f9a1c20 482 913           a session arrived; does the headset show this?
-//! → yes                             (or: no)
-//! ← paired 3f9a1c20                 written down; the session is being served
-//! ← refused | closed                it said no, or nobody came in time
+//! ← open 120 482913                 the gate is open for this many seconds, and this is the
+//!                                   code to type on the device -- said only here
+//! ← wrong 3f9a1c20 2                a device did not prove the code; this many tries are left
+//! ← paired 3f9a1c20                 it proved it: written down, and being served
+//! ← locked | closed                 three wrong codes closed it, or nobody paired in time
 //!
 //! → launch chrome                   start a catalogue entry, as the headset would
 //! ← launched chrome | failed <why>
@@ -59,11 +59,9 @@ use std::sync::{Arc, Mutex};
 /// Something a command-line client asked for.
 #[derive(Debug)]
 pub enum Asked {
-    /// Open the pairing window, and tell this client what happens.
+    /// Open the pairing window, and tell this client its code and what happens.
     Pair { client: u64 },
-    /// The answer to a `code` line.
-    Answer { client: u64, yes: bool },
-    /// The client went away. A pairing it started is cancelled: nobody is left to confirm it.
+    /// The client went away. A pairing it started is cancelled: nobody is left who saw its code.
     Gone { client: u64 },
     /// Start this catalogue entry, exactly as if the headset had asked. What the settings
     /// app's Open button sends.
@@ -172,8 +170,6 @@ fn accept(listener: UnixListener, tx: Sender<Asked>, clients: Arc<Mutex<HashMap<
                     let rest = rest.trim().to_string();
                     let asked = match word {
                         "pair" => Asked::Pair { client },
-                        "yes" | "y" => Asked::Answer { client, yes: true },
-                        "no" | "n" => Asked::Answer { client, yes: false },
                         "launch" if !rest.is_empty() => Asked::Launch { client, app: rest },
                         "list" => Asked::List { client },
                         "close" => match rest.parse() {
@@ -276,39 +272,41 @@ pub fn pair_with_running_host() -> Option<bool> {
         match words.next() {
             Some("open") => {
                 let seconds = words.next().unwrap_or("120");
+                let code = spatiand_stream::pairing::show(words.next().unwrap_or("?"));
                 println!("Pairing is open for {seconds} seconds.");
                 println!(
-                    "In Spatiand: Settings → Remote computers → Add a computer, and type this \
-                     machine's address."
+                    "On the device: Settings \u{2192} Remote computers \u{2192} Add a computer, type this \
+                     machine's address, and then the code."
                 );
-            }
-            Some("code") => {
-                let who = words.next().unwrap_or("?");
-                let code: Vec<&str> = words.collect();
-                let code = code.join(" ");
                 println!();
-                println!("A headset ({who}) is asking to pair.");
-                print!("Does it show the code  {code}  ? [y/N] ");
-                let _ = std::io::stdout().flush();
-                let mut answer = String::new();
-                let _ = std::io::stdin().read_line(&mut answer);
-                let yes = matches!(answer.trim().to_lowercase().as_str(), "y" | "yes");
-                let _ = writeln!(writer, "{}", if yes { "yes" } else { "no" });
+                println!("On the device, type the code  {code}");
+                println!();
+                println!("Keep it to yourself: whoever types it is trusted with this person's data.");
+            }
+            Some("wrong") => {
+                let who = words.next().unwrap_or("?");
+                let left = words.next().unwrap_or("?");
+                println!("A device ({who}) did not give the right code; {left} tries left.");
             }
             Some("paired") => {
-                println!("Paired. It can connect from now on without asking.");
+                let who = words.next().unwrap_or("?");
+                println!("Paired with {who}. It can connect from now on without a code.");
                 return Some(true);
             }
-            Some("refused") => {
-                println!("Refused. Nothing was written down.");
+            Some("locked") => {
+                println!("Three wrong codes: pairing is closed, and nothing was written down.");
                 return Some(false);
             }
             Some("closed") => {
-                println!("Nobody came. Pairing is closed again.");
+                println!("Nobody paired in time. Pairing is closed again.");
                 return Some(false);
             }
             Some("busy") => {
                 println!("Another pairing is already in progress on this host.");
+                return Some(false);
+            }
+            Some("failed") => {
+                println!("Could not open pairing: {}", words.collect::<Vec<_>>().join(" "));
                 return Some(false);
             }
             _ => {}

@@ -371,21 +371,23 @@ pub fn run(
                 shell.set_hosts(made_up_hosts().0, made_up_hosts().1);
             }
             let page = std::env::var("SPATIAND_VIEW_PAGE").unwrap_or_default();
-            if page == "address" || page == "pairing" {
+            if page == "address" || page == "code" || page == "pairing" {
                 for _ in 0..shell.hosts().len() {
                     shell.handle(Intent::Navigate(spatiand_shell::NavDirection::Down));
                 }
                 shell.handle(Intent::Accept);
                 shell.type_text("workshop");
             }
+            if page == "code" || page == "pairing" {
+                shell.type_enter();
+                shell.type_text("3925");
+            }
             if page == "pairing" {
+                shell.type_text("24");
                 shell.type_enter();
                 shell.set_pairing(spatiand_shell::PairingView {
                     address: "workshop".into(),
-                    code: Some("392 524".into()),
-                    status: "Check that workshop shows the same code, and answer yes there. \
-                             Then press A here if they match."
-                        .into(),
+                    status: "Proving the code with workshop…".into(),
                     ..Default::default()
                 });
             }

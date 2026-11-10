@@ -6,15 +6,17 @@
 //!   row for adding another. A computer that is off says so rather than vanishing: the
 //!   question "why is it not in the launcher?" deserves an answer, and it is usually "it is
 //!   asleep".
-//! * **The address.** Typed on the on-screen keyboard. The one piece of text anything in the
-//!   shell asks for, and the only thing this headset cannot find out for itself.
-//! * **The comparison.** Both ends show the same six digits, the way Bluetooth pairs a
-//!   keyboard. The wearer checks them against the computer's screen and says yes on both.
-//!   Nothing is typed from one to the other, so nothing is there to be overheard.
+//! * **The address.** Typed on the on-screen keyboard: the computer's name, the only thing this
+//!   headset cannot find out for itself.
+//! * **The code.** Six digits the computer shows when it is asked to pair (`spatiand-host
+//!   --pair`), typed here. It is never sent: the two ends prove to each other that they know it
+//!   (`spatiand_stream::pairing`), so connecting while the computer is waiting is not enough to
+//!   be trusted by it, and something in between cannot pass for either. The headset never shows
+//!   a code of its own.
 //!
 //! Like everything in the shell, this decides what should happen and never does it. Whether a
-//! computer is online, what its code is and whether it said yes all arrive from the compositor,
-//! which is the part with a network.
+//! computer is online and whether the code was right arrive from the compositor, which is the
+//! part with a network.
 
 use crate::grid::Direction;
 
@@ -55,13 +57,10 @@ impl HostStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PairingView {
     pub address: String,
-    /// The six digits, once both certificates are known.
-    pub code: Option<String>,
     /// One line about where things are.
     pub status: String,
-    /// The computer has said yes.
-    pub host_accepted: bool,
-    /// It is over, one way or the other; A or B goes back to the list.
+    /// It is over, one way or the other. A goes back to the list, or, when it failed, to the
+    /// code to try again; B goes back to the list.
     pub finished: bool,
     /// Over, and it worked.
     pub succeeded: bool,
@@ -71,6 +70,8 @@ pub struct PairingView {
 pub enum Page {
     List,
     Address,
+    /// The code the computer shows, being typed.
+    Code,
     Pairing,
 }
 
@@ -79,10 +80,8 @@ pub enum Page {
 pub enum HostsAction {
     /// Nothing for the compositor; the page changed.
     None,
-    /// Start pairing with this address.
-    Pair(String),
-    /// The wearer has compared the codes and they match.
-    Confirm,
+    /// Pair with the computer at this address, proving this code.
+    Pair { address: String, code: String },
     /// Stop pairing.
     Cancel,
     /// Stop knowing this computer.
@@ -96,12 +95,12 @@ pub struct Hosts {
     cursor: usize,
     page: Page,
     typed: String,
+    /// The code being typed: digits only.
+    code: String,
     pairing: PairingView,
     /// The row pressed once for forgetting. Forgetting is the one destructive thing here, and
     /// it asks twice: the second press on the same row does it, and moving away cancels.
     armed: Option<usize>,
-    /// Pressed "they match" and waiting for the computer to agree.
-    confirmed: bool,
 }
 
 impl Default for Hosts {
@@ -111,9 +110,9 @@ impl Default for Hosts {
             cursor: 0,
             page: Page::List,
             typed: String::new(),
+            code: String::new(),
             pairing: PairingView::default(),
             armed: None,
-            confirmed: false,
         }
     }
 }
@@ -151,8 +150,9 @@ impl Hosts {
         &self.pairing
     }
 
-    pub fn confirmed(&self) -> bool {
-        self.confirmed
+    /// The code typed so far.
+    pub fn code(&self) -> &str {
+        &self.code
     }
 
     /// Whether the row at `index` has been pressed once, for forgetting.
@@ -232,15 +232,16 @@ impl Hosts {
                 self.armed = Some(cursor);
                 HostsAction::None
             }
-            Page::Address => self.submit(),
+            Page::Address | Page::Code => self.submit(),
             Page::Pairing => {
                 if self.pairing.finished {
-                    self.page = Page::List;
-                    return HostsAction::None;
-                }
-                if self.pairing.code.is_some() && !self.confirmed {
-                    self.confirmed = true;
-                    return HostsAction::Confirm;
+                    if self.pairing.succeeded {
+                        self.page = Page::List;
+                    } else {
+                        // A wrong code, usually: the address stays, the code is typed again.
+                        self.page = Page::Code;
+                        self.code.clear();
+                    }
                 }
                 HostsAction::None
             }
@@ -253,6 +254,10 @@ impl Hosts {
             Page::List => (false, HostsAction::None),
             Page::Address => {
                 self.page = Page::List;
+                (true, HostsAction::None)
+            }
+            Page::Code => {
+                self.page = Page::Address;
                 (true, HostsAction::None)
             }
             Page::Pairing => {
@@ -269,14 +274,23 @@ impl Hosts {
 
     /// Whether typing should come here rather than go to a window.
     pub fn wants_text(&self) -> bool {
-        self.page == Page::Address
+        matches!(self.page, Page::Address | Page::Code)
     }
 
     /// Some text from the keyboard.
     ///
-    /// Only what can be in an address: a name, an IPv4 or IPv6 address, a port. Anything else
-    /// is dropped here rather than failing later with a message about DNS.
+    /// For an address, only what can be in one: a name, an IPv4 or IPv6 address, a port.
+    /// Anything else is dropped here rather than failing later with a message about DNS. For
+    /// the code, only digits, and no more than it has.
     pub fn type_text(&mut self, text: &str) {
+        if self.page == Page::Code {
+            for c in text.chars().filter(char::is_ascii_digit) {
+                if self.code.len() < CODE_DIGITS {
+                    self.code.push(c);
+                }
+            }
+            return;
+        }
         if self.page != Page::Address {
             return;
         }
@@ -290,30 +304,48 @@ impl Hosts {
     }
 
     pub fn backspace(&mut self) {
-        if self.page == Page::Address {
-            self.typed.pop();
+        match self.page {
+            Page::Address => {
+                self.typed.pop();
+            }
+            Page::Code => {
+                self.code.pop();
+            }
+            _ => {}
         }
     }
 
-    /// Enter, or A on the address page.
+    /// Enter, or A on the address or code page.
     pub fn submit(&mut self) -> HostsAction {
-        if self.page != Page::Address {
-            return HostsAction::None;
+        match self.page {
+            Page::Address => {
+                if !self.typed.trim().is_empty() {
+                    self.page = Page::Code;
+                    self.code.clear();
+                }
+                HostsAction::None
+            }
+            Page::Code => {
+                if self.code.len() != CODE_DIGITS {
+                    return HostsAction::None;
+                }
+                let address = self.typed.trim().to_string();
+                self.page = Page::Pairing;
+                self.pairing = PairingView {
+                    address: address.clone(),
+                    status: format!("Proving the code with {address}…"),
+                    ..PairingView::default()
+                };
+                HostsAction::Pair { address, code: std::mem::take(&mut self.code) }
+            }
+            _ => HostsAction::None,
         }
-        let address = self.typed.trim().to_string();
-        if address.is_empty() {
-            return HostsAction::None;
-        }
-        self.page = Page::Pairing;
-        self.confirmed = false;
-        self.pairing = PairingView {
-            address: address.clone(),
-            status: format!("Looking for {address}…"),
-            ..PairingView::default()
-        };
-        HostsAction::Pair(address)
     }
 }
+
+/// How many digits a computer's pairing code has (`spatiand_stream::pairing::DIGITS`; the
+/// shell has no network and does not link it).
+pub const CODE_DIGITS: usize = 6;
 
 #[cfg(test)]
 mod tests {
@@ -348,9 +380,17 @@ mod tests {
         assert_eq!(hosts.typed(), "workshop", "lower-cased, spaces and junk dropped");
         hosts.backspace();
         hosts.type_text("p:47600");
+        assert_eq!(hosts.activate(), HostsAction::None, "the address leads to the code");
+        assert_eq!(hosts.page(), Page::Code);
+        assert!(hosts.wants_text());
+        hosts.type_text("482 91");
+        assert_eq!(hosts.code(), "48291", "digits only");
+        assert_eq!(hosts.activate(), HostsAction::None, "five digits are not a code");
+        hosts.type_text("34");
+        assert_eq!(hosts.code(), "482913", "and no more than six");
         assert_eq!(
             hosts.activate(),
-            HostsAction::Pair("workshop:47600".into())
+            HostsAction::Pair { address: "workshop:47600".into(), code: "482913".into() }
         );
         assert_eq!(hosts.page(), Page::Pairing);
         assert!(!hosts.wants_text(), "typing goes back to windows once it is sent");
@@ -365,20 +405,43 @@ mod tests {
     }
 
     #[test]
-    fn a_code_can_be_confirmed_once_and_only_once_it_exists() {
+    fn a_failed_pairing_goes_back_to_the_code_and_a_good_one_to_the_list() {
         let mut hosts = Hosts::default();
         hosts.activate();
         hosts.type_text("workshop");
         hosts.activate();
-        assert_eq!(hosts.activate(), HostsAction::None, "no code yet, nothing to agree to");
+        hosts.type_text("111111");
+        hosts.activate();
+        assert_eq!(hosts.activate(), HostsAction::None, "nothing to press while it is proving");
+        assert_eq!(hosts.page(), Page::Pairing);
         hosts.set_pairing(PairingView {
             address: "workshop".into(),
-            code: Some("482 913".into()),
-            ..PairingView::default()
+            status: "the code was not right".into(),
+            finished: true,
+            succeeded: false,
         });
-        assert_eq!(hosts.activate(), HostsAction::Confirm);
-        assert!(hosts.confirmed());
-        assert_eq!(hosts.activate(), HostsAction::None, "a second press is not a second yes");
+        hosts.activate();
+        assert_eq!(hosts.page(), Page::Code, "try the code again");
+        assert_eq!(hosts.code(), "", "typed afresh");
+        hosts.type_text("482913");
+        assert_eq!(
+            hosts.activate(),
+            HostsAction::Pair { address: "workshop".into(), code: "482913".into() }
+        );
+        hosts.set_pairing(PairingView { finished: true, succeeded: true, ..PairingView::default() });
+        hosts.activate();
+        assert_eq!(hosts.page(), Page::List);
+    }
+
+    #[test]
+    fn b_from_the_code_goes_back_to_the_address() {
+        let mut hosts = Hosts::default();
+        hosts.activate();
+        hosts.type_text("workshop");
+        hosts.activate();
+        assert_eq!(hosts.back(), (true, HostsAction::None));
+        assert_eq!(hosts.page(), Page::Address);
+        assert_eq!(hosts.typed(), "workshop", "kept, to correct");
     }
 
     #[test]
@@ -387,12 +450,16 @@ mod tests {
         hosts.activate();
         hosts.type_text("x");
         hosts.activate();
+        hosts.type_text("123456");
+        hosts.activate();
         assert_eq!(hosts.back(), (true, HostsAction::Cancel));
         assert_eq!(hosts.page(), Page::List);
 
         hosts.step(Direction::Down);
         hosts.activate();
         hosts.type_text("x");
+        hosts.activate();
+        hosts.type_text("123456");
         hosts.activate();
         hosts.set_pairing(PairingView {
             finished: true,

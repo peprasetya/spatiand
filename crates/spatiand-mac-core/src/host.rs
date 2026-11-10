@@ -22,14 +22,14 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 use spatiand_stream::transport::{peer_fingerprint, Trust, CLOSE_TAKEN_OVER};
 use spatiand_stream::video::{split, Packet, FLAG_KEYFRAME, FLAG_LAST};
-use spatiand_stream::{pairing_code, ClientMessage, Fingerprint, Gate, HostMessage, Identity};
+use spatiand_stream::pairing::{Verdict, Window};
+use spatiand_stream::{ClientMessage, Fingerprint, Gate, HostMessage, Identity};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot;
 
 type EventFn = extern "C" fn(*mut c_void, *const c_char);
 
-/// How long a stranger has to be answered, before it is turned away.
-const DECISION: Duration = Duration::from_secs(90);
+/// How long a device not paired yet has to prove the code, once it has connected.
+const PROVING: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy)]
 struct Callbacks {
@@ -60,8 +60,9 @@ pub struct HostCore {
     identity: Arc<Identity>,
     paired: Arc<Mutex<Vec<Fingerprint>>>,
     paired_path: PathBuf,
-    /// Who is waiting to be let in, and the way to answer them.
-    waiting: Arc<Mutex<Option<oneshot::Sender<bool>>>>,
+    /// The pairing window, while one is open: its code, its clock and its attempts. The same
+    /// as the Linux host's; see `spatiand_stream::pairing`.
+    window: Arc<Mutex<Option<Window>>>,
     /// The next frame number of each window, kept across a restarted encoder: a session drops
     /// any frame numbered at or below the last it showed.
     frames: Mutex<HashMap<u16, u32>>,
@@ -187,7 +188,7 @@ impl HostCore {
             });
         }
         let (out, outbox) = unbounded_channel();
-        let waiting = Arc::new(Mutex::new(None));
+        let window = Arc::new(Mutex::new(None));
         runtime.spawn(serve(
             endpoint,
             outbox,
@@ -196,9 +197,9 @@ impl HostCore {
             paired.clone(),
             paired_path.clone(),
             gate.clone(),
-            waiting.clone(),
+            window.clone(),
         ));
-        Ok(HostCore { runtime, out, gate, identity, paired, paired_path, waiting, frames: Mutex::new(HashMap::new()) })
+        Ok(HostCore { runtime, out, gate, identity, paired, paired_path, window, frames: Mutex::new(HashMap::new()) })
     }
 
     fn say(&self, message: HostMessage) {
@@ -251,7 +252,7 @@ async fn serve(
     paired: Arc<Mutex<Vec<Fingerprint>>>,
     paired_path: PathBuf,
     gate: Arc<Gate>,
-    waiting: Arc<Mutex<Option<oneshot::Sender<bool>>>>,
+    window: Arc<Mutex<Option<Window>>>,
 ) {
     let mut next: Option<(quinn::Connection, Fingerprint)> = None;
     loop {
@@ -267,19 +268,18 @@ async fn serve(
             "who": who.to_string(),
             "short": who.short(),
             "address": connection.remote_address().to_string(),
-            "code": pairing_code(&this_host, &who),
             "known": known,
         }}));
-        // A device not yet trusted is served nothing until the owner has said yes.
+        // A device not yet trusted is served nothing until it has proved the code shown here.
+        let mut control = None;
         if !known {
-            let (tx, rx) = oneshot::channel();
-            *waiting.lock().unwrap() = Some(tx);
-            let answer = tokio::time::timeout(DECISION, rx).await;
-            *waiting.lock().unwrap() = None;
-            if !matches!(answer, Ok(Ok(true))) {
-                connection.close(1u32.into(), b"not paired");
-                callbacks.say(&json!({ "left": { "refused": true } }));
-                continue;
+            match prove(&connection, this_host, who, &window, &gate, callbacks).await {
+                Some(stream) => control = Some(stream),
+                None => {
+                    connection.close(1u32.into(), b"not paired");
+                    callbacks.say(&json!({ "left": { "refused": true } }));
+                    continue;
+                }
             }
             let list = {
                 let mut list = paired.lock().unwrap();
@@ -298,7 +298,7 @@ async fn serve(
         while outbox.try_recv().is_ok() {}
         callbacks.say(&json!({ "attached": { "who": who.to_string() } }));
         tokio::select! {
-            _ = session(&connection, &mut outbox, callbacks) => {}
+            _ = session(&connection, control, &mut outbox, callbacks) => {}
             _ = gone(&paired, who) => {
                 log::info!("{} was removed from the owner's devices", who.short());
                 connection.close(1u32.into(), b"not paired");
@@ -323,13 +323,116 @@ async fn gone(paired: &Mutex<Vec<Fingerprint>>, who: Fingerprint) {
     }
 }
 
-async fn session(connection: &quinn::Connection, outbox: &mut UnboundedReceiver<ToSession>, callbacks: Callbacks) {
-    let mut control = match connection.open_uni().await {
-        Ok(stream) => stream,
-        Err(e) => {
-            log::warn!("could not open the control stream: {e}");
-            return;
+/// A device not paired yet, through the open gate: it proves the code shown at this Mac or is
+/// turned away. `Some` with the control stream the exchange was on -- the session's, from then
+/// on -- once it has, and is written down by the caller. What it costs and what it leaves is
+/// told to the app as `{"pairing": ...}`.
+async fn prove(
+    connection: &quinn::Connection,
+    this_host: Fingerprint,
+    who: Fingerprint,
+    window: &Mutex<Option<Window>>,
+    gate: &Gate,
+    callbacks: Callbacks,
+) -> Option<quinn::SendStream> {
+    if window.lock().unwrap().is_none() {
+        return None;
+    }
+    let mut control = connection.open_uni().await.ok()?;
+    let refuse = |reason: String| HostMessage::Refused { version: spatiand_stream::VERSION, reason };
+    let outcome = tokio::time::timeout(PROVING, async {
+        loop {
+            let mut stream = connection.accept_uni().await.ok()?;
+            let bytes = stream.read_to_end(64 * 1024).await.ok()?;
+            let Ok(message) = spatiand_stream::from_bytes::<ClientMessage>(&bytes) else { continue };
+            match message {
+                ClientMessage::PairStart { spake } => {
+                    let reply = match window.lock().unwrap().as_mut() {
+                        Some(w) => w.start(this_host, who, &spake),
+                        None => Err("pairing on this host has closed again".into()),
+                    };
+                    match reply {
+                        Ok(reply) => {
+                            let _ = spatiand_stream::link::tell(&mut control, &reply).await;
+                        }
+                        Err(reason) => {
+                            let _ = spatiand_stream::link::tell(&mut control, &refuse(reason)).await;
+                            return Some(None);
+                        }
+                    }
+                }
+                ClientMessage::PairConfirm { confirm } => {
+                    let verdict = match window.lock().unwrap().as_mut() {
+                        Some(w) => w.confirm(who, &confirm),
+                        None => Verdict::Stray,
+                    };
+                    match verdict {
+                        Verdict::Stray => {}
+                        Verdict::Paired(_) => return Some(Some(verdict)),
+                        _ => {
+                            let wrong = refuse(spatiand_stream::pairing::WRONG_CODE.into());
+                            let _ = spatiand_stream::link::tell(&mut control, &wrong).await;
+                            return Some(Some(verdict));
+                        }
+                    }
+                }
+                // A device from before codes were typed, asking to be let in the old way.
+                ClientMessage::Hello { .. } => {
+                    let old = refuse(
+                        "this host pairs with a code typed on the device; update Spatiand on this \
+                         device, then pair again"
+                            .into(),
+                    );
+                    let _ = spatiand_stream::link::tell(&mut control, &old).await;
+                    return Some(None);
+                }
+                _ => {}
+            }
         }
+    })
+    .await;
+    // Gone, or out of time, part way through: an attempt that heard the reply is spent.
+    let verdict = match outcome {
+        Ok(Some(verdict)) => verdict,
+        Ok(None) | Err(_) => window.lock().unwrap().as_mut().and_then(|w| w.abandon(&who)),
+    };
+    match verdict {
+        Some(Verdict::Paired(_)) => {
+            *window.lock().unwrap() = None;
+            callbacks.say(&json!({ "pairing": { "paired": who.short() } }));
+            Some(control)
+        }
+        Some(Verdict::Wrong { left }) => {
+            callbacks.say(&json!({ "pairing": { "wrong": { "who": who.short(), "left": left } } }));
+            None
+        }
+        Some(Verdict::Locked) => {
+            *window.lock().unwrap() = None;
+            gate.set_open(false);
+            callbacks.say(&json!({ "pairing": { "locked": true } }));
+            None
+        }
+        Some(Verdict::Stray) | None => None,
+    }
+}
+
+async fn session(
+    connection: &quinn::Connection,
+    control: Option<quinn::SendStream>,
+    outbox: &mut UnboundedReceiver<ToSession>,
+    callbacks: Callbacks,
+) {
+    // A device that has just paired goes on with the stream its pairing was on: a session reads
+    // the first stream the host opens as the control stream.
+    let mut control = match control {
+        Some(stream) => stream,
+        None => match connection.open_uni().await {
+            Ok(stream) => stream,
+            Err(e) => {
+                log::warn!("could not open the control stream: {e}");
+                return;
+            }
+        },
     };
     let reading = tokio::spawn({
         let connection = connection.clone();
@@ -551,24 +654,32 @@ pub extern "C" fn sp_host_audio(core: *mut HostCore, app: *const c_char, channel
     core.audio(app, channels, unsafe { std::slice::from_raw_parts(data, length) }.to_vec());
 }
 
-/// Let a device that has never been here pair, for as long as this is on, or stop.
+/// Let a device that has never been here pair, or stop.
+///
+/// Opening makes a fresh code and returns it, `482913`, for the app to show at this Mac -- and
+/// only there: it is never sent. The device's user types it; a device that proves it is let in
+/// and written down, with nobody asked to say yes (`spatiand_stream::pairing`). Free the code
+/// with `sp_free_string`. Closing, or a code that could not be made, returns null.
 #[no_mangle]
-pub extern "C" fn sp_host_open_pairing(core: *mut HostCore, open: i32) {
+pub extern "C" fn sp_host_open_pairing(core: *mut HostCore, open: i32) -> *mut c_char {
     // SAFETY: from `sp_host_start`, or null.
-    if let Some(core) = unsafe { core.as_ref() } {
-        core.gate.set_open(open != 0);
+    let Some(core) = (unsafe { core.as_ref() }) else { return std::ptr::null_mut() };
+    if open == 0 {
+        *core.window.lock().unwrap() = None;
+        core.gate.set_open(false);
+        return std::ptr::null_mut();
     }
-}
-
-/// The owner's answer about the device that is waiting to be let in.
-#[no_mangle]
-pub extern "C" fn sp_host_decide(core: *mut HostCore, admit: i32) {
-    // SAFETY: from `sp_host_start`, or null.
-    if let Some(core) = unsafe { core.as_ref() } {
-        if let Some(tx) = core.waiting.lock().unwrap().take() {
-            let _ = tx.send(admit != 0);
+    let window = match Window::open(spatiand_stream::pairing::WINDOW) {
+        Ok(window) => window,
+        Err(e) => {
+            log::error!("{e}");
+            return std::ptr::null_mut();
         }
-    }
+    };
+    let code = CString::new(window.code()).ok();
+    *core.window.lock().unwrap() = Some(window);
+    core.gate.set_open(true);
+    code.map(CString::into_raw).unwrap_or(std::ptr::null_mut())
 }
 
 /// Trust a device by its fingerprint, without it having to ask: for pairing in the other direction.

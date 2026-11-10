@@ -121,9 +121,19 @@ pub enum ClientMessage {
     /// its pictures, as for any other.
     Show { window: WindowId },
     /// Spatiand's applications' settings, kept the same on every paired machine. See
-    /// [`ConfigSync`]. Last, so that a host that predates it reads every other message as
+    /// [`ConfigSync`]. Placed so that a host that predates it reads every other message as
     /// before, and this one as something it does not know and passes over.
     ConfigSync(ConfigSync),
+    /// Pairing, first: this device's SPAKE2 message, made from the code the person typed and
+    /// both certificates' fingerprints. Said instead of `Hello` by a device that is not paired
+    /// yet; see `crate::pairing`. A host that predates it passes it over, and a device that
+    /// hears `Welcome` without a `PairReply` first knows it is talking to one.
+    PairStart { spake: Vec<u8> },
+    /// Pairing, last: this device's key confirmation, said only once the host's has checked
+    /// out. The host writes nothing down before it has checked this.
+    ///
+    /// These two last in this enum, and must stay so: see `crate::VERSION`.
+    PairConfirm { confirm: Vec<u8> },
 }
 
 /// What the host sends.
@@ -216,8 +226,14 @@ pub enum HostMessage {
     /// does its own (`window::METRES_PER_POINT`), so a window is as big as it is to its
     /// application wherever it runs. Said after `Stream`; one not said is 1.
     ///
-    /// Last, and must stay so: a session built before it reports it as unknown.
+    /// Placed so that a session built before it reports it as unknown.
     Density { window: WindowId, pixels_per_point: f64 },
+    /// The host's answer to [`ClientMessage::PairStart`]: its SPAKE2 message and its key
+    /// confirmation. The only thing besides `Refused` a device that is not paired is ever
+    /// told. See `crate::pairing`.
+    ///
+    /// Last, and must stay so: a session built before it reports it as unknown.
+    PairReply { spake: Vec<u8>, confirm: Vec<u8> },
 }
 
 /// A window the host has.
@@ -559,6 +575,8 @@ mod tests {
                 mime_type: "image/png".into(),
             }),
             ClientMessage::Detach,
+            ClientMessage::PairStart { spake: vec![0x41; 33] },
+            ClientMessage::PairConfirm { confirm: vec![7; 32] },
         ];
         for message in client {
             let bytes = crate::to_bytes(&message).expect("encodes");
@@ -611,6 +629,7 @@ mod tests {
                 window: WindowId(1),
                 drawn: true,
             },
+            HostMessage::PairReply { spake: vec![0x42; 33], confirm: vec![9; 32] },
         ];
         for message in host {
             let bytes = crate::to_bytes(&message).expect("encodes");

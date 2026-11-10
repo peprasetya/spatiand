@@ -1,26 +1,30 @@
 //! Which machines this host has met.
 //!
-//! Pairing is done once, from a shell on the host, because that shell is already the proof of
-//! who you are: anyone who can run `spatiand-host --pair` has an account here, and no scheme
-//! invented on top of that would add anything.
-//!
 //! ```text
 //! spatiand-host --fingerprint       # what this host is
-//! spatiand-host --pair              # trust the next session that connects, for two minutes
+//! spatiand-host --pair              # open pairing for two minutes, and show the code to type
 //! spatiand-host --trust <60 hex>    # trust one by name
 //! spatiand-host --paired            # who is trusted
 //! spatiand-host --forget <its name> # and undo it
 //! ```
 //!
-//! This is deliberately *not* a PIN typed into the headset. A PIN exists so that two machines
-//! with no shared context can authenticate over an untrusted network; ssh has already done
-//! that job here, and better. When this has to work for somebody with no shell — a person
-//! installing a package on a machine with a screen — a PIN is the thing to add, and the trust
-//! store below does not change.
+//! **Pairing is a code shown here and typed on the device.** `--pair` opens a window and prints
+//! a fresh six-digit code; the person types it on the device, and the two prove to each other
+//! that they know it, with both certificates bound into the proof (see
+//! `spatiand_stream::pairing`). Nothing asks the person here to say yes, and the code never
+//! crosses the network.
 //!
-//! **A window rather than a permanent invitation.** `--pair` trusts the *next* session to
-//! connect and then closes, so a host is never left standing open. Two minutes is long enough
-//! to put a headset on.
+//! It used to be the other way round: the device showed a code worked out from both
+//! certificates and the person here answered y/N. That trusted whoever connected first and
+//! was answered yes -- and anybody can work that code out, so a device showing it proved
+//! nothing. Being able to run `--pair` proves who you are *here*; it says nothing about which
+//! device connected in the meantime, and a paired device is written into the owner's roster,
+//! where the person's key and data follow it. Typing the code is what proves the device is the
+//! one in your hand.
+//!
+//! **A window rather than a permanent invitation.** `--pair` admits one device and closes, so a
+//! host is never left standing open. Two minutes is long enough to put a headset on; three
+//! wrong codes close it early (`spatiand_stream::pairing::ATTEMPTS`).
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -28,7 +32,7 @@ use std::path::{Path, PathBuf};
 use spatiand_stream::Fingerprint;
 
 /// How long `--pair` waits for a session to appear.
-pub const PAIRING_WINDOW: std::time::Duration = std::time::Duration::from_secs(120);
+pub const PAIRING_WINDOW: std::time::Duration = spatiand_stream::pairing::WINDOW;
 
 /// The machines allowed to connect.
 #[derive(Debug, Default, Clone)]

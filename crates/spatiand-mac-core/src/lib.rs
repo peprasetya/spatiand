@@ -341,20 +341,21 @@ pub unsafe extern "C" fn sp_fingerprint(core: *mut Core) -> *mut c_char {
         .unwrap_or(std::ptr::null_mut())
 }
 
+/// Pair with a host, proving `code`: the six digits it shows, as the person typed them here.
+/// Reports "proving" once connected, then "paired" -- only when both ends proved the code -- or
+/// "pair_failed" with why.
+///
 /// # Safety
-/// `core` from `sp_start`, `address` a C string.
+/// `core` from `sp_start`, `address` and `code` C strings.
 #[no_mangle]
-pub unsafe extern "C" fn sp_pair(core: *mut Core, address: *const c_char) {
-    let (Some(core), Some(address)) = (core.as_ref(), string(address)) else { return };
+pub unsafe extern "C" fn sp_pair(core: *mut Core, address: *const c_char, code: *const c_char) {
+    let (Some(core), Some(address), Some(code)) = (core.as_ref(), string(address), string(code)) else { return };
     let identity = core.identity.clone();
     let callbacks = core.callbacks;
     core.runtime.spawn(async move {
-        let outcome = link::pair(&identity, &address, |p| {
-            let link::Pairing::Compare { fingerprint, code } = p;
-            callbacks.core(
-                "compare",
-                json!({ "fingerprint": fingerprint.to_string(), "code": code }),
-            );
+        let outcome = link::pair(&identity, &address, &code, |p| {
+            let link::Pairing::Proving { fingerprint } = p;
+            callbacks.core("proving", json!({ "fingerprint": fingerprint.to_string() }));
         })
         .await;
         match outcome {

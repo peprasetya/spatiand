@@ -140,10 +140,8 @@ pub enum ShellEvent {
     /// Start one of Spatiand's own applications, which Spatiand carries and runs here.
     LaunchOwn(AppEntry),
     LaunchRemote { host: String, app: String },
-    /// Start pairing with a computer at this address.
-    PairHost(String),
-    /// The wearer has compared the codes and they match.
-    ConfirmPairing,
+    /// Pair with the computer at this address, proving the code the wearer typed.
+    PairHost { address: String, code: String },
     /// Stop the pairing in progress.
     CancelPairing,
     /// Stop knowing this computer.
@@ -156,8 +154,7 @@ pub enum ShellEvent {
 fn hosts_event(action: HostsAction) -> Option<ShellEvent> {
     match action {
         HostsAction::None => None,
-        HostsAction::Pair(address) => Some(ShellEvent::PairHost(address)),
-        HostsAction::Confirm => Some(ShellEvent::ConfirmPairing),
+        HostsAction::Pair { address, code } => Some(ShellEvent::PairHost { address, code }),
         HostsAction::Cancel => Some(ShellEvent::CancelPairing),
         HostsAction::Forget(address) => Some(ShellEvent::ForgetHost(address)),
     }
@@ -1209,7 +1206,7 @@ mod tests {
     }
 
     #[test]
-    fn pairing_a_computer_from_the_hud_is_typing_its_address_and_pressing_enter() {
+    fn pairing_a_computer_from_the_hud_is_typing_its_address_then_its_code() {
         let mut s = shell();
         s.handle(Intent::ToggleHud);
         while s.hud().focused().action != HudAction::OpenHosts {
@@ -1223,10 +1220,16 @@ mod tests {
         assert_eq!(s.handle(Intent::Accept), None);
         assert!(s.wants_text());
         s.type_text("workshop");
-        assert_eq!(s.type_enter(), Some(ShellEvent::PairHost("workshop".into())));
+        assert_eq!(s.type_enter(), None, "the address leads to the code");
+        assert!(s.wants_text());
+        s.type_text("482913");
+        assert_eq!(
+            s.type_enter(),
+            Some(ShellEvent::PairHost { address: "workshop".into(), code: "482913".into() })
+        );
         assert!(!s.wants_text());
 
-        // B from the comparison cancels it, and B again returns to the HUD it came from.
+        // B while it is proving cancels it, and B again returns to the HUD it came from.
         assert_eq!(s.handle(Intent::Back), Some(ShellEvent::CancelPairing));
         assert_eq!(s.handle(Intent::Back), Some(ShellEvent::ModeChanged(Mode::Hud)));
     }

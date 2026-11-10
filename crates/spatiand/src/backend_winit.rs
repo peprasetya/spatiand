@@ -315,8 +315,7 @@ pub fn run(
                     // Remote computers are served by the headset backend, which holds the
                     // hosts; this one is for working on the shell at a desk.
                     ShellEvent::LaunchRemote { .. }
-                    | ShellEvent::PairHost(_)
-                    | ShellEvent::ConfirmPairing
+                    | ShellEvent::PairHost { .. }
                     | ShellEvent::CancelPairing
                     | ShellEvent::ForgetHost(_)
                     | ShellEvent::Bluetooth(_) => {

@@ -7,8 +7,10 @@ import CSpatiand
 import Foundation
 
 final class HostLink {
-    /// A device has connected: who, a short name, where from, the six digits to compare, and whether it is paired.
+    /// A device has connected: who, a short name, where from, and whether it is paired.
     var onJoined: (([String: Any]) -> Void)?
+    /// How a pairing went: {"paired": short}, {"wrong": {who, left}} or {"locked": true}.
+    var onPairing: (([String: Any]) -> Void)?
     /// A session has been let in and should be greeted.
     var onAttached: (() -> Void)?
     /// What the session said: a `ClientMessage` as serde writes it.
@@ -40,6 +42,8 @@ final class HostLink {
                     }
                 } else if let left = object["left"] as? [String: Any] {
                     link.onLeft?((left["refused"] as? Bool) ?? false)
+                } else if let pairing = object["pairing"] as? [String: Any] {
+                    link.onPairing?(pairing)
                 }
             }
         }
@@ -80,8 +84,13 @@ final class HostLink {
         }
     }
 
-    func openPairing(_ open: Bool) { if let core { sp_host_open_pairing(core, open ? 1 : 0) } }
-    func decide(_ admit: Bool) { if let core { sp_host_decide(core, admit ? 1 : 0) } }
+    /// Open pairing and get the code to show here, or close it (nil).
+    @discardableResult
+    func openPairing(_ open: Bool) -> String? {
+        guard let core, let raw = sp_host_open_pairing(core, open ? 1 : 0) else { return nil }
+        defer { sp_free_string(raw) }
+        return String(cString: raw)
+    }
     func trust(_ fingerprint: String) { if let core { sp_host_trust(core, fingerprint) } }
     var pairedCount: Int { core.map { Int(sp_host_paired_count($0)) } ?? 0 }
     func forgetAll() { if let core { sp_host_forget_all(core) } }

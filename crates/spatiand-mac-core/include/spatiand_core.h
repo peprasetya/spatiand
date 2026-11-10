@@ -19,7 +19,7 @@ typedef struct sp_core sp_core;
 
 // One JSON object per call. Either {"host": <what the host said>} (a HostMessage as serde writes
 // it, with each application's icon as a base64 string) or {"core": {...}} for what the core
-// itself has to say: "connected", "disconnected", "compare", "paired", "pair_failed".
+// itself has to say: "connected", "disconnected", "proving", "paired", "pair_failed".
 typedef void (*sp_event_fn)(void *user, const char *json);
 
 // One whole picture for one window. `codec`: 0 H.264, 1 HEVC, 2 AV1. The bytes are an
@@ -38,9 +38,11 @@ sp_core *sp_start(const char *identity_dir, void *user, sp_event_fn on_event,
 // This computer's fingerprint, in full. Free with sp_free_string.
 char *sp_fingerprint(sp_core *core);
 
-// Pair with a host that is waiting to be paired with. Reports through events: "compare" with the
-// code to read out, then "paired" or "pair_failed".
-void sp_pair(sp_core *core, const char *address);
+// Pair with a host that is waiting to be paired with, proving `code`: the six digits the host
+// shows, as the person typed them here. Never sent; see crates/spatiand-stream/src/pairing.rs.
+// Reports through events: "proving" once connected, then "paired" (both ends proved the code)
+// or "pair_failed" with why.
+void sp_pair(sp_core *core, const char *address, const char *code);
 
 // Open a session with a paired host. `fingerprint` is the host's, in full hex.
 void sp_connect(sp_core *core, const char *address, const char *fingerprint);
@@ -58,8 +60,10 @@ void sp_stop(sp_core *core);
 
 typedef struct HostCore sp_host;
 
-// What the app hears, as one JSON object per call: {"joined": {who, short, address, code, known}},
-// {"said": <a ClientMessage as serde writes it, bytes as base64>}, {"left": {refused}}.
+// What the app hears, as one JSON object per call: {"joined": {who, short, address, known}},
+// {"said": <a ClientMessage as serde writes it, bytes as base64>}, {"left": {refused}}, and
+// while pairing {"pairing": {"paired": short}}, {"pairing": {"wrong": {who, left}}} or
+// {"pairing": {"locked": true}} (three wrong codes closed it).
 // Start listening on `port` with the identity in `identity_dir`. NULL if it could not.
 sp_host *sp_host_start(const char *identity_dir, uint16_t port, void *user, sp_event_fn on_event);
 void sp_host_stop(sp_host *host);
@@ -72,10 +76,11 @@ void sp_host_video(sp_host *host, uint16_t window, int32_t keyframe, uint64_t ca
                    const uint8_t *data, size_t length);
 // A little of one application's sound: signed 16-bit little-endian, interleaved, 48 kHz.
 void sp_host_audio(sp_host *host, const char *app, uint16_t channels, const uint8_t *data, size_t length);
-// Let a device that has never been here pair, or stop.
-void sp_host_open_pairing(sp_host *host, int32_t open);
-// The owner's answer about the device waiting to be let in.
-void sp_host_decide(sp_host *host, int32_t admit);
+// Let a device that has never been here pair, or stop. Opening returns the fresh six-digit code
+// to show at this Mac (and nowhere else; it is never sent): the device's user types it, and a
+// device that proves it is paired with nobody asked. Free with sp_free_string. Closing returns
+// NULL.
+char *sp_host_open_pairing(sp_host *host, int32_t open);
 void sp_host_trust(sp_host *host, const char *fingerprint);
 int32_t sp_host_paired_count(sp_host *host);
 void sp_host_forget_all(sp_host *host);

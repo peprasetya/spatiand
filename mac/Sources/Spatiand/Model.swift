@@ -40,8 +40,8 @@ final class Model {
     /// The menu rebuilds itself when it opens, so most changes need no notice; this is for the
     /// ones that should show without it (the icon, a pairing in progress).
     var onChange: (() -> Void)?
-    /// Pairing, as the user sees it: the code to compare, and how it ended.
-    var onCompare: ((String, String) -> Void)?
+    /// Pairing, as the user sees it: connected and proving the code, and how it ended.
+    var onProving: (() -> Void)?
     var onPaired: ((PairedHost) -> Void)?
     var onPairFailed: ((String) -> Void)?
     var onProblem: ((String) -> Void)?
@@ -140,7 +140,7 @@ final class Model {
         link.say(["Glasses": ["on": glassesOn]])
     }
 
-    func pair(address: String) { link.pair(address: address) }
+    func pair(address: String, code: String) { link.pair(address: address, code: code) }
 
     func forget(_ host: PairedHost) {
         if self.host == host { disconnect(); self.host = nil }
@@ -189,10 +189,8 @@ final class Model {
                     }
                 }
             }
-        case "compare":
-            if let d = detail as? [String: Any], let code = d["code"] as? String, let fp = d["fingerprint"] as? String {
-                onCompare?(code, fp)
-            }
+        case "proving":
+            onProving?()
         case "paired":
             if let d = detail as? [String: Any], let name = d["name"] as? String,
                let fp = d["fingerprint"] as? String, let address = d["address"] as? String {

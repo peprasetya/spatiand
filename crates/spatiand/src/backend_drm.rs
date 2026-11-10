@@ -1387,8 +1387,7 @@ pub fn run(
             for event in shell_events {
                 match event {
                     ShellEvent::LaunchRemote { host, app } => remotes.launch(&host, &app),
-                    ShellEvent::PairHost(address) => remotes.pair(address),
-                    ShellEvent::ConfirmPairing => remotes.confirm(),
+                    ShellEvent::PairHost { address, code } => remotes.pair(address, code),
                     ShellEvent::CancelPairing => remotes.cancel(),
                     ShellEvent::ForgetHost(address) => remotes.forget(&address, &mut prefs),
                     ShellEvent::Bluetooth(action) => bluetooth.act(action),

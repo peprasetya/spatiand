@@ -40,6 +40,7 @@ pub mod clipboard;
 pub mod control;
 pub mod keys;
 pub mod link;
+pub mod pairing;
 pub mod transport;
 pub mod video;
 

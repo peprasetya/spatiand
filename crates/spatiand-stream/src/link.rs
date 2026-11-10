@@ -12,7 +12,7 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use crate::transport::{client_first_contact, pairing_code, peer_fingerprint, Fingerprint, Identity};
+use crate::transport::{client_first_contact, peer_fingerprint, Fingerprint, Identity};
 use crate::{ClientMessage, HostMessage};
 
 /// Where a host listens unless told otherwise.
@@ -103,11 +103,12 @@ fn has_port(address: &str) -> bool {
 /// How a pairing is going.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pairing {
-    /// Connected, and this is what the host is. Show the code.
-    Compare { fingerprint: Fingerprint, code: String },
+    /// Connected, and this is the certificate the host presented: the code is being proved
+    /// against it.
+    Proving { fingerprint: Fingerprint },
 }
 
-/// The outcome of a pairing the host agreed to.
+/// The outcome of a pairing both ends proved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paired {
     pub fingerprint: Fingerprint,
@@ -115,18 +116,23 @@ pub struct Paired {
     pub name: String,
 }
 
-/// Pair with a host that is waiting to be paired with.
+/// Pair with a host that is waiting to be paired with, using the code shown at it.
 ///
-/// Connects without knowing what the host is, reports the host's fingerprint and the code
-/// both ends will show, then waits for the host to be told yes or no by the person at it.
-/// **It does not decide anything.** Whether the wearer agrees the codes match is asked
-/// separately, and nothing should be written down unless both the host said yes here *and* the
-/// wearer said yes there: a host saying yes proves only that *something* said yes.
+/// `code` is what the person typed on this device (see [`crate::pairing::typed`]); it is never
+/// sent. Connects without knowing what the host is, then proves the code with the host over
+/// that connection, both certificates bound in (see [`crate::pairing`]). `Ok` only when the
+/// host has proved it knows the code too **and** accepted this device's proof: then, and only
+/// then, may the host be written down. A wrong code, a machine in the middle, or a host that
+/// lets this device in without proving anything (one built before this scheme) is an `Err`,
+/// and nothing is to be written down.
 pub async fn pair(
     identity: &Identity,
     address: &str,
+    code: &str,
     mut progress: impl FnMut(Pairing),
 ) -> Result<Paired, String> {
+    let code = crate::pairing::typed(code)
+        .ok_or_else(|| format!("the code is the {} digits shown on the host", crate::pairing::DIGITS))?;
     let target = resolve(address).await?;
     let endpoint = client_first_contact(identity)?;
     let connection = endpoint
@@ -139,62 +145,69 @@ pub async fn pair(
 
     let fingerprint = peer_fingerprint(&connection)
         .ok_or_else(|| "the host presented no certificate".to_string())?;
-    progress(Pairing::Compare {
-        fingerprint,
-        code: pairing_code(&identity.fingerprint(), &fingerprint),
-    });
+    progress(Pairing::Proving { fingerprint });
 
-    say(
-        &connection,
-        &ClientMessage::Hello {
-            version: crate::VERSION,
-            codecs: Vec::new(),
-            max_size: (0, 0),
-            refresh_mhz: 0,
-            session: "spatiand pairing".into(),
-        },
-    )
-    .await
-    .map_err(|_| not_pairing(address))?;
+    let (prover, start) = crate::pairing::Prover::start(&code, identity.fingerprint(), fingerprint);
+    say(&connection, &start).await.map_err(|_| not_pairing(address))?;
 
-    // The host says nothing until somebody at it answers, so this waits on a person.
-    let wait = async {
-        let control = connection.accept_uni().await.map_err(|_| not_pairing(address))?;
-        let mut control = control;
+    // A host answers at once: there is nobody at it to wait for.
+    let exchange = async {
+        let mut control = connection.accept_uni().await.map_err(|_| not_pairing(address))?;
+        let mut prover = Some(prover);
         loop {
             let Some((message, rest)) = hear(control).await else {
-                return Err(format!("{address} closed the connection without saying yes"));
+                return Err(if prover.is_some() {
+                    not_pairing(address)
+                } else {
+                    format!("{address} closed the connection without letting this device in")
+                });
             };
             control = rest;
             match message {
+                HostMessage::PairReply { spake, confirm } => {
+                    let Some(proving) = prover.take() else {
+                        return Err(format!("{address} answered twice; not pairing with it"));
+                    };
+                    // A wrong code ends it here, before this device has said anything that
+                    // would let the host check a guess: it hangs up and writes nothing down.
+                    let confirmation = proving.finish(&spake, &confirm)?;
+                    say(&connection, &confirmation)
+                        .await
+                        .map_err(|_| format!("{address} went away before the pairing was done"))?;
+                }
                 HostMessage::Welcome { host, .. } => {
-                    return Ok(Paired {
-                        fingerprint,
-                        name: host,
-                    })
+                    if prover.is_some() {
+                        // Let in without proving anything: a host from before codes were typed.
+                        return Err(format!(
+                            "{address} runs an older spatiand-host, which pairs without a code; \
+                             update it, then pair again. Nothing was written down."
+                        ));
+                    }
+                    return Ok(Paired { fingerprint, name: host });
                 }
                 HostMessage::Refused { reason, .. } => return Err(reason),
                 _ => {}
             }
         }
     };
-    let result = tokio::time::timeout(Duration::from_secs(180), wait)
+    let result = tokio::time::timeout(Duration::from_secs(30), exchange)
         .await
-        .unwrap_or_else(|_| Err("nobody answered on the host in three minutes".into()));
+        .unwrap_or_else(|_| Err(format!("{address} stopped answering part way through pairing")));
     connection.close(0u32.into(), b"pairing done");
     result
 }
 
 fn not_pairing(address: &str) -> String {
     format!(
-        "{address} is not expecting a new headset. On it, run  spatiand-host --pair  and try \
-         again within two minutes."
+        "{address} is not expecting a new device. On it, run  spatiand-host --pair  and type the \
+         code it shows within two minutes."
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pairing::{Verdict, Window, WRONG_CODE};
     use crate::transport::{server, Gate, Trust};
     use std::sync::Arc;
 
@@ -220,11 +233,129 @@ mod tests {
         });
     }
 
-    /// A host that lets anyone through its gate, and answers the first session the way the
-    /// real host does once the person at it has said `answer`.
-    async fn host_that_answers(answer: Option<&'static str>) -> (SocketAddr, Fingerprint, Arc<Gate>) {
+    /// A host that lets anyone through its gate and pairs the way the real ones do: it reads
+    /// what the device says, answers with [`crate::pairing::Window`], and lets the device in
+    /// only on a confirmation that checks out. Each connection is one attempt; every verdict is
+    /// reported on `verdicts`.
+    async fn pairing_host(
+        code: &'static str,
+    ) -> (SocketAddr, Fingerprint, Arc<Gate>, tokio::sync::mpsc::UnboundedReceiver<Verdict>) {
         let identity = Identity::new().unwrap();
         let fingerprint = identity.fingerprint();
+        let gate = Arc::new(Gate::new(Vec::new()));
+        gate.set_open(true);
+        let endpoint =
+            server("127.0.0.1:0".parse().unwrap(), &identity, Trust::Gate(gate.clone())).unwrap();
+        let address = endpoint.local_addr().unwrap();
+        let (verdicts, heard) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut window = Window::with_code(code.into(), Duration::from_secs(120));
+            while let Some(incoming) = endpoint.accept().await {
+                let Ok(connection) = incoming.await else { continue };
+                let who = peer_fingerprint(&connection).unwrap();
+                let Ok(mut control) = connection.open_uni().await else { continue };
+                let mut verdict = None;
+                while let Ok(stream) = connection.accept_uni().await {
+                    let mut stream = stream;
+                    let Ok(bytes) = stream.read_to_end(64 * 1024).await else { break };
+                    match crate::from_bytes::<ClientMessage>(&bytes) {
+                        Ok(ClientMessage::PairStart { spake }) => {
+                            match window.start(fingerprint, who, &spake) {
+                                Ok(reply) => {
+                                    let _ = tell(&mut control, &reply).await;
+                                }
+                                Err(reason) => {
+                                    let _ = tell(&mut control, &HostMessage::Refused { version: crate::VERSION, reason }).await;
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(ClientMessage::PairConfirm { confirm }) => {
+                            let v = window.confirm(who, &confirm);
+                            let message = match v {
+                                Verdict::Paired(_) => HostMessage::Welcome {
+                                    version: crate::VERSION,
+                                    host: "workshop".into(),
+                                    reattached: false,
+                                },
+                                _ => HostMessage::Refused {
+                                    version: crate::VERSION,
+                                    reason: WRONG_CODE.into(),
+                                },
+                            };
+                            let _ = tell(&mut control, &message).await;
+                            verdict = Some(v);
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                let v = verdict.or_else(|| window.abandon(&who));
+                if let Some(v) = v {
+                    let _ = verdicts.send(v);
+                }
+                let _ = connection.closed().await;
+            }
+        });
+        (address, fingerprint, gate, heard)
+    }
+
+    #[test]
+    fn the_right_code_pairs_and_learns_the_hosts_name() {
+        let session = Identity::new().unwrap();
+        runtime().block_on(async {
+            let (address, host, _gate, mut verdicts) = pairing_host("482913").await;
+            let mut seen = Vec::new();
+            let paired = pair(&session, &address.to_string(), "482 913", |p| seen.push(p))
+                .await
+                .expect("pairs");
+            assert_eq!(paired.fingerprint, host);
+            assert_eq!(paired.name, "workshop");
+            assert_eq!(seen, vec![Pairing::Proving { fingerprint: host }]);
+            assert_eq!(verdicts.recv().await, Some(Verdict::Paired(session.fingerprint())));
+        });
+    }
+
+    #[test]
+    fn a_wrong_code_is_refused_and_the_host_admits_nothing() {
+        let session = Identity::new().unwrap();
+        runtime().block_on(async {
+            let (address, _, _gate, mut verdicts) = pairing_host("482913").await;
+            let error = pair(&session, &address.to_string(), "111111", |_| {}).await.unwrap_err();
+            assert!(error.contains(WRONG_CODE), "{error}");
+            assert_eq!(verdicts.recv().await, Some(Verdict::Wrong { left: 2 }));
+        });
+    }
+
+    #[test]
+    fn three_wrong_codes_close_the_window_even_to_the_right_one() {
+        let session = Identity::new().unwrap();
+        runtime().block_on(async {
+            let (address, _, _gate, mut verdicts) = pairing_host("482913").await;
+            for typed in ["111111", "222222", "333333"] {
+                assert!(pair(&session, &address.to_string(), typed, |_| {}).await.is_err());
+            }
+            assert_eq!(verdicts.recv().await, Some(Verdict::Wrong { left: 2 }));
+            assert_eq!(verdicts.recv().await, Some(Verdict::Wrong { left: 1 }));
+            assert_eq!(verdicts.recv().await, Some(Verdict::Locked));
+            let error = pair(&session, &address.to_string(), "482913", |_| {}).await.unwrap_err();
+            assert!(error.contains("too many"), "{error}");
+        });
+    }
+
+    #[test]
+    fn something_not_a_code_is_not_sent_at_all() {
+        let session = Identity::new().unwrap();
+        runtime().block_on(async {
+            let (address, _, _gate, _verdicts) = pairing_host("482913").await;
+            let error = pair(&session, &address.to_string(), "48291", |_| {}).await.unwrap_err();
+            assert!(error.contains("digits"), "{error}");
+        });
+    }
+
+    /// A host from before codes were typed: it lets the device in on its own say-so.
+    async fn old_host() -> SocketAddr {
+        let identity = Identity::new().unwrap();
         let gate = Arc::new(Gate::new(Vec::new()));
         gate.set_open(true);
         let endpoint =
@@ -234,54 +365,20 @@ mod tests {
             let Some(incoming) = endpoint.accept().await else { return };
             let Ok(connection) = incoming.await else { return };
             let Ok(mut control) = connection.open_uni().await else { return };
-            // The person at the host takes a moment.
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let message = match answer {
-                Some(name) => HostMessage::Welcome {
-                    version: crate::VERSION,
-                    host: name.into(),
-                    reattached: false,
-                },
-                None => HostMessage::Refused {
-                    version: crate::VERSION,
-                    reason: "the code was not confirmed on the host".into(),
-                },
-            };
-            let _ = tell(&mut control, &message).await;
+            let welcome = HostMessage::Welcome { version: crate::VERSION, host: "old".into(), reattached: false };
+            let _ = tell(&mut control, &welcome).await;
             let _ = connection.closed().await;
         });
-        (address, fingerprint, gate)
+        address
     }
 
     #[test]
-    fn pairing_shows_the_code_first_and_learns_the_hosts_name_when_it_says_yes() {
+    fn a_host_that_lets_the_device_in_without_proof_is_not_paired_with() {
         let session = Identity::new().unwrap();
         runtime().block_on(async {
-            let (address, host, _gate) = host_that_answers(Some("workshop")).await;
-            let mut seen = Vec::new();
-            let paired = pair(&session, &address.to_string(), |p| seen.push(p))
-                .await
-                .expect("pairs");
-            assert_eq!(paired.fingerprint, host);
-            assert_eq!(paired.name, "workshop");
-            assert_eq!(
-                seen,
-                vec![Pairing::Compare {
-                    fingerprint: host,
-                    code: pairing_code(&session.fingerprint(), &host),
-                }],
-                "the code has to be on screen before the host is asked"
-            );
-        });
-    }
-
-    #[test]
-    fn a_host_that_says_no_is_a_failed_pairing_with_its_reason() {
-        let session = Identity::new().unwrap();
-        runtime().block_on(async {
-            let (address, _, _gate) = host_that_answers(None).await;
-            let error = pair(&session, &address.to_string(), |_| {}).await.unwrap_err();
-            assert!(error.contains("not confirmed"), "{error}");
+            let address = old_host().await;
+            let error = pair(&session, &address.to_string(), "482913", |_| {}).await.unwrap_err();
+            assert!(error.contains("older spatiand-host"), "{error}");
         });
     }
 
@@ -289,9 +386,9 @@ mod tests {
     fn a_host_that_is_not_pairing_says_how_to_make_it() {
         let session = Identity::new().unwrap();
         runtime().block_on(async {
-            let (address, _, gate) = host_that_answers(Some("x")).await;
+            let (address, _, gate, _verdicts) = pairing_host("482913").await;
             gate.set_open(false);
-            let error = pair(&session, &address.to_string(), |_| {}).await.unwrap_err();
+            let error = pair(&session, &address.to_string(), "482913", |_| {}).await.unwrap_err();
             assert!(error.contains("spatiand-host --pair"), "{error}");
         });
     }

@@ -174,7 +174,9 @@ Mac's at once. Plugged in again, every one of them is in the room.
 
 ## The Mac as a host
 
-Switched on in Spatiand's settings (Computers), and paired from its menu. To a Deck or a Beam
+Switched on in Spatiand's settings (Computers), and paired from its menu: **Let a new device
+pair** shows a six-digit code at the Mac, typed on the device and proved, never sent
+(`spatiand_stream::pairing`; three wrong codes close it). To a Deck or a Beam
 Pro it is a host like the Linux one, with these differences, which are a Mac's:
 
 * **Its windows are already open, on a screen of its own.** So at attach each is *offered*
@@ -206,7 +208,7 @@ when run from the bundle. **The ones marked ✋ move the Mac's real pointer.**
 | `--selftest-windows [--and-choose]` | the list of windows |
 | `--selftest-hover <App> <title>` | moves over a window as the room does |
 | `--picture-settings <file>` | the settings window, to a PNG (`SPATIAND_SETTINGS_PAGE=0…4`) |
-| `--serve-host <s>` | this Mac as a host only; `crates/spatiand-stream/examples/probe-session` connects to it (`--show-screens`) |
+| `--serve-host <s>` | this Mac as a host only, pairing open (it prints `pairing code ......` for `probe-pair`); `crates/spatiand-stream/examples/probe-session` connects to it (`--show-screens`) |
 
 ## Checked on real glasses, and not
 

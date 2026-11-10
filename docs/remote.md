@@ -181,7 +181,7 @@ written to a file that decodes to the window.
 
 ```text
 spatiand-host --fingerprint          # what this host is
-spatiand-host --pair                 # trust the next session to connect, for two minutes
+spatiand-host --pair                 # open pairing for two minutes; shows the code to type on the device
 spatiand-host --paired / --trust / --forget
 cargo run --release -p spatiand-host --example probe-session -- <host:port> <fingerprint> \
     --launch chrome --out /tmp/seen.hevc
@@ -190,16 +190,34 @@ cargo run --release -p spatiand-host --example probe-session -- <host:port> <fin
 `probe-session` is a session with no headset: it does what Spatiand will do, and is the way to
 check the link without a compositor, a GPU or anybody wearing anything.
 
-### Pairing is done over ssh, on purpose
+### Pairing is a code shown at the host and typed on the device
 
-`--pair` trusts the **next** session to connect and then closes the window. There is no PIN and
-no web interface, because the shell you type that command into has already proved who you are —
-anyone who can run it has an account on the host. A PIN exists to bootstrap trust between
-machines with no shared context; ssh is that context, and it is stronger.
+*Rewritten 2026-11-10; until then `--pair` trusted the next session to connect, the device showed
+a code worked out from both certificates and the host asked y/N.* That was wrong: ssh proves who
+is at the **host**, and nothing about which device connected in the meantime. Anyone who reached
+the host in those two minutes and was answered "yes" -- by a person who saw the code already on
+their own screen and pressed y -- was paired, and a paired device is put on the owner's roster,
+where the person's key and data follow it. The code proved nothing, because anyone can work it out.
 
-What that leaves for later is somebody with no shell — a person installing a package on a
-machine with a screen — and for them a PIN shown on that screen slots into the same trust store
-without changing anything else.
+Now (`spatiand_stream::pairing`, the same code on the Linux and the Mac host):
+
+1. `spatiand-host --pair` (or the Mac's **Let a new device pair**, or the settings app's **Pair a
+   headset**) opens the window and **shows a fresh random six-digit code at the host only**. It is
+   never sent, and nobody at the host is asked to say yes.
+2. On the device: Remote computers → Add a computer, the host's address, then **the code, typed**.
+   The device never shows a code of its own.
+3. The two run SPAKE2 with the code as the password and both TLS certificate fingerprints as the
+   identities (device A, host B), then confirm the key both ways (HMAC-SHA256): the host sends
+   its confirmation with its reply, the device checks it -- a wrong code ends there with nothing
+   written down -- and sends its own, which the host checks before it writes the device down
+   and lets it in.
+4. A wrong code costs an attempt; three close the window. A man in the middle has a different
+   certificate on each leg, so it cannot relay one leg into the other and is left with one guess.
+
+A device not paired is told nothing but the pairing replies, and nothing it says but its pairing
+messages is listened to -- not even its microphone. A device from before this change that tries to
+pair is refused with "update Spatiand on this device"; a new device that meets an old host is let
+in without proof, notices, and writes nothing down ("update it, then pair again").
 
 **Trust is a list of certificate fingerprints, and an empty list means nobody.** Not an address
 range: `100.64.0.0/10` is shared carrier space, which a phone tether hands out, so "it is on
@@ -450,7 +468,8 @@ any other application, so it arrives in the headset as an ordinary window:
   is not where the person choosing is looking.
 * **Network** — the bitrate ceiling (shared between open windows), frame-rate cap, idle rate,
   port.
-* **Pair a headset** — the same code comparison as `spatiand-host --pair`, without a terminal.
+* **Pair a headset** — the same as `spatiand-host --pair`, without a terminal: it shows the code
+  to type on the headset (see *Pairing is a code shown at the host* above).
 
 It writes `apps.toml` and `host.toml` atomically; the host checks both once a second, re-serves
 the catalogue to a connected headset, and restarts streams when the bandwidth changes. Measured:

@@ -167,7 +167,7 @@ mod tests {
     }
 
     #[test]
-    fn a_real_keyboards_enter_sends_the_address() {
+    fn a_real_keyboards_enter_sends_the_address_and_then_the_code() {
         let mut shell = address_page();
         let mut keys = MenuKeys::default();
         let mut events = Vec::new();
@@ -175,7 +175,12 @@ mod tests {
             keys.text(&mut shell, code, true, &mut events); // w o r k
         }
         keys.text(&mut shell, spatiand_shell::keyboard::KEY_ENTER, true, &mut events);
-        assert_eq!(events, [ShellEvent::PairHost("work".into())]);
+        assert!(events.is_empty(), "the address leads to the code: {events:?}");
+        for code in [5, 3, 4, 10, 11, 2] {
+            keys.text(&mut shell, code, true, &mut events); // 4 2 3 9 0 1
+        }
+        keys.text(&mut shell, spatiand_shell::keyboard::KEY_ENTER, true, &mut events);
+        assert_eq!(events, [ShellEvent::PairHost { address: "work".into(), code: "423901".into() }]);
     }
 
     #[test]

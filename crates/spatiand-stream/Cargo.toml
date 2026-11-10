@@ -16,6 +16,11 @@ quinn = { version = "0.11", default-features = false, features = ["runtime-tokio
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rcgen = "0.14"
 sha2 = "0.10"
+# Pairing: the code typed on the device is proved, never sent. SPAKE2 turns six digits into a
+# shared key that a guesser gets one online try at; ring (already rustls' crypto) gives the
+# random code and the constant-time key confirmation. See `pairing`.
+spake2 = "0.4"
+ring = "0.17"
 tokio = { version = "1", features = ["rt", "net", "time", "io-util", "sync", "macros"] }
 
 [dev-dependencies]

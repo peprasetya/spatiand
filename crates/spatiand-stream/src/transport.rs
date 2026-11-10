@@ -29,7 +29,7 @@
 //! verify and nothing to expire: this is two machines that have met, not a browser visiting a
 //! stranger.
 //!
-//! Trust is established once, by pairing (see [`pairing_code`]), and written down. Until a host has been
+//! Trust is established once, by pairing (see [`crate::pairing`]), and written down. Until a host has been
 //! paired it trusts nobody, which is the only safe default — an address range is not an
 //! identity, and the one people reach for (`100.64.0.0/10`) is shared carrier space that a
 //! phone tether can hand out.
@@ -252,7 +252,8 @@ impl Gate {
     /// Let a stranger through the handshake, or stop doing so.
     ///
     /// Getting through is not being trusted: the host still decides what to do with a session
-    /// it has not paired with, and serves it nothing until the pairing is confirmed.
+    /// it has not paired with, and serves it nothing until it has proved the pairing code
+    /// (see [`crate::pairing`]).
     pub fn set_open(&self, open: bool) {
         self.open.store(open, std::sync::atomic::Ordering::SeqCst);
     }
@@ -330,9 +331,10 @@ fn server_config(
 /// Connect to a host this session has **not** met, to find out who it is.
 ///
 /// The one place a session accepts a certificate it was not told about, and it is safe only
-/// because of what happens next: nothing is written down until the wearer has compared the
-/// [`pairing_code`] shown here with the one the host shows, and said they match. A machine
-/// in the middle would have to present its own certificate, which gives a different code.
+/// because of what happens next: nothing is written down until the two ends have proved to
+/// each other that they know the code shown at the host, with both certificates' fingerprints
+/// bound into the proof (see [`crate::pairing`]). A machine in the middle would have to
+/// present its own certificate, which makes the proof fail even with the right code.
 ///
 /// Read the fingerprint off the connection with [`peer_fingerprint`].
 pub fn client_first_contact(identity: &Identity) -> Result<Endpoint, String> {
@@ -414,8 +416,13 @@ fn client_config(
     Ok(config)
 }
 
-/// The six digits both ends show while pairing, so a person can see they are talking to each
-/// other and not to something in between.
+/// Six digits both ends can show, so a person can see they are talking to each other and not
+/// to something in between.
+///
+/// **Not how a device pairs with a host** any more: that is a code shown only at the host and
+/// typed on the device, proved by [`crate::pairing`], because a comparison is only as good as
+/// the person answering it, and a "yes" pressed without looking let in whoever connected
+/// first. SpatiKey's own pairing with a Mac still compares these (see `docs/spatikey.md`).
 ///
 /// Numeric comparison, the way Bluetooth pairs a keyboard: each side computes the code from
 /// **both** fingerprints, so a machine in the middle — which must present its own certificate

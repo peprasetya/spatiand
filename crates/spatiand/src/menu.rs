@@ -300,7 +300,7 @@ fn card(shell: &Shell) -> Option<MenuModel> {
     }
 }
 
-/// The remote computers page: the list, the address being typed, or a code being compared.
+/// The remote computers page: the list, the address or the code being typed, or the pairing.
 fn hosts(hosts: &spatiand_shell::Hosts) -> MenuModel {
     use spatiand_shell::hosts::{Page, ADD_LABEL};
     match hosts.page() {
@@ -347,33 +347,47 @@ fn hosts(hosts: &spatiand_shell::Hosts) -> MenuModel {
             // The text being typed, as the one row, with a bar where the next letter goes.
             rows: vec![MenuRow::plain(format!("{}\u{2502}", hosts.typed()))],
             cursor: 0,
-            detail: "On the computer, run  spatiand-host --pair  first. Then type its name or \
-                     address here — its hostname, or something like 192.168.1.20 — and press \
-                     Enter."
+            detail: "On the computer, run  spatiand-host --pair  first: it shows a code. Then \
+                     type its name or address here — its hostname, or something like \
+                     192.168.1.20 — and press Enter."
                 .into(),
-            footer: "Enter connect    B back".into(),
+            footer: "Enter next    B back".into(),
+        },
+        Page::Code => MenuModel {
+            title: format!("Pairing with {}", hosts.typed()),
+            // The digits typed so far, in the two groups the computer shows them in, with a bar
+            // where the next one goes.
+            rows: vec![MenuRow::plain(format!("{}\u{2502}", code_shown(hosts.code())))],
+            cursor: 0,
+            detail: "Type the six-digit code the computer shows. Only a device that has it is \
+                     paired, and it is never sent: the two prove to each other that they know it."
+                .into(),
+            footer: "Enter pair    B back".into(),
         },
         Page::Pairing => {
             let pairing = hosts.pairing();
-            let mut rows = Vec::new();
-            if let Some(code) = &pairing.code {
-                rows.push(MenuRow::with(code.clone(), "the code"));
-            }
-            let footer = if pairing.finished {
-                "A done"
-            } else if pairing.code.is_some() && !hosts.confirmed() {
-                "A they match    B cancel"
-            } else {
-                "B cancel"
+            let footer = match (pairing.finished, pairing.succeeded) {
+                (true, true) => "A done",
+                (true, false) => "A try again    B back",
+                (false, _) => "B cancel",
             };
             MenuModel {
                 title: format!("Pairing with {}", pairing.address),
-                rows,
+                rows: Vec::new(),
                 cursor: 0,
                 detail: pairing.status.clone(),
                 footer: footer.into(),
             }
         }
+    }
+}
+
+/// A code as it is being typed: `482 9`, grouped as the computer shows it.
+fn code_shown(code: &str) -> String {
+    if code.len() > 3 {
+        format!("{} {}", &code[..3], &code[3..])
+    } else {
+        code.to_string()
     }
 }
 

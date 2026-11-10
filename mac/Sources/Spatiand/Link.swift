@@ -66,7 +66,7 @@ final class Link {
         return String(cString: raw)
     }
 
-    func pair(address: String) { if let core { sp_pair(core, address) } }
+    func pair(address: String, code: String) { if let core { sp_pair(core, address, code) } }
     func connect(address: String, fingerprint: String) { if let core { sp_connect(core, address, fingerprint) } }
     func disconnect() { if let core { sp_disconnect(core) } }
 

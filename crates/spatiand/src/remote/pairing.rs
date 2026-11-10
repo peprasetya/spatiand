@@ -1,9 +1,9 @@
 //! A pairing in progress, on its own thread.
 //!
-//! The protocol is in `spatiand_stream::link::pair`; this only runs it off the compositor
-//! thread and keeps what it learns where the compositor can look. The compositor polls — a
-//! pairing lasts as long as a person takes to read six digits twice, and a poll per frame is
-//! nothing next to that.
+//! The protocol is in `spatiand_stream::link::pair` and `spatiand_stream::pairing`; this only
+//! runs it off the compositor thread and keeps what it learns where the compositor can look.
+//! The compositor polls -- a pairing takes a round trip or two once the code is typed, and a
+//! poll per frame is nothing next to that.
 
 use std::sync::{Arc, Mutex};
 
@@ -13,7 +13,7 @@ use spatiand_stream::{Fingerprint, Identity};
 /// What the compositor can see of a pairing.
 #[derive(Debug, Clone, Default)]
 pub struct State {
-    pub code: Option<String>,
+    /// The certificate the host presented, once connected: the code is being proved against it.
     pub fingerprint: Option<Fingerprint>,
     /// Set once, when it is over.
     pub outcome: Option<Result<Paired, String>>,
@@ -27,7 +27,8 @@ pub struct Pairing {
 }
 
 impl Pairing {
-    pub fn start(address: String, identity_dir: std::path::PathBuf) -> Pairing {
+    /// Pair with `address`, proving `code`, the digits the wearer typed from the host's screen.
+    pub fn start(address: String, code: String, identity_dir: std::path::PathBuf) -> Pairing {
         let state: Arc<Mutex<State>> = Arc::default();
         let (cancel, cancelled) = tokio::sync::oneshot::channel::<()>();
         {
@@ -54,20 +55,19 @@ impl Pairing {
                     };
                     let outcome = runtime.block_on(async {
                         let progress = |p: Progress| {
-                            let Progress::Compare { fingerprint, code } = p;
-                            log::info!("pairing with {address}: code {code}");
+                            let Progress::Proving { fingerprint } = p;
+                            log::info!("pairing with {address}: it is {}; proving the code", fingerprint.short());
                             if let Ok(mut s) = state.lock() {
-                                s.code = Some(code);
                                 s.fingerprint = Some(fingerprint);
                             }
                         };
                         tokio::select! {
-                            outcome = link::pair(&identity, &address, progress) => outcome,
+                            outcome = link::pair(&identity, &address, &code, progress) => outcome,
                             _ = cancelled => Err("cancelled".into()),
                         }
                     });
                     match &outcome {
-                        Ok(paired) => log::info!("{address} said yes; it is {}", paired.name),
+                        Ok(paired) => log::info!("{address} and this device proved the code; it is {}", paired.name),
                         Err(e) => log::info!("pairing with {address} ended: {e}"),
                     }
                     finish(outcome);

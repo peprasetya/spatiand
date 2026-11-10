@@ -255,9 +255,14 @@ async fn session(
         tokio::select! {
             outgoing = outbox.recv() => {
                 let Some(outgoing) = outgoing else { break };
-                // **The only way out.** A stranger through an open pairing gate gets its refusal
-                // and nothing else: not a picture, a sound, a window's name or the clipboard.
-                let for_stranger = matches!(outgoing, ToSession::Close | ToSession::Control(HostMessage::Refused { .. }));
+                // **The only way out.** A stranger through an open pairing gate gets the host's
+                // half of the pairing exchange and its refusal, and nothing else: not a
+                // picture, a sound, a window's name or the clipboard.
+                let for_stranger = matches!(
+                    outgoing,
+                    ToSession::Close
+                        | ToSession::Control(HostMessage::Refused { .. } | HostMessage::PairReply { .. })
+                );
                 if !for_stranger && !admitted.load(Ordering::SeqCst) {
                     continue;
                 }
@@ -394,6 +399,12 @@ async fn heard(mut stream: quinn::RecvStream, inbox: Sender<FromSession>, admitt
     }
     let magic = first.len() >= 8
         && spatiand_stream::audio::AudioHeader::length(&first[..8].try_into().unwrap()).is_some();
+    // A microphone is played into this machine's sound only for a session that has been let
+    // in: a stranger in the pairing window is heard for its pairing messages and nothing else.
+    if magic && !admitted.load(Ordering::SeqCst) {
+        log::warn!("a session not let in tried to send sound; ignored");
+        return;
+    }
     if !magic {
         match stream.read_to_end(64 * 1024).await {
             Ok(rest) => {

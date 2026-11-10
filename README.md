@@ -91,8 +91,8 @@ nothing. Sound comes from the window, as a local application's does; keys, both
 pointers, the microphone and the controller go the other way — the controller
 as a gamepad of the host's own, played through the application's own layout.
 Applications keep running when the glasses go and are handed back when they
-return. A headset is paired once, by a code confirmed on the host, and is known
-by its certificate afterwards. Every host offers its own settings first, as an
+return. A headset is paired once, by a code the host shows and the headset's
+wearer types -- proved, never sent -- and is known by its certificate afterwards. Every host offers its own settings first, as an
 ordinary window that works with the pointer or with the D-pad, A and B.
 
 An application there can also be the room: a Second Life viewer draws the world

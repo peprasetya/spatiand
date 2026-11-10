@@ -59,6 +59,10 @@ final class MacHost {
     private var held: Set<UInt32> = []
     private var pairingTimer: Timer?
     private(set) var pairing = false
+    /// The code shown while pairing is open, and the panel it is shown in. Shown here only.
+    private(set) var pairingCode: String?
+    private var pairingPanel: NSPanel?
+    private var pairingText: NSTextField?
     private var lastClick: (at: Date, point: CGPoint, count: Int)?
     private var pressedButton: CGMouseButton = .left
 
@@ -82,6 +86,7 @@ final class MacHost {
         l.onAttached = { [unowned self] in greet() }
         l.onSaid = { [unowned self] in said($0) }
         l.onLeft = { [unowned self] refused in left(refused) }
+        l.onPairing = { [unowned self] in pairingNews($0) }
         clipboard.send = { [weak l] in l?.say($0) }
         clipboard.start()
         if ProcessInfo.processInfo.environment["SPATIAND_HOST_TRUST_SELF"] != nil { l.trust(l.fingerprint) }
@@ -95,8 +100,7 @@ final class MacHost {
     func stop() {
         poll?.invalidate()
         poll = nil
-        pairingTimer?.invalidate()
-        pairing = false
+        closePairing()
         detach()
         link = nil
         status = "Off"
@@ -111,48 +115,81 @@ final class MacHost {
 
     // MARK: pairing
 
-    /// Let a device that has never been here ask to pair, for two minutes.
+    /// Let a device that has never been here pair, for two minutes: a fresh code, shown here
+    /// and only here, for the person to type on the device. A device that proves it is paired;
+    /// nobody is asked to allow it (crates/spatiand-stream/src/pairing.rs).
     func openPairing() {
-        guard let link else { return }
-        link.openPairing(true)
+        guard let link, let code = link.openPairing(true) else { return }
         pairing = true
+        pairingCode = code
         pairingTimer?.invalidate()
         pairingTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: false) { [weak self] _ in self?.closePairing() }
+        // Printed for `--serve-host`, where whoever runs it is at this terminal; never logged.
+        if CommandLine.arguments.contains("--serve-host") { print("pairing code \(code)") }
+        showPairing("On the device, add this Mac (\(address)) and type the code\n\n\(Self.grouped(code))\n\nOnly a device that types it is paired. Keep it to yourself: a paired device can use this Mac's windows and ask its SpatiKey.")
         onChange?()
     }
 
     func closePairing() {
         link?.openPairing(false)
         pairing = false
+        pairingCode = nil
         pairingTimer?.invalidate()
+        pairingPanel?.close()
+        pairingPanel = nil
+        pairingText = nil
+        onChange?()
+    }
+
+    private static func grouped(_ code: String) -> String {
+        code.count == 6 ? "\(code.prefix(3)) \(code.suffix(3))" : code
+    }
+
+    /// The code, in a panel that stays up while pairing is open and does not stop anything else.
+    private func showPairing(_ text: String) {
+        if pairingPanel == nil {
+            let label = NSTextField(wrappingLabelWithString: "")
+            label.font = .systemFont(ofSize: 15)
+            label.frame = NSRect(x: 20, y: 20, width: 380, height: 170)
+            let panel = NSPanel(
+                contentRect: NSRect(x: 0, y: 0, width: 420, height: 210),
+                styleMask: [.titled, .utilityWindow], backing: .buffered, defer: false)
+            panel.title = "Pairing a device"
+            panel.contentView?.addSubview(label)
+            panel.center()
+            panel.level = .floating
+            pairingPanel = panel
+            pairingText = label
+        }
+        pairingText?.stringValue = text
+        NSApp.activate(ignoringOtherApps: true)
+        pairingPanel?.makeKeyAndOrderFront(nil)
+    }
+
+    /// What became of an attempt at the code.
+    private func pairingNews(_ news: [String: Any]) {
+        if let who = news["paired"] as? String {
+            closePairing()
+            status = "Paired with \(who)"
+            PairingUI.alert("Paired", "The device \(who) typed the code, and can use this Mac from now on.")
+        } else if let wrong = news["wrong"] as? [String: Any] {
+            let who = wrong["who"] as? String ?? "a device"
+            let left = wrong["left"] as? Int ?? 0
+            if let code = pairingCode {
+                showPairing("A device (\(who)) did not give the right code; \(left) tries left.\n\nOn the device, type the code\n\n\(Self.grouped(code))")
+            }
+        } else if news["locked"] != nil {
+            closePairing()
+            PairingUI.alert("Pairing closed", "Three wrong codes were given, so pairing closed. Nothing was written down.")
+        }
         onChange?()
     }
 
     private func joined(_ info: [String: Any]) {
         let known = info["known"] as? Bool ?? false
         let name = info["short"] as? String ?? "a device"
-        if known {
-            status = "Serving \(name)"
-            onChange?()
-            return
-        }
-        // For tests with no one at the Mac to press the button: the environment has to say so.
-        if ProcessInfo.processInfo.environment["SPATIAND_HOST_AUTO_ALLOW"] != nil {
-            link?.decide(true)
-            closePairing()
-            return
-        }
-        let code = info["code"] as? String ?? "??? ???"
-        let address = info["address"] as? String ?? ""
-        let alert = NSAlert()
-        alert.messageText = "A device wants to use this Mac's windows, and to ask its SpatiKey"
-        alert.informativeText = "Check that it shows the same six digits:\n\n\(code)\n\nIt is connecting from \(address). Allow it only if you started this and the digits match."
-        alert.addButton(withTitle: "Allow")
-        alert.addButton(withTitle: "Don't allow")
-        NSApp.activate(ignoringOtherApps: true)
-        let allowed = alert.runModal() == .alertFirstButtonReturn
-        link?.decide(allowed)
-        if allowed { closePairing() }
+        status = known ? "Serving \(name)" : "A device is proving the code"
+        onChange?()
     }
 
     private func left(_ refused: Bool) {

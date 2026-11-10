@@ -428,8 +428,6 @@ pub struct LocalClipboard {
 
 struct PairingInProgress {
     pairing: pairing::Pairing,
-    /// The wearer has said the codes match.
-    confirmed: bool,
     /// Over: kept only so the page can say how it ended.
     finished: Option<Result<String, String>>,
 }
@@ -504,19 +502,13 @@ impl Remotes {
         log::warn!("no host for {app_id}");
     }
 
-    pub fn pair(&mut self, address: String) {
+    /// Pair with the host at `address`, proving `code`: the digits it shows, as the wearer typed them.
+    pub fn pair(&mut self, address: String, code: String) {
         log::info!("pairing with {address}");
         self.pairing = Some(PairingInProgress {
-            pairing: pairing::Pairing::start(address, spatiand_track::config::config_dir()),
-            confirmed: false,
+            pairing: pairing::Pairing::start(address, code, spatiand_track::config::config_dir()),
             finished: None,
         });
-    }
-
-    pub fn confirm(&mut self) {
-        if let Some(p) = self.pairing.as_mut() {
-            p.confirmed = true;
-        }
     }
 
     pub fn cancel(&mut self) {
@@ -691,7 +683,7 @@ impl Remotes {
             .collect()
     }
 
-    /// Once a frame: finish a pairing that both ends agreed to, and tell the shell anything
+    /// Once a frame: finish a pairing that both ends proved, and tell the shell anything
     /// that changed.
     pub fn tick(
         &mut self,
@@ -762,10 +754,9 @@ impl Remotes {
                 p.finished = Some(Err(e));
                 return;
             }
-            // The host said yes. Written down only once the wearer has said so too: the host
-            // saying yes proves only that *something* said yes.
-            Some(Ok(paired)) if p.confirmed => paired,
-            Some(Ok(_)) => return,
+            // Both ends proved the code, with this connection's certificates bound in: this is
+            // the host whose screen the wearer read it from. Only now is it written down.
+            Some(Ok(paired)) => paired,
         };
         let address = p.pairing.address.clone();
         p.finished = Some(Ok(paired.name.clone()));
@@ -791,37 +782,19 @@ impl Remotes {
         let p = self.pairing.as_ref()?;
         let state = p.pairing.state();
         let address = p.pairing.address.clone();
-        let host_accepted = matches!(state.outcome, Some(Ok(_)));
         let (status, finished, succeeded) = match &p.finished {
             Some(Ok(name)) => (
                 format!("Paired with {name}. Its apps are in the launcher."),
                 true,
                 true,
             ),
-            Some(Err(e)) => (e.clone(), true, false),
-            None => match (&state.code, p.confirmed, host_accepted) {
-                (None, _, _) => (format!("Looking for {address}…"), false, false),
-                (Some(_), false, _) => (
-                    format!(
-                        "Check that {address} shows the same code, and answer yes there. Then \
-                         press A here if they match."
-                    ),
-                    false,
-                    false,
-                ),
-                (Some(_), true, false) => (
-                    format!("Waiting for {address} to be told yes…"),
-                    false,
-                    false,
-                ),
-                (Some(_), true, true) => ("Saving…".into(), false, false),
-            },
+            Some(Err(e)) => (format!("{}. Press A to type the code again.", e.trim_end_matches('.')), true, false),
+            None if state.fingerprint.is_none() => (format!("Looking for {address}…"), false, false),
+            None => (format!("Proving the code with {address}…"), false, false),
         };
         Some(PairingView {
             address,
-            code: state.code,
             status,
-            host_accepted,
             finished,
             succeeded,
         })

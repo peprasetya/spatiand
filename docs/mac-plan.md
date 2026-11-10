@@ -67,8 +67,8 @@ builds both. This Mac is paired with the owner's host and everything below was r
 
 **Works (each checked end to end with a headless self-test, `Spatiand --selftest-*`):**
 
-* Pairing from the menu (this Mac shows the code, the host is asked, and the host is written
-  down only after both have said yes).
+* Pairing from the menu (the host shows a code, it is typed on this Mac, and the host is
+  written down only once both have proved it; since 2026-11-10, see `spatiand_stream::pairing`).
 * A host's applications as ordinary Mac windows: HEVC/H.264 decoded by VideoToolbox and shown by
   an `AVSampleBufferDisplayLayer`; the mouse, wheel and keyboard go back (Command stands in for
   Control, switchable); resizing asks the host's window to resize; closing asks the application
@@ -142,7 +142,7 @@ are showing every few seconds.
 
 **The Mac as a host (built 2026-10-05, tried over loopback only).** The menu's "Let other devices use this
 Mac's windows" makes this Mac listen on port 47600, speaking the Linux host's protocol, so a Deck or a Beam Pro can
-pair with it (the menu opens pairing for two minutes; this Mac asks to confirm the six digits) and open its running
+pair with it (the menu opens pairing for two minutes and this Mac shows a code to type on the device) and open its running
 applications: the transport is Rust (`host.rs`: QUIC, a gate for paired devices, the control stream, packetised
 pictures), the rest is Swift (`MacHost.swift`: ScreenCaptureKit capture, `HostEncoder.swift` hardware HEVC, input posted
 back at the application, close and resize through Accessibility, the clipboard). `Spatiand --selftest-host
