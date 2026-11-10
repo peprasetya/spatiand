@@ -1,6 +1,6 @@
 diff -ru a/src/connection.c b/src/connection.c
---- a/src/connection.c	2026-11-10 16:22:07.354448294 +0700
-+++ b/src/connection.c	2026-11-10 16:22:07.450792772 +0700
+--- a/src/connection.c	2026-11-10 18:06:44.021699720 +0700
++++ b/src/connection.c	2026-11-10 18:06:44.117697226 +0700
 @@ -39,6 +39,11 @@
  #include <unistd.h>
  #include <sys/types.h>
@@ -14,8 +14,8 @@ diff -ru a/src/connection.c b/src/connection.c
  #include <ffi.h>
  
 diff -ru a/src/wayland-os.c b/src/wayland-os.c
---- a/src/wayland-os.c	2026-11-10 16:22:07.231563816 +0700
-+++ b/src/wayland-os.c	2026-11-10 16:22:07.343795601 +0700
+--- a/src/wayland-os.c	2026-11-10 18:06:43.913901673 +0700
++++ b/src/wayland-os.c	2026-11-10 18:06:44.010700005 +0700
 @@ -33,7 +33,9 @@
  #include <fcntl.h>
  #include <errno.h>

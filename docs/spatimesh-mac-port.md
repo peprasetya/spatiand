@@ -82,6 +82,19 @@ kernel, macOS's family, and widens Linux checks to BSD wherever that is the righ
   plain `is_mac`. `content/browser` is done by hand: it holds the Linux zygote and sandbox, which
   must never come to the Mac.
 
+## Where it stopped (2026-11-10, 18:20)
+
+Third pass (`logs/build-ozone4.log`): 144 failures, read and sorted. Fixed since, not yet built:
+a fault of `gn-ui.py`'s first version (its assert fix-up spanned lines and undid one real rewrite
+after each assert: `ui/views`' Cocoa block among them; rewritten again, 40 files); the Linux UI's
+strings and resources (`IDS_`/`IDC_`/`IDR_` missing: GRIT's `is_linux` is now true where
+`is_mac_linux_ui`, beside `is_macosx`); the map's edits to `content/browser` (process
+management, system) and the certificate manager (NSS on Linux, the Keychain on the Mac) put
+back. GN configures. **Next**: run `ozbuild.sh` (a long pass: only when the owner says), then
+the remaining Cocoa sources outside `ui/views`/`chrome/browser/ui` (`content/app_shim_remote_cocoa`,
+`components/remote_cocoa`, `chrome/browser/*_mac.mm` beside the UI, `content/browser`'s views by
+hand), and `JavascriptAppModalEventBlockerAura`.
+
 ## Resuming (littleotter is shut down at night)
 
 Everything changed in its tree is kept here: `third_party/chromium/mac/save-wip.sh` (run on

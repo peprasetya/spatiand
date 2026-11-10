@@ -31,11 +31,15 @@ import sys
 DIRS = (
     "chrome/browser/ui/",
     "ui/",
-    "content/browser/renderer_host/",
-    "content/browser/web_contents/",
     "components/constrained_window/",
     "components/web_modal/",
     "components/eye_dropper/",
+)
+# Inside those, what is the system's, not the UI's: the certificates are NSS's on Linux and the
+# Keychain's on the Mac. (content/browser is left out whole: its renderer_host holds process
+# management beside the views; it is done by hand.)
+EXCLUDE = (
+    "chrome/browser/ui/webui/certificate_manager/",
 )
 
 BSD = re.compile(r"\s*(\|\||&&)\s*!?BUILDFLAG\(IS_BSD\)")
@@ -109,7 +113,7 @@ def main():
         if not name.startswith("patch-"):
             continue
         path, pairs = hunks(open(os.path.join(files, name), errors="replace").read())
-        if not path or not path.startswith(DIRS) or not path.endswith((".cc", ".h", ".mm")):
+        if not path or not path.startswith(DIRS) or path.startswith(EXCLUDE) or not path.endswith((".cc", ".h", ".mm")):
             continue
         target = os.path.join(src, path)
         if not os.path.exists(target):
