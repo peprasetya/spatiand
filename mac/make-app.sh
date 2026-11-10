@@ -17,8 +17,8 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
 cp .build/release/Spatiand "$app/Contents/MacOS/Spatiand"
 # Spatiand's own applications, each a program beside the app's, which is where the launcher
-# looks for them (crates/spatiand/src/own.rs). SpatiReel, SpatiLoupe, SpatiShelf and SpatiMesh
-# link **the FFmpeg the app carries** (third_party/ffmpeg: the same version on every platform,
+# looks for them (crates/spatiand/src/own.rs). SpatiReel, SpatiLoupe and SpatiShelf (and SpatiMesh,
+# below, through its framework) link **the FFmpeg the app carries** (third_party/ffmpeg: the same version on every platform,
 # LGPL), not one the Mac happens to have: it is in Contents/Frameworks, found by the programs'
 # own search path (.cargo/config.toml). bindgen wants to be told where libclang is. Each is built on its own, so that
 # one that does not build leaves the others.
@@ -79,6 +79,16 @@ cp Resources/Spatiand.icns "$app/Contents/Resources/Spatiand.icns"
 # What the launcher shows for this Mac and for another computer: looked up as a Linux desktop
 # would look them up, in a theme of the app's own.
 cp -R icons "$app/Contents/Resources/icons"
+# SpatiMesh: the Deck's Chromium, its Linux UI built for this Mac (docs/spatimesh-mac-port.md,
+# out/mac-ozone; FFmpeg and OpenSSL already in its framework's Libraries, third_party/chromium/
+# mac/ozbuild.sh). Carried in Contents/Helpers, where the room finds it and starts it as the
+# Deck's room starts its own (crates/spatiand/src/own.rs). Without a build there, no SpatiMesh.
+spatimesh="${SPATIAND_SPATIMESH_APP:-$HOME/Developer/spatiand-chromium-mac/chromium/src/out/mac-ozone/SpatiMesh.app}"
+if [ -d "$spatimesh" ]; then
+  mkdir -p "$app/Contents/Helpers"
+  ditto --noextattr --norsrc "$spatimesh" "$app/Contents/Helpers/SpatiMesh.app"
+  echo "SpatiMesh carried from $spatimesh"
+fi
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -135,12 +145,22 @@ if [ -n "$IDENTITY" ]; then
   # What is inside is signed first, with the same certificate.
   for lib in "$app"/Contents/Frameworks/*.dylib; do [ -f "$lib" ] && codesign --force --sign "$IDENTITY" "$lib" >/dev/null 2>&1; done
   for own in $OWN; do [ -f "$app/Contents/MacOS/$own" ] && codesign --force --sign "$IDENTITY" "$app/Contents/MacOS/$own" >/dev/null 2>&1; done
+  # SpatiMesh from the inside out: its loose libraries, then the app with everything in it.
+  if [ -d "$app/Contents/Helpers/SpatiMesh.app" ]; then
+    find "$app/Contents/Helpers/SpatiMesh.app" -name "*.dylib" -type f -exec codesign --force --sign "$IDENTITY" {} \; >/dev/null 2>&1
+    codesign --force --deep --sign "$IDENTITY" "$app/Contents/Helpers/SpatiMesh.app" >/dev/null 2>&1 \
+      || echo "warning: SpatiMesh could not be signed"
+  fi
   codesign --force --sign "$IDENTITY" --identifier com.peprasetya.spatiand "$app" >/dev/null 2>&1 \
     && echo "signed with \"$IDENTITY_NAME\" ($IDENTITY): permissions survive rebuilds" \
     || { echo "warning: could not sign with \"$IDENTITY_NAME\"; signing ad hoc"; codesign --force --sign - "$app" >/dev/null 2>&1 || true; }
 else
   for lib in "$app"/Contents/Frameworks/*.dylib; do [ -f "$lib" ] && codesign --force --sign - "$lib" >/dev/null 2>&1; done
   for own in $OWN; do [ -f "$app/Contents/MacOS/$own" ] && codesign --force --sign - "$app/Contents/MacOS/$own" >/dev/null 2>&1; done
+  if [ -d "$app/Contents/Helpers/SpatiMesh.app" ]; then
+    find "$app/Contents/Helpers/SpatiMesh.app" -name "*.dylib" -type f -exec codesign --force --sign - {} \; >/dev/null 2>&1
+    codesign --force --deep --sign - "$app/Contents/Helpers/SpatiMesh.app" >/dev/null 2>&1
+  fi
   codesign --force --sign - "$app" >/dev/null 2>&1 || echo "warning: could not sign"
   echo "note: signed ad hoc, so each rebuild asks for Screen Recording and Accessibility again;"
   echo "      create the \"$IDENTITY_NAME\" certificate (see HoloFrame) to stop that"

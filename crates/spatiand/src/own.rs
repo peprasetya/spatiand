@@ -109,10 +109,31 @@ fn native_library_dir() -> Option<PathBuf> {
 /// `~/spatiand-chromium`, or where `SPATIAND_CHROMIUM` says. On the Beam Pro it is the same
 /// browser built for Android's libc, carried in the APK as `libspatimesh_chromium.so`, its
 /// resources and launcher unpacked by the app into its files (android/build.sh) and run through
-/// sh, as nothing there may be run itself. On the Mac there is none until Chromium's port draws
-/// through the room there too (the Rust window program that stood in was removed on 2026-11-10),
-/// and the launcher has no SpatiMesh. What starts it, its switches to follow.
+/// sh, as nothing there may be run itself. On the Mac it is the same browser's Linux UI built for
+/// macOS (docs/spatimesh-mac-port.md), carried in Spatiand.app's Contents/Helpers by make-app.sh,
+/// started with the Deck's switches (third_party/chromium/run.sh). What starts it, its switches to
+/// follow.
 fn chromium_spatimesh() -> Option<String> {
+    if cfg!(target_os = "macos") {
+        // Contents/MacOS/<this program> -> Contents/Helpers/SpatiMesh.app
+        let exe = std::env::current_exe().ok()?;
+        let program = exe.parent()?.parent()?.join("Helpers/SpatiMesh.app/Contents/MacOS/SpatiMesh");
+        if !program.is_file() {
+            return None;
+        }
+        let data = PathBuf::from(std::env::var_os("HOME")?).join(".config/spatiand-chromium");
+        // `--disable-gpu`: a workaround until the GPU's frames reach the room on the Mac (Ozone's
+        // GL surface through ANGLE, then IOSurfaces as the Beam Pro hands AHardwareBuffers); the
+        // page and the UI are drawn in software into shared memory until then.
+        return Some(format!(
+            "\"{}\" --user-data-dir=\"{}\" --class=spatimesh-chromium --no-first-run --no-default-browser-check \
+             --overscroll-history-navigation=0 --disable-gpu \
+             --enable-features=EnableExtensionAutoupdate,ProfilesReordering,WaylandWindowDecorations \
+             --disable-features=SigninPromoOnAvatarPill",
+            program.display(),
+            data.display()
+        ));
+    }
     if cfg!(target_os = "android") {
         let program = native_library_dir()?.join("libspatimesh_chromium.so");
         // Its resources there whole: the app writes their stamp last.
