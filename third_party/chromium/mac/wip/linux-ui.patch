@@ -928,6 +928,28 @@ index 6efce2a9e8..2e6df024db 100644
    system_media_permissions::RegisterSystemMediaPermissionStatesPrefs(registry);
    AppShimRegistry::Get()->RegisterLocalPrefs(registry);
    GlassFrameService::RegisterLocalStatePrefs(registry);
+diff --git a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
+index 2ea5e654ea..48f46c8723 100644
+--- a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
++++ b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
+@@ -441,7 +441,7 @@
+ #if !BUILDFLAG(IS_CHROMEOS)
+ #include "chrome/browser/download/bubble/download_bubble_update_service_factory.h"
+ #include "chrome/browser/profiles/profile_statistics_factory.h"
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand's, on every platform
+ #include "chrome/browser/spatiand/profile_service.h"
+ #endif
+ #include "chrome/browser/ui/startup/first_run_service.h"
+@@ -1408,7 +1408,7 @@ void ChromeBrowserMainExtraPartsProfiles::
+ #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
+   ProfileStatisticsFactory::GetInstance();
+ #endif
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand's, on every platform
+   spatiand::ProfileServiceFactory::GetInstance();
+ #endif
+ #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 diff --git a/chrome/browser/renderer_context_menu/BUILD.gn b/chrome/browser/renderer_context_menu/BUILD.gn
 index 1e3789cbe2..857e3ea433 100644
 --- a/chrome/browser/renderer_context_menu/BUILD.gn
@@ -2065,9 +2087,18 @@ index c6e44f9a4b..36334e66fe 100644
    // using this ID. In response, the desktop will stop playing the "waiting
    // for startup" animation (if any).
 diff --git a/chrome/browser/ui/chrome_pages.cc b/chrome/browser/ui/chrome_pages.cc
-index c69cf45c0d..c285ffdceb 100644
+index c69cf45c0d..8131f272bb 100644
 --- a/chrome/browser/ui/chrome_pages.cc
 +++ b/chrome/browser/ui/chrome_pages.cc
+@@ -5,7 +5,7 @@
+ #include "chrome/browser/ui/chrome_pages.h"
+ 
+ #include "build/build_config.h"
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand's, on every platform
+ #include "chrome/browser/spatiand/spatikey_window.h"
+ #endif
+ 
 @@ -272,7 +272,7 @@ bool SiteGURLIsValid(const GURL& url) {
    return !site_origin.opaque() && (url.SchemeIsHTTPOrHTTPS() ||
                                     url.SchemeIs(extensions::kExtensionScheme)
@@ -2077,6 +2108,15 @@ index c69cf45c0d..c285ffdceb 100644
                                     || url.SchemeIs(webapps::kIsolatedAppScheme)
  #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
          // BUILDFLAG(IS_CHROMEOS)
+@@ -564,7 +564,7 @@ void ShowClearBrowsingDataDialog(BrowserWindowInterface* browser) {
+ }
+ 
+ void ShowPasswordManager(BrowserWindowInterface* bwi) {
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand's, on every platform
+   // Spatiand: passwords are looked at in SpatiKey's window.
+   spatiand::OpenSpatiKey();
+   if ((true)) {
 diff --git a/chrome/browser/ui/cocoa/BUILD.gn b/chrome/browser/ui/cocoa/BUILD.gn
 index 4ce5c7aef0..85a52a2ffe 100644
 --- a/chrome/browser/ui/cocoa/BUILD.gn
@@ -4090,9 +4130,18 @@ index 474b8356af..e50f5cdf11 100644
  #else
    const bool tiled = false;
 diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
-index 3aefe793c1..6e24073c41 100644
+index 3aefe793c1..5f6b559ea4 100644
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -4,7 +4,7 @@
+ 
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ 
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand's, on every platform
+ #include "chrome/browser/spatiand/profiles_sync.h"
+ #endif
+ 
 @@ -382,7 +382,8 @@
  #include "chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.h"
  #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -4153,6 +4202,24 @@ index 3aefe793c1..6e24073c41 100644
    if (WindowFeatureController::From(browser())->UsesImmersiveFullscreenMode()) {
      return IsFullscreen() ? overlay_widget_.get() : GetWidget();
    }
+@@ -1590,7 +1596,7 @@ void BrowserView::Show() {
+     return;
+   }
+ 
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand's, on every platform
+   // Spatiand: a locked profile's window waits for its PIN or password.
+   if (auto* profiles = spatiand::ProfilesSync::Get();
+       profiles && profiles->DeferShow(browser()->GetProfile(),
+@@ -1660,7 +1666,7 @@ void BrowserView::Show() {
+ }
+ 
+ void BrowserView::ShowInactive() {
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand's, on every platform
+   // Spatiand: as in Show().
+   if (auto* profiles = spatiand::ProfilesSync::Get();
+       profiles && profiles->DeferShow(browser()->GetProfile(),
 @@ -1795,7 +1801,8 @@ bool BrowserView::IsOnCurrentWorkspace() const {
  }
  
@@ -5214,6 +5281,37 @@ index 72a0e6a5f7..2ac7b10cb8 100644
    source_set("badged_profile_photo") {
      public = [ "badged_profile_photo.h" ]
      sources = [ "badged_profile_photo.cc" ]
+diff --git a/chrome/browser/ui/views/profiles/profile_menu_view.cc b/chrome/browser/ui/views/profiles/profile_menu_view.cc
+index 20ccf02b44..c53406f5ff 100644
+--- a/chrome/browser/ui/views/profiles/profile_menu_view.cc
++++ b/chrome/browser/ui/views/profiles/profile_menu_view.cc
+@@ -5,7 +5,7 @@
+ #include "chrome/browser/ui/views/profiles/profile_menu_view.h"
+ 
+ // Spatiand: its profiles are Linux's only as yet (chrome/browser/spatiand), as everywhere else they are used.
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand's, on every platform
+ #include "chrome/browser/spatiand/profiles_sync.h"
+ #endif
+ 
+@@ -1271,7 +1271,7 @@ void ProfileMenuView::BuildFeatureButtons() {
+   BuildAutofillSettingsButton();
+   MaybeBuildManageGoogleAccountButton();
+   BuildCustomizeProfileButton();
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand's, on every platform
+   if (spatiand::ProfilesSync* profiles = spatiand::ProfilesSync::Get()) {
+     const base::FilePath path = profile().GetPath();
+     AddFeatureButton(
+@@ -1447,7 +1447,7 @@ void ProfileMenuView::BuildProfileManagementFeatureButtons() {
+       base::BindRepeating(&ProfileMenuView::OnManageProfilesButtonClicked,
+                           base::Unretained(this)));
+ 
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand's, on every platform
+   if (spatiand::ProfilesSync* profiles = spatiand::ProfilesSync::Get();
+       profiles && profiles->AnyLock()) {
+     AddProfileManagementFeatureButton(
 diff --git a/chrome/browser/ui/views/profiles/profile_picker_view.cc b/chrome/browser/ui/views/profiles/profile_picker_view.cc
 index 6b8c4255d0..08f07c8ea2 100644
 --- a/chrome/browser/ui/views/profiles/profile_picker_view.cc
@@ -5690,6 +5788,28 @@ index 2dee3396b4..5485957976 100644
      deps += [ "//chrome/browser/ui/cocoa" ]
    }
  
+diff --git a/chrome/browser/ui/webui/password_manager/password_manager_ui.cc b/chrome/browser/ui/webui/password_manager/password_manager_ui.cc
+index 84b03fdf4c..023b5dd35b 100644
+--- a/chrome/browser/ui/webui/password_manager/password_manager_ui.cc
++++ b/chrome/browser/ui/webui/password_manager/password_manager_ui.cc
+@@ -5,7 +5,7 @@
+ #include "chrome/browser/ui/webui/password_manager/password_manager_ui.h"
+ 
+ #include "build/build_config.h"
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand's, on every platform
+ #include "chrome/browser/spatiand/spatikey_window.h"
+ #endif
+ 
+@@ -816,7 +816,7 @@ DEFINE_CLASS_CUSTOM_ELEMENT_EVENT_TYPE(PasswordManagerUI,
+ 
+ PasswordManagerUI::PasswordManagerUI(content::WebUI* web_ui)
+     : ui::MojoWebUIController(web_ui, /*enable_chrome_send=*/true) {
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand's, on every platform
+   // Spatiand: passwords are looked at in SpatiKey's window.
+   spatiand::OpenSpatiKeyInstead(web_ui->GetWebContents());
+ #endif
 diff --git a/chrome/browser/ui/webui_browser/BUILD.gn b/chrome/browser/ui/webui_browser/BUILD.gn
 index d21d9c6042..7c2d0b0551 100644
 --- a/chrome/browser/ui/webui_browser/BUILD.gn
