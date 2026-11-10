@@ -469,10 +469,11 @@ fn run_host(
     let roster = {
         let me = this_host.to_string();
         let name = std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default().trim().to_string();
+        let address = spatiand_sync::roster::host_address(&name, options.port);
         let list = paired_path.clone();
         spatiand_sync::roster::Roster::watch(move || {
             // Each time: two machines writing its entry at once can lose what this one said of itself.
-            spatiand_sync::roster::Roster::open_default().note(&me, &name, "", true);
+            spatiand_sync::roster::Roster::open_default().note(&me, &name, &address, true);
             pair::Paired::load(&list).fingerprints().iter().map(|f| (f.to_string(), String::new())).collect()
         })
     };

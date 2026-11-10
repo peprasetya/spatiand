@@ -32,6 +32,18 @@ pub unsafe extern "C" fn sp_roster_note(fp: *const c_char, name: *const c_char, 
     spatiand_sync::roster::Roster::open_default().note(&text(fp), &text(name), &text(address), own != 0);
 }
 
+/// A host saying itself on the owner's list: its name, and where it can be reached, from its
+/// machine's name and port by the rule every host uses ([`spatiand_sync::roster::host_address`]).
+///
+/// # Safety
+/// C strings.
+#[no_mangle]
+pub unsafe extern "C" fn sp_roster_note_host(fp: *const c_char, name: *const c_char, machine: *const c_char, port: u16) {
+    let text = |p: *const c_char| if p.is_null() { String::new() } else { CStr::from_ptr(p).to_string_lossy().into_owned() };
+    let address = spatiand_sync::roster::host_address(&text(machine), port);
+    spatiand_sync::roster::Roster::open_default().note(&text(fp), &text(name), &address, true);
+}
+
 /// Take a device off every machine's list. Whether it was on it.
 ///
 /// # Safety

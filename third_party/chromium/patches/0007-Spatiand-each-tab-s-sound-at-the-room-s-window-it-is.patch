@@ -63,10 +63,10 @@ index 78f29c0e4d..e2b7ba6d3e 100644
  
 diff --git a/content/browser/media/spatiand_window_audio.cc b/content/browser/media/spatiand_window_audio.cc
 new file mode 100644
-index 0000000000..9bb78a52c5
+index 0000000000..47bfff735a
 --- /dev/null
 +++ b/content/browser/media/spatiand_window_audio.cc
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,115 @@
 +// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
 +
@@ -88,7 +88,6 @@ index 0000000000..9bb78a52c5
 +#include "base/no_destructor.h"
 +#include "base/strings/string_split.h"
 +#include "base/strings/stringprintf.h"
-+#include "base/supports_user_data.h"
 +#include "base/task/thread_pool.h"
 +#include "base/timer/timer.h"
 +#include "content/browser/renderer_host/media/media_stream_manager.h"
@@ -108,14 +107,6 @@ index 0000000000..9bb78a52c5
 +// How soon a tab's sound follows it into another window (or the room's sink for a new window
 +// appears): twice a second, a file read off the UI thread and a walk over the tabs.
 +constexpr base::TimeDelta kEvery = base::Milliseconds(500);
-+
-+const char kRoutedKey[] = "spatiand_window_audio";
-+
-+// Where a tab's sound was last sent, so it is sent again only when that changes.
-+struct Routed : public base::SupportsUserData::Data {
-+  GlobalRenderFrameHostToken frame;
-+  std::string sink;
-+};
 +
 +using SinkMap = std::map<std::string, std::string>;
 +
@@ -140,10 +131,15 @@ index 0000000000..9bb78a52c5
 +  return sinks;
 +}
 +
++// Sets the page's preferred output where Chromium does not already hold it. Asked every tick,
++// not remembered: Chromium forgets a page's preferred output on each navigation of its main
++// frame, a page's own included (YouTube opening a video is one), while the frame stays the same.
 +void SetPreferredSinkOnIO(GlobalRenderFrameHostToken frame, std::string sink) {
-+  if (auto* manager = MediaStreamManager::GetPreferredOutputManagerInstance()) {
-+    manager->SetPreferredSinkId(frame, sink, base::DoNothing());
++  auto* manager = MediaStreamManager::GetPreferredOutputManagerInstance();
++  if (!manager || manager->GetPreferredSinkId(frame) == sink) {
++    return;
 +  }
++  manager->SetPreferredSinkId(frame, sink, base::DoNothing());
 +}
 +
 +// Each tab's sound to the sink of the window it is in: its window's key is this process and the
@@ -163,17 +159,6 @@ index 0000000000..9bb78a52c5
 +    }
 +    const GlobalRenderFrameHostToken frame =
 +        contents->GetPrimaryMainFrame()->GetGlobalFrameToken();
-+    auto* routed = static_cast<Routed*>(contents->GetUserData(kRoutedKey));
-+    if (routed && routed->frame == frame && routed->sink == sink) {
-+      continue;
-+    }
-+    if (!routed) {
-+      auto owned = std::make_unique<Routed>();
-+      routed = owned.get();
-+      contents->SetUserData(kRoutedKey, std::move(owned));
-+    }
-+    routed->frame = frame;
-+    routed->sink = sink;
 +    // Streams playing on the default device switch to it as they play; an empty sink is the
 +    // default again (the sink SpatiMesh was launched with).
 +    GetIOThreadTaskRunner({})->PostTask(FROM_HERE,

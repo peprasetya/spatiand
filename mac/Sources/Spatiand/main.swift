@@ -143,6 +143,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Started with the Mac already locked: as though it had just been.
         if (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true {
             screenLocked = true
+            MacHost.shared.macLocked = true
             print("screens: started with the Mac locked; the glasses are its lock screen's until it is unlocked")
             DispatchQueue.main.async { MacScreens.letGoForLock(); MacScreens.yieldToGlasses() }
         }
@@ -195,6 +196,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func locked(_ now: Bool) {
         guard now != screenLocked else { return }
         screenLocked = now
+        MacHost.shared.macLocked = now
         print("screens: the Mac is \(now ? "locked; the glasses are given its lock screen" : "unlocked")")
         if now {
             if Room.shared.inGlasses { Room.shared.leaveGlasses() }

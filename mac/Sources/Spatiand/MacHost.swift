@@ -289,7 +289,8 @@ final class MacHost {
         rosterLooked = Date()
         let me = link.fingerprint
         DispatchQueue.global(qos: .utility).async {
-            sp_roster_note(me, Host.current().localizedName ?? "Mac", "", 1)
+            // Where it can be reached too: a host nobody has dialled yet is otherwise on every device's list with no address.
+            sp_roster_note_host(me, Host.current().localizedName ?? "Mac", ProcessInfo.processInfo.hostName, Self.port)
             for host in Hosts.all { sp_roster_note(host.fingerprint, host.name, host.address, 0) }
             guard let raw = sp_roster_json() else { return }
             defer { sp_settings_free(raw) }
@@ -326,8 +327,35 @@ final class MacHost {
     }
 
     /// Share the windows of every application a session has launched, and stop sharing ones that have gone.
+    /// Whether this Mac is locked. **macOS lets nothing capture its windows or make a screen while
+    /// it is** (its own security, not to be got round), so a locked Mac offers nothing and says why,
+    /// rather than opening each window, failing and opening it again every second -- which a
+    /// session sees as windows that blink and never show. Set by the app (`locked(_:)` in main).
+    var macLocked = false {
+        didSet {
+            guard macLocked != oldValue else { return }
+            toldLocked = false
+            if !macLocked { reconcile() }
+        }
+    }
+    private var toldLocked = false
+
+    private func sayLocked() {
+        guard attached, let link else { return }
+        toldLocked = true
+        link.say(["Notice": ["text": "\(Host.current().localizedName ?? "This Mac") is locked: unlock it to use its windows here."]])
+    }
+
+    /// Windows whose capture macOS refused, and when: not asked for again on their own until a
+    /// while has passed, as the sound's (`soundFailed`).
+    private var captureFailed: [CGWindowID: Date] = [:]
+
     private func reconcile() {
         guard attached, MacWindows.allowed(ask: false) else { return }
+        if macLocked {
+            if !toldLocked { sayLocked() }
+            return
+        }
         Task { [weak self] in
             let list = await MacWindows.list()
             await MainActor.run { self?.apply(list) }
@@ -373,7 +401,11 @@ final class MacHost {
         }
         openedSince.formIntersection(here)
         passedOver.formIntersection(here)
-        let wanted = list.filter { (launched.contains($0.bundle) && !passedOver.contains($0.windowID)) || openedSince.contains($0.windowID) || askedFor.contains($0.windowID) }
+        let refusedLately = { (id: CGWindowID) in Date().timeIntervalSince(self.captureFailed[id] ?? .distantPast) < 30 }
+        let wanted = list.filter {
+            askedFor.contains($0.windowID)
+                || !refusedLately($0.windowID) && ((launched.contains($0.bundle) && !passedOver.contains($0.windowID)) || openedSince.contains($0.windowID))
+        }
         let byWindow = Dictionary(uniqueKeysWithValues: wanted.map { ($0.windowID, $0) })
         // Gone.
         for (id, s) in shared where byWindow[s.info.windowID] == nil {
@@ -439,6 +471,10 @@ final class MacHost {
                     print("host: could not capture \(info.app): \(error)")
                     self?.shared[id] = nil
                     self?.link?.say(["Closed": ["window": Int(id)]])
+                    // Not asked for again by itself: a refused capture asked for every tick is a
+                    // window that blinks on the session's side. Asked for again, it is tried again.
+                    self?.askedFor.remove(info.windowID)
+                    self?.captureFailed[info.windowID] = Date()
                 }
             }
         }
@@ -541,6 +577,7 @@ final class MacHost {
         case "Launch":
             if let app = fields["app"] as? String { launch(app) }
         case "Show":
+            if macLocked { sayLocked(); break }
             if let id = windowNumber(fields), let info = offered[id] {
                 askedFor.insert(info.windowID)
                 reconcile()

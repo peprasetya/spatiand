@@ -379,6 +379,26 @@ impl Roster {
 
 /// `--devices`, `--forget-device <which>`, `--settings-bin` and `--restore-settings [hours] [path]`,
 /// the same on every platform. Whether one of them was asked for, having done it.
+/// Where a host can be reached, as it says of itself on the owner's list: its machine's name, the
+/// first label lowercased (`littleOtter.local` is `littleotter`, which a tailnet's names and a
+/// LAN's mDNS both answer to), with the port only when it is not the usual one.
+///
+/// Without this a host's address was only ever what a device that paired with it had dialled, so
+/// a host nobody had dialled -- a Mac turned into a host after its owner's devices were paired
+/// elsewhere -- was on every device's list with nowhere to reach it, and no device offered it.
+/// [`Roster::note`] keeps an address already known: one a device dialled stands.
+pub fn host_address(machine_name: &str, port: u16) -> String {
+    let name = machine_name.trim().split('.').next().unwrap_or("").to_lowercase();
+    if name.is_empty() || name == "localhost" {
+        return String::new();
+    }
+    if port == spatiand_stream::link::DEFAULT_PORT {
+        name
+    } else {
+        format!("{name}:{port}")
+    }
+}
+
 pub fn command_line(args: &[String]) -> bool {
     let after = |flag: &str| args.iter().position(|a| a == flag).map(|i| args[i + 1..].to_vec());
     if args.iter().any(|a| a == "--devices") {
@@ -434,6 +454,15 @@ mod tests {
 
     const A: &str = "aa00000000000000000000000000000000000000000000000000000000000000";
     const B: &str = "bb00000000000000000000000000000000000000000000000000000000000000";
+
+    #[test]
+    fn a_host_says_where_it_is_by_its_machine_name() {
+        assert_eq!(host_address("littleOtter.local", 47600), "littleotter");
+        assert_eq!(host_address("deepmagpie\n", 47600), "deepmagpie");
+        assert_eq!(host_address("darkphoenix.tail26824f.ts.net", 47601), "darkphoenix:47601");
+        assert_eq!(host_address("", 47600), "", "no name, no address: one a device dials stands");
+        assert_eq!(host_address("localhost", 47600), "");
+    }
 
     fn roster(name: &str) -> (Roster, PathBuf) {
         let dir = std::env::temp_dir().join(format!("spatiand-roster-{}-{name}", std::process::id()));

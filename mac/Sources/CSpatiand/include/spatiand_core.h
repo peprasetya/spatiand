@@ -85,6 +85,7 @@ void sp_settings_free(char *text);
 // command line's `--devices`, `--forget-device`, `--settings-bin`, `--restore-settings`.
 char *sp_roster_json(void);
 void sp_roster_note(const char *fp, const char *name, const char *address, int own);
+void sp_roster_note_host(const char *fp, const char *name, const char *machine, uint16_t port);
 int sp_roster_remove(const char *fp);
 int sp_roster_command_line(const char *json);
 // One picture of one window: an Annex B access unit, parameter sets first on a keyframe.
