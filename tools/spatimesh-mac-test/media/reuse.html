@@ -1,0 +1,24 @@
+<html><head><title>codec reuse</title></head><body style="background:#111;color:#eee;font:20px monospace">
+<video id=v width=320 autoplay></video><pre id=out></pre>
+<script>
+setInterval(() => console.log("[tick] " + document.visibilityState + " " + (performance.now()|0)), 2000);
+const files = (new URLSearchParams(location.search).get("f") || "vp9-opus.webm,h264-aac.mp4").split(",");
+const v = document.getElementById("v"); v.volume = 0.05;
+let i = -1, timer = null, done = false;
+function report(why) {
+  if (done) return; done = true; clearTimeout(timer);
+  const q = v.getVideoPlaybackQuality();
+  const r = { file: files[i], why, t: +v.currentTime.toFixed(2), w: v.videoWidth, h: v.videoHeight,
+              frames: q.totalVideoFrames, dropped: q.droppedVideoFrames, err: v.error ? v.error.code + " " + v.error.message : "" };
+  console.log("[codec] " + JSON.stringify(r));
+  setTimeout(next, 200);
+}
+function next() {
+  i++; if (i >= files.length) { console.log("[codec] done"); return; }
+  done = false; v.src = files[i]; v.play().catch(e => console.log("[codec] play() " + e));
+  timer = setTimeout(() => report("timeout"), 12000);
+}
+v.addEventListener("error", () => report("error"));
+v.addEventListener("timeupdate", () => { if (v.currentTime > 3) report("played"); });
+next();
+</script></body></html>

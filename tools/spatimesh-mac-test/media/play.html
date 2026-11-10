@@ -1,0 +1,7 @@
+<html><head><title>play</title></head><body style="background:#123;color:#eee;font:20px monospace">
+<video id=v width=480 autoplay loop></video>
+<script>
+const f = new URLSearchParams(location.search).get("f"); const v = document.getElementById("v");
+v.volume = 0.05; v.src = f; document.title = f;
+setInterval(() => { const q = v.getVideoPlaybackQuality(); console.log("[play] " + f + " t=" + v.currentTime.toFixed(1) + " frames=" + q.totalVideoFrames + " " + document.visibilityState); }, 5000);
+</script></body></html>

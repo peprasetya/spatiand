@@ -6194,9 +6194,18 @@ index f892f348b8..596e0ae9bc 100644
  #endif
    return owned_shared_image_manager_.get();
 diff --git a/content/browser/BUILD.gn b/content/browser/BUILD.gn
-index 690e0c0317..51f3f43931 100644
+index 690e0c0317..493d8eddc5 100644
 --- a/content/browser/BUILD.gn
 +++ b/content/browser/BUILD.gn
+@@ -2564,7 +2564,7 @@ source_set("browser") {
+ 
+   # Spatiand: each tab's sound at the room's window it is in, which it finds through the tab's
+   # aura window -- on Linux, where browser_main_loop.cc starts it.
+-  if (is_linux) {
++  if (is_linux || is_mac_linux_ui) {  # and on the Mac's Linux UI (its sound into the room)
+     sources += [
+       "media/spatiand_window_audio.cc",
+       "media/spatiand_window_audio.h",
 @@ -2684,33 +2684,8 @@ source_set("browser") {
          [ "file_system_access/file_path_watcher/file_path_watcher_stub.cc" ]
  
@@ -6447,9 +6456,18 @@ index 9f0eda1ba4..dca379f037 100644
    map->Add<blink::mojom::RenderAccessibilityHost>(
        &BindRenderFrameHostImpl<
 diff --git a/content/browser/browser_main_loop.cc b/content/browser/browser_main_loop.cc
-index e2b7ba6d3e..2d0e7f584f 100644
+index e2b7ba6d3e..d83ba7648e 100644
 --- a/content/browser/browser_main_loop.cc
 +++ b/content/browser/browser_main_loop.cc
+@@ -1124,7 +1124,7 @@ int BrowserMainLoop::PreMainMessageLoopRun() {
+   base::DisallowUnresponsiveTasks();
+   responsiveness_watcher_ = new responsiveness::Watcher;
+   responsiveness_watcher_->SetUp();
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)
+   // Spatiand: each tab's sound at the room's window it is in.
+   SpatiandWindowAudio::Start();
+ #endif
 @@ -1254,7 +1254,9 @@ void BrowserMainLoop::ShutdownThreadsAndCleanUp() {
  
    BrowserProcessIOThread::ProcessHostCleanUp();
@@ -6522,6 +6540,248 @@ index 514d33f8a6..42331937c7 100644
  }
  
  }  // namespace content
+diff --git a/content/browser/media/spatiand_window_audio.cc b/content/browser/media/spatiand_window_audio.cc
+index 9bb78a52c5..9abb7e851c 100644
+--- a/content/browser/media/spatiand_window_audio.cc
++++ b/content/browser/media/spatiand_window_audio.cc
+@@ -13,15 +13,16 @@
+ 
+ #include "base/environment.h"
+ #include "base/files/file_path.h"
++#include "base/files/file_path_watcher.h"
+ #include "base/files/file_util.h"
+ #include "base/functional/bind.h"
+ #include "base/functional/callback_helpers.h"
++#include "base/logging.h"
+ #include "base/no_destructor.h"
+ #include "base/strings/string_split.h"
+ #include "base/strings/stringprintf.h"
+-#include "base/supports_user_data.h"
++#include "base/task/sequenced_task_runner.h"
+ #include "base/task/thread_pool.h"
+-#include "base/timer/timer.h"
+ #include "content/browser/renderer_host/media/media_stream_manager.h"
+ #include "content/browser/renderer_host/media/preferred_audio_output_device_manager.h"
+ #include "content/browser/web_contents/web_contents_impl.h"
+@@ -29,6 +30,7 @@
+ #include "content/public/browser/browser_thread.h"
+ #include "content/public/browser/global_routing_id.h"
+ #include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/web_contents.h"
+ #include "ui/aura/window.h"
+ #include "ui/aura/window_tree_host.h"
+ 
+@@ -36,28 +38,32 @@ namespace content {
+ 
+ namespace {
+ 
+-// How soon a tab's sound follows it into another window (or the room's sink for a new window
+-// appears): twice a second, a file read off the UI thread and a walk over the tabs.
+-constexpr base::TimeDelta kEvery = base::Milliseconds(500);
+-
+-const char kRoutedKey[] = "spatiand_window_audio";
+-
+-// Where a tab's sound was last sent, so it is sent again only when that changes.
+-struct Routed : public base::SupportsUserData::Data {
+-  GlobalRenderFrameHostToken frame;
+-  std::string sink;
+-};
++// Nothing here runs on a timer. A tab's sound is routed when something changes it: the room's
++// map of sinks changing (a window appearing, going, or given another sink), a page beginning a
++// sound with no output chosen for it (a new page, or one whose output Chromium forgot at a
++// navigation of its main frame, YouTube opening its next video among them), and a tab moving
++// into another window. With nothing playing and nothing changing, it costs nothing.
+ 
+ using SinkMap = std::map<std::string, std::string>;
+ 
+-// The room's sinks by window key, from `$XDG_RUNTIME_DIR/spatiand-sinks` (`key<TAB>sink` lines,
+-// written by the room as windows come and go).
+-SinkMap ReadSinkMap() {
+-  SinkMap sinks;
++// The map as last read. On the UI thread.
++SinkMap& Sinks() {
++  static base::NoDestructor<SinkMap> sinks;
++  return *sinks;
++}
++
++// `$XDG_RUNTIME_DIR/spatiand-sinks`, where the room writes its map; empty when there is no room.
++base::FilePath SinkMapPath() {
+   std::unique_ptr<base::Environment> env = base::Environment::Create();
+   std::optional<std::string> dir = env->GetVar("XDG_RUNTIME_DIR");
++  return dir ? base::FilePath(*dir).Append("spatiand-sinks") : base::FilePath();
++}
++
++// The room's sinks by window key (`key<TAB>sink` lines). May block.
++SinkMap ReadSinkMap(const base::FilePath& path) {
++  SinkMap sinks;
+   std::string text;
+-  if (!dir || !base::ReadFileToString(base::FilePath(*dir).Append("spatiand-sinks"), &text)) {
++  if (!base::ReadFileToString(path, &text)) {
+     return sinks;
+   }
+   for (std::string_view line :
+@@ -71,51 +77,65 @@ SinkMap ReadSinkMap() {
+   return sinks;
+ }
+ 
++// Sets the page's preferred output where Chromium does not already hold it: what Chromium holds
++// is asked each time rather than remembered here, because Chromium forgets a page's preferred
++// output at each navigation of its main frame while the frame stays the same.
+ void SetPreferredSinkOnIO(GlobalRenderFrameHostToken frame, std::string sink) {
+-  if (auto* manager = MediaStreamManager::GetPreferredOutputManagerInstance()) {
+-    manager->SetPreferredSinkId(frame, sink, base::DoNothing());
++  auto* manager = MediaStreamManager::GetPreferredOutputManagerInstance();
++  if (!manager || manager->GetPreferredSinkId(frame) == sink) {
++    return;
+   }
++  manager->SetPreferredSinkId(frame, sink, base::DoNothing());
+ }
+ 
+-// Each tab's sound to the sink of the window it is in: its window's key is this process and the
+-// window's surface, as the room keys the sink it gives every SpatiMesh window.
+-void Route(SinkMap sinks) {
+-  for (WebContentsImpl* contents : WebContentsImpl::GetAllWebContents()) {
+-    gfx::NativeWindow window = contents->GetTopLevelNativeWindow();
+-    if (!window || !window->GetHost() || !contents->GetPrimaryMainFrame()) {
+-      continue;
+-    }
+-    std::string sink;
++// One tab to the sink of the window it is in: its window's key is this process and the window's
++// surface, as the room keys the sink it gives every SpatiMesh window. Empty is the default (the
++// sink SpatiMesh was launched with).
++void RouteContents(WebContents* contents) {
++  if (!contents || !contents->GetPrimaryMainFrame()) {
++    return;
++  }
++  std::string sink;
++  gfx::NativeWindow window = contents->GetTopLevelNativeWindow();
++  if (window && window->GetHost()) {
+     if (const uint32_t surface = window->GetHost()->GetSpatiandSurfaceId()) {
+-      const auto it = sinks.find(base::StringPrintf("wl:%d:%u", getpid(), surface));
+-      if (it != sinks.end()) {
++      const auto it = Sinks().find(base::StringPrintf("wl:%d:%u", getpid(), surface));
++      if (it != Sinks().end()) {
+         sink = it->second;
+       }
+     }
+-    const GlobalRenderFrameHostToken frame =
+-        contents->GetPrimaryMainFrame()->GetGlobalFrameToken();
+-    auto* routed = static_cast<Routed*>(contents->GetUserData(kRoutedKey));
+-    if (routed && routed->frame == frame && routed->sink == sink) {
+-      continue;
+-    }
+-    if (!routed) {
+-      auto owned = std::make_unique<Routed>();
+-      routed = owned.get();
+-      contents->SetUserData(kRoutedKey, std::move(owned));
+-    }
+-    routed->frame = frame;
+-    routed->sink = sink;
+-    // Streams playing on the default device switch to it as they play; an empty sink is the
+-    // default again (the sink SpatiMesh was launched with).
+-    GetIOThreadTaskRunner({})->PostTask(FROM_HERE,
+-                                        base::BindOnce(&SetPreferredSinkOnIO, frame, sink));
+   }
++  const GlobalRenderFrameHostToken frame = contents->GetPrimaryMainFrame()->GetGlobalFrameToken();
++  // Streams already playing switch to it as they play.
++  GetIOThreadTaskRunner({})->PostTask(FROM_HERE,
++                                      base::BindOnce(&SetPreferredSinkOnIO, frame, sink));
+ }
+ 
+-void Tick() {
+-  base::ThreadPool::PostTaskAndReplyWithResult(
+-      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+-      base::BindOnce(&ReadSinkMap), base::BindOnce(&Route));
++// The room's map changed: every tab, against the new one.
++void RouteAll(SinkMap sinks) {
++  Sinks() = std::move(sinks);
++  for (WebContentsImpl* contents : WebContentsImpl::GetAllWebContents()) {
++    RouteContents(contents);
++  }
++}
++
++// On the watcher's sequence, which may block.
++void OnSinkMapChanged(const base::FilePath& path, bool error) {
++  if (error) {
++    return;
++  }
++  GetUIThreadTaskRunner({})->PostTask(FROM_HERE, base::BindOnce(&RouteAll, ReadSinkMap(path)));
++}
++
++// On the watcher's sequence: watch the map for good, and read it once now. The room replaces the
++// file by renaming a new one over it, which a watch of the path sees.
++void Watch(const base::FilePath& path) {
++  static base::NoDestructor<base::FilePathWatcher> watcher;
++  if (!watcher->Watch(path, base::FilePathWatcher::Type::kNonRecursive,
++                      base::BindRepeating(&OnSinkMapChanged))) {
++    LOG(WARNING) << "Spatiand: cannot watch " << path << "; tabs keep the sinks they have";
++  }
++  OnSinkMapChanged(path, false);
+ }
+ 
+ }  // namespace
+@@ -123,8 +143,28 @@ void Tick() {
+ // static
+ void SpatiandWindowAudio::Start() {
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+-  static base::NoDestructor<base::RepeatingTimer> timer;
+-  timer->Start(FROM_HERE, kEvery, base::BindRepeating(&Tick));
++  const base::FilePath path = SinkMapPath();
++  if (path.empty()) {
++    return;
++  }
++  static base::NoDestructor<scoped_refptr<base::SequencedTaskRunner>> runner(
++      base::ThreadPool::CreateSequencedTaskRunner(
++          {base::MayBlock(), base::TaskPriority::USER_VISIBLE}));
++  (*runner)->PostTask(FROM_HERE, base::BindOnce(&Watch, path));
++}
++
++// static
++void SpatiandWindowAudio::SoundBegins(GlobalRenderFrameHostToken main_frame) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  if (RenderFrameHost* frame = RenderFrameHost::FromFrameToken(main_frame)) {
++    RouteContents(WebContents::FromRenderFrameHost(frame));
++  }
++}
++
++// static
++void SpatiandWindowAudio::MovedWindow(WebContents* contents) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  RouteContents(contents);
+ }
+ 
+ }  // namespace content
+diff --git a/content/browser/media/spatiand_window_audio.h b/content/browser/media/spatiand_window_audio.h
+index e88fbb636c..62e0e922d2 100644
+--- a/content/browser/media/spatiand_window_audio.h
++++ b/content/browser/media/spatiand_window_audio.h
+@@ -4,15 +4,25 @@
+ #ifndef CONTENT_BROWSER_MEDIA_SPATIAND_WINDOW_AUDIO_H_
+ #define CONTENT_BROWSER_MEDIA_SPATIAND_WINDOW_AUDIO_H_
+ 
++#include "content/public/browser/global_routing_id.h"
++
+ namespace content {
+ 
++class WebContents;
++
+ // Each tab's sound placed at the window it is in, in Spatiand's room: the room gives every
+ // SpatiMesh window a sink of its own and says where they are; each tab plays to its window's
+ // (the page's preferred output device), and follows it to another window as it is dragged there.
++// Routed only when something changes, never on a timer.
+ class SpatiandWindowAudio {
+  public:
+-  // Begins routing, for the life of the browser. On the UI thread.
++  // Begins watching the room's map of sinks, for the life of the browser. On the UI thread.
+   static void Start();
++  // A page has begun a sound with no output chosen for it (PreferredAudioOutputDeviceManager):
++  // a new page, or one whose output Chromium forgot at a navigation. On the UI thread.
++  static void SoundBegins(GlobalRenderFrameHostToken main_frame);
++  // A tab has moved into another window (WebContentsViewAura). On the UI thread.
++  static void MovedWindow(WebContents* contents);
+ };
+ 
+ }  // namespace content
 diff --git a/content/browser/renderer_host/clipboard_host_impl.cc b/content/browser/renderer_host/clipboard_host_impl.cc
 index bf6f3a80e7..b6c7f6a780 100644
 --- a/content/browser/renderer_host/clipboard_host_impl.cc
@@ -6549,6 +6809,37 @@ index bf6f3a80e7..b6c7f6a780 100644
 +#endif  // BUILDFLAG(IS_MAC_LINUX_UI)
 +
  }  // namespace content
+diff --git a/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc b/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc
+index 5ec0724a8a..4420cf92a3 100644
+--- a/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc
++++ b/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc
+@@ -11,6 +11,12 @@
+ #include "content/browser/renderer_host/render_frame_host_impl.h"
+ #include "content/public/common/content_features.h"
+ #include "media/audio/audio_device_description.h"
++
++// Spatiand
++#include "base/functional/bind.h"
++#include "build/build_config.h"
++#include "content/browser/media/spatiand_window_audio.h"
++#include "content/public/browser/browser_task_traits.h"
+ #include "third_party/blink/public/mojom/media/renderer_audio_input_stream_factory.mojom.h"
+ 
+ namespace content {
+@@ -150,6 +156,13 @@ void PreferredAudioOutputDeviceManagerImpl::AddSwitcher(
+     AddNewConfigEntry(main_frame_token,
+                       media::AudioDeviceDescription::kDefaultDeviceId,
+                       device_switcher);
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)
++    // Spatiand: a page begins a sound with no output chosen for it (a new page, or one whose
++    // output was forgotten at a navigation): it is given its window's sink in the room.
++    GetUIThreadTaskRunner({})->PostTask(
++        FROM_HERE,
++        base::BindOnce(&SpatiandWindowAudio::SoundBegins, main_frame_token));
++#endif
+   }
+ }
+ 
 diff --git a/content/browser/renderer_host/render_widget_host_impl.cc b/content/browser/renderer_host/render_widget_host_impl.cc
 index 337d8bea19..465610a23e 100644
 --- a/content/browser/renderer_host/render_widget_host_impl.cc
@@ -6685,6 +6976,30 @@ index 2af8d9638d..78002cdf21 100644
    bool SetCompositionFromExistingText(
        const gfx::Range& range,
        const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override;
+diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
+index 8e9457fe57..39fc54aec9 100644
+--- a/content/browser/web_contents/web_contents_view_aura.cc
++++ b/content/browser/web_contents/web_contents_view_aura.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "content/browser/web_contents/web_contents_view_aura.h"
+ 
++#include "content/browser/media/spatiand_window_audio.h"
++
+ #include <stddef.h>
+ #include <stdint.h>
+ 
+@@ -565,6 +567,10 @@ class WebContentsViewAura::WindowObserver
+     window->GetHost()->AddObserver(this);
+     if (view_->web_contents_->IsBeingCaptured())
+       view_->video_capture_lock_ = window->GetHost()->CreateVideoCaptureLock();
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)
++    // Spatiand: a tab in another window sounds at that window in the room.
++    SpatiandWindowAudio::MovedWindow(view_->web_contents_);
++#endif
+   }
+ 
+   void OnWindowRemovingFromRootWindow(aura::Window* window,
 diff --git a/content/browser/web_contents/web_contents_view_aura.h b/content/browser/web_contents/web_contents_view_aura.h
 index 98df67ad53..d84267b405 100644
 --- a/content/browser/web_contents/web_contents_view_aura.h
@@ -6905,6 +7220,772 @@ index b0eefdc640..04a670e41d 100644
    scoped_refptr<gfx::NativePixmap> GetNativePixmap();
  #elif BUILDFLAG(IS_WIN)
    virtual std::optional<gl::DCLayerOverlayImage> GetDCLayerOverlayImage();
+diff --git a/media/audio/BUILD.gn b/media/audio/BUILD.gn
+index 42f2bcc4ed..0c7491f251 100644
+--- a/media/audio/BUILD.gn
++++ b/media/audio/BUILD.gn
+@@ -294,6 +294,19 @@ source_set("audio") {
+     sources += [ "linux/audio_manager_linux.cc" ]
+   }
+ 
++  # Spatiand: the Linux UI on macOS hands every stream to Spatiand's room, at the window its
++  # tab is in, as on the Beam Pro (media/audio/spatiand; android-libc/0012 there).
++  if (is_mac_linux_ui) {
++    sources += [
++      "spatiand/audio_manager_spatiand.cc",
++      "spatiand/audio_manager_spatiand.h",
++      "spatiand/spatiand_input.cc",
++      "spatiand/spatiand_input.h",
++      "spatiand/spatiand_output.cc",
++      "spatiand/spatiand_output.h",
++    ]
++  }
++
+   if (use_alsa) {
+     libs += [ "asound" ]
+     sources += [
+diff --git a/media/audio/mac/audio_manager_mac.cc b/media/audio/mac/audio_manager_mac.cc
+index 2e697dd38f..18c200d0fb 100644
+--- a/media/audio/mac/audio_manager_mac.cc
++++ b/media/audio/mac/audio_manager_mac.cc
+@@ -4,6 +4,11 @@
+ 
+ #include "media/audio/mac/audio_manager_mac.h"
+ 
++#include "build/build_config.h"
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++#include "media/audio/spatiand/audio_manager_spatiand.h"
++#endif
++
+ #include <algorithm>
+ #include <limits>
+ #include <memory>
+@@ -1360,8 +1365,15 @@ void AudioManagerMac::ReleaseInputStream(AudioInputStream* stream) {
+ std::unique_ptr<AudioManager> CreateAudioManager(
+     std::unique_ptr<AudioThread> audio_thread,
+     AudioLogFactory* audio_log_factory) {
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: SpatiMesh's sound goes to the room, which places each window's
++  // through its HRTF; the room plays it on the Mac's own output.
++  return std::make_unique<AudioManagerSpatiand>(std::move(audio_thread),
++                                                audio_log_factory);
++#else
+   return std::make_unique<AudioManagerMac>(std::move(audio_thread),
+                                            audio_log_factory);
++#endif
+ }
+ 
+ // static
+diff --git a/media/audio/spatiand/audio_manager_spatiand.cc b/media/audio/spatiand/audio_manager_spatiand.cc
+new file mode 100644
+index 0000000000..0d1cfdb6cd
+--- /dev/null
++++ b/media/audio/spatiand/audio_manager_spatiand.cc
+@@ -0,0 +1,124 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "media/audio/spatiand/audio_manager_spatiand.h"
++
++#include <utility>
++
++#include "media/audio/audio_device_description.h"
++#include "media/audio/fake_audio_output_stream.h"
++#include "media/audio/spatiand/spatiand_input.h"
++#include "media/audio/spatiand/spatiand_output.h"
++#include "media/base/audio_parameters.h"
++#include "media/base/channel_layout.h"
++
++namespace media {
++
++namespace {
++
++// What the room takes: 48 kHz, placed a hundredth of a second at a time.
++constexpr int kRate = 48000;
++constexpr int kFrames = 480;
++
++// What a stream for the default device is heard under: SpatiMesh's newest window.
++constexpr char kDefaultName[] = "spatimesh-chromium";
++
++std::string NameOf(const std::string& device_id) {
++  if (device_id.empty() || AudioDeviceDescription::IsDefaultDevice(device_id) ||
++      AudioDeviceDescription::IsCommunicationsDevice(device_id)) {
++    return kDefaultName;
++  }
++  return device_id;
++}
++
++}  // namespace
++
++AudioManagerSpatiand::AudioManagerSpatiand(std::unique_ptr<AudioThread> audio_thread,
++                                           AudioLogFactory* audio_log_factory)
++    : AudioManagerBase(std::move(audio_thread), audio_log_factory) {}
++
++AudioManagerSpatiand::~AudioManagerSpatiand() = default;
++
++bool AudioManagerSpatiand::HasAudioOutputDevices() {
++  return true;
++}
++
++bool AudioManagerSpatiand::HasAudioInputDevices() {
++  return true;
++}
++
++const std::string_view AudioManagerSpatiand::GetName() {
++  return "Spatiand";
++}
++
++AudioOutputStream* AudioManagerSpatiand::MakeLinearOutputStream(const AudioParameters& params,
++                                                                const LogCallback& log_callback) {
++  // The room takes 48 kHz alone; the low-latency streams are made at that rate (below), and
++  // a linear one is only a fallback for when they cannot be opened.
++  if (params.sample_rate() != kRate) {
++    return FakeAudioOutputStream::MakeFakeStream(this, params);
++  }
++  return new SpatiandAudioOutputStream(this, params, kDefaultName);
++}
++
++AudioOutputStream* AudioManagerSpatiand::MakeLowLatencyOutputStream(
++    const AudioParameters& params,
++    const std::string& device_id,
++    const LogCallback& log_callback) {
++  if (params.sample_rate() != kRate) {
++    return FakeAudioOutputStream::MakeFakeStream(this, params);
++  }
++  return new SpatiandAudioOutputStream(this, params, NameOf(device_id));
++}
++
++AudioInputStream* AudioManagerSpatiand::MakeLinearInputStream(const AudioParameters& params,
++                                                              const std::string& device_id,
++                                                              const LogCallback& log_callback) {
++  return new SpatiandAudioInputStream(this, params);
++}
++
++AudioInputStream* AudioManagerSpatiand::MakeLowLatencyInputStream(
++    const AudioParameters& params,
++    const std::string& device_id,
++    const LogCallback& log_callback) {
++  return new SpatiandAudioInputStream(this, params);
++}
++
++AudioParameters AudioManagerSpatiand::GetInputStreamParameters(const std::string& device_id) {
++  return AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY, ChannelLayoutConfig::Mono(), kRate,
++                         kFrames);
++}
++
++bool AudioManagerSpatiand::GetAudioOutputDeviceNames(AudioDeviceNames* device_names) {
++  device_names->push_front(AudioDeviceName::CreateDefault());
++  return true;
++}
++
++bool AudioManagerSpatiand::GetAudioInputDeviceNames(AudioDeviceNames* device_names) {
++  // One: the machine's microphone, through the room.
++  device_names->push_front(AudioDeviceName::CreateDefault());
++  return true;
++}
++
++AudioParameters AudioManagerSpatiand::GetPreferredOutputStreamParameters(
++    const std::string& output_device_id,
++    const AudioParameters& input_params) {
++  // The room places mono, stereo, 5.1 and 7.1 channel by channel, through its HRTF; anything
++  // else is mixed to stereo by Chromium on the way.
++  ChannelLayoutConfig layout = ChannelLayoutConfig::Stereo();
++  if (input_params.IsValid()) {
++    switch (input_params.channel_layout()) {
++      case CHANNEL_LAYOUT_MONO:
++      case CHANNEL_LAYOUT_5_1:
++      case CHANNEL_LAYOUT_5_1_BACK:
++      case CHANNEL_LAYOUT_7_1:
++        layout = input_params.channel_layout_config();
++        break;
++      default:
++        break;
++    }
++  }
++  return AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY, layout, kRate, kFrames);
++}
++
++}  // namespace media
+diff --git a/media/audio/spatiand/audio_manager_spatiand.h b/media/audio/spatiand/audio_manager_spatiand.h
+new file mode 100644
+index 0000000000..6f7f9b10cd
+--- /dev/null
++++ b/media/audio/spatiand/audio_manager_spatiand.h
+@@ -0,0 +1,63 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef MEDIA_AUDIO_SPATIAND_AUDIO_MANAGER_SPATIAND_H_
++#define MEDIA_AUDIO_SPATIAND_AUDIO_MANAGER_SPATIAND_H_
++
++#include <memory>
++#include <string>
++#include <string_view>
++
++#include "media/audio/audio_manager_base.h"
++
++namespace media {
++
++// Spatiand: sound into Spatiand's room where there is no PulseAudio to play into its windows'
++// sinks: SpatiMesh on the Beam Pro, Chromium's Linux browser on Android's libc. Each stream goes
++// to the room's socket, `$XDG_RUNTIME_DIR/spatiand-sound`, under the name of the sink it is for.
++// A tab's is its window's (`spatiand.window.<slot>`, which content/browser/media/
++// spatiand_window_audio.cc makes the tab's output device, as it does on the Deck, where the same
++// names are PipeWire's sinks), and the room places it at that window through its HRTF, under the
++// window's own mute and volume; a tab moved to another window has its streams opened again under
++// that window's name. A stream for the default device goes under `spatimesh-chromium`, which the
++// room places at SpatiMesh's newest window: a tab's sound before it has been routed. The
++// microphone is the room's too (`spatiand-mic`), which records the machine's while a page is
++// listening.
++class MEDIA_EXPORT AudioManagerSpatiand : public AudioManagerBase {
++ public:
++  AudioManagerSpatiand(std::unique_ptr<AudioThread> audio_thread,
++                       AudioLogFactory* audio_log_factory);
++  AudioManagerSpatiand(const AudioManagerSpatiand&) = delete;
++  AudioManagerSpatiand& operator=(const AudioManagerSpatiand&) = delete;
++  ~AudioManagerSpatiand() override;
++
++  // AudioManager:
++  bool HasAudioOutputDevices() override;
++  bool HasAudioInputDevices() override;
++  const std::string_view GetName() override;
++
++  // AudioManagerBase:
++  AudioOutputStream* MakeLinearOutputStream(const AudioParameters& params,
++                                            const LogCallback& log_callback) override;
++  AudioOutputStream* MakeLowLatencyOutputStream(const AudioParameters& params,
++                                                const std::string& device_id,
++                                                const LogCallback& log_callback) override;
++  AudioInputStream* MakeLinearInputStream(const AudioParameters& params,
++                                          const std::string& device_id,
++                                          const LogCallback& log_callback) override;
++  AudioInputStream* MakeLowLatencyInputStream(const AudioParameters& params,
++                                              const std::string& device_id,
++                                              const LogCallback& log_callback) override;
++  AudioParameters GetInputStreamParameters(const std::string& device_id) override;
++  bool GetAudioOutputDeviceNames(AudioDeviceNames* device_names) override;
++  bool GetAudioInputDeviceNames(AudioDeviceNames* device_names) override;
++
++ protected:
++  AudioParameters GetPreferredOutputStreamParameters(
++      const std::string& output_device_id,
++      const AudioParameters& input_params) override;
++};
++
++}  // namespace media
++
++#endif  // MEDIA_AUDIO_SPATIAND_AUDIO_MANAGER_SPATIAND_H_
+diff --git a/media/audio/spatiand/spatiand_input.cc b/media/audio/spatiand/spatiand_input.cc
+new file mode 100644
+index 0000000000..e602ab2014
+--- /dev/null
++++ b/media/audio/spatiand/spatiand_input.cc
+@@ -0,0 +1,193 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "media/audio/spatiand/spatiand_input.h"
++
++#include <errno.h>
++#include <fcntl.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <unistd.h>
++
++#include <utility>
++
++#include "base/check.h"
++#include "base/containers/span.h"
++#include "base/functional/bind.h"
++#include "base/logging.h"
++#include "base/posix/eintr_wrapper.h"
++#include "base/task/single_thread_task_runner.h"
++#include "media/audio/audio_manager_base.h"
++#include "media/base/audio_bus.h"
++#include "media/base/audio_sample_types.h"
++
++namespace media {
++
++namespace {
++
++// How long before it is read a sample was heard by the microphone: Android's recording, then the
++// room's handing it on. A guess, as Android says nothing of it here.
++constexpr base::TimeDelta kHeardBefore = base::Milliseconds(30);
++
++// The most kept waiting: a page that stops reading for longer loses the oldest.
++constexpr size_t kMostWaiting = 48000 * 2 / 2;  // half a second of 16-bit mono
++
++}  // namespace
++
++SpatiandAudioInputStream::SpatiandAudioInputStream(AudioManagerBase* manager,
++                                                   const AudioParameters& params)
++    : manager_(manager),
++      params_(params),
++      worker_(manager->GetWorkerTaskRunner(), params),
++      bus_(AudioBus::Create(params)) {}
++
++SpatiandAudioInputStream::~SpatiandAudioInputStream() {
++  DCHECK(!callback_);
++}
++
++AudioInputStream::OpenOutcome SpatiandAudioInputStream::Open() {
++  DCHECK(manager_->GetTaskRunner()->BelongsToCurrentThread());
++  if (socket_.is_valid()) {
++    return OpenOutcome::kAlreadyOpen;
++  }
++  // The room sends 48 kHz mono, as AudioManagerSpatiand says its microphone is; asked for two
++  // channels, each has it.
++  if (params_.sample_rate() != 48000 || params_.channels() > 2) {
++    LOG(WARNING) << "Spatiand's microphone is 48 kHz mono, not " << params_.AsHumanReadableString();
++    return OpenOutcome::kFailed;
++  }
++  const char* dir = getenv("XDG_RUNTIME_DIR");
++  if (!dir || !*dir) {
++    return OpenOutcome::kFailed;
++  }
++  const std::string path = std::string(dir) + "/spatiand-mic";
++  sockaddr_un address = {};
++  address.sun_family = AF_UNIX;
++  if (path.size() >= sizeof(address.sun_path)) {
++    return OpenOutcome::kFailed;
++  }
++  memcpy(address.sun_path, path.c_str(), path.size() + 1);
++#if defined(SOCK_CLOEXEC)
++  base::ScopedFD socket(::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
++#else
++  // macOS: no SOCK_CLOEXEC; close-on-exec set at once after.
++  base::ScopedFD socket(::socket(AF_UNIX, SOCK_STREAM, 0));
++  if (socket.is_valid()) {
++    fcntl(socket.get(), F_SETFD, FD_CLOEXEC);
++  }
++#endif
++  if (!socket.is_valid() ||
++      HANDLE_EINTR(connect(socket.get(), reinterpret_cast<const sockaddr*>(&address),
++                           sizeof(address))) != 0) {
++    PLOG(WARNING) << "Spatiand's room has no microphone at " << path;
++    return OpenOutcome::kFailedDeviceRemoved;
++  }
++  if (HANDLE_EINTR(write(socket.get(), "SPMC", 4)) != 4 ||
++      fcntl(socket.get(), F_SETFL, O_NONBLOCK) != 0) {
++    PLOG(WARNING) << "Spatiand's room would not give its microphone";
++    return OpenOutcome::kFailed;
++  }
++  socket_ = std::move(socket);
++  return OpenOutcome::kSuccess;
++}
++
++void SpatiandAudioInputStream::Start(AudioInputCallback* callback) {
++  DCHECK(manager_->GetTaskRunner()->BelongsToCurrentThread());
++  callback_ = callback;
++  waiting_.clear();
++  worker_.Start(base::BindRepeating(&SpatiandAudioInputStream::Tick, base::Unretained(this)));
++}
++
++void SpatiandAudioInputStream::Stop() {
++  DCHECK(manager_->GetTaskRunner()->BelongsToCurrentThread());
++  worker_.Stop();
++  callback_ = nullptr;
++}
++
++void SpatiandAudioInputStream::Close() {
++  DCHECK(!callback_);
++  DCHECK(manager_->GetTaskRunner()->BelongsToCurrentThread());
++  // The room stops recording once nobody is connected.
++  socket_.reset();
++  manager_->ReleaseInputStream(this);
++}
++
++double SpatiandAudioInputStream::GetMaxVolume() {
++  return 1.0;
++}
++
++void SpatiandAudioInputStream::SetVolume(double volume) {}
++
++double SpatiandAudioInputStream::GetVolume() {
++  return 1.0;
++}
++
++bool SpatiandAudioInputStream::SetAutomaticGainControl(bool enabled) {
++  return false;
++}
++
++bool SpatiandAudioInputStream::GetAutomaticGainControl() {
++  return false;
++}
++
++bool SpatiandAudioInputStream::IsMuted() {
++  return false;
++}
++
++void SpatiandAudioInputStream::SetOutputDeviceForAec(const std::string& output_device_id) {}
++
++void SpatiandAudioInputStream::Tick(base::TimeTicks ideal_time, base::TimeTicks now) {
++  DCHECK(manager_->GetWorkerTaskRunner()->BelongsToCurrentThread());
++  if (!socket_.is_valid()) {
++    return;
++  }
++  uint8_t chunk[4096];
++  // At most what is kept, a tick: a sender running ahead of the clock does not hold the thread.
++  for (size_t taken = 0; taken < kMostWaiting;) {
++    const ssize_t got = HANDLE_EINTR(read(socket_.get(), chunk, sizeof(chunk)));
++    if (got > 0) {
++      waiting_.insert(waiting_.end(), chunk, chunk + got);
++      taken += static_cast<size_t>(got);
++      continue;
++    }
++    if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
++      break;
++    }
++    // The room has gone, or would not record.
++    LOG(WARNING) << "Spatiand's microphone has stopped";
++    socket_.reset();
++    callback_->OnError(AudioInputCallback::Error::kRuntimeError);
++    return;
++  }
++  if (waiting_.size() > kMostWaiting) {
++    // Whole samples only, so what follows is still read in step.
++    const size_t extra = (waiting_.size() - kMostWaiting) & ~size_t{1};
++    waiting_.erase(waiting_.begin(), waiting_.begin() + extra);
++  }
++  const size_t buffer = static_cast<size_t>(params_.frames_per_buffer()) * sizeof(int16_t);
++  size_t given = 0;
++  while (waiting_.size() - given >= buffer) {
++    const auto samples = base::span(reinterpret_cast<const int16_t*>(waiting_.data() + given),
++                                    static_cast<size_t>(params_.frames_per_buffer()));
++    if (params_.channels() == 1) {
++      bus_->FromInterleaved<SignedInt16SampleTypeTraits>(samples);
++    } else {
++      spread_.resize(samples.size() * static_cast<size_t>(params_.channels()));
++      for (size_t i = 0; i < samples.size(); ++i) {
++        for (int c = 0; c < params_.channels(); ++c) {
++          spread_[i * static_cast<size_t>(params_.channels()) + static_cast<size_t>(c)] = samples[i];
++        }
++      }
++      bus_->FromInterleaved<SignedInt16SampleTypeTraits>(spread_);
++    }
++    const base::TimeDelta behind =
++        params_.GetBufferDuration() * ((waiting_.size() - given) / buffer - 1);
++    callback_->OnData(bus_.get(), now - kHeardBefore - behind, 1.0, {});
++    given += buffer;
++  }
++  waiting_.erase(waiting_.begin(), waiting_.begin() + given);
++}
++
++}  // namespace media
+diff --git a/media/audio/spatiand/spatiand_input.h b/media/audio/spatiand/spatiand_input.h
+new file mode 100644
+index 0000000000..b71da92c1e
+--- /dev/null
++++ b/media/audio/spatiand/spatiand_input.h
+@@ -0,0 +1,68 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef MEDIA_AUDIO_SPATIAND_SPATIAND_INPUT_H_
++#define MEDIA_AUDIO_SPATIAND_SPATIAND_INPUT_H_
++
++#include <stdint.h>
++
++#include <memory>
++#include <string>
++#include <vector>
++
++#include "base/files/scoped_file.h"
++#include "base/memory/raw_ptr.h"
++#include "base/time/time.h"
++#include "media/audio/audio_io.h"
++#include "media/base/audio_parameters.h"
++#include "media/base/fake_audio_worker.h"
++
++namespace media {
++
++class AudioBus;
++class AudioManagerBase;
++
++// The microphone, from Spatiand's room (see AudioManagerSpatiand): it connects to the room's
++// `$XDG_RUNTIME_DIR/spatiand-mic` and says `SPMC`; the room records the machine's microphone while
++// anyone is connected (Android's voice recording, echo cancelling and noise suppression on) and
++// sends 48 kHz mono little-endian 16-bit samples as they come (crates/spatiand/src/own.rs, `mic`).
++// Read a buffer at a time, on the clock, without waiting on the socket.
++class SpatiandAudioInputStream : public AudioInputStream {
++ public:
++  SpatiandAudioInputStream(AudioManagerBase* manager, const AudioParameters& params);
++  SpatiandAudioInputStream(const SpatiandAudioInputStream&) = delete;
++  SpatiandAudioInputStream& operator=(const SpatiandAudioInputStream&) = delete;
++  ~SpatiandAudioInputStream() override;
++
++  // AudioInputStream:
++  OpenOutcome Open() override;
++  void Start(AudioInputCallback* callback) override;
++  void Stop() override;
++  void Close() override;
++  double GetMaxVolume() override;
++  void SetVolume(double volume) override;
++  double GetVolume() override;
++  bool SetAutomaticGainControl(bool enabled) override;
++  bool GetAutomaticGainControl() override;
++  bool IsMuted() override;
++  void SetOutputDeviceForAec(const std::string& output_device_id) override;
++
++ private:
++  // On the manager's worker thread, once a buffer: what the room has sent, to the page.
++  void Tick(base::TimeTicks ideal_time, base::TimeTicks now);
++
++  const raw_ptr<AudioManagerBase> manager_;
++  const AudioParameters params_;
++  base::ScopedFD socket_;
++  raw_ptr<AudioInputCallback> callback_ = nullptr;
++  FakeAudioWorker worker_;
++  const std::unique_ptr<AudioBus> bus_;
++  // Bytes read and not yet given, less than a buffer once a tick is done.
++  std::vector<uint8_t> waiting_;
++  // The mono samples once for each channel, when two are asked for.
++  std::vector<int16_t> spread_;
++};
++
++}  // namespace media
++
++#endif  // MEDIA_AUDIO_SPATIAND_SPATIAND_INPUT_H_
+diff --git a/media/audio/spatiand/spatiand_output.cc b/media/audio/spatiand/spatiand_output.cc
+new file mode 100644
+index 0000000000..850e3e53c4
+--- /dev/null
++++ b/media/audio/spatiand/spatiand_output.cc
+@@ -0,0 +1,160 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "media/audio/spatiand/spatiand_output.h"
++
++#include <stdlib.h>
++#include <string.h>
++#include <fcntl.h>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <unistd.h>
++
++#include <algorithm>
++#include <utility>
++
++#include "base/check.h"
++#include "base/functional/bind.h"
++#include "base/logging.h"
++#include "base/posix/eintr_wrapper.h"
++#include "base/task/single_thread_task_runner.h"
++#include "media/audio/audio_manager_base.h"
++#include "media/base/audio_bus.h"
++#include "media/base/audio_sample_types.h"
++
++namespace media {
++
++namespace {
++
++// How long after it is written a buffer is heard: the room gathers a hundredth of a second from
++// every stream of a window before it places it, and then plays it out of the machine. The same
++// as Spatiand's own players say of it (crates/spatiand-media/src/sound.rs, BEHIND).
++constexpr base::TimeDelta kHeardAfter = base::Milliseconds(60);
++
++// All of `bytes`, or false.
++bool WriteAll(int fd, const void* bytes, size_t length) {
++  const char* at = static_cast<const char*>(bytes);
++  while (length > 0) {
++    const ssize_t written = HANDLE_EINTR(write(fd, at, length));
++    if (written <= 0) {
++      return false;
++    }
++    at += written;
++    length -= static_cast<size_t>(written);
++  }
++  return true;
++}
++
++}  // namespace
++
++SpatiandAudioOutputStream::SpatiandAudioOutputStream(AudioManagerBase* manager,
++                                                     const AudioParameters& params,
++                                                     std::string name)
++    : manager_(manager),
++      params_(params),
++      name_(std::move(name)),
++      worker_(manager->GetWorkerTaskRunner(), params),
++      bus_(AudioBus::Create(params)),
++      samples_(static_cast<size_t>(params.frames_per_buffer() * params.channels())) {}
++
++SpatiandAudioOutputStream::~SpatiandAudioOutputStream() {
++  DCHECK(!callback_);
++}
++
++bool SpatiandAudioOutputStream::Open() {
++  DCHECK(manager_->GetTaskRunner()->BelongsToCurrentThread());
++  const char* dir = getenv("XDG_RUNTIME_DIR");
++  if (!dir || !*dir) {
++    return false;
++  }
++  const std::string path = std::string(dir) + "/spatiand-sound";
++  sockaddr_un address = {};
++  address.sun_family = AF_UNIX;
++  if (path.size() >= sizeof(address.sun_path)) {
++    return false;
++  }
++  memcpy(address.sun_path, path.c_str(), path.size() + 1);
++#if defined(SOCK_CLOEXEC)
++  base::ScopedFD socket(::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
++#else
++  // macOS: no SOCK_CLOEXEC; close-on-exec set at once after.
++  base::ScopedFD socket(::socket(AF_UNIX, SOCK_STREAM, 0));
++  if (socket.is_valid()) {
++    fcntl(socket.get(), F_SETFD, FD_CLOEXEC);
++  }
++#endif
++  if (!socket.is_valid() ||
++      HANDLE_EINTR(connect(socket.get(), reinterpret_cast<const sockaddr*>(&address),
++                           sizeof(address))) != 0) {
++    PLOG(WARNING) << "Spatiand's room takes no sound at " << path;
++    return false;
++  }
++  std::string head = "SPSN";
++  const auto put = [&head](uint32_t value, int bytes) {
++    for (int i = 0; i < bytes; ++i) {
++      head.push_back(static_cast<char>((value >> (8 * i)) & 0xff));
++    }
++  };
++  put(static_cast<uint32_t>(params_.channels()), 2);
++  put(static_cast<uint32_t>(params_.sample_rate()), 4);
++  put(static_cast<uint32_t>(name_.size()), 2);
++  head += name_;
++  if (!WriteAll(socket.get(), head.data(), head.size())) {
++    PLOG(WARNING) << "Spatiand's room would not take " << name_ << "'s sound";
++    return false;
++  }
++  socket_ = std::move(socket);
++  bus_->Zero();
++  return true;
++}
++
++void SpatiandAudioOutputStream::Start(AudioSourceCallback* callback) {
++  DCHECK(manager_->GetTaskRunner()->BelongsToCurrentThread());
++  callback_ = callback;
++  worker_.Start(base::BindRepeating(&SpatiandAudioOutputStream::Tick, base::Unretained(this)));
++}
++
++void SpatiandAudioOutputStream::Stop() {
++  DCHECK(manager_->GetTaskRunner()->BelongsToCurrentThread());
++  // Waits for a tick under way: nothing is written after this.
++  worker_.Stop();
++  callback_ = nullptr;
++}
++
++void SpatiandAudioOutputStream::Close() {
++  DCHECK(!callback_);
++  DCHECK(manager_->GetTaskRunner()->BelongsToCurrentThread());
++  socket_.reset();
++  manager_->ReleaseOutputStream(this);
++}
++
++void SpatiandAudioOutputStream::Flush() {}
++
++void SpatiandAudioOutputStream::SetVolume(double volume) {
++  volume_.store(static_cast<float>(std::clamp(volume, 0.0, 1.0)));
++}
++
++void SpatiandAudioOutputStream::GetVolume(double* volume) {
++  *volume = volume_.load();
++}
++
++void SpatiandAudioOutputStream::Tick(base::TimeTicks ideal_time, base::TimeTicks now) {
++  DCHECK(manager_->GetWorkerTaskRunner()->BelongsToCurrentThread());
++  const base::TimeDelta delay = kHeardAfter + std::max(base::TimeDelta(), ideal_time - now);
++  callback_->OnMoreData(delay, now, {}, bus_.get());
++  if (!socket_.is_valid()) {
++    // The room has gone: the page plays on, unheard.
++    return;
++  }
++  const float volume = volume_.load();
++  if (volume != 1.0f) {
++    bus_->Scale(volume);
++  }
++  bus_->ToInterleaved<SignedInt16SampleTypeTraits>(samples_);
++  if (!WriteAll(socket_.get(), samples_.data(), samples_.size() * sizeof(int16_t))) {
++    PLOG(WARNING) << "Spatiand's room stopped taking " << name_ << "'s sound";
++    socket_.reset();
++  }
++}
++
++}  // namespace media
+diff --git a/media/audio/spatiand/spatiand_output.h b/media/audio/spatiand/spatiand_output.h
+new file mode 100644
+index 0000000000..e6c3fcf1b8
+--- /dev/null
++++ b/media/audio/spatiand/spatiand_output.h
+@@ -0,0 +1,66 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef MEDIA_AUDIO_SPATIAND_SPATIAND_OUTPUT_H_
++#define MEDIA_AUDIO_SPATIAND_SPATIAND_OUTPUT_H_
++
++#include <stdint.h>
++
++#include <atomic>
++#include <memory>
++#include <string>
++#include <vector>
++
++#include "base/files/scoped_file.h"
++#include "base/memory/raw_ptr.h"
++#include "base/time/time.h"
++#include "media/audio/audio_io.h"
++#include "media/base/audio_parameters.h"
++#include "media/base/fake_audio_worker.h"
++
++namespace media {
++
++class AudioBus;
++class AudioManagerBase;
++
++// One stream into Spatiand's room (see AudioManagerSpatiand): it connects to the room's socket and
++// says `SPSN`, its channel count (u16), rate (u32, the room's 48000) and the name it is heard
++// under (u16 length, then the bytes), then writes interleaved little-endian 16-bit samples, a
++// buffer (a hundredth of a second) at a time on the clock, as Spatiand's own players do
++// (crates/spatiand-media/src/sound.rs; the room's side is crates/spatiand/src/own.rs, `sound`).
++class SpatiandAudioOutputStream : public AudioOutputStream {
++ public:
++  SpatiandAudioOutputStream(AudioManagerBase* manager,
++                            const AudioParameters& params,
++                            std::string name);
++  SpatiandAudioOutputStream(const SpatiandAudioOutputStream&) = delete;
++  SpatiandAudioOutputStream& operator=(const SpatiandAudioOutputStream&) = delete;
++  ~SpatiandAudioOutputStream() override;
++
++  // AudioOutputStream:
++  bool Open() override;
++  void Start(AudioSourceCallback* callback) override;
++  void Stop() override;
++  void SetVolume(double volume) override;
++  void GetVolume(double* volume) override;
++  void Close() override;
++  void Flush() override;
++
++ private:
++  // On the manager's worker thread, once a buffer: the next buffer, to the room.
++  void Tick(base::TimeTicks ideal_time, base::TimeTicks now);
++
++  const raw_ptr<AudioManagerBase> manager_;
++  const AudioParameters params_;
++  const std::string name_;
++  base::ScopedFD socket_;
++  raw_ptr<AudioSourceCallback> callback_ = nullptr;
++  FakeAudioWorker worker_;
++  const std::unique_ptr<AudioBus> bus_;
++  std::vector<int16_t> samples_;
++  std::atomic<float> volume_{1.0f};
++};
++
++}  // namespace media
++
++#endif  // MEDIA_AUDIO_SPATIAND_SPATIAND_OUTPUT_H_
 diff --git a/printing/printing_context_mac.mm b/printing/printing_context_mac.mm
 index 4f15b217fc..1eac1d2931 100644
 --- a/printing/printing_context_mac.mm
@@ -6925,6 +8006,20 @@ index 4f15b217fc..1eac1d2931 100644
  
      // TODO(stuartmorgan): We really want a tab sheet here, not a modal window.
      // Will require restructuring the PrintingContext API to use a callback.
+diff --git a/sandbox/policy/mac/audio.sb b/sandbox/policy/mac/audio.sb
+index c3af283ccd..2f53c23ebb 100644
+--- a/sandbox/policy/mac/audio.sb
++++ b/sandbox/policy/mac/audio.sb
+@@ -65,3 +65,9 @@
+   (sysctl-name "hw.optional.sse4_1")
+   (sysctl-name "hw.optional.sse4_2")
+ )
++
++; Spatiand: the Linux UI on macOS hands its sound to Spatiand's room and records through it
++; (media/audio/spatiand): the room's two sockets, in whatever runtime folder the room gave
++; ($XDG_RUNTIME_DIR), and nothing else.
++(allow network-outbound
++  (remote unix-socket (path-regex #"/spatiand-(sound|mic)$")))
 diff --git a/third_party/libdrm/BUILD.gn b/third_party/libdrm/BUILD.gn
 index 43cc4de4ef..81c8f8b62e 100644
 --- a/third_party/libdrm/BUILD.gn
@@ -11129,6 +12224,36 @@ index 13b72eea29..f59521725a 100644
  
    // The SkSurface the clients can draw to show the surface on screen.
    sk_sp<SkSurface> sk_surface_;
+diff --git a/ui/ozone/platform/wayland/host/spatiand_xr.cc b/ui/ozone/platform/wayland/host/spatiand_xr.cc
+index a588ebe584..be06dc5f0c 100644
+--- a/ui/ozone/platform/wayland/host/spatiand_xr.cc
++++ b/ui/ozone/platform/wayland/host/spatiand_xr.cc
+@@ -11,6 +11,7 @@
+ #include "base/files/scoped_file.h"
+ #include "base/logging.h"
+ #include "base/no_destructor.h"
++#include "base/strings/stringprintf.h"
+ #include "ui/ozone/platform/wayland/host/wayland_surface.h"
+ #include "ui/ozone/platform/wayland/host/wayland_window.h"
+ #include "ui/platform_window/platform_window.h"
+@@ -87,6 +88,17 @@ void SpatiandXr::Attach(WaylandWindow* window) {
+   }
+   spatiand_xr_surface_v1_add_listener(object, &kSurfaceListener, window);
+   Objects()[window] = object;
++  // The name this window's sound is handed over with: this process and the
++  // window's surface, the key the room keeps the window's sink under (on the
++  // Deck it can read the process itself; on the Mac it cannot, and goes by
++  // this). Double-buffered: it comes with the window's next commit.
++  if (spatiand_xr_surface_v1_get_version(object) >=
++      SPATIAND_XR_SURFACE_V1_SET_SOUND_KEY_SINCE_VERSION) {
++    spatiand_xr_surface_v1_set_sound_key(
++        object, base::StringPrintf("wl:%d:%u", getpid(),
++                                   window->GetSpatiandSurfaceId())
++                    .c_str());
++  }
+ }
+ 
+ // static
 diff --git a/ui/ozone/platform/wayland/host/wayland_buffer_manager_host.cc b/ui/ozone/platform/wayland/host/wayland_buffer_manager_host.cc
 index a7506130a0..aaf73718e4 100644
 --- a/ui/ozone/platform/wayland/host/wayland_buffer_manager_host.cc

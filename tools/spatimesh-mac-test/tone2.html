@@ -1,0 +1,6 @@
+<html><head><title>Tone 2</title></head><body style="background:#246;color:white;font:40px sans-serif">
+<h1>Tone 2 (580 Hz, near silent)</h1><button id=b onclick="go()">play</button>
+<script>
+function go(){ const c=new AudioContext(); const o=c.createOscillator(); const g=c.createGain(); g.gain.value=0.001; o.frequency.value=580; o.connect(g).connect(c.destination); o.start(); document.title="Tone 2 playing"; }
+addEventListener("load", go);
+</script></body></html>
