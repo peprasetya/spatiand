@@ -110,7 +110,7 @@ enum MacScreens {
         let made = virtualDisplay
         // The glasses by what they are, not by number: changing to two eyes they come back as
         // another display, and the one they were is still listed for a moment.
-        func isGlasses(_ id: CGDirectDisplayID) -> Bool { CGDisplayVendorNumber(id) == 0x3647 && CGDisplayModelNumber(id) == 0x3132 }
+        func isGlasses(_ id: CGDirectDisplayID) -> Bool { GlassesScreen.isGlasses(id) }
         let others = ids.prefix(Int(count)).filter { $0 != glasses && $0 != made && !isGlasses($0) && CGDisplayMirrorsDisplay($0) != glasses }
         if !others.isEmpty { print("screens: \(others.count) other screen(s) here; the virtual one is not made the main one") }
         guard others.isEmpty, let virtual = resolve(virtualToBe) else { return false }
@@ -146,7 +146,7 @@ enum MacScreens {
     /// from the change of mode (arranged while changing, it did not come back: see `leadIfAlone`).
     static func yieldToGlasses(tries: Int = 0) {
         guard let made = virtualDisplay, CGMainDisplayID() == made else { return }
-        func isGlasses(_ id: CGDirectDisplayID) -> Bool { CGDisplayVendorNumber(id) == 0x3647 && CGDisplayModelNumber(id) == 0x3132 }
+        func isGlasses(_ id: CGDirectDisplayID) -> Bool { GlassesScreen.isGlasses(id) }
         var count: UInt32 = 0
         var ids = [CGDirectDisplayID](repeating: 0, count: 16)
         CGGetActiveDisplayList(16, &ids, &count)

@@ -16,6 +16,7 @@
 import AppKit
 import AVFoundation
 import CSpatiand
+import IOKit
 import QuartzCore
 
 /// A window AppKit is not allowed to move: it constrains new frames to the screens it knows of,
@@ -54,8 +55,48 @@ final class GlassesScreen {
         var count: UInt32 = 0
         var ids = [CGDirectDisplayID](repeating: 0, count: 16)
         guard CGGetActiveDisplayList(16, &ids, &count) == .success else { return nil }
-        return ids.prefix(Int(count)).first { CGDisplayVendorNumber($0) == 0x3647 && CGDisplayModelNumber($0) == 0x3132 }
+        return ids.prefix(Int(count)).first { isGlasses($0) }
     }
+
+    /// Whether a display is the glasses': by the numbers CoreGraphics gives, or -- when it has
+    /// lost them -- by the framebuffer's own.
+    ///
+    /// **CoreGraphics can lose the glasses' identity** and name their display "unkn"/"virt"
+    /// (0x756e6b6e/0x76697274), one 1920x1080 mode, while the framebuffer under it has read
+    /// their EDID right ("Air", 13895/12594). macOS then asks "mirror or extend" on them, and the
+    /// room, looking for 0x3647/0x3132, waited for a display that was there and told the wearer
+    /// to plug them in again, three times, to no end (littleotter, 2026-11-10, after the glasses
+    /// were taken off for a while). Such a display is the glasses' when a framebuffer has
+    /// their EDID: the stand-in macOS makes for a Mac with no screen at all exists only when
+    /// nothing is plugged in, and another screen keeps its own numbers.
+    static func isGlasses(_ id: CGDirectDisplayID) -> Bool {
+        if CGDisplayVendorNumber(id) == 0x3647 && CGDisplayModelNumber(id) == 0x3132 { return true }
+        guard CGDisplayVendorNumber(id) == 0x756e_6b6e, CGDisplayModelNumber(id) == 0x7669_7274,
+              CGDisplayIsBuiltin(id) == 0 else { return false }
+        return glassesFramebuffer()
+    }
+
+    /// Whether a framebuffer has the glasses' EDID (IOMobileFramebuffer's DisplayAttributes).
+    private static func glassesFramebuffer() -> Bool {
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOMobileFramebuffer"), &iterator) == KERN_SUCCESS else { return false }
+        defer { IOObjectRelease(iterator) }
+        while case let entry = IOIteratorNext(iterator), entry != 0 {
+            defer { IOObjectRelease(entry) }
+            guard let value = IORegistryEntryCreateCFProperty(entry, "DisplayAttributes" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue(),
+                  let attributes = value as? [String: Any],
+                  let product = attributes["ProductAttributes"] as? [String: Any] else { continue }
+            if (product["LegacyManufacturerID"] as? Int) == 0x3647, (product["ProductID"] as? Int) == 0x3132 {
+                if !lostIdentitySaid {
+                    lostIdentitySaid = true
+                    print("glasses: macOS has lost their display's name (it says unkn/virt); known by the framebuffer's EDID")
+                }
+                return true
+            }
+        }
+        return false
+    }
+    private static var lostIdentitySaid = false
 
     /// ANGLE's Metal layer, put inside ours when the compositor first draws, shows each frame
     /// the moment it is given one -- across the middle of the last, if that is where the
