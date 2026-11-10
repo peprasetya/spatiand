@@ -122,10 +122,30 @@ waits on. Fixed:
   the room's own channel (`describe` in `spatiand_xr_v1`), as on the Deck, where there is no AT-SPI
   bus in the room either.
 
-**Next**: the rest of pass 6's failures, first `components/remote_cocoa` (Chromium's Cocoa window
-bridge) and who pulls it in: `chrome/browser:core`, `content/browser`, `ui/shell_dialogs`,
-`chrome/browser/ui/cocoa`, `chrome/browser/image_editor`, `components/user_education/views`,
-`components/system_media_controls`. These mix UI and system, so by hand, file by file.
+**Passes 7 and 8 (the same night)**, the Cocoa UI taken out, the system kept:
+
+- `content/browser`: the Mac web-contents and render-widget views, drag, Cocoa input and key
+  equivalents, the CoreAnimation compositor view, `app_shim_remote_cocoa` out (a block of their
+  own under `!is_mac_linux_ui`); sandbox, process launching, speech, screen lock, theme helper,
+  file watching kept. macOS's Now Playing kept with no app shim (`ApplicationHost::GetForNativeView`
+  answers none). The text-input host (Cocoa's input method) is not bound: **gap**, a page asking
+  for it would lose its renderer.
+- `chrome/browser`: the app controller and menu bar, Cocoa key equivalents, the Cocoa views'
+  delegates, `chrome/browser/ui/cocoa` out. `ChromeBrowserMainPartsMac` stays for the system
+  (keychain, relaunch, disk-image install, app shims, trust store) without its Cocoa pieces, with
+  Ozone's extra parts, the Deck's views parts (`ViewsLinux`) and Spatiand's own parts.
+- `remote_cocoa/app_shim` builds only `CrApplication`, the process's NSApplication.
+- WebUI pages (`chrome/browser/ui/webui`) keep the Mac's: 40 files of the map's widenings put back;
+  both scripts leave the folder alone.
+- GRIT: in the Linux UI's reading `is_macosx` is false, as on Linux, and the Mac-first rule looks
+  through nested `<if>`s.
+- viz: no overlays on the Linux UI on macOS (the window goes through Wayland).
+- Aura's views answer Cocoa's own window ideas (activation independence, fullscreen Spaces,
+  event-tracking loops) with nothing.
+
+**To come over from the Beam Pro** (its patches that are not bionic's alone): Spatiand's own file
+chooser (`android-libc/0019`; the Linux path has no portal on the Mac) and each window's sound
+handed to the room (`android-libc/0012`).
 
 ## Resuming (littleotter is shut down at night)
 

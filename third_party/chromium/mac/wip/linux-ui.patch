@@ -237,6 +237,39 @@ index 122d85bf51..c20d54b30b 100644
        "fullscreen_linux.cc",
        "icon_loader_auralinux.cc",
        "shell_integration_linux.cc",
+diff --git a/chrome/browser/chrome_browser_application_mac.mm b/chrome/browser/chrome_browser_application_mac.mm
+index 823b03b27c..13b1327a5f 100644
+--- a/chrome/browser/chrome_browser_application_mac.mm
++++ b/chrome/browser/chrome_browser_application_mac.mm
+@@ -4,6 +4,8 @@
+ 
+ #import "chrome/browser/chrome_browser_application_mac.h"
+ 
++#include "build/build_config.h"
++
+ #include <Carbon/Carbon.h>  // for <HIToolbox/Events.h>
+ 
+ #include "base/apple/call_with_eh_frame.h"
+@@ -17,7 +19,9 @@
+ #include "base/trace_event/trace_event.h"
+ #import "chrome/browser/app_controller_mac.h"
+ #import "chrome/browser/mac/exception_processor.h"
++#if !BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: Cocoa's own right-to-left, not the Linux UI's
+ #include "chrome/browser/ui/cocoa/l10n_util.h"
++#endif
+ #include "chrome/common/chrome_switches.h"
+ #include "components/crash/core/common/crash_key.h"
+ #import "components/crash/core/common/objc_zombie.h"
+@@ -148,7 +152,9 @@ + (void)initialize {
+   }
+   InstallObjcExceptionPreprocessor();
+ 
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
+   cocoa_l10n_util::ApplyForcedRTL();
++#endif
+ }
+ 
+ - (void)orderFrontCharacterPalette:sender {
 diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
 index 5c655d08eb..4c2aa4a051 100644
 --- a/chrome/browser/chrome_browser_main.cc
@@ -4147,6 +4180,37 @@ index 8e7df2da72..2c8ea9031a 100644
      frameworks = [
        "AppKit.framework",
        "CoreGraphics.framework",
+diff --git a/components/remote_cocoa/app_shim/BUILD.gn b/components/remote_cocoa/app_shim/BUILD.gn
+index 8e61a19d40..67e5040cb7 100644
+--- a/components/remote_cocoa/app_shim/BUILD.gn
++++ b/components/remote_cocoa/app_shim/BUILD.gn
+@@ -101,6 +101,26 @@ component("app_shim") {
+     "SecurityInterface.framework",
+     "UniformTypeIdentifiers.framework",
+   ]
++
++  if (is_mac_linux_ui) {
++    # Spatiand: the Linux UI on macOS keeps only the process's own NSApplication
++    # (CrApplication, the event loop every macOS app has); the Cocoa windows,
++    # views, menus and dialogs bridged here are Chromium's Cocoa UI, which Aura's
++    # views and Ozone replace.
++    sources = []
++    sources = [
++      "cr_application.h",
++      "cr_application.mm",
++      "remote_cocoa_app_shim_export.h",
++    ]
++    deps = []
++    deps = [
++      "//base",
++      "//components/crash/core/common",
++    ]
++    frameworks = []
++    frameworks = [ "Cocoa.framework" ]
++  }
+ }
+ 
+ component("features") {
 diff --git a/components/remote_cocoa/browser/application_host.mm b/components/remote_cocoa/browser/application_host.mm
 index cc3ef45e8f..ff1dd245e3 100644
 --- a/components/remote_cocoa/browser/application_host.mm
@@ -5871,10 +5935,10 @@ index ca272e73b1..34003889f9 100644
          value = target_platform in ('cygwin', 'win32')
        elif name == 'is_android':
 diff --git a/tools/grit/grit/node/misc.py b/tools/grit/grit/node/misc.py
-index bb5a66ba56..eeda78e1f0 100644
+index bb5a66ba56..4f4d3e4bc1 100644
 --- a/tools/grit/grit/node/misc.py
 +++ b/tools/grit/grit/node/misc.py
-@@ -304,14 +304,53 @@ class IfNode(SplicingNode):
+@@ -304,14 +304,64 @@ class IfNode(SplicingNode):
          )
        self.if_then_else = True
  
@@ -5908,8 +5972,19 @@ index bb5a66ba56..eeda78e1f0 100644
 +      return children
 +    taken = _MacOnlyIds(root)
 +    return self._Branch(mac_cond) + [
-+        c for c in children if not set(c.GetTextualIds()) & taken
++        c for c in _Spliced(children) if not set(c.GetTextualIds()) & taken
 +    ]
++
++
++def _Spliced(nodes):
++  '''Spatiand: the nodes, with each <if>/<then>/<else>/<part> among them opened
++  into what it holds now (they are transparent: their children count as their
++  siblings), so that a resource nested a level down is checked too.'''
++  for node in nodes:
++    if isinstance(node, SplicingNode):
++      yield from _Spliced(node.ActiveChildren())
++    else:
++      yield node
 +
 +
 +def _MacOnlyIds(root):
