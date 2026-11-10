@@ -1,3 +1,27 @@
+diff --git a/base/BUILD.gn b/base/BUILD.gn
+index 6a9e120bcb..1bf1ac2407 100644
+--- a/base/BUILD.gn
++++ b/base/BUILD.gn
+@@ -2435,6 +2435,19 @@ component("base") {
+     }
+   }
+ 
++  # Spatiand: the Linux UI on macOS reads the desktop's environment and passes
++  # xdg-activation tokens (Wayland's) as Linux's UI does: xdg_util is
++  # environment-variable parsing and ~/.config/user-dirs.dirs reading, no
++  # Linux system. The rest of base/nix (mime_util_xdg) is not brought over:
++  # the system (MIME types) stays macOS's.
++  if (is_mac_linux_ui) {
++    sources += [
++      "nix/xdg_util.cc",
++      "nix/xdg_util.h",
++    ]
++    deps += [ "//base/third_party/xdg_user_dirs" ]
++  }
++
+   if (use_blink) {
+     sources += [
+       "files/file_path_watcher.cc",
 diff --git a/base/task/current_thread.cc b/base/task/current_thread.cc
 index dd959f737c..8f141ca4cf 100644
 --- a/base/task/current_thread.cc
@@ -105,6 +129,38 @@ index 6e45f4c226..c23686aa04 100644
    pkg_config("libffi") {
      packages = [ "libffi" ]
    }
+diff --git a/chrome/BUILD.gn b/chrome/BUILD.gn
+index 5886f2ff4f..08682ea3ac 100644
+--- a/chrome/BUILD.gn
++++ b/chrome/BUILD.gn
+@@ -1282,11 +1282,22 @@ if (is_win) {
+ 
+   # Limit the exported symbols of the framework library.
+   config("chrome_dll_symbol_exports") {
+-    inputs = [ rebase_path("app/framework.exports") ]
+-    ldflags = [
+-      "-Wl,-exported_symbols_list",
+-      "-Wl," + rebase_path("app/framework.exports", root_build_dir),
+-    ]
++    if (is_mac_linux_ui) {
++      # Spatiand: the Linux UI on macOS has no app shims (a web app is a window
++      # Spatiand shows, as on the Deck), so the framework does not export their
++      # entry point (_ChromeAppModeStart_vN, in //chrome/app_shim); the rest of
++      # app/framework.exports, named here.
++      ldflags = [
++        "-Wl,-exported_symbol,_ChromeMain",
++        "-Wl,-exported_symbol,_ChromeWebAppShortcutCopierMain",
++      ]
++    } else {
++      inputs = [ rebase_path("app/framework.exports") ]
++      ldflags = [
++        "-Wl,-exported_symbols_list",
++        "-Wl," + rebase_path("app/framework.exports", root_build_dir),
++      ]
++    }
+   }
+ 
+   # Control the order of exported symbols in the framework library.
 diff --git a/chrome/app/chrome_command_ids.h b/chrome/app/chrome_command_ids.h
 index 65b9ce9bc4..596258862a 100644
 --- a/chrome/app/chrome_command_ids.h
@@ -124,7 +180,7 @@ index 65b9ce9bc4..596258862a 100644
  #endif // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
  
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 122d85bf51..cc1f70bddd 100644
+index 122d85bf51..a16b85f0d2 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -509,7 +509,8 @@ if (!is_android) {
@@ -182,10 +238,18 @@ index 122d85bf51..cc1f70bddd 100644
        "//components/remote_cocoa/app_shim:features",
        "//components/remote_cocoa/browser",
        "//sandbox/mac:seatbelt",
-@@ -1575,6 +1566,27 @@ source_set("core") {
+@@ -1575,6 +1566,35 @@ source_set("core") {
        "//third_party/crashpad/crashpad/client",
      ]
  
++    # Spatiand: the Linux UI on macOS names its Wayland windows (app_id, WM
++    # class) as Linux's does; shell_integration_linux.cc itself is Linux's
++    # system (desktop files, xdg-settings, GLib) and is not built here.
++    if (is_mac_linux_ui) {
++      sources += [ "shell_integration_linux_ui_mac.cc" ]
++      deps += [ ":shell_integration_linux" ]
++    }
++
 +    # Spatiand: Chromium's Cocoa browser UI (its app controller and menu bar, Cocoa's key
 +    # equivalents, the Cocoa views' delegates), not the Linux UI's on macOS.
 +    if (!is_mac_linux_ui) {
@@ -210,7 +274,7 @@ index 122d85bf51..cc1f70bddd 100644
      frameworks = [
        "Accelerate.framework",
        "AudioUnit.framework",
-@@ -1617,11 +1629,10 @@ source_set("core") {
+@@ -1617,11 +1637,10 @@ source_set("core") {
      }
    }
  
@@ -225,7 +289,7 @@ index 122d85bf51..cc1f70bddd 100644
        "spatiand/bookmark_sync.cc",
        "spatiand/bookmark_sync.h",
        "spatiand/cookie_sync.cc",
-@@ -1648,6 +1659,14 @@ source_set("core") {
+@@ -1648,6 +1667,14 @@ source_set("core") {
        "spatiand/storage_sync.h",
        "spatiand/spatikey_window.h",
        "spatiand/shared_folder.h",
@@ -240,8 +304,79 @@ index 122d85bf51..cc1f70bddd 100644
        "fullscreen_linux.cc",
        "icon_loader_auralinux.cc",
        "shell_integration_linux.cc",
+diff --git a/chrome/browser/apps/app_shim/app_shim_manager_mac.cc b/chrome/browser/apps/app_shim/app_shim_manager_mac.cc
+index 36f4db160a..01d1dedc2b 100644
+--- a/chrome/browser/apps/app_shim/app_shim_manager_mac.cc
++++ b/chrome/browser/apps/app_shim/app_shim_manager_mac.cc
+@@ -14,6 +14,7 @@
+ #include <vector>
+ 
+ #include "apps/app_lifetime_monitor_factory.h"
++#include "build/build_config.h"
+ #include "base/apple/bundle_locations.h"
+ #include "base/apple/foundation_util.h"
+ #include "base/apple/osstatus_logging.h"
+@@ -1149,7 +1150,11 @@ void AppShimManager::OnShimProcessConnectedAndAllLaunchesDone(
+   // creating any browser windows or other ScopedKeepAlive instances that
+   // resulted from the app shim launch, so now is a good time to stop the
+   // browser process from keeping itself alive indefinitely.
++  // Spatiand: the app shims are the system's and kept; the AppController that
++  // keeps a hidden browser alive is the Cocoa UI's, not on the Linux UI.
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
+   app_controller_mac::ResetKeepAliveWhileHidden();
++#endif
+ 
+   // If we failed because the profile was locked, launch the profile manager.
+   if (result == chrome::mojom::AppShimLaunchResult::kProfileLocked) {
+diff --git a/chrome/browser/background/extensions/BUILD.gn b/chrome/browser/background/extensions/BUILD.gn
+index 6f3c0f1955..1a49c6f2f0 100644
+--- a/chrome/browser/background/extensions/BUILD.gn
++++ b/chrome/browser/background/extensions/BUILD.gn
+@@ -41,7 +41,8 @@ source_set("impl") {
+   if (is_win) {
+     sources += [ "background_mode_manager_win.cc" ]
+   }
+-  if (is_mac) {
++  # Spatiand: the Linux UI on macOS takes Aura's (below), as Linux does.
++  if (is_mac && !is_mac_linux_ui) {
+     sources += [ "background_mode_manager_mac.cc" ]
+   }
+   if (is_chromeos) {
+diff --git a/chrome/browser/browser_process_platform_part_mac.mm b/chrome/browser/browser_process_platform_part_mac.mm
+index 05dd81cbf0..8e0719ae8f 100644
+--- a/chrome/browser/browser_process_platform_part_mac.mm
++++ b/chrome/browser/browser_process_platform_part_mac.mm
+@@ -6,6 +6,7 @@
+ 
+ #include "base/apple/foundation_util.h"
+ #include "base/time/time.h"
++#include "build/build_config.h"
+ #import "chrome/browser/app_controller_mac.h"
+ #include "chrome/browser/apps/app_shim/app_shim_manager_mac.h"
+ #include "chrome/browser/apps/app_shim/web_app_shim_manager_delegate_mac.h"
+@@ -24,6 +25,12 @@
+ }
+ 
+ void BrowserProcessPlatformPart::AttemptExit(bool try_to_quit_application) {
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: the Linux UI quits as Linux does: close every browser, and the
++  // last one closing ends the process. Cocoa's confirm-to-quit and the
++  // AppController's termination are the Cocoa UI's.
++  BrowserProcessPlatformPartBase::AttemptExit(try_to_quit_application);
++#else
+   // On the Mac, the application continues to run once all windows are closed.
+   // Terminate will result in a CloseAllBrowsers() call, and once (and if)
+   // that is done, will cause the application to exit cleanly.
+@@ -45,6 +52,7 @@
+   }
+ 
+   chrome_browser_application_mac::Terminate();
++#endif  // BUILDFLAG(IS_MAC_LINUX_UI)
+ }
+ 
+ void BrowserProcessPlatformPart::PreMainMessageLoopRun() {
 diff --git a/chrome/browser/chrome_browser_application_mac.mm b/chrome/browser/chrome_browser_application_mac.mm
-index 823b03b27c..13b1327a5f 100644
+index 823b03b27c..48b79249ea 100644
 --- a/chrome/browser/chrome_browser_application_mac.mm
 +++ b/chrome/browser/chrome_browser_application_mac.mm
 @@ -4,6 +4,8 @@
@@ -253,17 +388,20 @@ index 823b03b27c..13b1327a5f 100644
  #include <Carbon/Carbon.h>  // for <HIToolbox/Events.h>
  
  #include "base/apple/call_with_eh_frame.h"
-@@ -17,7 +19,9 @@
+@@ -17,7 +19,12 @@
  #include "base/trace_event/trace_event.h"
  #import "chrome/browser/app_controller_mac.h"
  #import "chrome/browser/mac/exception_processor.h"
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++#include "chrome/browser/lifetime/application_lifetime.h"
++#endif
 +#if !BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: Cocoa's own right-to-left, not the Linux UI's
  #include "chrome/browser/ui/cocoa/l10n_util.h"
 +#endif
  #include "chrome/common/chrome_switches.h"
  #include "components/crash/core/common/crash_key.h"
  #import "components/crash/core/common/objc_zombie.h"
-@@ -148,7 +152,9 @@ + (void)initialize {
+@@ -148,7 +155,9 @@ + (void)initialize {
    }
    InstallObjcExceptionPreprocessor();
  
@@ -273,8 +411,32 @@ index 823b03b27c..13b1327a5f 100644
  }
  
  - (void)orderFrontCharacterPalette:sender {
+@@ -316,12 +325,23 @@ - (void)_customizeFileMenuIfNeeded {
+ // NSApplication event loop, so final post- MessageLoop::Run() work is done
+ // before exiting.
+ - (void)terminate:(id)sender {
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: no AppController on the Linux UI. macOS's own quit requests
++  // (logout, restart, the Dock's or Activity Monitor's Quit) are answered as
++  // Linux answers SIGTERM/SIGHUP (ExitHandler::Exit): close every browser;
++  // the last one closing ends the process.
++  chrome::AttemptExit();
++#else
+   [AppController.sharedController tryToTerminateApplication];
++#endif
+   // Return, don't exit. The application is responsible for exiting on its own.
+ }
+ 
+ - (void)cancelTerminate:(id)sender {
++  // Spatiand: nothing to cancel on the Linux UI, as on Linux.
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
+   [AppController.sharedController stopTryingToTerminateApplication];
++#endif
+ }
+ 
+ 
 diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
-index 5c655d08eb..4c2aa4a051 100644
+index 5c655d08eb..4d4a226767 100644
 --- a/chrome/browser/chrome_browser_main.cc
 +++ b/chrome/browser/chrome_browser_main.cc
 @@ -343,6 +343,10 @@
@@ -308,6 +470,16 @@ index 5c655d08eb..4c2aa4a051 100644
  #endif
  
    main_parts->AddParts(
+@@ -1542,7 +1550,8 @@ void ChromeBrowserMainParts::PreProfileInit() {
+   javascript_dialog_extensions_client::InstallClient();
+ #endif
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's JavaScript dialogs are Views', as on Linux; Cocoa's are the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (base::FeatureList::IsEnabled(features::kViewsJSAppModalDialog) ||
+       headless::IsHeadlessMode()) {
+     InstallChromeJavaScriptAppModalDialogViewFactory();
 diff --git a/chrome/browser/chrome_browser_main_mac.mm b/chrome/browser/chrome_browser_main_mac.mm
 index b269f1610a..debc3f3c1c 100644
 --- a/chrome/browser/chrome_browser_main_mac.mm
@@ -393,10 +565,10 @@ index b269f1610a..debc3f3c1c 100644
 +#endif
  }
 diff --git a/chrome/browser/download/BUILD.gn b/chrome/browser/download/BUILD.gn
-index 20809f42db..e5034d7c97 100644
+index 20809f42db..abfc29f8b1 100644
 --- a/chrome/browser/download/BUILD.gn
 +++ b/chrome/browser/download/BUILD.gn
-@@ -351,12 +351,13 @@ source_set("impl") {
+@@ -351,12 +351,21 @@ source_set("impl") {
    }
  
    if (is_mac) {
@@ -412,6 +584,14 @@ index 20809f42db..e5034d7c97 100644
 +    if (!is_mac_linux_ui) {
 +      sources += [ "drag_download_item_mac.mm" ]
 +      deps += [ "//chrome/browser/ui/cocoa" ]
++    } else {
++      # Spatiand: the Dock tile that draws that progress (NSDockTile: the
++      # system's Dock, not a browser window) is built here, as the rest of
++      # //chrome/browser/ui/cocoa is the Cocoa UI's and left out.
++      sources += [
++        "//chrome/browser/ui/cocoa/dock_icon.h",
++        "//chrome/browser/ui/cocoa/dock_icon.mm",
++      ]
 +    }
    }
  
@@ -434,6 +614,30 @@ index a3bd451b79..2ad8692e3a 100644
  }
  
  @end
+diff --git a/chrome/browser/extensions/BUILD.gn b/chrome/browser/extensions/BUILD.gn
+index ce661e5f9c..9e6b34bd47 100644
+--- a/chrome/browser/extensions/BUILD.gn
++++ b/chrome/browser/extensions/BUILD.gn
+@@ -1455,9 +1455,17 @@ source_set("extensions") {
+         "api/enterprise_reporting_private/keychain_data_helper_mac.cc",
+         "api/enterprise_reporting_private/keychain_data_helper_mac.h",
+         "api/image_writer_private/removable_storage_provider_mac.cc",
+-        "system_display/display_info_provider_mac.cc",
+-        "system_display/display_info_provider_mac.h",
+       ]
++
++      # Spatiand: on the Linux UI on macOS the displays are Ozone's (Wayland's
++      # outputs, through display::Screen): Aura's provider (below), as on Linux;
++      # NSScreen's is the Cocoa UI's.
++      if (!is_mac_linux_ui) {
++        sources += [
++          "system_display/display_info_provider_mac.cc",
++          "system_display/display_info_provider_mac.h",
++        ]
++      }
+     }
+ 
+     if (is_linux) {
 diff --git a/chrome/browser/image_editor/BUILD.gn b/chrome/browser/image_editor/BUILD.gn
 index eb9ecb29c1..3bac9bd351 100644
 --- a/chrome/browser/image_editor/BUILD.gn
@@ -447,6 +651,182 @@ index eb9ecb29c1..3bac9bd351 100644
      sources += [
        "event_capture_mac.h",
        "event_capture_mac.mm",
+diff --git a/chrome/browser/image_editor/screenshot_flow.cc b/chrome/browser/image_editor/screenshot_flow.cc
+index f499eb7c56..3cf2f4dc4d 100644
+--- a/chrome/browser/image_editor/screenshot_flow.cc
++++ b/chrome/browser/image_editor/screenshot_flow.cc
+@@ -29,7 +29,8 @@
+ #include "ui/snapshot/snapshot.h"
+ #include "ui/views/background.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Aura's event capture); EventCaptureMac is an NSEvent monitor.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/image_editor/event_capture_mac.h"
+ #include "components/lens/lens_features.h"
+ #include "content/public/browser/render_view_host.h"
+@@ -114,7 +115,8 @@ void ScreenshotFlow::CreateAndAddUIOverlay() {
+   screen_capture_layer_->SetName("ScreenshotRegionSelectionLayer");
+   screen_capture_layer_->SetFillsBoundsOpaquely(false);
+   screen_capture_layer_->set_delegate(this);
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Aura's event capture); EventCaptureMac is an NSEvent monitor.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   gfx::Rect bounds = web_contents_->GetViewBounds();
+   const gfx::NativeView web_contents_view =
+       web_contents_->GetContentNativeView();
+@@ -154,7 +156,8 @@ void ScreenshotFlow::RemoveUIOverlay() {
+   if (!web_contents_ || !screen_capture_layer_)
+     return;
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Aura's event capture); EventCaptureMac is an NSEvent monitor.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   views::Widget* widget = views::Widget::GetWidgetForNativeView(
+       web_contents_->GetContentNativeView());
+   if (!widget)
+@@ -244,7 +247,8 @@ void ScreenshotFlow::OnMouseEvent(ui::MouseEvent* event) {
+ 
+   gfx::Point location = located_event->location();
+   gfx::Rect web_contents_bounds = web_contents_->GetViewBounds();
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Aura's event capture); EventCaptureMac is an NSEvent monitor.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // Offset |location| be relative to the WebContents widget, vs the parent
+   // window, recomputed rather than cached in case e.g. user disables
+   // bookmarks bar from another window.
+@@ -358,7 +362,8 @@ bool ScreenshotFlow::IsUIOverlayShown() {
+ }
+ 
+ void ScreenshotFlow::ResetUIOverlayBounds() {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Aura's event capture); EventCaptureMac is an NSEvent monitor.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   gfx::Rect bounds = web_contents_->GetViewBounds();
+   const gfx::NativeView web_contents_view =
+       web_contents_->GetContentNativeView();
+@@ -427,7 +432,8 @@ void ScreenshotFlow::SetCursor(ui::mojom::CursorType cursor_type) {
+     return;
+   }
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Aura's event capture); EventCaptureMac is an NSEvent monitor.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (cursor_type == ui::mojom::CursorType::kCross) {
+     EventCaptureMac::SetCrossCursor();
+     return;
+diff --git a/chrome/browser/image_editor/screenshot_flow.h b/chrome/browser/image_editor/screenshot_flow.h
+index 8462b4929b..c9f445ba4e 100644
+--- a/chrome/browser/image_editor/screenshot_flow.h
++++ b/chrome/browser/image_editor/screenshot_flow.h
+@@ -21,7 +21,8 @@
+ #include "ui/gfx/geometry/rect.h"
+ #include "ui/gfx/image/image.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Aura's event capture); EventCaptureMac is an NSEvent monitor.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/image_editor/event_capture_mac.h"
+ #else
+ #include "base/scoped_observation.h"
+@@ -230,7 +231,8 @@ class ScreenshotFlow : public content::WebContentsObserver,
+   RegionSelectionCallback region_selection_callback_;
+ 
+   // Mac-specific
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Aura's event capture); EventCaptureMac is an NSEvent monitor.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   std::unique_ptr<EventCaptureMac> event_capture_mac_;
+ #else
+   base::ScopedObservation<ui::EventTarget, ui::EventHandler> event_capture_{
+diff --git a/chrome/browser/lifetime/BUILD.gn b/chrome/browser/lifetime/BUILD.gn
+index 93f3a1792e..c7f8a69e15 100644
+--- a/chrome/browser/lifetime/BUILD.gn
++++ b/chrome/browser/lifetime/BUILD.gn
+@@ -106,7 +106,11 @@ source_set("impl") {
+     ]
+   }
+ 
+-  if (is_mac) {
++  # Spatiand: the Linux UI on macOS ends the app as Linux does
++  # (application_lifetime_aura.cc: notifications and Aura's widgets closed);
++  # the Mac's posts NSApp's will-terminate for the AppController, the Cocoa
++  # UI's. The process's run loop ends by its keep-alives, as on Linux.
++  if (is_mac && !is_mac_linux_ui) {
+     sources += [ "application_lifetime_mac.mm" ]
+     deps += [
+       "//chrome/browser:app_controller_mac",
+diff --git a/chrome/browser/lifetime/smart_restart_policy.cc b/chrome/browser/lifetime/smart_restart_policy.cc
+index 942233325c..434c0fa50e 100644
+--- a/chrome/browser/lifetime/smart_restart_policy.cc
++++ b/chrome/browser/lifetime/smart_restart_policy.cc
+@@ -94,7 +94,8 @@ ExtendedExecutionOutcome SmartRestartPolicy::CanLockScreenRestartProceed(
+   }
+ #endif  // !BUILDFLAG(IS_CHROMEOS)
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: no AppController on the Linux UI.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (app_controller_mac::IsOpeningNewWindow()) {
+     return ExtendedExecutionOutcome::kBlockedByPolicy;
+   }
+@@ -121,9 +122,12 @@ bool SmartRestartPolicy::CanZeroWindowRestartProceed() {
+     return false;
+   }
+ 
++  // Spatiand: no AppController on the Linux UI.
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (app_controller_mac::IsOpeningNewWindow()) {
+     return false;
+   }
++#endif
+ 
+   // 2. Evaluates current blockers (Downloads, Media) and ensures the browser
+   // is windowless via the total_browser_count_is_zero check.
+diff --git a/chrome/browser/mac/chrome_browser_main_extra_parts_mac.h b/chrome/browser/mac/chrome_browser_main_extra_parts_mac.h
+index 95726e7765..76288e6854 100644
+--- a/chrome/browser/mac/chrome_browser_main_extra_parts_mac.h
++++ b/chrome/browser/mac/chrome_browser_main_extra_parts_mac.h
+@@ -7,6 +7,7 @@
+ 
+ #include <memory>
+ 
++#include "build/build_config.h"
+ #include "chrome/browser/chrome_browser_main_extra_parts.h"
+ 
+ namespace display {
+@@ -26,7 +27,10 @@ class ChromeBrowserMainExtraPartsMac : public ChromeBrowserMainExtraParts {
+   void PreEarlyInitialization() override;
+ 
+  private:
++  // Spatiand: NSScreen's screen is the Cocoa UI's; the Linux UI's is Ozone's.
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
+   std::unique_ptr<display::ScopedNativeScreen> screen_;
++#endif
+ };
+ 
+ #endif  // CHROME_BROWSER_MAC_CHROME_BROWSER_MAIN_EXTRA_PARTS_MAC_H_
+diff --git a/chrome/browser/mac/chrome_browser_main_extra_parts_mac.mm b/chrome/browser/mac/chrome_browser_main_extra_parts_mac.mm
+index 6bb5ccb823..e5a151a038 100644
+--- a/chrome/browser/mac/chrome_browser_main_extra_parts_mac.mm
++++ b/chrome/browser/mac/chrome_browser_main_extra_parts_mac.mm
+@@ -4,11 +4,16 @@
+ 
+ #include "chrome/browser/mac/chrome_browser_main_extra_parts_mac.h"
+ 
++#include "build/build_config.h"
+ #include "ui/display/screen.h"
+ 
+ ChromeBrowserMainExtraPartsMac::ChromeBrowserMainExtraPartsMac() = default;
+ ChromeBrowserMainExtraPartsMac::~ChromeBrowserMainExtraPartsMac() = default;
+ 
+ void ChromeBrowserMainExtraPartsMac::PreEarlyInitialization() {
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
+   screen_ = std::make_unique<display::ScopedNativeScreen>();
++#endif
++  // Spatiand: on the Linux UI the screen is Ozone's, made by the views parts
++  // as on Linux (ChromeBrowserMainExtraPartsViewsLinux), not NSScreen's.
+ }
 diff --git a/chrome/browser/platform_util_mac.mm b/chrome/browser/platform_util_mac.mm
 index 390d63ffee..1967d047aa 100644
 --- a/chrome/browser/platform_util_mac.mm
@@ -480,6 +860,20 @@ index 390d63ffee..1967d047aa 100644
  }
  
  }  // namespace platform_util
+diff --git a/chrome/browser/policy/chrome_browser_cloud_management_controller_desktop.cc b/chrome/browser/policy/chrome_browser_cloud_management_controller_desktop.cc
+index 1d65eb9e1a..d5b0f9939b 100644
+--- a/chrome/browser/policy/chrome_browser_cloud_management_controller_desktop.cc
++++ b/chrome/browser/policy/chrome_browser_cloud_management_controller_desktop.cc
+@@ -183,7 +183,8 @@ bool ChromeBrowserCloudManagementControllerDesktop::
+       case ChromeBrowserCloudManagementController::RegisterResult::
+           kEnrollmentFailedSilently:
+         CHECK(!IsEnterpriseStartupDialogShowing(), base::NotFatalUntil::M155);
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: no AppController on the Linux UI: startup goes on as on Linux.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+         app_controller_mac::EnterpriseStartupDialogClosed();
+ #endif
+         return true;
 diff --git a/chrome/browser/prefs/BUILD.gn b/chrome/browser/prefs/BUILD.gn
 index 84858cdae5..ec5f36e3f9 100644
 --- a/chrome/browser/prefs/BUILD.gn
@@ -499,6 +893,41 @@ index 84858cdae5..ec5f36e3f9 100644
    }
  
    if (enable_webui_ntp) {
+diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
+index 6efce2a9e8..2e6df024db 100644
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -515,8 +515,11 @@
+ 
+ #if BUILDFLAG(IS_MAC)
+ #include "chrome/browser/media/webrtc/system_media_capture_permissions_stats_mac.h"
++// Spatiand: Cocoa's confirm-to-quit and quit-with-apps are the Cocoa UI's.
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/ui/cocoa/apps/quit_with_apps_controller_mac.h"
+ #include "chrome/browser/ui/cocoa/confirm_quit.h"
++#endif
+ #include "chrome/browser/ui/views/frame/glass_frame_service.h"
+ #include "chrome/browser/web_applications/os_integration/mac/app_shim_registry.h"
+ #endif
+@@ -1646,8 +1649,18 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
+ #endif  // BUILDFLAG(IS_CHROMEOS)
+ 
+ #if BUILDFLAG(IS_MAC)
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
+   confirm_quit::RegisterLocalState(registry);
+   QuitWithAppsController::RegisterPrefs(registry);
++#else
++  // Spatiand, workaround: Cocoa's confirm-to-quit and quit-with-apps (the Cocoa
++  // UI's) are not built, but their prefs stay registered with their defaults:
++  // policy, first-run master prefs and the Mac's settings page (WebUI keeps the
++  // Mac's) name them. Proper alternative: those Mac-only toggles follow the
++  // Linux UI and the prefs go.
++  registry->RegisterBooleanPref(prefs::kConfirmToQuitEnabled, true);
++  registry->RegisterBooleanPref(prefs::kNotifyWhenAppsKeepChromeAlive, true);
++#endif
+   system_media_permissions::RegisterSystemMediaPermissionStatesPrefs(registry);
+   AppShimRegistry::Get()->RegisterLocalPrefs(registry);
+   GlassFrameService::RegisterLocalStatePrefs(registry);
 diff --git a/chrome/browser/renderer_context_menu/BUILD.gn b/chrome/browser/renderer_context_menu/BUILD.gn
 index 1e3789cbe2..857e3ea433 100644
 --- a/chrome/browser/renderer_context_menu/BUILD.gn
@@ -537,6 +966,187 @@ index 1e3789cbe2..857e3ea433 100644
      if (is_linux || is_chromeos || is_win) {
        sources += [
          # This test is for the spelling options submenu that's only for
+diff --git a/chrome/browser/sessions/session_service.cc b/chrome/browser/sessions/session_service.cc
+index 781d2e2f7e..914ee1a3ed 100644
+--- a/chrome/browser/sessions/session_service.cc
++++ b/chrome/browser/sessions/session_service.cc
+@@ -70,7 +70,8 @@
+ #include "chromeos/components/kiosk/kiosk_utils.h"
+ #endif  // BUILDFLAG(IS_CHROMEOS)
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: no AppController (dock, menu bar) on the Linux UI: sessions as on Linux.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/app_controller_mac.h"
+ #endif
+ 
+@@ -214,7 +215,8 @@ bool SessionService::ShouldRestore(BrowserWindowInterface* browser) {
+   if (!has_open_trackable_browsers_ &&
+       !StartupBrowserCreator::InSynchronousProfileLaunch() &&
+       !SessionRestore::IsRestoring(profile())
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: no AppController (dock, menu bar) on the Linux UI: sessions as on Linux.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+       // On OSX, a new window should not start a new session if it was opened
+       // from the dock or the menubar.
+       && !app_controller_mac::IsOpeningNewWindow()
+diff --git a/chrome/browser/shell_integration_linux_ui_mac.cc b/chrome/browser/shell_integration_linux_ui_mac.cc
+new file mode 100644
+index 0000000000..aece21b817
+--- /dev/null
++++ b/chrome/browser/shell_integration_linux_ui_mac.cc
+@@ -0,0 +1,151 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// Spatiand: the Linux UI on macOS (IS_MAC_LINUX_UI) names its Wayland windows
++// as Linux's UI does: the browser's xdg_toplevel app_id and WM class come from
++// `--class` (Spatiand keys each window's sound by it: "spatimesh-chromium"),
++// else from the desktop name, and a web app's from its desktop-file name.
++//
++// Workaround, named: these are Linux's functions from
++// shell_integration_linux.cc (GetWMClassFromAppName, GetXdgAppIdForWebApp,
++// GetProgramClassName, GetProgramClassClass and their helpers), carried here
++// because the rest of that file is Linux's system (desktop files, xdg-settings,
++// GLib), not built on macOS; and its inputs that live in Linux-only places
++// (switches::kWmClass, chrome::GetDesktopName,
++// web_app::GetAppDesktopShortcutFilename) are restated. Proper alternative:
++// split shell_integration_linux.cc so the window-naming part is one file built
++// for `is_linux || is_mac_linux_ui`, and widen those three to the Linux UI.
++
++#include <memory>
++#include <optional>
++#include <string>
++
++#include "base/command_line.h"
++#include "base/environment.h"
++#include "base/files/file_path.h"
++#include "base/i18n/file_util_icu.h"
++#include "base/strings/string_util.h"
++#include "build/build_config.h"
++#include "chrome/browser/shell_integration_linux.h"
++#include "chrome/browser/web_applications/web_app_helpers.h"
++#include "chrome/common/chrome_constants.h"
++#include "chrome/common/chrome_switches.h"
++#include "ui/ozone/public/ozone_platform.h"
++#include "ui/ozone/public/platform_utils.h"
++
++static_assert(BUILDFLAG(IS_MAC_LINUX_UI));
++
++namespace shell_integration_linux {
++
++namespace {
++
++// Linux's switches::kWmClass ("The same as the --class argument in X
++// applications"), declared there for Linux alone.
++constexpr char kWmClassSwitch[] = "class";
++
++// As shell_integration_linux.cc.
++constexpr char kWebAppDesktopIdPrefixEnvVar[] =
++    "CHROME_WEB_APP_DESKTOP_ID_PREFIX";
++
++// As shell_integration_linux.cc: the desktop file's name without ".desktop".
++std::string GetDesktopBaseName(const std::string& desktop_file_name) {
++  static const char kDesktopExtension[] = ".desktop";
++  auto remainder = base::RemoveSuffix(desktop_file_name, kDesktopExtension);
++  return remainder ? std::string(*remainder) : desktop_file_name;
++}
++
++// As Linux's chrome::GetDesktopName (chrome/common/channel_info_posix.cc) for
++// a Chromium-branded build: $CHROME_DESKTOP, else "chromium-browser.desktop".
++std::string GetDesktopName(base::Environment& env) {
++  std::optional<std::string> name = env.GetVar("CHROME_DESKTOP");
++  if (name.has_value() && !name.value().empty()) {
++    return name.value();
++  }
++  return "chromium-browser.desktop";
++}
++
++// As web_app::GetAppDesktopShortcutFilename
++// (web_app_shortcut_linux.cc): "<executable>-<app id>-<profile>.desktop".
++std::string GetAppDesktopShortcutFilename(const base::FilePath& profile_path,
++                                          const std::string& app_id) {
++  std::string filename(chrome::kBrowserProcessExecutableName);
++  filename.append("-").append(app_id).append("-").append(
++      profile_path.BaseName().value());
++  base::i18n::ReplaceIllegalCharactersInPath(&filename, '_');
++  // Spaces in filenames break xdg-desktop-menu
++  // (see https://bugs.freedesktop.org/show_bug.cgi?id=66605).
++  base::ReplaceChars(filename, " ", "_", &filename);
++  return filename.append(".desktop");
++}
++
++}  // namespace
++
++std::string GetWMClassFromAppName(std::string app_name) {
++  base::i18n::ReplaceIllegalCharactersInPath(&app_name, '_');
++  base::TrimString(app_name, "_", &app_name);
++  return app_name;
++}
++
++std::string GetXdgAppIdForWebApp(std::string app_name,
++                                 const base::FilePath& profile_path) {
++  auto remainder = base::RemovePrefix(app_name, web_app::kCrxAppPrefix);
++  if (remainder) {
++    app_name = std::string(*remainder);
++  }
++  std::string app_id =
++      GetDesktopBaseName(GetAppDesktopShortcutFilename(profile_path, app_name));
++
++  std::unique_ptr<base::Environment> env = base::Environment::Create();
++  std::optional<std::string> desktop_id_prefix =
++      env->GetVar(kWebAppDesktopIdPrefixEnvVar);
++  if (desktop_id_prefix.has_value()) {
++    app_id.insert(0, desktop_id_prefix.value());
++  }
++
++  return app_id;
++}
++
++namespace internal {
++
++std::string GetProgramClassName(const base::CommandLine& command_line,
++                                const std::string& desktop_file_name) {
++  std::string class_name = GetDesktopBaseName(desktop_file_name);
++  std::string user_data_dir =
++      command_line.GetSwitchValueNative(switches::kUserDataDir);
++  return user_data_dir.empty() ? class_name
++                               : class_name + " (" + user_data_dir + ")";
++}
++
++std::string GetProgramClassClass(const base::CommandLine& command_line,
++                                 const std::string& desktop_file_name) {
++  if (command_line.HasSwitch(kWmClassSwitch)) {
++    return command_line.GetSwitchValueASCII(kWmClassSwitch);
++  }
++  std::string desktop_base_name = GetDesktopBaseName(desktop_file_name);
++  if (auto* platform_utils =
++          ui::OzonePlatform::GetInstance()->GetPlatformUtils()) {
++    return platform_utils->GetWmWindowClass(desktop_base_name);
++  }
++  if (!desktop_base_name.empty()) {
++    // Capitalize the first character like gtk does.
++    desktop_base_name[0] = base::ToUpperASCII(desktop_base_name[0]);
++  }
++  return desktop_base_name;
++}
++
++}  // namespace internal
++
++std::string GetProgramClassName() {
++  std::unique_ptr<base::Environment> env(base::Environment::Create());
++  return internal::GetProgramClassName(*base::CommandLine::ForCurrentProcess(),
++                                       GetDesktopName(*env));
++}
++
++std::string GetProgramClassClass() {
++  std::unique_ptr<base::Environment> env(base::Environment::Create());
++  return internal::GetProgramClassClass(*base::CommandLine::ForCurrentProcess(),
++                                        GetDesktopName(*env));
++}
++
++}  // namespace shell_integration_linux
 diff --git a/chrome/browser/spatiand/spatikey_window.cc b/chrome/browser/spatiand/spatikey_window.cc
 index f1dbd321f1..9bf1ab841a 100644
 --- a/chrome/browser/spatiand/spatikey_window.cc
@@ -732,10 +1342,30 @@ index eaed07e785..265b3c613c 100644
      sources += [
        "cocoa/test/cocoa_test_helper.h",
 diff --git a/chrome/browser/ui/accelerator_table.cc b/chrome/browser/ui/accelerator_table.cc
-index 532ec4748b..da083b6b68 100644
+index 532ec4748b..9362a60c06 100644
 --- a/chrome/browser/ui/accelerator_table.cc
 +++ b/chrome/browser/ui/accelerator_table.cc
-@@ -77,11 +77,11 @@ const AcceleratorMapping kAcceleratorMap[] = {
+@@ -26,7 +26,8 @@
+ #include "ui/events/event_constants.h"
+ #include "ui/events/keycodes/keyboard_codes.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Linux's accelerator table); the Mac's are NSMenu's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/global_keyboard_shortcuts_mac.h"
+ #endif
+ 
+@@ -55,7 +56,8 @@ const AcceleratorMapping kAcceleratorMap[] = {
+ #endif
+     {ui::VKEY_ESCAPE, ui::EF_NONE, IDC_CLOSE_FIND_OR_STOP},
+ 
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Linux's accelerator table); the Mac's are NSMenu's.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+     {ui::VKEY_D, ui::EF_PLATFORM_ACCELERATOR, IDC_BOOKMARK_THIS_TAB},
+     {ui::VKEY_D, ui::EF_SHIFT_DOWN | ui::EF_PLATFORM_ACCELERATOR,
+      IDC_BOOKMARK_ALL_TABS},
+@@ -77,11 +79,11 @@ const AcceleratorMapping kAcceleratorMap[] = {
      {ui::VKEY_S, ui::EF_PLATFORM_ACCELERATOR, IDC_SAVE_PAGE},
      {ui::VKEY_9, ui::EF_PLATFORM_ACCELERATOR, IDC_SELECT_LAST_TAB},
      {ui::VKEY_NUMPAD9, ui::EF_PLATFORM_ACCELERATOR, IDC_SELECT_LAST_TAB},
@@ -749,7 +1379,7 @@ index 532ec4748b..da083b6b68 100644
      {ui::VKEY_NEXT, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN, IDC_MOVE_TAB_NEXT},
      {ui::VKEY_PRIOR, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN,
       IDC_MOVE_TAB_PREVIOUS},
-@@ -109,7 +109,7 @@ const AcceleratorMapping kAcceleratorMap[] = {
+@@ -109,7 +111,7 @@ const AcceleratorMapping kAcceleratorMap[] = {
      {ui::VKEY_NUMPAD7, ui::EF_PLATFORM_ACCELERATOR, IDC_SELECT_TAB_6},
      {ui::VKEY_8, ui::EF_PLATFORM_ACCELERATOR, IDC_SELECT_TAB_7},
      {ui::VKEY_NUMPAD8, ui::EF_PLATFORM_ACCELERATOR, IDC_SELECT_TAB_7},
@@ -758,7 +1388,7 @@ index 532ec4748b..da083b6b68 100644
      {ui::VKEY_1, ui::EF_ALT_DOWN, IDC_SELECT_TAB_0},
      {ui::VKEY_NUMPAD1, ui::EF_ALT_DOWN, IDC_SELECT_TAB_0},
      {ui::VKEY_2, ui::EF_ALT_DOWN, IDC_SELECT_TAB_1},
-@@ -163,7 +163,7 @@ const AcceleratorMapping kAcceleratorMap[] = {
+@@ -163,7 +165,7 @@ const AcceleratorMapping kAcceleratorMap[] = {
       IDC_TOGGLE_VERTICAL_TABS_COLLAPSE},
  
  // Platform-specific key maps.
@@ -767,7 +1397,27 @@ index 532ec4748b..da083b6b68 100644
      {ui::VKEY_BROWSER_BACK, ui::EF_NONE, IDC_BACK},
      {ui::VKEY_BROWSER_FORWARD, ui::EF_NONE, IDC_FORWARD},
      {ui::VKEY_BROWSER_HOME, ui::EF_NONE, IDC_HOME},
-@@ -321,7 +321,7 @@ std::vector<AcceleratorMapping> GetAcceleratorList() {
+@@ -261,7 +263,8 @@ const AcceleratorMapping kAcceleratorMap[] = {
+ #endif  // !BUILDFLAG(IS_MAC)
+ };
+ 
+-#if !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_CHROMEOS)
++// Spatiand: the UI follows Linux's path (Linux's accelerator table); the Mac's are NSMenu's.
++#if !(BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)) && !BUILDFLAG(IS_CHROMEOS)
+ const AcceleratorMapping kTabGroupAcceleratorMap[] = {
+     // Tab group commands.
+     {ui::VKEY_C, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN, IDC_ADD_NEW_TAB_TO_GROUP},
+@@ -274,7 +277,8 @@ const AcceleratorMapping kTabGroupAcceleratorMap[] = {
+ 
+ const AcceleratorMapping kDevToolsAcceleratorMap[] = {
+     {ui::VKEY_F12, ui::EF_NONE, IDC_DEV_TOOLS_TOGGLE},
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Linux's accelerator table); the Mac's are NSMenu's.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+     {ui::VKEY_I, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN, IDC_DEV_TOOLS},
+     {ui::VKEY_J, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN,
+      IDC_DEV_TOOLS_CONSOLE},
+@@ -321,7 +325,7 @@ std::vector<AcceleratorMapping> GetAcceleratorList() {
                           std::begin(kDevToolsAcceleratorMap),
                           std::end(kDevToolsAcceleratorMap));
  
@@ -776,6 +1426,36 @@ index 532ec4748b..da083b6b68 100644
      accelerators->emplace_back(AcceleratorMapping(
          {ui::VKEY_N, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN, IDC_NEW_SPLIT_TAB}));
  #elif BUILDFLAG(IS_CHROMEOS)
+@@ -350,7 +354,8 @@ std::vector<AcceleratorMapping> GetAcceleratorList() {
+ 
+     // Prevent conflicts with global_keyboard_shortcuts_mac.mm and chromeos
+     // accelerators.
+-#if !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_CHROMEOS)
++// Spatiand: the UI follows Linux's path (Linux's accelerator table); the Mac's are NSMenu's.
++#if !(BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)) && !BUILDFLAG(IS_CHROMEOS)
+     accelerators->insert(accelerators->end(),
+                          std::begin(kTabGroupAcceleratorMap),
+                          std::end(kTabGroupAcceleratorMap));
+@@ -367,7 +372,8 @@ void ClearAcceleratorListForTesting() {
+ 
+ bool GetStandardAcceleratorForCommandId(int command_id,
+                                         ui::Accelerator* accelerator) {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Linux's accelerator table); the Mac's are NSMenu's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // On macOS, the cut/copy/paste accelerators are defined in the main menu
+   // built in main_menu_builder.mm and the accelerator is user configurable. All
+   // of this is handled by CommandDispatcher.
+@@ -395,7 +401,8 @@ bool IsCommandRepeatable(int command_id) {
+ }
+ 
+ bool GetAcceleratorForCommandId(int command_id, ui::Accelerator* accelerator) {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Linux's accelerator table); the Mac's are NSMenu's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (GetDefaultMacAcceleratorForCommandId(command_id, accelerator)) {
+     return true;
+   }
 diff --git a/chrome/browser/ui/actions/chrome_action_id.h b/chrome/browser/ui/actions/chrome_action_id.h
 index 637e84f591..033afedf26 100644
 --- a/chrome/browser/ui/actions/chrome_action_id.h
@@ -877,6 +1557,40 @@ index 033a8de753..05f8cbd5de 100644
        sources += [ "autofill_popup_controller_impl_mac_test_api.h" ]
      }
      public_deps += [ "//ui/gfx:test_support" ]
+diff --git a/chrome/browser/ui/autofill/autofill_suggestion_controller.cc b/chrome/browser/ui/autofill/autofill_suggestion_controller.cc
+index 5343403fee..ce7c211330 100644
+--- a/chrome/browser/ui/autofill/autofill_suggestion_controller.cc
++++ b/chrome/browser/ui/autofill/autofill_suggestion_controller.cc
+@@ -15,7 +15,8 @@
+ #include "chrome/browser/ui/autofill/at_memory_suggestion_controller.h"
+ #include "chrome/browser/ui/autofill/autofill_keyboard_accessory_controller_impl.h"
+ #include "components/autofill/core/common/autofill_util.h"
+-#elif BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Views' popup); the Mac's controller adds the Touch Bar, Cocoa's.
++#elif BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ // We cannot include the Objective-C++ header of AutofillPopupControllerImplMac
+ // here. This function is defined in autofill_popup_controller_impl_mac.mm.
+ #else
+@@ -24,7 +25,8 @@
+ 
+ namespace autofill {
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Views' popup); the Mac's controller adds the Touch Bar, Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ // We cannot include the Objective-C++ header of AutofillPopupControllerImplMac
+ // here. This function is defined in autofill_popup_controller_impl_mac.mm.
+ base::WeakPtr<AutofillSuggestionController>
+@@ -50,7 +52,8 @@ AutofillSuggestionController::Create(
+   auto* controller = new AutofillKeyboardAccessoryControllerImpl(
+       delegate, web_contents, std::move(controller_common));
+   return controller->GetWeakPtr();
+-#elif BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Views' popup); the Mac's controller adds the Touch Bar, Cocoa's.
++#elif BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   return CreateAutofillPopupControllerImplMac(delegate, web_contents,
+                                               std::move(controller_common));
+ #else
 diff --git a/chrome/browser/ui/autofill/chrome_autofill_client.cc b/chrome/browser/ui/autofill/chrome_autofill_client.cc
 index 59f7afe950..3c6db8fb2d 100644
 --- a/chrome/browser/ui/autofill/chrome_autofill_client.cc
@@ -1045,10 +1759,20 @@ index 2278294752..d21aeb1c07 100644
    }
  }
 diff --git a/chrome/browser/ui/browser_actions.cc b/chrome/browser/ui/browser_actions.cc
-index 09509ddd6a..f77a761a86 100644
+index 09509ddd6a..dce5d30d92 100644
 --- a/chrome/browser/ui/browser_actions.cc
 +++ b/chrome/browser/ui/browser_actions.cc
-@@ -237,7 +237,7 @@
+@@ -54,7 +54,8 @@
+ #include "content/public/common/page_zoom.h"
+ #include "ui/base/interaction/element_identifier.h"
+ #include "ui/base/interaction/element_tracker.h"
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (its fullscreen toolbar, main menu and Apple events).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/global_keyboard_shortcuts_mac.h"
+ #include "chrome/browser/ui/browser_commands_mac.h"
+ #endif
+@@ -237,7 +238,7 @@
  #include "chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.h"
  #endif
  
@@ -1057,7 +1781,7 @@ index 09509ddd6a..f77a761a86 100644
  #include "chrome/common/pref_names.h"
  #include "components/prefs/pref_service.h"
  #endif
-@@ -2541,7 +2541,7 @@ void BrowserActions::InitializeToolbarAndMiscActions() {
+@@ -2541,7 +2542,7 @@ void BrowserActions::InitializeToolbarAndMiscActions() {
            .Build());
  #endif  // BUILDFLAG(IS_CHROMEOS)
  
@@ -1066,7 +1790,7 @@ index 09509ddd6a..f77a761a86 100644
    root_action_item_->AddChild(
        actions::ActionItem::Builder(
            base::BindRepeating(
-@@ -2673,7 +2673,7 @@ void BrowserActions::InitializeToolbarAndMiscActions() {
+@@ -2673,7 +2674,7 @@ void BrowserActions::InitializeToolbarAndMiscActions() {
            .SetActionId(kActionExit)
            .Build());
  
@@ -1075,11 +1799,41 @@ index 09509ddd6a..f77a761a86 100644
    root_action_item_->AddChild(
        actions::ActionItem::Builder(
            base::BindRepeating(
+@@ -2758,7 +2759,8 @@ void BrowserActions::InitializeToolbarAndMiscActions() {
+           .SetActionId(kActionOpenInPwaWindow)
+           .Build());
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (its fullscreen toolbar, main menu and Apple events).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   root_action_item_->AddChild(
+       actions::ActionItem::Builder(
+           base::BindRepeating(
+@@ -4336,7 +4338,8 @@ void BrowserActions::InitializeToolbarAndMiscActions() {
+           .SetActionId(kActionShowBetaForum)
+           .Build());
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (its fullscreen toolbar, main menu and Apple events).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   root_action_item_->AddChild(
+       actions::ActionItem::Builder(
+           base::BindRepeating(
 diff --git a/chrome/browser/ui/browser_command_controller.cc b/chrome/browser/ui/browser_command_controller.cc
-index bb0e8009e9..249e365080 100644
+index bb0e8009e9..ffcdd3cf6f 100644
 --- a/chrome/browser/ui/browser_command_controller.cc
 +++ b/chrome/browser/ui/browser_command_controller.cc
-@@ -174,7 +174,7 @@
+@@ -152,7 +152,8 @@
+ #include "ui/base/interaction/element_tracker.h"
+ #endif
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (its fullscreen, main menu and Apple events).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/ui/browser_commands_mac.h"
+ #endif
+ 
+@@ -174,7 +175,7 @@
  #include "components/user_manager/user_manager.h"
  #endif
  
@@ -1088,7 +1842,27 @@ index bb0e8009e9..249e365080 100644
  #include "ui/base/ime/text_edit_commands.h"
  #include "ui/base/ime/text_input_flags.h"
  #include "ui/linux/linux_ui.h"
-@@ -505,7 +505,7 @@ bool BrowserCommandController::IsReservedCommandOrKey(
+@@ -379,7 +380,8 @@ BrowserCommandController::BrowserCommandController(BrowserWindowInterface* bwi)
+       policy::policy_prefs::kDownloadRestrictions,
+       base::BindRepeating(&BrowserCommandController::UpdateSaveAsState,
+                           base::Unretained(this)));
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (its fullscreen, main menu and Apple events).
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+   profile_pref_registrar_.Add(
+       prefs::kFullscreenAllowed,
+       base::BindRepeating(
+@@ -488,7 +490,8 @@ bool BrowserCommandController::IsReservedCommandOrKey(
+     // found in http://crbug.com/40501396.
+     const bool is_exit_fullscreen =
+         (command_id == IDC_EXIT || command_id == IDC_FULLSCREEN);
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (its fullscreen, main menu and Apple events).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+     // This behavior is different on Mac OS, which has a unique user-initiated
+     // full-screen mode. According to the discussion in
+     // http://crbug.com/40511102, the commands should be reserved for
+@@ -505,7 +508,7 @@ bool BrowserCommandController::IsReservedCommandOrKey(
  #endif
    }
  
@@ -1097,7 +1871,17 @@ index bb0e8009e9..249e365080 100644
    // If this key was registered by the user as a content editing hotkey, then
    // it is not reserved.
    auto* linux_ui = ui::LinuxUi::instance();
-@@ -868,7 +868,7 @@ void BrowserCommandController::HandleCommandWithDisposition(
+@@ -700,7 +703,8 @@ void BrowserCommandController::HandleCommandWithDisposition(
+       ToggleVerticalTabs(browser_);
+       break;
+     case IDC_TOGGLE_VERTICAL_TABS_COLLAPSE:
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (its fullscreen, main menu and Apple events).
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+       // On Mac, the logging for both the keyboard shortcut and the view menu
+       // is handled in BrowserNativeWidgetMac::ExecuteCommand to correctly
+       // distinguish between the two trigger sources.
+@@ -868,7 +872,7 @@ void BrowserCommandController::HandleCommandWithDisposition(
        break;
  #endif
  
@@ -1106,7 +1890,7 @@ index bb0e8009e9..249e365080 100644
      case IDC_MINIMIZE_WINDOW:
        browser_->GetWindow()->Minimize();
        break;
-@@ -881,7 +881,7 @@ void BrowserCommandController::HandleCommandWithDisposition(
+@@ -881,7 +885,7 @@ void BrowserCommandController::HandleCommandWithDisposition(
  
  #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
  
@@ -1115,7 +1899,17 @@ index bb0e8009e9..249e365080 100644
      case IDC_USE_SYSTEM_TITLE_BAR: {
        PrefService* prefs = profile()->GetPrefs();
        prefs->SetBoolean(prefs::kUseCustomChromeFrame,
-@@ -1772,7 +1772,7 @@ void BrowserCommandController::InitCommandState() {
+@@ -899,7 +903,8 @@ void BrowserCommandController::HandleCommandWithDisposition(
+       break;
+ #endif  // BUILDFLAG(IS_WIN)
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (its fullscreen, main menu and Apple events).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+     case IDC_TOGGLE_FULLSCREEN_TOOLBAR:
+       chrome::ToggleAlwaysShowToolbarInFullscreen(browser_);
+       break;
+@@ -1772,7 +1777,7 @@ void BrowserCommandController::InitCommandState() {
    command_updater_->UpdateCommandEnabled(IDC_VISIT_DESKTOP_OF_LRU_USER_4, true);
    command_updater_->UpdateCommandEnabled(IDC_VISIT_DESKTOP_OF_LRU_USER_5, true);
  #endif
@@ -1124,6 +1918,46 @@ index bb0e8009e9..249e365080 100644
    command_updater_->UpdateCommandEnabled(IDC_MINIMIZE_WINDOW, true);
    command_updater_->UpdateCommandEnabled(IDC_MAXIMIZE_WINDOW, true);
    command_updater_->UpdateCommandEnabled(IDC_RESTORE_WINDOW, true);
+@@ -1827,7 +1832,8 @@ void BrowserCommandController::InitCommandState() {
+     command_updater_->UpdateCommandEnabled(IDC_DEV_TOOLS_TOGGLE,
+                                            dev_tools_enabled);
+     command_updater_->UpdateCommandEnabled(IDC_VIEW_SOURCE, dev_tools_enabled);
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (its fullscreen, main menu and Apple events).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+     command_updater_->UpdateCommandEnabled(IDC_TOGGLE_JAVASCRIPT_APPLE_EVENTS,
+                                            dev_tools_enabled);
+ #endif
+@@ -2296,7 +2302,8 @@ void BrowserCommandController::UpdateCommandsForDevTools() {
+   command_updater_->UpdateCommandEnabled(IDC_DEV_TOOLS_TOGGLE,
+                                          dev_tools_enabled);
+   command_updater_->UpdateCommandEnabled(IDC_VIEW_SOURCE, dev_tools_enabled);
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (its fullscreen, main menu and Apple events).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   command_updater_->UpdateCommandEnabled(IDC_TOGGLE_JAVASCRIPT_APPLE_EVENTS,
+                                          dev_tools_enabled);
+ #endif
+@@ -2430,7 +2437,8 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode() {
+     command_updater_->UpdateCommandEnabled(IDC_PROFILING_ENABLED, show_main_ui);
+   }
+ 
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (its fullscreen, main menu and Apple events).
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+   // Disable toggling into fullscreen mode if disallowed by pref.
+   const bool fullscreen_enabled =
+       is_fullscreen ||
+@@ -2706,7 +2714,8 @@ void BrowserCommandController::UpdateCommandsForTabKeyboardFocus(
+ }
+ 
+ void BrowserCommandController::UpdateCommandsForWebContentsFocus() {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (its fullscreen, main menu and Apple events).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // On Mac, toggling caret browsing changes whether it's enabled or not
+   // based on web contents focus.
+   command_updater_->UpdateCommandEnabled(IDC_CARET_BROWSING_TOGGLE,
 diff --git a/chrome/browser/ui/browser_commands.cc b/chrome/browser/ui/browser_commands.cc
 index 4657e2fbc5..12e1b7abcd 100644
 --- a/chrome/browser/ui/browser_commands.cc
@@ -1413,7 +2247,7 @@ index 67ac7b7787..53e722914a 100644
  source_set("exclusive_access") {
    sources = [
 diff --git a/chrome/browser/ui/extensions/BUILD.gn b/chrome/browser/ui/extensions/BUILD.gn
-index e88c10b460..4375f1c92f 100644
+index e88c10b460..a3e4dbe8cf 100644
 --- a/chrome/browser/ui/extensions/BUILD.gn
 +++ b/chrome/browser/ui/extensions/BUILD.gn
 @@ -50,7 +50,7 @@ source_set("extensions") {
@@ -1434,16 +2268,15 @@ index e88c10b460..4375f1c92f 100644
      sources += [ "extension_install_ui_desktop.cc" ]
      deps += [
        "//chrome/app:generated_resources",
-@@ -218,7 +218,7 @@ source_set("impl") {
+@@ -218,6 +218,7 @@ source_set("impl") {
      sources += [ "extension_dialog_utils_views.cc" ]
      deps += [ "//chrome/browser/ui/views/frame:toolbar_button_provider" ]
    }
--  if (is_win || is_mac) {
-+  if (is_win || (is_mac && !is_mac_linux_ui)) {
++  # Spatiand: kept on the Linux UI: not Cocoa (Views/DialogModel), and the C++ chooses it on IS_MAC; Linux has none (owner to decide).
+   if (is_win || is_mac) {
      deps += [ "//chrome/browser/ui/views/extensions:settings_overridden_dialog_view_utils" ]
    }
- 
-@@ -417,7 +417,7 @@ source_set("browser_tests") {
+@@ -417,7 +418,7 @@ source_set("browser_tests") {
        "//ui/native_theme:test_support",
      ]
  
@@ -1505,6 +2338,20 @@ index 191396857c..e52d04fb95 100644
        sources += [ "find_bar_platform_helper_mac_interactive_uitest.mm" ]
      }
    }
+diff --git a/chrome/browser/ui/find_bar/find_bar_platform_helper.cc b/chrome/browser/ui/find_bar/find_bar_platform_helper.cc
+index 7d210a655f..b5b176507f 100644
+--- a/chrome/browser/ui/find_bar/find_bar_platform_helper.cc
++++ b/chrome/browser/ui/find_bar/find_bar_platform_helper.cc
+@@ -6,7 +6,8 @@
+ 
+ #include "build/build_config.h"
+ 
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; the Mac's helper shares AppKit's find pasteboard.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+ // static
+ std::unique_ptr<FindBarPlatformHelper> FindBarPlatformHelper::Create(
+     FindBarController* find_bar_controller) {
 diff --git a/chrome/browser/ui/frame/BUILD.gn b/chrome/browser/ui/frame/BUILD.gn
 index 112da4dbc5..4585b714fa 100644
 --- a/chrome/browser/ui/frame/BUILD.gn
@@ -1750,18 +2597,19 @@ index beffc4b78a..7ca492bf8f 100644
    }
  
 diff --git a/chrome/browser/ui/passwords/bubble_controllers/BUILD.gn b/chrome/browser/ui/passwords/bubble_controllers/BUILD.gn
-index 283bf4e28d..8f02c182f6 100644
+index 283bf4e28d..8f8796cb74 100644
 --- a/chrome/browser/ui/passwords/bubble_controllers/BUILD.gn
 +++ b/chrome/browser/ui/passwords/bubble_controllers/BUILD.gn
-@@ -27,14 +27,14 @@ source_set("bubble_controllers") {
+@@ -27,6 +27,8 @@ source_set("bubble_controllers") {
      "//ui/gfx/range",
    ]
  
--  if (is_win || is_mac || is_chromeos) {
-+  if (is_win || (is_mac && !is_mac_linux_ui) || is_chromeos) {
++  # Spatiand: the controllers of the Views bubbles for macOS's own biometric
++  # check (Touch ID, the system's): kept on the Linux UI.
+   if (is_win || is_mac || is_chromeos) {
      sources += [
        "biometric_authentication_confirmation_bubble_controller.h",
-       "biometric_authentication_for_filling_bubble_controller.h",
+@@ -34,7 +36,7 @@ source_set("bubble_controllers") {
      ]
    }
  
@@ -1770,15 +2618,16 @@ index 283bf4e28d..8f02c182f6 100644
      sources += [ "relaunch_chrome_bubble_controller.h" ]
    }
  }
-@@ -88,14 +88,14 @@ source_set("impl") {
+@@ -88,6 +90,8 @@ source_set("impl") {
      ]
    }
  
--  if (is_win || is_mac || is_chromeos) {
-+  if (is_win || (is_mac && !is_mac_linux_ui) || is_chromeos) {
++  # Spatiand: the controllers of the Views bubbles for macOS's own biometric
++  # check (Touch ID, the system's): kept on the Linux UI.
+   if (is_win || is_mac || is_chromeos) {
      sources += [
        "biometric_authentication_confirmation_bubble_controller.cc",
-       "biometric_authentication_for_filling_bubble_controller.cc",
+@@ -95,7 +99,7 @@ source_set("impl") {
      ]
    }
  
@@ -1787,7 +2636,7 @@ index 283bf4e28d..8f02c182f6 100644
      sources += [ "relaunch_chrome_bubble_controller.cc" ]
    }
  
-@@ -155,14 +155,14 @@ source_set("unit_tests") {
+@@ -155,14 +159,14 @@ source_set("unit_tests") {
      ]
    }
  
@@ -1985,27 +2834,25 @@ index 11b592c5fa..46c59075a7 100644
  source_set("safety_hub") {
    sources = [
 diff --git a/chrome/browser/ui/search_engines/BUILD.gn b/chrome/browser/ui/search_engines/BUILD.gn
-index f8ce327c11..5244655f83 100644
+index f8ce327c11..4f0b3f38ab 100644
 --- a/chrome/browser/ui/search_engines/BUILD.gn
 +++ b/chrome/browser/ui/search_engines/BUILD.gn
-@@ -53,7 +53,7 @@ source_set("search_engines") {
+@@ -53,6 +53,7 @@ source_set("search_engines") {
      "//url",
    ]
  
--  if (is_win || is_mac) {
-+  if (is_win || (is_mac && !is_mac_linux_ui)) {
++  # Spatiand: kept on the Linux UI: not Cocoa (Views/DialogModel), and the C++ chooses it on IS_MAC; Linux has none (owner to decide).
+   if (is_win || is_mac) {
      if (enable_extensions_core) {
        public += [ "default_search_extension_controlled_controller.h" ]
-       sources += [ "default_search_extension_controlled_controller.cc" ]
-@@ -84,7 +84,7 @@ source_set("unit_tests") {
+@@ -84,6 +85,7 @@ source_set("unit_tests") {
      "//content/test:test_support",
    ]
  
--  if (is_win || is_mac) {
-+  if (is_win || (is_mac && !is_mac_linux_ui)) {
++  # Spatiand: kept on the Linux UI: not Cocoa (Views/DialogModel), and the C++ chooses it on IS_MAC; Linux has none (owner to decide).
+   if (is_win || is_mac) {
      if (enable_extensions_core) {
        sources +=
-           [ "default_search_extension_controlled_controller_unittest.cc" ]
 diff --git a/chrome/browser/ui/send_tab_to_self/BUILD.gn b/chrome/browser/ui/send_tab_to_self/BUILD.gn
 index 036f0b13f2..22da09f9bf 100644
 --- a/chrome/browser/ui/send_tab_to_self/BUILD.gn
@@ -2161,29 +3008,27 @@ index df168a846a..b396194994 100644
      deps += [
        "//chrome/browser/ui/startup/default_browser_prompt/pin_infobar",
 diff --git a/chrome/browser/ui/startup/default_browser_prompt/pin_infobar/BUILD.gn b/chrome/browser/ui/startup/default_browser_prompt/pin_infobar/BUILD.gn
-index fb432004e4..7b25d69558 100644
+index fb432004e4..21d5e718ee 100644
 --- a/chrome/browser/ui/startup/default_browser_prompt/pin_infobar/BUILD.gn
 +++ b/chrome/browser/ui/startup/default_browser_prompt/pin_infobar/BUILD.gn
-@@ -22,7 +22,7 @@ source_set("pin_infobar") {
+@@ -22,6 +22,7 @@ source_set("pin_infobar") {
      "//ui/gfx:native_ui_types",
    ]
  
--  if (is_mac) {
-+  if ((is_mac && !is_mac_linux_ui)) {
++  # Spatiand: pinning to macOS's Dock: the system's, kept.
+   if (is_mac) {
      sources += [ "pin_infobar_mac_util.h" ]
    }
- }
-@@ -57,7 +57,7 @@ source_set("impl") {
+@@ -57,6 +58,7 @@ source_set("impl") {
      ]
    }
  
--  if (is_mac) {
-+  if ((is_mac && !is_mac_linux_ui)) {
++  # Spatiand: pinning to macOS's Dock: the system's, kept.
+   if (is_mac) {
      sources += [ "pin_infobar_mac_util.mm" ]
      deps += [ "//chrome/browser/mac" ]
-   }
 diff --git a/chrome/browser/ui/startup/startup_browser_creator_impl.cc b/chrome/browser/ui/startup/startup_browser_creator_impl.cc
-index 28c4033534..8cb69e6f92 100644
+index 28c4033534..edf423c480 100644
 --- a/chrome/browser/ui/startup/startup_browser_creator_impl.cc
 +++ b/chrome/browser/ui/startup/startup_browser_creator_impl.cc
 @@ -70,7 +70,7 @@
@@ -2222,7 +3067,17 @@ index 28c4033534..8cb69e6f92 100644
      params.startup_id = startup_id;
  #endif
      if (command_line_->HasSwitch(switches::kWindowName)) {
-@@ -465,7 +465,7 @@ BrowserWindowInterface* StartupBrowserCreatorImpl::OpenTabsInBrowser(
+@@ -400,7 +400,8 @@ BrowserWindowInterface* StartupBrowserCreatorImpl::OpenTabsInBrowser(
+                  std::unique_ptr<ScopedProfileKeepAlive> profile_keepalive,
+                  headless::HeadlessCommandHandler::Result result) {
+                 if (browser && browser->GetWindow()) {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: no AppController keep-alive on the Linux UI: the last window closing ends the process, as on Linux.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+                   // On Macs Chrome keeps running after the last browser
+                   // window is closed which is not expected for headless
+                   // command execution, so explicitly allow application
+@@ -465,7 +466,7 @@ BrowserWindowInterface* StartupBrowserCreatorImpl::OpenTabsInBrowser(
      }
    }
  
@@ -2407,6 +3262,30 @@ index bce61ce332..5ebff7a005 100644
      sources += [
        "tab_drag_session_input_adapter_mac.h",
        "tab_drag_session_input_adapter_mac.mm",
+diff --git a/chrome/browser/ui/tabs/tab_drag_api/desktop_tab_drag_impl/tab_drag_session_input_adapter_factory.cc b/chrome/browser/ui/tabs/tab_drag_api/desktop_tab_drag_impl/tab_drag_session_input_adapter_factory.cc
+index 08fb15373e..0e5cd08d45 100644
+--- a/chrome/browser/ui/tabs/tab_drag_api/desktop_tab_drag_impl/tab_drag_session_input_adapter_factory.cc
++++ b/chrome/browser/ui/tabs/tab_drag_api/desktop_tab_drag_impl/tab_drag_session_input_adapter_factory.cc
+@@ -7,7 +7,8 @@
+ #include "build/build_config.h"
+ #include "components/browser_apis/tab_drag/adapters/tab_drag_session_input_adapter.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Aura's input); the Mac's adapter reads NSEvents.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/ui/tabs/tab_drag_api/desktop_tab_drag_impl/tab_drag_session_input_adapter_mac.h"
+ #else
+ #include "chrome/browser/ui/tabs/tab_drag_api/desktop_tab_drag_impl/tab_drag_session_input_adapter_aura.h"
+@@ -18,7 +19,8 @@ namespace tabs_api {
+ // static
+ std::unique_ptr<TabDragSessionInputAdapter>
+ TabDragSessionInputAdapterFactory::Create() {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Aura's input); the Mac's adapter reads NSEvents.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   return std::make_unique<MacInputAdapter>();
+ #else
+   return std::make_unique<AuraInputAdapter>();
 diff --git a/chrome/browser/ui/tabs/tab_features.cc b/chrome/browser/ui/tabs/tab_features.cc
 index aa10f77379..e45ade4d5e 100644
 --- a/chrome/browser/ui/tabs/tab_features.cc
@@ -2490,6 +3369,54 @@ index 141e39b4ce..d0732b4e1b 100644
  
  import("//build/config/chrome_build.gni")
  import("//build/config/ui.gni")
+diff --git a/chrome/browser/ui/toasts/toast_controller.cc b/chrome/browser/ui/toasts/toast_controller.cc
+index 4ea7cb8bf3..12251acf79 100644
+--- a/chrome/browser/ui/toasts/toast_controller.cc
++++ b/chrome/browser/ui/toasts/toast_controller.cc
+@@ -50,7 +50,8 @@
+ #include "ui/views/view.h"
+ #include "ui/views/widget/widget.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (focus, fullscreen).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/ui/fullscreen_util_mac.h"
+ #endif
+ 
+@@ -155,7 +156,8 @@ bool ToastController::MaybeShowToast(ToastParams params) {
+   return true;
+ }
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (focus, fullscreen).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ void ToastController::OnWidgetActivationChanged(views::Widget* widget,
+                                                 bool active) {
+   if (active) {
+@@ -265,7 +267,8 @@ bool ToastController::ShouldRenderToastOverWebContents() {
+                                 base::to_address(browser_window_interface_))
+                                 ->ShouldHideUIForFullscreen();
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (focus, fullscreen).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   render_in_contents |=
+       fullscreen_utils::IsInContentFullscreen(browser_window_interface_);
+ #endif
+diff --git a/chrome/browser/ui/toasts/toast_controller.h b/chrome/browser/ui/toasts/toast_controller.h
+index 7afda85820..0a720f2594 100644
+--- a/chrome/browser/ui/toasts/toast_controller.h
++++ b/chrome/browser/ui/toasts/toast_controller.h
+@@ -109,7 +109,8 @@ class ToastController : public views::WidgetObserver,
+       WidgetDestroyedCallback callback);
+ 
+   // views::WidgetObserver:
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's focus handling.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
+ #endif
+   void OnWidgetDestroyed(views::Widget* widget) override;
 diff --git a/chrome/browser/ui/toolbar/BUILD.gn b/chrome/browser/ui/toolbar/BUILD.gn
 index 74a8839903..2099903c58 100644
 --- a/chrome/browser/ui/toolbar/BUILD.gn
@@ -2782,8 +3709,91 @@ index 36aa1f7c16..c8fea759f2 100644
    // On the Linux desktop, we want to prevent the user from logging in as root,
    // so that we don't destroy the profile. Now that we have some minimal ui
    // initialized, check to see if we're running as root and bail if we are.
+diff --git a/chrome/browser/ui/views/chrome_browser_main_extra_parts_views_linux.cc b/chrome/browser/ui/views/chrome_browser_main_extra_parts_views_linux.cc
+index 83d1f694ea..71d899ab6e 100644
+--- a/chrome/browser/ui/views/chrome_browser_main_extra_parts_views_linux.cc
++++ b/chrome/browser/ui/views/chrome_browser_main_extra_parts_views_linux.cc
+@@ -4,11 +4,14 @@
+ 
+ #include "chrome/browser/ui/views/chrome_browser_main_extra_parts_views_linux.h"
+ 
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/themes/theme_service_aura_linux.h"
++#endif
+ #include "chrome/browser/ui/views/theme_profile_key.h"
+ #include "ui/base/buildflags.h"
+ #include "ui/base/cursor/cursor_factory.h"
+ #include "ui/base/ime/input_method.h"
++#include "ui/color/system_theme.h"
+ #include "ui/linux/linux_ui.h"
+ #include "ui/linux/linux_ui_delegate.h"
+ #include "ui/linux/linux_ui_factory.h"
+@@ -20,7 +23,9 @@
+ #include "ui/linux/dark_mode_manager_linux.h"
+ #endif
+ 
+-#if BUILDFLAG(ENABLE_PRINTING)
++// Spatiand: on the Linux UI on macOS printing is the system's (macOS's
++// printing context); Linux's print dialog (GTK's, through LinuxUi) is not.
++#if BUILDFLAG(ENABLE_PRINTING) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "components/printing/common/print_dialog_linux_factory.h"
+ #endif
+ 
+@@ -34,10 +39,19 @@ class LinuxUiGetterImpl : public ui::LinuxUiGetter {
+     return GetForProfile(GetThemeProfileForWindow(window));
+   }
+   ui::LinuxUiTheme* GetForProfile(Profile* profile) override {
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++    // Spatiand: macOS has no GTK or Qt, so a profile's system theme is always
++    // the default one, which is what ThemeServiceAuraLinux would answer
++    // (ValidateSystemTheme keeps GTK/Qt to Linux). Its pref (prefs::kSystemTheme)
++    // and service are Linux's and not built on the Mac.
++    return profile ? ui::GetLinuxUiTheme(ui::SystemTheme::kDefault)
++                   : ui::GetDefaultLinuxUiTheme();
++#else
+     return profile
+                ? ui::GetLinuxUiTheme(
+                      ThemeServiceAuraLinux::GetSystemThemeForProfile(profile))
+                : ui::GetDefaultLinuxUiTheme();
++#endif
+   }
+ };
+ 
+@@ -61,7 +75,7 @@ void ChromeBrowserMainExtraPartsViewsLinux::ToolkitInitialized() {
+     ui::CursorFactory::GetInstance()->ObserveThemeChanges();
+   }
+ 
+-#if BUILDFLAG(ENABLE_PRINTING)
++#if BUILDFLAG(ENABLE_PRINTING) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   print_dialog_factory_ = std::make_unique<printing::PrintDialogLinuxFactory>();
+ #endif
+ 
+diff --git a/chrome/browser/ui/views/chrome_browser_main_extra_parts_views_linux.h b/chrome/browser/ui/views/chrome_browser_main_extra_parts_views_linux.h
+index 379214fe8b..eb5981de7b 100644
+--- a/chrome/browser/ui/views/chrome_browser_main_extra_parts_views_linux.h
++++ b/chrome/browser/ui/views/chrome_browser_main_extra_parts_views_linux.h
+@@ -14,7 +14,9 @@
+ #include "printing/buildflags/buildflags.h"
+ #include "ui/display/display_observer.h"
+ 
+-#if BUILDFLAG(ENABLE_PRINTING)
++// Spatiand: printing on macOS is the system's (PrintingContextMac); Linux's
++// print dialog factory is not built there.
++#if BUILDFLAG(ENABLE_PRINTING) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "printing/printing_context_linux.h"
+ #endif
+ 
+@@ -54,7 +56,7 @@ class ChromeBrowserMainExtraPartsViewsLinux
+ #if BUILDFLAG(USE_DBUS)
+   std::unique_ptr<ui::DarkModeManagerLinux> dark_mode_manager_;
+ #endif
+-#if BUILDFLAG(ENABLE_PRINTING)
++#if BUILDFLAG(ENABLE_PRINTING) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   std::unique_ptr<printing::PrintingContextLinux::PrintDialogFactory>
+       print_dialog_factory_;
+ #endif
 diff --git a/chrome/browser/ui/views/chrome_views_delegate.h b/chrome/browser/ui/views/chrome_views_delegate.h
-index c695c48d0c..b51b340cba 100644
+index c695c48d0c..e1db9b0bec 100644
 --- a/chrome/browser/ui/views/chrome_views_delegate.h
 +++ b/chrome/browser/ui/views/chrome_views_delegate.h
 @@ -52,7 +52,7 @@ class ChromeViewsDelegate : public views::ViewsDelegate {
@@ -2795,6 +3805,16 @@ index c695c48d0c..b51b340cba 100644
    bool WindowManagerProvidesTitleBar(bool maximized) override;
    gfx::ImageSkia* GetDefaultWindowIcon() const override;
  #endif
+@@ -63,7 +63,8 @@ class ChromeViewsDelegate : public views::ViewsDelegate {
+   void OnBeforeWidgetInit(
+       views::Widget::InitParams* params,
+       views::internal::NativeWidgetDelegate* delegate) override;
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's compositors come from Aura's environment, as on Linux; this is NativeWidgetMac's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   ui::ContextFactory* GetContextFactory() override;
+ #endif
+   std::string GetApplicationName() override;
 diff --git a/chrome/browser/ui/views/chrome_views_delegate_linux.cc b/chrome/browser/ui/views/chrome_views_delegate_linux.cc
 index c5808a0797..427270f81e 100644
 --- a/chrome/browser/ui/views/chrome_views_delegate_linux.cc
@@ -2857,36 +3877,33 @@ index f5149668be..8dcbe0906c 100644
  
  source_set("data_sharing") {
 diff --git a/chrome/browser/ui/views/desktop_capture/BUILD.gn b/chrome/browser/ui/views/desktop_capture/BUILD.gn
-index 50775c453a..168aa65b9d 100644
+index 50775c453a..129aa0f7c8 100644
 --- a/chrome/browser/ui/views/desktop_capture/BUILD.gn
 +++ b/chrome/browser/ui/views/desktop_capture/BUILD.gn
-@@ -31,7 +31,7 @@ source_set("desktop_capture") {
+@@ -31,6 +31,7 @@ source_set("desktop_capture") {
      "//ui/base",
      "//ui/views",
    ]
--  if (is_mac) {
-+  if ((is_mac && !is_mac_linux_ui)) {
++  # Spatiand: macOS's own screen/audio capture permission (TCC) checks and the Views panes that ask for it: the system's, kept.
+   if (is_mac) {
      public += [
        "audio_capture_permission_checker_mac.h",
-       "audio_permission_warning_view.h",
-@@ -83,7 +83,7 @@ source_set("impl") {
+@@ -83,6 +84,7 @@ source_set("impl") {
    ]
    public_deps = [ "//chrome/browser:browser_public_dependencies" ]
  
--  if (is_mac) {
-+  if ((is_mac && !is_mac_linux_ui)) {
++  # Spatiand: macOS's own screen/audio capture permission (TCC) checks and the Views panes that ask for it: the system's, kept.
+   if (is_mac) {
      sources += [
        "audio_capture_permission_checker_mac.mm",
-       "audio_permission_warning_view.mm",
-@@ -143,7 +143,7 @@ source_set("unit_tests") {
+@@ -143,6 +145,7 @@ source_set("unit_tests") {
      "//ui/views:test_support",
    ]
  
--  if (is_mac) {
-+  if ((is_mac && !is_mac_linux_ui)) {
++  # Spatiand: macOS's own screen/audio capture permission (TCC) checks and the Views panes that ask for it: the system's, kept.
+   if (is_mac) {
      sources += [
        "audio_capture_permission_checker_mac_unittest.mm",
-       "desktop_media_permission_pane_view_mac_unittest.mm",
 diff --git a/chrome/browser/ui/views/download/BUILD.gn b/chrome/browser/ui/views/download/BUILD.gn
 index 249545c270..62a73c87d5 100644
 --- a/chrome/browser/ui/views/download/BUILD.gn
@@ -2900,6 +3917,40 @@ index 249545c270..62a73c87d5 100644
  
  source_set("download") {
    sources = [
+diff --git a/chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.cc b/chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.cc
+index 365fe43848..c1b81d38f8 100644
+--- a/chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.cc
++++ b/chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.cc
+@@ -74,7 +74,8 @@ DEFINE_USER_DATA(DownloadToolbarUIController);
+ #include "ui/views/view_class_properties.h"
+ #include "ui/views/widget/widget.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is Cocoa's fullscreen.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/ui/fullscreen_util_mac.h"
+ #endif
+ 
+@@ -568,7 +569,8 @@ void DownloadToolbarUIController::AnnounceAccessibleAlertNow(
+ }
+ 
+ bool DownloadToolbarUIController::IsFullscreenWithParentViewHidden() const {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is Cocoa's fullscreen.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (fullscreen_utils::IsInContentFullscreen(browser_view_->browser())) {
+     return true;
+   }
+@@ -595,7 +597,8 @@ bool DownloadToolbarUIController::ShouldShowExclusiveAccessBubble() const {
+   if (!browser_view_) {
+     return false;
+   }
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is Cocoa's fullscreen.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // In content fullscreen, we do not show the download bubble and the toolbar
+   // is not visible. Therefore, we must show the ExclusiveAccessBubble notice.
+   if (fullscreen_utils::IsInContentFullscreen(browser_view_->browser())) {
 diff --git a/chrome/browser/ui/views/eye_dropper/BUILD.gn b/chrome/browser/ui/views/eye_dropper/BUILD.gn
 index 17236aafa8..49fded26bc 100644
 --- a/chrome/browser/ui/views/eye_dropper/BUILD.gn
@@ -3024,10 +4075,110 @@ index 474b8356af..e50f5cdf11 100644
  #else
    const bool tiled = false;
 diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
-index 3aefe793c1..50dedae96f 100644
+index 3aefe793c1..6e24073c41 100644
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
-@@ -2454,7 +2454,7 @@ void BrowserView::ToolbarSizeChanged(bool is_animating) {
+@@ -382,7 +382,8 @@
+ #include "chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.h"
+ #endif  // BUILDFLAG(IS_CHROMEOS)
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/global_keyboard_shortcuts_mac.h"
+ #include "chrome/browser/ui/fullscreen_util_mac.h"
+ #include "chrome/browser/ui/views/frame/immersive_mode_overlay_views_mac.h"
+@@ -478,7 +479,8 @@ void CheckFocusListForCycles(views::View* const start_view) {
+ bool GetGestureCommand(ui::GestureEvent* event, int* command) {
+   DCHECK(command);
+   *command = 0;
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (event->details().type() == ui::EventType::kGestureSwipe) {
+     if (event->details().swipe_left()) {
+       *command = IDC_BACK;
+@@ -597,7 +599,8 @@ bool ShouldShowWindowIcon(const Browser* browser,
+       WindowFeatureController::WindowFeature::kFeatureTitleBar);
+ }
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ 
+ void GetAnyTabAudioStates(const Browser* browser,
+                           bool* any_tab_playing_audio,
+@@ -1133,7 +1136,8 @@ BrowserView::~BrowserView() {
+   organizer_panel_container_ = nullptr;
+   side_panel_ = nullptr;
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   tab_overlay_view_ = nullptr;
+ 
+   overlay_widget_.reset();
+@@ -1459,7 +1463,8 @@ bool BrowserView::GetAccelerator(int cmd_id,
+     cmd_id = IDC_TASK_MANAGER_SHORTCUT;
+   }
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // On macOS, most accelerators are defined in MainMenu.xib and are user
+   // configurable. Furthermore, their values and enabled state depends on the
+   // key window. Views code relies on a static mapping that is not dependent on
+@@ -1531,7 +1536,8 @@ float BrowserView::GetTopControlsSlideBehaviorShownRatio() const {
+ }
+ 
+ views::Widget* BrowserView::GetWidgetForAnchoring() {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (WindowFeatureController::From(browser())->UsesImmersiveFullscreenMode()) {
+     return IsFullscreen() ? overlay_widget_.get() : GetWidget();
+   }
+@@ -1795,7 +1801,8 @@ bool BrowserView::IsOnCurrentWorkspace() const {
+ }
+ 
+ bool BrowserView::IsVisibleOnScreen() const {
+-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if (BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)) || BUILDFLAG(IS_WIN)
+   // TODO(crbug.com/405283740): currently only works for mac and windows. See
+   // comments around Widget::IsVisibleOnScreen() for more details. Eventually
+   // this should work for all platforms.
+@@ -1992,7 +1999,8 @@ void BrowserView::OnActiveTabChanged(content::WebContents* old_contents,
+       active_contents_view->web_contents() != new_contents &&
+       !tab_change_in_split_view;
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // Widget::IsActive is inconsistent between Mac and Aura, so don't check for
+   // it on Mac. The check is also unnecessary for Mac, since restoring focus
+   // won't activate the widget on that platform.
+@@ -2264,7 +2272,8 @@ void BrowserView::FullscreenStateChanged() {
+       frame_view->ShouldEnableImmersiveModeController());
+ #endif
+ 
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+   if (AppUsesWindowControlsOverlay()) {
+     // Defer the refresh: the fullscreen transition resizes the HWND
+     // synchronously, and updating layer state mid-paint trips
+@@ -2277,7 +2286,8 @@ void BrowserView::FullscreenStateChanged() {
+   }
+ #endif
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (AppUsesWindowControlsOverlay()) {
+     UpdateWindowControlsOverlayEnabled();
+   }
+@@ -2454,7 +2464,7 @@ void BrowserView::ToolbarSizeChanged(bool is_animating) {
  }
  
  void BrowserView::TabDraggingStatusChanged(bool is_dragging) {
@@ -3036,6 +4187,126 @@ index 3aefe793c1..50dedae96f 100644
    UpdateFastResizeForContentViews(is_dragging);
  
    if (!is_dragging) {
+@@ -2593,7 +2603,8 @@ void BrowserView::UpdateWindowControlsOverlayEnabled() {
+                 IDS_WEB_APP_WINDOW_CONTROLS_OVERLAY_ENABLED_ALERT)
+           : l10n_util::GetStringUTF16(
+                 IDS_WEB_APP_WINDOW_CONTROLS_OVERLAY_DISABLED_ALERT);
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (browser_widget_) {
+     browser_widget_->browser_native_widget()->AnnounceTextInInProcessWindow(
+         state_change_text);
+@@ -2646,7 +2657,8 @@ void BrowserView::UpdateWindowControlsOverlayAvailable() {
+     available = false;
+   }
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // On macOS, when in fullscreen mode, window controls (the menu bar, title
+   // bar, and toolbar) are attached to a separate NSView that slides down from
+   // the top of the screen, independent of, and overlapping the WebContents.
+@@ -2961,7 +2973,8 @@ void BrowserView::OnWidgetShowStateChanged(views::Widget* widget) {
+ 
+ void BrowserView::OnWidgetWindowModalVisibilityChanged(views::Widget* widget,
+                                                        bool visible) {
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+   // MacOS does not need views window scrim. We use sheets to show window modals
+   // (-[NSWindow beginSheet:]), which natively draw a scrim.
+   window_scrim_view_->SetVisible(visible);
+@@ -3048,7 +3061,8 @@ void BrowserView::DisableTabStripEditingForTesting() {
+ }
+ 
+ bool BrowserView::IsToolbarVisible() const {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // Immersive full screen makes it possible to display the toolbar when
+   // kShowFullscreenToolbar is not set.
+   if (!WindowFeatureController::From(browser())
+@@ -3325,7 +3339,8 @@ bool BrowserView::HandleKeyboardEvent(const NativeWebKeyboardEvent& event) {
+       event, GetFocusManager());
+ }
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ namespace {
+ remote_cocoa::mojom::CutCopyPasteCommand CommandFromBrowserCommand(
+     int command_id) {
+@@ -3363,7 +3378,8 @@ void BrowserView::Paste() {
+ // won't do anything. We'll need something like an overall clipboard command
+ // manager to do that.
+ void BrowserView::CutCopyPaste(int command_id) {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   auto command = CommandFromBrowserCommand(command_id);
+   auto* application_host =
+       GetWidget() ? remote_cocoa::ApplicationHost::GetForNativeView(
+@@ -3662,7 +3678,8 @@ std::u16string BrowserView::GetWindowTitle() const {
+   std::u16string title =
+       WindowMetadataController::From(browser_.get())
+           ->GetWindowTitleForCurrentTab(true /* include_app_name */);
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   bool any_tab_playing_audio = false;
+   bool any_tab_playing_muted_audio = false;
+   GetAnyTabAudioStates(browser_.get(), &any_tab_playing_audio,
+@@ -3825,7 +3842,8 @@ void BrowserView::ReparentTabStripAndWebAppViewsToTopContainer(
+     return;
+   }
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (!WindowFeatureController::From(browser())
+            ->UsesImmersiveFullscreenTabbedMode()) {
+     top_container()->AddChildViewAt(horizontal_tab_strip_region_view_.get(), 0);
+@@ -4094,7 +4112,8 @@ views::View* BrowserView::CreateOverlayView() {
+   return overlay_view;
+ }
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ views::View* BrowserView::CreateMacOverlayView() {
+   DCHECK(
+       WindowFeatureController::From(browser())->UsesImmersiveFullscreenMode());
+@@ -4589,7 +4608,8 @@ views::CloseRequestResult BrowserView::OnWindowCloseRequested() {
+ }
+ 
+ int BrowserView::NonClientHitTest(const gfx::Point& point) {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // The top container while in immersive fullscreen on macOS lives in another
+   // Widget (OverlayWidgetMac). This means that BrowserView does not need to
+   // consult BrowserViewLayout::NonClientHitTest() to calculate the hit test.
+@@ -5503,7 +5523,8 @@ void BrowserView::ProcessFullscreen(bool fullscreen, const int64_t display_id) {
+   // TODO(b/40276379): Move this out from ProcessFullscreen.
+   RequestFullscreen(fullscreen, display_id);
+ 
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+   // On Mac platforms, FullscreenStateChanged() is invoked from
+   // BrowserNativeWidgetMac::OnWindowFullscreenTransitionComplete when the
+   // asynchronous fullscreen transition is complete. On other platforms, there
+@@ -5526,7 +5547,8 @@ void BrowserView::ProcessFullscreen(bool fullscreen, const int64_t display_id) {
+ }
+ 
+ void BrowserView::RequestFullscreen(bool fullscreen, int64_t display_id) {
+-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (immersive fullscreen, NSMenu accelerators, NSApp cut/copy/paste).
++#if (BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
+   // Request target display fullscreen from lower layers on supported platforms.
+   browser_widget_->SetFullscreen(fullscreen, display_id);
+ #else   // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
 diff --git a/chrome/browser/ui/views/frame/browser_widget.cc b/chrome/browser/ui/views/frame/browser_widget.cc
 index e6483eae65..d26454cf3e 100644
 --- a/chrome/browser/ui/views/frame/browser_widget.cc
@@ -3116,6 +4387,20 @@ index 8d886fa150..eabef665f2 100644
    bool tiled_ = false;
  #endif
  };
+diff --git a/chrome/browser/ui/views/frame/browser_window_factory.cc b/chrome/browser/ui/views/frame/browser_window_factory.cc
+index fff1235c35..9893410998 100644
+--- a/chrome/browser/ui/views/frame/browser_window_factory.cc
++++ b/chrome/browser/ui/views/frame/browser_window_factory.cc
+@@ -58,7 +58,8 @@ BrowserWindow::CreateBrowserWindow(Browser* browser,
+   }
+   view->browser_widget()->InitBrowserWidget();
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; the overlay is Cocoa's immersive fullscreen.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (WindowFeatureController::From(view->browser())
+           ->UsesImmersiveFullscreenMode()) {
+     // This needs to happen after BrowserWidget has been initialized. It creates
 diff --git a/chrome/browser/ui/views/frame/contents_web_view.cc b/chrome/browser/ui/views/frame/contents_web_view.cc
 index c49d4c8b7e..ec6b41a0b3 100644
 --- a/chrome/browser/ui/views/frame/contents_web_view.cc
@@ -3155,6 +4440,30 @@ index 83a9d79657..a103923104 100644
      // On Linux, middle-clicking the New Tab Button triggers
      // paste and navigate, either to URLs or to search queries.
      new_tab_button_->SetTriggerableEventFlags(
+diff --git a/chrome/browser/ui/views/frame/immersive_mode_controller_factory_views.cc b/chrome/browser/ui/views/frame/immersive_mode_controller_factory_views.cc
+index 99d1d91252..8f12615f1c 100644
+--- a/chrome/browser/ui/views/frame/immersive_mode_controller_factory_views.cc
++++ b/chrome/browser/ui/views/frame/immersive_mode_controller_factory_views.cc
+@@ -10,7 +10,8 @@
+ #include "chrome/browser/ui/views/frame/immersive_mode_controller_chromeos.h"
+ #endif
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (the stub); this is Cocoa's immersive fullscreen.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/ui/views/frame/immersive_mode_controller_mac.h"
+ #include "chrome/browser/ui/window_feature_controller/window_feature_controller.h"
+ #endif
+@@ -22,7 +23,8 @@ std::unique_ptr<ImmersiveModeController> CreateImmersiveModeController(
+     ui::UnownedUserDataHost& host) {
+ #if BUILDFLAG(IS_CHROMEOS)
+   return std::make_unique<ImmersiveModeControllerChromeos>(host);
+-#elif BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (the stub); this is Cocoa's immersive fullscreen.
++#elif BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (window_feature_controller->UsesImmersiveFullscreenMode()) {
+     return std::make_unique<ImmersiveModeControllerMac>(
+         host,
 diff --git a/chrome/browser/ui/views/frame/layout/browser_view_app_layout_impl.cc b/chrome/browser/ui/views/frame/layout/browser_view_app_layout_impl.cc
 index 4ffd66d706..6f866a60f4 100644
 --- a/chrome/browser/ui/views/frame/layout/browser_view_app_layout_impl.cc
@@ -3168,6 +4477,60 @@ index 4ffd66d706..6f866a60f4 100644
      label.SetSubpixelRenderingEnabled(false);
  #endif
    }
+diff --git a/chrome/browser/ui/views/frame/layout/browser_view_layout_delegate_impl.cc b/chrome/browser/ui/views/frame/layout/browser_view_layout_delegate_impl.cc
+index b545371d66..0d7bdb7fc6 100644
+--- a/chrome/browser/ui/views/frame/layout/browser_view_layout_delegate_impl.cc
++++ b/chrome/browser/ui/views/frame/layout/browser_view_layout_delegate_impl.cc
+@@ -28,7 +28,8 @@
+ #include "ui/gfx/geometry/rect.h"
+ #include "ui/views/view.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is Cocoa's immersive fullscreen.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/ui/fullscreen_util_mac.h"
+ #include "chrome/browser/ui/window_feature_controller/window_feature_controller.h"
+ #endif
+@@ -108,7 +109,8 @@ BrowserLayoutParams BrowserViewLayoutDelegateImpl::GetBrowserLayoutParams(
+ BrowserViewLayoutDelegateImpl::WindowState
+ BrowserViewLayoutDelegateImpl::GetBrowserWindowState() const {
+   if (browser_view_->IsFullscreen()) {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is Cocoa's immersive fullscreen.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+     if (fullscreen_utils::IsAlwaysShowToolbarEnabled(
+             browser_view_->browser()) &&
+         !fullscreen_utils::IsInContentFullscreen(browser_view_->browser())) {
+@@ -240,7 +242,8 @@ void BrowserViewLayoutDelegateImpl::UpdateWindowControlsOverlay(
+ }
+ 
+ bool BrowserViewLayoutDelegateImpl::ShouldLayoutTabStrip() const {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is Cocoa's immersive fullscreen.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // The tab strip is hosted in a separate widget in immersive fullscreen on
+   // macOS.
+   if (WindowFeatureController::From(browser_view_->browser())
+@@ -253,7 +256,8 @@ bool BrowserViewLayoutDelegateImpl::ShouldLayoutTabStrip() const {
+ }
+ 
+ int BrowserViewLayoutDelegateImpl::GetExtraInfobarOffset() const {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is Cocoa's immersive fullscreen.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   auto* const controller = GetImmersiveModeController();
+   if (WindowFeatureController::From(browser_view_->browser())
+           ->UsesImmersiveFullscreenMode() &&
+@@ -309,7 +313,8 @@ bool BrowserViewLayoutDelegateImpl::IsInVerticalTabsMode() const {
+ 
+ bool BrowserViewLayoutDelegateImpl::ContentFullscreenOverridesShowTabstrip()
+     const {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is Cocoa's immersive fullscreen.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // Do not lay out the vertical tabstrip in content-fullscreen on Mac. This
+   // check cannot be done in BrowserView because the immersive mode controller
+   // itself relies on BrowserView reporting which tab strip it *would* draw,
 diff --git a/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc b/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
 index 75f02715c7..071660754b 100644
 --- a/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
@@ -3436,6 +4799,30 @@ index 20e22a3110..7f1de73040 100644
  
  source_set("cookie_controls") {
    sources = []
+diff --git a/chrome/browser/ui/views/location_bar/zoom_bubble_manager_views.cc b/chrome/browser/ui/views/location_bar/zoom_bubble_manager_views.cc
+index a09bfbc6de..d030d57191 100644
+--- a/chrome/browser/ui/views/location_bar/zoom_bubble_manager_views.cc
++++ b/chrome/browser/ui/views/location_bar/zoom_bubble_manager_views.cc
+@@ -14,7 +14,8 @@
+ #include "chrome/browser/ui/views/page_action/page_action_view_interface.h"
+ #include "ui/views/widget/widget.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is Cocoa's fullscreen.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/ui/fullscreen_util_mac.h"
+ #endif
+ 
+@@ -26,7 +27,8 @@ ZoomBubbleManagerViews::~ZoomBubbleManagerViews() = default;
+ views::BubbleAnchor ZoomBubbleManagerViews::GetZoomBubbleAnchor() {
+   CHECK(browser_view_);
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is Cocoa's fullscreen.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (fullscreen_utils::IsInContentFullscreen(browser_view_->browser())) {
+     return views::BubbleAnchor();
+   }
 diff --git a/chrome/browser/ui/views/media_preview/BUILD.gn b/chrome/browser/ui/views/media_preview/BUILD.gn
 index f7f10f2e2f..7ab9a07048 100644
 --- a/chrome/browser/ui/views/media_preview/BUILD.gn
@@ -3497,6 +4884,64 @@ index 8d7cfeb29e..29e1ffb6d7 100644
        sources += [ "media_router_ui_interactive_uitest.cc" ]
      }
  
+diff --git a/chrome/browser/ui/views/media_router/presentation_receiver_window_view.cc b/chrome/browser/ui/views/media_router/presentation_receiver_window_view.cc
+index 39e5379aff..eca369d269 100644
+--- a/chrome/browser/ui/views/media_router/presentation_receiver_window_view.cc
++++ b/chrome/browser/ui/views/media_router/presentation_receiver_window_view.cc
+@@ -32,7 +32,8 @@
+ #include "ui/views/layout/box_layout.h"
+ #include "ui/views/widget/widget.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Linux's accelerator table); the Mac's are NSMenu's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/global_keyboard_shortcuts_mac.h"
+ #endif
+ 
+@@ -138,7 +139,8 @@ PresentationReceiverWindowView::~PresentationReceiverWindowView() {
+ }
+ 
+ void PresentationReceiverWindowView::Init() {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Linux's accelerator table); the Mac's are NSMenu's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // On macOS, the mapping between accelerators and commands is dynamic and user
+   // configurable. We fetch and use the default mapping.
+   bool result = GetDefaultMacAcceleratorForCommandId(IDC_FULLSCREEN,
+diff --git a/chrome/browser/ui/views/message_box_dialog.cc b/chrome/browser/ui/views/message_box_dialog.cc
+index 356daa75a6..0baf215195 100644
+--- a/chrome/browser/ui/views/message_box_dialog.cc
++++ b/chrome/browser/ui/views/message_box_dialog.cc
+@@ -43,7 +43,8 @@
+ #include "ui/views/win/hwnd_util.h"
+ #endif
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Views' message box); NSAlert is the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/ui/cocoa/simple_message_box_cocoa.h"
+ #endif
+ 
+@@ -95,7 +96,8 @@ chrome::MessageBoxResult ShowSync(gfx::NativeWindow parent,
+ 
+ bool CanUseNativeMessageBox(bool has_checkbox) {
+   // Only Windows and macOS have native message box.
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Views' message box); NSAlert is the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   return true;
+ #elif BUILDFLAG(IS_WIN)
+   // Windows message box cannot display checkbox.
+@@ -147,7 +149,8 @@ void ShowNativeMessageBox(gfx::NativeWindow parent,
+   std::move(callback).Run((result == IDYES || result == IDOK)
+                               ? chrome::MESSAGE_BOX_RESULT_YES
+                               : chrome::MESSAGE_BOX_RESULT_NO);
+-#elif BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Views' message box); NSAlert is the Cocoa UI's.
++#elif BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // Even though this function could return a value synchronously here in
+   // principle, in practice call sites do not expect any behavior other than a
+   // return of DEFERRED and an invocation of the callback.
 diff --git a/chrome/browser/ui/views/omnibox/BUILD.gn b/chrome/browser/ui/views/omnibox/BUILD.gn
 index 155926bfa6..5a1acb91db 100644
 --- a/chrome/browser/ui/views/omnibox/BUILD.gn
@@ -3532,6 +4977,30 @@ index 942c7ad5fe..b0316406d4 100644
      sources += [ "video_overlay_window_native_widget_mac.mm" ]
      deps += [ "//components/remote_cocoa/common:mojo" ]
      frameworks = [ "Cocoa.framework" ]
+diff --git a/chrome/browser/ui/views/overlay/video_overlay_window_views.cc b/chrome/browser/ui/views/overlay/video_overlay_window_views.cc
+index ae1efcd28d..8032615839 100644
+--- a/chrome/browser/ui/views/overlay/video_overlay_window_views.cc
++++ b/chrome/browser/ui/views/overlay/video_overlay_window_views.cc
+@@ -97,7 +97,8 @@
+ #include "ui/base/win/shell.h"
+ #endif
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path: an Aura widget, not NativeWidgetMac.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/ui/views/overlay/video_overlay_window_native_widget_mac.h"
+ #endif  // BUILDFLAG(IS_MAC)
+ 
+@@ -351,7 +352,8 @@ std::unique_ptr<VideoOverlayWindowViews> VideoOverlayWindowViews::Create(
+   params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
+ #endif
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path: an Aura widget, not NativeWidgetMac.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // On Mac, we override the default native widget with our own subclass, which
+   // allows us to get the default window styling (e.g. corner radius) even
+   // though we're using `views::Widget::InitParams::remove_standard_frame`.
 diff --git a/chrome/browser/ui/views/page_info/BUILD.gn b/chrome/browser/ui/views/page_info/BUILD.gn
 index 75de315765..a683787b72 100644
 --- a/chrome/browser/ui/views/page_info/BUILD.gn
@@ -3546,7 +5015,7 @@ index 75de315765..a683787b72 100644
      # (media_preview is unavailable on ChromeOS).
      public_deps += [ "//chrome/browser/ui/views/media_preview" ]
 diff --git a/chrome/browser/ui/views/passwords/BUILD.gn b/chrome/browser/ui/views/passwords/BUILD.gn
-index e970e50304..1ccb1fc585 100644
+index e970e50304..299a0fccfe 100644
 --- a/chrome/browser/ui/views/passwords/BUILD.gn
 +++ b/chrome/browser/ui/views/passwords/BUILD.gn
 @@ -53,14 +53,14 @@ source_set("passwords") {
@@ -3566,15 +5035,16 @@ index e970e50304..1ccb1fc585 100644
      # password_relaunch_chrome_view is only shown on Linux and macOS.
      public += [ "password_relaunch_chrome_view.h" ]
    }
-@@ -131,14 +131,14 @@ source_set("impl") {
+@@ -131,6 +131,8 @@ source_set("impl") {
      "//components/password_manager/core/browser/features:password_features",
    ]
  
--  if (is_win || is_mac || is_chromeos) {
-+  if (is_win || (is_mac && !is_mac_linux_ui) || is_chromeos) {
++  # Spatiand: Views bubbles for macOS's own biometric check (Touch ID, the
++  # system's): kept on the Linux UI.
+   if (is_win || is_mac || is_chromeos) {
      sources += [
        "biometric_authentication_confirmation_bubble_view.cc",
-       "biometric_authentication_for_filling_bubble_view.cc",
+@@ -138,7 +140,7 @@ source_set("impl") {
      ]
    }
  
@@ -3584,7 +5054,7 @@ index e970e50304..1ccb1fc585 100644
      sources += [ "password_relaunch_chrome_view.cc" ]
      deps += [ "//components/os_crypt/async/common" ]
 diff --git a/chrome/browser/ui/views/permissions/BUILD.gn b/chrome/browser/ui/views/permissions/BUILD.gn
-index f780ed13fd..62945dbd44 100644
+index f780ed13fd..e8ea3cd759 100644
 --- a/chrome/browser/ui/views/permissions/BUILD.gn
 +++ b/chrome/browser/ui/views/permissions/BUILD.gn
 @@ -66,7 +66,7 @@ if (toolkit_views) {
@@ -3605,15 +5075,15 @@ index f780ed13fd..62945dbd44 100644
        public += [ "permission_prompt_notifications_mac.h" ]
        public_deps += [ "//chrome/browser/apps/app_shim" ]
      }
-@@ -164,7 +164,7 @@ if (toolkit_views) {
+@@ -164,6 +164,8 @@ if (toolkit_views) {
        ]
      }
  
--    if (is_mac) {
-+    if ((is_mac && !is_mac_linux_ui)) {
++    # Spatiand: macOS's own notification permission prompt for an app (through
++    # its app shim): the system's, kept.
+     if (is_mac) {
        sources += [ "permission_prompt_notifications_mac.cc" ]
        deps += [ "//chrome/browser/permissions/system" ]
-     }
 diff --git a/chrome/browser/ui/views/picture_in_picture/BUILD.gn b/chrome/browser/ui/views/picture_in_picture/BUILD.gn
 index add1285ee9..d83eb43ed7 100644
 --- a/chrome/browser/ui/views/picture_in_picture/BUILD.gn
@@ -3627,6 +5097,30 @@ index add1285ee9..d83eb43ed7 100644
      public += [ "document_pip_native_widget_mac.h" ]
      sources += [ "document_pip_native_widget_mac.mm" ]
      deps += [ "//components/remote_cocoa/common:mojo" ]
+diff --git a/chrome/browser/ui/views/picture_in_picture/document_pip_host.cc b/chrome/browser/ui/views/picture_in_picture/document_pip_host.cc
+index 39f40c1326..1c7f4f9329 100644
+--- a/chrome/browser/ui/views/picture_in_picture/document_pip_host.cc
++++ b/chrome/browser/ui/views/picture_in_picture/document_pip_host.cc
+@@ -43,7 +43,8 @@
+ #include "ui/views/window/non_client_view.h"
+ #include "url/origin.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path: an Aura widget, not NativeWidgetMac.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/ui/views/picture_in_picture/document_pip_native_widget_mac.h"
+ #endif
+ 
+@@ -155,7 +156,8 @@ void DocumentPipHost::CreateAndShowPipWindow(
+   params.bounds = initial_bounds;
+ 
+   widget_ = std::make_unique<views::Widget>();
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path: an Aura widget, not NativeWidgetMac.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // Give the borderless PiP window the default macOS styling (rounded corners +
+   // drop shadow) so it matches the Browser-backed Document PiP window. The
+   // Widget takes ownership of the native widget. Safety: the native widget's
 diff --git a/chrome/browser/ui/views/policy/BUILD.gn b/chrome/browser/ui/views/policy/BUILD.gn
 index 0cad0fef83..627a4ec404 100644
 --- a/chrome/browser/ui/views/policy/BUILD.gn
@@ -3640,6 +5134,49 @@ index 0cad0fef83..627a4ec404 100644
        public += [ "enterprise_startup_dialog_mac_util.h" ]
        sources += [ "enterprise_startup_dialog_mac_util.mm" ]
      }
+diff --git a/chrome/browser/ui/views/policy/enterprise_startup_dialog_view.cc b/chrome/browser/ui/views/policy/enterprise_startup_dialog_view.cc
+index 0570d77297..d6e0b3d67e 100644
+--- a/chrome/browser/ui/views/policy/enterprise_startup_dialog_view.cc
++++ b/chrome/browser/ui/views/policy/enterprise_startup_dialog_view.cc
+@@ -40,7 +40,8 @@
+ #include "ui/views/controls/throbber.h"
+ #include "ui/views/layout/box_layout.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSApp's modal run loop is the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "base/task/current_thread.h"
+ #include "chrome/browser/ui/views/policy/enterprise_startup_dialog_mac_util.h"
+ #endif
+@@ -186,7 +187,8 @@ EnterpriseStartupDialogView::EnterpriseStartupDialogView(
+                      base::Unretained(this), false));
+   SetBorder(views::CreateEmptyBorder(GetDialogInsets()));
+   CreateDialogWidget(this, gfx::NativeWindow(), gfx::NativeView())->Show();
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSApp's modal run loop is the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+       FROM_HERE, base::BindOnce(&EnterpriseStartupDialogView::StartModalDialog,
+                                 weak_factory_.GetWeakPtr()));
+@@ -243,14 +245,16 @@ bool EnterpriseStartupDialogView::IsShowing() {
+ }
+ 
+ void EnterpriseStartupDialogView::StartModalDialog() {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSApp's modal run loop is the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   base::CurrentThread::ScopedAllowApplicationTasksInNativeNestedLoop allow;
+   StartModal(GetWidget()->GetNativeWindow());
+ #endif
+ }
+ 
+ void EnterpriseStartupDialogView::RunDialogCallback(bool was_accepted) {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSApp's modal run loop is the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // On mac, we need to stop the modal message loop before returning the result
+   // to the caller who controls its own run loop.
+   StopModal();
 diff --git a/chrome/browser/ui/views/profiles/BUILD.gn b/chrome/browser/ui/views/profiles/BUILD.gn
 index 72a0e6a5f7..2ac7b10cb8 100644
 --- a/chrome/browser/ui/views/profiles/BUILD.gn
@@ -3663,10 +5200,17 @@ index 72a0e6a5f7..2ac7b10cb8 100644
      public = [ "badged_profile_photo.h" ]
      sources = [ "badged_profile_photo.cc" ]
 diff --git a/chrome/browser/ui/views/profiles/profile_picker_view.cc b/chrome/browser/ui/views/profiles/profile_picker_view.cc
-index 6b8c4255d0..590667ea45 100644
+index 6b8c4255d0..08f07c8ea2 100644
 --- a/chrome/browser/ui/views/profiles/profile_picker_view.cc
 +++ b/chrome/browser/ui/views/profiles/profile_picker_view.cc
-@@ -90,7 +90,7 @@
+@@ -85,12 +85,13 @@
+ #include "ui/views/win/hwnd_util.h"
+ #endif
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (NSMenu accelerators, trackpad history swiping).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/global_keyboard_shortcuts_mac.h"
  #include "chrome/browser/renderer_host/chrome_render_widget_host_view_mac_history_swiping_control.h"
  #endif
  
@@ -3675,6 +5219,36 @@ index 6b8c4255d0..590667ea45 100644
  #include "chrome/browser/shell_integration_linux.h"
  #endif
  
+@@ -252,7 +253,8 @@ bool ProfilePicker::IsActive() {
+     return false;
+   }
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (NSMenu accelerators, trackpad history swiping).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   return g_profile_picker_view->GetWidget() &&
+          g_profile_picker_view->GetWidget()->IsVisible();
+ #else
+@@ -642,7 +644,8 @@ void ProfilePickerView::Init(Profile* picker_profile) {
+       contents_.get());
+   web_modal::WebContentsModalDialogManager::FromWebContents(contents_.get())
+       ->SetDelegate(this);
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (NSMenu accelerators, trackpad history swiping).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   history_swiper::HistorySwipingControl::CreateForWebContents(
+       contents_.get(),
+       base::BindRepeating(
+@@ -929,7 +932,8 @@ void ProfilePickerView::ConfigureAccelerators() {
+     AddAccelerator(accelerator);
+   }
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (NSMenu accelerators, trackpad history swiping).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // Check Mac-specific accelerators. Note: Chrome does not support dynamic or
+   // user-configured accelerators on Mac. Default static accelerators are used
+   // instead.
 diff --git a/chrome/browser/ui/views/profiles/profile_picker_widget.cc b/chrome/browser/ui/views/profiles/profile_picker_widget.cc
 index bf31502de4..79fd278b58 100644
 --- a/chrome/browser/ui/views/profiles/profile_picker_widget.cc
@@ -3921,10 +5495,20 @@ index 176676e688..629a1ab568 100644
      deps += [ "//components/remote_cocoa/app_shim" ]
    }
 diff --git a/chrome/browser/ui/views/user_education/browser_user_education_service.cc b/chrome/browser/ui/views/user_education/browser_user_education_service.cc
-index 3568a071ff..1bb5de7d0d 100644
+index 3568a071ff..ee3ba9ccd5 100644
 --- a/chrome/browser/ui/views/user_education/browser_user_education_service.cc
 +++ b/chrome/browser/ui/views/user_education/browser_user_education_service.cc
-@@ -288,7 +288,7 @@ CreateNavigationAction(GURL target) {
+@@ -148,7 +148,8 @@
+ #include "ash/user_education/views/help_bubble_factory_views_ash.h"
+ #endif  // BUILDFLAG(IS_CHROMEOS)
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path: help bubbles anchored in Views, not in Cocoa's menus.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "components/user_education/views/help_bubble_factory_mac.h"
+ #endif  // BUILDFLAG(IS_MAC)
+ 
+@@ -288,7 +289,7 @@ CreateNavigationAction(GURL target) {
  }
  
  #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
@@ -3933,7 +5517,17 @@ index 3568a071ff..1bb5de7d0d 100644
  void NavigateToSettingsPage(ContextPtr ctx,
                              user_education::FeaturePromoHandle promo_handle) {
    BrowserWindowInterface* const browser = GetBrowser(ctx);
-@@ -1770,7 +1770,7 @@ void MaybeRegisterChromeFeaturePromos(
+@@ -335,7 +336,8 @@ void RegisterChromeHelpBubbleFactories(
+   registry.MaybeRegister<FloatingWebUIHelpBubbleFactoryBrowser>(delegate);
+   // Fall back to in-WebUI help bubble if the floating bubble doesn't apply.
+   registry.MaybeRegister<TabWebUIHelpBubbleFactoryBrowser>();
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path: help bubbles anchored in Views, not in Cocoa's menus.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   registry.MaybeRegister<user_education::HelpBubbleFactoryMac>(delegate);
+ #endif
+ }
+@@ -1770,7 +1772,7 @@ void MaybeRegisterChromeFeaturePromos(
                         "new translate screen feature on the Lens Overlay.")));
  
  #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN) || \
@@ -3990,6 +5584,30 @@ index 08b06556f2..4119350867 100644
      public += [
        "authenticator_touch_id_view.h",
        "mac_authentication_view.h",
+diff --git a/chrome/browser/ui/views/webauthn/sheet_view_factory.cc b/chrome/browser/ui/views/webauthn/sheet_view_factory.cc
+index fc151c0c95..4a34d414a7 100644
+--- a/chrome/browser/ui/views/webauthn/sheet_view_factory.cc
++++ b/chrome/browser/ui/views/webauthn/sheet_view_factory.cc
+@@ -35,7 +35,8 @@
+ #include "ui/views/layout/box_layout_view.h"
+ #include "ui/views/style/typography.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Touch ID sheet embeds an NSView (LAAuthenticationView) in the NSWindow: the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/ui/views/webauthn/authenticator_touch_id_view.h"
+ #endif  // BUILDFLAG(IS_MAC)
+ 
+@@ -367,7 +368,8 @@ std::unique_ptr<AuthenticatorRequestSheetView> CreateSheetViewForCurrentStepOf(
+               dialog_model));
+       break;
+     case Step::kGPMTouchID:
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Touch ID sheet embeds an NSView (LAAuthenticationView) in the NSWindow: the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+       sheet_view = std::make_unique<AuthenticatorTouchIdView>(
+           std::make_unique<AuthenticatorTouchIdSheetModel>(dialog_model));
+ #else
 diff --git a/chrome/browser/ui/web_applications/web_app_dialogs.h b/chrome/browser/ui/web_applications/web_app_dialogs.h
 index a854ba3c74..920cff4d28 100644
 --- a/chrome/browser/ui/web_applications/web_app_dialogs.h
@@ -4029,6 +5647,21 @@ index f13cbad715..925dd22117 100644
    void ShowIPHPromoForAppsLaunchedViaLinkCapturing(
        BrowserWindowInterface* browser,
        const webapps::AppId& app_id,
+diff --git a/chrome/browser/ui/webui/certificate_viewer/certificate_viewer_webui.cc b/chrome/browser/ui/webui/certificate_viewer/certificate_viewer_webui.cc
+index eb1521277b..ee1a86c96c 100644
+--- a/chrome/browser/ui/webui/certificate_viewer/certificate_viewer_webui.cc
++++ b/chrome/browser/ui/webui/certificate_viewer/certificate_viewer_webui.cc
+@@ -345,7 +345,9 @@ void ShowCertificateViewer(WebContents* web_contents,
+                                            web_contents, parent);
+ }
+ 
+-#if !(BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC))
++// Spatiand: the Linux UI on macOS shows a client certificate in this viewer, as
++// Linux does; the Mac's (SFCertificatePanel, a Cocoa sheet) is the Cocoa UI's.
++#if !(BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)) || BUILDFLAG(IS_MAC_LINUX_UI)
+ void ShowCertificateViewerForClientAuth(content::WebContents* web_contents,
+                                         gfx::NativeWindow parent,
+                                         net::X509Certificate* cert) {
 diff --git a/chrome/browser/ui/webui/infobar_internals/BUILD.gn b/chrome/browser/ui/webui/infobar_internals/BUILD.gn
 index 2dee3396b4..5485957976 100644
 --- a/chrome/browser/ui/webui/infobar_internals/BUILD.gn
@@ -4065,10 +5698,20 @@ index d21d9c6042..7c2d0b0551 100644
        "//chrome/browser:global_keyboard_shortcuts_mac",
        "//chrome/browser/apps/app_shim",
 diff --git a/chrome/browser/ui/webui_browser/webui_browser_window.cc b/chrome/browser/ui/webui_browser/webui_browser_window.cc
-index a0771f25f5..102684cdb1 100644
+index a0771f25f5..334ce3b59d 100644
 --- a/chrome/browser/ui/webui_browser/webui_browser_window.cc
 +++ b/chrome/browser/ui/webui_browser/webui_browser_window.cc
-@@ -74,7 +74,7 @@ const char* const kWebUIBrowserWindowKey = "__WEBUI_BROWSER_WINDOW__";
+@@ -8,7 +8,8 @@
+ #include "base/feature_list.h"
+ #include "base/notimplemented.h"
+ #include "chrome/browser/app_mode/app_mode_utils.h"
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (NSMenu accelerators, NSWindow widget).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "chrome/browser/global_keyboard_shortcuts_mac.h"
+ #endif
+ #include "chrome/browser/profiles/profile.h"
+@@ -74,7 +75,7 @@ const char* const kWebUIBrowserWindowKey = "__WEBUI_BROWSER_WINDOW__";
  
  // Copied from chrome/browser/ui/views/frame/browser_widget.cc.
  bool IsUsingLinuxSystemTheme(Profile* profile) {
@@ -4076,6 +5719,26 @@ index a0771f25f5..102684cdb1 100644
 +#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)
    return ThemeServiceFactory::GetForProfile(profile)->UsingSystemTheme();
  #else
+   return false;
+@@ -582,7 +583,8 @@ ui::RendererColorMap WebUIBrowserWindow::GetRendererColorMap(
+ bool WebUIBrowserWindow::GetAcceleratorForCommandId(
+     int command_id,
+     ui::Accelerator* accelerator) const {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (NSMenu accelerators, NSWindow widget).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (GetDefaultMacAcceleratorForCommandId(command_id, accelerator)) {
+     return true;
+   }
+@@ -1045,7 +1047,8 @@ WebUIBrowserWindow::PreHandleKeyboardEvent(
+ }
+ 
+ // These functions have Mac implementations in webui_browser_window_mac.mm.
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; this is the Cocoa UI's (NSMenu accelerators, NSWindow widget).
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+ bool WebUIBrowserWindow::HandleKeyboardEvent(
+     const input::NativeWebKeyboardEvent& event) {
    return false;
 diff --git a/chrome/browser/ui/window_sizer/BUILD.gn b/chrome/browser/ui/window_sizer/BUILD.gn
 index 613a9dd9d6..639a58aef9 100644
@@ -4738,6 +6401,36 @@ index 9f0eda1ba4..665c0b593e 100644
    map->Add<blink::mojom::TextInputHost>(base::BindRepeating(
        [](RenderFrameHost* host,
           mojo::PendingReceiver<blink::mojom::TextInputHost> receiver) {
+diff --git a/content/browser/browser_main_loop.cc b/content/browser/browser_main_loop.cc
+index e2b7ba6d3e..2d0e7f584f 100644
+--- a/content/browser/browser_main_loop.cc
++++ b/content/browser/browser_main_loop.cc
+@@ -1254,7 +1254,9 @@ void BrowserMainLoop::ShutdownThreadsAndCleanUp() {
+ 
+   BrowserProcessIOThread::ProcessHostCleanUp();
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI on macOS has no Cocoa compositor view (its windows'
++// compositors are Aura's, shown through Wayland).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   BrowserCompositorMac::DisableRecyclingForShutdown();
+ #endif
+ 
+diff --git a/content/browser/devtools/protocol/native_input_event_builder.h b/content/browser/devtools/protocol/native_input_event_builder.h
+index 697f4f51e4..b71f3e10a1 100644
+--- a/content/browser/devtools/protocol/native_input_event_builder.h
++++ b/content/browser/devtools/protocol/native_input_event_builder.h
+@@ -12,7 +12,9 @@ namespace content::protocol {
+ 
+ class NativeInputEventBuilder {
+  public:
+-#if BUILDFLAG(IS_APPLE)
++  // Spatiand: the Linux UI on macOS takes keys as Linux does (no NSEvent);
++  // native_input_event_builder_mac.mm is the Cocoa UI's.
++#if BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   static gfx::NativeEvent CreateEvent(
+       const input::NativeWebKeyboardEvent& event);
+ #else
 diff --git a/content/browser/gpu/gpu_process_host.cc b/content/browser/gpu/gpu_process_host.cc
 index 6ce17b75d1..da0dd1ff90 100644
 --- a/content/browser/gpu/gpu_process_host.cc
@@ -4784,6 +6477,47 @@ index 514d33f8a6..42331937c7 100644
  }
  
  }  // namespace content
+diff --git a/content/browser/renderer_host/clipboard_host_impl.cc b/content/browser/renderer_host/clipboard_host_impl.cc
+index bf6f3a80e7..b6c7f6a780 100644
+--- a/content/browser/renderer_host/clipboard_host_impl.cc
++++ b/content/browser/renderer_host/clipboard_host_impl.cc
+@@ -1172,4 +1172,22 @@ void ClipboardHostImpl::StopObservingClipboard() {
+   clipboard_listener_.reset();
+ }
+ 
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++// Spatiand: on the Linux UI on macOS the clipboard is Wayland's (Spatiand's),
++// not AppKit's pasteboard (clipboard_host_impl_mac.mm, the Cocoa UI's). Blink
++// still asks for these two because the mojom enables them on macOS:
++// - the find pasteboard: Linux has none, so nothing is written;
++// - the pasteboard's privacy setting: Spatiand, the Mac app that holds the
++//   pasteboard, is what macOS asks; to the page it is allowed, as on Linux.
++// Workaround, named: the proper alternative is that the mojom and Blink enable
++// these by the UI (IS_MAC_LINUX_UI off), not by the OS.
++void ClipboardHostImpl::WriteStringToFindPboard(const std::u16string& text) {}
++
++void ClipboardHostImpl::GetPlatformPermissionState(
++    GetPlatformPermissionStateCallback callback) {
++  std::move(callback).Run(
++      blink::mojom::PlatformClipboardPermissionState::kAllow);
++}
++#endif  // BUILDFLAG(IS_MAC_LINUX_UI)
++
+ }  // namespace content
+diff --git a/content/browser/renderer_host/render_widget_host_impl.cc b/content/browser/renderer_host/render_widget_host_impl.cc
+index 337d8bea19..465610a23e 100644
+--- a/content/browser/renderer_host/render_widget_host_impl.cc
++++ b/content/browser/renderer_host/render_widget_host_impl.cc
+@@ -4123,7 +4123,8 @@ device::mojom::WakeLock* RenderWidgetHostImpl::GetWakeLock() {
+ 
+ std::unique_ptr<input::FlingSchedulerBase>
+ RenderWidgetHostImpl::MakeFlingScheduler() {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: flings are Aura's on the Linux UI, as on Linux; FlingSchedulerMac drives Cocoa's compositor view.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   return std::make_unique<FlingSchedulerMac>(this);
+ #elif BUILDFLAG(IS_ANDROID)
+   return std::make_unique<FlingSchedulerAndroid>(this);
 diff --git a/content/browser/renderer_host/render_widget_host_view_aura.cc b/content/browser/renderer_host/render_widget_host_view_aura.cc
 index 18f19186a6..79a3800b9d 100644
 --- a/content/browser/renderer_host/render_widget_host_view_aura.cc
@@ -4922,6 +6656,36 @@ index 98df67ad53..d84267b405 100644
    BackForwardTransitionAnimationManager*
    GetBackForwardTransitionAnimationManager() override;
    void DestroyBackForwardTransitionAnimationManager() override;
+diff --git a/content/browser/web_contents/web_contents_view_child_frame.cc b/content/browser/web_contents/web_contents_view_child_frame.cc
+index f2f94492d0..f4cf09dbec 100644
+--- a/content/browser/web_contents/web_contents_view_child_frame.cc
++++ b/content/browser/web_contents/web_contents_view_child_frame.cc
+@@ -29,7 +29,8 @@ using blink::DragOperationsMask;
+ namespace content {
+ 
+ namespace {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: no external (NSMenu) popups on the Linux UI.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ class NoOpPopupMenuHelperDelegate : public PopupMenuHelper::Delegate {
+  public:
+   void OnMenuClosed() final {
+diff --git a/content/public/common/features.gni b/content/public/common/features.gni
+index 72b79775c2..8d6280f37a 100644
+--- a/content/public/common/features.gni
++++ b/content/public/common/features.gni
+@@ -7,7 +7,10 @@ import("//build/config/features.gni")
+ 
+ declare_args() {
+   # Whether or not to use external popup menu.
+-  use_external_popup_menu = is_android || (is_apple && use_blink)
++  # Spatiand: not on the Linux UI on macOS: <select> popups are Blink's own,
++  # as on Linux; the external ones are Cocoa's NSMenu (popup_menu_helper_mac).
++  use_external_popup_menu =
++      is_android || (is_apple && use_blink && !is_mac_linux_ui)
+ 
+   # Enables basic plugin support. This enables support for registering and
+   # looking up plugins.
 diff --git a/gpu/command_buffer/service/BUILD.gn b/gpu/command_buffer/service/BUILD.gn
 index 09245d2ddd..f64f8212a1 100644
 --- a/gpu/command_buffer/service/BUILD.gn
@@ -6663,10 +8427,10 @@ index d183769a6b..a3bece31d6 100644
  #endif
  
 diff --git a/ui/base/BUILD.gn b/ui/base/BUILD.gn
-index e3fdc65a70..303f0662ad 100644
+index e3fdc65a70..a11c1ca2ca 100644
 --- a/ui/base/BUILD.gn
 +++ b/ui/base/BUILD.gn
-@@ -337,12 +337,18 @@ component("base") {
+@@ -337,12 +337,20 @@ component("base") {
        "cocoa/user_interface_item_command_handler.h",
        "cocoa/views_hostable.h",
        "cocoa/window_size_constants.h",
@@ -6677,20 +8441,38 @@ index e3fdc65a70..303f0662ad 100644
 -      "resource/resource_bundle_mac.mm",
      ]
 +    # Spatiand: the Linux UI on macOS (use_aura) drags and loads its resources
-+    # as Linux does (below).
++    # as Linux does (below); only where the locale packs lie in the app bundle
++    # (<locale>.lproj, the system's layout) stays the Mac's, in
++    # resource_bundle_mac.mm.
++    sources += [ "resource/resource_bundle_mac.mm" ]
 +    if (!use_aura) {
 +      sources += [
 +        "dragdrop/os_exchange_data_provider_builder_mac.h",
 +        "dragdrop/os_exchange_data_provider_builder_mac.mm",
 +        "dragdrop/os_exchange_data_provider_mac.h",
 +        "dragdrop/os_exchange_data_provider_mac.mm",
-+        "resource/resource_bundle_mac.mm",
 +      ]
 +    }
    }
  
    if (is_apple) {
-@@ -422,7 +428,8 @@ component("base") {
+@@ -408,6 +416,15 @@ component("base") {
+       ]
+     }
+ 
++    # Spatiand: the Linux UI on macOS: Ozone/Wayland's screen reports the
++    # desktop's environment (XDG variables) as on Linux.
++    if (is_mac_linux_ui) {
++      sources += [
++        "linux/linux_desktop.cc",
++        "linux/linux_desktop.h",
++      ]
++    }
++
+     if (is_linux) {
+       sources += [
+         "linux/xdg_shortcut.cc",
+@@ -422,7 +439,8 @@ component("base") {
        ]
      }
  
@@ -6700,7 +8482,7 @@ index e3fdc65a70..303f0662ad 100644
        sources += [
          "accelerators/platform_accelerator_cocoa.h",
          "accelerators/platform_accelerator_cocoa.mm",
-@@ -565,7 +572,7 @@ component("base") {
+@@ -565,7 +583,7 @@ component("base") {
      deps += [ "//ui/events" ]
    }
  
@@ -6709,7 +8491,7 @@ index e3fdc65a70..303f0662ad 100644
      sources += [ "resource/resource_bundle_auralinux.cc" ]
    }
  
-@@ -577,14 +584,15 @@ component("base") {
+@@ -577,14 +595,15 @@ component("base") {
      public_deps += [ "//ui/base/glib" ]
    }
  
@@ -6727,7 +8509,7 @@ index e3fdc65a70..303f0662ad 100644
      deps += [ "//ui/base/clipboard" ]
    }
  
-@@ -1392,7 +1400,7 @@ if (is_win) {
+@@ -1392,7 +1411,7 @@ if (is_win) {
    }
  }
  
@@ -6762,6 +8544,22 @@ index c833e6e881..ee4d62b6e3 100644
    return ui::kKeybindingPlatformLinux;
  #elif BUILDFLAG(IS_FUCHSIA)
    // TODO(crbug.com/40220501): Change this once we decide what string should be
+diff --git a/ui/base/accelerators/global_accelerator_listener/BUILD.gn b/ui/base/accelerators/global_accelerator_listener/BUILD.gn
+index 1e6a4191b4..5e8e1eaa09 100644
+--- a/ui/base/accelerators/global_accelerator_listener/BUILD.gn
++++ b/ui/base/accelerators/global_accelerator_listener/BUILD.gn
+@@ -33,7 +33,10 @@ source_set("global_accelerator_listener") {
+     ]
+   }
+ 
+-  if (is_mac) {
++  # Spatiand: the Linux UI on macOS asks Ozone (the Wayland compositor,
++  # Spatiand) for global shortcuts, as Linux does; Carbon's system-wide hotkeys
++  # are the Cocoa UI's.
++  if (is_mac && !is_mac_linux_ui) {
+     sources += [
+       "global_accelerator_listener_mac.h",
+       "global_accelerator_listener_mac.mm",
 diff --git a/ui/base/clipboard/BUILD.gn b/ui/base/clipboard/BUILD.gn
 index 3c7a17dbee..56c292dff1 100644
 --- a/ui/base/clipboard/BUILD.gn
@@ -7134,6 +8932,54 @@ index d1ee681461..b6120ddeb7 100644
    return max_scale_factor_;
  #else
    return GetMaxSupportedResourceScaleFactor();
+diff --git a/ui/base/resource/resource_bundle_mac.mm b/ui/base/resource/resource_bundle_mac.mm
+index ba901991c9..938167f898 100644
+--- a/ui/base/resource/resource_bundle_mac.mm
++++ b/ui/base/resource/resource_bundle_mac.mm
+@@ -20,6 +20,7 @@
+ #include "base/synchronization/lock.h"
+ #include "ui/base/resource/resource_handle.h"
+ #include "ui/base/resource/resource_scale_factor.h"
++#include "build/build_config.h"
+ #include "ui/gfx/image/image.h"
+ 
+ namespace ui {
+@@ -52,6 +53,11 @@
+ 
+ }  // namespace
+ 
++// Spatiand: on the Linux UI on macOS (IS_MAC_LINUX_UI) the common packs load as
++// on Linux (resource_bundle_auralinux.cc, from DIR_ASSETS: the same Resources
++// folder of the framework) and images are Skia's, not NSImage's; only
++// GetLocaleFilePath, where the bundle keeps the locale packs, is the Mac's.
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
+ void ResourceBundle::LoadCommonResources() {
+   AddDataPackFromPath(GetResourcesPakFilePath(@"chrome_100_percent", nil),
+                       k100Percent);
+@@ -63,6 +69,7 @@
+                         k200Percent);
+   }
+ }
++#endif  // !BUILDFLAG(IS_MAC_LINUX_UI)
+ 
+ // static
+ base::FilePath ResourceBundle::GetLocaleFilePath(std::string_view app_locale) {
+@@ -83,6 +90,8 @@
+   return locale_file_path.IsAbsolute() ? locale_file_path : base::FilePath();
+ }
+ 
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
++
+ gfx::Image& ResourceBundle::GetNativeImageNamed(int resource_id) {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+ 
+@@ -123,5 +132,6 @@
+   DCHECK(inserted.second);
+   return inserted.first->second;
+ }
++#endif  // !BUILDFLAG(IS_MAC_LINUX_UI)
+ 
+ }  // namespace ui
 diff --git a/ui/base/test/skia_gold_pixel_diff.cc b/ui/base/test/skia_gold_pixel_diff.cc
 index a501ba653c..04088e712d 100644
 --- a/ui/base/test/skia_gold_pixel_diff.cc
@@ -7551,6 +9397,20 @@ index dc8009ddcd..400f068d11 100644
    kGtk = 1,
    kQt = 2,
    kMaxValue = kQt,
+diff --git a/ui/compositor/BUILD.gn b/ui/compositor/BUILD.gn
+index b445118280..b22923da4a 100644
+--- a/ui/compositor/BUILD.gn
++++ b/ui/compositor/BUILD.gn
+@@ -93,7 +93,8 @@ component("compositor") {
+     ]
+   }
+ 
+-  if (is_linux || is_fuchsia) {
++  # Spatiand: the Linux UI on macOS: Wayland's frame callbacks drive the frames.
++  if (is_linux || is_fuchsia || is_mac_linux_ui) {
+     sources += [
+       "external_begin_frame_adapter.cc",
+       "external_begin_frame_adapter.h",
 diff --git a/ui/display/BUILD.gn b/ui/display/BUILD.gn
 index c09f41bea0..8eee92e398 100644
 --- a/ui/display/BUILD.gn
@@ -7580,7 +9440,7 @@ index c09f41bea0..8eee92e398 100644
  
    if (is_win) {
 diff --git a/ui/display/screen.cc b/ui/display/screen.cc
-index b918c494ed..2a482491fc 100644
+index b918c494ed..b917667072 100644
 --- a/ui/display/screen.cc
 +++ b/ui/display/screen.cc
 @@ -82,7 +82,7 @@ void Screen::SetDisplayForNewWindows(int64_t display_id) {
@@ -7592,6 +9452,19 @@ index b918c494ed..2a482491fc 100644
  Screen::ScreenSaverSuspender::~ScreenSaverSuspender() = default;
  
  std::unique_ptr<Screen::ScreenSaverSuspender> Screen::SuspendScreenSaver() {
+@@ -243,7 +243,11 @@ ScreenInfos Screen::GetScreenInfosNearestDisplay(int64_t nearest_id) const {
+   return result;
+ }
+ 
+-#if BUILDFLAG(IS_APPLE)
++// Spatiand: on the Linux UI on macOS the screen is Ozone's (Wayland's outputs,
++// made by Views' desktop screen as on Linux); NSScreen's (mac/screen_mac.mm,
++// CreateNativeScreen) is the Cocoa UI's and not built. screen.h still declares
++// ScopedNativeScreen; nothing on the Linux UI makes one.
++#if BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ 
+ ScopedNativeScreen::ScopedNativeScreen(const base::Location& location) {
+   if (!Screen::HasScreen()) {
 diff --git a/ui/display/screen.h b/ui/display/screen.h
 index c8bd0657da..3cd9f83e34 100644
 --- a/ui/display/screen.h
@@ -8640,10 +10513,20 @@ index 775f63c363..f6d115f960 100644
        }
        deps += [
 diff --git a/ui/message_center/views/message_popup_view.cc b/ui/message_center/views/message_popup_view.cc
-index d6d5c67d5b..820efa4178 100644
+index d6d5c67d5b..19d122a079 100644
 --- a/ui/message_center/views/message_popup_view.cc
 +++ b/ui/message_center/views/message_popup_view.cc
-@@ -164,7 +164,7 @@ std::unique_ptr<views::Widget> MessagePopupView::Show() {
+@@ -122,7 +122,8 @@ void MessagePopupView::UpdateContentsForChildNotification(
+   popup_collection_->NotifyPopupResized();
+ }
+ 
+-#if !BUILDFLAG(IS_APPLE)
++// Spatiand: Aura's opacity on the Linux UI; message_popup_view_mac.mm reads an NSWindow.
++#if !BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_MAC_LINUX_UI)
+ float MessagePopupView::GetOpacity() const {
+   if (!IsWidgetValid())
+     return 0.f;
+@@ -164,7 +165,7 @@ std::unique_ptr<views::Widget> MessagePopupView::Show() {
        views::Widget::InitParams::CLIENT_OWNS_WIDGET,
        views::Widget::InitParams::TYPE_POPUP);
    params.z_order = ui::ZOrderLevel::kFloatingWindow;
@@ -9880,6 +11763,21 @@ index 220e24fed9..e4a2a62108 100644
    MOCK_METHOD1(OnWindowTiledStateChanged,
                 void(WindowTiledEdges new_tiled_edges));
  #endif
+diff --git a/ui/platform_window/BUILD.gn b/ui/platform_window/BUILD.gn
+index 6b8f26d65c..8668c21b99 100644
+--- a/ui/platform_window/BUILD.gn
++++ b/ui/platform_window/BUILD.gn
+@@ -46,7 +46,9 @@ component("platform_window") {
+     ]
+   }
+ 
+-  if (is_linux || is_chromeos) {
++  # Spatiand: the Linux UI on macOS: Ozone/Wayland's window extensions
++  # (X11's lookup only answers null: Spatiand is Wayland alone).
++  if (is_linux || is_chromeos || is_mac_linux_ui) {
+     sources += [
+       "extensions/system_modal_extension.cc",
+       "extensions/system_modal_extension.h",
 diff --git a/ui/platform_window/platform_window_delegate.cc b/ui/platform_window/platform_window_delegate.cc
 index 52d4ae6242..9637bb317e 100644
 --- a/ui/platform_window/platform_window_delegate.cc
@@ -10225,8 +12123,56 @@ index 3354c0c505..2441fcbe3b 100644
        sources += [ "widget/desktop_aura/desktop_window_tree_host_platform_impl_interactive_uitest.cc" ]
      }
  
+diff --git a/ui/views/accessibility/ax_virtual_view.cc b/ui/views/accessibility/ax_virtual_view.cc
+index cf8203006e..6efb19ada9 100644
+--- a/ui/views/accessibility/ax_virtual_view.cc
++++ b/ui/views/accessibility/ax_virtual_view.cc
+@@ -360,7 +360,8 @@ gfx::NativeViewAccessible AXVirtualView::ChildAtIndex(size_t index) const {
+   NOTREACHED() << "|index| should be less than the child count.";
+ }
+ 
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: no NSWindow on the Linux UI.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+ gfx::NativeViewAccessible AXVirtualView::GetNSWindow() {
+   NOTREACHED();
+ }
+diff --git a/ui/views/accessibility/tree/widget_ax_manager.cc b/ui/views/accessibility/tree/widget_ax_manager.cc
+index 1071b79408..baddb49a20 100644
+--- a/ui/views/accessibility/tree/widget_ax_manager.cc
++++ b/ui/views/accessibility/tree/widget_ax_manager.cc
+@@ -23,7 +23,8 @@
+ #include "ui/views/win/hwnd_util.h"
+ #endif  // BUILDFLAG(IS_WIN)
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: no NSView/NSWindow behind an Aura widget on the Linux UI.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "ui/views/widget/native_widget_mac.h"
+ #endif  // BUILDFLAG(IS_MAC)
+ 
+@@ -478,7 +479,8 @@ WidgetAXManager::AccessibilityGetNativeViewAccessible() {
+   if (!widget_) {
+     return gfx::NativeViewAccessible();
+   }
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: no NSView/NSWindow behind an Aura widget on the Linux UI.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // On macOS, the chromium accessibility tree is attached to an NSView. We must
+   // return the NativeViewAccessible for the NSView to connect our internal tree
+   // to the native one.
+@@ -499,7 +501,8 @@ WidgetAXManager::AccessibilityGetNativeViewAccessibleForWindow() {
+   if (!widget_) {
+     return gfx::NativeViewAccessible();
+   }
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: no NSView/NSWindow behind an Aura widget on the Linux UI.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // On macOS, the chromium accessibility tree is attached to an NSView itself
+   // connected to an NSWindow. We must return the NativeViewAccessible for the
+   // NSWindow to connect our internal tree to the native one.
 diff --git a/ui/views/accessibility/view_accessibility.cc b/ui/views/accessibility/view_accessibility.cc
-index 8fe7a551bd..1e4f633385 100644
+index 8fe7a551bd..bdbbd292d1 100644
 --- a/ui/views/accessibility/view_accessibility.cc
 +++ b/ui/views/accessibility/view_accessibility.cc
 @@ -37,7 +37,7 @@
@@ -10238,7 +12184,19 @@ index 8fe7a551bd..1e4f633385 100644
  #include "ui/views/accessibility/view_ax_platform_node_delegate_auralinux.h"
  #endif
  
-@@ -107,7 +107,7 @@ std::unique_ptr<ViewAccessibility> ViewAccessibility::Create(View* view) {
+@@ -100,14 +100,18 @@ std::unique_ptr<ViewAccessibility> ViewAccessibility::Create(View* view) {
+     return base::WrapUnique(new ViewAccessibility(view));
+   }
+ 
+-#if !BUILDFLAG(HAS_NATIVE_ACCESSIBILITY)
++// Spatiand: on the Linux UI on macOS there is no ATK (Linux's platform
++// accessibility) and no NSView to hang macOS's on: plain ViewAccessibility, as
++// on a Linux build without ATK. Workaround, named: no link to macOS's
++// accessibility; the proper alternative is the room's describe (spatiand_xr_v1).
++#if !BUILDFLAG(HAS_NATIVE_ACCESSIBILITY) || BUILDFLAG(IS_MAC_LINUX_UI)
+   // Cannot use std::make_unique because constructor is protected.
+   return base::WrapUnique(new ViewAccessibility(view));
+ #elif BUILDFLAG(IS_WIN)
    return ViewAXPlatformNodeDelegateWin::CreatePlatformSpecific(view);
  #elif BUILDFLAG(IS_MAC)
    return ViewAXPlatformNodeDelegateMac::CreatePlatformSpecific(view);
@@ -10247,6 +12205,346 @@ index 8fe7a551bd..1e4f633385 100644
    return ViewAXPlatformNodeDelegateAuraLinux::CreatePlatformSpecific(view);
  #endif
  }
+diff --git a/ui/views/bubble/bubble_dialog_delegate_view.cc b/ui/views/bubble/bubble_dialog_delegate_view.cc
+index 70d78fa06c..691f67cefa 100644
+--- a/ui/views/bubble/bubble_dialog_delegate_view.cc
++++ b/ui/views/bubble/bubble_dialog_delegate_view.cc
+@@ -65,7 +65,8 @@
+ #include "ui/base/win/shell.h"
+ #endif
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSWindow bubbles are the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "ui/views/widget/widget_utils_mac.h"
+ #else
+ #include "ui/aura/window.h"
+@@ -295,7 +296,8 @@ class BubbleDialogDelegate::AnchorViewObserver : public ViewObserver {
+ 
+ // This class is responsible for observing events on a BubbleDialogDelegate's
+ // anchor widget and notifying the BubbleDialogDelegate of them.
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSWindow bubbles are the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ class BubbleDialogDelegate::AnchorWidgetObserver : public WidgetObserver {
+ #else
+ class BubbleDialogDelegate::AnchorWidgetObserver : public WidgetObserver,
+@@ -306,7 +308,8 @@ class BubbleDialogDelegate::AnchorWidgetObserver : public WidgetObserver,
+   AnchorWidgetObserver(BubbleDialogDelegate* owner, Widget* widget)
+       : owner_(owner) {
+     widget_observation_.Observe(widget);
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSWindow bubbles are the Cocoa UI's.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+     window_observation_.Observe(widget->GetNativeWindow());
+ #endif
+   }
+@@ -314,7 +317,8 @@ class BubbleDialogDelegate::AnchorWidgetObserver : public WidgetObserver,
+ 
+   // WidgetObserver:
+   void OnWidgetDestroying(Widget* widget) override {
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSWindow bubbles are the Cocoa UI's.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+     DCHECK(window_observation_.IsObservingSource(widget->GetNativeWindow()));
+     window_observation_.Reset();
+ #endif
+@@ -338,7 +342,8 @@ class BubbleDialogDelegate::AnchorWidgetObserver : public WidgetObserver,
+     owner_->GetWidget()->ThemeChanged();
+   }
+ 
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSWindow bubbles are the Cocoa UI's.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+   // aura::WindowObserver:
+   void OnWindowTransformed(aura::Window* window,
+                            ui::PropertyChangeReason reason) override {
+@@ -366,7 +371,8 @@ class BubbleDialogDelegate::AnchorWidgetObserver : public WidgetObserver,
+   raw_ptr<BubbleDialogDelegate> owner_;
+   base::ScopedObservation<views::Widget, views::WidgetObserver>
+       widget_observation_{this};
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSWindow bubbles are the Cocoa UI's.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+   base::ScopedObservation<aura::Window, aura::WindowObserver>
+       window_observation_{this};
+ #endif
+@@ -696,7 +702,8 @@ void BubbleDialogDelegate::OnAnchorWidgetDestroying() {
+ }
+ 
+ void BubbleDialogDelegate::OnBubbleWidgetActivationChanged(bool active) {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSWindow bubbles are the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // Install |mac_bubble_closer_| the first time the widget becomes active.
+   if (active && !mac_bubble_closer_) {
+     mac_bubble_closer_ = std::make_unique<ui::BubbleCloser>(
+@@ -832,7 +839,8 @@ gfx::Rect BubbleDialogDelegate::GetAnchorRect() const {
+     return anchor_rect_.value_or(gfx::Rect());
+   }
+ 
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSWindow bubbles are the Cocoa UI's.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+   // GetAnchorBoundsInScreen returns values that take anchor widget's
+   // translation into account, so undo that here. Without this, features which
+   // apply transforms on windows such as ChromeOS overview mode will see bubbles
+@@ -1088,7 +1096,8 @@ gfx::Rect BubbleDialogDelegate::GetDesiredBubbleBounds() {
+ 
+   gfx::Rect bubble_bounds = GetBubbleBounds();
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSWindow bubbles are the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // GetBubbleBounds() doesn't take the Mac NativeWindow's style mask into
+   // account, so we need to adjust the size.
+   gfx::Size actual_size =
+diff --git a/ui/views/bubble/bubble_dialog_delegate_view.h b/ui/views/bubble/bubble_dialog_delegate_view.h
+index d15f68dfe2..4ab7f7cc3c 100644
+--- a/ui/views/bubble/bubble_dialog_delegate_view.h
++++ b/ui/views/bubble/bubble_dialog_delegate_view.h
+@@ -41,7 +41,8 @@
+ #include "ui/views/widget/widget_observer.h"
+ #include "ui/views/window/dialog_delegate.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSWindow bubbles are the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "ui/base/cocoa/bubble_closer.h"
+ #endif
+ 
+@@ -726,7 +727,8 @@ class VIEWS_EXPORT BubbleDialogDelegate : public DialogDelegate {
+   // By default, all BubbleDialogDelegates have parent windows.
+   bool has_parent_ = true;
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; NSWindow bubbles are the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // Special handler for close_on_deactivate() on Mac. Window (de)activation is
+   // suppressed by the WindowServer when clicking rapidly, so the bubble must
+   // monitor clicks as well for the desired behavior.
+diff --git a/ui/views/controls/menu/menu_controller.cc b/ui/views/controls/menu/menu_controller.cc
+index 0e5fb31ca1..c82d4b0fab 100644
+--- a/ui/views/controls/menu/menu_controller.cc
++++ b/ui/views/controls/menu/menu_controller.cc
+@@ -81,7 +81,8 @@
+ #include "ui/ozone/public/ozone_platform.h"
+ #endif
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "ui/base/cocoa/appkit_utils.h"
+ #endif
+ 
+@@ -102,7 +103,8 @@ enum class MenuPartType { kNone, kMenuItem, kScrollUp, kScrollDown };
+ DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::vector<views::ViewTracker>,
+                                    kOrderedMenuChildren)
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ bool AcceleratorShouldCancelMenu(const ui::Accelerator& accelerator) {
+   // Only trigger menu cancellation on key press, not on key release.
+   // This prevents menus from closing when users release modifier keys after
+@@ -730,7 +732,8 @@ void MenuController::Run(Widget* parent,
+     menu_pre_target_handler_ = MenuPreTargetHandler::Create(this, owner_);
+   }
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   menu_cocoa_watcher_ = std::make_unique<MenuCocoaWatcherMac>(base::BindOnce(
+       &MenuController::Cancel, this->AsWeakPtr(), ExitType::kAll));
+ #endif
+@@ -789,7 +792,8 @@ void MenuController::Cancel(ExitType type) {
+   // Track stack depth to defer controller destruction during menu
+   // cancellation.
+   ScopedDeletionGuard guard(AsWeakPtr());
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   menu_closure_animation_.reset();
+ #endif
+ 
+@@ -893,7 +897,8 @@ bool MenuController::OnMousePressed(SubmenuView* source,
+   // pressed state stored.
+   DCHECK(!current_mouse_event_target_ || current_mouse_pressed_state_);
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // Mac: If the app is inactive, the first click activates the app and keys a
+   // window (NSWindowDidBecomeKey). Our watcher closes menus on that focus
+   // change, which would dismiss the menu before mouse-release can execute the
+@@ -1545,7 +1550,8 @@ ui::PostDispatchAction MenuController::OnWillDispatchKeyEvent(
+ 
+   if (event->type() == ui::EventType::kKeyPressed) {
+     bool key_handled = false;
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+     // Special handling for Option-Up and Option-Down, which should behave like
+     // Home and End respectively in menus.
+     if ((event->flags() & ui::EF_ALT_DOWN)) {
+@@ -1593,7 +1599,8 @@ ui::PostDispatchAction MenuController::OnWillDispatchKeyEvent(
+ 
+   ui::Accelerator accelerator(*event);
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (AcceleratorShouldCancelMenu(accelerator)) {
+     Cancel(ExitType::kAll);
+     return ui::POST_DISPATCH_PERFORM_DEFAULT;
+@@ -1646,7 +1653,8 @@ void MenuController::OnWidgetDestroying(Widget* widget) {
+   owner_ = nullptr;
+   native_view_for_gestures_ = gfx::NativeView();
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   menu_closure_animation_.reset();
+ #endif
+ 
+@@ -1682,7 +1690,8 @@ ui::ColorId MenuController::GetSeparatorColorId() const {
+ }
+ 
+ void MenuController::OnMenuItemDestroying(MenuItemView* menu_item) {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (menu_closure_animation_ && menu_closure_animation_->item() == menu_item) {
+     menu_closure_animation_.reset();
+   }
+@@ -1753,7 +1762,8 @@ void MenuController::SetSelection(MenuItemView* menu_item,
+        (menu_item->GetType() == MenuItemView::Type::kActionableSubMenu &&
+         (selection_types & SELECTION_OPEN_SUBMENU) == 0));
+   bool should_set_popup_focus_override = should_notify_selected_child_changed;
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // On macOS, avoid setting popup focus when the app is inactive.
+   // Selecting a menu item sets popup_focus (see
+   // ui/accessibility/platform/ax_platform_node.cc). If popup_focus remains set
+@@ -2007,7 +2017,8 @@ bool MenuController::OnKeyPressed(const ui::KeyEvent& event) {
+       break;
+ 
+ // On Mac, treat space the same as return.
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+     case ui::VKEY_SPACE:
+       SendAcceleratorToHotTrackedView(event.flags());
+       break;
+@@ -2020,7 +2031,8 @@ bool MenuController::OnKeyPressed(const ui::KeyEvent& event) {
+       // Fallthrough to accept or dismiss combobox menus on F4, like windows.
+       [[fallthrough]];
+     case ui::VKEY_RETURN:
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+     case ui::VKEY_SPACE:
+ #endif
+       // An odd special case: if a prefix selection is in flight, space should
+@@ -2071,7 +2083,8 @@ bool MenuController::OnKeyPressed(const ui::KeyEvent& event) {
+       CloseSubmenu();
+       break;
+ 
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+     case ui::VKEY_APPS:
+       ShowContextMenu();
+       break;
+@@ -2315,7 +2328,8 @@ void MenuController::Accept(MenuItemView* item, int event_flags) {
+   result_ = item;
+   accept_event_flags_ = event_flags;
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   menu_closure_animation_ = std::make_unique<MenuClosureAnimationMac>(
+       item, item->GetParentMenuItem()->GetSubmenu(),
+       base::BindOnce(&MenuController::ReallyAccept, base::Unretained(this)));
+@@ -2327,7 +2341,8 @@ void MenuController::Accept(MenuItemView* item, int event_flags) {
+ 
+ void MenuController::ReallyAccept() {
+   DCHECK(!for_drop_);
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // Reset the closure animation since it's now finished - this also unblocks
+   // input events for the menu.
+   menu_closure_animation_.reset();
+@@ -3598,7 +3613,8 @@ void MenuController::RepostEventAndCancel(SubmenuView* source,
+       exit_type = ExitType::kOutermost;
+     }
+   }
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // When doing a menu closure animation, target the deepest submenu - that way
+   // MenuClosureAnimationMac will fade out all the menus in sync, rather than
+   // the shallowest menu only.
+@@ -4089,7 +4105,8 @@ bool MenuController::MaybeForwardToAnnotation(SubmenuView* source,
+ }
+ 
+ bool MenuController::CanProcessInputEvents() const {
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus behave as on Linux; this is Cocoa's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   return !menu_closure_animation_;
+ #else
+   return true;
+diff --git a/ui/views/controls/menu/menu_controller.h b/ui/views/controls/menu/menu_controller.h
+index 7618bba202..99a94152d4 100644
+--- a/ui/views/controls/menu/menu_controller.h
++++ b/ui/views/controls/menu/menu_controller.h
+@@ -35,7 +35,8 @@
+ #include "ui/views/view_tracker.h"
+ #include "ui/views/widget/widget_observer.h"
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus are Aura's; Cocoa's watcher and closure animation are the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "ui/views/controls/menu/menu_closure_animation_mac.h"
+ #include "ui/views/controls/menu/menu_cocoa_watcher_mac.h"
+ #endif
+@@ -878,7 +879,8 @@ class VIEWS_EXPORT MenuController final : public gfx::AnimationDelegate,
+   // A mask of the EventFlags for the mouse buttons currently pressed.
+   int current_mouse_pressed_state_ = 0;
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's menus are Aura's; Cocoa's watcher and closure animation are the Cocoa UI's.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   std::unique_ptr<MenuClosureAnimationMac> menu_closure_animation_;
+   std::unique_ptr<MenuCocoaWatcherMac> menu_cocoa_watcher_;
+ #endif
+diff --git a/ui/views/controls/menu/menu_runner_impl.cc b/ui/views/controls/menu/menu_runner_impl.cc
+index 5636a2be48..83ebcefcff 100644
+--- a/ui/views/controls/menu/menu_runner_impl.cc
++++ b/ui/views/controls/menu/menu_runner_impl.cc
+@@ -62,7 +62,8 @@ bool IsAltPressed() {
+ 
+ namespace internal {
+ 
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Views menus, not NSMenu).
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+ MenuRunnerImplInterface* MenuRunnerImplInterface::Create(
+     ui::MenuModel* menu_model,
+     int32_t run_types,
+@@ -300,7 +301,8 @@ bool MenuRunnerImpl::ShouldShowMnemonics(int32_t run_types) {
+   show_mnemonics |= ui::win::IsAltPressed();
+ #elif BUILDFLAG(IS_OZONE)
+   show_mnemonics |= IsAltPressed();
+-#elif BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path (Views menus, not NSMenu).
++#elif BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   show_mnemonics = false;
+ #endif
+   return show_mnemonics;
 diff --git a/ui/views/controls/native/native_view_host_aura.cc b/ui/views/controls/native/native_view_host_aura.cc
 index c28d73f4dc..8ba7e1547f 100644
 --- a/ui/views/controls/native/native_view_host_aura.cc
@@ -10473,6 +12771,30 @@ index 6aa745b6a9..3fa7267d23 100644
    bool SetCompositionFromExistingText(
        const gfx::Range& range,
        const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override;
+diff --git a/ui/views/controls/views_text_services_context_menu_base.cc b/ui/views/controls/views_text_services_context_menu_base.cc
+index 0b93d9fe92..d9fdbb87bb 100644
+--- a/ui/views/controls/views_text_services_context_menu_base.cc
++++ b/ui/views/controls/views_text_services_context_menu_base.cc
+@@ -51,7 +51,8 @@ bool ViewsTextServicesContextMenuBase::GetAcceleratorForCommandId(
+ #if BUILDFLAG(IS_WIN)
+     *accelerator = ui::Accelerator(ui::VKEY_OEM_PERIOD, ui::EF_COMMAND_DOWN);
+     return true;
+-#elif BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; the Mac's text services menu is Cocoa's.
++#elif BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+     *accelerator = ui::Accelerator(ui::VKEY_SPACE,
+                                    ui::EF_COMMAND_DOWN | ui::EF_CONTROL_DOWN);
+     return true;
+@@ -89,7 +90,8 @@ bool ViewsTextServicesContextMenuBase::SupportsCommand(int command_id) const {
+   return command_id == IDS_CONTENT_CONTEXT_EMOJI;
+ }
+ 
+-#if !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_CHROMEOS)
++// Spatiand: the UI follows Linux's path; the Mac's text services menu is Cocoa's.
++#if !(BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)) && !BUILDFLAG(IS_CHROMEOS)
+ // static
+ std::unique_ptr<ViewsTextServicesContextMenu>
+ ViewsTextServicesContextMenu::Create(ui::SimpleMenuModel* menu,
 diff --git a/ui/views/controls/webview/BUILD.gn b/ui/views/controls/webview/BUILD.gn
 index e741b52a4d..285c4f1792 100644
 --- a/ui/views/controls/webview/BUILD.gn
@@ -10595,10 +12917,20 @@ index 4dd9876644..302342962d 100644
    // bubble is shown, the main widget remains active. Because of that when
    // focus is set to the main widget to process accelerator, the main widget
 diff --git a/ui/views/style/platform_style.cc b/ui/views/style/platform_style.cc
-index c817eccc28..d7d70206bf 100644
+index c817eccc28..b8dd82b022 100644
 --- a/ui/views/style/platform_style.cc
 +++ b/ui/views/style/platform_style.cc
-@@ -23,7 +23,7 @@
+@@ -6,7 +6,8 @@
+ 
+ #include "build/build_config.h"
+ 
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; platform_style_mac.mm is the Cocoa UI's.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+ #include <stddef.h>
+ 
+ #include <memory>
+@@ -23,19 +24,20 @@
  #include "ui/views/controls/focusable_border.h"
  #include "ui/views/controls/scrollbar/scroll_bar_views.h"
  
@@ -10607,7 +12939,13 @@ index c817eccc28..d7d70206bf 100644
  #include "ui/views/controls/scrollbar/overlay_scroll_bar.h"
  #endif
  #endif
-@@ -35,7 +35,7 @@ namespace views {
+ 
+ namespace views {
+ 
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the UI follows Linux's path; platform_style_mac.mm is the Cocoa UI's.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+ 
  // static
  std::unique_ptr<ScrollBar> PlatformStyle::CreateScrollBar(
      ScrollBar::Orientation orientation) {
@@ -10616,6 +12954,102 @@ index c817eccc28..d7d70206bf 100644
    return std::make_unique<OverlayScrollBar>(orientation);
  #else
    return std::make_unique<ScrollBarViews>(orientation);
+diff --git a/ui/views/style/platform_style.h b/ui/views/style/platform_style.h
+index 1e9785672f..6fefeb5594 100644
+--- a/ui/views/style/platform_style.h
++++ b/ui/views/style/platform_style.h
+@@ -10,6 +10,7 @@
+ #include <memory>
+ #include <string_view>
+ 
++#include "build/build_config.h"
+ #include "ui/views/controls/button/button.h"
+ #include "ui/views/controls/scrollbar/scroll_bar.h"
+ #include "ui/views/view.h"
+@@ -22,6 +23,8 @@ class Range;
+ namespace views {
+ 
+ // Cross-platform API for providing platform-specific styling for toolkit-views.
++// Spatiand: on the Linux UI on macOS (IS_MAC_LINUX_UI) every constant below
++// takes Linux's value: the UI follows Linux's path; the Mac's are the Cocoa UI's.
+ class VIEWS_EXPORT PlatformStyle {
+  public:
+   PlatformStyle() = delete;
+@@ -33,17 +36,17 @@ class VIEWS_EXPORT PlatformStyle {
+   static constexpr bool kIsOkButtonLeading = BUILDFLAG(IS_WIN);
+ 
+   // Whether the default button for a dialog can be the Cancel button.
+-  static constexpr bool kDialogDefaultButtonCanBeCancel = !BUILDFLAG(IS_MAC);
++  static constexpr bool kDialogDefaultButtonCanBeCancel = !(BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI));
+ 
+   // Whether right clicking on text, selects the word under cursor.
+-  static constexpr bool kSelectWordOnRightClick = BUILDFLAG(IS_MAC);
++  static constexpr bool kSelectWordOnRightClick = (BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI));
+ 
+   // Whether right clicking inside an unfocused text view selects all the text.
+-  static constexpr bool kSelectAllOnRightClickWhenUnfocused = BUILDFLAG(IS_MAC);
++  static constexpr bool kSelectAllOnRightClickWhenUnfocused = (BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI));
+ 
+   // Whether the Space key clicks a button on key press or key release.
+   static constexpr Button::KeyClickAction kKeyClickActionOnSpace =
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+       Button::KeyClickAction::kOnKeyPress;
+ #else
+       Button::KeyClickAction::kOnKeyRelease;
+@@ -53,42 +56,43 @@ class VIEWS_EXPORT PlatformStyle {
+   // Otherwise, Return does nothing unless it is handled by an accelerator.
+   // On Mac, the Return key is used to perform the default action even when a
+   // control is focused.
+-  static constexpr bool kReturnClicksFocusedControl = !BUILDFLAG(IS_MAC);
++  static constexpr bool kReturnClicksFocusedControl = !(BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI));
+ 
+   // Whether cursor left and right can be used in a TableView to select and
+   // resize columns and whether a focus ring should be shown around the active
+   // cell.
+   static constexpr bool kTableViewSupportsKeyboardNavigationByCell =
+-      !BUILDFLAG(IS_MAC);
++      !(BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI));
+ 
+   // Whether TableView will show rows with alternating colors.
+   static constexpr bool kTableViewSupportsAlternatingRowColors =
+-      BUILDFLAG(IS_MAC);
++      (BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI));
+ 
+   // Whether selecting a row in a TreeView selects the entire row or only the
+   // label for that row.
+-  static constexpr bool kTreeViewSelectionPaintsEntireRow = BUILDFLAG(IS_MAC);
++  static constexpr bool kTreeViewSelectionPaintsEntireRow = (BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI));
+ 
+   // Whether ripples should be used for visual feedback on control activation.
+-  static constexpr bool kUseRipples = !BUILDFLAG(IS_MAC);
++  static constexpr bool kUseRipples = !(BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI));
+ 
+   // Whether text fields should use a "drag" cursor when not actually
+   // dragging but available to do so.
+   static constexpr bool kTextfieldUsesDragCursorWhenDraggable =
+-      !BUILDFLAG(IS_MAC);
++      !(BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI));
+ 
+   // Whether controls in inactive widgets appear disabled.
+   static constexpr bool kInactiveWidgetControlsAppearDisabled =
+-      BUILDFLAG(IS_MAC);
++      (BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI));
+ 
+   // Default setting at bubble creation time for whether arrow will be adjusted
+   // for bubbles going off-screen to bring more bubble area into view. Linux
+   // clips bubble windows that extend outside their parent window bounds.
+-  static constexpr bool kAdjustBubbleIfOffscreen = !BUILDFLAG(IS_LINUX);
++  static constexpr bool kAdjustBubbleIfOffscreen =
++      !(BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI));
+ 
+   // Default focus behavior on the platform.
+   static constexpr View::FocusBehavior kDefaultFocusBehavior =
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+       View::FocusBehavior::ACCESSIBLE_ONLY;
+ #else
+       View::FocusBehavior::ALWAYS;
 diff --git a/ui/views/test/ui_controls_factory_desktop_aura_ozone.cc b/ui/views/test/ui_controls_factory_desktop_aura_ozone.cc
 index a19a0fa4df..367e563c18 100644
 --- a/ui/views/test/ui_controls_factory_desktop_aura_ozone.cc
