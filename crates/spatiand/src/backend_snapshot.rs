@@ -734,6 +734,7 @@ pub fn run(
                         // window. See [`Scripted`].
                         let mut pointer_at = (0.5f64, 0.5f64);
                         let mut dictation = crate::dictate::Dictation::default();
+                        let mut describing: Option<std::sync::mpsc::Receiver<String>> = None;
                         for step in scripted_steps() {
                             let mut settle = 0.5f32;
                             match &step {
@@ -761,6 +762,16 @@ pub fn run(
                                     .unwrap_or(3.0);
                                 settle = seconds + 0.8 + 1.2;
                                 dictating = true;
+                            }
+                            if matches!(step, Scripted::Describe) {
+                                let asked = chosen_window(&runtime.state, &windows)
+                                    .and_then(|w| w.window.toplevel().map(|t| t.wl_surface().clone()))
+                                    .and_then(|surface| crate::xr::ask_description(&surface));
+                                if asked.is_none() {
+                                    log::warn!("describe: no window to ask, or it cannot be asked");
+                                }
+                                describing = asked;
+                                settle = settle.max(1.5);
                             }
                             let pressed_the_card = matches!(step, Scripted::Notice) && dictation.owns_notice();
                             if pressed_the_card {
@@ -798,6 +809,19 @@ pub fn run(
                                 }
                                 // The assistant's questions, answered as the session answers them.
                                 crate::spatikey::serve(&mut runtime.state, 0);
+                                if let Some(rx) = &describing {
+                                    match rx.try_recv() {
+                                        Ok(said) => {
+                                            log::info!("describe: said {said}");
+                                            describing = None;
+                                        }
+                                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                            log::info!("describe: no answer");
+                                            describing = None;
+                                        }
+                                        Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                                    }
+                                }
                                 for event in crate::assist::serve(&mut runtime.state, None, &windows, &mut renderer, 0) {
                                     log::info!("assist: the shell would be asked {event:?}");
                                 }
@@ -1725,6 +1749,9 @@ enum Scripted {
     RoomUp,
     Notice,
     Dictate(String),
+    /// The window (`SPATIAND_WINDOW`'s, or the first) asked what it shows, as dictation and the
+    /// assistant ask it (`xr::ask_description`); its answer logged as `describe: said ...`.
+    Describe,
 }
 
 fn scripted_steps() -> Vec<Scripted> {
@@ -1771,6 +1798,7 @@ fn scripted_steps() -> Vec<Scripted> {
                 ("roomup", _) => Scripted::RoomUp,
                 ("notice", _) => Scripted::Notice,
                 ("dictate", _) => Scripted::Dictate(rest.to_string()),
+                ("describe", _) => Scripted::Describe,
                 ("window", _) => Scripted::Window(rest.to_string()),
                 _ => {
                     log::warn!("SPATIAND_STEPS: not understood: {step:?}");
@@ -1967,7 +1995,7 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
             pointer_event_on(state, windows, *at, Some((crate::pointer::BTN_LEFT, false)), true);
         }
         // Done by the steps' loop, which has to keep the room going while the file plays.
-        Scripted::Dictate(_) => {}
+        Scripted::Dictate(_) | Scripted::Describe => {}
         Scripted::Notice => {
             if crate::install::asking() {
                 crate::install::accept();

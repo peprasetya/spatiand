@@ -322,7 +322,8 @@ gn gen --args="target_os = \"mac\" $ARGS target_cpu = \"arm64\" enable_pdf = tru
 # A real python3 first: the tools the build runs by "env python3" (the linker's driver) otherwise
 # get macOS's stub, which looks for one in Xcode, and Xcode has none.
 export PATH="$CR/chromium/src/third_party/cpython3/host/bin:$PATH"
-nice -n 10 python3 $CR/depot_tools/siso.py ninja -C out/mac chrome --offline
+# -k 0: on with everything else past a failure, so that a port sees all of what fails at once.
+nice -n 10 python3 $CR/depot_tools/siso.py ninja -C out/mac -k 0 chrome --offline
 cp $CR/cromite/build/RELEASE out/mac/
 EOF
 }
