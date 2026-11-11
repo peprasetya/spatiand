@@ -199,9 +199,9 @@ final class DeskWindows: NSObject, NSWindowDelegate {
         switch event.type {
         case .keyDown:
             // The application repeats a held key itself, at the Mac's own rate.
-            if !event.isARepeat { sp_desk_key(view.id, event.keyCode, true) }
+            if !event.isARepeat { sp_desk_key(view.id, KeyMap.place(event.keyCode), true) }
         case .keyUp:
-            sp_desk_key(view.id, event.keyCode, false)
+            sp_desk_key(view.id, KeyMap.place(event.keyCode), false)
         case .flagsChanged:
             let flags = event.modifierFlags
             let down: Bool

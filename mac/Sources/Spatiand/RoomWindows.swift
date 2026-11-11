@@ -45,8 +45,24 @@ final class RoomWindows {
     /// when the screen goes back those put away come back where they were. One chosen from the
     /// list by hand still comes out.
     ///
-    /// The screens on show, by their entry, and the display each is.
+    /// **And there the Mac is left to itself** (the owner, 2026-11-11: "when screen is pulled to
+    /// the room, make it as native mac, don't override mac behaviour. if the screen hidden, then
+    /// spatiand override the mac behaviour"). A window on a screen that is on show is not brought
+    /// forward, made the active one or moved by the room on its own account -- the room giving
+    /// it the keys, a scan finding it in front -- only when the wearer presses, types or scrolls
+    /// in that window's own picture in the room. See `focus`, `rescan`, `follow`.
+    ///
+    /// The screens on show, by their entry, and the display each was asked for as
+    /// (`MacScreens.virtualToBe` for the virtual one). **Not the display's number then**: the
+    /// virtual screen is made anew at a lock and comes back as another number (8, 11, 14 in one
+    /// evening), and what is on show is asked afresh each time (`displaysOnShow`).
     private var screensOnShow: [UInt32: CGDirectDisplayID] = [:]
+    /// The window the room has given the keys without bringing it forward on the Mac, because
+    /// its screen is in the room: brought forward at the first key typed into it.
+    private var raiseDue: UInt32?
+    /// Where the button went down in a screen, until the pointer has left that spot: a head
+    /// that is never quite still made every click there a short drag.
+    private var pressedInScreenAt: CGPoint?
     /// The windows put away because a screen they are on came out.
     private var putAwayForScreen: Set<UInt32> = []
     private var scan: Timer?
@@ -125,6 +141,20 @@ final class RoomWindows {
         return showing.contains { $0.info.display != nil }
     }
 
+    /// The displays that are in the room as screens, for whoever asks from another thread.
+    var displaysInRoom: Set<CGDirectDisplayID> {
+        insideLock.lock()
+        defer { insideLock.unlock() }
+        return Set(screensShown.compactMap { MacScreens.current($0) })
+    }
+    private var screensShown: [CGDirectDisplayID] = []
+    private func publishScreens() {
+        let now = Array(screensOnShow.values)
+        insideLock.lock()
+        screensShown = now
+        insideLock.unlock()
+    }
+
     /// The windows on show, kept for whoever asks from another thread. **Nothing waits for the
     /// queue**: it does things to other applications that take as long as those applications
     /// like, and the main thread -- which is where the mouse and keyboard come in -- waiting
@@ -197,6 +227,13 @@ final class RoomWindows {
         insideLock.unlock()
     }
 
+    /// For tests: the room's number of a window that is on show.
+    func roomID(of windowID: CGWindowID) -> UInt32? {
+        insideLock.lock()
+        defer { insideLock.unlock() }
+        return showing.first { $0.info.windowID == windowID }?.id
+    }
+
     /// For tests: the room's number and the details of an application's window that is on show.
     func shownWindow(bundle: String) -> (id: UInt32, info: MacWindowInfo)? {
         insideLock.lock()
@@ -261,7 +298,13 @@ final class RoomWindows {
     func follow(bundle: String) {
         queue.async { [self] in
             following.insert(bundle)
-            for (id, entry) in entries where entry.info.bundle == bundle { sp_window_show(id) }
+            var left = 0
+            for (id, entry) in entries where entry.info.bundle == bundle {
+                // On a screen that is in the room it is there already.
+                if onScreenInRoom(entry.info) { left += 1; continue }
+                sp_window_show(id)
+            }
+            if left > 0 { print("windows: \(bundle) was asked for; \(left) window(s) of it are on a screen that is in the room, and are left there") }
         }
         start()
         DispatchQueue.main.async { self.rescan() }
@@ -277,7 +320,9 @@ final class RoomWindows {
             queue.async { [self] in
                 var broughtThisScan = 0
                 for found in all where !entries.values.contains(where: { $0.info.windowID == found.windowID }) && !passedOver.contains(found.windowID) {
-                    let info = MacWindows.bringOntoMain(found, glasses: glasses)
+                    // (Moved only if the room's pointer could not reach it: not one that is
+                    // partly on a screen in the room, where the wearer put it there.)
+                    let info = reachableOnScreenInRoom(found, glasses: glasses) ? found : MacWindows.bringOntoMain(found, glasses: glasses)
                     if info.display != nil {
                         _ = announce(info, hidden: true)
                         continue
@@ -288,7 +333,7 @@ final class RoomWindows {
                     if info.prompt {
                         let id = announce(info, hidden: true)
                         // On a screen that is in the room it is there already.
-                        if !onScreenInRoom(info) { sp_window_show(id) }
+                        if !onScreenInRoom(info) { sp_window_show(id) } else { print("windows: macOS asks something (\(info.windowID)) on a screen that is in the room; left to the screen") }
                         continue
                     }
                     // Only windows in their own right; see `MacWindows.isOrdinary`.
@@ -339,9 +384,14 @@ final class RoomWindows {
                     // and whole the next, and a burst of windows each being captured has
                     // brought the Mac to its knees. Two a scan; the rest wait in the list.
                     // Not while it is on a screen that is in the room: it is there already.
-                    if ((opened && broughtThisScan < 2) || following.contains(info.bundle)) && !onScreenInRoom(info) {
-                        broughtThisScan += 1
-                        sp_window_show(id)
+                    if (opened && broughtThisScan < 2) || following.contains(info.bundle) {
+                        if onScreenInRoom(info) {
+                            print("windows: \(info.app) \u{201C}\(info.title)\u{201D} (\(info.windowID)) opened on a screen that is in the room; left to the screen, not shown twice")
+                        } else {
+                            broughtThisScan += 1
+                            print("windows: \(info.app) \u{201C}\(info.title)\u{201D} (\(info.windowID)) is new and on no screen that is in the room; it comes out")
+                            sp_window_show(id)
+                        }
                     }
                 }
                 // And one taken for a new window all the same, because the tab it replaced had
@@ -370,11 +420,19 @@ final class RoomWindows {
                 // the window it has, which was put away in the room, and nothing was seen.
                 // Not while the wearer is working on a whole screen of the Mac's: there,
                 // windows come to the front under their own hand, and are seen on the screen.
+                // **Nor one that is on a screen in the room**, whatever has the room's keys:
+                // it is seen there, in front, already. (Only the keys being the screen's was
+                // asked, and a link pressed in a window beside the screen brought the browser
+                // out of the screen as a second picture of itself: littleotter, 2026-11-11.)
                 let front = MacWindows.frontWindow()
                 if scanned, let front, front != macFront, entries[focused]?.info.display == nil,
-                   let (id, _) = entries.first(where: { $0.value.info.windowID == front && $0.value.capture == nil && $0.value.info.display == nil }) {
-                    print("windows: the Mac brought \(entries[id]!.info.app) \u{201C}\(entries[id]!.info.title)\u{201D} to the front; it comes out")
-                    sp_window_show(id)
+                   let (id, entry) = entries.first(where: { $0.value.info.windowID == front && $0.value.capture == nil && $0.value.info.display == nil }) {
+                    if onScreenInRoom(entry.info) {
+                        print("windows: the Mac brought \(entry.info.app) \u{201C}\(entry.info.title)\u{201D} to the front on a screen that is in the room; left to the screen")
+                    } else {
+                        print("windows: the Mac brought \(entry.info.app) \u{201C}\(entry.info.title)\u{201D} to the front; it comes out")
+                        sp_window_show(id)
+                    }
                 }
                 macFront = front
                 scanned = true
@@ -430,6 +488,9 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             guard let id = at.keys.first, let info = entries[id]?.info, let p = point(id) else { return }
             if info.display == nil, let top = topWindow(at: p, for: info.pid), top.pid != info.pid || (top.id != info.windowID && entries.values.contains(where: { $0.info.windowID == top.id })),
                let ax = MacWindows.axWindow(info) {
+                // (Also where its screen is in the room: the wearer is scrolling this window's
+                // own picture, and what is scrolled is what lies under the real pointer.)
+                if onScreenInRoom(info) { print("windows: \(info.app) is scrolled in its own picture while something lies over it on its screen, which is in the room; brought to the top there") }
                 AXUIElementPerformAction(ax, kAXRaiseAction as CFString)
                 // Raised among its own application's windows; and that application's above the others'.
                 if top.pid != info.pid { NSRunningApplication(processIdentifier: info.pid)?.activate(options: []) }
@@ -450,7 +511,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
     func menu(of id: UInt32) {
         queue.async { [self] in
             guard let info = entries[id]?.info else { sp_menu_close(); return }
-            focus(id)
+            focus(id, acting: true)
             RoomMenus.shared.onChosen = { [weak self] in self?.queue.async { self?.rescanSoon() } }
             RoomMenus.shared.open(pid: info.pid, name: info.app)
         }
@@ -485,37 +546,63 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
 
     /// The window is on show in the room: capture it.
     /// Which display a window is on now: the one under its middle.
+    /// (Or, with its middle pulled off every screen, the one most of it is on.)
     private func displayOf(_ info: MacWindowInfo) -> CGDirectDisplayID? {
         let frame = MacWindows.bounds(info.windowID) ?? info.frame
         var found: CGDirectDisplayID = 0
         var count: UInt32 = 0
-        guard CGGetDisplaysWithPoint(CGPoint(x: frame.midX, y: frame.midY), 1, &found, &count) == .success, count > 0 else { return nil }
-        return found
+        if CGGetDisplaysWithPoint(CGPoint(x: frame.midX, y: frame.midY), 1, &found, &count) == .success, count > 0 { return found }
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+        guard CGGetActiveDisplayList(16, &ids, &count) == .success else { return nil }
+        var best: (CGDirectDisplayID, CGFloat)?
+        for id in ids.prefix(Int(count)) {
+            let part = CGDisplayBounds(id).intersection(frame)
+            let area = part.isNull ? 0 : part.width * part.height
+            if area > (best?.1 ?? 0) { best = (id, area) }
+        }
+        return best?.0
+    }
+
+    /// The displays that are on show in the room as screens, as they are numbered now.
+    private func displaysOnShow() -> Set<CGDirectDisplayID> {
+        Set(screensOnShow.values.compactMap { MacScreens.current($0) })
     }
 
     /// Whether a window is on a screen that is on show in the room.
     private func onScreenInRoom(_ info: MacWindowInfo) -> Bool {
         guard info.display == nil, !screensOnShow.isEmpty, let display = displayOf(info) else { return false }
-        return screensOnShow.values.contains(display)
+        return displaysOnShow().contains(display)
+    }
+
+    /// Whether a window just found can be got at on a screen that is in the room: some of it
+    /// is there, and none of it on the glasses.
+    private func reachableOnScreenInRoom(_ info: MacWindowInfo, glasses: CGDirectDisplayID?) -> Bool {
+        guard info.display == nil, !screensOnShow.isEmpty else { return false }
+        if let glasses, CGDisplayBounds(glasses).intersects(info.frame) { return false }
+        return displaysOnShow().contains { CGDisplayBounds($0).intersects(info.frame) }
     }
 
     /// A screen has come out: the windows on show that are on it are put away.
     private func screenOut(_ id: UInt32, _ info: MacWindowInfo) {
         guard let wanted = info.display, let display = MacScreens.resolve(wanted) else { return }
-        screensOnShow[id] = display
+        screensOnShow[id] = wanted
         var put = 0
         for (other, entry) in entries where other != id && entry.capture != nil && entry.info.display == nil && displayOf(entry.info) == display {
             putAwayForScreen.insert(other)
             sp_window_hide(other)
             put += 1
         }
-        print("windows: the screen \(info.title) is in the room; \(put) window(s) on it put away until it goes")
+        raiseDue = nil
+        publishScreens()
+        print("windows: the screen \(info.title) (display \(display)) is in the room; \(put) window(s) on it put away until it goes, and the Mac is left to arrange what is on it")
     }
 
     /// A screen has gone back (or away): the windows put away for it come back where they were.
     private func screenIn(_ id: UInt32) {
         guard screensOnShow.removeValue(forKey: id) != nil else { return }
-        let stillOut = Set(screensOnShow.values)
+        publishScreens()
+        pressedInScreenAt = nil
+        let stillOut = displaysOnShow()
         var back = 0
         for other in putAwayForScreen {
             guard let entry = entries[other] else { putAwayForScreen.remove(other); continue }
@@ -524,7 +611,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             sp_window_restore(other)
             back += 1
         }
-        print("windows: a screen has left the room; \(back) window(s) back where they were")
+        print("windows: a screen has left the room; \(back) window(s) back where they were\(screensOnShow.isEmpty ? ", and the room brings windows forward on the Mac again" : "")")
     }
 
     private func shown(_ id: UInt32) {
@@ -565,6 +652,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         entries[id]?.capture = nil
         publish()
         at[id] = nil
+        if raiseDue == id { raiseDue = nil }
         setInside(!at.isEmpty)
     }
 
@@ -579,6 +667,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             setInside(!at.isEmpty)
             down.remove(id)
             if focused == id { focused = 0 }
+            if raiseDue == id { raiseDue = nil }
             sp_window_close(id)
         }
     }
@@ -596,7 +685,32 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             scanned = false
             seen.removeAll()
             passedOver.removeAll()
+            untold.removeAll()
+            // **And everything said of them.** Left as it was, the pointer was "inside a Mac
+            // window" for good once the glasses came back (no window was left to say it had
+            // gone: scrolls and pinches went to macOS, not the room), and a screen was "on show"
+            // that no longer was, so nothing opened on it ever came out.
+            let screens = screensOnShow.count, away = putAwayForScreen.count
+            screensOnShow.removeAll()
+            putAwayForScreen.removeAll()
+            publishScreens()
+            at.removeAll()
+            down.removeAll()
+            focused = 0
+            raiseDue = nil
+            pressedInScreenAt = nil
+            heldModifiers.removeAll()
+            macFront = nil
+            catchUpDue = false
+            insideLock.lock()
+            pointerNow.removeAll()
+            dragIn = nil
+            inScreenAt = nil
+            insideNow = false
+            insideLock.unlock()
+            PointerLog.shared.inScreen = false
             publish()
+            print("windows: out of the room, all of them\(screens > 0 ? "; \(screens) screen(s) were on show, \(away) window(s) put away for them" : "")")
         }
     }
 
@@ -660,11 +774,27 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
     /// (the one notifications come down on covers the whole screen) are over everything, always.
     private func topWindow(at p: CGPoint, for pid: pid_t) -> (pid: pid_t, id: CGWindowID)? { MacInput.top(at: p, for: pid) }
 
-    private func focus(_ id: UInt32) {
+    /// The room's keys are this window's now. `acting`: the wearer is doing something in the
+    /// window itself (a press in it, its menu), not only the room saying whose the keys are.
+    private func focus(_ id: UInt32, acting: Bool = false) {
         // A window that loses the keys is told no more of them, its releases neither.
         if id != focused { heldModifiers.removeAll() }
         focused = id
-        if id != 0 { raise(id) }
+        raiseDue = nil
+        guard id != 0, let info = entries[id]?.info, info.display == nil else { return }
+        // **Not brought forward for being given the keys, while its screen is in the room.**
+        // The room gives a window the keys when its bar is taken hold of to move it, when its
+        // edge is pulled, when it comes out, when the window that had them is put away: none of
+        // which is the wearer using it. Each made its application the Mac's active one and put
+        // it over whatever was being used in the screen (the owner, 2026-11-11: "claude ...
+        // become focus app, and close the window I used"). It is brought forward when it is
+        // pressed, or at the first key typed into it.
+        if !acting, onScreenInRoom(info) {
+            raiseDue = id
+            print("windows: \(info.app) (\(id)) has the room's keys; its screen is in the room, so the Mac's front window is left as it is until it is pressed or typed in")
+            return
+        }
+        raise(id)
     }
 
     private func point(_ id: UInt32) -> CGPoint? {
@@ -706,6 +836,14 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         // what is held follows the pointer the wearer sees.
         if down.contains(id) {
             let here = CGEvent(source: nil)?.location ?? p
+            // **In a screen, not until the pointer has left where it was pressed** by more than
+            // a head held still moves it: every press there was a press, a drag of a few points
+            // and a release, and a window pressed to bring it forward is not brought by a drag
+            // begun in it (macOS leaves a window where it is while something is dragged out of it).
+            if let pressed = pressedInScreenAt {
+                if hypot(p.x - pressed.x, p.y - pressed.y) < 6, !RoomTap.shared.handIsMoving { return }
+                pressedInScreenAt = nil
+            }
             if !RoomTap.shared.handIsDragging, hypot(here.x - p.x, here.y - p.y) > 2 {
                 PointerLog.shared.note(String(format: "drag %.1f %.1f from %.1f %.1f (head)", p.x, p.y, here.x, here.y))
                 RoomTap.shared.warp(to: p)
@@ -780,7 +918,10 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             // window itself, or something of the application's that is not one of its windows,
             // there is nothing to bring: the application is made the active one and no more.
             if entries[id]?.info.display != nil {
+                // A screen: the press is the Mac's own, and what it brings forward is the Mac's to say.
                 focused = id
+                raiseDue = nil
+                pressedInScreenAt = button == .left ? p : nil
             } else if let info = entries[id]?.info, let top = topWindow(at: p, for: info.pid), top.pid == info.pid,
                top.id == info.windowID || !entries.values.contains(where: { $0.info.windowID == top.id }) {
                 focused = id
@@ -791,7 +932,12 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
                     let deadline = Date().addingTimeInterval(0.25)
                     while app?.isActive != true, Date() < deadline { usleep(5_000) }
                 }
-            } else if focused != id { focus(id) } else { raise(id) }
+            } else if focused != id { focus(id, acting: true) } else { raise(id) }
+            // Pressed: whatever was waiting to be brought forward has been, or is not wanted.
+            if entries[id]?.info.display == nil {
+                if raiseDue != nil, let info = entries[id]?.info, onScreenInRoom(info) { print("windows: \(info.app) (\(id)) is pressed in its own picture; brought forward on its screen, which is in the room") }
+                raiseDue = nil
+            }
             RoomTap.shared.warp(to: p)
             // Twice in the same place, soon enough, is a double click: said in the event, since
             // the system that would have counted them never saw them.
@@ -809,7 +955,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             post(event)
         } else {
             let dragged = button == .left && down.contains(id)
-            if button == .left { down.remove(id); noteDrag(nil) }
+            if button == .left { down.remove(id); noteDrag(nil); pressedInScreenAt = nil }
             rescanSoon()
             // Let go where the real cursor is, which is where the drag has taken it.
             let p = dragged ? (CGEvent(source: nil)?.location ?? p) : p
@@ -842,6 +988,9 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
     }
 
     private func key(_ code: UInt16, down: Bool, isRepeat: Bool = false) {
+        // As macOS calls the key on this keyboard (an ISO one has two the other way about).
+        // A repeat comes straight from the tap, as macOS said it.
+        let code = isRepeat ? code : KeyMap.place(code)
         // Modifier keys are not posted as keys: they are the flags on the keys that follow.
         if [0x38, 0x3C, 0x3B, 0x3E, 0x3A, 0x3D, 0x37, 0x36, 0x39].contains(code) {
             if code != 0x39 {
@@ -854,7 +1003,12 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             return
         }
         // To the window the room says has the keys, whatever the Mac has in front by now.
-        if down, focused != 0, entries[focused]?.info.display == nil, let pid = entries[focused]?.info.pid, NSWorkspace.shared.frontmostApplication?.processIdentifier != pid {
+        // (And one given the keys without being brought forward, its screen being in the room,
+        // is brought now: the wearer is typing into it.)
+        if down, focused != 0, entries[focused]?.info.display == nil, let pid = entries[focused]?.info.pid,
+           raiseDue == focused || NSWorkspace.shared.frontmostApplication?.processIdentifier != pid {
+            if raiseDue == focused, let info = entries[focused]?.info { print("windows: \(info.app) (\(focused)) is typed in; brought forward on its screen, which is in the room") }
+            raiseDue = nil
             raise(focused)
         }
         let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(code), keyDown: down)

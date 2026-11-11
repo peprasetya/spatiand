@@ -95,6 +95,21 @@ final class RoomTap {
     }
     /// Whether the room has the pointer and keys now.
     private(set) var holding = false
+    /// The keys the room has been told are down, as it was told them: let go when the keyboard
+    /// is given back to the Mac, which hears their releases from then on and the room never.
+    /// (Control and Option always, after Control-Option-G: the room's applications had them
+    /// held, and the first letters typed on coming back by the menu were shortcuts.)
+    private var keysDown = Set<UInt16>()
+    private let keysLock = NSLock()
+
+    /// A key to the room, remembered while it is down.
+    private func key(_ code: UInt16, _ down: Bool) {
+        let code = KeyMap.place(code)
+        keysLock.lock()
+        if down { keysDown.insert(code) } else { keysDown.remove(code) }
+        keysLock.unlock()
+        sp_key(code, down)
+    }
     private var buttons: Int32 = 0
     /// The modifier keys that are down, as the last real event said.
     private(set) var flags: CGEventFlags = []
@@ -559,6 +574,14 @@ final class RoomTap {
         }
         hideCursor(on)
         if on { startRawFingers() } else { sp_multitouch_stop(); rawFingers = false }
+        if !on {
+            keysLock.lock()
+            let held = keysDown
+            keysDown.removeAll()
+            keysLock.unlock()
+            for code in held { sp_key(code, false) }
+            if !held.isEmpty { print("input: \(held.count) key(s) the room had down are let go with the keyboard") }
+        }
         sp_pointer_held(on)
         sp_pointer(0, 0, 0, 0, 0)
         print("input: the mouse and keyboard are \(on ? "the room's" : "this Mac's")")
@@ -699,10 +722,10 @@ final class RoomTap {
             flags = event.flags
             let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
             lastKeyAt = Self.uptime
-            if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { onRepeat?(code) } else { sp_key(code, true) }
+            if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { onRepeat?(code) } else { key(code, true) }
         case .keyUp:
             flags = event.flags
-            sp_key(UInt16(event.getIntegerValueField(.keyboardEventKeycode)), false)
+            key(UInt16(event.getIntegerValueField(.keyboardEventKeycode)), false)
         case .flagsChanged:
             flags = event.flags
             let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
@@ -712,7 +735,7 @@ final class RoomTap {
                 // locked at the first and was the opposite of the Mac from the third on.
                 sp_key(code, true)
                 sp_key(code, false)
-            } else if let bit = Self.modifierBit(code) { sp_key(code, event.flags.rawValue & bit != 0) }
+            } else if let bit = Self.modifierBit(code) { key(code, event.flags.rawValue & bit != 0) }
         default:
             guard (18...34).contains(type.rawValue), let gesture = NSEvent(cgEvent: event) else { break }
             // **The Touch Bar's touches come the same way as the trackpad's**, and are not the

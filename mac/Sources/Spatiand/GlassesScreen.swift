@@ -297,6 +297,10 @@ final class GlassesScreen {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         } while Date() < deadline
         let frame = screen?.frame ?? expected
+        // **Told to stop meanwhile** (the Mac locked, or 2D mode chosen, in the seconds this
+        // waited with the run loop turning): no window then. It was made all the same, and the
+        // room took the mouse and keyboard with nothing of the room to be seen.
+        guard opening else { print("glasses: told to stop while their display was waited for; no window is made"); return }
         guard frame.width > 1, frame.height > 1 else { opening = false; say("The glasses' display is not usable"); return }
         displayID = id
 

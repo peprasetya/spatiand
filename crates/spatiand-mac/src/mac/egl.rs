@@ -107,6 +107,12 @@ unsafe impl Send for Layer {}
 
 /// The surface to draw into for a window the app handed over.
 pub fn surface_of(window: &super::NativeWindow) -> Layer {
+    // A surface is about to be made of it: `pace` sets that surface's swap interval and flushes
+    // its first frames again. Remembered per display only, a surface rebuilt on the same display
+    // (a swap that failed) -- or one made after `pace` had already run once more on the old
+    // surface, between the app naming the new window and the loop taking it -- kept the driver's
+    // own interval, which shows every other refresh.
+    clock().set.store(false, std::sync::atomic::Ordering::SeqCst);
     Layer { layer: window.layer, size: window.size }
 }
 

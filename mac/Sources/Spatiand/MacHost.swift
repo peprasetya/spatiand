@@ -46,6 +46,23 @@ final class MacHost {
     }
 
     private var shared: [UInt16: Shared] = [:]
+
+    /// **A screen shown to the session stands for the windows on it**, as in the room
+    /// (`RoomWindows`; the owner, 2026-11-11: "when screen is pulled to the room, make it as
+    /// native mac, don't override mac behaviour"): a window opened on it is not sent as a
+    /// stream of its own beside the screen it is already seen in, and one the session gives the
+    /// keys is not made the Mac's active one for that alone -- only when it is pressed or
+    /// scrolled in its own picture. One asked for from the list by hand is still shown.
+    private func onSharedScreen(_ info: MacWindowInfo) -> Bool {
+        guard info.display == nil else { return false }
+        let displays = Set(shared.values.compactMap { $0.info.display }.compactMap { MacScreens.current($0) })
+        guard !displays.isEmpty else { return false }
+        let frame = MacWindows.bounds(info.windowID) ?? info.frame
+        var found: CGDirectDisplayID = 0
+        var count: UInt32 = 0
+        guard CGGetDisplaysWithPoint(CGPoint(x: frame.midX, y: frame.midY), 1, &found, &count) == .success, count > 0 else { return false }
+        return displays.contains(found)
+    }
     /// The sound of each application that has a window being shared, by bundle.
     private var sounds: [String: MacAudio] = [:]
     private var soundFailed: [String: Date] = [:]
@@ -314,7 +331,8 @@ final class MacHost {
     private func tick() {
         followRoster()
         guard attached else { return }
-        for s in shared.values where s.info.display == nil {
+        // (Not one on a screen the session is shown: there it can be reached wherever it is put.)
+        for s in shared.values where s.info.display == nil && !onSharedScreen(s.info) {
             MacWindows.bringOntoScreen(s.info, frame: s.capture.frame())
         }
         sendCatalog(force: false)
@@ -405,6 +423,8 @@ final class MacHost {
         let wanted = list.filter {
             askedFor.contains($0.windowID)
                 || !refusedLately($0.windowID) && ((launched.contains($0.bundle) && !passedOver.contains($0.windowID)) || openedSince.contains($0.windowID))
+                    // On a screen the session is shown, it is seen there already.
+                    && !onSharedScreen($0)
         }
         let byWindow = Dictionary(uniqueKeysWithValues: wanted.map { ($0.windowID, $0) })
         // Gone.
@@ -594,7 +614,13 @@ final class MacHost {
             }
         case "Focus":
             focus = windowNumber(fields)
-            if let id = focus, let s = shared[id] { NSRunningApplication(processIdentifier: s.info.pid)?.activate() }
+            if let id = focus, let s = shared[id] {
+                if onSharedScreen(s.info) {
+                    print("host: \(s.info.app) has the session's keys; it is on a screen the session is shown, so the Mac's front window is left as it is until it is pressed")
+                } else {
+                    NSRunningApplication(processIdentifier: s.info.pid)?.activate()
+                }
+            }
         case "WantKeyframe":
             if let id = windowNumber(fields), let s = shared[id] { resend(s) }
         case "InputAt", "Input":
@@ -761,7 +787,8 @@ final class MacHost {
             if down { held.insert(code) } else { held.remove(code) }
             // The modifiers ride on the keys that follow; they are not keys of their own here.
             if [42, 54, 29, 97, 56, 100, 125, 126, 58].contains(code) { return }
-            guard let mac = Self.macKey[code] else { return }
+            // (As macOS calls the key on this Mac's keyboard: an ISO one has two the other way about.)
+            guard let mac = Self.macKey[code].map(KeyMap.place) else { return }
             // A screen's keys go to whatever has the keys on the Mac, as a keyboard's do.
             MacInput.key(code: mac, flags: NSEvent.ModifierFlags(rawValue: UInt(flags(for: info.bundle).rawValue)), down: down, pid: info.display != nil ? nil : info.pid)
         default:

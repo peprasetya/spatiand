@@ -338,6 +338,8 @@ pub static MICROPHONE_ALLOWED: std::sync::atomic::AtomicBool = std::sync::atomic
 /// all; each arrives hidden, and is brought out from the list of windows, or by opening its
 /// application in the launcher. Only the ones on show are captured.
 pub fn size_new_windows(state: &mut crate::Spatiand, _windows: &mut [crate::scene::WindowQuad]) {
+    // Once a frame with the glasses on: what 2D mode leaves to be done then (`desk::in_glasses`).
+    desk::in_glasses(state);
     use smithay::reexports::wayland_server::Resource;
     use smithay::wayland::seat::WaylandFocus;
     let scale = *DISPLAY_SCALE.lock().unwrap();

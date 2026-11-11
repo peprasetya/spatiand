@@ -142,21 +142,7 @@ pub fn tick(state: &mut crate::Spatiand) -> bool {
     DESK.with(|desk| {
         let mut desk = desk.borrow_mut();
         if !on {
-            if desk.was_on {
-                // The glasses have the windows now: the Mac's go.
-                for (id, _) in desk.told.drain() {
-                    ffi::tell_window(Asked::DeskClose, id, 0.0, 0.0, 0.0);
-                }
-                desk.was_on = false;
-            }
-            desk.parked.clear();
-            desk.active = None;
-            // The room gives the keys to whom it likes meanwhile: remembered, a click on the
-            // window that had them here was taken as nothing to do, and its keys went elsewhere.
-            desk.keyboard = None;
-            desk.held.clear();
-            PARKED.lock().unwrap().clear();
-            INPUT.lock().unwrap().clear();
+            leave(state, &mut desk);
             return;
         }
         if !desk.was_on {
@@ -182,6 +168,54 @@ pub fn tick(state: &mut crate::Spatiand) -> bool {
         }
     });
     on
+}
+
+/// 2D mode is off: the Mac's windows of the session go, and what was asked of them is dropped.
+/// **But an application asked for is opened all the same**: "Spatiand App" in the menu bar
+/// asks here whichever mode the session is in, and with the glasses on what it asked was thrown
+/// away with the rest -- nothing opened, or it opened unasked when the glasses next went.
+fn leave(state: &mut crate::Spatiand, desk: &mut Desk) {
+    if desk.was_on {
+        // The glasses have the windows now: the Mac's go.
+        for (id, _) in desk.told.drain() {
+            ffi::tell_window(Asked::DeskClose, id, 0.0, 0.0, 0.0);
+        }
+        desk.was_on = false;
+    }
+    desk.parked.clear();
+    desk.active = None;
+    // The room gives the keys to whom it likes meanwhile: remembered, a click on the
+    // window that had them here was taken as nothing to do, and its keys went elsewhere.
+    desk.keyboard = None;
+    desk.held.clear();
+    PARKED.lock().unwrap().clear();
+    let asked = std::mem::take(&mut *INPUT.lock().unwrap());
+    for input in asked {
+        if let Input::Launch(name) = input {
+            launch(state, &name);
+        }
+    }
+}
+
+/// Once a frame while the glasses have the session, where `tick` is not run: 2D mode's own
+/// leaving is done here too (the glasses can have their display before a pass without them
+/// has been made, and the Mac's windows of the session then stayed, frozen), and an
+/// application asked for from the menu bar is opened.
+pub fn in_glasses(state: &mut crate::Spatiand) {
+    if on() {
+        return;
+    }
+    DESK.with(|desk| leave(state, &mut desk.borrow_mut()));
+}
+
+fn launch(state: &mut crate::Spatiand, name: &str) {
+    match crate::own::list().into_iter().find(|a| a.name.eq_ignore_ascii_case(name)) {
+        Some(app) => {
+            log::info!("opening {} (asked for from the Mac's menu bar)", app.name);
+            crate::own::launch(&app, &state.socket_name.clone(), &[]);
+        }
+        None => log::warn!("no application of Spatiand's called {name}"),
+    }
 }
 
 /// The windows put aside, for the app's menu: a few times a second, and only those still open.
@@ -253,15 +287,7 @@ fn apply(state: &mut crate::Spatiand, desk: &mut Desk) {
     let time = || desk_time(started);
     for input in inputs {
         match input {
-            Input::Launch(name) => {
-                match crate::own::list().into_iter().find(|a| a.name.eq_ignore_ascii_case(&name)) {
-                    Some(app) => {
-                        log::info!("2D: opening {}", app.name);
-                        crate::own::launch(&app, &state.socket_name.clone(), &[]);
-                    }
-                    None => log::warn!("2D: no application of Spatiand's called {name}"),
-                }
-            }
+            Input::Launch(name) => launch(state, &name),
             Input::Motion(id, x, y) => {
                 let Some(surface) = surface(desk, id) else { continue };
                 let Some(pointer) = state.seat.get_pointer() else { continue };

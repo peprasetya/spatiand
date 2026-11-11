@@ -4,7 +4,26 @@
 //  the layout lives with the application. So this is a table of *positions*: the physical key
 //  that a Mac calls 0x00 is the one Linux calls KEY_A.
 
+import Carbon.HIToolbox
+
 enum KeyMap {
+    /// **On an ISO keyboard (a British or German one) macOS reports two keys the other way
+    /// about**: the key left of 1 as 0x0A and the key beside left Shift as 0x32, where on an
+    /// ANSI keyboard 0x32 is the key left of 1 and 0x0A is not there at all (Linux's hid-apple
+    /// puts the same pair right, `iso_layout`). The tables here and in the compositor
+    /// (crates/spatiand-mac, keycodes.rs) are of places, and are ANSI's: so with an ISO keyboard
+    /// the two are exchanged on the way in, and again on the way out to a window of this Mac's,
+    /// whose layout expects them as macOS gives them. Its own inverse; every other key is itself.
+    ///
+    /// Not tried on an ISO keyboard: none was here (2026-11-11).
+    static func place(_ code: UInt16) -> UInt16 {
+        guard code == 0x0A || code == 0x32, isISO else { return code }
+        return code == 0x0A ? 0x32 : 0x0A
+    }
+
+    /// Whether the keyboard last typed on is an ISO one, as macOS has it.
+    static var isISO: Bool { KBGetLayoutType(Int16(LMGetKbdType())) == PhysicalKeyboardLayoutType(kKeyboardISO) }
+
     static let evdev: [UInt16: UInt32] = [
         0: 30, 1: 31, 2: 32, 3: 33, 4: 35, 5: 34, 6: 44, 7: 45, 8: 46, 9: 47, 10: 86, 11: 48,
         12: 16, 13: 17, 14: 18, 15: 19, 16: 21, 17: 20, 18: 2, 19: 3, 20: 4, 21: 5, 22: 7, 23: 6,
@@ -38,7 +57,7 @@ enum KeyMap {
     /// The code to send, with Command standing in for Control: a Mac user's copy, paste and
     /// select-all are Command, and on the other end they are Control.
     static func code(for key: UInt16, commandIsControl: Bool) -> UInt32? {
-        guard let code = evdev[key] else { return nil }
+        guard let code = evdev[place(key)] else { return nil }
         if commandIsControl {
             if key == 55 { return 29 }
             if key == 54 { return 97 }

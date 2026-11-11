@@ -150,7 +150,7 @@ final class VideoView: NSView {
     private func release(_ keyCode: UInt16) {
         guard down.remove(keyCode) != nil else { return }
         if swallowed.remove(keyCode) != nil {
-            send(code: KeyMap.evdev[keyCode] ?? 0, pressed: false)
+            send(code: KeyMap.evdev[KeyMap.place(keyCode)] ?? 0, pressed: false)
             send(code: 42, pressed: false)
         } else if let code = KeyMap.code(for: keyCode, commandIsControl: Settings.commandIsControl) {
             send(code: code, pressed: false)
@@ -167,7 +167,7 @@ final class VideoView: NSView {
             // means something there. Command stands in for Control, so add the Shift.
             swallowed.insert(keyCode)
             send(code: 42, pressed: true)
-            send(code: KeyMap.evdev[keyCode] ?? 0, pressed: true)
+            send(code: KeyMap.evdev[KeyMap.place(keyCode)] ?? 0, pressed: true)
         } else if let code = KeyMap.code(for: keyCode, commandIsControl: Settings.commandIsControl) {
             send(code: code, pressed: true)
         }

@@ -65,11 +65,16 @@ final class Room {
         desk = true
         sp_hold_glasses(false)
         sp_desk(true)
-        begin()
+        shareIdentity()
+        begin(hosts: true)
     }
 
-    /// The session itself, once, whichever way it is going to be shown.
-    private func begin() {
+    /// The session itself, once, whichever way it is going to be shown. `hosts`: the computers
+    /// this Mac has paired with are the session's to connect to -- told here, before it
+    /// starts, which is when it takes them: told only when the glasses came, a session begun
+    /// in 2D mode never had them in the room.
+    private func begin(hosts: Bool) {
+        if hosts { for host in Hosts.all { sp_paired_host(host.address, host.fingerprint) } }
         sp_display_scale(Double(NSScreen.main?.backingScaleFactor ?? 2))
         sp_microphone_allowed(AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
         listApplications()
@@ -106,8 +111,7 @@ final class Room {
         shareIdentity()
         // Not when it is only being looked at: a host shows its windows to one viewer, and
         // connecting would take them from wherever they are being used.
-        if !preview { for host in Hosts.all { sp_paired_host(host.address, host.fingerprint) } }
-        if !fromDesk { begin() }
+        if !fromDesk { begin(hosts: !preview) }
         RoomTap.shared.onChange = { [weak self] in self?.onChange?() }
         RoomTap.shared.onRepeat = { RoomWindows.shared.repeated($0) }
         RoomTap.shared.overMacWindow = { RoomWindows.shared.pointerInside }

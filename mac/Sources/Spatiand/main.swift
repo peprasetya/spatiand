@@ -712,6 +712,145 @@ if CommandLine.arguments.contains("--selftest-screen") {
     application.run()
 }
 
+if CommandLine.arguments.contains("--selftest-screen-windows") {
+    // **A screen in the room stands for the windows on it, and there the Mac is left alone.**
+    // The room in a window; the virtual screen made the main one (as on a Mac whose only screen
+    // is the glasses) or, with another screen here, this Mac's main screen; TextEdit's windows
+    // opened, brought forward and given the keys, with the screen out of the room and in it.
+    // Each step says PASSED or FAILED. Run with SPATIAND_TEST_ONLY_BUNDLE=com.apple.TextEdit,
+    // so that nothing else of the Mac's is in the test's room; TextEdit is quit at the end if
+    // the test started it. With --sizes the virtual screen is then given other sizes, as
+    // macOS's Displays settings give them, and its picture has to follow.
+    setenv("SPATIAND_HMD", "null", 1)
+    setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    let textEdit = "com.apple.TextEdit"
+    let folder = NSTemporaryDirectory() + "spatiand-screen-test"
+    try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+    for name in ["first", "second", "third"] { try? "a file of the test's\n".write(toFile: folder + "/spatiand-\(name).txt", atomically: true, encoding: .utf8) }
+    let wasRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: textEdit).isEmpty
+    let frontBefore = NSWorkspace.shared.frontmostApplication
+    var failures = 0
+    func after(_ seconds: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body) }
+    func check(_ what: String, _ good: Bool) { if !good { failures += 1 }; print("screen windows: \(good ? "PASSED" : "FAILED") \(what)") }
+    func open(_ arguments: [String]) { let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/open"); p.arguments = arguments; try? p.run(); p.waitUntilExit() }
+    func window(_ name: String) -> CGWindowID? {
+        for w in (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? [] {
+            if (w[kCGWindowOwnerName as String] as? String) == "TextEdit", (w[kCGWindowName as String] as? String)?.contains("spatiand-\(name)") == true { return w[kCGWindowNumber as String] as? CGWindowID }
+        }
+        return nil
+    }
+    func shown(_ name: String) -> Bool { window(name).map { RoomWindows.shared.has($0) } ?? false }
+    func front() -> String { NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?" }
+    func finish() {
+        Room.shared.stop()
+        if !wasRunning { NSRunningApplication.runningApplications(withBundleIdentifier: textEdit).forEach { $0.terminate() } }
+        frontBefore?.activate(options: [])
+        try? FileManager.default.removeItem(atPath: folder)
+        print("screen windows: \(failures == 0 ? "ALL PASSED" : "\(failures) FAILED")")
+        after(1.5) { exit(failures == 0 ? 0 : 1) }
+    }
+    DispatchQueue.main.async {
+        var screen: MacWindowInfo?
+        if let glasses = GlassesScreen.findDisplay() {
+            print("screen windows: the glasses are display \(glasses); the virtual screen made the main one: \(MacScreens.leadIfAlone(besides: glasses))")
+        }
+        Room.shared.start(preview: true)
+        after(1.5) { sp_control(3, true); after(0.1) { sp_control(3, false) } }
+        // 1. With no screen in the room, a window opened comes out.
+        after(4) { open(["-a", "TextEdit", folder + "/spatiand-first.txt"]) }
+        after(10) { check("with no screen in the room, a window opened comes out", shown("first")) }
+        // 2. The screen it is on comes out: the window is put away.
+        after(11) {
+            let main = CGMainDisplayID()
+            screen = MacScreens.list(excluding: nil).first { MacScreens.current($0.display ?? 0) == main }
+            guard let screen else { print("screen windows: FAILED, the main display \(main) is not among the screens"); failures += 1; return }
+            print("screen windows: bringing the screen \(screen.title)")
+            RoomWindows.shared.bring(screen)
+        }
+        after(15) {
+            check("the screen is on show", RoomWindows.shared.screenOnShow)
+            check("the window on it is put away", !shown("first"))
+            // The keys to nothing of the Mac's, as when a window of the room's own has them:
+            // the case in which a window brought to the front came out of the screen.
+            RoomWindows.shared.asked(Int32(SP_WINDOW_FOCUS), id: 0, a: 0, b: 0, c: 0)
+        }
+        // 3. A window opened on the screen stays in the screen.
+        after(16) { open(["-a", "TextEdit", folder + "/spatiand-second.txt"]) }
+        after(22) { check("a window opened on a screen that is in the room does not come out", window("second") != nil && !shown("second")) }
+        // 4. Nor one the Mac brings to the front there.
+        after(23) { open(["-a", "Finder"]) }
+        after(26) { open(["-a", "TextEdit"]) }
+        after(31) { check("a window the Mac brings to the front on that screen does not come out", !shown("first") && !shown("second")) }
+        // 5. One brought out by hand comes out, and is not made the Mac's front application for it.
+        after(32) { open(["-a", "Finder"]) }
+        after(35) {
+            Task {
+                guard let id = window("second"), let info = await MacWindows.list().first(where: { $0.windowID == id }) else { print("screen windows: FAILED, no second window to bring"); failures += 1; return }
+                RoomWindows.shared.bring(info)
+            }
+        }
+        after(39) {
+            check("a window chosen by hand comes out beside its screen", shown("second"))
+            check("given the room's keys, it is not brought forward on the Mac (front: \(front()))", front() != textEdit)
+            // 6. Typed in (an arrow key, which changes nothing), it is.
+            if let id = window("second").flatMap({ RoomWindows.shared.roomID(of: $0) }) {
+                RoomWindows.shared.asked(Int32(SP_WINDOW_KEY), id: id, a: 0x7B, b: 1, c: 0)
+                RoomWindows.shared.asked(Int32(SP_WINDOW_KEY), id: id, a: 0x7B, b: 0, c: 0)
+            }
+        }
+        after(41) { check("typed in, it is brought forward (front: \(front()))", front() == textEdit) }
+        // 7. The screen put away: the window put away for it is back, and the room brings forward again.
+        after(42) {
+            if let id = RoomWindows.shared.shownWindow(bundle: MacScreens.bundle)?.id { sp_window_hide(id) } else { print("screen windows: FAILED, no screen on show to put away"); failures += 1 }
+        }
+        after(46) {
+            check("the screen put away, the window put away for it is back", shown("first"))
+            check("no screen is on show", !RoomWindows.shared.screenOnShow)
+            open(["-a", "Finder"])
+        }
+        after(49) {
+            if let id = window("first").flatMap({ RoomWindows.shared.roomID(of: $0) }) { RoomWindows.shared.asked(Int32(SP_WINDOW_FOCUS), id: id, a: 0, b: 0, c: 0) }
+        }
+        after(51) { check("with no screen in the room, a window given the keys is brought forward at once (front: \(front()))", front() == textEdit) }
+        after(52) { open(["-a", "TextEdit", folder + "/spatiand-third.txt"]) }
+        after(58) {
+            check("and a window opened comes out again", shown("third"))
+            sp_screenshot()
+            guard CommandLine.arguments.contains("--sizes"), let screen else { finish(); return }
+            // 8. The screen back in the room, and given other sizes.
+            RoomWindows.shared.bring(screen)
+            let sizes = [(2560, 1440), (3840, 2160), (7680, 2160), (1920, 1080)]
+            let was = Defaults.store.string(forKey: "virtualScreen")
+            for (i, size) in sizes.enumerated() {
+                after(5 + Double(i) * 7) {
+                    guard let display = MacScreens.virtualDisplay else { check("there is a virtual screen to resize", false); return }
+                    // As macOS's Displays settings do it: the display's mode set, by nobody Spatiand knows.
+                    let options = [kCGDisplayShowDuplicateLowResolutionModes: true] as CFDictionary
+                    let mode = ((CGDisplayCopyAllDisplayModes(display, options) as? [CGDisplayMode]) ?? []).first { $0.width == size.0 && $0.height == size.1 && $0.pixelWidth == size.0 }
+                    var config: CGDisplayConfigRef?
+                    guard let mode, CGBeginDisplayConfiguration(&config) == .success else { check("the virtual screen offers \(size.0)x\(size.1)", false); return }
+                    CGConfigureDisplayWithDisplayMode(config, display, mode, nil)
+                    check("the virtual screen takes \(size.0)x\(size.1)", CGCompleteDisplayConfiguration(config, .permanently) == .success)
+                }
+                after(5 + Double(i) * 7 + 5) {
+                    let bounds = MacScreens.virtualDisplay.map { CGDisplayBounds($0) } ?? .zero
+                    let info = RoomWindows.shared.shownWindow(bundle: MacScreens.bundle)
+                    check("the screen is \(size.0)x\(size.1) (it is \(Int(bounds.width))x\(Int(bounds.height))) and still on show", Int(bounds.width) == size.0 && Int(bounds.height) == size.1 && info != nil)
+                    check("the size is kept (\(Defaults.store.string(forKey: "virtualScreen") ?? "none"))", Defaults.store.string(forKey: "virtualScreen") == "\(size.0)x\(size.1)")
+                    sp_screenshot()
+                }
+            }
+            after(5 + Double(sizes.count) * 7 + 1) {
+                if let was { Defaults.store.set(was, forKey: "virtualScreen") } else { Defaults.store.removeObject(forKey: "virtualScreen") }
+                finish()
+            }
+        }
+    }
+    application.run()
+}
+
 if CommandLine.arguments.contains("--selftest-windows") {
     // The room in a window, and its list of windows opened (the settings, then Windows): every
     // window open on this Mac should be in it, put away. A picture is saved (~/screenshots).
