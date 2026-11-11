@@ -7934,7 +7934,7 @@ index 2af8d9638d..78002cdf21 100644
        const gfx::Range& range,
        const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override;
 diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
-index 8e9457fe57..39fc54aec9 100644
+index 8e9457fe57..22197ab136 100644
 --- a/content/browser/web_contents/web_contents_view_aura.cc
 +++ b/content/browser/web_contents/web_contents_view_aura.cc
 @@ -4,6 +4,8 @@
@@ -7957,8 +7957,79 @@ index 8e9457fe57..39fc54aec9 100644
    }
  
    void OnWindowRemovingFromRootWindow(aura::Window* window,
+@@ -1491,10 +1497,16 @@ void WebContentsViewAura::OnMouseEvent(ui::MouseEvent* event) {
+ // WebContentsViewAura, aura::client::DragDropDelegate implementation:
+ 
+ void WebContentsViewAura::DragEnteredCallback(
++    uint64_t drag_enter_id,
+     DropMetadata drop_metadata,
+     std::unique_ptr<DropData> drop_data,
+     base::WeakPtr<RenderWidgetHostViewBase> target,
+     std::optional<gfx::PointF> transformed_pt) {
++  // Spatiand: the drag left (or was dropped) before what it entered over was
++  // found: nothing is in progress (see |drag_enter_id_|).
++  if (drag_enter_id != drag_enter_id_) {
++    return;
++  }
+   drag_in_progress_ = true;
+   dropped_in_this_web_contents_ = false;
+   if (!target) {
+@@ -1572,7 +1584,8 @@ void WebContentsViewAura::OnDragEntered(const ui::DropTargetEvent& event) {
+       web_contents_->GetRenderViewHost()->GetWidget()->GetView(),
+       event.location_f(),
+       base::BindOnce(&WebContentsViewAura::DragEnteredCallback,
+-                     weak_ptr_factory_.GetWeakPtr(), drop_metadata,
++                     weak_ptr_factory_.GetWeakPtr(), ++drag_enter_id_,
++                     drop_metadata,
+                      std::move(drop_data)));
+ }
+ 
+@@ -1622,7 +1635,8 @@ void WebContentsViewAura::DragUpdatedCallback(
+       current_rwh_for_drag_->DragTargetDragLeave(transformed_leave_point,
+                                                  screen_pt);
+     }
+-    DragEnteredCallback(drop_metadata, std::move(drop_data), target,
++    DragEnteredCallback(drag_enter_id_, drop_metadata, std::move(drop_data),
++                        target,
+                         transformed_pt);
+   }
+ 
+@@ -1679,6 +1693,7 @@ void WebContentsViewAura::OnDragExited() {
+     // Don't compute the results of exiting, but clean up the flag to avoid
+     // hanging the renderer process. See crbug.com/434130454.
+     drag_in_progress_ = false;
++    ++drag_enter_id_;
+     return;
+   }
+   CompleteDragExit();
+@@ -1686,6 +1701,7 @@ void WebContentsViewAura::OnDragExited() {
+ 
+ void WebContentsViewAura::CompleteDragExit() {
+   drag_in_progress_ = false;
++  ++drag_enter_id_;
+ 
+   web_contents_->PreHandleDragExit();
+ 
+@@ -1708,6 +1724,7 @@ void WebContentsViewAura::CompleteDragExit() {
+ 
+ void WebContentsViewAura::OnDropExit() {
+   drag_in_progress_ = false;
++  ++drag_enter_id_;
+   auto end_drag_runner = std::move(end_drag_runner_);
+ }
+ 
+@@ -1787,7 +1804,8 @@ void WebContentsViewAura::PerformDropCallback(
+ 
+     std::unique_ptr<DropData> drop_data = std::make_unique<DropData>();
+     PrepareDropData(drop_data.get(), *data.get());
+-    DragEnteredCallback(drop_metadata, std::move(drop_data), target,
++    DragEnteredCallback(drag_enter_id_, drop_metadata, std::move(drop_data),
++                        target,
+                         transformed_pt);
+   }
+ 
 diff --git a/content/browser/web_contents/web_contents_view_aura.h b/content/browser/web_contents/web_contents_view_aura.h
-index 98df67ad53..d84267b405 100644
+index 98df67ad53..aa5093f386 100644
 --- a/content/browser/web_contents/web_contents_view_aura.h
 +++ b/content/browser/web_contents/web_contents_view_aura.h
 @@ -260,6 +260,11 @@ class CONTENT_EXPORT WebContentsViewAura
@@ -7973,6 +8044,32 @@ index 98df67ad53..d84267b405 100644
    BackForwardTransitionAnimationManager*
    GetBackForwardTransitionAnimationManager() override;
    void DestroyBackForwardTransitionAnimationManager() override;
+@@ -331,7 +336,8 @@ class CONTENT_EXPORT WebContentsViewAura
+   aura::client::DragDropDelegate::DropCallback GetDropCallback(
+       const ui::DropTargetEvent& event) override;
+ 
+-  void DragEnteredCallback(DropMetadata flags,
++  void DragEnteredCallback(uint64_t drag_enter_id,
++                           DropMetadata flags,
+                            std::unique_ptr<DropData> drop_data,
+                            base::WeakPtr<RenderWidgetHostViewBase> target,
+                            std::optional<gfx::PointF> transformed_pt);
+@@ -443,6 +449,15 @@ class CONTENT_EXPORT WebContentsViewAura
+   // drop happens or drag exits.
+   bool drag_in_progress_;
+ 
++  // Spatiand: which entering of a drag this is. What is under the pointer is
++  // found asynchronously (another site's frame under it has to be asked), so
++  // DragEnteredCallback can run after the drag has left or been dropped again:
++  // it then set |drag_in_progress_| for a drag that was over, and the end of
++  // the next drag begun in this page (EndDrag) waited for an exit that never
++  // came -- the page heard no pointer until it was loaded again. A callback
++  // whose number is not this one is of an entering that is over.
++  uint64_t drag_enter_id_ = 0;
++
+   // Used to determine which enum value to fire for the "Event.DragDrop.Surface"
+   // histogram.
+   bool dropped_in_this_web_contents_ = false;
 diff --git a/content/browser/web_contents/web_contents_view_child_frame.cc b/content/browser/web_contents/web_contents_view_child_frame.cc
 index f2f94492d0..f4cf09dbec 100644
 --- a/content/browser/web_contents/web_contents_view_child_frame.cc

@@ -1,0 +1,12 @@
+<html><head><title>Links</title></head><body style="background:#234;color:white;font:32px sans-serif">
+<p><a id=a href="#one" style="color:#8cf;display:block;padding:20px">link one</a></p>
+<p><a id=b href="#two" style="color:#8cf;display:block;padding:20px">link two</a></p>
+<!-- ?frame: another site's frame under the links (served by sk.sh at localhost:18765), so that finding what is
+     under the pointer has to ask the frame's process: the slow path a drag's enter takes on real pages. -->
+<script>
+if (location.search.includes("frame")) { const f = document.createElement("iframe"); f.src = "http://127.0.0.1:18765/done.html"; f.style = "position:absolute;left:0;top:0;width:100%;height:400px;border:0;z-index:-1;opacity:0.5"; document.body.appendChild(f); }
+// Each press, click and context menu said in the console, to see whether the page still hears the pointer.
+let n = 0;
+for (const t of ["mousedown", "mouseup", "click", "contextmenu", "dragstart", "dragend"])
+  addEventListener(t, e => console.log("[links]", ++n, t, e.target.id || e.target.tagName, e.clientX, e.clientY, location.hash));
+</script></body></html>

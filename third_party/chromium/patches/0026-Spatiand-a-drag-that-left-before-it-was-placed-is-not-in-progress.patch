@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000026 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Thu, 12 Nov 2026 06:00:00 +0700
+Subject: [PATCH] Spatiand: a drag that left before it was placed is not in
+ progress
+
+WebContentsViewAura finds what a drag entered over asynchronously (another
+site's frame under the pointer has to be asked), and DragEnteredCallback set
+drag_in_progress_ whenever it came back: also after the drag had left again,
+as a link pressed with a moving pointer and let go at once does. The flag
+then stayed set, and the end of the next drag begun in the page that got no
+enter of its own (EndDrag) was put off until an exit that never came: the
+renderer was never told the drag was over and the page heard no pointer until
+it was loaded again, while the browser's own UI went on. Each entering has a
+number now; a callback of an entering that is over does nothing. Found on the
+Mac in the room (2026-11-12); the code is every platform's.
+---
+ .../browser/web_contents/web_contents_view_aura.cc     | 18 +++++++++++++++---
+ .../browser/web_contents/web_contents_view_aura.h      | 12 +++++++++++-
+ 2 files changed, 26 insertions(+), 4 deletions(-)
+
+diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
+index 39fc54a..22197ab 100644
+--- a/content/browser/web_contents/web_contents_view_aura.cc
++++ b/content/browser/web_contents/web_contents_view_aura.cc
+@@ -1497,10 +1497,16 @@ void WebContentsViewAura::OnMouseEvent(ui::MouseEvent* event) {
+ // WebContentsViewAura, aura::client::DragDropDelegate implementation:
+ 
+ void WebContentsViewAura::DragEnteredCallback(
++    uint64_t drag_enter_id,
+     DropMetadata drop_metadata,
+     std::unique_ptr<DropData> drop_data,
+     base::WeakPtr<RenderWidgetHostViewBase> target,
+     std::optional<gfx::PointF> transformed_pt) {
++  // Spatiand: the drag left (or was dropped) before what it entered over was
++  // found: nothing is in progress (see |drag_enter_id_|).
++  if (drag_enter_id != drag_enter_id_) {
++    return;
++  }
+   drag_in_progress_ = true;
+   dropped_in_this_web_contents_ = false;
+   if (!target) {
+@@ -1578,7 +1584,8 @@ void WebContentsViewAura::OnDragEntered(const ui::DropTargetEvent& event) {
+       web_contents_->GetRenderViewHost()->GetWidget()->GetView(),
+       event.location_f(),
+       base::BindOnce(&WebContentsViewAura::DragEnteredCallback,
+-                     weak_ptr_factory_.GetWeakPtr(), drop_metadata,
++                     weak_ptr_factory_.GetWeakPtr(), ++drag_enter_id_,
++                     drop_metadata,
+                      std::move(drop_data)));
+ }
+ 
+@@ -1628,7 +1635,8 @@ void WebContentsViewAura::DragUpdatedCallback(
+       current_rwh_for_drag_->DragTargetDragLeave(transformed_leave_point,
+                                                  screen_pt);
+     }
+-    DragEnteredCallback(drop_metadata, std::move(drop_data), target,
++    DragEnteredCallback(drag_enter_id_, drop_metadata, std::move(drop_data),
++                        target,
+                         transformed_pt);
+   }
+ 
+@@ -1685,6 +1693,7 @@ void WebContentsViewAura::OnDragExited() {
+     // Don't compute the results of exiting, but clean up the flag to avoid
+     // hanging the renderer process. See crbug.com/434130454.
+     drag_in_progress_ = false;
++    ++drag_enter_id_;
+     return;
+   }
+   CompleteDragExit();
+@@ -1692,6 +1701,7 @@ void WebContentsViewAura::OnDragExited() {
+ 
+ void WebContentsViewAura::CompleteDragExit() {
+   drag_in_progress_ = false;
++  ++drag_enter_id_;
+ 
+   web_contents_->PreHandleDragExit();
+ 
+@@ -1714,6 +1724,7 @@ void WebContentsViewAura::CompleteDragExit() {
+ 
+ void WebContentsViewAura::OnDropExit() {
+   drag_in_progress_ = false;
++  ++drag_enter_id_;
+   auto end_drag_runner = std::move(end_drag_runner_);
+ }
+ 
+@@ -1793,7 +1804,8 @@ void WebContentsViewAura::PerformDropCallback(
+ 
+     std::unique_ptr<DropData> drop_data = std::make_unique<DropData>();
+     PrepareDropData(drop_data.get(), *data.get());
+-    DragEnteredCallback(drop_metadata, std::move(drop_data), target,
++    DragEnteredCallback(drag_enter_id_, drop_metadata, std::move(drop_data),
++                        target,
+                         transformed_pt);
+   }
+ 
+diff --git a/content/browser/web_contents/web_contents_view_aura.h b/content/browser/web_contents/web_contents_view_aura.h
+index d84267b..aa5093f 100644
+--- a/content/browser/web_contents/web_contents_view_aura.h
++++ b/content/browser/web_contents/web_contents_view_aura.h
+@@ -336,7 +336,8 @@ class CONTENT_EXPORT WebContentsViewAura
+   aura::client::DragDropDelegate::DropCallback GetDropCallback(
+       const ui::DropTargetEvent& event) override;
+ 
+-  void DragEnteredCallback(DropMetadata flags,
++  void DragEnteredCallback(uint64_t drag_enter_id,
++                           DropMetadata flags,
+                            std::unique_ptr<DropData> drop_data,
+                            base::WeakPtr<RenderWidgetHostViewBase> target,
+                            std::optional<gfx::PointF> transformed_pt);
+@@ -448,6 +449,15 @@ class CONTENT_EXPORT WebContentsViewAura
+   // drop happens or drag exits.
+   bool drag_in_progress_;
+ 
++  // Spatiand: which entering of a drag this is. What is under the pointer is
++  // found asynchronously (another site's frame under it has to be asked), so
++  // DragEnteredCallback can run after the drag has left or been dropped again:
++  // it then set |drag_in_progress_| for a drag that was over, and the end of
++  // the next drag begun in this page (EndDrag) waited for an exit that never
++  // came -- the page heard no pointer until it was loaded again. A callback
++  // whose number is not this one is of an entering that is over.
++  uint64_t drag_enter_id_ = 0;
++
+   // Used to determine which enum value to fire for the "Event.DragDrop.Surface"
+   // histogram.
+   bool dropped_in_this_web_contents_ = false;
+-- 
+2.53.0
+
