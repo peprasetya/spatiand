@@ -837,11 +837,15 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         if down.contains(id) {
             let here = CGEvent(source: nil)?.location ?? p
             // **In a screen, not until the pointer has left where it was pressed** by more than
-            // a head held still moves it: every press there was a press, a drag of a few points
-            // and a release, and a window pressed to bring it forward is not brought by a drag
-            // begun in it (macOS leaves a window where it is while something is dragged out of it).
+            // a head held still, or a finger pressing the trackpad down, moves it. Every press
+            // there was a press, a drag of a few points and a release -- macOS steadies its own
+            // cursor while a trackpad is pressed, and the room's pointer has nothing of the kind --
+            // and a window pressed to bring it forward is not brought by a drag begun in it: macOS
+            // leaves a window behind while something is dragged out of it (a list's row, a file,
+            // chosen text). That is the "not direct" of 2026-11-11. Four points, about what an
+            // application itself lets pass before it calls a press a drag.
             if let pressed = pressedInScreenAt {
-                if hypot(p.x - pressed.x, p.y - pressed.y) < 6, !RoomTap.shared.handIsMoving { return }
+                if hypot(p.x - pressed.x, p.y - pressed.y) < 4 { return }
                 pressedInScreenAt = nil
             }
             if !RoomTap.shared.handIsDragging, hypot(here.x - p.x, here.y - p.y) > 2 {

@@ -297,3 +297,53 @@ over ssh (`git push littleotter master`, then `make-app.sh` in `~/Developer/Spat
   (`MacScreens.yieldToGlasses`, retried whenever the screens wake while locked, and on a start
   while locked); `com.apple.screenIsUnlocked` brings the room back as a plug-in does. A short
   sleep with no lock the room comes back from by itself (tried: 20 s asleep, back at 60 fps).
+
+## A screen in the room is the Mac's own (2026-11-11)
+
+The owner: "when screen is pulled to the room, make it as native mac, don't override mac behaviour.
+if the screen hidden, then spatiand override the mac behaviour." What that is in the code
+(`RoomWindows`), each decision said in the log (`windows: ...`):
+
+- **Nothing on a screen that is on show is in the room twice.** Windows on show there are put away
+  when the screen comes out and come back when it goes (`screenOut`, `screenIn`); a window that
+  opens there, one the Mac brings to the front there, a question macOS asks there, and the windows
+  of an application asked for from the launcher or a notice (`follow`) all stay in the screen
+  ("left to the screen"). One chosen from the list of windows by hand still comes out. Which screens
+  are on show is kept by what was asked for, not the display's number, which changes each time the
+  virtual screen is made anew (a lock).
+- **Nothing on it is brought forward or made active by the room alone.** The room gives a window the
+  keys for many reasons that are not the wearer using it (its bar taken hold of, its edge pulled, it
+  came out, the window that had the keys was put away); each used to raise it on the Mac and make its
+  application the active one, over whatever was being used in the screen. While its screen is on
+  show a window pulled out beside it is brought forward only by a press in its own picture, the
+  first key typed into it, a scroll or pinch begun over it while it is covered, or its menu button.
+  With no screen on show everything is as it was.
+- **A press in a screen is a press**, not a press and a drag: no drag is posted until the pointer
+  has left the place by four points. macOS leaves a window behind while something is dragged out of
+  it, so the few points a head or a pressing finger moves kept a pressed window from coming forward.
+- **The glasses going forgets all of it** (`clear`): the screens on show, what was put away for
+  them, where the pointer was, what was pressed and held.
+- The same for a session this Mac is a host to (`MacHost.onSharedScreen`): a window on a screen the
+  session is shown is not sent beside it unless asked for, nor made active for being given the keys.
+
+`Spatiand --selftest-screen-windows [--sizes]` (with `SPATIAND_TEST_ONLY_BUNDLE=com.apple.TextEdit`)
+walks through it with TextEdit's windows and says PASSED or FAILED for each step; it opens windows
+and changes the front application, so not while the Mac is being used.
+
+## The virtual screen's sizes (2026-11-11)
+
+The virtual screen offers fourteen sizes at once, 1280x720 to 7680x2160 (`MacScreens.sizes`), of any
+shape -- macOS takes a list of unlike modes (`SPVirtualDisplay initWithModeWidths:`), it need not be
+the one-aspect ladder HoloFrame's was. System Settings -> Displays chooses among them while the screen
+is in use, and so does Spatiand's own settings window (which now changes the size in place and no
+longer makes the screen anew). A size chosen in macOS's settings is kept for next time
+(`MacScreens.noteMode`, the `virtualScreen` default) -- unless it came within seconds of a display
+coming or going, when it is macOS laying the displays out again (it put the screen at 1280x720 when
+the glasses' question was answered) and the screen is asked back to the size chosen. The picture in
+the room follows a change of size (`MacCapture.followResize`), and the pointer with it. 1920x1080
+is the default. One display to macOS whatever its size (serial 0x53500001; it was a serial per size).
+
+Two pixels a point: `defaults write com.peprasetya.spatiand virtualScreenHiDPI -bool true` and a
+restart. macOS then offers each size sharp as well; tried only as far as the modes being offered
+and taken (a 1920x1080 desktop in 3840x2160 pixels), not in the room. The largest size is then
+offered sharp only (15360x4320 pixels, more than the 7680x2160 the plain one has).
