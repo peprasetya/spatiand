@@ -39,48 +39,42 @@
 
 @implementation SPVirtualDisplay {
     CGVirtualDisplay *_display;
-    uint32_t _targetPixelWidth, _targetPixelHeight;
 }
 
-static void SPReduceAspect(uint32_t w, uint32_t h, uint32_t *aw, uint32_t *ah) {
-    uint32_t a = w, b = h;
-    while (b) { uint32_t t = a % b; a = b; b = t; }
-    *aw = w / a;
-    *ah = h / a;
-}
-
-- (nullable instancetype)initWithWidth:(uint32_t)width
-                                height:(uint32_t)height
-                                 hiDPI:(BOOL)hiDPI
-                          serialNumber:(uint32_t)serialNumber
-                                  name:(NSString *)name {
+- (nullable instancetype)initWithModeWidths:(NSArray<NSNumber *> *)widths
+                                    heights:(NSArray<NSNumber *> *)heights
+                                      hiDPI:(BOOL)hiDPI
+                               serialNumber:(uint32_t)serialNumber
+                                       name:(NSString *)name {
     self = [super init];
     if (!self) return nil;
+    if (widths.count == 0 || widths.count != heights.count) return nil;
 
     // Deliberately NOT calling NSApplicationLoad() here. Initialising AppKit before the
     // display exists makes NSScreen cache a list without it, and that stale list then
     // misplaces every window we create. The caller brings AppKit up afterwards instead.
+    //
+    // **A list of sizes, of any shape, and macOS offers them all** (System Settings >
+    // Displays, and CGDisplayCopyAllDisplayModes): 1280x720 up to 7680x2160 together, tried
+    // on macOS 27.2, 2026-11-11. They need not be one aspect, as the ladder this was first
+    // made with (BetterDummy's) was; a lone mode is still not reliably accepted.
+    //
+    // With hiDPI each size is offered at two pixels a point as well (and macOS adds sizes of
+    // its own): the pixels allowed for must then be twice the largest, and the largest is
+    // offered at two pixels a point only.
     uint32_t scale = hiDPI ? 2 : 1;
-    uint32_t aw, ah;
-    SPReduceAspect(width, height, &aw, &ah);
-
-    // Publish a ladder of same-aspect modes rather than a single mode: macOS picks from
-    // it (System Settings > Displays), and a lone mode is not reliably accepted. The
-    // 4-aspect-unit step matches what a live BetterDisplay 32:9 canvas advertises.
-    uint32_t stepW = aw * 4, stepH = ah * 4;
-    uint32_t maxK = width / stepW;
-    uint32_t minK = MAX(1u, maxK / 3);
-    if (maxK == 0) return nil;
-
+    uint32_t maxW = 0, maxH = 0;
     NSMutableArray *modes = [NSMutableArray array];
-    for (uint32_t k = minK; k <= maxK; k++) {
-        CGVirtualDisplayMode *m = [[CGVirtualDisplayMode alloc] initWithWidth:stepW * k * scale
-                                                                      height:stepH * k * scale
-                                                                 refreshRate:60.0];
-        if (m) [modes addObject:m];
+    for (NSUInteger i = 0; i < widths.count; i++) {
+        uint32_t w = widths[i].unsignedIntValue, h = heights[i].unsignedIntValue;
+        if (w < 320 || h < 200) continue;
+        CGVirtualDisplayMode *m = [[CGVirtualDisplayMode alloc] initWithWidth:w height:h refreshRate:60.0];
+        if (!m) continue;
+        [modes addObject:m];
+        if (w > maxW) maxW = w;
+        if (h > maxH) maxH = h;
     }
-    _targetPixelWidth  = stepW * maxK * scale;
-    _targetPixelHeight = stepH * maxK * scale;
+    if (modes.count == 0) return nil;
 
     CGVirtualDisplayDescriptor *desc = [[CGVirtualDisplayDescriptor alloc] init];
     desc.queue = dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0);
@@ -92,16 +86,15 @@ static void SPReduceAspect(uint32_t w, uint32_t h, uint32_t *aw, uint32_t *ah) {
     desc.redPrimary   = CGPointMake(0.454, 0.242);
     desc.greenPrimary = CGPointMake(0.353, 0.674);
     desc.bluePrimary  = CGPointMake(0.157, 0.084);
-    // Must equal the largest mode in the ladder.
-    desc.maxPixelsWide = _targetPixelWidth;
-    desc.maxPixelsHigh = _targetPixelHeight;
-    // Nominal 24" diagonal, as BetterDummy does.
-    double diag = (24 * 25.4) / sqrt((double)(aw * aw + ah * ah));
-    desc.sizeInMillimeters = CGSizeMake(aw * diag, ah * diag);
+    // Must cover the largest mode, each way.
+    desc.maxPixelsWide = maxW * scale;
+    desc.maxPixelsHigh = maxH * scale;
+    // Nominally a 16:9 panel of 27 inches: nothing is drawn to its size.
+    desc.sizeInMillimeters = CGSizeMake(598, 336);
     // Stable across launches, so macOS remembers this display's resolution and where the
     // user put it. A random value here means rearranging the desktop every run.
     desc.serialNum = serialNumber;
-    desc.productID = (MIN(aw - 1, 255u) << 8) | MIN(ah - 1, 255u);
+    desc.productID = 0x0F10;
     desc.vendorID  = 0xF0F0;
 
     _display = [[CGVirtualDisplay alloc] initWithDescriptor:desc];
@@ -129,25 +122,37 @@ static void SPReduceAspect(uint32_t w, uint32_t h, uint32_t *aw, uint32_t *ah) {
     return s;
 }
 
-- (BOOL)selectLargestMode {
+- (CGSize)currentPointSize {
+    CGDirectDisplayID did = self.displayID;
+    if (!did) return CGSizeZero;
+    CGDisplayModeRef m = CGDisplayCopyDisplayMode(did);
+    if (!m) return CGSizeZero;
+    CGSize s = CGSizeMake(CGDisplayModeGetWidth(m), CGDisplayModeGetHeight(m));
+    CGDisplayModeRelease(m);
+    return s;
+}
+
+- (BOOL)selectWidth:(uint32_t)width height:(uint32_t)height hiDPI:(BOOL)hiDPI {
     CGDirectDisplayID did = self.displayID;
     if (!did) return NO;
-    CFArrayRef modes = CGDisplayCopyAllDisplayModes(did, NULL);
+    // The modes at two pixels a point are listed only when asked for.
+    NSDictionary *options = @{(__bridge NSString *)kCGDisplayShowDuplicateLowResolutionModes: @YES};
+    CFArrayRef modes = CGDisplayCopyAllDisplayModes(did, (__bridge CFDictionaryRef)options);
     if (!modes) return NO;
 
-    CGDisplayModeRef best = NULL;
-    size_t bestPixels = 0;
+    CGDisplayModeRef found = NULL;
     for (CFIndex i = 0; i < CFArrayGetCount(modes); i++) {
         CGDisplayModeRef m = (CGDisplayModeRef)CFArrayGetValueAtIndex(modes, i);
-        if (!CGDisplayModeIsUsableForDesktopGUI(m)) continue;
-        size_t px = CGDisplayModeGetPixelWidth(m) * CGDisplayModeGetPixelHeight(m);
-        if (px > bestPixels) { bestPixels = px; best = m; }
+        if (CGDisplayModeGetWidth(m) != width || CGDisplayModeGetHeight(m) != height) continue;
+        if ((CGDisplayModeGetPixelWidth(m) != CGDisplayModeGetWidth(m)) != (hiDPI ? true : false)) continue;
+        found = m;
+        if (CGDisplayModeIsUsableForDesktopGUI(m)) break;
     }
     BOOL ok = NO;
-    if (best) {
+    if (found) {
         CGDisplayConfigRef config;
         if (CGBeginDisplayConfiguration(&config) == kCGErrorSuccess) {
-            CGConfigureDisplayWithDisplayMode(config, did, best, NULL);
+            CGConfigureDisplayWithDisplayMode(config, did, found, NULL);
             ok = CGCompleteDisplayConfiguration(config, kCGConfigurePermanently) == kCGErrorSuccess;
         }
     }

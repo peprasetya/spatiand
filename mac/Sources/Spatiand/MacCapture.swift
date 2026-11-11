@@ -310,6 +310,13 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         try await s.startCapture()
         stream = s
         print("capture: the screen \(info.title), display \(id), \(Int(pixels.width))x\(Int(pixels.height))")
+        // Looked at twice a second, as a window is: a screen given another size (in macOS's
+        // Displays settings, or Spatiand's) is captured at that size, picture coming or not.
+        let timer = DispatchSource.makeTimerSource(queue: samples)
+        timer.schedule(deadline: .now() + 0.5, repeating: 0.5)
+        timer.setEventHandler { [weak self] in self?.followResize() }
+        timer.resume()
+        watch = timer
     }
 
     func start() async throws {
@@ -529,6 +536,21 @@ final class MacCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// A window that has been resized is captured at its new size, or it would be scaled to the old.
     private func followResize() {
         guard let stream, let config, Date().timeIntervalSince(lastResize) > 0.4 else { return }
+        if let display {
+            // A screen: as many pixels as its mode has now, which is not always its points.
+            guard CGDisplayIsActive(display) != 0, let mode = CGDisplayCopyDisplayMode(display) else { return }
+            let points = CGDisplayBounds(display).size
+            let pixels = pointsOnly ? points : CGSize(width: mode.pixelWidth, height: mode.pixelHeight)
+            guard Int(pixels.width) != config.width || Int(pixels.height) != config.height, pixels.width >= 320, pixels.height >= 200, points.width > 0 else { return }
+            lastResize = Date()
+            print("capture: the screen \(info.title) is now \(Int(pixels.width))x\(Int(pixels.height)) (it was \(config.width)x\(config.height)); its picture follows")
+            configuredSize = points
+            scale = pixels.width / points.width
+            config.width = Int(pixels.width)
+            config.height = Int(pixels.height)
+            Task { try? await stream.updateConfiguration(config) }
+            return
+        }
         let now = frame().size
         guard abs(now.width - configuredSize.width) > 1 || abs(now.height - configuredSize.height) > 1, now.width >= 50, now.height >= 50 else { return }
         lastResize = Date()
