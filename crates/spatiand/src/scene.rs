@@ -3995,7 +3995,10 @@ pub fn collect_windows(
         // Menus, dropdowns and submenus, in the order the client stacked them. Each is its own
         // surface with its own buffer -- importing the toplevel's tree does not reach them,
         // which is why a window whose menu was open still drew as if it were not.
-        for (popup, offset) in smithay::desktop::PopupManager::popups_for_surface(&surface) {
+        // Smithay lists a menu's submenus before the menu itself (front to back); here the later
+        // one is drawn nearer and pressed first, so the list is turned round.
+        let listed: Vec<_> = smithay::desktop::PopupManager::popups_for_surface(&surface).collect();
+        for (popup, offset) in listed.into_iter().rev() {
             let popup_surface = popup.wl_surface().clone();
             // Said out loud, once per menu, for the same reason the window's three failures
             // are: a menu that does not appear is indistinguishable from a menu the
@@ -4039,6 +4042,9 @@ pub fn collect_windows(
             if note_once(5, &popup_surface) {
                 log::info!("menu {pw}x{ph} at ({}, {})", offset.0, offset.1);
             }
+            // A menu drawn by an application's GPU is a placeholder too, as its window is.
+            #[cfg(target_os = "macos")]
+            let texture = crate::mac::remote_video::substitute(renderer, &popup_surface, texture);
             popups.push(PopupQuad {
                 surface: popup_surface.clone(),
                 texture,
@@ -4241,6 +4247,12 @@ fn push_subsurfaces(
         })
         .flatten();
         if let Some((texture, pw, ph, crop, opaque)) = imported {
+            // On the Mac what an application's GPU drew is not in its buffer: the buffer is a
+            // placeholder naming the picture, as its window's is (`collect_windows`), and every
+            // surface of the application has its own. Swapped in only for the window, every
+            // bubble and menu of SpatiMesh's was a clear rectangle: there, and unseen.
+            #[cfg(target_os = "macos")]
+            let texture = crate::mac::remote_video::substitute(renderer, &child, texture);
             out.push(PopupQuad { surface: child.clone(), texture, offset: at, pixels: (pw, ph), crop, opaque, input });
         }
         push_subsurfaces(renderer, &child, at, out);

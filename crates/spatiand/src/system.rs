@@ -1023,7 +1023,16 @@ pub fn friendly_name(raw: &str) -> String {
     ];
     let mut name = raw.to_string();
     for (from, to) in RULES {
-        if name.contains(from) {
+        if from == "Air" {
+            // The whole word only: "AirPods Pro" is somebody's headset, not the glasses.
+            if name.split_whitespace().any(|word| word == from) {
+                name = name
+                    .split_whitespace()
+                    .map(|word| if word == from { to } else { word })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+            }
+        } else if name.contains(from) {
             name = name.replace(from, to);
         }
     }

@@ -221,7 +221,21 @@ pub fn clamp_pitch(pitch: f64) -> f64 {
 pub fn facing(head: DQuat) -> (f64, f64) {
     let forward = head * DVec3::X;
     let up = head * DVec3::Z;
-    let heading = up.z * forward.truncate() - forward.z * up.truncate();
+    // That mixture is exact only without roll. Lying on one side (roll near a right angle) `up`
+    // is level and points sideways, so the mixture alone turned the heading up to a right angle
+    // away, and to nothing at all -- world zero -- when looking level. So each of the two
+    // directions is trusted by how level `forward` is: forward's own heading while it has one,
+    // the top of the head's as forward nears vertical. Without roll the two are the same
+    // direction, so nothing changes there.
+    let level = forward.truncate();
+    // Forward alone up to sixty degrees of tilt; handed over to the top of the head by 84.
+    let weight = ((level.length() - 0.1) / 0.4).clamp(0.0, 1.0);
+    let by_forward = level.normalize_or_zero();
+    let by_up = (-forward.z * up.truncate()).normalize_or_zero();
+    let mut heading = weight * by_forward + (1.0 - weight) * by_up;
+    if heading.length_squared() < 1e-12 {
+        heading = up.z * level - forward.z * up.truncate();
+    }
     let yaw = heading.y.atan2(heading.x);
     let pitch = clamp_pitch(forward.z.clamp(-1.0, 1.0).asin());
     (yaw, pitch)
@@ -455,6 +469,7 @@ impl WindowLayout {
             self.pinned.retain(|p| *p != id);
             self.recognised.remove(&id);
             self.pixels_per_point.remove(&id);
+            self.heights.remove(&id);
             if self.focused == Some(id) {
                 self.focused = self.placements.keys().copied().next();
             }
@@ -662,6 +677,7 @@ pub fn apply_resize_anchors(state: &mut crate::state::Spatiand) {
             Some(id) => id,
             None => continue,
         };
+        let width_was = placement.width;
         let mut placement = placement;
         // **As big in the room as it is to its application**: its points at one size for every
         // window ([`METRES_PER_POINT`]). A window pinned to the glass is sized by the pin.
@@ -698,7 +714,9 @@ pub fn apply_resize_anchors(state: &mut crate::state::Spatiand) {
                 continue;
             }
         }
-        if was != Some(now) {
+        // The width as well as the height: a window made only wider has the height it had, and
+        // its new width went unstored whenever nothing else changed.
+        if was != Some(now) || placement.width != width_was {
             moves.push((window.clone(), placement, now));
         }
     }
@@ -1213,6 +1231,19 @@ mod facing_tests {
         let (y, p) = degrees(facing(rolled));
         assert!((y - 60.0).abs() < 4.0, "ten degrees of roll moved the heading to {y}");
         assert!((p - 20.0).abs() < 0.5, "roll changed the pitch to {p}");
+    }
+
+    #[test]
+    fn lying_on_one_side_still_faces_where_the_eyes_do() {
+        for (yaw, up) in [(60.0, 0.0), (-100.0, 30.0), (10.0, -45.0)] {
+            for roll in [90.0f64, -90.0, 70.0] {
+                let rolled = head(yaw, up) * DQuat::from_axis_angle(DVec3::X, roll.to_radians());
+                let (y, p) = degrees(facing(rolled));
+                assert!(close(y, yaw),
+                    "heading {yaw}, tipped {up}, rolled {roll}: came back as {y}");
+                assert!((p - up).abs() < 0.5, "roll {roll} changed the pitch to {p}");
+            }
+        }
     }
 
     #[test]

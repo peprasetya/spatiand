@@ -1073,7 +1073,8 @@ impl PointerState {
             })
             .collect();
         let mut dismissed = 0;
-        for popup in open.into_iter().rev() {
+        // Smithay's list already has each submenu before the menu it hangs from.
+        for popup in open {
             if let smithay::desktop::PopupKind::Xdg(popup) = popup {
                 popup.send_popup_done();
                 dismissed += 1;

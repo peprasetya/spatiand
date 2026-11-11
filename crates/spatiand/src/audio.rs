@@ -304,7 +304,30 @@ impl Audio {
     /// gone. That is a `/proc` lookup per departed window, which happens when somebody closes
     /// something, not every frame.
     pub fn forget(&mut self, window: usize) {
-        let Some(slot) = self.bound.remove(&window) else {
+        let slot = self.bound.remove(&window);
+        // The sinks of launches whose processes have ended since, whatever window this was. A
+        // process usually ends a moment *after* its last window goes, so asked only then, and
+        // only about that window's sink, the answer was always "still running" and the sink
+        // stayed for the session; so did the sink of a second start of a running app, which
+        // hands over and exits without ever showing a window.
+        let mut ended: Vec<Slot> = self
+            .launched
+            .iter()
+            .map(|(_, held)| *held)
+            .filter(|held| Some(*held) != slot)
+            .filter(|held| !self.bound.values().any(|b| b == held))
+            .filter(|held| !self.keyed.values().any(|k| k == held))
+            // Not one just started: a launcher may be gone before its app has a window.
+            .filter(|held| !self.claimed_at.iter().any(|(s, at)| s == held && at.elapsed() < UNCLAIMED_FOR))
+            .filter(|held| !self.launched.iter().any(|(pid, s)| s == held && process_alive(*pid)))
+            .collect();
+        ended.sort_unstable();
+        ended.dedup();
+        for slot in ended {
+            log::debug!("slot {slot}: its app has ended, so its sink goes");
+            self.close_slot(slot);
+        }
+        let Some(slot) = slot else {
             return;
         };
         if self.bound.values().any(|held| *held == slot) {
@@ -318,6 +341,10 @@ impl Audio {
             log::debug!("window {window} has gone; slot {slot} stays, its app is still running");
             return;
         }
+        self.close_slot(slot);
+    }
+
+    fn close_slot(&mut self, slot: Slot) {
         self.launched.retain(|(_, s)| *s != slot);
         self.keyed.retain(|_, s| *s != slot);
         self.widths.remove(&slot);
