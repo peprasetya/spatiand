@@ -119,13 +119,23 @@ enum MacScreens {
         // size until the displays are arranged, and taking it then, macOS put the glasses back
         // at the top left as the main screen (an M6 Mac mini, 2026-11-09).
         for attempt in 1...3 {
-            if CGMainDisplayID() == virtual, CGDisplayBounds(glasses).maxX <= CGDisplayBounds(virtual).minX {
+            if CGMainDisplayID() == virtual, CGDisplayMirrorsDisplay(virtual) == kCGNullDirectDisplay,
+               CGDisplayBounds(glasses).maxX <= CGDisplayBounds(virtual).minX {
                 if attempt > 1 { print("screens: the glasses are this Mac's only screen; the virtual one is the main screen (\(attempt - 1) arrangement(s))") }
                 lock.lock(); leading = true; lock.unlock()
                 return true
             }
             var config: CGDisplayConfigRef?
             guard CGBeginDisplayConfiguration(&config) == .success else { return false }
+            // **Not a mirror of the glasses.** Plugged in again, the glasses came back in two eyes
+            // with the virtual screen mirroring them (2026-11-11, after macOS's question of what
+            // to show on them was answered "an additional display" both times): one desktop,
+            // 3840 wide, under the room. Each is told to be its own screen before it is placed.
+            if CGDisplayMirrorsDisplay(virtual) != kCGNullDirectDisplay || CGDisplayMirrorsDisplay(glasses) != kCGNullDirectDisplay {
+                if attempt == 1 { print("screens: the virtual screen and the glasses were mirrors of each other; parted") }
+                CGConfigureDisplayMirrorOfDisplay(config, virtual, kCGNullDirectDisplay)
+                CGConfigureDisplayMirrorOfDisplay(config, glasses, kCGNullDirectDisplay)
+            }
             CGConfigureDisplayOrigin(config, virtual, 0, 0)
             // **The glasses to its left**: macOS draws its arrow to the right of where it points, so
             // a cursor stopped at the virtual screen's right edge, with the glasses there, had its
