@@ -136,6 +136,7 @@ pub extern "C" fn sp_begin(callback: Option<Callback>, user: *mut c_void) {
     if shared.running.swap(true, Ordering::SeqCst) {
         return;
     }
+    ALIVE.store(true, Ordering::SeqCst);
     let started = std::thread::Builder::new().name("spatiand".into()).spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             use smithay::reexports::calloop::EventLoop;
@@ -163,10 +164,12 @@ pub extern "C" fn sp_begin(callback: Option<Callback>, user: *mut c_void) {
             log::error!("the session died; see the panic above");
         }
         shared.running.store(false, Ordering::SeqCst);
+        ALIVE.store(false, Ordering::SeqCst);
     });
     if let Err(e) = started {
         log::error!("could not start the session: {e}");
         super::shared().running.store(false, Ordering::SeqCst);
+        ALIVE.store(false, Ordering::SeqCst);
     }
 }
 
@@ -176,9 +179,14 @@ pub extern "C" fn sp_end() {
     shared().running.store(false, Ordering::SeqCst);
 }
 
+/// Whether the session's thread is still there: from its start until it has left its loop and
+/// put the glasses back to one picture. Not the flag `sp_end` clears -- the Mac app waited on
+/// that one after clearing it, so never waited, and quit with the glasses left in two eyes.
+static ALIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[no_mangle]
 pub extern "C" fn sp_running() -> bool {
-    shared().running.load(Ordering::SeqCst)
+    ALIVE.load(Ordering::SeqCst)
 }
 
 /// The layer on the glasses' screen to draw into, its size in pixels, and which display it is on

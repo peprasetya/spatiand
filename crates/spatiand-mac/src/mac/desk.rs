@@ -151,6 +151,10 @@ pub fn tick(state: &mut crate::Spatiand) -> bool {
             }
             desk.parked.clear();
             desk.active = None;
+            // The room gives the keys to whom it likes meanwhile: remembered, a click on the
+            // window that had them here was taken as nothing to do, and its keys went elsewhere.
+            desk.keyboard = None;
+            desk.held.clear();
             PARKED.lock().unwrap().clear();
             INPUT.lock().unwrap().clear();
             return;

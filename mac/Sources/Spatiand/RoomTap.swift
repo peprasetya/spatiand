@@ -706,7 +706,13 @@ final class RoomTap {
         case .flagsChanged:
             flags = event.flags
             let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-            if let bit = Self.modifierBit(code) { sp_key(code, event.flags.rawValue & bit != 0) }
+            if code == 0x39 {
+                // Caps Lock says only that it is now on or off, and the room's keyboard turns
+                // its lock at a press: a press either way (as DeskWindows does), or the room
+                // locked at the first and was the opposite of the Mac from the third on.
+                sp_key(code, true)
+                sp_key(code, false)
+            } else if let bit = Self.modifierBit(code) { sp_key(code, event.flags.rawValue & bit != 0) }
         default:
             guard (18...34).contains(type.rawValue), let gesture = NSEvent(cgEvent: event) else { break }
             // **The Touch Bar's touches come the same way as the trackpad's**, and are not the

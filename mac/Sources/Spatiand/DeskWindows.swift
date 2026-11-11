@@ -206,10 +206,16 @@ final class DeskWindows: NSObject, NSWindowDelegate {
             let flags = event.modifierFlags
             let down: Bool
             switch event.keyCode {
-            case 0x38, 0x3C: down = flags.contains(.shift)
-            case 0x3B, 0x3E: down = flags.contains(.control)
-            case 0x3A, 0x3D: down = flags.contains(.option)
-            case 0x37, 0x36: down = flags.contains(.command)
+            // Each key by its own bit of the flags (as RoomTap does), not the one both of a
+            // pair share: with both Shifts down, letting one go told it down again, for good.
+            case 0x38: down = flags.rawValue & 0x02 != 0
+            case 0x3C: down = flags.rawValue & 0x04 != 0
+            case 0x3B: down = flags.rawValue & 0x01 != 0
+            case 0x3E: down = flags.rawValue & 0x2000 != 0
+            case 0x3A: down = flags.rawValue & 0x20 != 0
+            case 0x3D: down = flags.rawValue & 0x40 != 0
+            case 0x37: down = flags.rawValue & 0x08 != 0
+            case 0x36: down = flags.rawValue & 0x10 != 0
             case 0x39:
                 // Caps Lock says only that it is now on or off: a press either way.
                 sp_desk_key(view.id, event.keyCode, true)
