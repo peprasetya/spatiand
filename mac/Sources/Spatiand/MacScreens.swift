@@ -59,12 +59,17 @@ enum MacScreens {
     private static var settlingUntil = Date.distantPast
     private static var watching = false
     private static var noteDue = false
+    /// When a display last came, went, or began or stopped copying another.
+    private static var displaysChangedAt = Date.distantPast
 
     /// Told of every change to the displays; the virtual screen changing its mode is looked at.
     private static func watch() {
         guard !watching else { return }
         watching = true
         CGDisplayRegisterReconfigurationCallback({ display, flags, _ in
+            if !flags.isDisjoint(with: [.addFlag, .removeFlag, .enabledFlag, .disabledFlag, .mirrorFlag, .unMirrorFlag]) {
+                MacScreens.lock.lock(); MacScreens.displaysChangedAt = Date(); MacScreens.lock.unlock()
+            }
             guard flags.contains(.setModeFlag), display == MacScreens.virtualDisplay else { return }
             MacScreens.modeChanged()
         }, nil)
@@ -85,10 +90,18 @@ enum MacScreens {
 
     /// **A size chosen in macOS's Displays settings is the size chosen**: kept, so that the
     /// screen is that size the next time it is made, and said in the log.
+    ///
+    /// **But not a size macOS gave it by itself.** When a display comes or goes -- the glasses
+    /// coming back in two eyes, macOS's question of what to show on them answered -- macOS
+    /// lays the displays out again and may put this one back at a size of its own choosing
+    /// (1280 by 720, littleotter, 2026-11-11: taken for the owner's choice, kept, and every
+    /// window on the screen squeezed into it). So a change of size within a few seconds of
+    /// the displays changing is macOS's, and the screen is asked back to the size chosen.
     private static func noteMode() {
         lock.lock()
         let made = virtual
         let settling = Date() < settlingUntil
+        let displaysChanged = Date().timeIntervalSince(displaysChangedAt) < 12
         lock.unlock()
         guard let made, made.displayID != 0 else { return }
         let id = made.displayID
@@ -98,6 +111,11 @@ enum MacScreens {
         guard w > 0, h > 0, w != now.width || h != now.height else { return }
         if settling { print("screens: the virtual screen is \(w)x\(h) while it is being set up; not taken for a choice"); return }
         guard CGDisplayIsActive(id) != 0, CGDisplayMirrorsDisplay(id) == kCGNullDirectDisplay else { return }
+        if displaysChanged {
+            print("screens: macOS put the virtual screen at \(w)x\(h) as the displays changed; not a choice, asked back to \(now.width)x\(now.height)")
+            DispatchQueue.global(qos: .userInitiated).async { settle(made) }
+            return
+        }
         guard sizes.contains(where: { $0.width == w && $0.height == h }) else {
             print("screens: the virtual screen is now \(w)x\(h), a size macOS added and none of Spatiand's own; used, but not kept for next time")
             return

@@ -813,10 +813,21 @@ final class RoomTap {
         if seenOnMain < 12 { seenOnMain += 1; gestureLog("main thread: %ld touches visible", gesture.allTouches().count) }
         let touches = gesture.allTouches()
         let size = touches.first?.deviceSize ?? NSSize(width: 440, height: 300)
-        heard(Fingers(all: touches.map {
+        let frame = Fingers(all: touches.map {
             Fingers.Finger(id: $0.identity.hash, x: Double($0.normalizedPosition.x), y: Double($0.normalizedPosition.y),
                            resting: $0.isResting, ended: $0.phase == .ended || $0.phase == .cancelled)
-        }, size: CGSize(width: size.width, height: size.height), at: gesture.timestamp))
+        }, size: CGSize(width: size.width, height: size.height), at: gesture.timestamp)
+        // **What is made of the fingers is made on the pointer's thread, whichever way they
+        // come.** Read here, on the main thread, they were also made into gestures here -- while
+        // the trackpad's own frames, which begin a moment after the room takes the mouse, were
+        // being made into gestures there: two threads in the same tables of fingers, and the
+        // app fell over as the room came up (littleotter, 2026-11-11 22:02, in `hands`).
+        guard let loop = tapLoop else { heard(frame); return }
+        CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { [self] in
+            guard holding, !rawFingers else { return }
+            heard(frame)
+        }
+        CFRunLoopWakeUp(loop)
     }
 
     // MARK: the trackpad's own frames
