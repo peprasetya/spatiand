@@ -753,6 +753,8 @@ if CommandLine.arguments.contains("--selftest-screen-windows") {
     }
     DispatchQueue.main.async {
         var screen: MacWindowInfo?
+        // Without both, nothing below can be told: windows are neither listed nor asked about.
+        print("screen windows: Accessibility \(AXIsProcessTrusted() ? "allowed" : "NOT allowed"), Screen Recording \(CGPreflightScreenCaptureAccess() ? "allowed" : "NOT allowed")")
         if let glasses = GlassesScreen.findDisplay() {
             print("screen windows: the glasses are display \(glasses); the virtual screen made the main one: \(MacScreens.leadIfAlone(besides: glasses))")
         }

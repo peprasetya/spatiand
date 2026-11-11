@@ -141,20 +141,6 @@ final class RoomWindows {
         return showing.contains { $0.info.display != nil }
     }
 
-    /// The displays that are in the room as screens, for whoever asks from another thread.
-    var displaysInRoom: Set<CGDirectDisplayID> {
-        insideLock.lock()
-        defer { insideLock.unlock() }
-        return Set(screensShown.compactMap { MacScreens.current($0) })
-    }
-    private var screensShown: [CGDirectDisplayID] = []
-    private func publishScreens() {
-        let now = Array(screensOnShow.values)
-        insideLock.lock()
-        screensShown = now
-        insideLock.unlock()
-    }
-
     /// The windows on show, kept for whoever asks from another thread. **Nothing waits for the
     /// queue**: it does things to other applications that take as long as those applications
     /// like, and the main thread -- which is where the mouse and keyboard come in -- waiting
@@ -593,14 +579,12 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             put += 1
         }
         raiseDue = nil
-        publishScreens()
         print("windows: the screen \(info.title) (display \(display)) is in the room; \(put) window(s) on it put away until it goes, and the Mac is left to arrange what is on it")
     }
 
     /// A screen has gone back (or away): the windows put away for it come back where they were.
     private func screenIn(_ id: UInt32) {
         guard screensOnShow.removeValue(forKey: id) != nil else { return }
-        publishScreens()
         pressedInScreenAt = nil
         let stillOut = displaysOnShow()
         var back = 0
@@ -693,7 +677,6 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             let screens = screensOnShow.count, away = putAwayForScreen.count
             screensOnShow.removeAll()
             putAwayForScreen.removeAll()
-            publishScreens()
             at.removeAll()
             down.removeAll()
             focused = 0
