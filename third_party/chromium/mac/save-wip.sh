@@ -30,7 +30,10 @@ media/audio/spatiand
 ui/ozone/platform/wayland/host/spatiand_iosurface_handover.h
 ui/ozone/platform/wayland/host/spatiand_iosurface_handover.cc
 third_party/spatiand_surfaces
-third_party/spatiand_xkbcommon/include"
+third_party/spatiand_xkbcommon/include
+chrome/app/app-linux-ui-Info.plist
+ui/shell_dialogs/select_file_dialog_linux_spatiand.h
+ui/shell_dialogs/select_file_dialog_linux_spatiand.cc"
 ssh littleotter "cd $MAC && git add -N $(echo $NEW | tr '\n' ' ') && git diff --binary && git reset -q -- $(echo $NEW | tr '\n' ' ')" > wip/linux-ui.patch.new
 mv wip/linux-ui.patch.new wip/linux-ui.patch
 

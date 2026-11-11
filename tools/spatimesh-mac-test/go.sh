@@ -10,9 +10,11 @@ L="$SRC/out/mac-ozone/SpatiMesh.app/Contents/Frameworks/SpatiMesh Framework.fram
 [ -e "$L/libssl.3.dylib" ] || cp -a $HOME/Applications/Spatiand.app/Contents/Frameworks/libssl.3.dylib $HOME/Applications/Spatiand.app/Contents/Frameworks/libcrypto.3.dylib "$L/"
 mkdir -p /tmp/smtest/rt /tmp/smtest/apps; chmod 700 /tmp/smtest/rt
 echo "${SOFT:+--disable-gpu} $@" > /tmp/smtest/flags
-pkill -f "mac-ozone/SpatiMesh.app" 2>/dev/null
+pkill -f "user-data-dir=/tmp/smtest/profile" 2>/dev/null
 cd /tmp/smtest; rm -f "$OUT"
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/tmp/smtest/rt} SPATIAND_SNAPSHOT_SOUND=${SOUND:-0} RUST_LOG=info SPATIAND_BACKEND=snapshot SPATIAND_HMD=null SPATIAND_INPUT=off SPATIAND_XWAYLAND=off SPATIAND_SNAPSHOT="$OUT" SPATIAND_SNAPSHOT_MODE=flat SPATIAND_CLIENT_WAIT=$WAIT SPATIAND_CLIENT=/tmp/smtest/run.sh
-timeout $((WAIT + 60)) $HOME/Developer/Spatiand/crates/spatiand-mac/target/release/spatiand-mac > /tmp/smtest/room.log 2>&1
-pkill -f "mac-ozone/SpatiMesh.app" 2>/dev/null
+# The room: a copy in the rig if there is one (another session may be rebuilding the checkout's).
+ROOM=/tmp/smtest/spatiand-mac; [ -x "$ROOM" ] || ROOM=$HOME/Developer/Spatiand/crates/spatiand-mac/target/release/spatiand-mac
+timeout $((WAIT + 60)) "$ROOM" > /tmp/smtest/room.log 2>&1
+pkill -f "user-data-dir=/tmp/smtest/profile" 2>/dev/null
 grep -v "smithay\|tracing" /tmp/smtest/room.log | grep -i "exited\|drew\|wrote\|may need" | cut -c1-200

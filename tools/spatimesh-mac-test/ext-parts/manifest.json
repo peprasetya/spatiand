@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Rig: the parts of an extension",
+  "version": "1.0",
+  "description": "A toolbar popup, an options page, a content script and a service worker, each saying it ran.",
+  "action": { "default_title": "Rig parts", "default_popup": "popup.html" },
+  "options_page": "options.html",
+  "background": { "service_worker": "bg.js" },
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_end" }]
+}

@@ -22,6 +22,26 @@ index 6a9e120bcb..1bf1ac2407 100644
    if (use_blink) {
      sources += [
        "files/file_path_watcher.cc",
+diff --git a/base/apple/foundation_util.mm b/base/apple/foundation_util.mm
+index 2c5fd95379..709f93e9a7 100644
+--- a/base/apple/foundation_util.mm
++++ b/base/apple/foundation_util.mm
+@@ -101,6 +101,15 @@ bool IsBackgroundOnlyProcess() {
+   // Info.plist to access its LSUIElement property.
+   @autoreleasepool {
+     NSDictionary* info_dictionary = [apple::MainBundle() infoDictionary];
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++    // Spatiand: with the Linux UI the browser is an agent to macOS as well
++    // (LSUIElement: no Dock icon; Spatiand alone shows it), so that key no
++    // longer tells the helpers from it: the browser's bundle says which it is
++    // (chrome/app/app-linux-ui-Info.plist).
++    if ([info_dictionary[@"SpatiandBrowserProcess"] boolValue]) {
++      return false;
++    }
++#endif
+     return [info_dictionary[@"LSUIElement"] boolValue] != NO;
+   }
+ }
 diff --git a/base/task/current_thread.cc b/base/task/current_thread.cc
 index dd959f737c..8f141ca4cf 100644
 --- a/base/task/current_thread.cc
@@ -130,10 +150,24 @@ index 6e45f4c226..c23686aa04 100644
      packages = [ "libffi" ]
    }
 diff --git a/chrome/BUILD.gn b/chrome/BUILD.gn
-index 5886f2ff4f..08682ea3ac 100644
+index 5886f2ff4f..94f548c3f2 100644
 --- a/chrome/BUILD.gn
 +++ b/chrome/BUILD.gn
-@@ -1282,11 +1282,22 @@ if (is_win) {
+@@ -531,7 +531,12 @@ if (is_win) {
+   }
+ 
+   tweak_info_plist("chrome_app_plist") {
+-    info_plist = "app/app-Info.plist"
++    if (is_mac_linux_ui) {
++      # Spatiand: an agent to macOS (no Dock icon), and no browser of macOS's.
++      info_plist = "app/app-linux-ui-Info.plist"
++    } else {
++      info_plist = "app/app-Info.plist"
++    }
+     args = [
+       "--breakpad=0",
+       "--scm=1",
+@@ -1282,11 +1287,22 @@ if (is_win) {
  
    # Limit the exported symbols of the framework library.
    config("chrome_dll_symbol_exports") {
@@ -161,6 +195,508 @@ index 5886f2ff4f..08682ea3ac 100644
    }
  
    # Control the order of exported symbols in the framework library.
+diff --git a/chrome/app/app-linux-ui-Info.plist b/chrome/app/app-linux-ui-Info.plist
+new file mode 100644
+index 0000000000..87b2aa4df1
+--- /dev/null
++++ b/chrome/app/app-linux-ui-Info.plist
+@@ -0,0 +1,496 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<!-- Spatiand: SpatiMesh with the Linux UI on macOS (is_mac_linux_ui). It is a client of Spatiand,
++     shown only by Spatiand (in the room, or in Spatiand's Mac windows): an agent to macOS
++     (LSUIElement: no Dock icon, no menu bar, not in the app switcher), and not offered by macOS
++     as a browser or as the opener of any kind of file or link (no document types, URL schemes,
++     AppleScript, Handoff or web-authentication-session support: nothing in the Linux UI answers
++     them). SpatiandBrowserProcess tells this bundle from the helpers' now that both are agents
++     (base::apple::IsBackgroundOnlyProcess). Otherwise app-Info.plist. -->
++<plist version="1.0">
++<dict>
++	<key>CFBundleDevelopmentRegion</key>
++	<string>en</string>
++	<key>CFBundleDisplayName</key>
++	<string>${EXECUTABLE_NAME}</string>
++	<key>CFBundleExecutable</key>
++	<string>${EXECUTABLE_NAME}</string>
++	<key>CFBundleIconFile</key>
++	<string>app.icns</string>
++	<key>CFBundleIconName</key>
++	<string>AppIcon</string>
++	<key>CFBundleIdentifier</key>
++	<string>${CHROMIUM_BUNDLE_ID}</string>
++	<key>CFBundleInfoDictionaryVersion</key>
++	<string>6.0</string>
++	<key>CFBundleName</key>
++	<string>${CHROMIUM_SHORT_NAME}</string>
++	<key>CFBundlePackageType</key>
++	<string>APPL</string>
++	<key>CFBundleSignature</key>
++	<string>${CHROMIUM_CREATOR}</string>
++	<key>LSEnvironment</key>
++	<dict>
++		<key>MallocNanoZone</key>
++		<string>0</string>
++	</dict>
++	<key>LSFileQuarantineEnabled</key>
++	<true/>
++	<key>LSHasLocalizedDisplayName</key>
++	<string>1</string>
++	<key>LSMinimumSystemVersion</key>
++	<string>${CHROMIUM_MIN_SYSTEM_VERSION}</string>
++	<key>LSRequiresNativeExecution</key>
++	<true/>
++	<key>NSCameraReactionEffectGesturesEnabledDefault</key>
++	<false/>
++	<key>NSPrincipalClass</key>
++	<string>BrowserCrApplication</string>
++	<key>NSSupportsAutomaticGraphicsSwitching</key>
++	<true/>
++	<key>UTImportedTypeDeclarations</key>
++	<array>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<string>public.image</string>
++			<key>UTTypeDescription</key>
++			<string>GIF image</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>GIF</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>com.compuserve.gif</string>
++			<key>UTTypeTagSpecification</key>
++			<dict>
++				<key>com.apple.ostype</key>
++				<string>GIFf</string>
++				<key>public.filename-extension</key>
++				<string>gif</string>
++				<key>public.mime-type</key>
++				<string>image/gif</string>
++			</dict>
++		</dict>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<string>public.text</string>
++			<key>UTTypeDescription</key>
++			<string>HTML text</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>HTML</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>public.html</string>
++			<key>UTTypeTagSpecification</key>
++			<dict>
++				<key>com.apple.nspboard-type</key>
++				<string>Apple HTML pasteboard type</string>
++				<key>com.apple.ostype</key>
++				<string>HTML</string>
++				<key>public.filename-extension</key>
++				<array>
++					<string>html</string>
++					<string>htm</string>
++					<string>shtml</string>
++					<string>shtm</string>
++				</array>
++				<key>public.mime-type</key>
++				<string>text/html</string>
++			</dict>
++		</dict>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<string>public.xml</string>
++			<key>UTTypeDescription</key>
++			<string>XHTML</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>XHTML</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>public.xhtml</string>
++			<key>UTTypeTagSpecification</key>
++			<dict>
++				<key>public.filename-extension</key>
++				<array>
++					<string>xhtml</string>
++					<string>xhtm</string>
++					<string>xht</string>
++				</array>
++				<key>public.mime-type</key>
++				<string>application/xhtml+xml</string>
++			</dict>
++		</dict>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<array>
++				<string>public.script</string>
++				<string>public.executable</string>
++			</array>
++			<key>UTTypeDescription</key>
++			<string>JavaScript</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>JAVASCRIPT</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>com.netscape.javascript-source</string>
++			<key>UTTypeTagSpecification</key>
++			<dict>
++				<key>public.filename-extension</key>
++				<array>
++					<string>js</string>
++					<string>jscript</string>
++					<string>javascript</string>
++					<string>mjs</string>
++				</array>
++				<key>public.mime-type</key>
++				<array>
++					<string>text/javascript</string>
++				</array>
++			</dict>
++		</dict>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<string>public.image</string>
++			<key>UTTypeDescription</key>
++			<string>JPEG image</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>JPEG</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>public.jpeg</string>
++			<key>UTTypeTagSpecification</key>
++			<dict>
++				<key>com.apple.ostype</key>
++				<string>JPEG</string>
++				<key>public.filename-extension</key>
++				<array>
++					<string>jpeg</string>
++					<string>jpg</string>
++					<string>jpe</string>
++				</array>
++				<key>public.mime-type</key>
++				<array>
++					<string>image/jpeg</string>
++					<string>image/jpg</string>
++				</array>
++			</dict>
++		</dict>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<array>
++				<string>public.data</string>
++				<string>public.content</string>
++			</array>
++			<key>UTTypeDescription</key>
++			<string>MIME HTML document</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>MHTML</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>org.ietf.mhtml</string>
++			<key>UTTypeReferenceURL</key>
++			<string>https://www.ietf.org/rfc/rfc2557</string>
++			<key>UTTypeTagSpecification</key>
++			<dict>
++				<key>com.apple.ostype</key>
++				<string>MHTM</string>
++				<key>public.filename-extension</key>
++				<array>
++					<string>mht</string>
++					<string>mhtml</string>
++				</array>
++				<key>public.mime-type</key>
++				<array>
++					<string>multipart/related</string>
++					<string>application/x-mimearchive</string>
++				</array>
++			</dict>
++		</dict>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<array>
++				<string>public.audio</string>
++			</array>
++			<key>UTTypeDescription</key>
++			<string>Ogg audio</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>OGG</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>org.xiph.ogg-audio</string>
++			<key>UTTypeReferenceURL</key>
++			<string>https://xiph.org/ogg/</string>
++			<key>UTTypeTagSpecification</key>
++			<dict>
++				<key>public.filename-extension</key>
++				<array>
++					<string>ogg</string>
++					<string>oga</string>
++				</array>
++				<key>public.mime-type</key>
++				<array>
++					<string>audio/ogg</string>
++				</array>
++			</dict>
++		</dict>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<array>
++				<string>public.movie</string>
++			</array>
++			<key>UTTypeDescription</key>
++			<string>Ogg video</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>OGV</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>org.xiph.ogv</string>
++			<key>UTTypeReferenceURL</key>
++			<string>https://xiph.org/ogg/</string>
++			<key>UTTypeTagSpecification</key>
++			<dict>
++				<key>public.filename-extension</key>
++				<array>
++					<string>ogm</string>
++					<string>ogv</string>
++				</array>
++				<key>public.mime-type</key>
++				<array>
++					<string>video/ogg</string>
++				</array>
++			</dict>
++		</dict>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<string>public.image</string>
++			<key>UTTypeDescription</key>
++			<string>PNG image</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>PNG</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>public.png</string>
++			<key>UTTypeTagSpecification</key>
++			<dict>
++				<key>com.apple.nspboard-type</key>
++				<string>Apple PNG pasteboard type</string>
++				<key>com.apple.ostype</key>
++				<string>PNGf</string>
++				<key>public.filename-extension</key>
++				<string>png</string>
++				<key>public.mime-type</key>
++				<string>image/png</string>
++			</dict>
++		</dict>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<array>
++				<string>public.image</string>
++				<string>public.xml</string>
++			</array>
++			<key>UTTypeDescription</key>
++			<string>SVG image</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>SVG</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>public.svg-image</string>
++			<key>UTTypeTagSpecification</key>
++			<dict>
++				<key>com.apple.ostype</key>
++				<array>
++					<string>svg </string>
++					<string>svgz</string>
++				</array>
++				<key>public.filename-extension</key>
++				<array>
++					<string>svg</string>
++					<string>svgz</string>
++				</array>
++				<key>public.mime-type</key>
++				<array>
++					<string>image/svg+xml</string>
++				</array>
++			</dict>
++		</dict>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<array>
++				<string>public.data</string>
++				<string>public.content</string>
++			</array>
++			<key>UTTypeDescription</key>
++			<string>text</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>TEXT</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>public.text</string>
++		</dict>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<string>public.movie</string>
++			<key>UTTypeDescription</key>
++			<string>WebM media</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>WEBM</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>org.webmproject.webm</string>
++			<key>UTTypeReferenceURL</key>
++			<string>https://www.webmproject.org/docs/container/</string>
++			<key>UTTypeTagSpecification</key>
++			<dict>
++				<key>public.filename-extension</key>
++				<string>webm</string>
++				<key>public.mime-type</key>
++				<array>
++					<string>video/webm</string>
++					<string>audio/webm</string>
++				</array>
++			</dict>
++		</dict>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<string>public.image</string>
++			<key>UTTypeDescription</key>
++			<string>WebP image</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>WEBP</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>org.webmproject.webp</string>
++			<key>UTTypeReferenceURL</key>
++			<string>https://developers.google.com/speed/webp</string>
++			<key>UTTypeTagSpecification</key>
++			<dict>
++				<key>public.filename-extension</key>
++				<string>webp</string>
++				<key>public.mime-type</key>
++				<string>image/webp</string>
++			</dict>
++		</dict>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<array>
++				<string>public.data</string>
++				<string>public.composite-content</string>
++			</array>
++			<key>UTTypeDescription</key>
++			<string>PDF document</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>PDF</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>com.adobe.pdf</string>
++			<key>UTTypeTagSpecification</key>
++			<dict>
++				<key>com.apple.nspboard-type</key>
++				<string>Apple PDF pasteboard type</string>
++				<key>com.apple.ostype</key>
++				<string>PDF </string>
++				<key>public.filename-extension</key>
++				<string>pdf</string>
++				<key>public.mime-type</key>
++				<string>application/pdf</string>
++			</dict>
++		</dict>
++		<dict>
++			<key>UTTypeConformsTo</key>
++			<string>public.heif-standard</string>
++			<key>UTTypeDescription</key>
++			<string>AV1 Image File Format</string>
++			<key>UTTypeIcons</key>
++			<dict>
++				<key>UTTypeIconBadgeName</key>
++				<string>Icon</string>
++				<key>UTTypeIconText</key>
++				<string>AVIF</string>
++			</dict>
++			<key>UTTypeIdentifier</key>
++			<string>public.avif</string>
++			<key>UTTypeTagSpecification</key>
++			<dict>
++				<key>com.apple.ostype</key>
++				<string>AVIF</string>
++				<key>public.filename-extension</key>
++				<string>avif</string>
++				<key>public.mime-type</key>
++				<string>image/avif</string>
++			</dict>
++		</dict>
++	</array>
++	<key>NSUserNotificationAlertStyle</key>
++	<string>banner</string>
++	<key>GPUEjectPolicy</key>
++	<string>wait</string>
++	<key>NSAppTransportSecurity</key>
++	<dict>
++		<key>NSAllowsArbitraryLoads</key>
++		<true/>
++	</dict>
++	<key>NSBonjourServices</key>
++	<array>
++		<string>_googlecast._tcp</string>
++	</array>
++	<key>LSUIElement</key>
++	<true/>
++	<key>SpatiandBrowserProcess</key>
++	<true/>
++</dict>
++</plist>
 diff --git a/chrome/app/chrome_command_ids.h b/chrome/app/chrome_command_ids.h
 index 65b9ce9bc4..596258862a 100644
 --- a/chrome/app/chrome_command_ids.h
@@ -376,7 +912,7 @@ index 05dd81cbf0..8e0719ae8f 100644
  
  void BrowserProcessPlatformPart::PreMainMessageLoopRun() {
 diff --git a/chrome/browser/chrome_browser_application_mac.mm b/chrome/browser/chrome_browser_application_mac.mm
-index 823b03b27c..48b79249ea 100644
+index 823b03b27c..36813ad526 100644
 --- a/chrome/browser/chrome_browser_application_mac.mm
 +++ b/chrome/browser/chrome_browser_application_mac.mm
 @@ -4,6 +4,8 @@
@@ -401,7 +937,23 @@ index 823b03b27c..48b79249ea 100644
  #include "chrome/common/chrome_switches.h"
  #include "components/crash/core/common/crash_key.h"
  #import "components/crash/core/common/objc_zombie.h"
-@@ -148,7 +155,9 @@ + (void)initialize {
+@@ -43,6 +50,15 @@ void RegisterBrowserCrApp() {
+   // will not be a BrowserCrApplication, but will instead be an NSApplication.
+   // This is undesirable and we must enforce that this doesn't happen.
+   CHECK([NSApp isKindOfClass:[BrowserCrApplication class]]);
++
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: SpatiMesh is a client of Spatiand, which alone shows it (in the
++  // room, or in Spatiand's own Mac windows): to macOS it is an agent, with no
++  // Dock icon, no menu bar and no place in the app switcher, as Spatiand's
++  // other applications have none. The bundle's Info.plist says the same
++  // (LSUIElement); this holds when the program is started outside a bundle too.
++  [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
++#endif
+ }
+ 
+ void Terminate() {
+@@ -148,7 +164,9 @@ + (void)initialize {
    }
    InstallObjcExceptionPreprocessor();
  
@@ -411,7 +963,7 @@ index 823b03b27c..48b79249ea 100644
  }
  
  - (void)orderFrontCharacterPalette:sender {
-@@ -316,12 +325,23 @@ - (void)_customizeFileMenuIfNeeded {
+@@ -316,12 +334,23 @@ - (void)_customizeFileMenuIfNeeded {
  // NSApplication event loop, so final post- MessageLoop::Run() work is done
  // before exiting.
  - (void)terminate:(id)sender {
@@ -756,6 +1308,34 @@ index 93f3a1792e..c7f8a69e15 100644
      sources += [ "application_lifetime_mac.mm" ]
      deps += [
        "//chrome/browser:app_controller_mac",
+diff --git a/chrome/browser/lifetime/application_lifetime.cc b/chrome/browser/lifetime/application_lifetime.cc
+index 120cee0391..de03ae93a8 100644
+--- a/chrome/browser/lifetime/application_lifetime.cc
++++ b/chrome/browser/lifetime/application_lifetime.cc
+@@ -35,7 +35,9 @@ namespace {
+ 
+ void AttemptExitInternal(bool try_to_quit_application) {
+   // On Mac, the platform-specific part handles setting this.
+-#if !BUILDFLAG(IS_MAC)
++  // Spatiand: that part is Cocoa's AppController, which the Linux UI does not
++  // have: there it is set here, as on Linux.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+   if (try_to_quit_application) {
+     browser_shutdown::SetTryingToQuit(true);
+   }
+diff --git a/chrome/browser/lifetime/browser_close_manager.cc b/chrome/browser/lifetime/browser_close_manager.cc
+index 520ae57b74..b1a3e9ff3c 100644
+--- a/chrome/browser/lifetime/browser_close_manager.cc
++++ b/chrome/browser/lifetime/browser_close_manager.cc
+@@ -134,7 +134,7 @@ void BrowserCloseManager::OnBrowserReportCloseable(bool proceed) {
+ }
+ 
+ void BrowserCloseManager::CheckForDownloadsInProgress() {
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: as the Deck
+   // Mac has its own in-progress downloads prompt in app_controller_mac.mm.
+   CloseBrowsers();
+ #else
 diff --git a/chrome/browser/lifetime/smart_restart_policy.cc b/chrome/browser/lifetime/smart_restart_policy.cc
 index 942233325c..434c0fa50e 100644
 --- a/chrome/browser/lifetime/smart_restart_policy.cc
@@ -827,6 +1407,21 @@ index 6bb5ccb823..e5a151a038 100644
 +  // Spatiand: on the Linux UI the screen is Ozone's, made by the views parts
 +  // as on Linux (ChromeBrowserMainExtraPartsViewsLinux), not NSScreen's.
  }
+diff --git a/chrome/browser/password_manager/factories/password_store_backend_factory.cc b/chrome/browser/password_manager/factories/password_store_backend_factory.cc
+index adefdb8dab..fe6a3b6cbd 100644
+--- a/chrome/browser/password_manager/factories/password_store_backend_factory.cc
++++ b/chrome/browser/password_manager/factories/password_store_backend_factory.cc
+@@ -83,8 +83,8 @@ CreatePasswordStoreBackend(
+   auto built_in = std::make_unique<password_manager::PasswordStoreBuiltInBackend>(
+       std::move(login_db), behavior, prefs, os_crypt_async,
+       std::move(affiliated_match_helper));
+-#if BUILDFLAG(IS_LINUX)
+-  // Spatiand: passwords are kept in SpatiKey's vault.
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: passwords are kept in SpatiKey's vault, on the Mac as on the Deck.
+   if (!is_account_store) {
+     return std::make_unique<password_manager::SpatikeyPasswordStoreBackend>(
+         std::move(built_in));
 diff --git a/chrome/browser/platform_util_mac.mm b/chrome/browser/platform_util_mac.mm
 index 390d63ffee..1967d047aa 100644
 --- a/chrome/browser/platform_util_mac.mm
@@ -1170,10 +1765,25 @@ index 0000000000..aece21b817
 +
 +}  // namespace shell_integration_linux
 diff --git a/chrome/browser/spatiand/spatikey_window.cc b/chrome/browser/spatiand/spatikey_window.cc
-index f1dbd321f1..9bf1ab841a 100644
+index f1dbd321f1..5e3878d125 100644
 --- a/chrome/browser/spatiand/spatikey_window.cc
 +++ b/chrome/browser/spatiand/spatikey_window.cc
-@@ -57,7 +57,18 @@ void Launch() {
+@@ -44,7 +44,14 @@ base::FilePath FindSpatiKey() {
+   }
+   base::FilePath here;
+   base::PathService::Get(base::DIR_EXE, &here);
++#if BUILDFLAG(IS_MAC)
++  // On the Mac a program of Spatiand.app beside its others, SpatiMesh being in its Helpers:
++  // .../Spatiand.app/Contents/Helpers/SpatiMesh.app/Contents/MacOS -> .../Spatiand.app/Contents
++  const base::FilePath program =
++      here.DirName().DirName().DirName().DirName().Append("MacOS/spatikey");
++#else
+   const base::FilePath program = here.DirName().Append("spatiand/target/release/spatikey");
++#endif
+   return base::PathExists(program) ? program : base::FilePath();
+ }
+ 
+@@ -57,7 +64,18 @@ void Launch() {
    options.new_process_group = true;
    base::Process process = base::LaunchProcess(base::CommandLine(program), options);
    if (process.IsValid()) {
@@ -5914,11 +6524,95 @@ index 8ae23e1aef..82fe0860b4 100644
  
  source_set("zoom") {
    sources = [
+diff --git a/chrome/browser/webauthn/authenticator_request_dialog_controller.cc b/chrome/browser/webauthn/authenticator_request_dialog_controller.cc
+index e5df00b768..04f931d36d 100644
+--- a/chrome/browser/webauthn/authenticator_request_dialog_controller.cc
++++ b/chrome/browser/webauthn/authenticator_request_dialog_controller.cc
+@@ -124,7 +124,7 @@ constexpr int GetMessageIdForTransportDescription(
+     case AuthenticatorTransport::kUsbHumanInterfaceDevice:
+       return IDS_WEBAUTHN_TRANSPORT_USB;
+     case AuthenticatorTransport::kInternal:
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: SpatiKey's
+       return IDS_WEBAUTHN_YOUR_CHROME_PROFILE;
+ #else
+       return IDS_WEBAUTHN_TRANSPORT_INTERNAL;
+@@ -171,7 +171,10 @@ constexpr const gfx::VectorIcon& GetTransportIcon(
+ // before platform authenticator dispatch during MakeCredential. This is
+ // currently only shown on MacOS, because that is the only desktop platform
+ // authenticator without a "native" WebAuthn UI.
+-constexpr bool kShowCreatePlatformPasskeyStep = BUILDFLAG(IS_MAC);
++// Spatiand: not on the Mac's Linux UI, where the platform authenticator is
++// SpatiKey's, as on the Deck: its touch says what the passkey is for.
++constexpr bool kShowCreatePlatformPasskeyStep =
++    BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI);
+ 
+ password_manager::PasskeyCredential::Source ToPasswordManagerSource(
+     AuthenticatorType type) {
+@@ -326,7 +329,7 @@ bool IsChromeImplemented(AuthenticatorType type) {
+ bool ProfileAuthenticatorWillDoUserVerification(
+     device::UserVerificationRequirement requirement,
+     bool platform_has_biometrics) {
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: SpatiKey's
+   return device::fido::mac::ProfileAuthenticatorWillDoUserVerification(
+       requirement, platform_has_biometrics);
+ #else
+@@ -799,7 +802,7 @@ void AuthenticatorRequestDialogController::
+       transport_availability_.platform_has_biometrics);
+   constexpr bool kIsMac = BUILDFLAG(IS_MAC);
+ 
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)
+   // Spatiand: a new passkey is made in SpatiKey's vault, whose touch says what
+   // for, with nothing to choose first.
+   if (!pending_step_ &&
+@@ -837,7 +840,7 @@ void AuthenticatorRequestDialogController::
+                  cred->value().source == AuthenticatorType::kWinNative ||
+                  // Spatiand: SpatiKey's touch names the site, and it is the
+                  // only such authenticator here.
+-                 (BUILDFLAG(IS_LINUX) &&
++                 ((BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)) &&
+                   cred->value().source == AuthenticatorType::kOther) ||
+                  // The enclave Touch ID prompts shows the credential details.
+                  (cred->value().source == AuthenticatorType::kEnclave &&
+@@ -1477,8 +1480,9 @@ void AuthenticatorRequestDialogController::SelectAccount(
+         response.credential->id, *response.user_entity,
+         // Spatiand: the platform authenticator here is SpatiKey's.
+         /*provider_name=*/
+-        BUILDFLAG(IS_LINUX) && response.transport_used ==
+-                                   device::FidoTransportProtocol::kInternal
++        (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)) &&
++                response.transport_used ==
++                    device::FidoTransportProtocol::kInternal
+             ? std::make_optional<std::string>("SpatiKey")
+             : std::nullopt);
+   }
+@@ -2305,7 +2309,7 @@ AuthenticatorRequestDialogController::IndexOfMakeCredentialPriorityMechanism() {
+       priority_list.emplace_back(Mechanism::WindowsAPI());
+     }
+ 
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: as the Deck
+     // For non-cross-platform try to trigger either platform authenticator.
+     if (should_create_in_icloud_keychain_) {
+       priority_list.emplace_back(Mechanism::ICloudKeychain());
 diff --git a/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc b/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
-index e3db47f1ba..d28416b643 100644
+index e3db47f1ba..72b098b35a 100644
 --- a/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
 +++ b/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
-@@ -1209,10 +1209,12 @@ void ChromeAuthenticatorRequestDelegate::ConfigureNSWindow(
+@@ -609,7 +609,9 @@ void ChromeAuthenticatorRequestDelegate::ConfigureDiscoveries(
+   dialog_controller_->set_is_non_webauthn_request(
+       request_source != RequestSource::kWebAuthentication);
+ 
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: not on the Linux UI: passkeys are SpatiKey's there, as on the
++  // Deck, and iCloud Keychain is neither offered nor made the default.
+   ConfigureICloudKeychain(request_source, rp_id);
+ #endif
+ 
+@@ -1209,10 +1211,12 @@ void ChromeAuthenticatorRequestDelegate::ConfigureNSWindow(
    const views::Widget* widget = views::Widget::GetTopLevelWidgetForNativeView(
        web_contents->GetNativeView());
    if (widget) {
@@ -7224,6 +7918,30 @@ index f2f94492d0..f4cf09dbec 100644
  class NoOpPopupMenuHelperDelegate : public PopupMenuHelper::Delegate {
   public:
    void OnMenuClosed() final {
+diff --git a/content/browser/webauth/authenticator_common_impl.cc b/content/browser/webauth/authenticator_common_impl.cc
+index 51af063df6..74206b055c 100644
+--- a/content/browser/webauth/authenticator_common_impl.cc
++++ b/content/browser/webauth/authenticator_common_impl.cc
+@@ -2145,14 +2145,15 @@ void AuthenticatorCommonImpl::ContinueIsUvpaaAfterOverrideCheck(
+               return available;
+             }).Then(std::move(callback));
+ 
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: SpatiKey's vault is the platform authenticator, on the Mac as on
++  // the Deck.
++  spatikey::WhenUsableKnown(std::move(uma_decorated_callback));
++#elif BUILDFLAG(IS_MAC)
+   IsUVPlatformAuthenticatorAvailable(GetBrowserContext(),
+                                      std::move(uma_decorated_callback));
+ #elif BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
+   IsUVPlatformAuthenticatorAvailable(std::move(uma_decorated_callback));
+-#elif BUILDFLAG(IS_LINUX)
+-  // Spatiand: SpatiKey's vault is the platform authenticator.
+-  spatikey::WhenUsableKnown(std::move(uma_decorated_callback));
+ #else
+   std::move(uma_decorated_callback).Run(false);
+ #endif
 diff --git a/content/public/common/features.gni b/content/public/common/features.gni
 index 72b79775c2..8d6280f37a 100644
 --- a/content/public/common/features.gni
@@ -7240,6 +7958,51 @@ index 72b79775c2..8d6280f37a 100644
  
    # Enables basic plugin support. This enables support for registering and
    # looking up plugins.
+diff --git a/device/fido/BUILD.gn b/device/fido/BUILD.gn
+index e1ce2fbe9f..f52eb3786f 100644
+--- a/device/fido/BUILD.gn
++++ b/device/fido/BUILD.gn
+@@ -230,7 +230,9 @@ component("fido") {
+       ]
+     }
+ 
+-    if (is_linux) {
++    # Spatiand: SpatiKey's vault is the platform authenticator wherever SpatiMesh is the
++    # Deck's browser: on Linux and on the Mac's Linux UI.
++    if (is_linux || is_mac_linux_ui) {
+       sources += [
+         "spatikey/spatikey_authenticator.cc",
+         "spatikey/spatikey_authenticator.h",
+diff --git a/device/fido/fido_discovery_factory.cc b/device/fido/fido_discovery_factory.cc
+index d8e5d7d0c8..f604b54be3 100644
+--- a/device/fido/fido_discovery_factory.cc
++++ b/device/fido/fido_discovery_factory.cc
+@@ -5,7 +5,7 @@
+ #include "device/fido/fido_discovery_factory.h"
+ 
+ #include "build/build_config.h"
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "device/fido/spatikey/spatikey_discovery.h"
+ #endif
+ 
+@@ -105,11 +105,12 @@ std::vector<std::unique_ptr<FidoDiscoveryBase>> FidoDiscoveryFactory::Create(
+       return {};
+     case FidoTransportProtocol::kInternal: {
+       std::vector<std::unique_ptr<FidoDiscoveryBase>> discoveries;
+-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_CHROMEOS)
+-      discoveries = MaybeCreatePlatformDiscovery();
+-#elif BUILDFLAG(IS_LINUX)
+-      // Spatiand: passkeys are kept in SpatiKey's vault.
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)
++      // Spatiand: passkeys are kept in SpatiKey's vault, on the Mac as on the
++      // Deck: not in macOS's own (Touch ID profile keys, iCloud Keychain).
+       discoveries.push_back(std::make_unique<SpatikeyDiscovery>());
++#elif BUILDFLAG(IS_MAC) || BUILDFLAG(IS_CHROMEOS)
++      discoveries = MaybeCreatePlatformDiscovery();
+ #endif
+       return discoveries;
+     }
 diff --git a/gpu/command_buffer/service/BUILD.gn b/gpu/command_buffer/service/BUILD.gn
 index 09245d2ddd..f64f8212a1 100644
 --- a/gpu/command_buffer/service/BUILD.gn
@@ -18672,10 +19435,10 @@ index 42849a1cc2..b1d1593b1b 100644
        "wayland_event_watcher_fdwatch.cc",
 diff --git a/ui/events/platform/wayland/wayland_event_watcher_mac.cc b/ui/events/platform/wayland/wayland_event_watcher_mac.cc
 new file mode 100644
-index 0000000000..2cf29f8147
+index 0000000000..6c2ddf37eb
 --- /dev/null
 +++ b/ui/events/platform/wayland/wayland_event_watcher_mac.cc
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,95 @@
 +// Copyright 2026 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -18745,13 +19508,19 @@ index 0000000000..2cf29f8147
 +void WaylandEventWatcherMac::OnReadable() {
 +  // As WaylandEventWatcherFdWatch::OnFileCanReadWithoutBlocking.
 +  WlDisplayReadEvents();
++  // A CFFileDescriptor's callbacks fire once each time they are enabled, where
++  // Linux's watcher is persistent. Enabled again before the events are
++  // dispatched, not after: dispatching one may run a nested loop that only
++  // events read here can end -- a tab dragged off its strip
++  // (WaylandWindowDragController::RunLoop) waits for the drag's enter, motion
++  // and drop. Enabled after, the drag never heard of its own end: the tab was
++  // gone from its strip, no window came, and the browser could not be closed.
++  if (fd_ref_) {
++    CFFileDescriptorEnableCallBacks(fd_ref_, kCFFileDescriptorReadCallBack);
++  }
 +  WlDisplayDispatchPendingQueue();
 +  if (!WlDisplayPrepareToRead()) {
 +    WlDisplayDispatchPendingQueue();
-+  }
-+  // A CFFileDescriptor's callbacks fire once each time they are enabled.
-+  if (fd_ref_) {
-+    CFFileDescriptorEnableCallBacks(fd_ref_, kCFFileDescriptorReadCallBack);
 +  }
 +}
 +
@@ -21247,7 +22016,7 @@ index 21a542a563..60da127d34 100644
    raw_ptr<gfx::ImageSkia> icon = nullptr;
    std::optional<SkColor> background_color;
 diff --git a/ui/shell_dialogs/BUILD.gn b/ui/shell_dialogs/BUILD.gn
-index 8de23c6560..60dfa312ab 100644
+index 8de23c6560..81506372f3 100644
 --- a/ui/shell_dialogs/BUILD.gn
 +++ b/ui/shell_dialogs/BUILD.gn
 @@ -9,7 +9,7 @@ import("//testing/test.gni")
@@ -21259,7 +22028,7 @@ index 8de23c6560..60dfa312ab 100644
    import("//build/config/mac/rules.gni")
  }
  if (is_ios) {
-@@ -52,7 +52,7 @@ component("shell_dialogs") {
+@@ -52,13 +52,21 @@ component("shell_dialogs") {
      sources += [ "shell_dialog_stub.cc" ]
    }
  
@@ -21268,7 +22037,21 @@ index 8de23c6560..60dfa312ab 100644
      sources += [
        "select_file_dialog_linux.cc",
        "select_file_dialog_linux.h",
-@@ -72,7 +72,7 @@ component("shell_dialogs") {
+       "shell_dialog_linux.cc",
+     ]
+     deps += [ "//ui/linux:linux_ui" ]
++    # Spatiand: where there is no desktop portal to ask (the Mac; Android's libc has the same
++    # under spatiand_android_libc, android-libc/0019), files are chosen in Spatiand's own chooser.
++    if (is_mac_linux_ui) {
++      sources += [
++        "select_file_dialog_linux_spatiand.cc",
++        "select_file_dialog_linux_spatiand.h",
++      ]
++    }
+     if (use_dbus) {
+       sources += [
+         "select_file_dialog_linux_portal.cc",
+@@ -72,7 +80,7 @@ component("shell_dialogs") {
      }
    }
  
@@ -21277,7 +22060,7 @@ index 8de23c6560..60dfa312ab 100644
      sources += [
        "select_file_dialog_mac.h",
        "select_file_dialog_mac.mm",
-@@ -107,7 +107,7 @@ component("shell_dialogs") {
+@@ -107,7 +115,7 @@ component("shell_dialogs") {
    }
  
    if (use_aura) {
@@ -21286,7 +22069,7 @@ index 8de23c6560..60dfa312ab 100644
        # Will be automatically filtered out on non-Mac.
        sources -= [ "select_file_dialog_mac.mm" ]
      }
-@@ -127,7 +127,7 @@ component("shell_dialogs") {
+@@ -127,7 +135,7 @@ component("shell_dialogs") {
      libs = [ "jnigraphics" ]
    }
  
@@ -21295,7 +22078,7 @@ index 8de23c6560..60dfa312ab 100644
      frameworks = [
        "CoreServices.framework",
        "Foundation.framework",
-@@ -152,7 +152,7 @@ test("shell_dialogs_unittests") {
+@@ -152,7 +160,7 @@ test("shell_dialogs_unittests") {
      "select_file_dialog_unittest.cc",
    ]
  
@@ -21304,7 +22087,7 @@ index 8de23c6560..60dfa312ab 100644
      sources += [ "select_file_dialog_mac_unittest.mm" ]
      frameworks = [ "UniformTypeIdentifiers.framework" ]
    }
-@@ -175,7 +175,7 @@ test("shell_dialogs_unittests") {
+@@ -175,7 +183,7 @@ test("shell_dialogs_unittests") {
      "//ui/strings",
    ]
  
@@ -21313,7 +22096,7 @@ index 8de23c6560..60dfa312ab 100644
      sources += [ "select_file_dialog_linux_portal_unittest.cc" ]
      deps += [
        "//components/dbus",
-@@ -184,7 +184,7 @@ test("shell_dialogs_unittests") {
+@@ -184,7 +192,7 @@ test("shell_dialogs_unittests") {
      ]
    }
  
@@ -21322,6 +22105,342 @@ index 8de23c6560..60dfa312ab 100644
      deps += [ "//components/remote_cocoa/app_shim" ]
    }
  
+diff --git a/ui/shell_dialogs/select_file_dialog_linux_spatiand.cc b/ui/shell_dialogs/select_file_dialog_linux_spatiand.cc
+new file mode 100644
+index 0000000000..f9a0447249
+--- /dev/null
++++ b/ui/shell_dialogs/select_file_dialog_linux_spatiand.cc
+@@ -0,0 +1,235 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "ui/shell_dialogs/select_file_dialog_linux_spatiand.h"
++
++#include <utility>
++
++#include "base/base_paths.h"
++#include "base/command_line.h"
++#include "base/environment.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/logging.h"
++#include "base/path_service.h"
++#include "base/process/launch.h"
++#include "base/strings/string_split.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/thread_pool.h"
++#include "build/build_config.h"
++#include "ui/shell_dialogs/selected_file_info.h"
++
++namespace ui {
++
++namespace {
++
++struct Asked {
++  const char* mode;
++  std::string title;
++  base::FilePath default_path;
++  base::FilePath last_path;
++  std::vector<std::string> accept;
++};
++
++// Where the chooser is: among Spatiand's programs, where the room says they are
++// (SPATIAND_APPS_DIR: on Android the APK's library folder, whose programs are named as
++// libraries). On the Mac the room does not say: the chooser is a program of Spatiand.app beside
++// its others (Contents/MacOS), and SpatiMesh is in Contents/Helpers/SpatiMesh.app.
++base::FilePath FindChooser(base::Environment* env) {
++#if BUILDFLAG(IS_MAC)
++  const char kProgram[] = "spatiand-choose";
++#else
++  const char kProgram[] = "libspatiand-choose.so";
++#endif
++  const std::string apps = env->GetVar("SPATIAND_APPS_DIR").value_or("");
++  if (!apps.empty()) {
++    const base::FilePath chooser = base::FilePath(apps).Append(kProgram);
++    if (base::PathExists(chooser)) {
++      return chooser;
++    }
++  }
++#if BUILDFLAG(IS_MAC)
++  // .../Spatiand.app/Contents/Helpers/SpatiMesh.app/Contents/MacOS -> .../Spatiand.app/Contents
++  base::FilePath here;
++  if (base::PathService::Get(base::DIR_EXE, &here)) {
++    const base::FilePath chooser =
++        here.DirName().DirName().DirName().DirName().Append("MacOS").Append(kProgram);
++    if (base::PathExists(chooser)) {
++      return chooser;
++    }
++  }
++#endif
++  LOG(WARNING) << "Spatiand: no file chooser (" << kProgram << ") among Spatiand's programs";
++  return base::FilePath();
++}
++
++// The chooser run, and what it wrote: nothing if it is not here, or nothing was chosen. Off the
++// UI thread: it waits for the wearer.
++std::optional<std::vector<base::FilePath>> RunChooser(Asked asked) {
++  std::unique_ptr<base::Environment> env = base::Environment::Create();
++  const base::FilePath chooser = FindChooser(env.get());
++  if (chooser.empty()) {
++    return std::nullopt;
++  }
++  // Where to begin: the folder of what was asked about, else where the last choice was, else
++  // the downloads, else home.
++  const base::FilePath home(env->GetVar("HOME").value_or("/"));
++  base::FilePath dir;
++  std::string name;
++  if (!asked.default_path.empty()) {
++    if (base::DirectoryExists(asked.default_path)) {
++      dir = asked.default_path;
++    } else {
++      name = asked.default_path.BaseName().value();
++      if (asked.default_path.IsAbsolute() && base::DirectoryExists(asked.default_path.DirName())) {
++        dir = asked.default_path.DirName();
++      }
++    }
++  }
++  if (dir.empty() && !asked.last_path.empty() && base::DirectoryExists(asked.last_path)) {
++    dir = asked.last_path;
++  }
++  if (dir.empty() && base::DirectoryExists(home.Append("Downloads"))) {
++    dir = home.Append("Downloads");
++  }
++  // Android's own Download folder, where Spatiand may read it ("All files access").
++  const base::FilePath shared("/storage/emulated/0/Download");
++  if (dir.empty() && base::DirectoryExists(shared) && base::PathIsReadable(shared)) {
++    dir = shared;
++  }
++  if (dir.empty()) {
++    dir = home;
++  }
++  base::CommandLine command(chooser);
++  command.AppendArg("--mode");
++  command.AppendArg(asked.mode);
++  command.AppendArg("--dir");
++  command.AppendArg(dir.value());
++  if (!asked.title.empty()) {
++    command.AppendArg("--title");
++    command.AppendArg(asked.title);
++  }
++  if (!name.empty()) {
++    command.AppendArg("--name");
++    command.AppendArg(name);
++  }
++  if (!asked.accept.empty()) {
++    command.AppendArg("--accept");
++    command.AppendArg(base::JoinString(asked.accept, ","));
++  }
++  std::string output;
++  int exit_code = -1;
++  if (!base::GetAppOutputWithExitCode(command, &output, &exit_code) || exit_code != 0) {
++    return std::nullopt;
++  }
++  std::vector<base::FilePath> paths;
++  for (const std::string& line :
++       base::SplitString(output, "\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
++    paths.emplace_back(line);
++  }
++  if (paths.empty()) {
++    return std::nullopt;
++  }
++  return paths;
++}
++
++}  // namespace
++
++SelectFileDialogLinuxSpatiand::SelectFileDialogLinuxSpatiand(
++    Listener* listener,
++    std::unique_ptr<SelectFilePolicy> policy)
++    : SelectFileDialogLinux(listener, std::move(policy)) {}
++
++SelectFileDialogLinuxSpatiand::~SelectFileDialogLinuxSpatiand() = default;
++
++bool SelectFileDialogLinuxSpatiand::IsRunning(gfx::NativeWindow parent_window) const {
++  return running_;
++}
++
++bool SelectFileDialogLinuxSpatiand::HasMultipleFileTypeChoicesImpl() {
++  return false;
++}
++
++void SelectFileDialogLinuxSpatiand::SelectFileImpl(
++    Type type,
++    const std::u16string& title,
++    const base::FilePath& default_path,
++    const FileTypeInfo* file_types,
++    int file_type_index,
++    const base::FilePath::StringType& default_extension,
++    gfx::NativeWindow owning_window,
++    const GURL* caller) {
++  set_type(type);
++  if (file_types) {
++    set_file_types(*file_types);
++  }
++  Asked asked;
++  switch (type) {
++    case SELECT_OPEN_FILE:
++      asked.mode = "open";
++      break;
++    case SELECT_OPEN_MULTI_FILE:
++      asked.mode = "open-multiple";
++      break;
++    case SELECT_FOLDER:
++    case SELECT_UPLOAD_FOLDER:
++    case SELECT_EXISTING_FOLDER:
++      asked.mode = "folder";
++      break;
++    case SELECT_SAVEAS_FILE:
++      asked.mode = "save";
++      break;
++    case SELECT_NONE:
++      return;
++  }
++  asked.title = base::UTF16ToUTF8(title);
++  asked.default_path = default_path;
++  const base::FilePath* last =
++      type == SELECT_SAVEAS_FILE ? last_saved_path() : last_opened_path();
++  if (last) {
++    asked.last_path = *last;
++  }
++  if (file_types) {
++    for (const auto& kinds : file_types->extensions) {
++      for (const auto& extension : kinds) {
++        asked.accept.push_back(extension);
++      }
++    }
++  }
++  running_ = true;
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE,
++      {base::MayBlock(), base::TaskPriority::USER_BLOCKING,
++       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
++      base::BindOnce(&RunChooser, std::move(asked)),
++      base::BindOnce(&SelectFileDialogLinuxSpatiand::Chosen, weak_factory_.GetWeakPtr(), type));
++}
++
++void SelectFileDialogLinuxSpatiand::Chosen(Type type,
++                                           std::optional<std::vector<base::FilePath>> paths) {
++  running_ = false;
++  if (!listener_) {
++    return;
++  }
++  if (!paths) {
++    listener_->FileSelectionCanceled();
++    return;
++  }
++  if (type == SELECT_SAVEAS_FILE) {
++    set_last_saved_path(paths->front().DirName());
++  } else if (type == SELECT_OPEN_FILE || type == SELECT_OPEN_MULTI_FILE) {
++    set_last_opened_path(paths->front().DirName());
++  }
++  if (type == SELECT_OPEN_MULTI_FILE) {
++    std::vector<SelectedFileInfo> files;
++    for (const base::FilePath& path : *paths) {
++      files.emplace_back(path);
++    }
++    listener_->MultiFilesSelected(files);
++    return;
++  }
++  listener_->FileSelected(SelectedFileInfo(paths->front()), 0);
++}
++
++}  // namespace ui
+diff --git a/ui/shell_dialogs/select_file_dialog_linux_spatiand.h b/ui/shell_dialogs/select_file_dialog_linux_spatiand.h
+new file mode 100644
+index 0000000000..03cb5a7c80
+--- /dev/null
++++ b/ui/shell_dialogs/select_file_dialog_linux_spatiand.h
+@@ -0,0 +1,55 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef UI_SHELL_DIALOGS_SELECT_FILE_DIALOG_LINUX_SPATIAND_H_
++#define UI_SHELL_DIALOGS_SELECT_FILE_DIALOG_LINUX_SPATIAND_H_
++
++#include <memory>
++#include <optional>
++#include <string>
++#include <vector>
++
++#include "base/files/file_path.h"
++#include "base/memory/weak_ptr.h"
++#include "ui/shell_dialogs/select_file_dialog_linux.h"
++
++namespace ui {
++
++// Spatiand: files chosen in Spatiand's own chooser, a window of the room (crates/spatiand-choose
++// in Spatiand, carried in the APK as libspatiand-choose.so and in the Mac's Spatiand.app as
++// Contents/MacOS/spatiand-choose), for SpatiMesh on Android's libc and on the Mac, where there
++// is no desktop portal to ask as there is on the Deck (android-libc/0019). The chooser is run as
++// a program, which writes what was chosen, a path a line.
++class SelectFileDialogLinuxSpatiand : public SelectFileDialogLinux {
++ public:
++  SelectFileDialogLinuxSpatiand(Listener* listener, std::unique_ptr<SelectFilePolicy> policy);
++  SelectFileDialogLinuxSpatiand(const SelectFileDialogLinuxSpatiand&) = delete;
++  SelectFileDialogLinuxSpatiand& operator=(const SelectFileDialogLinuxSpatiand&) = delete;
++
++  // SelectFileDialog:
++  bool IsRunning(gfx::NativeWindow parent_window) const override;
++
++ protected:
++  ~SelectFileDialogLinuxSpatiand() override;
++
++  // SelectFileDialog:
++  void SelectFileImpl(Type type,
++                      const std::u16string& title,
++                      const base::FilePath& default_path,
++                      const FileTypeInfo* file_types,
++                      int file_type_index,
++                      const base::FilePath::StringType& default_extension,
++                      gfx::NativeWindow owning_window,
++                      const GURL* caller) override;
++  bool HasMultipleFileTypeChoicesImpl() override;
++
++ private:
++  void Chosen(Type type, std::optional<std::vector<base::FilePath>> paths);
++
++  bool running_ = false;
++  base::WeakPtrFactory<SelectFileDialogLinuxSpatiand> weak_factory_{this};
++};
++
++}  // namespace ui
++
++#endif  // UI_SHELL_DIALOGS_SELECT_FILE_DIALOG_LINUX_SPATIAND_H_
+diff --git a/ui/shell_dialogs/shell_dialog_linux.cc b/ui/shell_dialogs/shell_dialog_linux.cc
+index 154651427f..60660347c9 100644
+--- a/ui/shell_dialogs/shell_dialog_linux.cc
++++ b/ui/shell_dialogs/shell_dialog_linux.cc
+@@ -3,6 +3,7 @@
+ // found in the LICENSE file.
+ 
+ #include "base/notreached.h"
++#include "build/build_config.h"
+ #include "build/config/linux/dbus/buildflags.h"
+ #include "ui/linux/linux_ui.h"
+ #include "ui/shell_dialogs/select_file_dialog_linux.h"
+@@ -12,12 +13,20 @@
+ #include "ui/shell_dialogs/select_file_dialog_linux_portal.h"
+ #endif
+ 
++#if defined(__TERMUX__) || BUILDFLAG(IS_MAC_LINUX_UI)
++#include "ui/shell_dialogs/select_file_dialog_linux_spatiand.h"
++#endif
++
+ namespace ui {
+ 
+ SelectFileDialog* CreateSelectFileDialog(
+     SelectFileDialog::Listener* listener,
+     std::unique_ptr<SelectFilePolicy> policy) {
+-#if BUILDFLAG(USE_DBUS)
++#if defined(__TERMUX__) || BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: no desktop portal on Android or on the Mac; Spatiand's own chooser
++  // (android-libc/0019).
++  return new SelectFileDialogLinuxSpatiand(listener, std::move(policy));
++#elif BUILDFLAG(USE_DBUS)
+   return new SelectFileDialogLinuxPortal(listener, std::move(policy));
+ #else
+   const LinuxUi* linux_ui = LinuxUi::instance();
 diff --git a/ui/snapshot/BUILD.gn b/ui/snapshot/BUILD.gn
 index e9dbc8b20e..7242821843 100644
 --- a/ui/snapshot/BUILD.gn

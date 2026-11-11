@@ -1,0 +1,13 @@
+<html><head><title>Menus</title></head><body style="background:#345;color:white;font:28px sans-serif">
+<h1>Menus</h1>
+<p><select id=s style="font:28px sans-serif;width:400px"><option>one<option>two<option>three<option>four</select></p>
+<p><a id=a href="page.html">a link to page.html</a></p>
+<p><input id=i style="font:28px sans-serif" placeholder="type here"> <input type=file id=f></p>
+<p id=out></p>
+<script>
+const say = (...a) => { console.log("[menus]", ...a); out.textContent = a.join(" "); };
+s.addEventListener("change", () => say("select", s.value));
+addEventListener("contextmenu", e => say("contextmenu", e.clientX, e.clientY));
+addEventListener("mousedown", e => console.log("[menus] down", e.clientX, e.clientY, e.button, "screen", e.screenX, e.screenY, "window at", screenX, screenY, "outer", outerWidth, outerHeight, "inner", innerWidth, innerHeight));
+f.addEventListener("change", () => say("file", f.files.length && f.files[0].name));
+</script></body></html>

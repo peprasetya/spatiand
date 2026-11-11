@@ -10,6 +10,8 @@ import struct
 import subprocess
 import sys
 
+import os
+DSYM = os.path.expanduser("~/Developer/spatiand-chromium-mac/chromium/src/out/mac-ozone/SpatiMesh Framework.dSYM/Contents/Resources/DWARF/SpatiMesh Framework")
 STREAM_THREADS, STREAM_MODULES, STREAM_EXCEPTION, STREAM_MEMORY = 3, 4, 6, 5
 
 
@@ -102,7 +104,7 @@ def main(path):
                 names[i] = f"{a:#x} ?"
             continue
         try:
-            out = subprocess.run(["atos", "-o", name, "-l", hex(base)] + [hex(a) for _, a in items],
+            out = subprocess.run(["atos", "-o", (DSYM if "SpatiMesh Framework" in name else name), "-l", hex(base)] + [hex(a) for _, a in items],
                                  capture_output=True, text=True, timeout=60).stdout.splitlines()
         except Exception as e:
             out = [str(e)] * len(items)
