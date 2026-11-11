@@ -196,15 +196,22 @@ final class GlassesScreen {
     private func wait(tries: Int) {
         guard opening else { missingSince = nil; return }
         guard let id = Self.findDisplay() else {
+            // macOS may be holding the display back behind its question of what to show on it,
+            // put where nobody can see it (DisplayPrompt.swift): answered for the wearer.
+            DisplayPrompt.answerForHeadset()
             if screensAsleep {
                 missingSince = nil
             } else if missingSince == nil {
                 missingSince = Date()
             } else if let since = missingSince, Date().timeIntervalSince(since) > Self.missingAfter, !missingSaid {
                 missingSaid = true
-                let text = "The glasses are plugged in, but their screen has not come on. Unplug them, and plug them in again."
+                // Plugging them in again would only bring macOS's question back, were that it.
+                let asked = DisplayPrompt.isUp
+                let text = asked
+                    ? "The Mac is asking what to show on the glasses, on its own screen. Choose an additional display there."
+                    : "The glasses are plugged in, but their screen has not come on. Unplug them, and plug them in again."
                 print("glasses: plugged in (USB) for \(Int(Self.missingAfter)) s awake with no display: \(text)")
-                say("The glasses' display has not come on: unplug them and plug them in again")
+                say(asked ? "The Mac is asking what to show on the glasses" : "The glasses' display has not come on: unplug them and plug them in again")
                 voice.speak(AVSpeechUtterance(string: text))
             }
             if !missingSaid { say("Waiting for the glasses' display") }
