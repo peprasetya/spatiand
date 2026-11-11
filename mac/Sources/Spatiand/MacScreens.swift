@@ -111,8 +111,12 @@ enum MacScreens {
         guard w > 0, h > 0, w != now.width || h != now.height else { return }
         if settling { print("screens: the virtual screen is \(w)x\(h) while it is being set up; not taken for a choice"); return }
         guard CGDisplayIsActive(id) != 0, CGDisplayMirrorsDisplay(id) == kCGNullDirectDisplay else { return }
-        if displaysChanged {
-            print("screens: macOS put the virtual screen at \(w)x\(h) as the displays changed; not a choice, asked back to \(now.width)x\(now.height)")
+        // **And only with macOS's settings open.** The few seconds above were not shown to catch
+        // every such change (an imitation of one was still kept, 2026-11-11), and nothing but
+        // System Settings lets the owner choose a size: without it running, the change is not his.
+        let settingsOpen = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences").isEmpty
+        if displaysChanged || !settingsOpen {
+            print("screens: macOS put the virtual screen at \(w)x\(h) \(displaysChanged ? "as the displays changed" : "with its settings closed"); not a choice, asked back to \(now.width)x\(now.height)")
             DispatchQueue.global(qos: .userInitiated).async { settle(made) }
             return
         }
