@@ -268,3 +268,26 @@ mac/wip/linux-ui.patch`, and `patch -p1` the libwayland one in `third_party/wayl
   Apple, in `ui/events/event_constants.h`: changing it rebuilds nearly everything and changes every
   shortcut, a decision and a long build); every exit ends in a trap (three dangling pointers at
   teardown, which Cromite's build checks; Crashpad keeps its folder under its own limit).
+
+## 2026-11-12: the page that went dead after a link's drag, visited links from other machines
+
+- **A link pressed with a moving pointer and let go at once** left the page deaf to the pointer
+  until it was loaded again (shared patch 0026, `WebContentsViewAura`): what a drag entered over
+  is found asynchronously when another site's frame is under it, and the answer, coming after the
+  drag had left, marked a drag as in progress for good; the next drag that got no enter of its own
+  then never told the page it had ended. Rig: `links.html?frame` through `sk.sh` (two aborted
+  drags, the second let go over nothing with `roomup`), then a click and a right click.
+  Why a press becomes a drag here: Chromium starts a drag after a few pixels of movement with the
+  button down, and in the glasses the head moves the pointer during the press; the Deck's pad
+  pointer stands still under a pressing thumb. The place to steady it is the room, for every
+  platform and application: hold the pointer where the button went down until it has moved past a
+  small angle (as `spatiand-input/steady.rs` does for the pads), not a threshold in each client.
+- **Visited links** from other machines (shared patch 0025): see docs/spatimesh.md. Rig:
+  `visited.py seed`, `visited.html` at localhost and at 127.0.0.1, `visited.py read` on a
+  DevTools picture.
+- **The wip holds 0024, 0025 and 0026 too**: `mac/wip/linux-ui.patch` is the Mac tree against
+  patches 0001-0023, so it carries the hunks of the three shared patches made since (blink's
+  `web_page_popup_impl.cc`; `history_sync.*`, `history_service.*`; the drag-enter hunks of
+  `web_contents_view_aura.*`, which also has the port's own). A Mac tree made anew applies the wip
+  alone, or 0024-0026 first and the wip with `git apply --3way`; they are committed into the Mac
+  tree at the next rebase, when LASTCHANGE moves anyway.

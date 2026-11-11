@@ -1,0 +1,361 @@
+From 0000000000000000000000000000000000000025 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Thu, 12 Nov 2026 06:10:00 +0700
+Subject: [PATCH] Spatiand: a page visited on one machine is a visited link on
+ the others
+
+Visits taken in from the other machines (HistorySync, patch 0009) were in the
+history page and never coloured as visited: Chromium colours a link by its
+row in the VisitedLinkDatabase (link, top-level page, frame) and the table
+made from it, which only a navigation on this machine made. Now each visit
+written for the others carries the page its link was followed on when
+Chromium knows it ("top" and "frame", optional: older files and builds read
+and write as before); a visit taken in gets its row and its place in the
+table at once, under the page that came with it, or, with none (every visit
+shared until now), on its own site; and what was in history before this gets
+the same once (a marker in the profile's local folder,
+visited-links-made).
+---
+ chrome/browser/spatiand/history_sync.cc   | 177 ++++++++++++++++++++-
+ chrome/browser/spatiand/history_sync.h    |  18 +++
+ .../history/core/browser/history_service.cc        |  14 ++
+ .../history/core/browser/history_service.h         |   8 +
+ 4 files changed, 215 insertions(+), 2 deletions(-)
+
+diff --git a/chrome/browser/spatiand/history_sync.cc b/chrome/browser/spatiand/history_sync.cc
+index 34c3fe9..8d13080 100644
+--- a/chrome/browser/spatiand/history_sync.cc
++++ b/chrome/browser/spatiand/history_sync.cc
+@@ -19,6 +19,10 @@
+ #include "chrome/browser/history/history_service_factory.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/spatiand/shared_folder.h"
++#include "base/files/file_util.h"
++#include "components/history/core/browser/history_database.h"
++#include "components/history/core/browser/history_db_task.h"
++#include "components/history/core/browser/history_service.h"
+ #include "components/history/core/browser/history_types.h"
+ #include "components/history/core/browser/url_row.h"
+ #include "url/gurl.h"
+@@ -51,6 +55,10 @@ base::ListValue VisitsToList(const std::vector<HistorySync::Visit>& visits) {
+     dict.Set("url", visit.url);
+     dict.Set("title", visit.title);
+     dict.Set("at", visit.at);
++    if (!visit.top.empty() && !visit.frame.empty()) {
++      dict.Set("top", visit.top);
++      dict.Set("frame", visit.frame);
++    }
+     list.Append(std::move(dict));
+   }
+   return list;
+@@ -76,6 +84,12 @@ std::vector<HistorySync::Visit> VisitsFromFile(const base::FilePath& file) {
+         visit.title = base::UTF8ToUTF16(*title);
+       }
+       visit.at = *at;
++      const std::string* top = item.GetDict().FindString("top");
++      const std::string* frame = item.GetDict().FindString("frame");
++      if (top && frame) {
++        visit.top = *top;
++        visit.frame = *frame;
++      }
+       visits.push_back(std::move(visit));
+     }
+   }
+@@ -110,6 +124,105 @@ bool Hides(const HistorySync::Forgotten& forgotten, const HistorySync::Visit& vi
+ 
+ }  // namespace
+ 
++// Where a visit's link counts as visited: under the page it was followed on, when that came with
++// it; else on its own site (top-level site and frame origin the link's own), which is the common
++// case of a page listing pages of its own site, and all that a visit with no page can say.
++std::optional<HistorySync::Link> LinkOf(const HistorySync::Visit& visit) {
++  HistorySync::Link link;
++  link.url = GURL(visit.url);
++  if (!link.url.is_valid() || !link.url.SchemeIsHTTPOrHTTPS()) {
++    return std::nullopt;
++  }
++  link.top = GURL(visit.top);
++  link.frame = GURL(visit.frame);
++  if (!link.top.is_valid() || !link.frame.is_valid()) {
++    link.top = link.url.GetWithEmptyPath();
++    link.frame = link.top;
++  }
++  return link;
++}
++
++// On the history thread: the rows of the VisitedLinkDatabase for links whose addresses are in
++// history already. `everything` is the pass made once for what was in history before this was
++// done (visits taken in from other machines earlier, whose files are not read again): every
++// address there, on its own site.
++class MakeLinks : public history::HistoryDBTask {
++ public:
++  MakeLinks(std::vector<HistorySync::Link> links,
++            base::FilePath everything_marker,
++            base::OnceCallback<void(std::vector<HistorySync::Link>)> done)
++      : links_(std::move(links)), marker_(std::move(everything_marker)), done_(std::move(done)) {}
++
++  bool RunOnDBThread(history::HistoryBackend* backend, history::HistoryDatabase* db) override {
++    if (!db) {
++      links_.clear();
++      return true;
++    }
++    if (!marker_.empty() && !base::PathExists(marker_)) {
++      history::URLDatabase::URLEnumerator all;
++      if (db->InitURLEnumeratorForEverything(&all)) {
++        history::URLRow row;
++        while (all.GetNextURL(&row)) {
++          if (row.visit_count() > 0 && !row.hidden() && row.url().SchemeIsHTTPOrHTTPS()) {
++            HistorySync::Link link;
++            link.url = row.url();
++            link.top = row.url().GetWithEmptyPath();
++            link.frame = link.top;
++            links_.push_back(std::move(link));
++          }
++        }
++      }
++      base::CreateDirectory(marker_.DirName());
++      base::WriteFile(marker_, "1");
++    }
++    std::vector<HistorySync::Link> made;
++    for (HistorySync::Link& link : links_) {
++      const history::URLID id = db->GetRowForURL(link.url, nullptr);
++      if (!id) {
++        continue;
++      }
++      history::VisitedLinkRow row;
++      if (db->GetRowForVisitedLink(id, link.top, link.frame, row) ||
++          db->AddVisitedLink(id, link.top, link.frame, 1)) {
++        made.push_back(std::move(link));
++      }
++    }
++    links_ = std::move(made);
++    return true;
++  }
++
++  void DoneRunOnMainThread() override { std::move(done_).Run(std::move(links_)); }
++
++ private:
++  std::vector<HistorySync::Link> links_;
++  const base::FilePath marker_;
++  base::OnceCallback<void(std::vector<HistorySync::Link>)> done_;
++};
++
++// On the history thread: the page a visit's link was followed on, from the row Chromium made.
++class FindPage : public history::HistoryDBTask {
++ public:
++  FindPage(history::VisitedLinkID id, base::OnceCallback<void(GURL, GURL)> done)
++      : id_(id), done_(std::move(done)) {}
++
++  bool RunOnDBThread(history::HistoryBackend* backend, history::HistoryDatabase* db) override {
++    history::VisitedLinkRow row;
++    if (db && db->GetVisitedLinkRow(id_, row)) {
++      top_ = row.top_level_url;
++      frame_ = row.frame_url;
++    }
++    return true;
++  }
++
++  void DoneRunOnMainThread() override { std::move(done_).Run(std::move(top_), std::move(frame_)); }
++
++ private:
++  const history::VisitedLinkID id_;
++  GURL top_;
++  GURL frame_;
++  base::OnceCallback<void(GURL, GURL)> done_;
++};
++
+ HistorySync::News::News() = default;
+ HistorySync::News::News(News&&) = default;
+ HistorySync::News& HistorySync::News::operator=(News&&) = default;
+@@ -284,9 +397,17 @@ HistorySync::HistorySync(Profile* profile,
+                          const std::string& id,
+                          scoped_refptr<base::SequencedTaskRunner> files)
+     : history_(HistoryServiceFactory::GetForProfile(profile, ServiceAccessType::EXPLICIT_ACCESS)),
++      links_made_file_(LocalProfileDir(id).Append("visited-links-made")),
+       files_(std::move(files), id) {
+   if (history_) {
+     observation_.Observe(history_);
++    // Once: what is in history from before visited links were made for what is taken in.
++    history_->ScheduleDBTask(
++        FROM_HERE,
++        std::make_unique<MakeLinks>(
++            std::vector<Link>(), links_made_file_,
++            base::BindOnce(&HistorySync::OnLinksMade, weak_factory_.GetWeakPtr())),
++        &tracker_);
+     Poll();
+   }
+ }
+@@ -341,6 +462,20 @@ void HistorySync::OnNews(News news) {
+       rows.push_back(std::move(row));
+     }
+     history_->AddPagesWithDetails(rows, history::SOURCE_BROWSED);
++    // A link is coloured as visited by its row in the VisitedLinkDatabase and the table made
++    // from it, which only a navigation here makes: made for these, after their addresses are in.
++    std::vector<Link> links;
++    for (const Visit* visit : visits) {
++      if (std::optional<Link> link = LinkOf(*visit)) {
++        links.push_back(std::move(*link));
++      }
++    }
++    history_->ScheduleDBTask(
++        FROM_HERE,
++        std::make_unique<MakeLinks>(
++            std::move(links), base::FilePath(),
++            base::BindOnce(&HistorySync::OnLinksMade, weak_factory_.GetWeakPtr())),
++        &tracker_);
+   }
+   for (const Forgotten& forgotten : news.forgotten) {
+     std::set<GURL> urls;
+@@ -360,6 +495,24 @@ void HistorySync::OnNews(News news) {
+   }
+ }
+ 
++void HistorySync::OnLinksMade(std::vector<Link> links) {
++  if (!history_) {
++    return;
++  }
++  for (const Link& link : links) {
++    history_->AddPartitionedVisitedLinkForSpatiand(link.url, link.top, link.frame);
++  }
++}
++
++void HistorySync::Record(Visit visit) {
++  if (last_ && last_->url == visit.url && last_->at == visit.at) {
++    last_->top = visit.top;
++    last_->frame = visit.frame;
++  }
++  unsaved_.push_back(std::move(visit));
++  SaveSoon();
++}
++
+ void HistorySync::SaveSoon() {
+   if (!save_timer_.IsRunning()) {
+     save_timer_.Start(FROM_HERE, kSaveAfter, base::BindOnce(
+@@ -383,8 +536,28 @@ void HistorySync::OnURLVisited(history::HistoryService* history_service,
+   visit.title = row.title();
+   visit.at = MsOfTime(visited_url_info.visit_row.visit_time);
+   last_ = visit;
+-  unsaved_.push_back(std::move(visit));
+-  SaveSoon();
++  // The page the link was followed on goes with it, for the other machines to colour it by.
++  const history::VisitedLinkID link = visited_url_info.visit_row.visited_link_id;
++  if (link == history::kInvalidVisitedLinkID) {
++    Record(std::move(visit));
++    return;
++  }
++  history_->ScheduleDBTask(
++      FROM_HERE,
++      std::make_unique<FindPage>(
++          link, base::BindOnce(
++                    [](base::WeakPtr<HistorySync> self, Visit visit, GURL top, GURL frame) {
++                      if (!self) {
++                        return;
++                      }
++                      if (top.is_valid() && frame.is_valid()) {
++                        visit.top = top.spec();
++                        visit.frame = frame.spec();
++                      }
++                      self->Record(std::move(visit));
++                    },
++                    weak_factory_.GetWeakPtr(), std::move(visit))),
++      &tracker_);
+ }
+ 
+ void HistorySync::OnURLsModified(history::HistoryService* history_service,
+diff --git a/chrome/browser/spatiand/history_sync.h b/chrome/browser/spatiand/history_sync.h
+index 825ff9c..9d76dcc 100644
+--- a/chrome/browser/spatiand/history_sync.h
++++ b/chrome/browser/spatiand/history_sync.h
+@@ -19,6 +19,7 @@
+ #include "base/timer/timer.h"
+ #include "components/history/core/browser/history_service.h"
+ #include "components/history/core/browser/history_service_observer.h"
++#include "url/gurl.h"
+ 
+ class Profile;
+ 
+@@ -44,6 +45,17 @@ class HistorySync : public history::HistoryServiceObserver {
+     std::u16string title;
+     std::string url;
+     double at = 0;
++    // The page the link was followed on, when Chromium knew it: the top-level page's address and
++    // the frame's ("top" and "frame" in the file; older files and builds have neither). A link is
++    // coloured as visited only where it is seen under the same top-level site and frame origin.
++    std::string top;
++    std::string frame;
++  };
++  // One partitioned visited link: the link, and the top-level page and frame it counts under.
++  struct Link {
++    GURL url;
++    GURL top;
++    GURL frame;
+   };
+   struct Forgotten {
+     std::optional<std::string> url;
+@@ -66,6 +78,10 @@ class HistorySync : public history::HistoryServiceObserver {
+  private:
+   void OnNews(News news);
+   void SaveSoon();
++  // A visit made here, with the page it was followed on if there was one.
++  void Record(Visit visit);
++  // Links whose rows are in the database now: into the table the renderers colour by.
++  void OnLinksMade(std::vector<Link> links);
+ 
+   // history::HistoryServiceObserver:
+   void OnURLVisited(history::HistoryService* history_service,
+@@ -76,6 +92,8 @@ class HistorySync : public history::HistoryServiceObserver {
+                           const history::DeletionInfo& deletion_info) override;
+ 
+   const raw_ptr<history::HistoryService> history_;
++  // Its being there says this profile's earlier history has had its visited links made.
++  const base::FilePath links_made_file_;
+   base::SequenceBound<Files> files_;
+   base::OneShotTimer save_timer_;
+   std::optional<Visit> last_;
+diff --git a/components/history/core/browser/history_service.cc b/components/history/core/browser/history_service.cc
+index 106df05..3ab470d 100644
+--- a/components/history/core/browser/history_service.cc
++++ b/components/history/core/browser/history_service.cc
+@@ -670,6 +670,20 @@ void HistoryService::AddPage(HistoryAddPageArgs add_page_args) {
+                               add_page_args));
+ }
+ 
++void HistoryService::AddPartitionedVisitedLinkForSpatiand(
++    const GURL& link_url,
++    const GURL& top_level_url,
++    const GURL& frame_url) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  if (!visit_delegate_ || !link_url.is_valid() || !top_level_url.is_valid() ||
++      !frame_url.is_valid()) {
++    return;
++  }
++  VisitedLink link = {link_url, net::SchemefulSite(top_level_url),
++                      url::Origin::Create(frame_url)};
++  visit_delegate_->AddVisitedLink(link);
++}
++
+ void HistoryService::AddPartitionedVisitedLinks(
+     const HistoryAddPageArgs& args) {
+   // Ensure that we can communicate to our in-memory hashtable.
+diff --git a/components/history/core/browser/history_service.h b/components/history/core/browser/history_service.h
+index 15f9447..df83ed1 100644
+--- a/components/history/core/browser/history_service.h
++++ b/components/history/core/browser/history_service.h
+@@ -220,6 +220,14 @@ class HistoryService : public KeyedService,
+   // history db (it never gets cleaned).
+   void AddPageNoVisitForBookmark(const GURL& url, const std::u16string& title);
+ 
++  // Spatiand: a partitioned visited link put in the in-memory table the
++  // renderers colour links by, with no visit made for it: for history taken in
++  // from another machine (chrome/browser/spatiand/history_sync.cc), whose row
++  // in the VisitedLinkDatabase that code writes itself.
++  void AddPartitionedVisitedLinkForSpatiand(const GURL& link_url,
++                                            const GURL& top_level_url,
++                                            const GURL& frame_url);
++
+   // Sets the title for the given page. The page should be in history. If it
+   // is not, this operation is ignored.
+   void SetPageTitle(const GURL& url, const std::u16string& title);
+-- 
+2.53.0
+
