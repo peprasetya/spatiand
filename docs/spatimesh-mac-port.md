@@ -188,3 +188,38 @@ deepmagpie after each step) writes `mac/wip/linux-ui.patch` and `mac/wip/libwayl
 shutdown nothing needs restoring: run `ozbuild.sh` again (under `caffeinate -i -s`), and the build
 goes on from what it had. Only if the tree were lost: a fresh Mac checkout, `git apply
 mac/wip/linux-ui.patch`, and `patch -p1` the libwayland one in `third_party/wayland/src`.
+
+## Morning of 2026-11-11: the GPU, the keyboard, the media
+
+- **Keyboard**: keys arrived (keydown with the right key and modifiers) but no text was typed.
+  Two causes: `use_xkbcommon` is Linux-only in GN (now on, linking the room's own
+  `mac/xkbcommon`, as the Beam Pro links the compositor's; headers kept in
+  `third_party/spatiand_xkbcommon/include`, the library copied in by `ozbuild.sh`), and
+  `ui/base/ime/init/input_method_factory.cc` took `IS_APPLE` before `IS_OZONE`, giving the Cocoa
+  `InputMethodMac`, which never inserts text. Typing into pages, the address bar and the profile
+  lock's PIN tested. Shortcuts are the Mac's (Cmd+L etc.).
+- **GPU**: Chromium's own Mac presenter draws each frame into an IOSurface (Graphite on Dawn/Metal).
+  With remote CoreAnimation off (`ui/base/cocoa/remote_layer_api.mm`: no CALayer host in the Linux
+  UI) and macOS's overlay processor (the primary plane, one layer), `CALayerParams` carries the
+  frame's IOSurface; `viz::HostDisplayClient` hands it to `OzonePlatform::ShowIOSurfaceFrame`,
+  and `ui/ozone/platform/wayland/host/spatiand_iosurface_handover.cc` gives it to the room as
+  every Spatiand application on the Mac does (`spatiand-surfaces` + the `SPSF` placeholder of
+  `spatiand_proto::handover`), attached once per size through Ozone's frames, the name rewritten
+  each frame. Nothing copied. `--disable-gpu` is gone from `own.rs`. The room now reads a client
+  IOSurface in its own pixel format (Chromium's are RGBA). Software mode keeps the stub overlay
+  processor and the Ozone canvas.
+- **SpatiKey** on the Mac listens in `~/Library/Application Support/Spatiand/spatikey.sock`
+  (spatikey-core); `components/spatikey/client.cc` looked in the runtime folder, so the locked
+  profile had no fingerprint button and logins none of SpatiKey's. Fixed and tested.
+- **Media** (patch 0023, all platforms): H.264/HEVC in MPEG-TS gave VideoToolbox nothing but
+  end-of-stream (the Annex-B converter dropped every packet of a stream already in Annex B);
+  Opus in a file was dropped (Chromium's list names `libopus`, Spatiand's FFmpeg has `opus`);
+  MP2 is let in and read as MPEG audio; VOB gets FFmpeg's generated PTS. With the GPU, on the
+  M6: AV1 (VideoToolbox; still no software AV1, the owner's choice), H.264, HEVC, VP9, MPEG-2,
+  TS, VOB, AVI, MKV+SRT, Opus, Vorbis, FLAC, AAC, AC-3, MP3, MP2 all play. The earlier MP2 test
+  file was mono at 384 kbit/s, which Layer II does not allow; Symphonia refuses it, rightly.
+- Sound per window and the tab move re-tested with the GPU: as before.
+- Rig: `go-gpu.sh` (run.sh without `--disable-gpu`), `cdpmedia.py PORT URL` (a page's media log
+  over DevTools), `keys.html`, `matrix.html?f=a,b`.
+- **Trap**: rebuilding and re-signing Spatiand.app made macOS ask for Screen Recording again
+  (`universalAccessAuthWarn`), although the certificate and designated requirement are the same.
