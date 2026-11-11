@@ -223,3 +223,30 @@ mac/wip/linux-ui.patch`, and `patch -p1` the libwayland one in `third_party/wayl
   over DevTools), `keys.html`, `matrix.html?f=a,b`.
 - **Trap**: rebuilding and re-signing Spatiand.app made macOS ask for Screen Recording again
   (`universalAccessAuthWarn`), although the certificate and designated requirement are the same.
+
+## Night of 2026-11-11: an agent to macOS, the tab drag, SpatiKey, the chooser
+
+- **No Dock icon.** The browser's bundle is `chrome/app/app-linux-ui-Info.plist` (`LSUIElement`; no
+  document types, URL schemes, AppleScript or Handoff, so macOS does not offer it as a browser), and
+  `RegisterBrowserCrApp` sets the accessory policy. Chromium told its helpers from the browser by
+  `LSUIElement`: the browser's plist now says `SpatiandBrowserProcess`
+  (`base::apple::IsBackgroundOnlyProcess`). `lsappinfo` gives `type="UIElement"`.
+- **A tab dragged off its strip** started Chromium's window drag (a `wl_data_device` drag of
+  `chromium/x-window-drag`, in a nested loop), and `wayland_event_watcher_mac.cc` enabled its
+  one-shot read callback again only after dispatching, so inside that loop nothing was read: the tab
+  was gone, no window came, the browser could not end. Enabled before dispatching now. The Deck's
+  watcher is persistent and never had this.
+- **Quitting as on Linux**: `SetTryingToQuit` and the downloads-in-progress question
+  (`application_lifetime.cc`, `browser_close_manager.cc`) were left to Cocoa's AppController.
+- **SpatiKey** as on the Deck: `device/fido/spatikey` built and the platform authenticator (before
+  macOS's Touch ID keys and iCloud Keychain, which are not offered), the passkey dialog's Linux
+  branches, `SpatikeyPasswordStoreBackend`; Password Manager opens `Spatiand.app/Contents/MacOS/spatikey`.
+- **Files** are chosen in Spatiand's chooser (`android-libc/0019` brought over):
+  `Spatiand.app/Contents/MacOS/spatiand-choose`, which `mac/make-app.sh` does not carry yet.
+- Rig: `sk.sh` (the stand-in SpatiKey service), `menus.html`, `ext-parts`, `SM_APP`; the rig runs
+  with `--use-mock-keychain` (over ssh the login keychain is locked). A copy of the bundle runs only
+  from a folder named `SpatiMesh.app`.
+- **Open**: a page's `<select>` list opens at the page's coordinates taken as the window's (Cromite's
+  viewport protection gives the page a view at 0,0; seen on the Beam Pro too); every exit ends in a
+  trap (three dangling pointers at teardown, which Cromite's build checks); the Mac keeps Chromium's
+  key in the Keychain where the Deck and the Beam Pro run `--password-store=basic`.
