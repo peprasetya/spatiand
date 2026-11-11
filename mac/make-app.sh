@@ -36,7 +36,7 @@ cp ../third_party/NOTICES.md "$app/Contents/Resources/licences/"
 cp "../third_party/ffmpeg/src/ffmpeg-$FFMPEG_VERSION/COPYING.LGPLv3" "$app/Contents/Resources/licences/"
 cp "../third_party/ffmpeg/src/openssl-$OPENSSL_VERSION/LICENSE.txt" "$app/Contents/Resources/licences/OpenSSL-LICENSE.txt"
 cp Resources/hrtf/NOTICE.txt "$app/Contents/Resources/licences/mysofa-NOTICE.txt" 2>/dev/null || true
-OWN="spatireel spatiloupe spatiquill spatishelf spatipal spatikey"
+OWN="spatireel spatiloupe spatiquill spatishelf spatipal spatikey spatiand-choose"
 for own in $OWN; do
   if (cd .. && LIBCLANG_PATH="${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib}" \
       FFMPEG_PKG_CONFIG_PATH="$FFMPEG/lib/pkgconfig" \
