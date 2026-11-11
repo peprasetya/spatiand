@@ -86,7 +86,10 @@ enum MacScreens {
         CGGetActiveDisplayList(16, &ids, &count)
         let made = virtualDisplay
         var out: [MacWindowInfo] = []
-        for display in ids.prefix(Int(count)) where display != excluding && display != made {
+        // The glasses by what they are as well as by number: changing to two eyes they come
+        // back as another display, and for that moment were offered as a screen, "Air"
+        // (2026-11-11: a Screen window of the room's own picture, 3840 wide).
+        for display in ids.prefix(Int(count)) where display != excluding && display != made && !GlassesScreen.isGlasses(display) {
             out.append(MacWindowInfo(windowID: windowID(for: display), pid: 0, bundle: bundle, app: "Screen", title: name(of: display),
                                      frame: CGDisplayBounds(display), display: display))
         }
