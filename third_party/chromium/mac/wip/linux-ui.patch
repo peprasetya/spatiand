@@ -716,7 +716,7 @@ index 65b9ce9bc4..596258862a 100644
  #endif // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
  
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 122d85bf51..a16b85f0d2 100644
+index 122d85bf51..ff25470d68 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -509,7 +509,8 @@ if (!is_android) {
@@ -774,7 +774,7 @@ index 122d85bf51..a16b85f0d2 100644
        "//components/remote_cocoa/app_shim:features",
        "//components/remote_cocoa/browser",
        "//sandbox/mac:seatbelt",
-@@ -1575,6 +1566,35 @@ source_set("core") {
+@@ -1575,6 +1566,40 @@ source_set("core") {
        "//third_party/crashpad/crashpad/client",
      ]
  
@@ -783,7 +783,12 @@ index 122d85bf51..a16b85f0d2 100644
 +    # system (desktop files, xdg-settings, GLib) and is not built here.
 +    if (is_mac_linux_ui) {
 +      sources += [ "shell_integration_linux_ui_mac.cc" ]
-+      deps += [ ":shell_integration_linux" ]
++      deps += [
++        ":shell_integration_linux",
++
++        # Spatiand: the encryption key of the Deck and the Beam Pro, not the Keychain's.
++        "//components/os_crypt/async/browser:posix_key_provider",
++      ]
 +    }
 +
 +    # Spatiand: Chromium's Cocoa browser UI (its app controller and menu bar, Cocoa's key
@@ -810,7 +815,7 @@ index 122d85bf51..a16b85f0d2 100644
      frameworks = [
        "Accelerate.framework",
        "AudioUnit.framework",
-@@ -1617,11 +1637,10 @@ source_set("core") {
+@@ -1617,11 +1642,10 @@ source_set("core") {
      }
    }
  
@@ -825,7 +830,7 @@ index 122d85bf51..a16b85f0d2 100644
        "spatiand/bookmark_sync.cc",
        "spatiand/bookmark_sync.h",
        "spatiand/cookie_sync.cc",
-@@ -1648,6 +1667,14 @@ source_set("core") {
+@@ -1648,6 +1672,14 @@ source_set("core") {
        "spatiand/storage_sync.h",
        "spatiand/spatikey_window.h",
        "spatiand/shared_folder.h",
@@ -878,6 +883,40 @@ index 6f3c0f1955..1a49c6f2f0 100644
      sources += [ "background_mode_manager_mac.cc" ]
    }
    if (is_chromeos) {
+diff --git a/chrome/browser/browser_process_impl.cc b/chrome/browser/browser_process_impl.cc
+index 4095c9bc78..b53743da05 100644
+--- a/chrome/browser/browser_process_impl.cc
++++ b/chrome/browser/browser_process_impl.cc
+@@ -278,7 +278,7 @@ void OnLocalStatePrefsLoaded();
+ #include "components/password_manager/core/browser/password_manager_switches.h"
+ #endif
+ 
+-#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC)
++#if (BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC)) || BUILDFLAG(IS_MAC_LINUX_UI)
+ #include "components/os_crypt/async/browser/posix_key_provider.h"
+ #endif
+ 
+@@ -1621,14 +1621,18 @@ void BrowserProcessImpl::PreMainMessageLoopRun() {
+           password_store, l10n_util::GetStringUTF8(IDS_PRODUCT_NAME), nullptr));
+ #endif  // BUILDFLAG(IS_LINUX)
+ 
+-#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC)
++  // Spatiand: on the Mac's Linux UI too, and alone there: SpatiMesh keeps what
++  // it encrypts (cookies, Login Data) under the same key on every machine, the
++  // one the Deck and the Beam Pro have with --password-store=basic, so nothing
++  // is kept in, or asked of, the macOS Keychain ("Chromium Safe Storage").
++#if (BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC)) || BUILDFLAG(IS_MAC_LINUX_UI)
+   // On other POSIX systems, this is the only key provider. On Linux, it is used
+   // as a fallback.
+   providers.emplace_back(
+       /*precedence=*/5u, std::make_unique<os_crypt_async::PosixKeyProvider>());
+ #endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_LINUX)
+ 
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (base::FeatureList::IsEnabled(features::kUseKeychainKeyProvider)) {
+     providers.emplace_back(std::make_pair(
+         /*precedence=*/10u,
 diff --git a/chrome/browser/browser_process_platform_part_mac.mm b/chrome/browser/browser_process_platform_part_mac.mm
 index 05dd81cbf0..8e0719ae8f 100644
 --- a/chrome/browser/browser_process_platform_part_mac.mm
@@ -1116,6 +1155,21 @@ index b269f1610a..debc3f3c1c 100644
    [AppController.sharedController didEndMainMessageLoop];
 +#endif
  }
+diff --git a/chrome/browser/defaults.cc b/chrome/browser/defaults.cc
+index d7f6b37014..aba1ce560f 100644
+--- a/chrome/browser/defaults.cc
++++ b/chrome/browser/defaults.cc
+@@ -8,7 +8,9 @@
+ 
+ namespace browser_defaults {
+ 
+-#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI on macOS is the Deck's browser: no menu bar and no Dock icon to quit
++// from or to come back to, so it ends with its last window and has Exit in its menu, as on Linux.
++#if BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI))
+ const bool kBrowserAliveWithNoWindows = true;
+ const bool kShowExitMenuItem = false;
+ #else
 diff --git a/chrome/browser/download/BUILD.gn b/chrome/browser/download/BUILD.gn
 index 20809f42db..abfc29f8b1 100644
 --- a/chrome/browser/download/BUILD.gn
@@ -6790,6 +6844,21 @@ index 8e7df2da72..2c8ea9031a 100644
      frameworks = [
        "AppKit.framework",
        "CoreGraphics.framework",
+diff --git a/components/os_crypt/async/browser/BUILD.gn b/components/os_crypt/async/browser/BUILD.gn
+index 2309659150..a7a48dc6f2 100644
+--- a/components/os_crypt/async/browser/BUILD.gn
++++ b/components/os_crypt/async/browser/BUILD.gn
+@@ -94,7 +94,9 @@ if (is_win) {
+   }
+ }
+ 
+-if ((is_posix || is_fuchsia) && !is_apple) {
++# Spatiand: also for the Linux UI on macOS, whose key is the Deck's and the Beam Pro's
++# (--password-store=basic: this provider's), not one kept in the Keychain.
++if (((is_posix || is_fuchsia) && !is_apple) || is_mac_linux_ui) {
+   source_set("posix_key_provider") {
+     sources = [
+       "posix_key_provider.cc",
 diff --git a/components/remote_cocoa/app_shim/BUILD.gn b/components/remote_cocoa/app_shim/BUILD.gn
 index 8e61a19d40..67e5040cb7 100644
 --- a/components/remote_cocoa/app_shim/BUILD.gn
@@ -8977,6 +9046,49 @@ index c3af283ccd..2f53c23ebb 100644
 +; ($XDG_RUNTIME_DIR), and nothing else.
 +(allow network-outbound
 +  (remote unix-socket (path-regex #"/spatiand-(sound|mic)$")))
+diff --git a/third_party/blink/renderer/core/exported/web_page_popup_impl.cc b/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
+index d340cb8910..ca54143c36 100644
+--- a/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
++++ b/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
+@@ -29,6 +29,8 @@
+ 
+ #include "third_party/blink/renderer/core/exported/web_page_popup_impl.h"
+ 
++#include "base/numerics/safe_conversions.h"
++
+ #include <memory>
+ 
+ #include "base/functional/callback_helpers.h"
+@@ -987,8 +989,28 @@ gfx::Rect WebPagePopupImpl::GetAnchorRectInScreen() const {
+   LocalFrameView* view = popup_client_->OwnerElement().GetDocument().View();
+   DCHECK(view);
+ 
+-  return view->GetFrame().GetChromeClient().LocalRootToScreenDIPs(
++  gfx::Rect anchor = view->GetFrame().GetChromeClient().LocalRootToScreenDIPs(
+       popup_client_->OwnerElement().VisibleBoundsInLocalRoot(), view);
++  // Spatiand: the opener's screen rects are emulated ones while its screen is
++  // emulated (DevTools' device mode; under Cromite's viewport protection,
++  // always: the view at 0,0 and scaled), and this rect is made from them. The
++  // popup's own rect has the emulation reversed (SetWindowRect); the anchor
++  // had not, and a window system that places a popup by its anchor (Wayland:
++  // xdg_positioner's anchor rect) put a <select>'s list, a date or a colour
++  // picker at the element's place in the page taken as its place in the
++  // window. Reversed here as there.
++  if (opener_emulator_scale_) {
++    anchor = gfx::Rect(
++        opener_original_widget_screen_origin_.x() +
++            base::ClampRound((anchor.x() - opener_widget_screen_origin_.x()) *
++                             opener_emulator_scale_),
++        opener_original_widget_screen_origin_.y() +
++            base::ClampRound((anchor.y() - opener_widget_screen_origin_.y()) *
++                             opener_emulator_scale_),
++        base::ClampRound(anchor.width() * opener_emulator_scale_),
++        base::ClampRound(anchor.height() * opener_emulator_scale_));
++  }
++  return anchor;
+ }
+ 
+ WebInputEventResult WebPagePopupImpl::DispatchBufferedTouchEvents() {
 diff --git a/third_party/blink/renderer/platform/theme/web_theme_engine_mac.cc b/third_party/blink/renderer/platform/theme/web_theme_engine_mac.cc
 index ecb2723266..a6788b3882 100644
 --- a/third_party/blink/renderer/platform/theme/web_theme_engine_mac.cc

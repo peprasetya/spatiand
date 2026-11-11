@@ -246,7 +246,25 @@ mac/wip/linux-ui.patch`, and `patch -p1` the libwayland one in `third_party/wayl
 - Rig: `sk.sh` (the stand-in SpatiKey service), `menus.html`, `ext-parts`, `SM_APP`; the rig runs
   with `--use-mock-keychain` (over ssh the login keychain is locked). A copy of the bundle runs only
   from a folder named `SpatiMesh.app`.
-- **Open**: a page's `<select>` list opens at the page's coordinates taken as the window's (Cromite's
-  viewport protection gives the page a view at 0,0; seen on the Beam Pro too); every exit ends in a
-  trap (three dangling pointers at teardown, which Cromite's build checks); the Mac keeps Chromium's
-  key in the Keychain where the Deck and the Beam Pro run `--password-store=basic`.
+- **The encryption key is the Deck's** (the owner, 11-11: "make it same as deck and Android"):
+  this Chromium has only `os_crypt_async`, and the Mac registered the Keychain's provider
+  ("Chromium Safe Storage", PBKDF2 of 1003 rounds). The Linux UI on macOS registers the POSIX
+  provider alone (`chrome/browser/browser_process_impl.cc`; its target built for
+  `is_mac_linux_ui`): `v10`, PBKDF2 of "peanuts"/"saltysalt", one round, AES-128-CBC, which is what
+  `--password-store=basic` gives the Deck and the Beam Pro. A cookie the Mac wrote decrypted by
+  that rule on deepmagpie, and one encrypted there by that rule was read by the Mac. Nothing asks
+  the Keychain; the rig runs without `--use-mock-keychain`. **What the Mac had encrypted under the
+  Keychain's key (its cookies) no longer decrypts**: signed out on the Mac once, until the shared
+  cookies come back or he signs in again. The old Keychain item is left where it is.
+- **A page's `<select>` list, date and colour pickers** opened at the element's place in the page
+  taken as its place in the window: blink reverses the screen emulation (Cromite's viewport
+  protection: always on) for the popup's own rectangle but not for its anchor
+  (`WebPagePopupImpl::GetAnchorRectInScreen`), and Wayland places a popup by its anchor. Reversed
+  there too. Shared code: the Deck and the Beam Pro have the same fault by the same path and get the
+  fix when it is folded into a shared patch (a new one after 0023, or beside 0020).
+- **Exit** is in the menu and the browser is not kept alive with no window
+  (`chrome/browser/defaults.cc`), as on Linux.
+- **Open**: shortcuts are Command's and their labels mixed (`EF_PLATFORM_ACCELERATOR` is Command on
+  Apple, in `ui/events/event_constants.h`: changing it rebuilds nearly everything and changes every
+  shortcut, a decision and a long build); every exit ends in a trap (three dangling pointers at
+  teardown, which Cromite's build checks; Crashpad keeps its folder under its own limit).
