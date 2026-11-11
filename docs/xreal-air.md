@@ -328,6 +328,18 @@ Asynchronous events the glasses push, same framing:
 0x6C12 P_END_HEARTBEAT     0x6C09 P_ASYNC_TEXT_LOG
 ```
 
+**`0x6C18`: worn or taken off [measured, 2026-11-11].** In none of the public drivers. The sensor
+between the nose pads pushes it on every change, and once after plug-in (0, then 1 a few seconds
+later on a face): first payload byte `01` worn, `00` taken off, the rest zero. Found by taking an
+Air off and putting it on with the log open: off 50 s gave `00` then `01` 50 s apart, and a finger
+held to the sensor gave `01` and lit the panel. **Taken off, the glasses darken their own panel**
+and light it again when worn; the host's display stays connected and its frames go on being
+taken, so nothing on the host shows it but this event. A sensor that misreads on a face is
+therefore a black picture in the middle of use: on 2026-11-11 the log has thirteen `00`s in
+twenty minutes before the picture went black. The driver passes it on as `HmdEvent::Worn`.
+`W_SLEEP_TIME` (`0x1E`) may be how long the panel waits; its payload is not known and it has not
+been written.
+
 `P_DISPLAY_TOGGLED` and `P_BUTTON_PRESSED` are how a host learns the wearer pressed a
 button — including the brightness-up long press that toggles 2D/3D. A tool that wants to
 stay in step with the physical buttons should listen for these rather than poll.

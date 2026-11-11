@@ -69,6 +69,11 @@ const MCU_DATA_OFFSET: usize = 22;
 // Async events the glasses push unprompted.
 const EVT_DISPLAY_TOGGLED: u16 = 0x6C04;
 const EVT_BUTTON_PRESSED: u16 = 0x6C05;
+/// The sensor between the nose pads: whether the glasses are on a face. In no public driver;
+/// learnt on an XREAL Air on 2026-11-11 by taking them off and putting them on (first byte
+/// 0 off, 1 worn; the rest zero). Off, the glasses darken their own panel, and light it again
+/// when worn -- nothing the host draws or stops drawing.
+const EVT_WORN: u16 = 0x6C18;
 
 // --- IMU (interface 3) ---
 const IMU_HEAD: u8 = 0xAA;
@@ -312,6 +317,7 @@ impl XrealGlasses {
                     pressed: true,
                 })
             }
+            EVT_WORN => Some(HmdEvent::Worn(*data.first()? != 0)),
             _ => None,
         }
     }

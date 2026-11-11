@@ -107,6 +107,9 @@ pub enum HmdEvent {
     /// A brightness asked for with [`Hmd::request_brightness`] was not set. Treat the control
     /// as absent, as when [`Hmd::brightness`] fails.
     BrightnessFailed,
+    /// The glasses were put on (`true`) or taken off, by their own sensor, for the headsets
+    /// that have one and say so. Taken off, such glasses darken their panel themselves.
+    Worn(bool),
     Disconnected,
 }
 

@@ -463,11 +463,9 @@ impl<P: Port> Worker<P> {
         }
         let msgid = u16::from_le_bytes([packet[MCU_MSGID_OFFSET], packet[MCU_MSGID_OFFSET + 1]]);
         let Some(event) = XrealGlasses::decode_async(msgid, packet) else {
-            // **Said, not only traced**, each kind when its payload changes: what the glasses push
-            // when they are taken off and put back on (their proximity sensor) is not known yet,
-            // and the panel came back from it black, the last picture fading, the room drawing
-            // on (littleotter, 2026-11-10). The heartbeats are left out: they are many and say
-            // nothing new.
+            // **Said, not only traced**, each kind when its payload changes: that is how the
+            // sensor that tells worn from taken off was found (0x6C18, now `HmdEvent::Worn`).
+            // The heartbeats are left out: they are many and say nothing new.
             const HEARTBEATS: [u16; 2] = [0x6C02, 0x6C12];
             let payload = packet.get(MCU_DATA_OFFSET..).unwrap_or(&[]);
             let payload = &payload[..payload.len().min(16)];
@@ -486,6 +484,12 @@ impl<P: Port> Worker<P> {
             HmdEvent::Button { .. } | HmdEvent::DisplayModeChanged(_)
         ) {
             self.brightness_moved();
+        }
+        // Said each time: taken off, the glasses darken their own panel, and a sensor that
+        // says so on a face is a picture gone black with the room drawing on (littleotter,
+        // 2026-11-10 and -11) -- the log is then where that is told from anything else.
+        if let HmdEvent::Worn(worn) = event {
+            log::info!("the glasses say they {}", if worn { "are worn" } else { "were taken off" });
         }
         self.emit(event);
     }
