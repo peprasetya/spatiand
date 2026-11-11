@@ -457,6 +457,9 @@ pub struct Scene {
     /// lives (a browser tab, a file being edited) and two windows often share one. Bounded
     /// below so a client that rewrites its title every frame cannot grow this without limit.
     titles: std::collections::HashMap<String, Texture>,
+    /// Textures the cache let go of at its last emptying, deleted at the next one: ones made
+    /// earlier in the same frame are still to be drawn when the cache is emptied in the middle of it.
+    titles_let_go: Vec<u32>,
 
     /// One key drawn on its own and raised, for standing it off the face under the pointer.
     ///
@@ -668,6 +671,7 @@ impl Scene {
             icon_loader: crate::icon::Loader::start(),
             icons_received: 0,
             titles: std::collections::HashMap::new(),
+            titles_let_go: Vec::new(),
             key_caps: std::collections::HashMap::new(),
             keys: None,
             keys_latches: (false, false, false, false, spatiand_shell::keyboard::Dictating::Off),
@@ -1210,7 +1214,8 @@ impl Scene {
         // otherwise add a texture per frame. Dropping the cache is cheaper than tracking ages,
         // and the visible cost is one rebuild of each title still on screen.
         if self.titles.len() > 64 {
-            let ids: Vec<u32> = self.titles.values().map(|t| t.id).collect();
+            let now: Vec<u32> = self.titles.values().map(|t| t.id).collect();
+            let ids = std::mem::replace(&mut self.titles_let_go, now);
             let _ = renderer.with_context(|gl| unsafe {
                 for id in ids {
                     gl.DeleteTextures(1, &id);

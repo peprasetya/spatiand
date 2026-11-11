@@ -460,6 +460,9 @@ pub struct Sidecar {
     /// One texture per label, rebuilt only when the text changes, as
     /// `(id, aspect, ink centre)`. See [`Sidecar::label`] for what the third one is for.
     labels: std::collections::HashMap<String, (u32, f32, f32)>,
+    /// Textures the cache let go of at its last emptying, deleted at the next one: ones made
+    /// earlier in the same frame are still to be drawn when the cache is emptied in the middle of it.
+    labels_let_go: Vec<u32>,
     white: u32,
     /// Landscape size, i.e. the panel's dimensions swapped if it is mounted portrait.
     size: (f32, f32),
@@ -497,6 +500,7 @@ impl Sidecar {
         };
         Self {
             labels: std::collections::HashMap::new(),
+            labels_let_go: Vec::new(),
             white,
             size,
             portrait,
@@ -959,7 +963,8 @@ impl Sidecar {
             return Some(*existing);
         }
         if self.labels.len() > 128 {
-            let ids: Vec<u32> = self.labels.values().map(|(id, _, _)| *id).collect();
+            let now: Vec<u32> = self.labels.values().map(|(id, _, _)| *id).collect();
+            let ids = std::mem::replace(&mut self.labels_let_go, now);
             let _ = renderer.with_context(|gl| unsafe {
                 for id in ids {
                     gl.DeleteTextures(1, &id);
