@@ -1,0 +1,139 @@
+From 8bb5bcd7f8b428d1ced893f738b1c51f5f944483 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Wed, 11 Nov 2026 06:14:56 +0700
+Subject: [PATCH] Spatiand: H.264 and HEVC in MPEG-TS to hardware decoders,
+ Opus and MP2 in files, a VOB's timestamps
+
+A stream whose extra data is already Annex B (MPEG-TS, an elementary stream) is passed on as it
+is: read as an MP4 decoder configuration record, every packet of it was dropped once a hardware
+decoder (VideoToolbox, VA-API, MediaCodec) asked for Annex B, so it got no picture at all.
+FFmpeg's own Opus decoder (Chromium's FFmpeg names libopus) and its MPEG audio Layer II decoders
+are let probe a stream: an Opus track in a file had no sample format and was dropped. Layers I and
+II are MPEG audio as Layer III is, for Chromium's MP3 decoders. An MPEG program stream (a DVD's
+VOB) gives most packets no PTS: FFmpeg makes them, as its own players do.
+---
+ media/ffmpeg/ffmpeg_common.cc                  | 12 ++++++++++--
+ media/filters/ffmpeg_glue.cc                   |  3 +++
+ ...mpeg_h264_to_annex_b_bitstream_converter.cc | 18 ++++++++++++++++++
+ ...mpeg_h265_to_annex_b_bitstream_converter.cc | 18 ++++++++++++++++++
+ 4 files changed, 49 insertions(+), 2 deletions(-)
+
+diff --git a/media/ffmpeg/ffmpeg_common.cc b/media/ffmpeg/ffmpeg_common.cc
+index 8024fab1d9..e1d36aa591 100644
+--- a/media/ffmpeg/ffmpeg_common.cc
++++ b/media/ffmpeg/ffmpeg_common.cc
+@@ -152,6 +152,12 @@ AudioCodec CodecIDToAudioCodec(AVCodecID codec_id) {
+       return AudioCodec::kDTS;
+     case AV_CODEC_ID_MP3:
+       return AudioCodec::kMP3;
++    // Spatiand: MPEG-1/2 audio Layers I and II, which Chromium has no codec of their own for: the
++    // same MPEG audio as Layer III, which FFmpeg's MPEG audio decoder takes as it is (each frame's
++    // header names its layer).
++    case AV_CODEC_ID_MP1:
++    case AV_CODEC_ID_MP2:
++      return AudioCodec::kMP3;
+     case AV_CODEC_ID_VORBIS:
+       return AudioCodec::kVorbis;
+     case AV_CODEC_ID_PCM_U8:
+@@ -1152,8 +1158,10 @@ const char* GetAllowedAudioDecoders() {
+       "mp3,pcm_s16be,pcm_s24be,pcm_mulaw,pcm_alaw"
+       // Spatiand: Dolby Digital and Dolby Digital Plus, and DTS, by Spatiand's FFmpeg; and
+       // FFmpeg's own MP3 decoder, which is the one it gives for MP3 (Chromium's FFmpeg is built
+-      // with the fixed-point one alone): without it no MP3 played at all.
+-      ",ac3,eac3,dca,alac,mp3float" EXTRA_CODECS;
++      // with the fixed-point one alone): without it no MP3 played at all. FFmpeg's own Opus
++      // decoder (Chromium's FFmpeg names libopus): without it no Opus track in a file had a
++      // sample format, and it was dropped. MPEG-1/2 Layer II, a DVD's and a broadcast's sound.
++      ",ac3,eac3,dca,alac,mp3float,opus,mp2float,mp2fixed" EXTRA_CODECS;
+ #undef EXTRA_CODECS
+ 
+   return kAllowedAudioCodecs.data();
+diff --git a/media/filters/ffmpeg_glue.cc b/media/filters/ffmpeg_glue.cc
+index 38b0acb8b0..b4af4f5051 100644
+--- a/media/filters/ffmpeg_glue.cc
++++ b/media/filters/ffmpeg_glue.cc
+@@ -225,6 +225,9 @@ bool FFmpegGlue::OpenContext(bool is_local_file) {
+     container_ = container_names::MediaContainerName::kContainerMPEG2TS;
+   } else if (format_name == "mpeg") {
+     container_ = container_names::MediaContainerName::kContainerMPEG2PS;
++    // A DVD's VOB gives most packets no PTS: FFmpeg makes them from the stream, as its own
++    // players do, where Chromium stopped at the first.
++    format_context_->flags |= AVFMT_FLAG_GENPTS;
+   } else if (format_name == "flv") {
+     container_ = container_names::MediaContainerName::kContainerFLV;
+   } else if (format_name == "asf") {
+diff --git a/media/filters/ffmpeg_h264_to_annex_b_bitstream_converter.cc b/media/filters/ffmpeg_h264_to_annex_b_bitstream_converter.cc
+index 7f2fbc390d..9069f7a203 100644
+--- a/media/filters/ffmpeg_h264_to_annex_b_bitstream_converter.cc
++++ b/media/filters/ffmpeg_h264_to_annex_b_bitstream_converter.cc
+@@ -13,6 +13,20 @@
+ 
+ namespace media {
+ 
++namespace {
++
++// Spatiand: whether a stream's extra data is already Annex B (a start code first), as MPEG-TS's
++// and an elementary stream's are, rather than an MP4 decoder configuration record. Such a
++// stream's packets are byte streams already and are passed on as they are; read as a record,
++// every packet of it was dropped, and a hardware decoder got none.
++bool IsAnnexB(base::span<const uint8_t> extra) {
++  return (extra.size() >= 3 && extra[0] == 0 && extra[1] == 0 && extra[2] == 1) ||
++         (extra.size() >= 4 && extra[0] == 0 && extra[1] == 0 && extra[2] == 0 &&
++          extra[3] == 1);
++}
++
++}  // namespace
++
+ FFmpegH264ToAnnexBBitstreamConverter::FFmpegH264ToAnnexBBitstreamConverter(
+     AVCodecParameters* stream_codec_parameters)
+     : configuration_processed_(false),
+@@ -39,6 +53,10 @@ bool FFmpegH264ToAnnexBBitstreamConverter::ConvertPacket(AVPacket* packet) {
+       return true;
+     }
+ 
++    if (IsAnnexB(AVCodecParametersExtraDataToSpan(stream_codec_parameters_.get()))) {
++      return true;
++    }
++
+     avc_config = std::make_unique<mp4::AVCDecoderConfigurationRecord>();
+ 
+     if (!converter_.ParseConfiguration(
+diff --git a/media/filters/ffmpeg_h265_to_annex_b_bitstream_converter.cc b/media/filters/ffmpeg_h265_to_annex_b_bitstream_converter.cc
+index 0c4af787e3..6d6bad5742 100644
+--- a/media/filters/ffmpeg_h265_to_annex_b_bitstream_converter.cc
++++ b/media/filters/ffmpeg_h265_to_annex_b_bitstream_converter.cc
+@@ -15,6 +15,20 @@
+ 
+ namespace media {
+ 
++namespace {
++
++// Spatiand: whether a stream's extra data is already Annex B (a start code first), as MPEG-TS's
++// and an elementary stream's are, rather than an MP4 decoder configuration record. Such a
++// stream's packets are byte streams already and are passed on as they are; read as a record,
++// every packet of it was dropped, and a hardware decoder got none.
++bool IsAnnexB(base::span<const uint8_t> extra) {
++  return (extra.size() >= 3 && extra[0] == 0 && extra[1] == 0 && extra[2] == 1) ||
++         (extra.size() >= 4 && extra[0] == 0 && extra[1] == 0 && extra[2] == 0 &&
++          extra[3] == 1);
++}
++
++}  // namespace
++
+ FFmpegH265ToAnnexBBitstreamConverter::FFmpegH265ToAnnexBBitstreamConverter(
+     AVCodecParameters* stream_codec_parameters)
+     : stream_codec_parameters_(stream_codec_parameters) {
+@@ -37,6 +51,10 @@ bool FFmpegH265ToAnnexBBitstreamConverter::ConvertPacket(AVPacket* packet) {
+       return true;
+     }
+ 
++    if (IsAnnexB(AVCodecParametersExtraDataToSpan(stream_codec_parameters_.get()))) {
++      return true;
++    }
++
+     hevc_config_ = std::make_unique<mp4::HEVCDecoderConfigurationRecord>();
+ 
+     if (!hevc_config_->Parse(
+-- 
+2.53.0
+

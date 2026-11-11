@@ -6,7 +6,7 @@
 #   third_party/chromium/mac/save-wip.sh        run on deepmagpie; commits nothing itself
 #
 # wip/linux-ui.patch      Chromium's own files changed and the new files of the port, as one
-#                         diff against the patched tree (patches 0001-0022, mac/0001-0002)
+#                         diff against the patched tree (patches 0001-0023, mac/0001-0002)
 # wip/libwayland.patch    third_party/wayland/src, which Chromium's DEPS leaves out of a Mac
 #                         checkout and was copied from the Deck's tree: its macOS changes, as a
 #                         diff against the Deck's copy
