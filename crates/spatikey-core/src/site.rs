@@ -100,7 +100,13 @@ pub fn site_matches(site: &str, origin: &str) -> bool {
     }
     match (Host::parse(site), &page.host) {
         (Some(Host::Domain(domain)), Host::Domain(host)) => {
-            *host == domain || (host.ends_with(&format!(".{domain}")) && !is_public_suffix(&domain))
+            // Nor into the host's own public suffix, as `rp_id_ok` has it: a login kept for
+            // linode.com is not one for x.members.linode.com, a stranger's site under a suffix
+            // (members.linode.com) that happens to lie inside the domain.
+            *host == domain
+                || (host.ends_with(&format!(".{domain}"))
+                    && !is_public_suffix(&domain)
+                    && registrable(host).is_some_and(|own| domain.len() >= own.len()))
         }
         (Some(Host::Ip(site)), Host::Ip(host)) => site == *host,
         _ => false,
@@ -353,6 +359,16 @@ fn registrable(domain: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_site_under_a_suffix_inside_the_kept_domain_is_another_site() {
+        // members.linode.com is a public suffix of its own (the list's private part).
+        assert!(is_public_suffix("members.linode.com"));
+        assert!(!site_matches("linode.com", "https://x.members.linode.com"));
+        assert!(site_matches("linode.com", "https://cloud.linode.com"));
+        assert!(site_matches("example.co.uk", "https://a.b.example.co.uk"));
+        assert!(site_matches("mail.example.com", "https://a.mail.example.com"));
+    }
+
     use super::*;
 
     #[test]
