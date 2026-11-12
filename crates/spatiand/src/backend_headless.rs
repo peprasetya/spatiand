@@ -76,6 +76,7 @@ pub fn run(
 
         let screen = runtime.state.screen.clone();
         runtime.state.send_frames(&screen, crate::pose::frame_time());
+        crate::pose::refuse(&mut runtime.state);
         runtime.state.space.refresh();
         runtime.state.settle_keyboard_focus();
         display.dispatch_clients(&mut runtime.state)?;

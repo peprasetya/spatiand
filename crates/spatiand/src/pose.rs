@@ -88,6 +88,67 @@ impl Channel {
     }
 }
 
+/// Clients told there were no poses to give, kept for when there are: the protocol's note on
+/// `unavailable` is that the object stays alive and "`channel` may arrive later if a headset
+/// appears". They used to be forgotten as they were told, so an application started a moment
+/// before the glasses were plugged in never had its poses.
+#[derive(Default)]
+pub struct Waiting(Vec<spatiand_proto::server::spatiand_xr_pose_channel_v1::SpatiandXrPoseChannelV1>);
+
+/// Answer the clients that asked for poses, from a frame loop that draws for a head: the
+/// channel while one is `tracked` (made when first wanted), and `unavailable` while none is --
+/// once each, and the channel after all when a headset appears.
+pub fn answer(state: &mut crate::Spatiand, tracked: bool, channel: &mut Option<Channel>, waiting: &mut Waiting) {
+    use smithay::reexports::wayland_server::Resource;
+    if state.pose_clients.is_empty() && (waiting.0.is_empty() || !tracked) {
+        return;
+    }
+    state.pose_channels_to_open = false;
+    if !tracked {
+        for client in state.pose_clients.drain(..) {
+            client.unavailable("no headset is being tracked in this session".into());
+            waiting.0.push(client);
+        }
+        waiting.0.retain(|c| c.is_alive());
+        return;
+    }
+    if channel.is_none() {
+        match Channel::new() {
+            Ok(made) => *channel = Some(made),
+            Err(e) => log::warn!("could not make a pose channel: {e}"),
+        }
+    }
+    let asked = state.pose_clients.drain(..);
+    match channel.as_ref() {
+        Some(channel) => {
+            for client in waiting.0.drain(..).chain(asked).filter(|c| c.is_alive()) {
+                client.channel(channel.fd(), channel.size());
+            }
+            log::info!("a client is reading head poses");
+        }
+        None => {
+            for client in asked {
+                client.unavailable("the pose channel could not be created".into());
+            }
+            // Not tried again for those told before: it would be every frame.
+            waiting.0.clear();
+        }
+    }
+}
+
+/// The same answer from a room that never has poses to give (nested on a desktop, headless,
+/// the snapshot rig): `unavailable`, where there used to be no answer at all and a client
+/// waited for one.
+pub fn refuse(state: &mut crate::Spatiand) {
+    if state.pose_clients.is_empty() {
+        return;
+    }
+    state.pose_channels_to_open = false;
+    for client in state.pose_clients.drain(..) {
+        client.unavailable("this session has no head tracking".into());
+    }
+}
+
 /// One sample, in the wire's frame and field order.
 ///
 /// Both the local channel and the viewport sent to a host are built from this, so an

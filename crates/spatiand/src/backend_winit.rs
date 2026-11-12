@@ -638,6 +638,7 @@ pub fn run(
 
         let screen = runtime.state.screen.clone();
         runtime.state.send_frames(&screen, crate::pose::frame_time());
+        crate::pose::refuse(&mut runtime.state);
         runtime.state.space.refresh();
         // As in a session: whatever the layout says is focused is what the keyboard talks to.
         runtime.state.settle_keyboard_focus();

@@ -482,6 +482,7 @@ pub fn run(
             // send a second picture until it is told it may.
             let screen = runtime.state.screen.clone();
             runtime.state.send_frames(&screen, crate::pose::frame_time());
+            crate::pose::refuse(&mut runtime.state);
             runtime.state.space.refresh();
             windows = crate::scene::collect_windows(&mut renderer, &runtime.state);
             if !windows.is_empty() {
@@ -506,6 +507,7 @@ pub fn run(
                     while std::time::Instant::now() < until {
                         let screen = runtime.state.screen.clone();
                         runtime.state.send_frames(&screen, crate::pose::frame_time());
+                        crate::pose::refuse(&mut runtime.state);
                         runtime.state.space.refresh();
                         display.dispatch_clients(&mut runtime.state)?;
                         display.flush_clients()?;
@@ -528,6 +530,7 @@ pub fn run(
                             thumbs.frame(&mut runtime.state, &windows);
                             let screen = runtime.state.screen.clone();
                             runtime.state.send_frames(&screen, crate::pose::frame_time());
+                            crate::pose::refuse(&mut runtime.state);
                             runtime.state.space.refresh();
                             display.dispatch_clients(&mut runtime.state)?;
                             display.flush_clients()?;
@@ -543,6 +546,7 @@ pub fn run(
             while std::time::Instant::now() < settle {
                 let screen = runtime.state.screen.clone();
                 runtime.state.send_frames(&screen, crate::pose::frame_time());
+                crate::pose::refuse(&mut runtime.state);
                 runtime.state.space.refresh();
                 display.dispatch_clients(&mut runtime.state)?;
                 display.flush_clients()?;
@@ -673,6 +677,7 @@ pub fn run(
                             // frame. Without them most toolkits paint once and stop.
                             let screen = runtime.state.screen.clone();
                             runtime.state.send_frames(&screen, crate::pose::frame_time());
+                            crate::pose::refuse(&mut runtime.state);
                             runtime.state.space.refresh();
                             display.dispatch_clients(&mut runtime.state)?;
                             display.flush_clients()?;
@@ -713,6 +718,7 @@ pub fn run(
                             while std::time::Instant::now() < answered {
                                 let screen = runtime.state.screen.clone();
                                 runtime.state.send_frames(&screen, crate::pose::frame_time());
+                                crate::pose::refuse(&mut runtime.state);
                                 runtime.state.space.refresh();
                                 display.dispatch_clients(&mut runtime.state)?;
                                 display.flush_clients()?;
@@ -840,6 +846,7 @@ pub fn run(
                                 let finishing = dictating && dictation.look() != spatiand_shell::keyboard::Dictating::Off;
                                 let screen = runtime.state.screen.clone();
                                 runtime.state.send_frames(&screen, crate::pose::frame_time());
+                                crate::pose::refuse(&mut runtime.state);
                                 runtime.state.space.refresh();
                                 display.dispatch_clients(&mut runtime.state)?;
                                 display.flush_clients()?;

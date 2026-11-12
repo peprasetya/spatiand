@@ -270,6 +270,8 @@ pub fn run(
     crate::dmabuf::advertise(&mut runtime.state, &renderer);
     runtime.state.set_screen_refresh(REFRESH_MHZ);
     let mut pose_channel: Option<crate::pose::Channel> = None;
+    // Clients told there were none yet, for when there are. See `crate::pose::Waiting`.
+    let mut pose_waiting = crate::pose::Waiting::default();
     let frame_ns: i64 = 1_000_000_000_000i64 / REFRESH_MHZ as i64;
 
     let mut glasses: Option<Output> = None;
@@ -1121,33 +1123,7 @@ pub fn run(
             }
             crate::window::apply_resize_anchors(&mut runtime.state);
 
-            if !runtime.state.pose_clients.is_empty() {
-                if hmd.is_none() {
-                    for client in runtime.state.pose_clients.drain(..) {
-                        client.unavailable("no headset is being tracked in this session".into());
-                    }
-                } else {
-                    if pose_channel.is_none() {
-                        match crate::pose::Channel::new() {
-                            Ok(channel) => pose_channel = Some(channel),
-                            Err(e) => log::warn!("could not make a pose channel: {e}"),
-                        }
-                    }
-                    match pose_channel.as_ref() {
-                        Some(channel) => {
-                            for client in runtime.state.pose_clients.drain(..) {
-                                client.channel(channel.fd(), channel.size());
-                            }
-                        }
-                        None => {
-                            for client in runtime.state.pose_clients.drain(..) {
-                                client.unavailable("the pose channel could not be created".into());
-                            }
-                        }
-                    }
-                }
-                runtime.state.pose_channels_to_open = false;
-            }
+            crate::pose::answer(&mut runtime.state, hmd.is_some(), &mut pose_channel, &mut pose_waiting);
             let sample = crate::pose::now_ns();
             let slot = crate::pose::wire_slot(orientation, DVec3::ZERO, &stereo, sample, sample + frame_ns);
             if let Some(channel) = pose_channel.as_mut() {

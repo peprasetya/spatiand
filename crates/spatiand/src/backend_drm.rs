@@ -196,6 +196,8 @@ pub fn run(
     // client that already had the old one reading a ring nobody wrote -- its picture stuck to
     // the head from the first replug of the glasses.
     let mut pose_channel: Option<crate::pose::Channel> = None;
+    // Clients told there were none yet, for when there are. See `crate::pose::Waiting`.
+    let mut pose_waiting = crate::pose::Waiting::default();
     // When the button now being held went down, while waiting with windows to lose.
     let mut leave_held_since: Option<std::time::Instant> = None;
     // Whether the last frame was a waiting one, so that the start of each wait can be told.
@@ -2018,34 +2020,7 @@ pub fn run(
             // imports are: only this loop knows whether there is a head being tracked, and
             // telling a client "yes" and then never writing a pose would be worse than
             // telling it "no".
-            if !runtime.state.pose_clients.is_empty() {
-                if hmd.is_none() {
-                    for client in runtime.state.pose_clients.drain(..) {
-                        client.unavailable("no headset is being tracked in this session".into());
-                    }
-                } else {
-                    if pose_channel.is_none() {
-                        match crate::pose::Channel::new() {
-                            Ok(channel) => pose_channel = Some(channel),
-                            Err(e) => log::warn!("could not make a pose channel: {e}"),
-                        }
-                    }
-                    match pose_channel.as_ref() {
-                        Some(channel) => {
-                            for client in runtime.state.pose_clients.drain(..) {
-                                client.channel(channel.fd(), channel.size());
-                            }
-                            log::info!("a client is reading head poses");
-                        }
-                        None => {
-                            for client in runtime.state.pose_clients.drain(..) {
-                                client.unavailable("the pose channel could not be created".into());
-                            }
-                        }
-                    }
-                }
-                runtime.state.pose_channels_to_open = false;
-            }
+            crate::pose::answer(&mut runtime.state, hmd.is_some(), &mut pose_channel, &mut pose_waiting);
             // The pose that is about to be drawn with, so a client reading now and the
             // compositor drawing now agree about where the head is. Built once and used twice,
             // so a local client and a host's application cannot be handed different numbers.
