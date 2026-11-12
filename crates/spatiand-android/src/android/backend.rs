@@ -168,6 +168,11 @@ pub fn run(
     let mut steady_left = spatiand_input::SteadyPad::default();
     let mut steady_right = spatiand_input::SteadyPad::default();
     let mut prefs = crate::prefs::Prefs::load();
+    // How far the pointer is held where its button went down, where the wearer has set it.
+    {
+        let (hold, mouse) = prefs.pointer_hold();
+        pointers.set_hold(hold, mouse);
+    }
     super::adopt_paired_hosts(&mut prefs);
     // A Mac in 2D mode watches no host: its own 2D view has them, and a host shows its windows
     // to one viewer at a time. They are watched from when the glasses have the session.
@@ -1363,6 +1368,12 @@ pub fn run(
                     .then(|| pointer::aim(ray_from_pad(pad.x, pad.y, orientation, origin, &pointer_config), &windows))
             };
             let right_aim = pads.as_ref().and_then(|p| aim_of(&p.right_pad));
+            // On the Mac the pointer is the mouse's or the trackpad's unless a pad's touchpad is
+            // moving it: a pointer held where its button went down is then let go by the hand's
+            // own movement far sooner than by the head's. See `pointer::press_hold`.
+            pointers.aimed_by_mouse(
+                (cfg!(target_os = "macos") && touch.is_none() && right_aim.is_some()).then_some(orientation),
+            );
             // The phone's touch area is a wheel and not a second pointer: where a thumb rests on
             // it says nothing about where in the room it means.
             let _left_aim: Option<Aim> = None;
@@ -1938,6 +1949,9 @@ pub fn run(
                     _ => None,
                 };
                 let room_draws_cursor = |ray: &spatiand_render::Ray| pointers.room_draws_cursor(ray);
+                // Where the pointer is held while a button is down, not where the head has
+                // trembled to: what is seen is what is clicked.
+                let shown_ray = |ray: &spatiand_render::Ray| pointers.shown(ray);
                 let record_now = recorder.as_mut().is_some_and(|r| r.due());
                 let recorder_ref = &mut recorder;
                 screenshot_owed |= screenshot;
@@ -2010,7 +2024,7 @@ pub fn run(
                                     gl,
                                     &eye,
                                     orientation,
-                                    &a.ray,
+                                    &shown_ray(&a.ray),
                                     nearer(a.hit.map(|(_, h)| h), keyboard_reach[0]),
                                     crate::scene::Pointing::RightThumb,
                                     cursor,

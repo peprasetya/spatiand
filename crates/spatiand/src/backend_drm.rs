@@ -269,6 +269,11 @@ pub fn run(
     // The room's two thumbs, held still while they only wander. See `spatiand_input::steady`.
     let mut steady_left = spatiand_input::SteadyPad::default();
     let mut steady_right = spatiand_input::SteadyPad::default();
+    // How far the pointer is held where its button went down, where the wearer has set it.
+    {
+        let (hold, mouse) = crate::prefs::Prefs::load().pointer_hold();
+        pointers.set_hold(hold, mouse);
+    }
     // When the left pad last scrolled, while its gesture has not been ended to the client.
     let mut scrolled_at: Option<std::time::Instant> = None;
     // The triggers read as mouse buttons, the way they are on the desktop: right pulls the left
@@ -2586,6 +2591,12 @@ pub fn run(
                     &windows,
                 )
             });
+            // The mouse has the pointer only with no thumb on a pad (see `cursor_aim` below), and
+            // then a pointer held where its button went down is let go by the mouse's own
+            // movement far sooner than by the head's. See `pointer::press_hold`.
+            pointers.aimed_by_mouse(
+                (right_aim.is_none() && left_aim.is_none() && mouse_aim.is_some()).then_some(orientation),
+            );
 
             // Light the close button whichever hand is over it. Either pad can press it, so
             // lighting only the one under the dominant hand would leave the other pressing a
@@ -3637,7 +3648,9 @@ pub fn run(
                                 gl,
                                 &eye,
                                 orientation,
-                                &a.ray,
+                                // Where it is held while a button is down, not where the
+                                // head has trembled to: what is seen is what is clicked.
+                                &pointers.shown(&a.ray),
                                 nearer(a.hit.map(|(_, h)| h), on_keys),
                                 aimed_by,
                                 cursor,

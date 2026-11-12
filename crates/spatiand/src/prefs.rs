@@ -72,6 +72,17 @@ pub struct Prefs {
     #[serde(default = "system_look")]
     pub look: String,
 
+    /// How far the pointer may turn from where a button went down before it is followed, in
+    /// degrees: what keeps a click a click under a head that is never still, and a double click
+    /// on one point. 0 turns it off. Not in the file unless put there by hand, so that the
+    /// room's own figure (`press_hold::HOLD_DEGREES`) can still be changed for everyone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pointer_hold_degrees: Option<f32>,
+    /// The same for a mouse's or a trackpad's own movement, which is meant
+    /// (`press_hold::MOUSE_HOLD_DEGREES`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pointer_hold_mouse_degrees: Option<f32>,
+
     /// Hosts running applications elsewhere, shown here as windows.
     ///
     /// Empty by default, and a session with none behaves exactly as it always has. Each entry
@@ -111,6 +122,16 @@ impl Prefs {
         LOOKS.iter().position(|l| *l == self.look).unwrap_or(0)
     }
 
+    /// How far a pointer is held where its button went down, and a mouse's own part of that,
+    /// in degrees: the room's figures unless the file says otherwise.
+    pub fn pointer_hold(&self) -> (f64, f64) {
+        use crate::pointer::press_hold::{HOLD_DEGREES, MOUSE_HOLD_DEGREES};
+        (
+            self.pointer_hold_degrees.map_or(HOLD_DEGREES, f64::from),
+            self.pointer_hold_mouse_degrees.map_or(MOUSE_HOLD_DEGREES, f64::from),
+        )
+    }
+
     /// Go to the next look, keep it, and say which it now is.
     pub fn next_look(&mut self) -> usize {
         let next = (self.look_index() + 1) % LOOKS.len();
@@ -134,6 +155,8 @@ impl Default for Prefs {
             pip_corner: Default::default(),
             pip_size: Default::default(),
             look: system_look(),
+            pointer_hold_degrees: None,
+            pointer_hold_mouse_degrees: None,
             remotes: Vec::new(),
         }
     }

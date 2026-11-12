@@ -43,6 +43,11 @@ use spatiand_render::Hit;
 use crate::scene::WindowQuad;
 use crate::state::Spatiand;
 
+// Declared here rather than beside `pointer` in each program's list of modules: this file is the
+// Deck's, the Beam Pro's and the Mac's alike, and the rule goes wherever it does.
+#[path = "press_hold.rs"]
+pub mod press_hold;
+
 /// Linux button codes, as `wl_pointer` expects them.
 pub const BTN_LEFT: u32 = 0x110;
 pub const BTN_RIGHT: u32 = 0x111;
@@ -700,6 +705,14 @@ pub struct PointerState {
     /// A pinch under way: the scale last sent, and whether it went out as the standard pinch
     /// (which has to be ended) rather than in Spatiand's own terms. See [`Self::pinch`].
     pinching: Option<(f64, bool)>,
+    /// The pointer held where its button went down; see [`press_hold`].
+    hold: press_hold::PressHold,
+    /// The head's orientation, while what aims the pointer is a mouse: what tells the mouse's
+    /// own movement from the head's it rides on. Said by the backend; see [`Self::aimed_by_mouse`].
+    mouse_head: Option<glam::DQuat>,
+    /// The ray last given to [`Self::motion`] and the one the pointer was held on instead, when
+    /// they differ: where the room draws its pointer ([`Self::shown`]).
+    steadied: Option<(Ray, Ray)>,
 }
 
 /// A ray plus what it currently hits.
@@ -916,6 +929,30 @@ impl PointerState {
         })
     }
 
+    /// How far a pointer is held where its button went down, in degrees: the wearer's own
+    /// setting (`prefs.toml`) in place of [`press_hold::HOLD_DEGREES`] and
+    /// [`press_hold::MOUSE_HOLD_DEGREES`].
+    pub fn set_hold(&mut self, degrees: f64, mouse_degrees: f64) {
+        self.hold = press_hold::PressHold::new(degrees, mouse_degrees);
+    }
+
+    /// Whether what aims the pointer this frame is a mouse or a trackpad, and if so the head it
+    /// is cast through. A hand on a mouse that moves it means to, so a held pointer is let go
+    /// after much less of the mouse's own travel than of the head's; see [`press_hold`].
+    pub fn aimed_by_mouse(&mut self, head: Option<glam::DQuat>) {
+        self.mouse_head = head;
+    }
+
+    /// Where the room is to draw the pointer aimed along `ray`: on the ray the pointer was held
+    /// on, if that is the ray applications were last told of, so that what is seen is what a
+    /// click will land on.
+    pub fn shown(&self, ray: &Ray) -> Ray {
+        match self.steadied {
+            Some((given, held)) if given == *ray => held,
+            _ => *ray,
+        }
+    }
+
     /// Send motion for wherever the pointer is now.
     pub fn motion(
         &mut self,
@@ -926,6 +963,22 @@ impl PointerState {
     ) {
         let Some(pointer) = state.seat.get_pointer() else {
             return;
+        };
+        // **Held where its button went down**, and for the next click of several: every
+        // pointer there is comes through here, so this is the one place for it. The held ray is
+        // aimed afresh, so what it is on -- the window, the menu, the place in it -- is all the
+        // held ray's. See `press_hold`.
+        let hand = self.mouse_head.map(|head| head.inverse() * aim.ray.direction);
+        let direction = self.hold.aim(aim.ray.direction, hand, time_ms);
+        let held;
+        let aim = if direction != aim.ray.direction {
+            let ray = Ray { origin: aim.ray.origin, direction };
+            self.steadied = Some((aim.ray, ray));
+            held = self::aim(ray, windows);
+            &held
+        } else {
+            self.steadied = None;
+            aim
         };
         // The second element of `focus` is the surface's ORIGIN in the same space as
         // `event.location`, not the position within it -- smithay delivers `location - origin`
@@ -1106,6 +1159,12 @@ impl PointerState {
             // state themselves and a stray release leaves them convinced a drag is running.
             return;
         }
+        // The pointer stays where this went down; see `press_hold`.
+        if pressed {
+            self.hold.pressed(time_ms);
+        } else if self.held.is_empty() {
+            self.hold.released();
+        }
 
         pointer.button(
             state,
@@ -1252,6 +1311,7 @@ impl PointerState {
                 pointer.frame(state);
             }
         }
+        self.hold.released();
         self.drag = None;
     }
 

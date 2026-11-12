@@ -32,7 +32,19 @@ its tests). A thumb only wandering -- the pad's noise, its pulse -- moves neithe
 the page: each axis of each pad is held until the thumb has gone 0.004 of a pad from it, 0.008
 once it has rested 100 ms, and then followed that far behind, so a slow scroll never shakes back
 (`spatiand-input/src/steady.rs`; the room's reading only, a game's layout gets the pads as they
-are; the Mac's and the Beam Pro's pads and phone pointer too). Held, a slow wobbling scroll went
+are; the Mac's and the Beam Pro's pads and phone pointer too). **A pointer stays where its
+button went down**, whatever aims it, on every platform: every pointer is cast through the head,
+so a press under a head that is never still was a few pixels of movement with the button down --
+to a browser a link dragged, not clicked -- and a second click never landed on the first. The
+room holds it there until the aim has turned 0.4 of a degree away (about 18 pixels of a window at
+its default distance), then lets it go and makes up what was held back over the next of its
+travel, so a drag or a selection begins where the button went down and nothing jumps; and for
+500 ms from the press it stays for the next press, so a double and a triple click are on one
+point. A mouse or a trackpad is let go after 0.1 of a degree of its own movement, the head under
+it still having the 0.4. The room's pointer is drawn where it is held
+(`crates/spatiand/src/press_hold.rs`, used in `PointerState::motion`, which every pointer passes;
+`pointer_hold_degrees` and `pointer_hold_mouse_degrees` in `prefs.toml`, 0 for off; the figures
+are chosen from the sizes around them, not yet from a recorded head). Held, a slow wobbling scroll went
 stop and start, so each of its steps goes out over the frames after it, 0.35 of what is owed a
 frame (`ScrollSpread`, about 40 ms on average): from the owner's recorded thumbs, frames sending
 nothing mid-scroll fell from 28% to 10% (`spatiand-input/examples/replay_scroll.rs`). Both pads *pressed* together

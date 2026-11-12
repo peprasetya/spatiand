@@ -282,6 +282,8 @@ mac/wip/linux-ui.patch`, and `patch -p1` the libwayland one in `third_party/wayl
   pointer stands still under a pressing thumb. The place to steady it is the room, for every
   platform and application: hold the pointer where the button went down until it has moved past a
   small angle (as `spatiand-input/steady.rs` does for the pads), not a threshold in each client.
+  Done in the room on 2026-11-12 (`crates/spatiand/src/press_hold.rs`, docs/state.md
+  "Controller"); the Mac needs a build of it.
 - **Visited links** from other machines (shared patch 0025): see docs/spatimesh.md. Rig:
   `visited.py seed`, `visited.html` at localhost and at 127.0.0.1, `visited.py read` on a
   DevTools picture.

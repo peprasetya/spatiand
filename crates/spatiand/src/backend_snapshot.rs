@@ -1747,6 +1747,12 @@ enum Scripted {
     Down(f64, f64),
     Up(f64, f64),
     Drag(f64, f64, f64, f64),
+    /// `shaky:u,v,degrees,clicks`: clicks as a wearer makes them, through the room's own
+    /// pointer (a ray, [`crate::pointer::PointerState`]) rather than straight to the client:
+    /// the aim trembling up to `degrees` about the place all the while, the button down for
+    /// eight frames and up for eight. What shows a click staying a click; see
+    /// `pointer::press_hold`.
+    Shaky(f64, f64, f64, u32),
     Scroll(f64, f64),
     /// `thumbs:dy,seconds,hover`: the left pad as a session sends it, a scroll every frame and
     /// its end a quarter of a second after the last; `hover` 1 has a right thumb resting on its
@@ -1791,6 +1797,8 @@ fn scripted_steps() -> Vec<Scripted> {
                 ("down", [u, v]) => Scripted::Down(*u, *v),
                 ("up", [u, v]) => Scripted::Up(*u, *v),
                 ("drag", [a, b, c, d]) => Scripted::Drag(*a, *b, *c, *d),
+                ("shaky", [u, v, degrees]) => Scripted::Shaky(*u, *v, *degrees, 1),
+                ("shaky", [u, v, degrees, clicks]) => Scripted::Shaky(*u, *v, *degrees, *clicks as u32),
                 ("scroll", [dx, dy]) => Scripted::Scroll(*dx, *dy),
                 ("thumbs", [dy, seconds, hover]) => Scripted::Thumbs(*dy, *seconds, *hover != 0.0),
                 ("pinch", [scale]) => Scripted::Pinch(*scale),
@@ -1902,6 +1910,76 @@ fn standard_pinch(state: &mut Spatiand, scale: f64) {
         pointer.gesture_pinch_update(state, &update);
     }
     pointer.gesture_pinch_end(state, &GesturePinchEndEvent { serial: SERIAL_COUNTER.next_serial(), time: 260, cancelled: false });
+}
+
+/// Clicks at `at` of the chosen window as a wearer's are: by a ray through the room's own
+/// pointer, trembling up to `degrees` about the place, held or not as the room holds it.
+fn shaky_clicks(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], at: (f64, f64), degrees: f64, clicks: u32) {
+    use glam::DVec3;
+    let Some(window) = chosen_window(state, windows) else {
+        log::warn!("a scripted pointer step with no window to point at");
+        return;
+    };
+    let w = window.window.clone();
+    let wanted = (at.0 * window.pixels.0 as f64 + window.origin.0 as f64, at.1 * window.pixels.1 as f64 + window.origin.1 as f64);
+    // From the middle of the room, `right` and `down` radians off the way to the window.
+    let ahead = window.placement.position().normalize();
+    let right = ahead.cross(DVec3::Z).normalize();
+    let up = right.cross(ahead);
+    let ray = |by: (f64, f64)| spatiand_render::Ray {
+        origin: DVec3::ZERO,
+        direction: (ahead + right * by.0.tan() - up * by.1.tan()).normalize(),
+    };
+    let lands = |by: (f64, f64)| -> Option<(f64, f64)> {
+        let aim = crate::pointer::aim(ray(by), windows);
+        let (index, hit) = aim.hit?;
+        let quad = windows.get(index)?;
+        let p = crate::pointer::surface_position(&hit, quad.pixels, &quad.placement)?;
+        Some((p.x + quad.origin.0 as f64, p.y + quad.origin.1 as f64))
+    };
+    // Found by stepping towards it: a window is curved, and a ray to a place on it is not
+    // worth working out the other way round for a test.
+    let per_pixel = window.placement.width / window.pixels.0.max(1) as f64 / window.placement.radius.max(0.1);
+    let mut by = (0.0, 0.0);
+    for _ in 0..12 {
+        let Some(now) = lands(by) else {
+            log::warn!("shaky: the ray left the window on the way to {at:?}");
+            return;
+        };
+        by = (by.0 + (wanted.0 - now.0) * per_pixel, by.1 + (wanted.1 - now.1) * per_pixel);
+    }
+    log::info!("shaky: aimed at {:?} of the window, wanted {wanted:?}; {} pixels to a degree there", lands(by), (1.0f64.to_radians() / per_pixel).round());
+    state.focus_window(&w);
+    let mut pointers = crate::pointer::PointerState::default();
+    let (hold, mouse) = crate::prefs::Prefs::load().pointer_hold();
+    pointers.set_hold(hold, mouse);
+    // Times that go on from one step to the next, as a session's do: what a client counts a
+    // double click by.
+    static TIME_MS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(5_000);
+    let mut frame = 0u32;
+    let mut tremble = |pointers: &mut crate::pointer::PointerState, state: &mut Spatiand| -> u32 {
+        frame += 1;
+        let time = TIME_MS.fetch_add(14, std::sync::atomic::Ordering::Relaxed);
+        let t = frame as f64;
+        // On the place itself to begin with, so the first press is where the step says.
+        let size = if frame == 1 { 0.0 } else { degrees.to_radians() * 0.7 };
+        let off = (size * (t * 1.3).sin(), size * (t * 0.9).cos());
+        let aim = crate::pointer::aim(ray((by.0 + off.0, by.1 + off.1)), windows);
+        pointers.motion(state, &aim, windows, time);
+        time
+    };
+    for _ in 0..clicks {
+        let time = tremble(&mut pointers, state);
+        pointers.button(state, crate::pointer::BTN_LEFT, true, time);
+        let mut time = time;
+        for _ in 0..8 {
+            time = tremble(&mut pointers, state);
+        }
+        pointers.button(state, crate::pointer::BTN_LEFT, false, time);
+        for _ in 0..8 {
+            tremble(&mut pointers, state);
+        }
+    }
 }
 
 fn pointer_event(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], at: (f64, f64), button: Option<(u32, bool)>) {
@@ -2054,6 +2132,10 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
             }
             *at = (*c, *d);
             pointer_event(state, windows, *at, Some((crate::pointer::BTN_LEFT, false)));
+        }
+        Scripted::Shaky(u, v, degrees, clicks) => {
+            *at = (*u, *v);
+            shaky_clicks(state, windows, *at, *degrees, *clicks);
         }
         // Done frame by frame by the steps' loop, after the pointer is put there.
         Scripted::Thumbs(..) => pointer_event(state, windows, *at, None),

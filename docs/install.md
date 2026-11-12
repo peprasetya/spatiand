@@ -69,6 +69,9 @@ Turning things off
     spatial_audio             whether each window's sound is placed
     audio_directness_centred  how much unplaced sound to keep, 0 to 1
     audio_directness_off_axis the same, for windows off to one side
+    pointer_hold_degrees      how far the pointer is held where a button went
+                              down (0.4 if absent; 0 turns it off)
+    pointer_hold_mouse_degrees  the same for a mouse's own movement (0.1)
 
 `~/.config/spatiand/session.env` is read into the session's environment if it
 exists. `RUST_LOG=debug` there is the way to get more out of the log on a
