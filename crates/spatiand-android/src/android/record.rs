@@ -67,15 +67,35 @@ pub fn publish(path: String) {
 }
 
 /// Screenshots saved before they were published -- by a build that kept them to itself -- are
-/// handed over now.
+/// handed over now; and so is every recording still in the app's own storage, where no gallery
+/// shows it: one cut short when the app was killed or the storage ran full (it plays as far as
+/// it was written: its segment has no size until it is finished), and one the media store would
+/// not take last time. At the session's start, before anything is recorded.
 pub fn publish_leftovers() {
     let dir = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())).join("screenshots");
-    let Ok(entries) = std::fs::read_dir(&dir) else { return };
-    for entry in entries.flatten() {
+    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
         let path = entry.path();
         if path.extension().is_some_and(|e| e == "png") {
             publish(path.display().to_string());
         }
+    }
+    for entry in std::fs::read_dir(directory()).into_iter().flatten().flatten() {
+        let path = entry.path();
+        let ours = path.file_name().is_some_and(|n| n.to_string_lossy().starts_with("spatiand-"));
+        if ours && path.extension().is_some_and(|e| e == "mkv") {
+            hand_over_unfinished(&path);
+        }
+    }
+}
+
+/// A recording that was not finished: handed to the app as it is if anything was written, and
+/// removed if nothing was.
+fn hand_over_unfinished(path: &std::path::Path) {
+    if std::fs::metadata(path).is_ok_and(|m| m.len() > 0) {
+        log::info!("recording: {} is handed over as far as it was written", path.display());
+        publish(path.display().to_string());
+    } else {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -170,6 +190,8 @@ pub struct Recorder {
     next_due: Instant,
     frames: u64,
     stop: Arc<AtomicBool>,
+    /// The recorder's thread has ended in an error: no more pictures are made for it.
+    failed: Arc<AtomicBool>,
     present_time: Option<PresentationTime>,
     display: *const c_void,
     _microphone: Option<spatiand_audio::server::Capture>,
@@ -246,6 +268,8 @@ impl Recorder {
         let stop = Arc::new(AtomicBool::new(false));
         let started = Instant::now();
         let stopping = stop.clone();
+        let failed = Arc::new(AtomicBool::new(false));
+        let failing = failed.clone();
         let shown = path.clone();
         let size_now = (size.0 as u32, size.1 as u32);
         std::thread::Builder::new()
@@ -259,7 +283,13 @@ impl Recorder {
                             done.push(shown.display().to_string());
                         }
                     }
-                    Err(e) => log::warn!("recording: {} is incomplete: {e}", shown.display()),
+                    // The storage full, most likely: what was written is still the wearer's,
+                    // and must not stay where nothing on the phone shows it.
+                    Err(e) => {
+                        log::warn!("recording: {} is incomplete: {e}", shown.display());
+                        failing.store(true, Ordering::SeqCst);
+                        hand_over_unfinished(&shown);
+                    }
                 }
             })
             .map_err(|e| format!("could not start the recorder: {e}"))?;
@@ -279,6 +309,7 @@ impl Recorder {
             next_due: started,
             frames: 0,
             stop,
+            failed,
             present_time,
             display: display.get_display_handle().handle as *const c_void,
             _microphone: microphone,
@@ -287,6 +318,10 @@ impl Recorder {
 
     /// Whether this frame is one to record. Asked once a frame, before it is drawn.
     pub fn due(&mut self) -> bool {
+        // Its thread gone, the encoder takes nothing: no frame is copied for it.
+        if self.failed.load(Ordering::SeqCst) {
+            return false;
+        }
         let now = Instant::now();
         if now < self.next_due {
             return false;

@@ -219,7 +219,9 @@ public class MainActivity extends Activity implements SensorEventListener {
     /**
      * Move a finished recording from the app's own storage to Movies/Spatiand, where a gallery
      * and a computer plugged in find it. Android lets an app write there only through its media
-     * store, and a recording is hundreds of megabytes: copied on a thread of its own.
+     * store, and a recording is hundreds of megabytes: copied on a thread of its own. One that
+     * could not be handed over stays in the app's storage and is tried again when the session
+     * next starts (record.rs, publish_leftovers).
      */
     void publish(String path) {
         new Thread(() -> {
@@ -237,7 +239,8 @@ public class MainActivity extends Activity implements SensorEventListener {
                     : android.provider.MediaStore.Video.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY),
                     values);
             if (uri == null) {
-                Log.w(TAG, "recording: the media store would not take " + from.getName() + "; it stays at " + path);
+                Log.w(TAG, "recording: the media store would not take " + from.getName() + "; it stays at " + path
+                        + " and is tried again when Spatiand next starts");
                 return;
             }
             try (InputStream in = new java.io.FileInputStream(from);
@@ -246,7 +249,8 @@ public class MainActivity extends Activity implements SensorEventListener {
                 int n;
                 while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
             } catch (Exception e) {
-                Log.w(TAG, "recording: could not copy " + from.getName() + " (" + e + "); it stays at " + path);
+                Log.w(TAG, "recording: could not copy " + from.getName() + " (" + e + "); it stays at " + path
+                        + " and is tried again when Spatiand next starts");
                 resolver.delete(uri, null, null);
                 return;
             }
