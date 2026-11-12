@@ -725,8 +725,14 @@ pub fn size_new_windows(state: &mut crate::Spatiand) {
     if wanted.is_empty() {
         return;
     }
+    // Only the phone's apps' own windows: a surface's number is its connection's alone, and a
+    // host's first window, made by the same client code, has the same one.
+    let prefix = format!("remote.{HOST}.");
     let all: Vec<smithay::desktop::Window> = state.space.elements().cloned().collect();
     for window in all {
+        if !state.app_id_of(&window).is_some_and(|a| a.starts_with(&prefix)) {
+            continue;
+        }
         let Some(surface) = window.wl_surface() else { continue };
         if !wanted.contains(&surface.id().protocol_id()) {
             continue;
