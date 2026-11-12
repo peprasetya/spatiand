@@ -592,19 +592,37 @@ unsafe fn remember_java(env: *mut JNIEnv) {
     let _ = SHELL_CLASS.set(global as usize);
 }
 
+/// A thread of ours that was attached to the VM here, let go of when the thread ends: Android's
+/// runtime aborts the whole process when a thread still attached returns, so a thread that only
+/// meant to end -- the apps' windows' on an error, the session's on a panic, both caught so that
+/// the app lives on -- took the app with it.
+struct Attached(*mut jni_sys::JavaVM);
+
+impl Drop for Attached {
+    fn drop(&mut self) {
+        unsafe { ((**self.0).v1_1.DetachCurrentThread)(self.0) };
+    }
+}
+
+thread_local! {
+    static ATTACHED: std::cell::RefCell<Option<Attached>> = const { std::cell::RefCell::new(None) };
+}
+
 /// Run `f` with this thread's JNI environment and the `Shell` class, attaching the thread to the
-/// VM the first time (as a daemon, so it never has to be let go of). Local references `f` makes
-/// are dropped after it; a Java exception is logged and cleared. `None` before the app has
-/// called in once.
+/// VM the first time (as a daemon, so the VM never waits for it; it is detached when it ends).
+/// Local references `f` makes are dropped after it; a Java exception is logged and cleared.
+/// `None` before the app has called in once.
 pub fn with_shell<R>(f: impl FnOnce(*mut JNIEnv, jclass) -> R) -> Option<R> {
     let vm = *VM.get()? as *mut jni_sys::JavaVM;
     let class = *SHELL_CLASS.get()? as jclass;
     unsafe {
         let mut env: *mut std::ffi::c_void = std::ptr::null_mut();
-        if ((**vm).v1_2.GetEnv)(vm, &mut env, jni_sys::JNI_VERSION_1_6) != jni_sys::JNI_OK
-            && ((**vm).v1_4.AttachCurrentThreadAsDaemon)(vm, &mut env, std::ptr::null_mut()) != jni_sys::JNI_OK
-        {
-            return None;
+        if ((**vm).v1_2.GetEnv)(vm, &mut env, jni_sys::JNI_VERSION_1_6) != jni_sys::JNI_OK {
+            if ((**vm).v1_4.AttachCurrentThreadAsDaemon)(vm, &mut env, std::ptr::null_mut()) != jni_sys::JNI_OK {
+                return None;
+            }
+            // Only a thread attached here is detached here: one Java started is the VM's own.
+            let _ = ATTACHED.try_with(|attached| *attached.borrow_mut() = Some(Attached(vm)));
         }
         let env = env as *mut JNIEnv;
         if ((**env).v1_2.PushLocalFrame)(env, 16) != 0 {
