@@ -490,7 +490,11 @@ pub fn resize(
     let limit = |degrees: f64| 2.0 * start.radius * (degrees.to_radians() / 2.0).tan();
     let (min_w, max_w) = (limit(MINIMUM_ANGLE_DEG), limit(MAXIMUM_ANGLE_DEG));
     let width = (start.width + grow_x).clamp(min_w, max_w);
-    let height = (start_height + grow_y).clamp(min_w / aspect.max(0.01), max_w);
+    // The least height is the least width's, by the window's shape -- which for a window
+    // narrower than about a fourteenth of its height is more than the most there may be, and
+    // `clamp` does not survive limits the wrong way round: dragging the edge of a 60 by 900
+    // strip ended the session. The most wins.
+    let height = (start_height + grow_y).clamp((min_w / aspect.max(0.01)).min(max_w), max_w);
 
     // Clamping changes how much the window actually grew, and the centre has to follow *that*
     // rather than the drag — otherwise a window held at its minimum keeps sliding sideways.
@@ -1388,6 +1392,23 @@ mod tests {
     const FOV: [f32; 4] = [-0.349_066, 0.349_066, 0.218_166, -0.218_166];
     const LEFT_HALF: [f32; 4] = [0.0, 0.5, 0.0, 1.0];
     const SBS: (f64, f64) = (3840.0, 1080.0);
+
+    #[test]
+    fn a_window_far_taller_than_wide_can_be_resized() {
+        // A tool strip, 60 by 900: its least height by its shape is more than the most any
+        // window may have, and the limits handed to `clamp` were the wrong way round.
+        let start = crate::window::Placement { width: 60.0 * crate::window::METRES_PER_POINT, ..Default::default() };
+        let limit = |degrees: f64| 2.0 * start.radius * (degrees.to_radians() / 2.0).tan();
+        assert!(limit(MINIMUM_ANGLE_DEG) / (60.0 / 900.0) > limit(MAXIMUM_ANGLE_DEG), "not the case this is about");
+        let limit = limit(MAXIMUM_ANGLE_DEG);
+        for edge in [Edge::Left, Edge::Right, Edge::Bottom, Edge::BottomLeft, Edge::BottomRight] {
+            for (dx, dy) in [(0.0, 0.0), (0.3, 0.3), (-0.3, -0.3), (5.0, 50.0)] {
+                let resized = resize(edge, &start, (60, 900), dx, dy);
+                assert!(resized.placement.width > 0.0 && resized.placement.width <= limit + 1e-9);
+                assert!(resized.pixels.0 >= 160 && resized.pixels.1 >= 120);
+            }
+        }
+    }
 
     #[test]
     fn pointing_straight_ahead_lands_in_the_middle_of_the_left_eye() {
