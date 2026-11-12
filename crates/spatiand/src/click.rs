@@ -231,8 +231,16 @@ impl Clicks {
     /// back — there is no separate way to release it, because two ways to say the same thing
     /// is how they come to disagree.
     pub fn wanted(&self, wanted: bool) {
-        if self.wanted.replace(wanted) != wanted {
-            let _ = self.tx.try_send(Msg::Wanted(wanted));
+        if self.wanted.get() == wanted {
+            return;
+        }
+        // Kept as said only once it has been: with the queue full -- the thread waiting to
+        // try the sound server again, four clicks behind it -- the change was dropped and
+        // remembered as sent, so the stream stayed open, or shut, until the keyboard next came
+        // and went. Not kept, it is said again next frame. (Nobody listening, as where the
+        // click goes into the session's own output, is not a reason to go on saying it.)
+        if !matches!(self.tx.try_send(Msg::Wanted(wanted)), Err(std::sync::mpsc::TrySendError::Full(_))) {
+            self.wanted.set(wanted);
         }
     }
 }
@@ -391,6 +399,29 @@ impl Drop for Player {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_change_that_could_not_be_said_is_said_again() {
+        // The handle without its thread, so the queue is only emptied here.
+        let (tx, rx) = sync_channel(QUEUE);
+        let clicks = Clicks { tx, wanted: std::cell::Cell::new(false) };
+        for _ in 0..QUEUE {
+            clicks.tx.try_send(Msg::Play).expect("room in an empty queue");
+        }
+        // The keyboard comes up with the queue full: dropped, and not taken as said.
+        clicks.wanted(true);
+        assert!(rx.try_iter().all(|m| matches!(m, Msg::Play)));
+        // Next frame there is room.
+        clicks.wanted(true);
+        assert!(matches!(rx.try_recv(), Ok(Msg::Wanted(true))));
+        // And said once: the frames after send nothing.
+        clicks.wanted(true);
+        assert!(rx.try_recv().is_err());
+        // With nobody listening it is not said for ever.
+        drop(rx);
+        clicks.wanted(false);
+        assert!(!clicks.wanted.get());
+    }
 
     #[test]
     fn the_click_is_short_enough_to_keep_up_with_typing() {
