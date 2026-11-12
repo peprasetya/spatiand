@@ -4665,6 +4665,13 @@ fn toggle_click(
     if on {
         // The control's own confirmation. Turning the sound on and hearing nothing until the
         // next letter leaves you unsure the button did anything.
+        //
+        // The stream is asked for first, here, and not left to the next frame's `wanted`: a
+        // click played into no stream opens one for itself, which is closed as soon as the
+        // click is written and nothing wants it -- before it has sounded, a frame ahead of
+        // the stream that would have kept it. Both keyboards reach this with themselves up,
+        // so the frame's own call says the same and sends nothing more.
+        clicks.wanted(true);
         clicks.play();
     }
     // Nothing to do when it goes off: the stream is held open by `Clicks::wanted`, which the
