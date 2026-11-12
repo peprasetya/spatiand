@@ -3429,18 +3429,24 @@ pub fn run(
                     //
                     // And only where the application's layout has not claimed them. In a game A
                     // is jump, and a jump must not also click on whatever the laser is over.
-                    if right_aim.is_some() {
+                    //
+                    // A press, that is. The release of one that went to the window is sent
+                    // wherever the thumb is by then, or the window is left holding the button
+                    // until the thumb next comes down, and takes that for the end of a drag.
+                    {
+                        let aiming = right_aim.is_some();
                         for (control, button, mapped) in [
                             (spatiand_input::Control::A, BTN_LEFT, controls.binds(spatiand_mapper::Button::A)),
                             (spatiand_input::Control::B, BTN_RIGHT, controls.binds(spatiand_mapper::Button::B)),
                             (spatiand_input::Control::X, BTN_MIDDLE, controls.binds(spatiand_mapper::Button::X)),
                         ] {
-                            if mapped {
+                            let was = face_down.contains(&button);
+                            if mapped && !was {
                                 continue;
                             }
-                            let down = p.buttons.is_down(control);
-                            let was = face_down.contains(&button);
-                            if down && !was {
+                            // A layout that takes the button over while it is held ends it too.
+                            let down = p.buttons.is_down(control) && !mapped;
+                            if down && !was && aiming {
                                 face_down.push(button);
                                 pointers.button(&mut runtime.state, button, true, time_ms);
                             } else if !down && was {
