@@ -117,12 +117,23 @@ pub struct Attention {
     /// How long they had been idle at the moment before that — which is what says how faded
     /// everything was when they came back, and so where each fade resumes from.
     before_wake: Duration,
+    /// How long since they came back: what the fade back in is timed by. Not `idle_for`,
+    /// which every later movement sets back to nothing.
+    since_wake: Duration,
 }
 
 impl Attention {
     /// The wearer did something. Restarts the clock.
     pub fn stir(&mut self) {
-        self.before_wake = self.idle_for;
+        // Coming back is the first movement after a rest, not each one: a thumb crossing a
+        // pad stirs on every frame, and a click stirs twice in one. Taken afresh each time,
+        // the second stir found a rest of one frame or none, so "where it had faded to" read
+        // as fully shown and a faded bar jumped to full on its second frame instead of
+        // easing in. While that ease is under way it is left to finish.
+        if self.since_wake.as_secs_f32() >= FADE_IN_SECS {
+            self.before_wake = self.idle_for;
+            self.since_wake = Duration::ZERO;
+        }
         self.idle_for = Duration::ZERO;
         self.stirs = self.stirs.wrapping_add(1);
     }
@@ -145,6 +156,7 @@ impl Attention {
             return;
         }
         self.idle_for = self.idle_for.saturating_add(dt);
+        self.since_wake = self.since_wake.saturating_add(dt);
     }
 
     /// How visible a surface with this idle threshold should currently be, 0..1.
@@ -172,7 +184,7 @@ impl Attention {
         }
         // Coming back, from where it had got to.
         let from = faded_by(self.before_wake);
-        (from + self.idle_for.as_secs_f32() / FADE_IN_SECS).clamp(0.0, 1.0)
+        (from + self.since_wake.as_secs_f32() / FADE_IN_SECS).clamp(0.0, 1.0)
     }
 
     /// The alpha for a surface that expressed no preference.
@@ -256,6 +268,39 @@ mod tests {
             (resumed - midway).abs() < 0.05,
             "resumed at {resumed} after fading to {midway}"
         );
+    }
+
+    #[test]
+    fn a_hand_that_keeps_moving_does_not_cut_the_fade_in_short() {
+        // A thumb moving across a pad stirs on every frame, and twice on a frame with a click.
+        // The bar must still ease in over FADE_IN_SECS, not arrive whole on the second frame.
+        let mut a = Attention::default();
+        idle(&mut a, IDLE_AFTER.as_secs_f32() + FADE_OUT_SECS + 1.0);
+        assert_eq!(a.default_alpha(), 0.0);
+        let mut last = 0.0;
+        let frames = (FADE_IN_SECS / FRAME.as_secs_f32()) as usize;
+        for frame in 0..frames {
+            a.stir();
+            a.stir();
+            a.tick(true, FRAME);
+            let alpha = a.default_alpha();
+            assert!(alpha >= last, "went back from {last} to {alpha}");
+            if frame + 2 < frames {
+                assert!(alpha < 1.0, "whole after {} frame(s) of a {FADE_IN_SECS} s fade", frame + 1);
+            }
+            last = alpha;
+        }
+        for _ in 0..3 {
+            a.stir();
+            a.tick(true, FRAME);
+        }
+        assert_eq!(a.default_alpha(), 1.0);
+        // And a rest after that fades and comes back as before.
+        idle(&mut a, IDLE_AFTER.as_secs_f32() + FADE_OUT_SECS + 1.0);
+        assert_eq!(a.default_alpha(), 0.0);
+        a.stir();
+        a.tick(true, Duration::ZERO);
+        assert!(a.default_alpha() < 0.1);
     }
 
     #[test]
