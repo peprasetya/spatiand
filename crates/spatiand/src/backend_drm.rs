@@ -749,6 +749,11 @@ pub fn run(
         let mut screenshot_owed = false;
         // A video being recorded of these displays. Belongs to them: rebuilt, it stops.
         let mut recorder: Option<crate::record::Recorder> = None;
+        // And is said to have stopped, as the Beam Pro's loop says it: the one before a rebuild
+        // was dropped, which finishes its file, but the menu went on offering to stop it -- and
+        // choosing that started another -- while the sound engine kept filling its track.
+        shell.set_recording(false);
+        spatial_audio.record(None);
 
         // Present one blank frame before doing anything else.
         //
