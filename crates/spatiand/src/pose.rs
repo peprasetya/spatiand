@@ -34,18 +34,35 @@ use spatiand_render::{EyeSide, StereoConfig};
 /// knows and a host does not: the glasses' own frame, and where the eyes sit.
 pub struct Channel {
     ring: Ring,
+    /// A second descriptor onto the ring that cannot be written through: the one clients are
+    /// handed. `None` only where one could not be made.
+    reader: Option<std::os::fd::OwnedFd>,
 }
 
 impl Channel {
     pub fn new() -> Result<Self, String> {
         let ring = Ring::new(c"spatiand-poses")?;
         log::info!("pose channel: {} bytes, {SLOTS} slots", ring.size());
-        Ok(Self { ring })
+        // The protocol's word is "read-only", and what was handed over was the room's own
+        // writable descriptor: any client of `spatiand_xr_v1` could have written over the
+        // poses every other one, and a host fed from them, reads.
+        let reader = match ring.read_only() {
+            Ok(fd) => Some(fd),
+            Err(e) => {
+                log::warn!("pose channel: no read-only descriptor ({e}); clients get the writable one");
+                None
+            }
+        };
+        Ok(Self { ring, reader })
     }
 
-    /// The descriptor to hand a client. Read-only on their side.
+    /// The descriptor to hand a client. Read-only: it cannot be mapped for writing.
     pub fn fd(&self) -> BorrowedFd<'_> {
-        self.ring.fd()
+        use std::os::fd::AsFd;
+        match &self.reader {
+            Some(fd) => fd.as_fd(),
+            None => self.ring.fd(),
+        }
     }
 
     pub fn size(&self) -> u32 {
@@ -245,6 +262,24 @@ mod tests {
         assert_eq!(newest.sample_ns, 111);
         assert_eq!(newest.predicted_ns, 222);
         assert_eq!(newest.head_orientation, [0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn what_a_client_is_handed_can_be_read_and_not_written() {
+        use std::os::fd::AsRawFd;
+        let mut channel = Channel::new().expect("channel");
+        channel.write(DQuat::IDENTITY, DVec3::ZERO, &cfg(), 111, 222);
+        let (fd, size) = (channel.fd().as_raw_fd(), channel.size() as usize);
+        // SAFETY: mapping a descriptor the channel owns; checked against MAP_FAILED.
+        let writable = unsafe {
+            libc::mmap(std::ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0)
+        };
+        assert_eq!(writable, libc::MAP_FAILED, "a client could overwrite the poses");
+        // SAFETY: as above.
+        let readable = unsafe { libc::mmap(std::ptr::null_mut(), size, libc::PROT_READ, libc::MAP_SHARED, fd, 0) };
+        assert_ne!(readable, libc::MAP_FAILED);
+        // SAFETY: unmapping what was just mapped.
+        unsafe { libc::munmap(readable, size) };
     }
 
     #[test]
