@@ -195,6 +195,12 @@ pub fn run(
     // display's: a client is handed it once, and one made again at each rebuild left every
     // client that already had the old one reading a ring nobody wrote -- its picture stuck to
     // the head from the first replug of the glasses.
+    // Which frame shown this is, for `wp_presentation`. It counts the frames this session has
+    // put on the glass, one per completed flip -- not the display's own refreshes, which the
+    // flip's event carries and nothing here reads yet: a refresh the room missed is not a gap
+    // in it. The session's, so that it never runs backwards: counted from nothing again at
+    // each rebuild of the displays, a client saw the sequence go back at every replug.
+    let mut presented_seq: u64 = 0;
     let mut pose_channel: Option<crate::pose::Channel> = None;
     // Clients told there were none yet, for when there are. See `crate::pose::Waiting`.
     let mut pose_waiting = crate::pose::Waiting::default();
@@ -996,9 +1002,6 @@ pub fn run(
         // when its flip completes. See `Spatiand::take_presentation_feedback`.
         let mut in_flight: Vec<smithay::wayland::presentation::PresentationFeedbackCallback> =
             Vec::new();
-        // Which vblank this is, which is what lets a client tell a late frame from a dropped
-        // one: two frames reported one sequence apart were consecutive, and a gap was not.
-        let mut presented_seq: u64 = 0;
         // What the hands were doing last frame, so "a hand moved" can be told from "the pads
         // were read again". See `crate::attention::Hands`.
         let mut last_hands = crate::attention::Hands::default();
@@ -4007,8 +4010,8 @@ pub fn run(
                 // smithay's `DrmEvent::VBlank` carries only the CRTC. That makes this the
                 // moment the event was *serviced* rather than the moment the scanout began,
                 // which is an event-loop hop late -- under a millisecond, and honest about
-                // being an approximation. The sequence number, which is the part that
-                // distinguishes late from dropped, is exact.
+                // being an approximation. The sequence number is our own count of frames
+                // shown (see `presented_seq`), not the display's of its refreshes.
                 if !in_flight.is_empty() {
                     let now = crate::pose::now_ns().max(0) as u64;
                     let refresh = std::time::Duration::from_nanos(frame_ns.max(1) as u64);

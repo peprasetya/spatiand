@@ -269,6 +269,9 @@ pub fn run(
 
     crate::dmabuf::advertise(&mut runtime.state, &renderer);
     runtime.state.set_screen_refresh(REFRESH_MHZ);
+    // See `backend_drm`: the session's count of frames shown, which a new window for the
+    // glasses does not start again.
+    let mut presented_seq: u64 = 0;
     let mut pose_channel: Option<crate::pose::Channel> = None;
     // Clients told there were none yet, for when there are. See `crate::pose::Waiting`.
     let mut pose_waiting = crate::pose::Waiting::default();
@@ -434,7 +437,6 @@ pub fn run(
         let mut frames = 0u32;
         let mut last_report = Instant::now();
         let mut in_flight: Vec<smithay::wayland::presentation::PresentationFeedbackCallback> = Vec::new();
-        let mut presented_seq: u64 = 0;
         let mut last_hands = crate::attention::Hands::default();
         let mut last_tick = Instant::now();
         let mut last_imu = Instant::now();
