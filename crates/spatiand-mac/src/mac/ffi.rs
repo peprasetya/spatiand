@@ -266,6 +266,25 @@ pub extern "C" fn sp_pinch(scale: f32) {
     }
 }
 
+pub static SCROLL_END: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static OVER_CLIENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The fingers have lifted from a scroll made with `sp_pointer`'s wheel: the client under the
+/// pointer is told the gesture is over (`wl_pointer.axis_stop`, finger source), as the Deck's
+/// pad tells it. A toolkit carries the page on from there by itself, and a browser takes a
+/// sideways swipe that scrolled nothing for back or forward only once it has ended.
+#[no_mangle]
+pub extern "C" fn sp_scroll_end() {
+    SCROLL_END.store(true, Ordering::SeqCst);
+}
+
+/// Whether the room's pointer is on a window of a client's (which carries a scroll on by
+/// itself after `sp_scroll_end`), and not on the room's own things, which do not.
+#[no_mangle]
+pub extern "C" fn sp_scroll_over_client() -> bool {
+    OVER_CLIENT.load(Ordering::Relaxed)
+}
+
 /// A key of the Mac's keyboard, by its virtual key code.
 #[no_mangle]
 pub extern "C" fn sp_key(mac_code: u16, pressed: bool) {

@@ -1599,6 +1599,11 @@ pub fn run(
                 if (wheel_right, wheel_up) != (0.0, 0.0) && pointers.drag.is_none() {
                     pointers.scroll(&mut runtime.state, wheel_right as f64 * 15.0, -(wheel_up as f64) * 15.0, time_ms);
                 }
+                // A trackpad's fingers have lifted from a scroll (a Mac's): the gesture is ended
+                // for the client as the Deck's pad ends it, `axis_stop`, after its last movement.
+                if super::scroll_ended() {
+                    pointers.scroll_fling(&mut runtime.state, time_ms);
+                }
 
                 if !shell.menu_is_open()
                     && (delivery.motion != (0, 0) || !delivery.mouse_buttons.is_empty() || delivery.wheel != (0, 0))

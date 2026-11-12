@@ -151,6 +151,12 @@ pub fn shared() -> &'static Arc<Shared> {
 
 // --- what `backend` asks of the platform it runs on ---
 
+/// The trackpad's two fingers have lifted from a scroll since this was last asked
+/// (`sp_scroll_end`): the frame loop ends the gesture for the client.
+pub fn scroll_ended() -> bool {
+    ffi::SCROLL_END.swap(false, std::sync::atomic::Ordering::SeqCst)
+}
+
 /// With nothing to draw into: the session's windows shown on the Mac's desktop, if the app has
 /// asked for 2D mode. True while it has, so the loop goes round at a window's pace.
 pub fn desk_tick(state: &mut crate::Spatiand) -> bool {
@@ -340,6 +346,9 @@ pub static MICROPHONE_ALLOWED: std::sync::atomic::AtomicBool = std::sync::atomic
 pub fn size_new_windows(state: &mut crate::Spatiand, _windows: &mut [crate::scene::WindowQuad]) {
     // Once a frame with the glasses on: what 2D mode leaves to be done then (`desk::in_glasses`).
     desk::in_glasses(state);
+    // Whether the pointer is on a client's surface, for the app to ask (`sp_scroll_over_client`).
+    let over = state.seat.get_pointer().is_some_and(|p| p.current_focus().is_some());
+    ffi::OVER_CLIENT.store(over, std::sync::atomic::Ordering::Relaxed);
     use smithay::reexports::wayland_server::Resource;
     use smithay::wayland::seat::WaylandFocus;
     let scale = *DISPLAY_SCALE.lock().unwrap();

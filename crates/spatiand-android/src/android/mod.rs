@@ -191,6 +191,11 @@ pub fn size_new_windows(state: &mut crate::Spatiand, _windows: &mut [crate::scen
     apps::size_new_windows(state);
 }
 
+/// A trackpad's scroll ended by its fingers lifting: a Mac's. The Beam Pro has no trackpad.
+pub fn scroll_ended() -> bool {
+    false
+}
+
 /// The Mac's 2D mode, which shows the session's windows on its desktop. The Beam Pro has no
 /// desktop of its own to show them on.
 pub fn desk_tick(_state: &mut crate::Spatiand) -> bool {

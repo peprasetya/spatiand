@@ -357,7 +357,15 @@ final class RoomTap {
         carry = (0, 0)
         gestureLog("two fingers lifted, mode %ld app %d speed %.0f last %.3f s ago, scrolled %.0f across %.0f up in %ld steps", two?.mode ?? -1, toApp ? 1 : 0, hypot(lastScroll.vx, lastScroll.vy), now - lastScroll.at, scrolled.x, scrolled.y, scrolled.n)
         scrolled = (0, 0, 0)
-        if two?.mode == 1, now - lastScroll.at < 0.12, hypot(lastScroll.vx, lastScroll.vy) > 100 {
+        // **Over a window of a client's (Spatiand's own applications, SpatiMesh) the scroll is
+        // ended as the Deck's pad ends it**, with the fingers' lifting said (`axis_stop`), and
+        // the application carries the page on by itself -- not by more scrolling made here,
+        // which to the application was fingers that never lifted. A browser goes back or forward
+        // on a sideways swipe only when the swipe has ended (the owner, 2026-11-12: two fingers
+        // left and right did nothing in SpatiMesh). The room's own lists still glide from here.
+        if two?.mode == 1, !toApp, sp_scroll_over_client() {
+            sp_scroll_end()
+        } else if two?.mode == 1, now - lastScroll.at < 0.12, hypot(lastScroll.vx, lastScroll.vy) > 100 {
             appGlide = toApp
             appGlideBegan = false
             glide = (lastScroll.vx, lastScroll.vy)

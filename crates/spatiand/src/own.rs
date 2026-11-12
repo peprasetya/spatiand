@@ -124,10 +124,13 @@ fn chromium_spatimesh() -> Option<String> {
         let data = PathBuf::from(std::env::var_os("HOME")?).join(".config/spatiand-chromium");
         // Drawn by the GPU: each frame an IOSurface, handed to the room as Spatiand's own
         // applications hand theirs (Chromium's ui/ozone/.../spatiand_iosurface_handover.cc).
+        // **Back and forward by a sideways swipe of two fingers, here**: a Mac has a trackpad,
+        // where that is what the swipe means in every browser. The Deck's switches turn it off
+        // (run.sh: on its pads a sideways swipe is a thumb's drift). The feature is Chromium's
+        // own and on by default only where it is built as Linux, so it is named.
         return Some(format!(
             "\"{}\" --user-data-dir=\"{}\" --class=spatimesh-chromium --no-first-run --no-default-browser-check \
-             --overscroll-history-navigation=0 \
-             --enable-features=EnableExtensionAutoupdate,ProfilesReordering,WaylandWindowDecorations \
+             --enable-features=EnableExtensionAutoupdate,ProfilesReordering,TouchpadOverscrollHistoryNavigation,WaylandWindowDecorations \
              --disable-features=SigninPromoOnAvatarPill",
             program.display(),
             data.display()

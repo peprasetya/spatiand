@@ -80,6 +80,11 @@ void sp_pointer_held(bool held);
 void sp_pointer_speed(float speed);
 // Two fingers spreading (above 1) or closing, since the last call.
 void sp_pinch(float scale);
+// The fingers have lifted from a scroll made with sp_pointer's wheel: the client under the pointer
+// is told so (wl_pointer.axis_stop) and carries the page on itself. sp_scroll_over_client says
+// whether there is such a client under the pointer (else the room's own things, which do not).
+void sp_scroll_end(void);
+bool sp_scroll_over_client(void);
 // A key of the Mac's keyboard, by its virtual key code; or by its evdev code.
 void sp_key(uint16_t mac_code, bool pressed);
 void sp_key_evdev(uint32_t code, bool pressed);
