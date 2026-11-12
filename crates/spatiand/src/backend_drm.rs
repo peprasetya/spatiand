@@ -190,6 +190,12 @@ pub fn run(
     // the second has every open window to lose, and must not be ended by a stray press. See
     // where this is read, below.
     let mut had_headset = false;
+    // Where head poses are published for clients that draw their own eye views. Created on
+    // demand: a session where nothing asks for poses never makes it. The session's, not one
+    // display's: a client is handed it once, and one made again at each rebuild left every
+    // client that already had the old one reading a ring nobody wrote -- its picture stuck to
+    // the head from the first replug of the glasses.
+    let mut pose_channel: Option<crate::pose::Channel> = None;
     // When the button now being held went down, while waiting with windows to lose.
     let mut leave_held_since: Option<std::time::Instant> = None;
     // Whether the last frame was a waiting one, so that the start of each wait can be told.
@@ -875,9 +881,6 @@ pub fn run(
         // Now that there is a renderer, clients can be offered dmabuf -- the formats come from
         // it, and there is nothing truthful to advertise before it exists.
         crate::dmabuf::advertise(&mut runtime.state, &renderer);
-        // Where head poses are published for clients that draw their own eye views. Created on
-        // demand: a session where nothing asks for poses never makes it.
-        let mut pose_channel: Option<crate::pose::Channel> = None;
         // How long one frame is, for the predicted display time. Read from the mode rather
         // than assumed, because it is 72 Hz on the glasses and something else on a panel.
         let frame_ns: i64 = output
