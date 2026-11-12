@@ -1081,7 +1081,7 @@ impl Spatiand {
         self.screen.set_preferred(mode);
     }
 
-    /// Keep the screen at least as big as the biggest X11 window.
+    /// Keep the screen at least as big as the biggest window.
     ///
     /// X11 has a screen and a pointer that lives on it, and a pointer cannot leave it. XWayland
     /// takes its screen from the outputs it is shown, which here is one output the size of a
@@ -1105,11 +1105,16 @@ impl Spatiand {
         let size: Size<i32, smithay::utils::Physical> = screen_size_for(
             self.space
                 .elements()
-                .filter_map(|w| w.x11_surface())
-                .map(|x11| {
-                    let size = x11.geometry().size;
-                    (size.w, size.h)
-                }),
+                // **Every window, not only X11's.** A Wayland application takes the screen's
+                // size as the most a page may be told its window is: SpatiMesh, whose pages are
+                // shown an emulated window (Cromite's viewport protection), drew a page into
+                // the screen's 1280 by 800 corner of a window dragged bigger and left the rest
+                // bare, or stretched it after a reload (Google Sheets, Dropbox; 2026-11-12).
+                .map(|w| match w.x11_surface() {
+                    Some(x11) => x11.geometry().size,
+                    None => w.geometry().size,
+                })
+                .map(|size| (size.w, size.h)),
         )
         .into();
         let current = self.screen.current_mode();
@@ -1120,7 +1125,7 @@ impl Spatiand {
             size,
             refresh: current.map(|m| m.refresh).unwrap_or(60_000),
         };
-        log::info!("the screen X11 sees is now {}x{}", size.w, size.h);
+        log::info!("the screen applications see is now {}x{}", size.w, size.h);
         self.screen.change_current_state(Some(mode), None, None, None);
         self.screen.set_preferred(mode);
     }
