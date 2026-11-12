@@ -144,6 +144,13 @@ pub fn now_ns() -> i64 {
     ts.tv_sec as i64 * 1_000_000_000 + ts.tv_nsec as i64
 }
 
+/// The time a frame callback is sent with: that clock, as `wl_callback.done` wants it ("the
+/// current time, in milliseconds"). Every loop sent zero, always, and a client that moves its
+/// animation on by the callback's time drew the same frame for ever.
+pub fn frame_time() -> std::time::Duration {
+    std::time::Duration::from_nanos(now_ns().max(0) as u64)
+}
+
 /// One eye, in OpenXR's frame and field order. The maths is `spatiand_render::openxr`'s,
 /// shared with the Beam Pro, which sends a host the same viewport from the same numbers.
 fn wire_eye(

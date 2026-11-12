@@ -481,7 +481,7 @@ pub fn run(
             // Frame callbacks, because a remote window is a client like any other and will not
             // send a second picture until it is told it may.
             let screen = runtime.state.screen.clone();
-            runtime.state.send_frames(&screen, std::time::Duration::ZERO);
+            runtime.state.send_frames(&screen, crate::pose::frame_time());
             runtime.state.space.refresh();
             windows = crate::scene::collect_windows(&mut renderer, &runtime.state);
             if !windows.is_empty() {
@@ -505,7 +505,7 @@ pub fn run(
                     let until = std::time::Instant::now() + std::time::Duration::from_millis(1500);
                     while std::time::Instant::now() < until {
                         let screen = runtime.state.screen.clone();
-                        runtime.state.send_frames(&screen, std::time::Duration::ZERO);
+                        runtime.state.send_frames(&screen, crate::pose::frame_time());
                         runtime.state.space.refresh();
                         display.dispatch_clients(&mut runtime.state)?;
                         display.flush_clients()?;
@@ -527,7 +527,7 @@ pub fn run(
                         while !thumbs.over() {
                             thumbs.frame(&mut runtime.state, &windows);
                             let screen = runtime.state.screen.clone();
-                            runtime.state.send_frames(&screen, std::time::Duration::ZERO);
+                            runtime.state.send_frames(&screen, crate::pose::frame_time());
                             runtime.state.space.refresh();
                             display.dispatch_clients(&mut runtime.state)?;
                             display.flush_clients()?;
@@ -542,7 +542,7 @@ pub fn run(
             let settle = std::time::Instant::now() + std::time::Duration::from_secs(4);
             while std::time::Instant::now() < settle {
                 let screen = runtime.state.screen.clone();
-                runtime.state.send_frames(&screen, std::time::Duration::ZERO);
+                runtime.state.send_frames(&screen, crate::pose::frame_time());
                 runtime.state.space.refresh();
                 display.dispatch_clients(&mut runtime.state)?;
                 display.flush_clients()?;
@@ -672,7 +672,7 @@ pub fn run(
                             // Frame callbacks are what tell a client it may draw the next
                             // frame. Without them most toolkits paint once and stop.
                             let screen = runtime.state.screen.clone();
-                            runtime.state.send_frames(&screen, std::time::Duration::ZERO);
+                            runtime.state.send_frames(&screen, crate::pose::frame_time());
                             runtime.state.space.refresh();
                             display.dispatch_clients(&mut runtime.state)?;
                             display.flush_clients()?;
@@ -712,7 +712,7 @@ pub fn run(
                                 std::time::Instant::now() + std::time::Duration::from_secs(3);
                             while std::time::Instant::now() < answered {
                                 let screen = runtime.state.screen.clone();
-                                runtime.state.send_frames(&screen, std::time::Duration::ZERO);
+                                runtime.state.send_frames(&screen, crate::pose::frame_time());
                                 runtime.state.space.refresh();
                                 display.dispatch_clients(&mut runtime.state)?;
                                 display.flush_clients()?;
@@ -839,7 +839,7 @@ pub fn run(
                                 }
                                 let finishing = dictating && dictation.look() != spatiand_shell::keyboard::Dictating::Off;
                                 let screen = runtime.state.screen.clone();
-                                runtime.state.send_frames(&screen, std::time::Duration::ZERO);
+                                runtime.state.send_frames(&screen, crate::pose::frame_time());
                                 runtime.state.space.refresh();
                                 display.dispatch_clients(&mut runtime.state)?;
                                 display.flush_clients()?;

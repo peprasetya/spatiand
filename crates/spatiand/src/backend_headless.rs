@@ -75,7 +75,7 @@ pub fn run(
         crate::dmabuf::settle(&mut runtime.state, &mut renderer);
 
         let screen = runtime.state.screen.clone();
-        runtime.state.send_frames(&screen, Duration::ZERO);
+        runtime.state.send_frames(&screen, crate::pose::frame_time());
         runtime.state.space.refresh();
         runtime.state.settle_keyboard_focus();
         display.dispatch_clients(&mut runtime.state)?;

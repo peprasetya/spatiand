@@ -4129,7 +4129,7 @@ pub fn run(
             // is the only one it has ever been told about. Menus get them too -- see
             // `Spatiand::send_frames`.
             let screen = runtime.state.screen.clone();
-            runtime.state.send_frames(&screen, Duration::ZERO);
+            runtime.state.send_frames(&screen, crate::pose::frame_time());
             runtime.state.space.refresh();
             display.dispatch_clients(&mut runtime.state)?;
             display.flush_clients()?;

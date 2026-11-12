@@ -2124,7 +2124,7 @@ pub fn run(
             }
 
             let screen = runtime.state.screen.clone();
-            runtime.state.send_frames(&screen, Duration::ZERO);
+            runtime.state.send_frames(&screen, crate::pose::frame_time());
             runtime.state.space.refresh();
             display.dispatch_clients(&mut runtime.state)?;
             display.flush_clients()?;

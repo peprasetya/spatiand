@@ -637,7 +637,7 @@ pub fn run(
         backend.submit(Some(&[Rectangle::from_size(size)]))?;
 
         let screen = runtime.state.screen.clone();
-        runtime.state.send_frames(&screen, Duration::ZERO);
+        runtime.state.send_frames(&screen, crate::pose::frame_time());
         runtime.state.space.refresh();
         // As in a session: whatever the layout says is focused is what the keyboard talks to.
         runtime.state.settle_keyboard_focus();
