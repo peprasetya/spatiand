@@ -365,10 +365,14 @@ fn run(stream: std::os::unix::net::UnixStream, inbox: Receiver<Command>) {
         // What the frame loop reads: which surface is which window, and which is to come out.
         if let Some(windows) = WINDOWS.get() {
             let mut shown = windows.shown.lock().unwrap();
+            // A wish the frame loop has not taken yet is kept: it looks once a frame, and this
+            // list is made again every few milliseconds.
+            let waiting: Vec<u32> = shown.values().filter(|(_, show)| *show).map(|(id, _)| *id).collect();
             shown.clear();
             for (id, entry) in entries.iter_mut() {
                 if let Some(surface) = entry.surface {
-                    shown.insert(surface, (*id, std::mem::take(&mut entry.show)));
+                    let show = std::mem::take(&mut entry.show) || waiting.contains(id);
+                    shown.insert(surface, (*id, show));
                 }
             }
         }
