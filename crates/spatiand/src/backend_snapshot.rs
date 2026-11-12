@@ -1586,19 +1586,26 @@ fn close_the_window(state: &Spatiand, windows: &[crate::scene::WindowQuad]) {
 /// what is being tested is what a client does when the pointer arrives, and going through the
 /// 3D pointer would be testing the ray maths instead. These are the same events it ends up
 /// sending: enter, motion in surface pixels, press, release.
-/// The window the harness acts on: the first, or with `SPATIAND_WINDOW=<text>` the first whose
+/// The window the harness acts on: the one opened first, or with `SPATIAND_WINDOW=<text>` the first opened whose
 /// title contains that text — so one of several remote windows can be clicked and photographed.
 fn chosen_window<'a>(
     state: &Spatiand,
     windows: &'a [crate::scene::WindowQuad],
 ) -> Option<&'a crate::scene::WindowQuad> {
+    // "The first" is the one opened first, not the first in the list: the list is back to
+    // front, and every step that focuses the window it acts on raises it to the end -- so with
+    // two windows each step went to the other one, and the picture was of whichever came up.
+    let opened = |w: &&crate::scene::WindowQuad| state.layout.id_of(&w.window).unwrap_or(usize::MAX);
     match std::env::var("SPATIAND_WINDOW") {
-        Ok(wanted) => windows.iter().find(|w| {
-            state
-                .title_of(&w.window)
-                .is_some_and(|t| t.to_lowercase().contains(&wanted.to_lowercase()))
-        }),
-        Err(_) => windows.first(),
+        Ok(wanted) => windows
+            .iter()
+            .filter(|w| {
+                state
+                    .title_of(&w.window)
+                    .is_some_and(|t| t.to_lowercase().contains(&wanted.to_lowercase()))
+            })
+            .min_by_key(opened),
+        Err(_) => windows.iter().min_by_key(opened),
     }
 }
 
@@ -1794,7 +1801,14 @@ fn scripted_steps() -> Vec<Scripted> {
                             number => code = number.parse().ok(),
                         }
                     }
-                    Scripted::Key(held, code?)
+                    // Said, as every other step that is not understood is: a key by name
+                    // (`key:ctrl+a`, `key:enter`) was dropped without a word, and the picture
+                    // taken as if it had been pressed.
+                    let Some(code) = code else {
+                        log::warn!("SPATIAND_STEPS: not understood: {step:?} (a key is its evdev number)");
+                        return None;
+                    };
+                    Scripted::Key(held, code)
                 }
                 ("keydown", [code]) => Scripted::Hold(*code as u32, true),
                 ("keyup", [code]) => Scripted::Hold(*code as u32, false),
