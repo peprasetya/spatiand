@@ -176,6 +176,13 @@ pub fn run(
     // replugging appeared to "fix" it only because that resets the device and leaves whichever
     // handle opened last as the only one.
     let mut hmd: Option<Box<dyn spatiand_hmd::Hmd>>;
+    // A headset opened by the frame loop, for the rebuild it then asks for: one that is on the
+    // USB bus but not open -- it said it was disconnected and came back before the presence
+    // check looked, or could not be opened when the displays were last built -- changes nothing
+    // that check can see, and was never opened again until the wearer unplugged it for longer.
+    // Opened there rather than by rebuilding to find out, so glasses that are listed but will
+    // not open cost a failed open now and then and not a rebuild of both screens each time.
+    let mut reopened: Option<Box<dyn spatiand_hmd::Hmd>> = None;
     // Has a headset ever been open in this session?
     //
     // The difference between "you started Spatiand without plugging the glasses in" and "your
@@ -498,7 +505,21 @@ pub fn run(
     loop {
         // Re-open on every rebuild. The device may have just appeared, and a handle from a
         // previous session refers to hardware that has since been unplugged.
-        hmd = match spatiand_hmd::open_any() {
+        //
+        // The old handle is let go of *first*, here, for every way of getting round to this
+        // line: `hmd = open_any()` opens the new one before dropping the old, and the old one's
+        // Drop then stops the stream the new one started (see where `hmd` is declared). Most
+        // rebuilds had already cleared it; the ones that had not -- a display arriving for
+        // glasses that were on USB, the sidecar's rebuild, the two retries below -- came back
+        // with glasses that sent nothing until the IMU watchdog rebuilt everything again.
+        hmd = None;
+        // A headset the frame loop found it could open again (see `reopened`) is this one: it
+        // is not opened twice.
+        let opened = match reopened.take() {
+            Some(h) => Ok(h),
+            None => spatiand_hmd::open_any(),
+        };
+        hmd = match opened {
             Ok(h) => {
                 log::info!("headset: {}", h.info().name);
                 settle_axes(h.info(), stored, &mut tracker, &mut calibration);
@@ -987,6 +1008,8 @@ pub fn run(
         // per cycle, and the session never settled long enough to draw anything.
         let built_with_glasses = spatiand_hmd::is_present();
         let mut last_presence_check = std::time::Instant::now();
+        // Whether a headset on the bus has already been said not to open, so it is said once.
+        let mut reopen_failed = false;
         // When the output was last rebuilt, so a device that is flapping cannot drive a rebuild
         // loop. A rebuild costs the better part of twenty seconds — mode forcing, link-up, and
         // up to ten seconds waiting for a stereo mode to appear — so without a floor here a
@@ -1783,6 +1806,25 @@ pub fn run(
                         }
                         hmd = None;
                         break;
+                    }
+                } else if present && hmd.is_none() && last_rebuild.elapsed() >= REBUILD_COOLDOWN {
+                    // On the bus and not open: nothing above sees that, since presence is what
+                    // the displays were built with. The handle is kept for the rebuild.
+                    match spatiand_hmd::open_any() {
+                        Ok(h) => {
+                            log::info!("the headset is back — opening it again");
+                            reopened = Some(h);
+                            break;
+                        }
+                        Err(e) => {
+                            if !reopen_failed {
+                                log::warn!(
+                                    "the headset is on USB but cannot be opened ({e}); trying \
+                                     again every second"
+                                );
+                            }
+                            reopen_failed = true;
+                        }
                     }
                 }
 
