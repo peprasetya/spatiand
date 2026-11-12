@@ -158,8 +158,9 @@ pub mod pose {
             let raw = unsafe {
                 libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING)
             };
-            // macOS has no memfd: shared memory with a name, and the name taken away at once so
-            // that only the descriptor is left. It cannot be sealed; nothing local maps it there.
+            // macOS has no memfd: shared memory with a name, which is kept for the ring's life
+            // (`read_only` opens it again by it) and taken away when the ring is dropped. It
+            // cannot be sealed; nothing local maps it there.
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             let (raw, unique) = unsafe {
                 static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -171,7 +172,15 @@ pub mod pose {
                 ))
                 .unwrap();
                 let _ = name;
-                (libc::shm_open(unique.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_EXCL, 0o600), unique)
+                let mut raw = libc::shm_open(unique.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_EXCL, 0o600);
+                // A name outlives its process there. One left by a room that was killed, whose
+                // pid this one has been given, is nobody's: taken away and made again, where it
+                // used to fail every pose channel of this run with "File exists".
+                if raw < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EEXIST) {
+                    libc::shm_unlink(unique.as_ptr());
+                    raw = libc::shm_open(unique.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_EXCL, 0o600);
+                }
+                (raw, unique)
             };
             if raw < 0 {
                 return Err(format!("memfd_create: {}", std::io::Error::last_os_error()));
@@ -180,7 +189,13 @@ pub mod pose {
             let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(raw) };
             // SAFETY: the descriptor is ours, sized to what is about to be mapped.
             if unsafe { libc::ftruncate(raw, size as libc::off_t) } < 0 {
-                return Err(format!("ftruncate: {}", std::io::Error::last_os_error()));
+                let error = std::io::Error::last_os_error();
+                // SAFETY: a libc call with a valid C string. The name is not left behind.
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                unsafe {
+                    libc::shm_unlink(unique.as_ptr());
+                }
+                return Err(format!("ftruncate: {error}"));
             }
             // SAFETY: a libc call on a descriptor we own.
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -197,7 +212,13 @@ pub mod pose {
                 )
             };
             if memory == libc::MAP_FAILED {
-                return Err(format!("mmap: {}", std::io::Error::last_os_error()));
+                let error = std::io::Error::last_os_error();
+                // SAFETY: as above.
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                unsafe {
+                    libc::shm_unlink(unique.as_ptr());
+                }
+                return Err(format!("mmap: {error}"));
             }
             let memory = memory as *mut u8;
             let header = Header {
