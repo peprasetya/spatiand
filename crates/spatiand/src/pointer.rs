@@ -815,6 +815,35 @@ pub fn aim(ray: Ray, windows: &[WindowQuad]) -> Aim {
     }
 }
 
+/// Give a surface the pointer lock or confinement it has asked for, now that the pointer is on
+/// it at `at`.
+///
+/// A constraint is given when it is made only if the pointer is on its surface at that moment
+/// (`PointerConstraintsHandler::new_constraint`), and smithay takes it back whenever the pointer
+/// leaves (`PointerTarget::leave` for a surface) and never gives it again itself -- "this is not
+/// sent automatically", its `activate` says. So a game that asked for its lock before the
+/// pointer was on its window, or whose window the pointer left for a moment, kept a lock that
+/// was never `locked` for as long as it lived: its camera turned by a cursor that stopped at the
+/// window's edge. Given here, each time the pointer is moved onto or within the surface, as the
+/// protocol says of a lasting lock: it "may again reactivate" when the pointer comes back.
+fn grant_constraint(
+    pointer: &smithay::input::pointer::PointerHandle<Spatiand>,
+    surface: &WlSurface,
+    at: Point<f64, Logical>,
+) {
+    if pointer.current_focus().as_ref() != Some(surface) {
+        return;
+    }
+    with_pointer_constraint(surface, pointer, |constraint| {
+        let Some(constraint) = constraint else { return };
+        // Only inside the part of the surface it was asked for, where it named one.
+        let inside = constraint.region().is_none_or(|region| region.contains(at.to_i32_round()));
+        if !constraint.is_active() && inside {
+            constraint.activate();
+        }
+    });
+}
+
 /// How far behind the window the ray hit a popup of another window counts as behind it.
 const BEHIND_SLACK_M: f64 = 0.01;
 
@@ -1062,6 +1091,7 @@ impl PointerState {
         let distance = aim.popup.map(|(_, _, h)| h.distance).or(aim.hit.map(|(_, h)| h.distance));
         self.last_aim = Some((aim.ray, distance));
         let location = local.unwrap_or_else(|| Point::from((0.0, 0.0)));
+        let onto = focus.as_ref().map(|(surface, _)| surface.clone());
         pointer.motion(
             state,
             focus.map(|(s, p)| (s, p)),
@@ -1071,6 +1101,9 @@ impl PointerState {
                 time: time_ms,
             },
         );
+        if let Some(surface) = onto {
+            grant_constraint(&pointer, &surface, location);
+        }
         pointer.frame(state);
     }
 
@@ -1379,6 +1412,10 @@ impl PointerState {
                     time: time_ms,
                 },
             );
+            // The pointer is on the window now, if it was not: a lock asked for before this
+            // first movement gave it the surface, or let go when the pointer last left, is
+            // given, and the next movement goes out as the locked pointer's.
+            grant_constraint(&pointer, surface, next.into());
         }
         pointer.frame(state);
     }
