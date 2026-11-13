@@ -359,6 +359,13 @@ impl Host {
         self.output.set_preferred(mode);
     }
 
+    /// The id a window opening now is known by.
+    fn next_id(&mut self) -> WindowId {
+        let id = free_id(self.next_window_id, |id| self.windows.iter().any(|t| t.id.0 == id));
+        self.next_window_id = id + 1;
+        WindowId(id)
+    }
+
     /// Track a newly mapped X11 window exactly as a new toplevel is tracked.
     pub fn adopt_x11(&mut self, surface: smithay::xwayland::X11Surface) {
         if self
@@ -375,8 +382,7 @@ impl Host {
             .unwrap_or_else(|| "unknown".into());
         let window = Window::new_x11_window(surface);
         self.space.map_element(window.clone(), (0, 0), false);
-        let id = WindowId(self.next_window_id);
-        self.next_window_id += 1;
+        let id = self.next_id();
         log::info!("window {} opened for {app} (X11)", id.0);
         self.windows.push(Tracked {
             id,
@@ -502,6 +508,28 @@ impl Host {
         };
         self.dmabuf_global = Some(global);
     }
+}
+
+/// The first window id at or after `from` that no open window has, going round.
+///
+/// **Never more than sixteen bits**, though the id is thirty-two in every message: a picture's
+/// packets name their window in sixteen (`spatiand_stream::video::Packet`), and a session
+/// finds the window by that. Counted up without end, the 65536th window a host opened -- a
+/// service runs for weeks, and every menu-less dialog is one -- was announced under a number
+/// its pictures could not carry, and they arrived for window 0, or for some older window still
+/// open. So the count goes round at what a packet can say, passing over the ids still in use.
+/// An id comes back only after sixty-five thousand others, long after the session was told
+/// its last window closed.
+fn free_id(from: u32, in_use: impl Fn(u32) -> bool) -> u32 {
+    const LAST: u32 = u16::MAX as u32;
+    let mut id = if (1..=LAST).contains(&from) { from } else { 1 };
+    for _ in 0..LAST {
+        if !in_use(id) {
+            break;
+        }
+        id = if id >= LAST { 1 } else { id + 1 };
+    }
+    id
 }
 
 /// The parent process of a pid, or `None` if it cannot be read.
@@ -651,8 +679,7 @@ impl XdgShellHandler for Host {
 
         let client = surface.wl_surface().client();
         let app = self.app_for(client.as_ref());
-        let id = WindowId(self.next_window_id);
-        self.next_window_id += 1;
+        let id = self.next_id();
         log::info!("window {} opened for {app}", id.0);
         self.windows.push(Tracked {
             id,
@@ -1036,5 +1063,37 @@ impl smithay::input::keyboard::KeyboardTarget<Host> for KeyboardFocus {
             }
             KeyboardFocus::X11(x11) => KeyboardTarget::modifiers(x11, seat, data, modifiers, serial),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::free_id;
+
+    #[test]
+    fn window_ids_count_up_from_where_they_were() {
+        assert_eq!(free_id(1, |_| false), 1);
+        assert_eq!(free_id(42, |_| false), 42);
+    }
+
+    #[test]
+    fn window_ids_go_round_at_what_a_video_packet_can_say() {
+        // The window after the 65535th is not 65536, which a packet would call 0.
+        assert_eq!(free_id(65_536, |_| false), 1);
+        assert_eq!(free_id(65_535, |_| false), 65_535);
+        assert_eq!(free_id(0, |_| false), 1);
+        // And every id a host hands out is the same on the wire's sixteen bits.
+        for from in [1u32, 65_535, 65_536, 70_000, u32::MAX] {
+            let id = free_id(from, |id| id % 3 == 0);
+            assert_eq!(u32::from(id as u16), id);
+            assert_ne!(id, 0);
+        }
+    }
+
+    #[test]
+    fn a_window_still_open_keeps_its_id_to_itself() {
+        // Gone round, with the first three windows the host ever opened still open.
+        assert_eq!(free_id(65_536, |id| id <= 3), 4);
+        assert_eq!(free_id(65_535, |id| id == 65_535 || id == 1), 2);
     }
 }
