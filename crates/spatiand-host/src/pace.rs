@@ -25,6 +25,8 @@ use spatiand_stream::WindowId;
 
 /// Never faster than this, whatever anybody asks for.
 const MAX_FPS: u32 = 240;
+/// The slowest display a session is believed to have, in millihertz.
+const MIN_DISPLAY_MHZ: u32 = 24_000;
 /// A window is always woken this often, even when it is out of sight and nobody is watching.
 ///
 /// Not zero, and the reason is worth stating: an application that is never woken can be an
@@ -74,6 +76,17 @@ impl Default for Rates {
 }
 
 impl Rates {
+    /// These, for a session whose display runs at `refresh_mhz` (`ClientMessage::Hello`).
+    ///
+    /// A figure no display has -- nothing, or beyond what is ever paced to -- changes nothing:
+    /// it is the session's to say, and a session can say anything.
+    pub fn for_display(self, refresh_mhz: u32) -> Rates {
+        if !(MIN_DISPLAY_MHZ..=MAX_FPS * 1000).contains(&refresh_mhz) {
+            return self;
+        }
+        Rates { refresh_mhz, ..self }
+    }
+
     /// How often a window in this state may draw.
     pub fn fps(&self, attention: Attention) -> f32 {
         let display = (self.refresh_mhz as f32 / 1000.0).clamp(1.0, MAX_FPS as f32);
@@ -193,6 +206,19 @@ mod tests {
             rates.fps(Attention::Away) > 0.0,
             "a window that is never woken never repaints when it comes back into view"
         );
+    }
+
+    #[test]
+    fn the_sessions_display_sets_the_rate_and_nonsense_does_not() {
+        let rates = Rates::default().for_display(72_000);
+        assert_eq!(rates.refresh_mhz, 72_000);
+        assert_eq!(rates.fps(Attention::Focused), 72.0);
+        // Only the display's rate: the wearer's ceiling and the rest stay as they were.
+        let slow = Rates { max_fps: 30, ..Default::default() }.for_display(90_000);
+        assert_eq!((slow.refresh_mhz, slow.max_fps), (90_000, 30));
+        for nonsense in [0, 1, 23_999, 240_001, u32::MAX] {
+            assert_eq!(rates.for_display(nonsense).refresh_mhz, 72_000);
+        }
     }
 
     #[test]

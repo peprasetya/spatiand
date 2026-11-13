@@ -312,6 +312,9 @@ struct Stream {
     /// more than every [`REBUDGET_EVERY`].
     kbit: u32,
     built: Instant,
+    /// The frame rate the encoder was built for, which its rate control divides the bit rate
+    /// by: a session with another display rebuilds it.
+    fps: u32,
     /// The commit count last encoded, so an unchanged window costs nothing.
     encoded_at: u64,
     frame: u32,
@@ -567,7 +570,7 @@ fn run_host(
                         }
                     }
                     FromSession::Said(message) if admitted => {
-                        said(&mut host, &library.served, message, &mut streams, &mut pads);
+                        said(&mut host, &library.served, message, &mut streams, &mut pads, &mut pacer);
                     }
                     // **A device not let in.** Only its pairing is listened to; anything else
                     // it says is dropped here.
@@ -1488,6 +1491,7 @@ fn said(
     message: spatiand_stream::ClientMessage,
     streams: &mut HashMap<u32, Stream>,
     pads: &mut pad::Pads,
+    pacer: &mut Pacer,
 ) {
     use spatiand_stream::ClientMessage as Says;
     match message {
@@ -1516,9 +1520,22 @@ fn said(
             host.glasses = on;
         }
         Says::Hello {
-            version, session, ..
+            version,
+            session,
+            refresh_mhz,
+            ..
         } => {
             log::info!("session {session} speaks version {version}");
+            // **Its display's rate is the rate here.** It was read and dropped, so every
+            // session was paced and budgeted as a 60 Hz one: the glasses' 72 got sixty
+            // pictures a second, one in six of their frames showing the last picture again.
+            // The encoders made for the old rate are made again for this one, where they are
+            // used (see `encode_window`).
+            let rates = pacer.rates().for_display(refresh_mhz);
+            if rates.refresh_mhz != pacer.rates().refresh_mhz {
+                log::info!("the session's display runs at {:.1} Hz", rates.refresh_mhz as f32 / 1000.0);
+                pacer.set_rates(rates);
+            }
             // A session's event times are its own clock; a new one starts a new mapping.
             host.session_max_kbit = None;
             host.event_clock = spatiand_stream::EventClock::default();
@@ -1672,6 +1689,7 @@ fn encode_window(
     let stale = streams.get(&id).is_some_and(|s| {
         s.encoder.width != size.0
             || s.encoder.height != size.1
+            || s.fps != fps
             || (budget::worth_changing(s.kbit, kbit) && s.built.elapsed() >= REBUDGET_EVERY)
     });
     if let Some(s) = streams.get(&id).filter(|_| stale) {
@@ -1698,6 +1716,7 @@ fn encode_window(
                 encoder,
                 kbit,
                 built: Instant::now(),
+                fps,
                 encoded_at: 0,
                 frame: carried,
                 wants_keyframe: true,
