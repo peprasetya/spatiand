@@ -2049,7 +2049,10 @@ pub fn run(
                                 scene.draw_notice(gl, &eye, orientation);
                             }
                         }
-                        if keyboard_open {
+                        // Not on the waiting screen, which is not a place: the keyboard left open in the
+                        // room stood on the Deck's own panel when the glasses were unplugged. A menu
+                        // asking for text there still gets it.
+                        if keyboard_open && (!waiting || shell.wants_text()) {
                             let focus = windows.iter().find(|w| w.focused);
                             scene.draw_keyboard(
                                 gl,
