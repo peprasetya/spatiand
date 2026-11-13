@@ -160,6 +160,20 @@ impl Board {
         self.pending = Some(mime_types);
     }
 
+    /// Whether `held` is still the copy made here that is on the clipboard.
+    ///
+    /// A copy is announced a turn or more after it is made, once a thread has read its text,
+    /// and a host's own copy can arrive in between. Announcing ours then would tell every
+    /// host -- the one that just copied among them -- that the session holds forms it can no
+    /// longer serve: their pastes would ask here and be answered with nothing, their own
+    /// clipboard replaced by one that pastes empty.
+    fn copied_here_is(&self, held: &Held) -> bool {
+        matches!(
+            &self.owner,
+            Some(Owner::Here(forms) | Owner::HereX11(forms)) if *forms == held.mime_types
+        )
+    }
+
     /// A host says its clipboard changed.
     ///
     /// Returns what to pass on: every *other* host hears about it too, which is what lets two
@@ -193,6 +207,9 @@ impl Board {
         );
         self.owner = Some(Owner::Host(host.to_string()));
         self.held = Some(held.clone());
+        // A copy made here in the same moment, not announced yet, has just been replaced. It
+        // must not be announced after all: the selection it would be read from is this one.
+        self.pending = None;
         // What was announced is no longer on the clipboard, so hearing it again is not an echo
         // but a new copy of the same thing: the same address copied twice, say, with something
         // else copied in between. Remembering it past this point dropped that second copy and
@@ -441,6 +458,9 @@ impl Board {
             while let Ok(note) = notes.try_recv() {
                 match note {
                     Note::Copied(held) => {
+                        if !self.copied_here_is(&held) {
+                            continue;
+                        }
                         self.announced = Some(held.clone());
                         out.push(Say::Everyone {
                             except: None,
@@ -881,6 +901,27 @@ mod tests {
         assert_eq!(board.host_wants_from_a_host("workshop", "image/png"), None);
         board.owner = Some(Owner::Here(vec!["image/png".into()]));
         assert_eq!(board.host_wants_from_a_host("study", "image/png"), None);
+    }
+
+    #[test]
+    fn a_copy_here_overtaken_by_a_host_is_not_announced_after_all() {
+        let mut board = Board::new();
+        board.copied_here(vec!["text/plain".into()], true, None);
+        let ours = Held {
+            mime_types: board.pending.clone().expect("a copy waiting to be announced"),
+            text: None,
+            bytes: 0,
+        };
+        assert!(board.copied_here_is(&ours));
+        // A newer copy here: the older one's announcement is the stale one.
+        board.copied_here(vec!["image/png".into()], false, None);
+        assert!(!board.copied_here_is(&ours));
+        // A host copied before the thread reading ours came back.
+        board.copied_here(vec!["text/plain".into()], true, None);
+        board.owner = Some(Owner::Host("workshop".into()));
+        assert!(!board.copied_here_is(&ours));
+        board.owner = None;
+        assert!(!board.copied_here_is(&ours));
     }
 
     #[test]
