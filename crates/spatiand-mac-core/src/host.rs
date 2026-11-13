@@ -254,12 +254,13 @@ async fn serve(
     gate: Arc<Gate>,
     window: Arc<Mutex<Option<Window>>>,
 ) {
-    let mut next: Option<(quinn::Connection, Fingerprint)> = None;
+    // The one to serve next, with the control stream its pairing was on if it has just paired.
+    let mut next: Option<(quinn::Connection, Fingerprint, Option<quinn::SendStream>)> = None;
     loop {
-        let (connection, who) = match next.take() {
+        let (connection, who, mut control) = match next.take() {
             Some(n) => n,
             None => match arrival(&endpoint).await {
-                Some(a) => a,
+                Some((connection, who)) => (connection, who, None),
                 None => return,
             },
         };
@@ -271,7 +272,6 @@ async fn serve(
             "known": known,
         }}));
         // A device not yet trusted is served nothing until it has proved the code shown here.
-        let mut control = None;
         if !known {
             match prove(&connection, this_host, who, &window, &gate, callbacks).await {
                 Some(stream) => control = Some(stream),
@@ -281,36 +281,95 @@ async fn serve(
                     continue;
                 }
             }
-            let list = {
-                let mut list = paired.lock().unwrap();
-                if !list.contains(&who) {
-                    list.push(who);
-                }
-                list.clone()
-            };
-            save_paired(&paired_path, &list);
-            gate.set_paired(list);
-            gate.set_open(false);
-            spatiand_sync::roster::Roster::open_default().pair(&who.to_string(), "", "");
+            write_down(who, &paired, &paired_path, &gate);
         }
         // Whatever is queued was meant for the session before this one; this one hears its windows
         // from the start, after its own hello, which the app sends when it hears `attached`.
         while outbox.try_recv().is_ok() {}
         callbacks.say(&json!({ "attached": { "who": who.to_string() } }));
-        tokio::select! {
-            _ = session(&connection, control, &mut outbox, callbacks) => {}
-            _ = gone(&paired, who) => {
-                log::info!("{} was removed from the owner's devices", who.short());
-                connection.close(1u32.into(), b"not paired");
-            }
-            arrived = arrival(&endpoint) => {
-                let Some(arrived) = arrived else { return };
-                connection.close(CLOSE_TAKEN_OVER.into(), b"another device took over");
-                next = Some(arrived);
+        // **A stranger through the open pairing gate waits beside the session**, and takes it over
+        // only once it has proved the code: any connection made while pairing was open used to
+        // close the session that was in, before saying a byte of the code, and could again for as
+        // long as the window stayed open. A paired device takes over at once, as before.
+        let mut waiting: Option<(quinn::Connection, Fingerprint, Proving)> = None;
+        {
+            let serving = session(&connection, control, &mut outbox, callbacks);
+            tokio::pin!(serving);
+            let removed = gone(&paired, who);
+            tokio::pin!(removed);
+            loop {
+                tokio::select! {
+                    _ = &mut serving => break,
+                    _ = &mut removed => {
+                        log::info!("{} was removed from the owner's devices", who.short());
+                        connection.close(1u32.into(), b"not paired");
+                        break;
+                    }
+                    arrived = arrival(&endpoint) => {
+                        let Some((arrived, their)) = arrived else { return };
+                        // Whoever was waiting is hung up on: one comes to pair at a time. Its proof
+                        // is left to end by itself, which counts an attempt it had begun as spent.
+                        if let Some((old, _, proving)) = waiting.take() {
+                            old.close(1u32.into(), b"not paired");
+                            tokio::spawn(proving);
+                        }
+                        if paired.lock().unwrap().contains(&their) {
+                            connection.close(CLOSE_TAKEN_OVER.into(), b"another device took over");
+                            next = Some((arrived, their, None));
+                            break;
+                        }
+                        let proving: Proving = Box::pin({
+                            let (arrived, window, gate) = (arrived.clone(), window.clone(), gate.clone());
+                            async move { prove(&arrived, this_host, their, &window, &gate, callbacks).await }
+                        });
+                        waiting = Some((arrived, their, proving));
+                    }
+                    proved = async { (&mut waiting.as_mut().unwrap().2).await }, if waiting.is_some() => {
+                        let (arrived, their, _) = waiting.take().unwrap();
+                        match proved {
+                            Some(stream) => {
+                                write_down(their, &paired, &paired_path, &gate);
+                                connection.close(CLOSE_TAKEN_OVER.into(), b"another device took over");
+                                next = Some((arrived, their, Some(stream)));
+                                break;
+                            }
+                            None => arrived.close(1u32.into(), b"not paired"),
+                        }
+                    }
+                }
             }
         }
         callbacks.say(&json!({ "left": { "refused": false } }));
+        // The session ended by itself with one still proving the code: it is heard out, and
+        // served next if it proves it.
+        if let Some((arrived, their, proving)) = waiting.take() {
+            match proving.await {
+                Some(stream) => {
+                    write_down(their, &paired, &paired_path, &gate);
+                    next = Some((arrived, their, Some(stream)));
+                }
+                None => arrived.close(1u32.into(), b"not paired"),
+            }
+        }
     }
+}
+
+/// A stranger's proof of the code, going on beside a session.
+type Proving = std::pin::Pin<Box<dyn std::future::Future<Output = Option<quinn::SendStream>> + Send>>;
+
+/// A device that has proved the code is one of the owner's from now on, and pairing is closed.
+fn write_down(who: Fingerprint, paired: &Mutex<Vec<Fingerprint>>, paired_path: &std::path::Path, gate: &Gate) {
+    let list = {
+        let mut list = paired.lock().unwrap();
+        if !list.contains(&who) {
+            list.push(who);
+        }
+        list.clone()
+    };
+    save_paired(paired_path, &list);
+    gate.set_paired(list);
+    gate.set_open(false);
+    spatiand_sync::roster::Roster::open_default().pair(&who.to_string(), "", "");
 }
 
 /// Until this session's device is no longer one of those paired.
@@ -722,6 +781,67 @@ pub extern "C" fn sp_host_forget_all(core: *mut HostCore) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    extern "C" fn said_to_nobody(_: *mut c_void, _: *const c_char) {}
+
+    /// While pairing is open anyone can connect. One who has not proved the code takes nothing
+    /// from the session that is in; a paired device coming in takes it over as before.
+    #[test]
+    fn a_stranger_who_has_not_proved_the_code_leaves_the_session_alone() {
+        let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        let host = Identity::new().unwrap();
+        let device = Identity::new().unwrap();
+        let paired = Arc::new(Mutex::new(vec![device.fingerprint()]));
+        let gate = Arc::new(Gate::new(vec![device.fingerprint()]));
+        let window = Arc::new(Mutex::new(Some(Window::open(spatiand_stream::pairing::WINDOW).unwrap())));
+        gate.set_open(true);
+        let endpoint = {
+            let _guard = runtime.enter();
+            spatiand_stream::transport::server("127.0.0.1:0".parse().unwrap(), &host, Trust::Gate(gate.clone())).unwrap()
+        };
+        let address = endpoint.local_addr().unwrap();
+        let (_out, outbox) = unbounded_channel();
+        let callbacks = Callbacks { user: 0, event: said_to_nobody };
+        // Never written: only a device that proves the code is written down, and none does here.
+        let nowhere = std::env::temp_dir().join("spatiand-test-host-paired-never-written.txt");
+        runtime.spawn(serve(endpoint, outbox, callbacks, host.fingerprint(), paired, nowhere, gate, window));
+
+        let connect = |endpoint: &quinn::Endpoint| {
+            runtime.block_on(async { endpoint.connect(address, "spatiand").unwrap().await.expect("connects") })
+        };
+        let closed_within = |connection: &quinn::Connection, ms: u64| {
+            runtime.block_on(async {
+                tokio::time::timeout(Duration::from_millis(ms), connection.closed()).await.ok()
+            })
+        };
+        let own = {
+            let _guard = runtime.enter();
+            spatiand_stream::transport::client(&device, host.fingerprint()).unwrap()
+        };
+        let session = connect(&own);
+        // In, and being served (nothing crosses until the app has something to say).
+        assert!(closed_within(&session, 300).is_none(), "the paired device was not let in");
+
+        let stranger = {
+            let _guard = runtime.enter();
+            spatiand_stream::transport::client_first_contact(&Identity::new().unwrap()).unwrap()
+        };
+        let knocking = connect(&stranger);
+        assert!(closed_within(&session, 500).is_none(), "a stranger who proved nothing closed the session");
+        // A second stranger hangs up the first and still takes nothing.
+        let another = connect(&stranger);
+        assert!(closed_within(&knocking, 5000).is_some(), "the first stranger was left waiting beside the second");
+        assert!(closed_within(&session, 500).is_none(), "a second stranger closed the session");
+
+        // The owner's own device coming in again takes over, with the code that says so.
+        let again = connect(&own);
+        match closed_within(&session, 5000) {
+            Some(quinn::ConnectionError::ApplicationClosed(close)) => assert_eq!(close.error_code, CLOSE_TAKEN_OVER.into()),
+            other => panic!("the session was not taken over: {other:?}"),
+        }
+        assert!(closed_within(&again, 300).is_none(), "the device that took over was not served");
+        drop(another);
+    }
 
     #[test]
     fn a_catalogue_with_an_icon_crosses_as_json_and_comes_back_a_host_message() {
