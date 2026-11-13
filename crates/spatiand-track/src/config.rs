@@ -63,7 +63,11 @@ pub fn save_axes(map: &AxisMap) -> std::io::Result<PathBuf> {
     }
     let text = toml::to_string_pretty(map)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    std::fs::write(&path, text)?;
+    // Written beside and moved over, so the power going mid-write leaves the old map and
+    // not half of the new one.
+    let partial = dir.join("axes.toml.partial");
+    std::fs::write(&partial, text)?;
+    std::fs::rename(&partial, &path)?;
     Ok(path)
 }
 

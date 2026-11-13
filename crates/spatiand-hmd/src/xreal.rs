@@ -519,17 +519,27 @@ impl Hmd for XrealGlasses {
         }
 
         if fds[0].revents & libc::POLLIN != 0 {
-            let n = self
-                .imu
-                .read_report(&mut self.buf, Duration::ZERO)?
-                .unwrap_or(0);
-            if let Some(sample) = Self::parse_imu(&self.buf[..n]) {
-                if sample.is_plausible() {
-                    return Ok(Some(HmdEvent::Imu(sample)));
+            // A packet that is no sample -- an ack, a rejection, a zeroed warm-up packet, one
+            // jolted past what a head can do -- is passed over for the one behind it. Answered
+            // with "nothing" instead, it ended the caller's draining of the frame's samples
+            // (`while let Ok(Some(..)) = poll(ZERO)`) with good ones still queued: the pose a
+            // frame late for as long as the jolt lasted, and the queue backing up behind it.
+            // Not for ever: a headset sending nothing else must not hold the frame.
+            for _ in 0..64 {
+                let n = self
+                    .imu
+                    .read_report(&mut self.buf, Duration::ZERO)?
+                    .unwrap_or(0);
+                if let Some(sample) = Self::parse_imu(&self.buf[..n]) {
+                    if sample.is_plausible() {
+                        return Ok(Some(HmdEvent::Imu(sample)));
+                    }
+                }
+                let mut imu = libc::pollfd { fd: self.imu.fd(), events: libc::POLLIN, revents: 0 };
+                if unsafe { libc::poll(&mut imu, 1, 0) } <= 0 || imu.revents & libc::POLLIN == 0 {
+                    break;
                 }
             }
-            // Acks, rejections and the zeroed warm-up packets all land here. Not an error;
-            // the caller polls again.
         }
         Ok(None)
     }
