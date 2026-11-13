@@ -1490,7 +1490,7 @@ pub fn run(
             // bar and the window stopped part of the way, the rest of the pinch going to
             // whatever the page made of it. There is no word of the fingers lifting, so a
             // pinch is one for as long as its steps keep coming.
-            if pinch_held.as_ref().is_some_and(|(w, at)| at.elapsed() > PINCH_LETS_GO || !w.alive()) {
+            if pinch_held.as_ref().is_some_and(|(w, at)| at.elapsed() > PINCH_LETS_GO || !smithay::utils::IsAlive::alive(w)) {
                 pinch_held = None;
             }
             if (pinch - 1.0).abs() > 1e-4 && !shell.menu_is_open() && drag_pinch == 1.0 {
