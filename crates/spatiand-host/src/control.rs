@@ -38,6 +38,8 @@
 //! → input 3 move 640 400             one input to window 3 exactly as a session sends it:
 //! → input 3 button 272 1             move the pointer, press (1) or release (0) a button or
 //! → input 3 scroll 0 15              turn the wheel (surface units, as a session sends)
+//! → input 3 fingerscroll 0 15        the same by a finger on a pad, then `scrollstop` as it
+//! → input 3 scrollstop                 lifts; `leave` takes the pointer off the window
 //! → input 3 keycode 56 1             a key by its evdev code -- held across commands, so a
 //! ← done | failed <why>              drag with Alt down can be done a step at a time
 //! → clipboard                       paste here, as an application would, and say what came
@@ -239,6 +241,9 @@ fn parse_input(rest: &str) -> Result<(u32, spatiand_stream::Input), String> {
             pressed: number(3)? != 0.0,
         },
         Some("scroll") => spatiand_stream::Input::Scroll { horizontal: number(2)?, vertical: number(3)? },
+        Some("fingerscroll") => spatiand_stream::Input::FingerScroll { horizontal: number(2)?, vertical: number(3)? },
+        Some("scrollstop") => spatiand_stream::Input::ScrollStop,
+        Some("leave") => spatiand_stream::Input::Leave,
         Some("keycode") => spatiand_stream::Input::Key {
             code: number(2)? as u32,
             pressed: number(3)? != 0.0,

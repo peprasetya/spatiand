@@ -93,6 +93,66 @@ pub fn focus(host: &mut Host, window: Option<WindowId>) {
     }
 }
 
+/// Point the pointer at whatever is now under it, before a press or a scroll is passed on.
+///
+/// The pointer's surface is chosen when it moves, and a pointer held still goes on naming the
+/// one it was over then. What is under it changes without it: Chrome draws parts of a page on
+/// subsurfaces of its window that come and go as the page scrolls, and a menu or a tooltip
+/// closes. A scroll goes to the surface the pointer names, so one that named a surface since
+/// taken away went nowhere, and so did every one after it until the pointer moved (2026-11-13:
+/// "quite often the scroll is not work" in Chrome). A desktop's compositor looks again whenever
+/// the surfaces change; here it is looked at when it matters.
+fn under_the_pointer_again(
+    host: &mut Host,
+    target: &smithay::desktop::Window,
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    time_ms: u32,
+) {
+    let Some(pointer) = host.seat.get_pointer() else {
+        return;
+    };
+    let Some((held, _, location)) = host.pointer_last.clone() else {
+        return;
+    };
+    // A surface taken away is looked for again whatever it was; one still there, only where
+    // the pointer was last in this window (its place in another means nothing here) and not
+    // locked (a locked pointer stays with the surface that locked it).
+    if smithay::utils::IsAlive::alive(&held) {
+        let mut root = held.clone();
+        while let Some(parent) = smithay::wayland::compositor::get_parent(&root) {
+            root = parent;
+        }
+        let in_this_window = &root == surface
+            || smithay::desktop::PopupManager::popups_for_surface(surface)
+                .any(|(popup, _)| popup.wl_surface() == &root);
+        let locked = smithay::wayland::pointer_constraints::with_pointer_constraint(&held, &pointer, |constraint| {
+            constraint.is_some_and(|c| c.is_active())
+        });
+        if !in_this_window || locked {
+            return;
+        }
+    }
+    let focus = target
+        .surface_under(location, smithay::desktop::WindowSurfaceType::ALL)
+        .map(|(s, at)| (s, at.to_f64()))
+        .unwrap_or((surface.clone(), (0.0, 0.0).into()));
+    if pointer.current_focus().as_ref() == Some(&focus.0) {
+        return;
+    }
+    log::debug!("pointer: what was under it changed while it was still; pointed again");
+    pointer.motion(
+        host,
+        Some(focus.clone()),
+        &MotionEvent {
+            location,
+            serial: SERIAL_COUNTER.next_serial(),
+            time: time_ms,
+        },
+    );
+    pointer.frame(host);
+    host.pointer_last = Some((focus.0, focus.1, location));
+}
+
 /// Apply one event to one window.
 pub fn apply(host: &mut Host, window: WindowId, input: Input, time_ms: u32) {
     let Some(target) = host.windows.iter().find(|t| t.id == window).map(|t| t.window.clone())
@@ -240,6 +300,7 @@ pub fn apply(host: &mut Host, window: WindowId, input: Input, time_ms: u32) {
             let Some(pointer) = host.seat.get_pointer() else {
                 return;
             };
+            under_the_pointer_again(host, &target, &surface, time_ms);
             // A press anywhere but on a menu closes the menus, as it does on a desktop. The
             // host takes no popup grabs, so nothing else would ever tell the client its menu
             // is over.
@@ -300,6 +361,7 @@ pub fn apply(host: &mut Host, window: WindowId, input: Input, time_ms: u32) {
             let Some(pointer) = host.seat.get_pointer() else {
                 return;
             };
+            under_the_pointer_again(host, &target, &surface, time_ms);
             let mut frame = AxisFrame::new(time_ms).source(AxisSource::Wheel);
             if horizontal != 0.0 {
                 frame = frame.value(Axis::Horizontal, horizontal);
@@ -318,6 +380,7 @@ pub fn apply(host: &mut Host, window: WindowId, input: Input, time_ms: u32) {
             let Some(pointer) = host.seat.get_pointer() else {
                 return;
             };
+            under_the_pointer_again(host, &target, &surface, time_ms);
             let mut frame = AxisFrame::new(time_ms).source(AxisSource::Finger);
             if horizontal != 0.0 {
                 frame = frame.value(Axis::Horizontal, horizontal);
