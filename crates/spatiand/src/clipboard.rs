@@ -496,11 +496,32 @@ fn write_away(fd: OwnedFd, bytes: Vec<u8>) {
     std::thread::Builder::new()
         .name("clipboard-write".into())
         .spawn(move || {
+            wait_for_the_reader(&fd);
             let mut file = std::fs::File::from(fd);
             // EPIPE here means the application abandoned the paste. Not worth a word.
             let _ = file.write_all(&bytes);
         })
         .ok();
+}
+
+/// Make writes to `fd` wait for room instead of failing when the pipe is full.
+///
+/// A Wayland application pasting hands over a pipe of its own, which waits. The pipe an X11
+/// paste arrives with is made by the X11 window manager, which reads it from the event loop
+/// and so opens both ends non-blocking: the first 64 KB go in, the next write is refused,
+/// `write_all` gives up, and the X11 application is handed a picture cut off at the size of a
+/// pipe. This thread has nothing to do but wait, so it is told to. The flag belongs to the
+/// writing end alone; the window manager's reading end stays as it made it.
+fn wait_for_the_reader(fd: &OwnedFd) {
+    use std::os::fd::AsRawFd;
+    // SAFETY: `fd` is open for as long as the borrow, and these two calls only read and set
+    // its status flags.
+    unsafe {
+        let flags = libc::fcntl(fd.as_raw_fd(), libc::F_GETFL);
+        if flags >= 0 && flags & libc::O_NONBLOCK != 0 {
+            libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags & !libc::O_NONBLOCK);
+        }
+    }
 }
 
 fn read_from_wayland(
@@ -683,6 +704,27 @@ mod tests {
         board.host_left("workshop");
         assert!(board.waiting.is_empty());
         assert!(pasted(read).is_empty(), "the pipe should close, not hang");
+    }
+
+    #[test]
+    fn a_paste_larger_than_a_pipe_arrives_whole_through_a_pipe_that_does_not_wait() {
+        // The pipe the X11 window manager makes for a paste: non-blocking at the writing end.
+        use std::os::fd::AsRawFd;
+        let (read, write) = std::io::pipe().expect("a pipe");
+        let write = OwnedFd::from(write);
+        unsafe {
+            let flags = libc::fcntl(write.as_raw_fd(), libc::F_GETFL);
+            assert_eq!(
+                libc::fcntl(write.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK),
+                0
+            );
+        }
+        let picture: Vec<u8> = (0..1_000_000u32).map(|i| (i % 251) as u8).collect();
+        write_away(write, picture.clone());
+        // A reader slower than the writer, as an event loop is: the pipe is full well before
+        // the first byte is taken out of it.
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(pasted(read) == picture, "the paste was cut off at what the pipe holds");
     }
 
     #[test]
