@@ -11,7 +11,7 @@ software below, each under its own licence. This file goes inside every build (o
 | rsmpeg (Rust bindings to FFmpeg, compiled into the programs) | 0.18.0, patched | MIT | `third_party/rsmpeg/` in Spatiand's repository, with `PATCHES.md` |
 | PDFium | chromium/8152 | BSD 3-clause and others | https://github.com/bblanchon/pdfium-binaries |
 | ANGLE (libEGL, libGLESv2) | see `mac/fetch-angle.sh` | BSD 3-clause | https://chromium.googlesource.com/angle/angle |
-| libmysofa | commit 648eed0 | BSD 3-clause (`mysofa-NOTICE.txt`) | https://github.com/hoene/libmysofa |
+| libmysofa | 1.3.5 | BSD 3-clause (`mysofa-NOTICE.txt`) | https://github.com/hoene/libmysofa/releases/tag/v1.3.5 |
 | rclone (in the storage service, linked in as a Go module, unchanged: no `replace` in `storage/go.mod`) | v1.76.0 | MIT | https://github.com/rclone/rclone/releases/tag/v1.76.0 (the module and its dependencies: `storage/go.mod`, `storage/go.sum`) |
 
 **FFmpeg is LGPL, and linked dynamically**: the FFmpeg libraries in the app are ordinary shared
