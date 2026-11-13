@@ -167,10 +167,15 @@ impl Encoder {
         fps: u32,
     ) -> Result<Encoder> {
         unsafe {
-            let mut device = ptr::null_mut();
+            // Everything made on the way is the `Opening`'s until the end, so that leaving by
+            // any of the errors below frees what there was. They used to return with the
+            // device, the surface pools, the canvas and the codec context still held -- a VA
+            // display and its surfaces each time -- and a window whose encoder would not open
+            // is asked for one again and again.
+            let mut made = Opening::default();
             let path = CString::new(node).unwrap();
             let r = ffi::av_hwdevice_ctx_create(
-                &mut device,
+                &mut made.device,
                 ffi::AV_HWDEVICE_TYPE_VAAPI,
                 path.as_ptr(),
                 ptr::null_mut(),
@@ -180,20 +185,22 @@ impl Encoder {
                 return Err(fail(&format!("could not open {node} for VA-API"), r));
             }
 
+            let device = made.device;
+
             // What the encoder reads: NV12, its own pool.
-            let frames = match hw_frames_of(device, ffi::AV_PIX_FMT_NV12, width, height, 8) {
-                Ok(frames) => frames,
-                Err(e) => {
-                    ffi::av_buffer_unref(&mut device);
-                    return Err(e);
-                }
-            };
+            made.frames = hw_frames_of(device, ffi::AV_PIX_FMT_NV12, width, height, 8)?;
+            let frames = made.frames;
 
             // What the compositor draws into: one BGRA surface, allocated here and exported as
             // a dmabuf. Two of them would let a frame be drawn while the last is encoding; one
             // is enough while the encode costs a millisecond and a half.
-            let source_frames = hw_frames_of(device, ffi::AV_PIX_FMT_BGRA, width, height, 2)?;
-            let canvas = ffi::av_frame_alloc();
+            made.source_frames = hw_frames_of(device, ffi::AV_PIX_FMT_BGRA, width, height, 2)?;
+            let source_frames = made.source_frames;
+            made.canvas = ffi::av_frame_alloc();
+            let canvas = made.canvas;
+            if canvas.is_null() {
+                return Err(EncodeError("out of memory for a surface to draw into".into()));
+            }
             let r = ffi::av_hwframe_get_buffer(source_frames, canvas, 0);
             if r < 0 {
                 return Err(fail("could not allocate a surface to draw into", r));
@@ -208,7 +215,8 @@ impl Encoder {
                     encoder_name(codec)
                 )));
             }
-            let codec_ctx = ffi::avcodec_alloc_context3(encoder);
+            made.codec_ctx = ffi::avcodec_alloc_context3(encoder);
+            let codec_ctx = made.codec_ctx;
             if codec_ctx.is_null() {
                 return Err(EncodeError("out of memory for an encoder".into()));
             }
@@ -269,6 +277,11 @@ impl Encoder {
 
             let filter = Filter::new(device, source_frames, width, height)?;
             let packet = ffi::av_packet_alloc();
+            if packet.is_null() {
+                return Err(EncodeError("out of memory for a packet".into()));
+            }
+            // All of it is the encoder's from here, and freed by its own `Drop`.
+            std::mem::forget(made);
 
             log::info!(
                 "{} encoder ready at {width}x{height}, ceiling {bitrate_kbit} kbit/s at {fps} fps",
@@ -352,6 +365,42 @@ impl Drop for Encoder {
     }
 }
 
+/// What [`Encoder::new`] has made so far, freed if it does not get as far as an encoder.
+///
+/// Each is null until it is made, and every one of libav's frees takes a null for nothing.
+struct Opening {
+    codec_ctx: *mut ffi::AVCodecContext,
+    device: *mut ffi::AVBufferRef,
+    frames: *mut ffi::AVBufferRef,
+    source_frames: *mut ffi::AVBufferRef,
+    canvas: *mut ffi::AVFrame,
+}
+
+impl Default for Opening {
+    fn default() -> Opening {
+        Opening {
+            codec_ctx: ptr::null_mut(),
+            device: ptr::null_mut(),
+            frames: ptr::null_mut(),
+            source_frames: ptr::null_mut(),
+            canvas: ptr::null_mut(),
+        }
+    }
+}
+
+impl Drop for Opening {
+    fn drop(&mut self) {
+        // The order `Encoder` frees in: what uses the device before the device.
+        unsafe {
+            ffi::avcodec_free_context(&mut self.codec_ctx);
+            ffi::av_frame_free(&mut self.canvas);
+            ffi::av_buffer_unref(&mut self.frames);
+            ffi::av_buffer_unref(&mut self.source_frames);
+            ffi::av_buffer_unref(&mut self.device);
+        }
+    }
+}
+
 /// A pool of VA-API surfaces holding `sw_format` pictures, `pool` of them.
 unsafe fn hw_frames_of(
     device: *mut ffi::AVBufferRef,
@@ -372,6 +421,7 @@ unsafe fn hw_frames_of(
     (*ctx).initial_pool_size = pool;
     let r = ffi::av_hwframe_ctx_init(frames);
     if r < 0 {
+        ffi::av_buffer_unref(&mut { frames });
         return Err(fail("could not describe a pool of surfaces", r));
     }
     Ok(frames)
@@ -395,7 +445,20 @@ impl Filter {
         if graph.is_null() {
             return Err(EncodeError("out of memory for a filter graph".into()));
         }
+        // The graph owns every filter made in it, so freeing it is all a failure needs.
+        Filter::build(graph, device, source_frames, width, height).inspect_err(|_| {
+            ffi::avfilter_graph_free(&mut { graph });
+        })
+    }
 
+    /// Fill `graph` in: input, conversion, output, linked and configured.
+    unsafe fn build(
+        graph: *mut ffi::AVFilterGraph,
+        device: *mut ffi::AVBufferRef,
+        source_frames: *mut ffi::AVBufferRef,
+        width: u32,
+        height: u32,
+    ) -> Result<Filter> {
         // The input is hardware frames, and a source filter given only text arguments cannot
         // describe those: what a VA-API frame *is* lives in its frame context. So the filter is
         // allocated, told its shape through the parameters structure — which is the only way to
@@ -519,8 +582,14 @@ unsafe fn export_dmabuf(frame: *mut ffi::AVFrame, width: u32, height: u32) -> Re
         return Err(EncodeError("the encoder's surface has no layers".into()));
     }
     let layer = &descriptor.layers[0];
-    let format = Fourcc::try_from(layer.format)
-        .map_err(|_| EncodeError(format!("unknown buffer format {:#x}", layer.format)))?;
+    let format = match Fourcc::try_from(layer.format) {
+        Ok(format) => format,
+        Err(_) => {
+            let unknown = layer.format;
+            ffi::av_frame_free(&mut { drm_frame });
+            return Err(EncodeError(format!("unknown buffer format {unknown:#x}")));
+        }
+    };
     let mut builder = Dmabuf::builder(
         (width as i32, height as i32),
         format,
@@ -542,11 +611,9 @@ unsafe fn export_dmabuf(frame: *mut ffi::AVFrame, width: u32, height: u32) -> Re
             plane.pitch as u32,
         );
     }
-    let dmabuf = builder
-        .build()
-        .ok_or_else(|| EncodeError("the encoder's surface has no planes".into()))?;
+    let dmabuf = builder.build();
     ffi::av_frame_free(&mut { drm_frame });
-    Ok(dmabuf)
+    dmabuf.ok_or_else(|| EncodeError("the encoder's surface has no planes".into()))
 }
 
 fn encoder_name(codec: Codec) -> &'static str {

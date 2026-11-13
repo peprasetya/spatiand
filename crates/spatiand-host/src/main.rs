@@ -494,6 +494,9 @@ fn run_host(
     let mut titles: HashMap<u32, String> = HashMap::new();
     let mut library_checked = Instant::now();
     let mut streams: HashMap<u32, Stream> = HashMap::new();
+    // Windows whose encoder would not open, or failed: when, and at what size. See
+    // `waiting_out_a_failure`.
+    let mut encoder_failed: HashMap<u32, (Duration, (u32, u32))> = HashMap::new();
     let mut encoded_file = options
         .encode_to
         .as_ref()
@@ -912,6 +915,7 @@ fn run_host(
         for id in departed {
             pacer.forget(id);
             streams.remove(&id.0);
+            encoder_failed.remove(&id.0);
         }
 
         // --- titles ---
@@ -1028,6 +1032,9 @@ fn run_host(
                 if size.0 == 0 || size.1 == 0 {
                     continue;
                 }
+                if waiting_out_a_failure(encoder_failed.get(&id), size, now) {
+                    continue;
+                }
                 // Unchanged, and nobody has asked for a keyframe. A request has to be answered
                 // even when nothing moved: a session whose picture broke on a still page waits
                 // for exactly this, and without it waited until something on the page changed.
@@ -1079,6 +1086,7 @@ fn run_host(
                     budget.get(&id).copied().unwrap_or(ceiling),
                 ) {
                     Ok(packets) => {
+                        encoder_failed.remove(&id);
                         if let Some(stream) = streams.get_mut(&id) {
                             if packets.is_empty() {
                                 log::debug!("window {id}: the encoder gave nothing back yet");
@@ -1139,6 +1147,7 @@ fn run_host(
                     Err(e) => {
                         log::error!("window {id}: {e}");
                         streams.remove(&id);
+                        encoder_failed.insert(id, (now, size));
                     }
                 }
             }
@@ -1247,6 +1256,21 @@ fn start_app(host: &mut state::Host, catalog: &Catalog, app: &str) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// How long a window whose encoder failed is left alone before another is tried.
+///
+/// A window with no stream is one that has something new to send, so the turn after a failure
+/// tried again, and the one after: an encoder the driver would not open -- a size it does not
+/// do, a GPU out of surfaces -- was opened two hundred and fifty times a second, each try a VA
+/// display and a line in the log, and the loop that serves every other window did little else.
+const ENCODER_RETRY: Duration = Duration::from_secs(2);
+
+/// Whether a window's encoder failed too lately to be tried again: `failed` is when it did, on
+/// the loop's clock, and the size it was for. A window that has changed size since is tried at
+/// once, the size being the likeliest thing to have been wrong.
+fn waiting_out_a_failure(failed: Option<&(Duration, (u32, u32))>, size: (u32, u32), now: Duration) -> bool {
+    failed.is_some_and(|(at, was)| *was == size && now.saturating_sub(*at) < ENCODER_RETRY)
 }
 
 /// How long an application started and not yet seen is taken to be on its way.
@@ -1786,6 +1810,20 @@ fn report(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_whose_encoder_failed_is_left_alone_for_a_while() {
+        let size = (1280, 800);
+        let failed = (Duration::from_secs(10), size);
+        // Never failed: nothing to wait for.
+        assert!(!waiting_out_a_failure(None, size, Duration::from_secs(10)));
+        // The next turn of the loop, four milliseconds on, and for the rest of the wait.
+        assert!(waiting_out_a_failure(Some(&failed), size, Duration::from_millis(10_004)));
+        assert!(waiting_out_a_failure(Some(&failed), size, Duration::from_millis(11_999)));
+        assert!(!waiting_out_a_failure(Some(&failed), size, Duration::from_secs(10) + ENCODER_RETRY));
+        // Resized meanwhile: tried at once.
+        assert!(!waiting_out_a_failure(Some(&failed), (1920, 1080), Duration::from_millis(10_004)));
+    }
 
     #[test]
     fn an_application_just_started_is_not_started_again() {
