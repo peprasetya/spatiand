@@ -65,6 +65,18 @@ struct Waiting {
     since: Instant,
 }
 
+/// A paste on one host waiting for another host, the one holding the clipboard, to send the
+/// bytes through here.
+struct Asked {
+    /// The host that is pasting.
+    host: String,
+    /// What it asked for, in its own words: the answer goes back under the same name.
+    wanted: String,
+    /// The same in the words of the host that holds it, which is how the bytes arrive.
+    mime_type: String,
+    since: Instant,
+}
+
 /// The session's clipboard.
 #[derive(Default)]
 pub struct Board {
@@ -80,6 +92,8 @@ pub struct Board {
     /// the new selection: reading the seat on the spot hands back the previous clipboard.
     pending: Option<Vec<String>>,
     waiting: Vec<Waiting>,
+    /// Pastes on other hosts waiting for the same thing.
+    asked: Vec<Asked>,
     /// What the reader threads have finished, for [`Board::pump`] to collect.
     ///
     /// Everything that reads an application's selection does it on a thread, so nothing it
@@ -282,6 +296,50 @@ impl Board {
         })
     }
 
+    /// A host is pasting what *another* host holds: the half of "copy on a host and paste on
+    /// another" that is more than passing the offer on. Says what to send and to whom, or
+    /// nothing when the clipboard is not a host's (or is the asker's own) and the answer is
+    /// to be found here.
+    ///
+    /// Small text is answered on the spot, as it is for a window here. Anything else is asked
+    /// of the host that has it, and the asker remembered until the bytes come through
+    /// [`Board::arrived`]. Without this the offer reached the second host, its paste asked
+    /// for the picture, and was answered with nothing.
+    fn host_wants_from_a_host(&mut self, host: &str, mime_type: &str) -> Option<Vec<Say>> {
+        let Some(Owner::Host(owner)) = self.owner.clone() else {
+            return None;
+        };
+        if owner == host {
+            return None;
+        }
+        let held = self.held.as_ref()?;
+        let answer = |bytes| Say::Just {
+            host: host.to_string(),
+            what: Wire::Data {
+                mime_type: mime_type.to_string(),
+                bytes,
+            },
+        };
+        if let Some(bytes) = held.answers(mime_type) {
+            return Some(vec![answer(bytes)]);
+        }
+        let Some(asked) = clipboard::resolve(mime_type, &held.mime_types) else {
+            // Empty rather than nothing, for the same reason as in `host_wants`.
+            return Some(vec![answer(Vec::new())]);
+        };
+        log::info!("clipboard: asking {owner} for {asked}, for {host}");
+        self.asked.push(Asked {
+            host: host.to_string(),
+            wanted: mime_type.to_string(),
+            mime_type: asked.clone(),
+            since: Instant::now(),
+        });
+        Some(vec![Say::Just {
+            host: owner,
+            what: Wire::Want { mime_type: asked },
+        }])
+    }
+
     /// A host is pasting what was copied here. Fetch it and answer.
     pub fn host_wants(
         &mut self,
@@ -292,6 +350,14 @@ impl Board {
         loop_handle: &smithay::reexports::calloop::LoopHandle<'static, crate::Runtime>,
     ) {
         log::info!("clipboard: {host} is pasting {mime_type} from here");
+        if let Some(says) = self.host_wants_from_a_host(host, &mime_type) {
+            if let Some((told, _)) = &self.notes {
+                for say in says {
+                    let _ = told.send(Note::Answer(say));
+                }
+            }
+            return;
+        }
         let fetch = match self.owner.as_ref() {
             Some(Owner::Here(forms)) => clipboard::resolve(&mime_type, forms)
                 .and_then(|asked| read_from_wayland(seat, &asked)),
@@ -317,8 +383,9 @@ impl Board {
             .ok();
     }
 
-    /// The bytes a paste here was waiting for.
-    pub fn arrived(&mut self, mime_type: &str, bytes: Vec<u8>) {
+    /// The bytes a paste was waiting for: written to the windows here that asked, and
+    /// returned addressed to the hosts that did.
+    pub fn arrived(&mut self, mime_type: &str, bytes: Vec<u8>) -> Vec<Say> {
         let (ready, rest): (Vec<Waiting>, Vec<Waiting>) = std::mem::take(&mut self.waiting)
             .into_iter()
             .partition(|w| w.mime_type.eq_ignore_ascii_case(mime_type));
@@ -326,6 +393,20 @@ impl Board {
         for waiting in ready {
             write_away(waiting.fd, bytes.clone());
         }
+        let (ready, rest): (Vec<Asked>, Vec<Asked>) = std::mem::take(&mut self.asked)
+            .into_iter()
+            .partition(|a| a.mime_type.eq_ignore_ascii_case(mime_type));
+        self.asked = rest;
+        ready
+            .into_iter()
+            .map(|asked| Say::Just {
+                host: asked.host,
+                what: Wire::Data {
+                    mime_type: asked.wanted,
+                    bytes: bytes.clone(),
+                },
+            })
+            .collect()
     }
 
     /// A host went away. What it was holding goes with it.
@@ -341,7 +422,8 @@ impl Board {
             self.held = None;
             self.announced = None;
             // Nobody is left to answer them. Closing the pipes ends the pastes empty at once
-            // rather than after `PATIENCE`.
+            // rather than after `PATIENCE`. The hosts that asked are answered when that runs
+            // out, by `expire`.
             self.waiting.clear();
         }
     }
@@ -373,7 +455,7 @@ impl Board {
                 }
             }
         }
-        self.expire();
+        out.extend(self.expire());
 
         if let Some(mime_types) = self.pending.take() {
             let fetch = match (clipboard::best_text(&mime_types), self.owner.as_ref()) {
@@ -410,7 +492,31 @@ impl Board {
         out
     }
 
-    fn expire(&mut self) {
+    /// Give up on pastes nobody answered. Those here end by their pipe closing; a host that
+    /// asked is told, with an empty answer, so the application there stops waiting too.
+    fn expire(&mut self) -> Vec<Say> {
+        let (late, rest): (Vec<Asked>, Vec<Asked>) = std::mem::take(&mut self.asked)
+            .into_iter()
+            .partition(|a| a.since.elapsed() >= PATIENCE);
+        self.asked = rest;
+        let gone = late
+            .into_iter()
+            .map(|asked| {
+                log::warn!(
+                    "no host answered {}'s paste of {} in {} s; ending it empty",
+                    asked.host,
+                    asked.mime_type,
+                    PATIENCE.as_secs()
+                );
+                Say::Just {
+                    host: asked.host,
+                    what: Wire::Data {
+                        mime_type: asked.wanted,
+                        bytes: Vec::new(),
+                    },
+                }
+            })
+            .collect();
         self.waiting.retain(|w| {
             let alive = w.since.elapsed() < PATIENCE;
             if !alive {
@@ -422,6 +528,7 @@ impl Board {
             }
             alive
         });
+        gone
     }
 }
 
@@ -463,7 +570,10 @@ pub fn exchange(remotes: &mut crate::remote::Remotes, state: &mut Spatiand) {
                 state.xwm.as_mut(),
                 &state.loop_handle,
             ),
-            Said::Data { mime_type, bytes } => state.clipboard.arrived(&mime_type, bytes),
+            Said::Data { mime_type, bytes } => {
+                let on = state.clipboard.arrived(&mime_type, bytes);
+                state.clipboard_out.extend(on);
+            }
         }
     }
     for host in remotes.offline() {
@@ -725,6 +835,52 @@ mod tests {
         // the first byte is taken out of it.
         std::thread::sleep(Duration::from_millis(100));
         assert!(pasted(read) == picture, "the paste was cut off at what the pipe holds");
+    }
+
+    #[test]
+    fn a_host_pastes_what_another_host_holds() {
+        let data = |host: &str, mime_type: &str, bytes: &[u8]| Say::Just {
+            host: host.into(),
+            what: Wire::Data {
+                mime_type: mime_type.into(),
+                bytes: bytes.to_vec(),
+            },
+        };
+        let mut board = from_a_host("hello");
+        // The text travelled with the offer and is answered from here.
+        assert_eq!(
+            board.host_wants_from_a_host("study", "text/plain;charset=utf-8"),
+            Some(vec![data("study", "text/plain;charset=utf-8", b"hello")])
+        );
+        // A picture is asked of the host that has it, and passed on when it comes.
+        assert_eq!(
+            board.host_wants_from_a_host("study", "image/png"),
+            Some(vec![Say::Just {
+                host: "workshop".into(),
+                what: Wire::Want {
+                    mime_type: "image/png".into()
+                }
+            }])
+        );
+        assert_eq!(
+            board.arrived("image/png", b"\x89PNG".to_vec()),
+            vec![data("study", "image/png", b"\x89PNG")]
+        );
+        assert!(board.asked.is_empty());
+        // Something the clipboard cannot be is answered empty rather than not at all.
+        assert_eq!(
+            board.host_wants_from_a_host("study", "image/jpeg"),
+            Some(vec![data("study", "image/jpeg", b"")])
+        );
+        // One the owner never answers is ended empty, not left with the application waiting.
+        board.host_wants_from_a_host("study", "image/png");
+        assert!(board.expire().is_empty(), "a slow host is not hurried along");
+        board.asked[0].since = Instant::now() - PATIENCE * 2;
+        assert_eq!(board.expire(), vec![data("study", "image/png", b"")]);
+        // The owner's own paste, and a paste of what was copied here, are not this path's.
+        assert_eq!(board.host_wants_from_a_host("workshop", "image/png"), None);
+        board.owner = Some(Owner::Here(vec!["image/png".into()]));
+        assert_eq!(board.host_wants_from_a_host("study", "image/png"), None);
     }
 
     #[test]
