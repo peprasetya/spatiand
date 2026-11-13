@@ -196,6 +196,32 @@ pub fn strips(radius: f64, y: f64, width: f64) -> Vec<Strip> {
 /// where it is allowed to go.
 pub const PITCH_LIMIT: f64 = 89.0 * std::f64::consts::PI / 180.0;
 
+impl Placement {
+    /// Take the window to `radius`, and answer by how much a spot of it is then further from
+    /// its middle, as an angle: a window is as many metres wide at any distance, so brought to
+    /// half the distance every part of it is twice as far round from its centre.
+    ///
+    /// For a window held by a spot (`pointer::Drag::Move`): its offsets from the ray times
+    /// this, and the spot is still under the pointer. Without it the window grew about its
+    /// middle and its title bar left the pointer that was holding it.
+    pub fn held_at(&mut self, radius: f64) -> f64 {
+        let nearer = self.radius / radius;
+        self.radius = radius;
+        nearer
+    }
+
+    /// Take the window to `radius` with the spot of it at (`yaw`, `pitch`) staying there: what
+    /// the pointer is on stays under the pointer.
+    pub fn set_radius_about(&mut self, radius: f64, yaw: f64, pitch: f64) {
+        let nearer = self.held_at(radius);
+        // The short way round: a window either side of straight behind is a few degrees
+        // from the ray, not most of a turn.
+        let round = (self.yaw - yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+        self.yaw = yaw + round * nearer;
+        self.pitch = clamp_pitch(pitch + (self.pitch - pitch) * nearer);
+    }
+}
+
 /// A pitch kept inside [`PITCH_LIMIT`].
 pub fn clamp_pitch(pitch: f64) -> f64 {
     pitch.clamp(-PITCH_LIMIT, PITCH_LIMIT)
@@ -732,6 +758,23 @@ pub fn apply_resize_anchors(state: &mut crate::state::Spatiand) {
 mod tests {
 
     use super::{on_cylinder, strips};
+
+    #[test]
+    fn a_window_brought_nearer_keeps_the_spot_under_the_pointer() {
+        // Held by its title bar, 0.2 rad above its middle and a little to one side.
+        let mut p = Placement { yaw: 0.3, pitch: 0.1, radius: 2.0, ..Placement::default() };
+        let (ray_yaw, ray_pitch) = (0.35, 0.3);
+        // In metres from the middle, the spot is where it was: twice the angle at half the distance.
+        let metres = ((p.yaw - ray_yaw) * p.radius, (p.pitch - ray_pitch) * p.radius);
+        p.set_radius_about(1.0, ray_yaw, ray_pitch);
+        assert_eq!(p.radius, 1.0);
+        assert!(((p.yaw - ray_yaw) * p.radius - metres.0).abs() < 1e-9);
+        assert!(((p.pitch - ray_pitch) * p.radius - metres.1).abs() < 1e-9);
+        // And across straight behind it goes the short way.
+        let mut q = Placement { yaw: 3.1, pitch: 0.0, radius: 2.0, ..Placement::default() };
+        q.set_radius_about(1.0, -3.1, 0.0);
+        assert!((q.yaw - (-3.1 - 2.0 * (std::f64::consts::TAU - 6.2))).abs() < 1e-9, "{}", q.yaw);
+    }
 
     #[test]
     fn a_bent_window_is_the_same_distance_from_the_wearer_all_the_way_across() {

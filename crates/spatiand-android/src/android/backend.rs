@@ -215,6 +215,11 @@ pub fn run(
     let mut menu_click_was = false;
     let mut keyboard_reach: [Option<spatiand_render::ray::Hit>; 2] = [None, None];
     let mut drag_left_y: Option<f32> = None;
+    // The window a pinch on a title bar took hold of, and when its last step came.
+    let mut pinch_held: Option<(smithay::desktop::Window, std::time::Instant)> = None;
+    // A pinch's steps come every frame or two while the fingers move; this long without one
+    // and the next is a new pinch, of whatever the pointer is on then.
+    const PINCH_LETS_GO: std::time::Duration = std::time::Duration::from_millis(400);
     // Where a finger was when an open menu last moved a row for it. See the menus above.
     let mut menu_swipe: Option<(f32, f32)> = None;
     // A window's speaker button held: the window, where the pointer was and the volume then,
@@ -1477,7 +1482,34 @@ pub fn run(
             // Two fingers pinching: on a title bar the window nearer or further; over a window,
             // its application's zoom if it has one.
             let pinch = controller.take_pinch();
-            if (pinch - 1.0).abs() > 1e-4 && !shell.menu_is_open() {
+            // A window being held takes the pinch as its distance, below with the drag.
+            let drag_pinch = if matches!(pointers.drag, Some(Drag::Move { .. })) { pinch } else { 1.0 };
+            // **A pinch that began on a title bar has hold of that window until the fingers
+            // are done**, wherever the bar goes meanwhile. The bar is thin, and bringing the
+            // window nearer moves it: asked afresh every frame, the pointer was soon off the
+            // bar and the window stopped part of the way, the rest of the pinch going to
+            // whatever the page made of it. There is no word of the fingers lifting, so a
+            // pinch is one for as long as its steps keep coming.
+            if pinch_held.as_ref().is_some_and(|(w, at)| at.elapsed() > PINCH_LETS_GO || !w.alive()) {
+                pinch_held = None;
+            }
+            if (pinch - 1.0).abs() > 1e-4 && !shell.menu_is_open() && drag_pinch == 1.0 {
+                if let Some((window, at)) = pinch_held.as_mut() {
+                    *at = std::time::Instant::now();
+                    if let Some(mut placement) = runtime.state.layout.get(window) {
+                        let radius = (placement.radius / pinch as f64).clamp(0.8, 8.0);
+                        // About the pointer, so the bar stays under it: the spot of the
+                        // window the ray is on is the one that does not move.
+                        match right_aim.as_ref() {
+                            Some(a) => {
+                                let d = a.ray.direction;
+                                placement.set_radius_about(radius, d.y.atan2(d.x), d.z.clamp(-1.0, 1.0).asin());
+                            }
+                            None => placement.radius = radius,
+                        }
+                        runtime.state.layout.set(window, placement);
+                    }
+                } else {
                 let target = right_aim
                     .as_ref()
                     .and_then(|a| a.hit)
@@ -1504,9 +1536,18 @@ pub fn run(
                         .is_some_and(|surface| crate::xr::tell_pinch(&surface, pinch));
                 if let Some(window) = target.filter(|_| on_title && !taken) {
                     if let Some(mut placement) = runtime.state.layout.get(&window) {
-                        placement.radius = (placement.radius / pinch as f64).clamp(0.8, 8.0);
+                        let radius = (placement.radius / pinch as f64).clamp(0.8, 8.0);
+                        match right_aim.as_ref() {
+                            Some(a) => {
+                                let d = a.ray.direction;
+                                placement.set_radius_about(radius, d.y.atan2(d.x), d.z.clamp(-1.0, 1.0).asin());
+                            }
+                            None => placement.radius = radius,
+                        }
                         runtime.state.layout.set(&window, placement);
                     }
+                    pinch_held = Some((window, std::time::Instant::now()));
+                }
                 }
             }
 
@@ -1514,27 +1555,39 @@ pub fn run(
                 pointers.release_all(&mut runtime.state, time_ms);
             } else {
                 match pointers.drag {
-                    Some(Drag::Move { ref window, yaw_offset, pitch_offset }) => {
-                        if let Some(a) = right_aim.as_ref() {
-                            let d = a.ray.direction;
-                            if let Some(mut placement) = runtime.state.layout.get(window) {
-                                placement.yaw = d.y.atan2(d.x) + yaw_offset;
-                                placement.pitch = crate::window::clamp_pitch(d.z.clamp(-1.0, 1.0).asin() + pitch_offset);
-                                // The finger sliding on the touch area while holding sets the
-                                // distance, as the left thumb does on the Deck.
-                                if let Some(p) = pads.as_ref() {
-                                    if p.left_pad.touched {
-                                        if let Some(previous) = drag_left_y {
-                                            let delta = (p.left_pad.y - previous) as f64;
-                                            placement.radius = (placement.radius + delta * 2.5).clamp(0.8, 8.0);
-                                        }
-                                        drag_left_y = Some(p.left_pad.y);
-                                    } else {
-                                        drag_left_y = None;
+                    Some(Drag::Move { ref window, ref mut yaw_offset, ref mut pitch_offset }) => {
+                        if let Some(mut placement) = runtime.state.layout.get(window) {
+                            // The finger sliding on the touch area while holding sets the
+                            // distance, as the left thumb does on the Deck -- and as there,
+                            // the spot that was grabbed stays under the pointer at any
+                            // distance (`Placement::held_at`), aimed or not.
+                            if let Some(p) = pads.as_ref() {
+                                if p.left_pad.touched {
+                                    if let Some(previous) = drag_left_y {
+                                        let delta = (p.left_pad.y - previous) as f64;
+                                        let radius = (placement.radius + delta * 2.5).clamp(0.8, 8.0);
+                                        let nearer = placement.held_at(radius);
+                                        *yaw_offset *= nearer;
+                                        *pitch_offset *= nearer;
                                     }
+                                    drag_left_y = Some(p.left_pad.y);
+                                } else {
+                                    drag_left_y = None;
                                 }
-                                runtime.state.layout.set(window, placement);
                             }
+                            // A pinch while holding does the same.
+                            if (drag_pinch - 1.0).abs() > 1e-4 {
+                                let radius = (placement.radius / drag_pinch as f64).clamp(0.8, 8.0);
+                                let nearer = placement.held_at(radius);
+                                *yaw_offset *= nearer;
+                                *pitch_offset *= nearer;
+                            }
+                            if let Some(a) = right_aim.as_ref() {
+                                let d = a.ray.direction;
+                                placement.yaw = d.y.atan2(d.x) + *yaw_offset;
+                                placement.pitch = crate::window::clamp_pitch(d.z.clamp(-1.0, 1.0).asin() + *pitch_offset);
+                            }
+                            runtime.state.layout.set(window, placement);
                         }
                     }
                     Some(Drag::Resize { ref window, .. }) => {

@@ -2680,39 +2680,47 @@ pub fn run(
                 match pointers.drag {
                     Some(Drag::Move {
                         ref window,
-                        yaw_offset,
-                        pitch_offset,
+                        ref mut yaw_offset,
+                        ref mut pitch_offset,
                     }) => {
-                        if let Some(a) = right_aim.as_ref() {
-                            let d = a.ray.direction;
-                            {
-                                if let Some(mut placement) = runtime.state.layout.get(window) {
-                                    // Relative to where it was grabbed, so the window hangs
-                                    // from the point you took hold of rather than snapping its
-                                    // centre to the ray.
-                                    placement.yaw = d.y.atan2(d.x) + yaw_offset;
-                                    placement.pitch = crate::window::clamp_pitch(
-                                        d.z.clamp(-1.0, 1.0).asin() + pitch_offset,
-                                    );
-                                    // The left thumb sets the distance while the right holds
-                                    // the window. No click needed: reaching for a second
-                                    // button while already holding something is awkward, and
-                                    // the thumb is on the pad anyway.
-                                    if let Some(p) = pads.as_ref() {
-                                        if p.left_pad.touched {
-                                            if let Some(previous) = drag_left_y {
-                                                let delta = (p.left_pad.y - previous) as f64;
-                                                placement.radius = (placement.radius + delta * 2.5)
-                                                    .clamp(0.8, 8.0);
-                                            }
-                                            drag_left_y = Some(p.left_pad.y);
-                                        } else {
-                                            drag_left_y = None;
-                                        }
+                        if let Some(mut placement) = runtime.state.layout.get(window) {
+                            // The left thumb sets the distance while the right holds
+                            // the window. No click needed: reaching for a second
+                            // button while already holding something is awkward, and
+                            // the thumb is on the pad anyway.
+                            //
+                            // Whether or not the right thumb is still on its pad: the window
+                            // is held by the click, and a thumb lifted from a pad that is
+                            // being pressed by its edge must not stop the other hand's work.
+                            if let Some(p) = pads.as_ref() {
+                                if p.left_pad.touched {
+                                    if let Some(previous) = drag_left_y {
+                                        let delta = (p.left_pad.y - previous) as f64;
+                                        let radius =
+                                            (placement.radius + delta * 2.5).clamp(0.8, 8.0);
+                                        // The window is held by the spot that was grabbed, and
+                                        // that spot stays under the pointer at any distance:
+                                        // see `Placement::held_at`.
+                                        let nearer = placement.held_at(radius);
+                                        *yaw_offset *= nearer;
+                                        *pitch_offset *= nearer;
                                     }
-                                    runtime.state.layout.set(window, placement);
+                                    drag_left_y = Some(p.left_pad.y);
+                                } else {
+                                    drag_left_y = None;
                                 }
                             }
+                            if let Some(a) = right_aim.as_ref() {
+                                let d = a.ray.direction;
+                                // Relative to where it was grabbed, so the window hangs
+                                // from the point you took hold of rather than snapping its
+                                // centre to the ray.
+                                placement.yaw = d.y.atan2(d.x) + *yaw_offset;
+                                placement.pitch = crate::window::clamp_pitch(
+                                    d.z.clamp(-1.0, 1.0).asin() + *pitch_offset,
+                                );
+                            }
+                            runtime.state.layout.set(window, placement);
                         }
                     }
                     Some(Drag::Resize { ref window, .. }) => {
