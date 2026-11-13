@@ -116,6 +116,10 @@ pub struct Host {
     /// the moment it is mapped — the session needs to know which launcher bubble it came from,
     /// and which controller layout to use, before the first frame.
     pub app_of_pid: HashMap<i32, String>,
+    /// Applications started and not yet seen: the process each was started as and when, by
+    /// catalogue id, until its first window opens or the process ends. What makes a second
+    /// request for one of them, in that gap, not a second copy; see `start_app` in `main.rs`.
+    pub starting: HashMap<String, (i32, std::time::Instant)>,
     /// Each launched application's own sink, when there is a network to send sound to.
     pub sounds: Option<crate::audio::Sounds>,
     /// A read-only descriptor onto the head-pose ring, handed to each application that takes
@@ -264,6 +268,7 @@ impl Host {
             next_window_id: 1,
             session_focus: None,
             app_of_pid: HashMap::new(),
+            starting: HashMap::new(),
             sounds: None,
             pose_fd: None,
             xr_channels: Vec::new(),
@@ -384,6 +389,7 @@ impl Host {
         self.space.map_element(window.clone(), (0, 0), false);
         let id = self.next_id();
         log::info!("window {} opened for {app} (X11)", id.0);
+        self.starting.remove(&app);
         self.windows.push(Tracked {
             id,
             app,
@@ -681,6 +687,7 @@ impl XdgShellHandler for Host {
         let app = self.app_for(client.as_ref());
         let id = self.next_id();
         log::info!("window {} opened for {app}", id.0);
+        self.starting.remove(&app);
         self.windows.push(Tracked {
             id,
             app,

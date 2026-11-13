@@ -696,6 +696,10 @@ fn run_host(
             }
             if let Some(app) = host.app_of_pid.remove(&pid) {
                 log::info!("{app} (pid {pid}) exited");
+                // One that ended before it showed anything is not on its way any more.
+                if host.starting.get(&app).is_some_and(|(started, _)| *started == pid) {
+                    host.starting.remove(&app);
+                }
             }
         }
 
@@ -1202,6 +1206,13 @@ fn start_app(host: &mut state::Host, catalog: &Catalog, app: &str) -> Result<(),
         log::info!("{app} is already running; showing the one that is");
         return Ok(());
     }
+    // **Nor while the one already asked for is on its way.** Running was judged by windows
+    // alone, and an application has none for its first second or several: a session that asked,
+    // lost the link and asked again on coming back -- or a launcher pressed twice -- got two.
+    if still_starting(host.starting.get(app).map(|(_, at)| at.elapsed())) {
+        log::info!("{app} is already starting; waiting for the one that is");
+        return Ok(());
+    }
     let entry = catalog
         .get(app)
         .ok_or_else(|| format!("{app} is not in the catalogue"))?;
@@ -1222,6 +1233,7 @@ fn start_app(host: &mut state::Host, catalog: &Catalog, app: &str) -> Result<(),
     let launched = apps::launch(entry, &host.socket_name, host.x11_display, &sound, pose)
         .map_err(|e| format!("could not start {app}: {e}"))?;
     host.app_of_pid.insert(launched.pid as i32, entry.id.clone());
+    host.starting.insert(entry.id.clone(), (launched.pid as i32, Instant::now()));
     if let Some(control) = launched.control {
         appcontrol::watch(host, entry.id.clone(), control);
         // It was told at launch, in its environment. Recorded, because otherwise the host takes
@@ -1232,6 +1244,20 @@ fn start_app(host: &mut state::Host, catalog: &Catalog, app: &str) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// How long an application started and not yet seen is taken to be on its way.
+///
+/// It stops being so the moment its first window opens or its process ends, so this is only
+/// for one that does neither: alive, and showing nothing. Long enough for a game behind a
+/// launcher and a compatibility layer; not for ever, because asking again is all a wearer can
+/// do about an application that hung before it drew anything.
+const STARTING_FOR: Duration = Duration::from_secs(60);
+
+/// Whether an application started `ago` -- `None` if it is not one started and still unseen --
+/// is still on its way, so that asking for it again starts nothing.
+fn still_starting(ago: Option<Duration>) -> bool {
+    ago.is_some_and(|ago| ago < STARTING_FOR)
 }
 
 /// A pairing in progress.
@@ -1736,4 +1762,19 @@ fn report(
     encode_ms.clear();
     compose_ms.clear();
     *sent_bytes = 0;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_application_just_started_is_not_started_again() {
+        assert!(still_starting(Some(Duration::ZERO)));
+        assert!(still_starting(Some(Duration::from_secs(20))));
+        // Seen, ended, or never asked for: nothing is on its way.
+        assert!(!still_starting(None));
+        // Alive and showing nothing for this long: asking again is allowed to start it.
+        assert!(!still_starting(Some(STARTING_FOR)));
+    }
 }
