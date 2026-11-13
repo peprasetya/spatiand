@@ -89,6 +89,13 @@ impl std::str::FromStr for Fingerprint {
         if text.len() != 64 {
             return Err(format!("a fingerprint is 64 hex characters, not {}", text.len()));
         }
+        // Digits and nothing else, checked before anything is cut in two: the length above is
+        // in bytes, so sixty-four of them can be fewer characters, and cutting between the
+        // bytes of one panics -- in whatever was reading a list somebody else wrote. And the
+        // number parser on its own takes a sign, so "+f" would have been a byte.
+        if !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("a fingerprint is hexadecimal".to_string());
+        }
         let mut out = [0u8; 32];
         for (i, byte) in out.iter_mut().enumerate() {
             *byte = u8::from_str_radix(&text[i * 2..i * 2 + 2], 16)
@@ -600,6 +607,21 @@ mod tests {
         assert!("".parse::<Fingerprint>().is_err());
         assert!("zz".repeat(32).parse::<Fingerprint>().is_err());
         assert!("ab".repeat(31).parse::<Fingerprint>().is_err());
+    }
+
+    #[test]
+    fn sixty_four_bytes_that_are_not_hex_digits_are_refused_not_cut_up() {
+        // Sixty-four bytes, thirty-two characters: cut in twos by byte it splits every one.
+        let text = "\u{e9}".repeat(32);
+        assert_eq!(text.len(), 64);
+        assert!(text.parse::<Fingerprint>().is_err());
+        // One odd character among digits, placed across a cut.
+        let text = format!("a\u{e9}{}", "0".repeat(61));
+        assert_eq!(text.len(), 64);
+        assert!(text.parse::<Fingerprint>().is_err());
+        // A sign is not a digit, though the number parser would take it for one.
+        assert!("+f".repeat(32).parse::<Fingerprint>().is_err());
+        assert!("AB".repeat(32).parse::<Fingerprint>().is_ok());
     }
 
     #[test]
