@@ -20,7 +20,7 @@ set -e
 # platforms. Blink's WebBluetooth is "experimental" on Linux, which the Deck's and the Beam Pro's
 # builds are: make it stable there, and Cromite's bluetooth_guard2 ask instead of block. The
 # Mac's comes with its Chromium (docs/mac-plan.md). docs/spatimesh.md.
-CROMITE_COMMIT=3724efc6ede3d2d94611c1fe71d1b090ebbb40a7   # 2026-09-19, Chromium 153.0.8010.37
+CHROMIUM_VERSION=157.0.8103.78   # stable on Linux, 2026-11-11; Termux's patches (android-libc/termux) are made for 157
 DEPOT_TOOLS_COMMIT=7083aadfb
 
 work=$(cd "${1:?work folder}" && pwd); step=${2:-all}
@@ -31,13 +31,13 @@ case $target in linux|android|mac) ;; *) echo "unknown target: $target" >&2; exi
 
 inside() { # command...: run in the 22.04 root, the work folder at /cr (CR); on a Mac, as it is
     if [ "$target" = mac ]; then
-        env CR="$work" CHROMIUM_TARGET=mac PATH="$work/depot_tools:$PATH" DEPOT_TOOLS_UPDATE=0 DEPOT_TOOLS_METRICS=0 \
+        env CR="$work" CHROMIUM_TARGET=mac CHROMIUM_VERSION="$CHROMIUM_VERSION" PATH="$work/depot_tools:$PATH" DEPOT_TOOLS_UPDATE=0 DEPOT_TOOLS_METRICS=0 \
             bash -c 'cd "$CR" && "$@"' inside "$@"
         return
     fi
     bwrap --unshare-user --uid 1000 --gid 1000 --bind "$root" / --dev /dev --tmpfs /dev/shm --proc /proc \
         --bind /tmp /tmp --bind "$work" /cr --ro-bind /etc/resolv.conf /etc/resolv.conf \
-        --setenv CR /cr --setenv HOME /cr/home --setenv USER builder --setenv LOGNAME builder --setenv CHROMIUM_TARGET "$target" \
+        --setenv CR /cr --setenv HOME /cr/home --setenv USER builder --setenv LOGNAME builder --setenv CHROMIUM_TARGET "$target" --setenv CHROMIUM_VERSION "$CHROMIUM_VERSION" \
         --setenv PATH /cr/depot_tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
         --setenv DEPOT_TOOLS_UPDATE 0 --setenv DEPOT_TOOLS_METRICS 0 --chdir /cr "$@"
 }
@@ -46,13 +46,10 @@ fetch() {
     mkdir -p "$work/home" "$work/logs"
     [ -d "$work/depot_tools" ] || git clone -q https://chromium.googlesource.com/chromium/tools/depot_tools.git "$work/depot_tools"
     git -C "$work/depot_tools" checkout -q "$DEPOT_TOOLS_COMMIT"
-    [ -d "$work/cromite" ] || git clone -q https://github.com/uazo/cromite.git "$work/cromite"
-    git -C "$work/cromite" fetch -q origin "$CROMITE_COMMIT" 2>/dev/null || true
-    git -C "$work/cromite" checkout -q "$CROMITE_COMMIT"
     inside bash -s <<'EOF'
 set -e
 (cd $CR/depot_tools && ./ensure_bootstrap >/dev/null)   # gn and siso want it; DEPOT_TOOLS_UPDATE=0 skips it
-VERSION=$(cat $CR/cromite/build/RELEASE)
+VERSION=$CHROMIUM_VERSION
 URL=https://chromium.googlesource.com/chromium/src.git
 mkdir -p $CR/chromium/src && cd $CR/chromium/src
 [ -d .git ] || git init -q

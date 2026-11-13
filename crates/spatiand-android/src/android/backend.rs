@@ -220,6 +220,9 @@ pub fn run(
     // A pinch's steps come every frame or two while the fingers move; this long without one
     // and the next is a new pinch, of whatever the pointer is on then.
     const PINCH_LETS_GO: std::time::Duration = std::time::Duration::from_millis(400);
+    // A pinch over what a window shows, passed on as Wayland's own pinch gesture: how far the
+    // fingers have spread since it began, and when its last step came.
+    let mut content_pinch: Option<(f64, std::time::Instant)> = None;
     // Where a finger was when an open menu last moved a row for it. See the menus above.
     let mut menu_swipe: Option<(f32, f32)> = None;
     // A window's speaker button held: the window, where the pointer was and the volume then,
@@ -1493,6 +1496,10 @@ pub fn run(
             if pinch_held.as_ref().is_some_and(|(w, at)| at.elapsed() > PINCH_LETS_GO || !smithay::utils::IsAlive::alive(w)) {
                 pinch_held = None;
             }
+            if content_pinch.as_ref().is_some_and(|(_, at)| at.elapsed() > PINCH_LETS_GO) {
+                content_pinch = None;
+                pointers.pinch_end(&mut runtime.state, time_ms);
+            }
             if (pinch - 1.0).abs() > 1e-4 && !shell.menu_is_open() && drag_pinch == 1.0 {
                 if let Some((window, at)) = pinch_held.as_mut() {
                     *at = std::time::Instant::now();
@@ -1534,6 +1541,17 @@ pub fn run(
                         .as_ref()
                         .and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()))
                         .is_some_and(|surface| crate::xr::tell_pinch(&surface, pinch));
+                // **An application that has not asked for Spatiand's pinch gets Wayland's own**
+                // (pointer-gestures), as the Deck's room gives it: a browser zooms its page by
+                // it as on any desktop. Here the pinch was offered through `spatiand_xr_v1`
+                // alone, which Chromium does not take, so two fingers spreading over a page in
+                // SpatiMesh did nothing (owner, 2026-11-13). One gesture for as long as its
+                // steps keep coming, as above.
+                if !on_title && !taken && target.is_some() {
+                    let spread = content_pinch.map_or(1.0, |(spread, _)| spread) * pinch as f64;
+                    pointers.pinch(&mut runtime.state, spread, time_ms);
+                    content_pinch = Some((spread, std::time::Instant::now()));
+                }
                 if let Some(window) = target.filter(|_| on_title && !taken) {
                     if let Some(mut placement) = runtime.state.layout.get(&window) {
                         let radius = (placement.radius / pinch as f64).clamp(0.8, 8.0);
