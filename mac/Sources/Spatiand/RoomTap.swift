@@ -758,6 +758,17 @@ final class RoomTap {
                 let touches = gesture.allTouches()
                 if !touches.isEmpty, touches.allSatisfy({ $0.type == .direct }) { return pass }
             }
+            // **How hard the pad is pressed**, written down for now and nothing more: a Magic
+            // Trackpad has a click and a deeper one (the owner, 2026-11-14: with one, three, four
+            // or five fingers, not with two), which he would give actions of his own. What macOS
+            // says of it, and with how many fingers on the pad, is what this finds out.
+            if gesture.type == .pressure {
+                let stage = gesture.stage
+                if stage != pressureStage {
+                    gestureLog("pressure: stage %ld to %ld, pressure %.2f, %ld fingers on the pad", pressureStage, stage, gesture.pressure, lastCount)
+                    pressureStage = stage
+                }
+            }
             if gesture.type == .gesture {
                 warpLock.lock(); touchedAt = Self.uptime; warpLock.unlock()
                 // The fingers come from the trackpad itself, on this thread (`rawFrame`): macOS's
@@ -774,6 +785,7 @@ final class RoomTap {
     }
 
     private var gestureSeen = 0
+    private var pressureStage = 0
 
     // **Palm rejection.** A touch is not a finger when it lands on the pad's edge (the sides, and
     // the far edge by the keyboard, where a palm or a thumb rests), or just after a key was
