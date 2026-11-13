@@ -765,7 +765,7 @@ final class RoomTap {
             if gesture.type == .pressure {
                 let stage = gesture.stage
                 if stage != pressureStage {
-                    gestureLog("pressure: stage %ld to %ld, pressure %.2f, %ld fingers on the pad", pressureStage, stage, gesture.pressure, lastCount)
+                    gestureNote(String(format: "pressure: stage %ld to %ld, pressure %.2f, %ld fingers on the pad", pressureStage, stage, gesture.pressure, lastCount))
                     pressureStage = stage
                 }
             }
@@ -1016,7 +1016,10 @@ private let gestureLogLock = NSLock()
 private let gestureLogOn = ProcessInfo.processInfo.environment["SPATIAND_GESTURE_LOG"] == "1"
 func gestureLog(_ format: String, _ args: CVarArg...) {
     guard gestureLogOn else { return }
-    let line = String(format: format, arguments: args)
+    gestureNote(String(format: format, arguments: args))
+}
+/// A line in that log whether or not it is asked for: the few that are being found out.
+func gestureNote(_ line: String) {
     gestureLogLock.lock(); defer { gestureLogLock.unlock() }
     let path = NSHomeDirectory() + "/Library/Logs/Spatiand-gestures.log"
     let text = String(format: "%.3f ", Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1e9) + line + "\n"
