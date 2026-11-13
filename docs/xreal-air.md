@@ -204,7 +204,7 @@ Real capture, glasses resting on a desk:
 | Offset | Size | Field | Encoding |
 |---|---|---|---|
 | 0 | 2 | signature | `01 02` — a data packet |
-| 2 | 2 | temperature | int16 LE |
+| 2 | 2 | temperature | int16 LE, **raw count, scale not measured** (see below) |
 | 4 | 8 | timestamp | uint64 LE |
 | 12 | 2 | gyro multiplier = 4000 | int16 LE |
 | 14 | 4 | gyro divisor = 16777216 | int32 LE |
@@ -219,6 +219,12 @@ Real capture, glasses resting on a desk:
 
 Scaling is `value = raw × multiplier ÷ divisor` per group. Gyro is **deg/s**, accel is
 **g**, mag is **gauss**.
+
+The temperature has no multiplier or divisor in the packet and is **not degrees**: the capture
+above reads `94 04` = 1172, resting on a desk. The only figure in degrees is the SDK's
+`GetTemperature` = 44 (below), read at another time with Nebula running, so the two do not give
+a conversion. Until both are read together at two temperatures, the driver reports no
+temperature (`ImuSample::temperature_c` is `None`) rather than the count.
 
 **Three independent confirmations that this layout is right**, glasses resting on a desk:
 

@@ -365,7 +365,11 @@ impl XrealGlasses {
         };
 
         let timestamp_ns = u64::from_le_bytes(packet[4..12].try_into().ok()?);
-        let temperature_c = Some(i16le(2) as f32);
+        // Not given: the int16 at offset 2 is the sensor's own count, not degrees, and what a
+        // count is worth has not been measured (docs/xreal-air.md: 1172 resting on a desk; the
+        // one figure in degrees, XREAL's SDK's 44, was read at another time). Passed on as it
+        // is, it was a "Celsius" some twenty-five times too large for whoever read it first.
+        let temperature_c = None;
 
         let (gyro_mul, gyro_div) = (i16le(12), i32le(14));
         let (acc_mul, acc_div) = (i16le(27), i32le(29));
