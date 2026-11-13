@@ -115,7 +115,6 @@ public class MainActivity extends Activity implements SensorEventListener {
         File movies = getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES);
         if (movies != null) Native.recordingsDir(movies.getPath());
         Native.begin();
-        openAsked(getIntent());
 
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
@@ -184,7 +183,10 @@ public class MainActivity extends Activity implements SensorEventListener {
                 Context.RECEIVER_EXPORTED);
         IntentFilter orange = new IntentFilter(ORANGE_DOWN);
         orange.addAction(ORANGE_UP);
-        registerReceiver(orangeKey, orange, Context.RECEIVER_EXPORTED);
+        // From the framework alone (it is services.jar that sends it): a sender must hold a
+        // permission only the system and the shell have, or any app could recentre the room.
+        registerReceiver(orangeKey, orange, "android.permission.INJECT_EVENTS", null,
+                Context.RECEIVER_EXPORTED);
         getSystemService(DisplayManager.class).registerDisplayListener(displays, ui);
         // The phone's own apps for the room's launcher, again whenever one comes or goes.
         Shell.init(this);
@@ -900,28 +902,15 @@ public class MainActivity extends Activity implements SensorEventListener {
         super.onNewIntent(intent);
         // Plugged in again while already running.
         if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(intent.getAction())) takeGlasses(true);
-        openAsked(intent);
     }
 
-    /** An app to open in the room, as its launcher does: "package/activity". */
-    static final String OPEN_APP = "id.prasetya.spatiand.OPEN_APP";
-
     /**
-     * Android asking for one of its apps in the room, by an extra on the intent that started or
-     * reached this activity: adb's way to try an app there without the glasses' pointer.
-     *
-     * <pre>  am start -n id.prasetya.spatiand/.MainActivity --es id.prasetya.spatiand.OPEN_APP pkg/activity</pre>
+     * One of Android's apps into the room, as its launcher does ("package/activity"): adb's way
+     * to try an app there without the glasses' pointer. Asked through {@link ShellProvider},
+     * which answers the shell user alone -- as extras on this activity's intent, which any app
+     * on the phone may send, any app could open and click in another's window here.
      */
-    void openAsked(Intent intent) {
-        // A click at x,y in the newest of the phone's apps' windows, in its own pixels: adb's way
-        // to try the room's input to them with the phone locked, when its touch area cannot.
-        String tap = intent == null ? null : intent.getStringExtra(OPEN_APP + "_TAP");
-        if (tap != null && tap.matches("\\d+,\\d+")) {
-            String[] at = tap.split(",");
-            Native.appsTap(Integer.parseInt(at[0]), Integer.parseInt(at[1]));
-        }
-        String component = intent == null ? null : intent.getStringExtra(OPEN_APP);
-        if (component == null || !component.contains("/")) return;
+    void openAsked(String component) {
         String label = component;
         try {
             label = getPackageManager().getActivityInfo(android.content.ComponentName.unflattenFromString(component), 0)

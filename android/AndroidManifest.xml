@@ -75,7 +75,8 @@
             </intent-filter>
         </receiver>
         <!-- Where Spatiand's shell helper (ShellHelper, run as the shell user) hands the app its
-             Binder. Exported so the shell can reach it; it answers no one else. -->
+             Binder, and where adb asks for one of the phone's apps in the room. Exported so the
+             shell can reach it; it answers no one else. -->
         <!-- The pairing code typed into Spatiand's notification, and its other answers. -->
         <receiver android:name=".AdbStarter$Typed" android:exported="false" />
         <provider

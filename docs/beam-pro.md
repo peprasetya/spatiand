@@ -227,9 +227,10 @@ would take every sound the system makes), of apps that forbid capture
 of its own: it sleeps with the phone's screen and does not wake again, and Android then freezes
 Spatiand as hidden -- keep the phone's screen on from before it starts, or make it again); the
 apps themselves need the phone unlocked; `tools/beam-shell/run.sh start` starts the helper over adb;
-`am start -n id.prasetya.spatiand/.MainActivity --es id.prasetya.spatiand.OPEN_APP
-pkg/activity` opens an app in the room, and `--es id.prasetya.spatiand.OPEN_APP_TAP x,y`
-clicks in the newest app's window through the room's own input path.
+with Spatiand open, `content call --uri content://id.prasetya.spatiand.shell --method open
+--arg pkg/activity` opens an app in the room, and `--method tap --arg x,y` clicks in the newest
+app's window through the room's own input path (the provider answers the shell user alone;
+these were extras on MainActivity's intent until 2026-11-12, which any app could send).
 
 ## Consequences for the design
 
