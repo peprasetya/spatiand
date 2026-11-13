@@ -218,16 +218,14 @@ function SpatiKeyForms(options) {
   // password), else the one typed to sign in. Never one SpatiKey filled and nobody changed, never
   // one only a script set.
   function passwordToReport(scope, preferred) {
-    var list = passwordsIn(scope), best = null;
+    var list = passwordsIn(scope), candidates = [];
     if (preferred && list.indexOf(preferred) < 0) list.push(preferred);
     for (var i = 0; i < list.length; i++) {
       var p = list[i];
       if (!typed.has(p) || !p.value || filledWith.get(p) === p.value) continue;
-      var kind = kindOf(p) === 'new-password' ? 'new-password' : 'password';
-      if (kind === 'new-password') return { field: p, value: p.value, kind: kind };
-      if (!best) best = { field: p, value: p.value, kind: kind };
+      candidates.push({ field: p, value: p.value, kind: kindOf(p) === 'new-password' ? 'new-password' : 'password' });
     }
-    return best;
+    return SpatiKeyForms.passwordAmong(candidates);
   }
 
   function usernameIn(scope, before) {
@@ -487,3 +485,24 @@ function SpatiKeyForms(options) {
     }
   };
 }
+
+// Which of a sent form's typed passwords ({value, kind}, in the document's order) is the one to
+// keep; null among none. One marked as new (autocomplete=new-password) is. With none marked and
+// several typed, the form is a sign-up or a change of password whose fields say nothing of
+// themselves: the new password is the one typed twice (itself and its confirmation), else the
+// last that differs from the first (the current one, then the new) -- not the first, which on a
+// change-password form is the old password, already kept. Outside the function above so that
+// node's tests can ask it (test/forms.test.js).
+SpatiKeyForms.passwordAmong = function (candidates) {
+  'use strict';
+  var i, j, first = candidates[0];
+  if (!first) return null;
+  for (i = 0; i < candidates.length; i++) if (candidates[i].kind === 'new-password') return candidates[i];
+  var chosen = null;
+  for (i = 0; i < candidates.length && !chosen; i++) {
+    for (j = i + 1; j < candidates.length; j++) if (candidates[j].value === candidates[i].value) { chosen = candidates[i]; break; }
+  }
+  for (i = candidates.length - 1; i > 0 && !chosen; i--) if (candidates[i].value !== first.value) chosen = candidates[i];
+  if (!chosen) return first;
+  return { field: chosen.field, value: chosen.value, kind: 'new-password' };
+};
