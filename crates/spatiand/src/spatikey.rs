@@ -231,6 +231,12 @@ fn type_into(state: &mut Spatiand, window: u64, steps: &[Step], time_ms: u32) ->
             Step::Enter => strokes.push((spatiand_shell::keyboard::KEY_ENTER, false)),
         }
     }
+    // The strokes go through the seat's own keyboard, where a Caps Lock left on (a real keyboard
+    // on the Deck) turns every letter to its other case: a password that arrives wrong without
+    // anyone seeing it. Refused, and said, rather than typed so.
+    if state.seat.get_keyboard().is_some_and(|keyboard| keyboard.modifier_state().caps_lock) {
+        return Err("Caps Lock is on: turn it off and try again".into());
+    }
     state.focus_window(&target);
     if state.layout.focused_id() != Some(window as usize) {
         return Err("the keyboard could not be given to that window".into());
