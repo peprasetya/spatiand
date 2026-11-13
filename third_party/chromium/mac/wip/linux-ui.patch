@@ -5007,6 +5007,28 @@ index 10b7682418b..c39e6f86aba 100644
    // In content fullscreen, we do not show the download bubble and the toolbar
    // is not visible. Therefore, we must show the ExclusiveAccessBubble notice.
    if (fullscreen_utils::IsInContentFullscreen(browser_view_->browser())) {
+diff --git a/chrome/browser/ui/views/event_utils.cc b/chrome/browser/ui/views/event_utils.cc
+index 07b21fd8ce3..73613bdbb62 100644
+--- a/chrome/browser/ui/views/event_utils.cc
++++ b/chrome/browser/ui/views/event_utils.cc
+@@ -21,14 +21,15 @@ bool IsPossibleDispositionEvent(const ui::Event& event) {
+ std::optional<ReorderDirection> GetReorderCommandForKeyboardEvent(
+     const ui::KeyEvent& event,
+     views::LayoutOrientation orientation) {
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
+   constexpr int kModifierFlag =
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+       ui::EF_COMMAND_DOWN;
+ #else
+       ui::EF_CONTROL_DOWN;
+ #endif
+ 
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (event.IsShiftDown()) {
+     if (event.key_code() == ui::VKEY_HOME) {
+       return ReorderDirection::kPrevious;
 diff --git a/chrome/browser/ui/views/eye_dropper/BUILD.gn b/chrome/browser/ui/views/eye_dropper/BUILD.gn
 index b6364f02aef..0ee0fdc86a4 100644
 --- a/chrome/browser/ui/views/eye_dropper/BUILD.gn
@@ -6052,6 +6074,20 @@ index 415f317ca4c..7b4da57aa58 100644
  
  source_set("cookie_controls") {
    sources = []
+diff --git a/chrome/browser/ui/views/location_bar/location_bar_view.cc b/chrome/browser/ui/views/location_bar/location_bar_view.cc
+index d07cbfe86cf..46832ab2160 100644
+--- a/chrome/browser/ui/views/location_bar/location_bar_view.cc
++++ b/chrome/browser/ui/views/location_bar/location_bar_view.cc
+@@ -1555,7 +1555,8 @@ void LocationBarView::RefreshAiModePageAction() {
+     } else {
+       ai_mode_hint_label_->SetVisible(false);
+     }
+-#if BUILDFLAG(IS_MAC)
++    // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+     ai_mode_hint_label_->SetText(u"⌘ + return for AI Mode");
+ #else
+     ai_mode_hint_label_->SetText(u"Ctrl + Enter for AI Mode");
 diff --git a/chrome/browser/ui/views/location_bar/zoom_bubble_manager_views.cc b/chrome/browser/ui/views/location_bar/zoom_bubble_manager_views.cc
 index 5a979b72350..17dd9a32dd3 100644
 --- a/chrome/browser/ui/views/location_bar/zoom_bubble_manager_views.cc
@@ -6245,6 +6281,44 @@ index fb3f3f03054..bcdcca4569c 100644
    // Makes window managers move the browser window, not the popup.
    if (delegate().is_full_webui_omnibox()) {
      params.native_widget = CreateOmniboxPopupNativeWidget(widget_.get());
+diff --git a/chrome/browser/ui/views/omnibox/omnibox_view_views.cc b/chrome/browser/ui/views/omnibox/omnibox_view_views.cc
+index 5fe6c355457..39a87cf313c 100644
+--- a/chrome/browser/ui/views/omnibox/omnibox_view_views.cc
++++ b/chrome/browser/ui/views/omnibox/omnibox_view_views.cc
+@@ -264,7 +264,8 @@ OmniboxViewViews::OmniboxViewViews(bool popup_window_mode,
+   GetViewAccessibility().SetAutoComplete("both");
+   GetViewAccessibility().AddHTMLAttributes(std::make_pair("type", "url"));
+   // Expose keyboard shortcut where it makes sense.
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   GetViewAccessibility().SetKeyShortcuts("⌘L");
+ #else
+   GetViewAccessibility().SetKeyShortcuts("Ctrl+L");
+@@ -2247,7 +2248,8 @@ bool OmniboxViewViews::HandleKeyEvent(views::Textfield* textfield,
+   switch (event.key_code()) {
+     case ui::VKEY_RETURN: {
+       if (omnibox::kShowRhsAimHint.Get()) {
+-#if BUILDFLAG(IS_MAC)
++        // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+         const bool ai_mode_modifier = command;
+ #else
+         const bool ai_mode_modifier = control;
+diff --git a/chrome/browser/ui/views/omnibox/webui_readonly_omnibox.cc b/chrome/browser/ui/views/omnibox/webui_readonly_omnibox.cc
+index c8c57605720..cd8c6ed68db 100644
+--- a/chrome/browser/ui/views/omnibox/webui_readonly_omnibox.cc
++++ b/chrome/browser/ui/views/omnibox/webui_readonly_omnibox.cc
+@@ -827,7 +827,8 @@ WebUIReadOnlyOmnibox::OnKey(
+   switch (dom_key) {
+     case ui::DomKey::ENTER: {
+       if (omnibox::kShowRhsAimHint.Get()) {
+-#if BUILDFLAG(IS_MAC)
++        // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+         const bool ai_mode_modifier = command;
+ #else
+         const bool ai_mode_modifier = control;
 diff --git a/chrome/browser/ui/views/overlay/BUILD.gn b/chrome/browser/ui/views/overlay/BUILD.gn
 index 82beb8fabd4..73be0593ca8 100644
 --- a/chrome/browser/ui/views/overlay/BUILD.gn
@@ -6677,6 +6751,23 @@ index af45c8a241c..a244057dc65 100644
  
  source_set("relaunch_notification") {
    public = [
+diff --git a/chrome/browser/ui/views/renderer_context_menu/render_view_context_menu_views.cc b/chrome/browser/ui/views/renderer_context_menu/render_view_context_menu_views.cc
+index 2a5168eae3a..48739e9f19a 100644
+--- a/chrome/browser/ui/views/renderer_context_menu/render_view_context_menu_views.cc
++++ b/chrome/browser/ui/views/renderer_context_menu/render_view_context_menu_views.cc
+@@ -285,10 +285,11 @@ bool RenderViewContextMenuViews::GetAcceleratorForCommandId(
+     }
+ 
+     case IDC_CONTENT_CONTEXT_EMOJI:
++      // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
+ #if BUILDFLAG(IS_WIN)
+       *accel = ui::Accelerator(ui::VKEY_OEM_PERIOD, ui::EF_COMMAND_DOWN);
+       return true;
+-#elif BUILDFLAG(IS_MAC)
++#elif BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+       *accel = ui::Accelerator(ui::VKEY_SPACE,
+                                ui::EF_COMMAND_DOWN | ui::EF_CONTROL_DOWN);
+       return true;
 diff --git a/chrome/browser/ui/views/scheduled_restart/BUILD.gn b/chrome/browser/ui/views/scheduled_restart/BUILD.gn
 index b15cdf5c4c1..53fec7dd820 100644
 --- a/chrome/browser/ui/views/scheduled_restart/BUILD.gn
@@ -6803,6 +6894,20 @@ index 413c423e539..116fb13b97b 100644
    // Bypasses the synchronous IsMouseHovered() check which can be stale on Linux
    // Wayland/X11 due to asynchronous cursor updates during mouse exit events.
    SetEditorBubbleButtonVisibilityOnHover(/*is_hovered=*/false);
+diff --git a/chrome/browser/ui/views/tabs/common/tab_view.cc b/chrome/browser/ui/views/tabs/common/tab_view.cc
+index 61a57c1534a..b40a84698e1 100644
+--- a/chrome/browser/ui/views/tabs/common/tab_view.cc
++++ b/chrome/browser/ui/views/tabs/common/tab_view.cc
+@@ -115,7 +115,8 @@ class TabHighlightPathGenerator : public views::HighlightPathGenerator {
+ };
+ 
+ bool IsSelectionModifierDown(const ui::MouseEvent& event) {
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   return event.IsCommandDown();
+ #else
+   return event.IsControlDown();
 diff --git a/chrome/browser/ui/views/tabs/dragging/BUILD.gn b/chrome/browser/ui/views/tabs/dragging/BUILD.gn
 index 72be2ada131..db7f998ad7d 100644
 --- a/chrome/browser/ui/views/tabs/dragging/BUILD.gn
@@ -6897,10 +7002,31 @@ index 5b803375ea8..c05dc226622 100644
    // window (plus shadow elevation outsets) rather than the screen. To handle
    // this, we adjust the display bounds by the difference between the drop arrow
 diff --git a/chrome/browser/ui/views/tabs/tab.cc b/chrome/browser/ui/views/tabs/tab.cc
-index 96d48ee0fec..1b9956caf07 100644
+index 96d48ee0fec..be5ad0c0a7c 100644
 --- a/chrome/browser/ui/views/tabs/tab.cc
 +++ b/chrome/browser/ui/views/tabs/tab.cc
-@@ -1504,7 +1504,7 @@ void Tab::MaybeUpdateHoverStatus(const ui::MouseEvent& event) {
+@@ -648,7 +648,9 @@ void Tab::Layout(PassKey) {
+ }
+ 
+ bool Tab::OnKeyPressed(const ui::KeyEvent& event) {
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: in the Linux UI Control is the wearer's Command, not the Mac's
++  // secondary click.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (event.key_code() == ui::VKEY_RETURN && event.IsControlDown()) {
+     ShowContextMenu(GetKeyboardContextMenuLocation(),
+                     ui::mojom::MenuSourceType::kKeyboard);
+@@ -718,7 +720,8 @@ bool Tab::OnKeyReleased(const ui::KeyEvent& event) {
+ 
+ namespace {
+ bool IsSelectionModifierDown(const ui::MouseEvent& event) {
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   return event.IsCommandDown();
+ #else
+   return event.IsControlDown();
+@@ -1504,7 +1507,7 @@ void Tab::MaybeUpdateHoverStatus(const ui::MouseEvent& event) {
      return;
    }
  
@@ -6909,6 +7035,21 @@ index 96d48ee0fec..1b9956caf07 100644
    // Move the hit test area for hovering up so that it is not overlapped by tab
    // hover cards when they are shown.
    // TODO(crbug.com/41467565): Once Linux/CrOS widget transparency is solved,
+diff --git a/chrome/browser/ui/views/tabs/tab_group_header.cc b/chrome/browser/ui/views/tabs/tab_group_header.cc
+index 8010ac8f743..01d617f4dcd 100644
+--- a/chrome/browser/ui/views/tabs/tab_group_header.cc
++++ b/chrome/browser/ui/views/tabs/tab_group_header.cc
+@@ -273,8 +273,9 @@ bool TabGroupHeader::OnKeyPressed(const ui::KeyEvent& event) {
+     return true;
+   }
+ 
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
+   constexpr int kModifiedFlag =
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+       ui::EF_COMMAND_DOWN;
+ #else
+       ui::EF_CONTROL_DOWN;
 diff --git a/chrome/browser/ui/views/task_manager_search_bar_view.cc b/chrome/browser/ui/views/task_manager_search_bar_view.cc
 index 40b42cb3c10..3a8caca01ab 100644
 --- a/chrome/browser/ui/views/task_manager_search_bar_view.cc
@@ -8520,6 +8661,20 @@ index 0f0580728ca..25ed5cdee1d 100644
    bool SetCompositionFromExistingText(
        const gfx::Range& range,
        const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override;
+diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
+index af7b76e6f88..428bb196d6c 100644
+--- a/content/browser/web_contents/web_contents_impl.cc
++++ b/content/browser/web_contents/web_contents_impl.cc
+@@ -4938,7 +4938,8 @@ bool WebContentsImpl::HandleKeyboardEvent(
+ bool WebContentsImpl::HandleWheelEvent(const blink::WebMouseWheelEvent& event) {
+   OPTIONAL_TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("content.verbose"),
+                         "WebContentsImpl::HandleWheelEvent");
+-#if !BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+   // On platforms other than Mac, control+mousewheel may change zoom. On Mac,
+   // this isn't done for two reasons:
+   //   -the OS already has a gesture to do this through pinch-zoom
 diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
 index 3a022e1f2fd..337aac2ef1f 100644
 --- a/content/browser/web_contents/web_contents_view_aura.cc
@@ -9623,10 +9778,30 @@ index 72f305c16b2..4fb9641a4bb 100644
 +(allow network-outbound
 +  (remote unix-socket (path-regex #"/spatiand-(sound|mic)$")))
 diff --git a/third_party/blink/renderer/core/editing/editing_behavior.cc b/third_party/blink/renderer/core/editing/editing_behavior.cc
-index f7c75030b95..512a539ba12 100644
+index f7c75030b95..8a11691026f 100644
 --- a/third_party/blink/renderer/core/editing/editing_behavior.cc
 +++ b/third_party/blink/renderer/core/editing/editing_behavior.cc
-@@ -116,7 +116,7 @@ const KeyboardCodeKeyDownEntry kKeyboardCodeKeyDownEntries[] = {
+@@ -45,7 +45,8 @@ const uint32_t kCtrlKey = WebInputEvent::kControlKey;
+ const uint32_t kAltKey = WebInputEvent::kAltKey;
+ const uint32_t kShiftKey = WebInputEvent::kShiftKey;
+ const uint32_t kMetaKey = WebInputEvent::kMetaKey;
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ // Aliases for the generic key defintions to make kbd shortcuts definitions more
+ // readable on OS X.
+ const uint32_t kOptionKey = kAltKey;
+@@ -82,7 +83,8 @@ struct DomKeyKeyDownEntry {
+   const char* name;
+ };
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ #define OPTION_OR_CTRL_KEY kOptionKey
+ #else
+ #define OPTION_OR_CTRL_KEY kCtrlKey
+@@ -116,7 +118,7 @@ const KeyboardCodeKeyDownEntry kKeyboardCodeKeyDownEntries[] = {
      {VKEY_NEXT, kShiftKey, "MovePageDownAndModifySelection"},
      {VKEY_UP, OPTION_OR_CTRL_KEY, "MoveParagraphBackward"},
      {VKEY_DOWN, OPTION_OR_CTRL_KEY, "MoveParagraphForward"},
@@ -9635,7 +9810,13 @@ index f7c75030b95..512a539ba12 100644
      {VKEY_UP, kCtrlKey | kShiftKey, "MoveParagraphBackwardAndModifySelection"},
      {VKEY_DOWN, kCtrlKey | kShiftKey, "MoveParagraphForwardAndModifySelection"},
      {VKEY_PRIOR, 0, "MovePageUp"},
-@@ -128,14 +128,14 @@ const KeyboardCodeKeyDownEntry kKeyboardCodeKeyDownEntries[] = {
+@@ -124,18 +126,19 @@ const KeyboardCodeKeyDownEntry kKeyboardCodeKeyDownEntries[] = {
+ #endif
+     {VKEY_HOME, 0, "MoveToBeginningOfLine"},
+     {VKEY_HOME, kShiftKey, "MoveToBeginningOfLineAndModifySelection"},
+-#if BUILDFLAG(IS_MAC)
++    // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
      {VKEY_PRIOR, kOptionKey, "MovePageUp"},
      {VKEY_NEXT, kOptionKey, "MovePageDown"},
  #endif
@@ -9652,7 +9833,21 @@ index f7c75030b95..512a539ba12 100644
      {VKEY_END, kCtrlKey, "MoveToEndOfDocument"},
      {VKEY_END, kCtrlKey | kShiftKey, "MoveToEndOfDocumentAndModifySelection"},
  #endif
-@@ -168,7 +168,7 @@ const KeyboardCodeKeyDownEntry kKeyboardCodeKeyDownEntries[] = {
+@@ -144,10 +147,11 @@ const KeyboardCodeKeyDownEntry kKeyboardCodeKeyDownEntries[] = {
+     {VKEY_DELETE, 0, "DeleteForward"},
+     {VKEY_BACK, OPTION_OR_CTRL_KEY, "DeleteWordBackward"},
+     {VKEY_DELETE, OPTION_OR_CTRL_KEY, "DeleteWordForward"},
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++    // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC_LINUX_UI)
+     {VKEY_BACK, kCtrlKey | kShiftKey, "DeleteToBeginningOfLine"},
+ #endif
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+     {'B', kCommandKey, "ToggleBold"},
+     {'I', kCommandKey, "ToggleItalic"},
+     {'U', kCommandKey, "ToggleUnderline"},
+@@ -168,7 +172,7 @@ const KeyboardCodeKeyDownEntry kKeyboardCodeKeyDownEntries[] = {
      {VKEY_INSERT, kCtrlKey, "Copy"},
      {VKEY_INSERT, kShiftKey, "Paste"},
      {VKEY_DELETE, kShiftKey, "Cut"},
@@ -9661,6 +9856,30 @@ index f7c75030b95..512a539ba12 100644
      // On OS X, we pipe these back to the browser, so that it can do menu item
      // blinking.
      {'C', kCtrlKey, "Copy"},
+diff --git a/third_party/blink/renderer/core/events/ui_event_with_key_state.cc b/third_party/blink/renderer/core/events/ui_event_with_key_state.cc
+index 9f467fb22fd..c945b94e0a6 100644
+--- a/third_party/blink/renderer/core/events/ui_event_with_key_state.cc
++++ b/third_party/blink/renderer/core/events/ui_event_with_key_state.cc
+@@ -76,7 +76,8 @@ void UIEventWithKeyState::DidCreateEventInIsolatedWorld(bool ctrl_key,
+                                                         bool shift_key,
+                                                         bool alt_key,
+                                                         bool meta_key) {
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   const bool new_tab_modifier_set = meta_key;
+ #else
+   const bool new_tab_modifier_set = ctrl_key;
+@@ -121,7 +122,8 @@ bool UIEventWithKeyState::getModifierState(const String& key_identifier) const {
+       {"Meta", WebInputEvent::kMetaKey},
+       {"AltGraph", WebInputEvent::kAltGrKey},
+       {"Accel",
+-#if BUILDFLAG(IS_MAC)
++       // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+        WebInputEvent::kMetaKey
+ #else
+        WebInputEvent::kControlKey
 diff --git a/third_party/blink/renderer/core/execution_context/navigator_base.cc b/third_party/blink/renderer/core/execution_context/navigator_base.cc
 index 3210b539109..3374fe42092 100644
 --- a/third_party/blink/renderer/core/execution_context/navigator_base.cc
@@ -9674,6 +9893,20 @@ index 3210b539109..3374fe42092 100644
  #elif BUILDFLAG(IS_MAC)
    return "MacIntel";
  #elif BUILDFLAG(IS_WIN)
+diff --git a/third_party/blink/renderer/core/exported/web_plugin_container_impl.cc b/third_party/blink/renderer/core/exported/web_plugin_container_impl.cc
+index ba20189f256..d411efa4864 100644
+--- a/third_party/blink/renderer/core/exported/web_plugin_container_impl.cc
++++ b/third_party/blink/renderer/core/exported/web_plugin_container_impl.cc
+@@ -113,7 +113,8 @@ namespace blink {
+ 
+ namespace {
+ 
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ const WebInputEvent::Modifiers kEditingModifier = WebInputEvent::kMetaKey;
+ #else
+ const WebInputEvent::Modifiers kEditingModifier = WebInputEvent::kControlKey;
 diff --git a/third_party/blink/renderer/core/frame/navigator_id.cc b/third_party/blink/renderer/core/frame/navigator_id.cc
 index 26681d0fbc0..3d6c1c8bf79 100644
 --- a/third_party/blink/renderer/core/frame/navigator_id.cc
@@ -9690,6 +9923,155 @@ index 26681d0fbc0..3d6c1c8bf79 100644
    // Match Safari and Mozilla on Mac x86.
    return "MacIntel";
  #elif BUILDFLAG(IS_WIN)
+diff --git a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc b/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc
+index 44e834ea715..a9a5e333fdb 100644
+--- a/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc
++++ b/third_party/blink/renderer/core/frame/web_frame_widget_impl.cc
+@@ -1119,7 +1119,8 @@ WebInputEventResult WebFrameWidgetImpl::HandleKeyEvent(
+   bool is_unmodified_menu_key =
+       !(event.GetModifiers() & WebInputEvent::kInputModifiers) &&
+       event.windows_key_code == VKEY_APPS;
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   bool is_shift_f10 = false;
+ #else
+   bool is_shift_f10 = (event.GetModifiers() & WebInputEvent::kInputModifiers) ==
+@@ -1188,7 +1189,9 @@ void WebFrameWidgetImpl::HandleMouseDown(LocalFrame& local_root,
+ 
+   // Dispatch the contextmenu event regardless of if the click was swallowed.
+   if (!GetPage()->GetSettings().GetShowContextMenuOnMouseUp()) {
+-#if BUILDFLAG(IS_MAC)
++    // Spatiand: in the Linux UI Control is the wearer's Command (a click with it
++    // opens a link in a new tab), not the Mac's secondary click.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+     if (event.button == WebMouseEvent::Button::kRight ||
+         (event.button == WebMouseEvent::Button::kLeft &&
+          event.GetModifiers() & WebMouseEvent::kControlKey))
+diff --git a/third_party/blink/renderer/core/html/forms/select_type.cc b/third_party/blink/renderer/core/html/forms/select_type.cc
+index e2502fc10ce..0f9aa0155f4 100644
+--- a/third_party/blink/renderer/core/html/forms/select_type.cc
++++ b/third_party/blink/renderer/core/html/forms/select_type.cc
+@@ -1351,7 +1351,8 @@ bool ListBoxSelectType::DefaultEventHandler(const Event& event) {
+     // Convert to coords relative to the list box if needed.
+     if (HTMLOptionElement* option = EventTargetOption(*mouse_event)) {
+       if (!option->IsDisabledFormControl()) {
+-#if BUILDFLAG(IS_MAC)
++        // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+         const bool meta_or_ctrl = mouse_event->metaKey();
+ #else
+         const bool meta_or_ctrl = mouse_event->ctrlKey();
+@@ -1499,7 +1500,8 @@ bool ListBoxSelectType::DefaultEventHandler(const Event& event) {
+     }
+ 
+     bool is_control_key = false;
+-#if BUILDFLAG(IS_MAC)
++    // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+     is_control_key = keyboard_event->metaKey();
+ #else
+     is_control_key = keyboard_event->ctrlKey();
+diff --git a/third_party/blink/renderer/core/html/html_element.cc b/third_party/blink/renderer/core/html/html_element.cc
+index 379c4609b42..0b97fce2383 100644
+--- a/third_party/blink/renderer/core/html/html_element.cc
++++ b/third_party/blink/renderer/core/html/html_element.cc
+@@ -3770,7 +3770,8 @@ String HTMLElement::accessKeyLabel() {
+   StringBuilder result;
+ 
+   const int modifiers = KeyboardEventManager::kAccessKeyModifiers;
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   if (modifiers & WebInputEvent::kControlKey) {
+     result.Append(uchar::kUpArrowheadKey);
+   }
+diff --git a/third_party/blink/renderer/core/input/keyboard_event_manager.cc b/third_party/blink/renderer/core/input/keyboard_event_manager.cc
+index 6d86e2c5024..bea919333e1 100644
+--- a/third_party/blink/renderer/core/input/keyboard_event_manager.cc
++++ b/third_party/blink/renderer/core/input/keyboard_event_manager.cc
+@@ -110,7 +110,8 @@ bool MapKeyCodeForScroll(int key_code,
+   if (modifiers & WebInputEvent::kControlKey) {
+     // Match FF behavior in the sense that Ctrl+home/end are the only Ctrl
+     // key combinations which affect scrolling.
+-#if BUILDFLAG(IS_MAC)
++    // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+     if (RuntimeEnabledFeatures::MacDisableCtrlHomeEndEnabled() ||
+         (key_code != VKEY_HOME && key_code != VKEY_END)) {
+       return false;
+diff --git a/third_party/blink/renderer/core/input/keyboard_event_manager.h b/third_party/blink/renderer/core/input/keyboard_event_manager.h
+index f40783c2d51..4981a95a13d 100644
+--- a/third_party/blink/renderer/core/input/keyboard_event_manager.h
++++ b/third_party/blink/renderer/core/input/keyboard_event_manager.h
+@@ -30,7 +30,8 @@ class CORE_EXPORT KeyboardEventManager final
+  public:
+   static const int kAccessKeyModifiers =
+ // TODO(crbug.com/618397): Add a settings to control this behavior.
+-#if BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+       WebInputEvent::kControlKey | WebInputEvent::kAltKey;
+ #else
+       WebInputEvent::kAltKey;
+diff --git a/third_party/blink/renderer/core/input/mouse_event_manager.cc b/third_party/blink/renderer/core/input/mouse_event_manager.cc
+index 09de09bc424..0a6bdc4f46e 100644
+--- a/third_party/blink/renderer/core/input/mouse_event_manager.cc
++++ b/third_party/blink/renderer/core/input/mouse_event_manager.cc
+@@ -335,7 +335,9 @@ WebInputEventResult MouseEventManager::DispatchMouseClickIfNeeded(
+   // We only prevent click event when the click may cause contextmenu to popup.
+   // However, we always send auxclick.
+   bool context_menu_event = false;
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: in the Linux UI Control is the wearer's Command, not the Mac's
++  // secondary click.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // FIXME: The Mac port achieves the same behavior by checking whether the
+   // context menu is currently open in WebPage::mouseEvent(). Consider merging
+   // the implementations.
+diff --git a/third_party/blink/renderer/core/inspector/dev_tools_host.cc b/third_party/blink/renderer/core/inspector/dev_tools_host.cc
+index b128ace8a29..be32f1cb500 100644
+--- a/third_party/blink/renderer/core/inspector/dev_tools_host.cc
++++ b/third_party/blink/renderer/core/inspector/dev_tools_host.cc
+@@ -158,7 +158,9 @@ void DevToolsHost::copyText(const String& text) {
+ }
+ 
+ String DevToolsHost::platform() const {
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as
++  // Control): DevTools' shortcuts are its Linux ones.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   return "mac";
+ #elif BUILDFLAG(IS_WIN)
+   return "windows";
+diff --git a/third_party/blink/renderer/core/loader/navigation_policy.cc b/third_party/blink/renderer/core/loader/navigation_policy.cc
+index 38e665443ba..b34cb4a59cd 100644
+--- a/third_party/blink/renderer/core/loader/navigation_policy.cc
++++ b/third_party/blink/renderer/core/loader/navigation_policy.cc
+@@ -53,7 +53,8 @@ NavigationPolicy NavigationPolicyFromEventModifiers(int16_t button,
+                                                     bool shift,
+                                                     bool alt,
+                                                     bool meta) {
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   const bool new_tab_modifier = (button == 1) || meta;
+ #else
+   const bool new_tab_modifier = (button == 1) || ctrl;
+diff --git a/third_party/blink/renderer/core/page/drag_controller.cc b/third_party/blink/renderer/core/page/drag_controller.cc
+index 368a3d9f5c9..dc9322e1942 100644
+--- a/third_party/blink/renderer/core/page/drag_controller.cc
++++ b/third_party/blink/renderer/core/page/drag_controller.cc
+@@ -1573,7 +1573,8 @@ DragOperation DragController::GetDragOperation(
+ bool DragController::IsCopyKeyDown(const DragData& drag_data) const {
+   const int modifiers = drag_data.GetModifiers();
+ 
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   return modifiers & WebInputEvent::kAltKey;
+ #else
+   return modifiers & WebInputEvent::kControlKey;
 diff --git a/third_party/blink/renderer/platform/theme/web_theme_engine_mac.cc b/third_party/blink/renderer/platform/theme/web_theme_engine_mac.cc
 index ecb2723266f..a6788b38824 100644
 --- a/third_party/blink/renderer/platform/theme/web_theme_engine_mac.cc
@@ -18921,10 +19303,58 @@ index dd9811827c1..a2e572c013b 100644
    # dependencies and be kept as minimal as possible.
    source_set("wm_role_names") {
 diff --git a/ui/base/accelerators/accelerator.cc b/ui/base/accelerators/accelerator.cc
-index 3d8645bd5dd..188c1d27394 100644
+index 3d8645bd5dd..2ac0e4ebe01 100644
 --- a/ui/base/accelerators/accelerator.cc
 +++ b/ui/base/accelerators/accelerator.cc
-@@ -402,7 +402,7 @@ std::vector<std::u16string> Accelerator::GetLongFormModifiers() const {
+@@ -160,7 +160,8 @@ std::vector<std::u16string> Accelerator::GetShortcutVectorRepresentation()
+ 
+   std::u16string key_code = GetKeyCodeStringForShortcut();
+ 
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   shortcut_vector = GetShortFormModifiers();
+   shortcut_vector.push_back(key_code);
+ #else
+@@ -210,7 +211,8 @@ std::u16string Accelerator::GetShortcutText() const {
+ 
+   // Shortcut text is expected to be represented using '+' as a separator on all
+   // platforms except Mac, where no separator is used.
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   shortcut = base::JoinString(shortcut_vector, u"");
+ #else
+   shortcut = base::JoinString(shortcut_vector, u"+");
+@@ -221,7 +223,8 @@ std::u16string Accelerator::GetShortcutText() const {
+ 
+ std::u16string Accelerator::GetKeyCodeStringForShortcut() const {
+   std::u16string key_string;
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   key_string = KeyCodeToMacSymbol();
+ #else
+   key_string = KeyCodeToName();
+@@ -365,7 +368,8 @@ std::u16string Accelerator::KeyCodeToName() const {
+     case VKEY_F11:
+       string_id = IDS_APP_F11_KEY;
+       break;
+-#if !BUILDFLAG(IS_MAC)
++    // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+     // On Mac, commas and periods are used literally in accelerator text.
+     case VKEY_OEM_COMMA:
+       string_id = IDS_APP_COMMA_KEY;
+@@ -396,13 +400,14 @@ std::vector<std::u16string> Accelerator::GetLongFormModifiers() const {
+   std::vector<std::u16string> modifiers;
+ 
+   if (IsCmdDown()) {
+-#if BUILDFLAG(IS_MAC)
++    // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+     modifiers.push_back(l10n_util::GetStringUTF16(IDS_APP_COMMAND_KEY));
+ #elif BUILDFLAG(IS_CHROMEOS)
      modifiers.push_back(l10n_util::GetStringUTF16(IDS_APP_SEARCH_KEY));
  #elif BUILDFLAG(IS_WIN)
      modifiers.push_back(l10n_util::GetStringUTF16(IDS_APP_WINDOWS_KEY));
@@ -18934,10 +19364,18 @@ index 3d8645bd5dd..188c1d27394 100644
  #else
      NOTREACHED();
 diff --git a/ui/base/accelerators/command.cc b/ui/base/accelerators/command.cc
-index c833e6e881a..ee4d62b6e3d 100644
+index c833e6e881a..362e87a4f6f 100644
 --- a/ui/base/accelerators/command.cc
 +++ b/ui/base/accelerators/command.cc
-@@ -81,7 +81,7 @@ std::string Command::CommandPlatform() {
+@@ -75,13 +75,14 @@ Command::Command(std::string_view command_name,
+ 
+ // static
+ std::string Command::CommandPlatform() {
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
+ #if BUILDFLAG(IS_WIN)
+   return ui::kKeybindingPlatformWin;
+-#elif BUILDFLAG(IS_MAC)
++#elif BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
    return ui::kKeybindingPlatformMac;
  #elif BUILDFLAG(IS_CHROMEOS)
    return ui::kKeybindingPlatformChromeOs;
@@ -18946,6 +19384,16 @@ index c833e6e881a..ee4d62b6e3d 100644
    return ui::kKeybindingPlatformLinux;
  #elif BUILDFLAG(IS_FUCHSIA)
    // TODO(crbug.com/40220501): Change this once we decide what string should be
+@@ -246,7 +247,8 @@ ui::Accelerator Command::ParseImpl(std::string_view accelerator,
+         // Mac the developer has to specify MacCtrl). Therefore we treat this
+         // as Command.
+         modifiers |= ui::EF_COMMAND_DOWN;
+-#if BUILDFLAG(IS_MAC)
++        // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+       } else if (platform_key == ui::kKeybindingPlatformDefault) {
+         // If we see "Command+foo" in the Default section it can mean two
+         // things, depending on the platform:
 diff --git a/ui/base/accelerators/global_accelerator_listener/BUILD.gn b/ui/base/accelerators/global_accelerator_listener/BUILD.gn
 index 1e6a4191b4d..5e8e1eaa090 100644
 --- a/ui/base/accelerators/global_accelerator_listener/BUILD.gn
@@ -19584,6 +20032,20 @@ index 46ca6525b0a..83b271176c4 100644
    std::string font_name = ui::ResourceBundle::GetSharedInstance()
                                .GetFont(ui::ResourceBundle::BaseFont)
                                .GetFontName();
+diff --git a/ui/base/window_open_disposition_utils.cc b/ui/base/window_open_disposition_utils.cc
+index 4f10a62808d..ab9fe242418 100644
+--- a/ui/base/window_open_disposition_utils.cc
++++ b/ui/base/window_open_disposition_utils.cc
+@@ -17,7 +17,8 @@ WindowOpenDisposition DispositionFromClick(
+     bool shift_key,
+     WindowOpenDisposition disposition_for_current_tab) {
+   // MacOS uses meta key (Command key) to spawn new tabs.
+-#if BUILDFLAG(IS_APPLE)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   const bool new_tab_modifier = middle_button || meta_key;
+   const bool split_view_modifier = meta_key;
+ #else
 diff --git a/ui/base/x/selection_owner.cc b/ui/base/x/selection_owner.cc
 index bc77404668d..1ea8e89fd4f 100644
 --- a/ui/base/x/selection_owner.cc
@@ -19978,6 +20440,22 @@ index 528fad30f56..44e99219081 100644
      public += [ "gestures/gesture_recognizer_impl_mac.h" ]
  
      sources += [
+diff --git a/ui/events/base_event_utils.cc b/ui/events/base_event_utils.cc
+index 75279b190bd..704ad64f4d4 100644
+--- a/ui/events/base_event_utils.cc
++++ b/ui/events/base_event_utils.cc
+@@ -16,9 +16,10 @@ namespace ui {
+ 
+ namespace {
+ 
++// Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
+ #if BUILDFLAG(IS_CHROMEOS)
+ const int kSystemKeyModifierMask = EF_ALT_DOWN | EF_COMMAND_DOWN;
+-#elif BUILDFLAG(IS_APPLE)
++#elif BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ // Alt modifier is used to input extended characters on Mac.
+ const int kSystemKeyModifierMask = EF_COMMAND_DOWN;
+ #else
 diff --git a/ui/events/event.cc b/ui/events/event.cc
 index 20b5f8b72de..4b6a3df423a 100644
 --- a/ui/events/event.cc
@@ -20009,6 +20487,20 @@ index 20b5f8b72de..4b6a3df423a 100644
    NormalizeFlags();
  #elif BUILDFLAG(IS_WIN)
    // Only Windows has native character events.
+diff --git a/ui/events/event_constants.h b/ui/events/event_constants.h
+index 36a58c73acc..ab7e54cb08b 100644
+--- a/ui/events/event_constants.h
++++ b/ui/events/event_constants.h
+@@ -50,7 +50,8 @@ constexpr EventFlags EF_MOUSE_BUTTON =
+ // An artificial value used to bridge platform differences.
+ // Many commands on Mac as Cmd+Key are the counterparts of
+ // Ctrl+Key on other platforms.
+-#if BUILDFLAG(IS_APPLE)
++// Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_MAC_LINUX_UI)
+ constexpr EventFlags EF_PLATFORM_ACCELERATOR = EF_COMMAND_DOWN;
+ #else
+ constexpr EventFlags EF_PLATFORM_ACCELERATOR = EF_CONTROL_DOWN;
 diff --git a/ui/events/event_switches.cc b/ui/events/event_switches.cc
 index 326ba6b8cd0..3ecdf7505b2 100644
 --- a/ui/events/event_switches.cc
@@ -23924,8 +24416,22 @@ index 2dba374b4e9..e4bd2d83cef 100644
    bool SetCompositionFromExistingText(
        const gfx::Range& range,
        const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override;
+diff --git a/ui/views/controls/table/table_view.cc b/ui/views/controls/table/table_view.cc
+index 512b49af196..9ba79905767 100644
+--- a/ui/views/controls/table/table_view.cc
++++ b/ui/views/controls/table/table_view.cc
+@@ -102,7 +102,8 @@ ui::ColorId selected_text_color_id(bool has_focus) {
+ 
+ // Whether the platform "command" key is down.
+ bool IsCmdOrCtrl(const ui::Event& event) {
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   return event.IsCommandDown();
+ #else
+   return event.IsControlDown();
 diff --git a/ui/views/controls/textfield/textfield.cc b/ui/views/controls/textfield/textfield.cc
-index 98f9190d2b2..090e35a4de8 100644
+index 98f9190d2b2..75a66f7ab12 100644
 --- a/ui/views/controls/textfield/textfield.cc
 +++ b/ui/views/controls/textfield/textfield.cc
 @@ -90,7 +90,7 @@
@@ -23946,7 +24452,17 @@ index 98f9190d2b2..090e35a4de8 100644
    return flags & ui::EF_CONTROL_DOWN;
  #else
    return false;
-@@ -840,7 +840,7 @@ bool Textfield::OnKeyPressed(const ui::KeyEvent& event) {
+@@ -251,7 +251,8 @@ Textfield::Textfield()
+       },
+       this));
+ 
+-#if !BUILDFLAG(IS_MAC)
++  // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+   // Do not map accelerators on Mac. E.g. They might not reflect custom
+   // keybindings that a user has set. But also on Mac, these commands dispatch
+   // via the "responder chain" when the OS searches through menu items in the
+@@ -840,7 +841,7 @@ bool Textfield::OnKeyPressed(const ui::KeyEvent& event) {
      return handled;
    }
  
@@ -23955,7 +24471,7 @@ index 98f9190d2b2..090e35a4de8 100644
    if (!handled) {
      if (auto* linux_ui = ui::LinuxUi::instance()) {
        const auto command =
-@@ -1025,7 +1025,7 @@ void Textfield::AboutToRequestFocusFromTabTraversal(bool reverse) {
+@@ -1025,7 +1026,7 @@ void Textfield::AboutToRequestFocusFromTabTraversal(bool reverse) {
  }
  
  bool Textfield::SkipDefaultKeyEventProcessing(const ui::KeyEvent& event) {
@@ -23964,7 +24480,7 @@ index 98f9190d2b2..090e35a4de8 100644
    // Skip any accelerator handling that conflicts with custom keybindings.
    if (auto* linux_ui = ui::LinuxUi::instance()) {
      if (IsTextEditCommandEnabled(linux_ui->GetTextEditCommandForEvent(
-@@ -2157,7 +2157,7 @@ bool Textfield::ShouldDoLearning() {
+@@ -2157,7 +2158,7 @@ bool Textfield::ShouldDoLearning() {
    return false;
  }
  
@@ -23973,7 +24489,7 @@ index 98f9190d2b2..090e35a4de8 100644
  // TODO(crbug.com/41452689): Implement this method to support Korean IME
  // reconversion feature on native text fields (e.g. find bar).
  bool Textfield::SetCompositionFromExistingText(
-@@ -2688,7 +2688,7 @@ ui::TextEditCommand Textfield::GetCommandForKeyEvent(
+@@ -2688,7 +2689,7 @@ ui::TextEditCommand Textfield::GetCommandForKeyEvent(
  #endif
          return ui::TextEditCommand::DELETE_BACKWARD;
        }
@@ -23982,7 +24498,7 @@ index 98f9190d2b2..090e35a4de8 100644
        // Only erase by line break on Linux and ChromeOS.
        if (shift) {
          return ui::TextEditCommand::DELETE_TO_BEGINNING_OF_LINE;
-@@ -2696,7 +2696,7 @@ ui::TextEditCommand Textfield::GetCommandForKeyEvent(
+@@ -2696,7 +2697,7 @@ ui::TextEditCommand Textfield::GetCommandForKeyEvent(
  #endif
        return ui::TextEditCommand::DELETE_WORD_BACKWARD;
      case ui::VKEY_DELETE:
@@ -24137,10 +24653,21 @@ index 8a6f5cd7d9a..8f75d80922c 100644
    LabelButton* control_button = BuildButton(
        container, GetStringUTF16(IDS_WIDGET_CHILD_WIDGET_BUTTON_LABEL));
 diff --git a/ui/views/focus/focus_manager.cc b/ui/views/focus/focus_manager.cc
-index c4c2cfc446d..c5d3f708c31 100644
+index c4c2cfc446d..8ce16b08406 100644
 --- a/ui/views/focus/focus_manager.cc
 +++ b/ui/views/focus/focus_manager.cc
-@@ -643,7 +643,7 @@ bool FocusManager::RedirectAcceleratorToParentWidget(
+@@ -537,7 +537,9 @@ bool FocusManager::ProcessAccelerator(const ui::Accelerator& accelerator) {
+     return true;
+   }
+ 
+-#if BUILDFLAG(IS_MAC)
++  // Spatiand: no NSMenu takes a bubble's keys in the Linux UI: redirected as on
++  // Linux.
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   // On MacOS accelerators are processed when a bubble is opened without
+   // manual redirection to bubble anchor widget. Including redirect on MacOS
+   // breaks processing accelerators by the bubble itself.
+@@ -643,7 +645,7 @@ bool FocusManager::RedirectAcceleratorToParentWidget(
      return false;
    }
  
@@ -24149,7 +24676,7 @@ index c4c2cfc446d..c5d3f708c31 100644
    // Processing an accelerator can delete things. Because we
    // need these objects afterwards on Linux, save widget_ as weak pointer and
    // save the close_on_deactivate property value of widget_delegate in a
-@@ -661,7 +661,7 @@ bool FocusManager::RedirectAcceleratorToParentWidget(
+@@ -661,7 +663,7 @@ bool FocusManager::RedirectAcceleratorToParentWidget(
    const bool accelerator_processed =
        focus_manager->ProcessAccelerator(accelerator);
  
@@ -24441,6 +24968,21 @@ index 6e06ba6554c..e2054d07529 100644
    void Maximize() override;
    void Minimize() override;
    bool IsMaximized() const override;
+diff --git a/ui/views/widget/root_view.cc b/ui/views/widget/root_view.cc
+index cc904642ca8..dd2c2b4f509 100644
+--- a/ui/views/widget/root_view.cc
++++ b/ui/views/widget/root_view.cc
+@@ -206,8 +206,9 @@ class PreEventDispatchHandler : public ui::EventHandler {
+     if (owner_->GetFocusManager()) {  // Can be NULL in unittests.
+       v = owner_->GetFocusManager()->GetFocusedView();
+     }
++    // Spatiand: the Linux UI's keys are Linux's (the room sends Command as Control).
+     bool is_shift_f10 =
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+         false;
+ #else
+         event->key_code() == ui::VKEY_F10 && event->IsShiftDown();
 diff --git a/ui/views/widget/widget.cc b/ui/views/widget/widget.cc
 index dd051b97e2c..dba229c8310 100644
 --- a/ui/views/widget/widget.cc

@@ -310,12 +310,29 @@ mac/wip/linux-ui.patch`, and `patch -p1` the libwayland one in `third_party/wayl
 - **The browser died when a blocked pop-up's picture came into the address bar**: the Cocoa
   accessibility node was notified and asked for an NSWindow, which the Linux UI has not
   (`ax_virtual_view.cc`). Not notified now. Rig: `popup.html`.
-- **Not yet**: the browser's own shortcuts and the address bar's Cut/Copy/Paste are still Command's
-  (`EF_PLATFORM_ACCELERATOR`, `ui/events/event_constants.h`: a rebuild of nearly everything).
+- The browser's own shortcuts and the address bar's Cut/Copy/Paste were Command's until the
+  rebase to 157: "The Mac's shortcuts as the Deck's", below.
 - **Shared history** (shared patches 0030, 0031; in the Mac tree too): a clearing of "the last
   hour" no longer clears every later visit on every machine; rig `visited.py forget`.
 
-## For the rebase: the Mac's shortcuts as the Deck's (the owner, 11-13: not before)
+## The Mac's shortcuts as the Deck's (done at the rebase to Chromium 157, 2026-11-14)
+
+**Done, with the tree rebuilt for 157** (30 files, each change behind `IS_MAC && !IS_MAC_LINUX_UI`,
+in `mac/wip`): the platform accelerator is Control, the system-key modifier Alt; the browser's
+shortcuts and their labels in every menu are Ctrl's; Ctrl+click opens a new tab in the browser's
+own links and in pages and is no longer a context click; the address bar and page fields cut, copy,
+paste, select and undo by Ctrl, and move by words with it; tabs are chosen and moved with Ctrl;
+Ctrl+wheel zooms; access keys are Alt's; DevTools is told it is on Linux. In the test room, with
+Control held as the room sends Command: new tab, close, reopen, tab by number and next, the address
+bar and its editing, a page field's, find, reload, Ctrl+click, a plain right click, a list's
+Ctrl+click, and every menu's labels, all as on Linux; a raw Command does nothing. Kept as they were:
+Blink's editing behaviour (the Mac's, so Up and Down go to a field's ends), and with it Home, End,
+Up and Down in the browser's own fields; so Ctrl+Up and Ctrl+Down no longer go to a field's ends
+there. Option is Alt as on Linux: Alt+letter types nothing in a page, Option+Left is Back. Not
+tried: Ctrl+wheel, a shortcut pressed while a bubble is open, DevTools' look. What follows is the
+plan it was made from.
+
+### The plan (the owner, 11-13: not before the rebase)
 
 The Mac room sends Command to its clients as Ctrl, and pages already get the Deck's keys and are
 told they are on Linux. What is left follows `EF_PLATFORM_ACCELERATOR`, which is Command on Apple;
