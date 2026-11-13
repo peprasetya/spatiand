@@ -185,7 +185,17 @@ impl Recorder {
                 rate,
             })
             .collect();
-        let writer = Writer::create(&path, "Spatiand", &encoder, &tracks).map_err(|e| e.to_string())?;
+        // From here a failure has something to undo: the captures are running and the sound
+        // has been told a recording is on, and what stops them is `Drop for Recorder`, of a
+        // recorder that does not exist yet. A `Child` let go of is not killed, so a folder
+        // that cannot be written to left two `pw-record`s behind at every attempt.
+        let writer = match Writer::create(&path, "Spatiand", &encoder, &tracks) {
+            Ok(writer) => writer,
+            Err(e) => {
+                abandon(&mut captures, audio);
+                return Err(e.to_string());
+            }
+        };
 
         let (to_thread, from_session) = mpsc::channel();
         let (give_back, free) = mpsc::channel();
@@ -194,7 +204,7 @@ impl Recorder {
         }
         let started = Instant::now();
         let shown = path.clone();
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("recorder".into())
             .spawn(move || {
                 match run(encoder, writer, sources, rate, started, from_session, give_back) {
@@ -205,8 +215,11 @@ impl Recorder {
                     ),
                     Err(e) => log::warn!("recording: {} is incomplete: {e}", shown.display()),
                 }
-            })
-            .map_err(|e| format!("could not start the recorder: {e}"))?;
+            });
+        if let Err(e) = thread {
+            abandon(&mut captures, audio);
+            return Err(format!("could not start the recorder: {e}"));
+        }
 
         log::info!("recording to {}", path.display());
         Ok(Recorder {
@@ -273,6 +286,17 @@ impl Recorder {
         );
         // The rest is `Drop`'s, which is also what runs when the displays are rebuilt with a
         // recording going: the file is finished either way.
+    }
+}
+
+/// Undo what [`Recorder::start`] had set going when it could not finish: the same as `stop`
+/// and `Drop` do for a recording that did start.
+fn abandon(captures: &mut Vec<Child>, audio: &crate::audio::Audio) {
+    audio.record(None);
+    crate::remote::sound::set_recording(false);
+    for child in captures {
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 
