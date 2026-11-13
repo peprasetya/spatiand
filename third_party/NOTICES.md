@@ -12,7 +12,7 @@ software below, each under its own licence. This file goes inside every build (o
 | PDFium | chromium/8100 | BSD 3-clause and others | https://github.com/bblanchon/pdfium-binaries |
 | ANGLE (libEGL, libGLESv2) | see `mac/fetch-angle.sh` | BSD 3-clause | https://chromium.googlesource.com/angle/angle |
 | libmysofa | commit 648eed0 | BSD 3-clause (`mysofa-NOTICE.txt`) | https://github.com/hoene/libmysofa |
-| rclone (in the storage service) | Spatiand's fork | MIT | `storage/` in Spatiand's repository |
+| rclone (in the storage service, linked in as a Go module, unchanged: no `replace` in `storage/go.mod`) | v1.76.0 | MIT | https://github.com/rclone/rclone/releases/tag/v1.76.0 (the module and its dependencies: `storage/go.mod`, `storage/go.sum`) |
 
 **FFmpeg is LGPL, and linked dynamically**: the FFmpeg libraries in the app are ordinary shared
 libraries that can be replaced with a build of one's own of the same version. It is configured

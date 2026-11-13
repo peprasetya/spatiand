@@ -184,7 +184,9 @@ func (v *vfses) get(ctx context.Context, remote string) (*vfs.VFS, error) {
 	// is written.
 	opt.CacheMode = vfscommon.CacheModeOff
 	opt.DirCacheTime = fs.Duration(30 * time.Second)
-	made := vfs.New(f, &opt)
+	// rclone keeps the request's settings from ctx but not its cancellation, so the VFS
+	// outlives the request that made it.
+	made := vfs.New(ctx, f, &opt)
 	v.byRemote[remote] = made
 	return made, nil
 }
