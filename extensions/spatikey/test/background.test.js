@@ -113,6 +113,8 @@ test('origins: the browser\'s word, and only secure ones', () => {
   assert.equal(originOf({ origin: 'https://a.example', url: 'https://b.example/' }), 'https://a.example');
   assert.equal(originOf({ url: 'https://b.example:8443/x?y' }), 'https://b.example:8443');
   assert.equal(originOf({ origin: 'null', url: 'about:blank' }), null);
+  // A sandboxed document at a site's address is not that site.
+  assert.equal(originOf({ origin: 'null', url: 'https://example.com/uploads/page.html' }), null);
   assert.equal(originOf({}), null);
   for (const good of ['https://example.com', 'http://localhost:8080', 'http://app.localhost', 'http://127.0.0.1:3000', 'http://127.9.9.9', 'http://[::1]:5000']) {
     assert.equal(isSecure(good), true, good);
@@ -261,6 +263,11 @@ test('filling: the browser\'s origin, one login at once, several chosen between'
   const insecure = background();
   assert.equal((await insecure.send({ k: 'fill' }, Object.assign({}, TOP, { origin: 'http://example.com' }))).err.code, 'insecure');
   assert.equal(insecure.asked.length, 0);
+  // A sandboxed document served from the site's own address is refused: nothing is asked.
+  const sandboxed = background();
+  assert.equal((await sandboxed.send({ k: 'fill' }, Object.assign({}, TOP, { origin: 'null' }))).err.code, 'insecure');
+  assert.equal((await sandboxed.send({ k: 'webauthn', doc: 'd', request: GET }, Object.assign({}, TOP, { origin: 'null' }))).err.code, 'browser');
+  assert.equal(sandboxed.asked.length, 0);
 });
 
 test('saving: a login sent is offered in the top frame, kept for the next page, saved on yes', async () => {

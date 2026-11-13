@@ -24,10 +24,17 @@
   var OFFER_MS = 120000;
 
   // ---- origins ----
-  // The origin of the frame a message came from, as the browser says it.
+  // The origin of the frame a message came from, as the browser says it. When the browser says
+  // "null" the document has no origin of its own -- a frame sandboxed without allow-same-origin,
+  // or a page served with "Content-Security-Policy: sandbox", which is how a site shows files it
+  // does not vouch for from its own address -- and that is the answer: its address names a site
+  // it is not, so nothing is filled there and no passkey is used (the browser's own WebAuthn
+  // refuses such a document too). The address is read only where the browser gives no origin at
+  // all.
   function originOf(sender) {
     if (!sender) return null;
-    if (typeof sender.origin === 'string' && sender.origin && sender.origin !== 'null') return sender.origin;
+    if (sender.origin === 'null') return null;
+    if (typeof sender.origin === 'string' && sender.origin) return sender.origin;
     try {
       var origin = new URL(sender.url).origin;
       return origin && origin !== 'null' ? origin : null;
