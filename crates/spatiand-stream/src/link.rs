@@ -21,8 +21,16 @@ use crate::{ClientMessage, HostMessage};
 /// already uses: a host and a Sunshine can run on the same machine.
 pub const DEFAULT_PORT: u16 = 47600;
 
-/// The largest control message believed. The catalogue is the big one, with its icons.
-const MAX_CONTROL: usize = 8 * 1024 * 1024;
+/// The largest control message believed, by either end.
+///
+/// The big one is a paste: `Clipboard::Data` carries one whole form of the clipboard, which is
+/// allowed to be [`crate::clipboard::LARGEST`], and around it the form's name and the message's
+/// own few bytes. So the limit follows from that one, in one place. It was three numbers that
+/// each looked sensible where they stood -- 32 MiB for what may be copied, 8 MiB here, 1 MiB
+/// where the host listens -- and a copied picture between the smaller and the larger of them
+/// was sent whole and then taken for a stream that had lost its place: whoever received it
+/// stopped listening on the control stream for good, with the link still up.
+pub const MAX_CONTROL: usize = crate::clipboard::LARGEST + (1 << 20);
 
 /// Say one thing to the host.
 pub async fn say(connection: &quinn::Connection, message: &ClientMessage) -> Result<(), String> {
@@ -210,6 +218,19 @@ mod tests {
     use crate::pairing::{Verdict, Window, WRONG_CODE};
     use crate::transport::{server, Gate, Trust};
     use std::sync::Arc;
+
+    #[test]
+    fn the_largest_paste_is_a_control_message_either_way() {
+        let data = || crate::control::Clipboard::Data {
+            // Longer than any real form's name.
+            mime_type: "x".repeat(4096),
+            bytes: vec![0xa5; crate::clipboard::LARGEST],
+        };
+        let up = crate::to_bytes(&ClientMessage::Clipboard(data())).unwrap();
+        let down = crate::to_bytes(&HostMessage::Clipboard(data())).unwrap();
+        assert!(up.len() > crate::clipboard::LARGEST && up.len() <= MAX_CONTROL);
+        assert!(down.len() > crate::clipboard::LARGEST && down.len() <= MAX_CONTROL);
+    }
 
     fn runtime() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread()

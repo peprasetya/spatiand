@@ -394,7 +394,7 @@ async fn heard(mut stream: quinn::RecvStream, inbox: Sender<FromSession>, admitt
     // Everything the session says comes down one ordered stream; see
     // `spatiand_stream::CONTROL_MAGIC` for why it has to be one.
     if first.len() >= 8 && first[..4] == spatiand_stream::CONTROL_MAGIC {
-        listen_control(stream, first[4..].to_vec(), inbox).await;
+        listen_control(stream, first[4..].to_vec(), inbox, admitted).await;
         return;
     }
     let magic = first.len() >= 8
@@ -428,10 +428,15 @@ async fn heard(mut stream: quinn::RecvStream, inbox: Sender<FromSession>, admitt
 /// In order is the point. A key's press and its release only mean anything in the sequence
 /// they were done in, and this is the only thing that guarantees it — see
 /// `spatiand_stream::CONTROL_MAGIC`.
-async fn listen_control(mut stream: quinn::RecvStream, rest: Vec<u8>, inbox: Sender<FromSession>) {
-    /// No single message is anywhere near this. A length beyond it is a desynchronised
-    /// stream, and reading it would be an allocation the other end chose.
-    const LARGEST: usize = 1 << 20;
+async fn listen_control(
+    mut stream: quinn::RecvStream,
+    rest: Vec<u8>,
+    inbox: Sender<FromSession>,
+    admitted: Arc<AtomicBool>,
+) {
+    /// All a session not let in may say at once: its pairing messages are a few dozen bytes,
+    /// and anything longer would be an allocation a stranger chose.
+    const LARGEST_UNADMITTED: usize = 64 << 10;
     let mut held = rest;
     let mut buffer = vec![0u8; 16 * 1024];
     loop {
@@ -441,7 +446,18 @@ async fn listen_control(mut stream: quinn::RecvStream, rest: Vec<u8>, inbox: Sen
                 break;
             }
             let length = u32::from_le_bytes(held[..4].try_into().unwrap()) as usize;
-            if length > LARGEST {
+            // A session let in may say anything up to the largest paste, which comes up this
+            // stream like everything else; the limit is the one the session reads the host's
+            // messages by. It was a megabyte, and a picture copied on the headset and pasted
+            // here ended the stream: nothing the session said after it was heard. A length
+            // beyond the limit is still a desynchronised stream, with nothing after it that
+            // can be believed.
+            let largest = if admitted.load(Ordering::SeqCst) {
+                spatiand_stream::link::MAX_CONTROL
+            } else {
+                LARGEST_UNADMITTED
+            };
+            if length > largest {
                 log::warn!("a session's control stream said a message was {length} bytes; closing it");
                 return;
             }
