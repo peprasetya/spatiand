@@ -466,6 +466,9 @@ fn run_host(
     // Who is here now, and the list of the owner's devices: one paired with any of their machines
     // is paired with this one, and one removed on any is removed here, and hung up on.
     let mut here: Option<Fingerprint> = None;
+    // And which of the network's connections that is: it is let in by this, so that a yes
+    // meant for one that has since gone lets nobody in. See `net::Admission`.
+    let mut here_session: u64 = 0;
     let roster = {
         let me = this_host.to_string();
         let name = std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default().trim().to_string();
@@ -507,9 +510,10 @@ fn run_host(
         if let Some(net) = &net {
             for event in net.poll() {
                 match event {
-                    FromSession::Joined { who, address } => {
+                    FromSession::Joined { session, who, address } => {
                         admitted = false;
                         here = Some(who);
+                        here_session = session;
                         if paired.contains(&who) {
                             log::info!("{} is a session this host knows", who.short());
                             admitted = true;
@@ -525,7 +529,7 @@ fn run_host(
                         }
                         if admitted {
                             // Only now is it listened to or spoken to. Encoding and sound wait too.
-                            net.set_admitted(true);
+                            net.set_admitted(here_session, true);
                             attached = true;
                             if let Some(s) = &host.sounds {
                                 s.set_attached(true);
@@ -551,6 +555,7 @@ fn run_host(
                         pads.rest();
                         input::release_everything(&mut host, 0);
                         admitted = false;
+                        net.set_admitted(here_session, false);
                         // A device that leaves part way through proving the code has spent its
                         // attempt: it heard the host's half, which is enough to check one guess.
                         if let (Some(p), Some(who)) = (pairing.as_mut(), gone) {
@@ -594,7 +599,7 @@ fn run_host(
                                     pairing = None;
                                     admitted = true;
                                     attached = true;
-                                    net.set_admitted(true);
+                                    net.set_admitted(here_session, true);
                                     if let Some(s) = &host.sounds {
                                         s.set_attached(true);
                                     }

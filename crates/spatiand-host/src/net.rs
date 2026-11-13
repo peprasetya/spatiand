@@ -26,7 +26,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
@@ -61,8 +61,10 @@ pub enum ToSession {
 
 /// What arrives.
 pub enum FromSession {
-    /// Somebody is here. Carries who, so pairing can write it down.
+    /// Somebody is here. Carries who, so pairing can write it down, and which connection
+    /// this is, to let it in by; see [`Admission`].
     Joined {
+        session: u64,
         who: Fingerprint,
         address: SocketAddr,
     },
@@ -70,11 +72,43 @@ pub enum FromSession {
     Left,
 }
 
+/// Which session has been let in, if one has.
+///
+/// **A connection, not a yes or no.** The compositor hears of a session some turns of its loop
+/// after the network has it, and by then the network may have another: a paired device joins,
+/// a stranger comes through an open pairing gate and takes over before the first's arrival
+/// has been read, and the "let it in" meant for the first lands on the stranger -- which was
+/// then told the windows and the clipboard and had its microphone played, without the code.
+/// So every connection has a number, the compositor lets a number in, and a session is in
+/// only while the number is its own.
+#[derive(Clone, Default)]
+pub struct Admission(Arc<AtomicU64>);
+
+impl Admission {
+    /// No connection has this number: they count from one.
+    const NOBODY: u64 = 0;
+
+    fn admit(&self, session: u64) {
+        self.0.store(session, Ordering::SeqCst);
+    }
+
+    /// Take back what `session` was given; nothing, if it is another that is in.
+    fn withdraw(&self, session: u64) {
+        let _ = self
+            .0
+            .compare_exchange(session, Self::NOBODY, Ordering::SeqCst, Ordering::SeqCst);
+    }
+
+    fn is(&self, session: u64) -> bool {
+        session != Self::NOBODY && self.0.load(Ordering::SeqCst) == session
+    }
+}
+
 /// The network, as the compositor sees it: post, and poll.
 pub struct Net {
-    /// Whether the session here has been let in. Until it has, nothing is sent it but its
-    /// refusal, and nothing it sends is listened to, whoever in the compositor forgets to ask.
-    admitted: Arc<AtomicBool>,
+    /// Which session has been let in. Until it has, nothing is sent it but its refusal, and
+    /// nothing it sends is listened to, whoever in the compositor forgets to ask.
+    admitted: Admission,
     out: UnboundedSender<ToSession>,
     inbox: Receiver<FromSession>,
 }
@@ -91,7 +125,7 @@ impl Net {
     ) -> Result<Net, String> {
         let (out, outbox) = unbounded_channel();
         let (inbox_tx, inbox) = std::sync::mpsc::channel();
-        let admitted = Arc::new(AtomicBool::new(false));
+        let admitted = Admission::default();
         let admitted_there = admitted.clone();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             // Two: one for the socket, one for everything else. A host is not a web server.
@@ -121,9 +155,14 @@ impl Net {
         Ok(Net { admitted, out, inbox })
     }
 
-    /// The session here is let in, or is not.
-    pub fn set_admitted(&self, admitted: bool) {
-        self.admitted.store(admitted, Ordering::SeqCst);
+    /// The session that joined as `session` is let in, or is not any more. Said of one that
+    /// has already gone, it lets nobody in.
+    pub fn set_admitted(&self, session: u64, admitted: bool) {
+        if admitted {
+            self.admitted.admit(session);
+        } else {
+            self.admitted.withdraw(session);
+        }
     }
 
     /// Post something. Never blocks, and never fails in a way the caller can do anything about:
@@ -148,9 +187,11 @@ async fn serve(
     mut outbox: UnboundedReceiver<ToSession>,
     inbox: Sender<FromSession>,
     mut poses: Option<crate::pose::Poses>,
-    admitted: Arc<AtomicBool>,
+    admitted: Admission,
 ) {
     let mut next: Option<(Connection, spatiand_stream::Fingerprint)> = None;
+    // Which connection this is, counted from one. See `Admission`.
+    let mut serial: u64 = 0;
     loop {
         let (connection, who) = match next.take() {
             Some(newcomer) => newcomer,
@@ -161,15 +202,15 @@ async fn serve(
         };
         let address = connection.remote_address();
         log::info!("session {} joined from {address}", who.short());
-        admitted.store(false, Ordering::SeqCst);
-        let _ = inbox.send(FromSession::Joined { who, address });
+        serial += 1;
+        let _ = inbox.send(FromSession::Joined { session: serial, who, address });
         if let Some(poses) = poses.as_mut() {
             poses.reset();
         }
 
         // One at a time, and listening meanwhile: a newcomer takes over.
         tokio::select! {
-            _ = session(&connection, &mut outbox, &inbox, poses.as_mut(), &admitted) => {
+            _ = session(&connection, serial, &mut outbox, &inbox, poses.as_mut(), &admitted) => {
                 log::info!("session {} left", who.short());
             }
             arrived = arrival(&endpoint) => {
@@ -209,10 +250,11 @@ async fn arrival(endpoint: &quinn::Endpoint) -> Option<(Connection, spatiand_str
 
 async fn session(
     connection: &Connection,
+    serial: u64,
     outbox: &mut UnboundedReceiver<ToSession>,
     inbox: &Sender<FromSession>,
     mut poses: Option<&mut crate::pose::Poses>,
-    admitted: &Arc<AtomicBool>,
+    admitted: &Admission,
 ) {
     // Whatever is still queued was meant for the session before this one -- pictures and news
     // of its windows, posted before the compositor heard it had gone. This one hears its
@@ -238,7 +280,7 @@ async fn session(
                     Ok(stream) => stream,
                     Err(_) => return,
                 };
-                tokio::spawn(heard(stream, inbox.clone(), admitted.clone()));
+                tokio::spawn(heard(stream, serial, inbox.clone(), admitted.clone()));
             }
         }
     });
@@ -263,7 +305,7 @@ async fn session(
                     ToSession::Close
                         | ToSession::Control(HostMessage::Refused { .. } | HostMessage::PairReply { .. })
                 );
-                if !for_stranger && !admitted.load(Ordering::SeqCst) {
+                if !for_stranger && !admitted.is(serial) {
                     continue;
                 }
                 match outgoing {
@@ -360,7 +402,7 @@ async fn session(
                 let Ok(datagram) = datagram else { break };
                 match spatiand_stream::from_bytes::<ClientMessage>(&datagram) {
                     Ok(ClientMessage::Viewport(viewport)) => {
-                        if let (Some(poses), true) = (poses.as_deref_mut(), admitted.load(Ordering::SeqCst)) {
+                        if let (Some(poses), true) = (poses.as_deref_mut(), admitted.is(serial)) {
                             poses.heard(&viewport, crate::pose::now_ns());
                         }
                     }
@@ -380,7 +422,7 @@ async fn session(
 /// means a malformed message can never desynchronise the next one. The exception is sound
 /// coming *up* from the headset, which is endless and so is recognised by its magic before
 /// anything tries to read it to the end. See `spatiand_stream::audio` and `crate::microphone`.
-async fn heard(mut stream: quinn::RecvStream, inbox: Sender<FromSession>, admitted: Arc<AtomicBool>) {
+async fn heard(mut stream: quinn::RecvStream, serial: u64, inbox: Sender<FromSession>, admitted: Admission) {
     // Enough to tell the two apart, and read in a way that tolerates a message shorter than
     // the magic: `Detach` is a couple of bytes.
     let mut first = Vec::new();
@@ -394,14 +436,14 @@ async fn heard(mut stream: quinn::RecvStream, inbox: Sender<FromSession>, admitt
     // Everything the session says comes down one ordered stream; see
     // `spatiand_stream::CONTROL_MAGIC` for why it has to be one.
     if first.len() >= 8 && first[..4] == spatiand_stream::CONTROL_MAGIC {
-        listen_control(stream, first[4..].to_vec(), inbox, admitted).await;
+        listen_control(stream, first[4..].to_vec(), serial, inbox, admitted).await;
         return;
     }
     let magic = first.len() >= 8
         && spatiand_stream::audio::AudioHeader::length(&first[..8].try_into().unwrap()).is_some();
     // A microphone is played into this machine's sound only for a session that has been let
     // in: a stranger in the pairing window is heard for its pairing messages and nothing else.
-    if magic && !admitted.load(Ordering::SeqCst) {
+    if magic && !admitted.is(serial) {
         log::warn!("a session not let in tried to send sound; ignored");
         return;
     }
@@ -431,8 +473,9 @@ async fn heard(mut stream: quinn::RecvStream, inbox: Sender<FromSession>, admitt
 async fn listen_control(
     mut stream: quinn::RecvStream,
     rest: Vec<u8>,
+    serial: u64,
     inbox: Sender<FromSession>,
-    admitted: Arc<AtomicBool>,
+    admitted: Admission,
 ) {
     /// All a session not let in may say at once: its pairing messages are a few dozen bytes,
     /// and anything longer would be an allocation a stranger chose.
@@ -452,7 +495,7 @@ async fn listen_control(
             // here ended the stream: nothing the session said after it was heard. A length
             // beyond the limit is still a desynchronised stream, with nothing after it that
             // can be believed.
-            let largest = if admitted.load(Ordering::SeqCst) {
+            let largest = if admitted.is(serial) {
                 spatiand_stream::link::MAX_CONTROL
             } else {
                 LARGEST_UNADMITTED
@@ -607,4 +650,36 @@ fn sound_stream(
         let _ = stream.finish();
     });
     tx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nobody_is_in_until_let_in() {
+        let admitted = Admission::default();
+        assert!(!admitted.is(1));
+        assert!(!admitted.is(Admission::NOBODY));
+        admitted.admit(1);
+        assert!(admitted.is(1));
+        admitted.withdraw(1);
+        assert!(!admitted.is(1));
+    }
+
+    /// The order it went wrong in: a paired session joins, a stranger takes over before the
+    /// compositor has read that, and the compositor then lets in "the session here".
+    #[test]
+    fn letting_in_a_session_that_has_gone_lets_nobody_in() {
+        let admitted = Admission::default();
+        let (paired, stranger) = (1, 2);
+        // The network is already on the stranger when the compositor says yes to the first.
+        admitted.admit(paired);
+        assert!(!admitted.is(stranger));
+        // And hearing that the first left takes nothing from whoever is in by then.
+        admitted.admit(stranger);
+        admitted.withdraw(paired);
+        assert!(admitted.is(stranger));
+        assert!(!admitted.is(paired));
+    }
 }
