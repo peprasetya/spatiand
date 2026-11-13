@@ -7,7 +7,7 @@
 #
 # Each lands in third_party/pdfium/<platform>/lib. With no argument, the ones Spatiand ships for.
 set -eu
-VERSION=chromium/8100
+VERSION=chromium/8152
 cd "$(dirname "$0")/.."
 [ $# -gt 0 ] || set -- mac-x64 mac-arm64 linux-x64 android-arm64
 for platform in "$@"; do

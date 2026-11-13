@@ -9,7 +9,7 @@ software below, each under its own licence. This file goes inside every build (o
 | **FFmpeg** (libavcodec, libavformat, libavutil, libavfilter, libavdevice, libswscale, libswresample) | 9.0.2 | **LGPL 3.0 or later** (`COPYING.LGPLv3`) | https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz, built unchanged by `third_party/ffmpeg/build.sh` (its configure line is there; patches, if any, in `third_party/ffmpeg/patches/`) |
 | **OpenSSL** (libssl, libcrypto), used by FFmpeg for https | 3.5.9 | Apache 2.0 (`OpenSSL-LICENSE.txt`) | https://github.com/openssl/openssl/releases/tag/openssl-3.5.9 |
 | rsmpeg (Rust bindings to FFmpeg, compiled into the programs) | 0.18.0, patched | MIT | `third_party/rsmpeg/` in Spatiand's repository, with `PATCHES.md` |
-| PDFium | chromium/8100 | BSD 3-clause and others | https://github.com/bblanchon/pdfium-binaries |
+| PDFium | chromium/8152 | BSD 3-clause and others | https://github.com/bblanchon/pdfium-binaries |
 | ANGLE (libEGL, libGLESv2) | see `mac/fetch-angle.sh` | BSD 3-clause | https://chromium.googlesource.com/angle/angle |
 | libmysofa | commit 648eed0 | BSD 3-clause (`mysofa-NOTICE.txt`) | https://github.com/hoene/libmysofa |
 | rclone (in the storage service, linked in as a Go module, unchanged: no `replace` in `storage/go.mod`) | v1.76.0 | MIT | https://github.com/rclone/rclone/releases/tag/v1.76.0 (the module and its dependencies: `storage/go.mod`, `storage/go.sum`) |
