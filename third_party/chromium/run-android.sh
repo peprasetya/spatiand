@@ -37,6 +37,6 @@ exec "$SPATIAND_APPS_DIR/libspatimesh_chromium.so" --ozone-platform=wayland --us
     --class=spatimesh-chromium \
     --password-store=basic --no-first-run --no-default-browser-check \
     --overscroll-history-navigation=0 --use-angle=vulkan --disable-setuid-sandbox --disable-partial-raster \
-    --enable-features=EnableExtensionAutoupdate,ProfilesReordering,WaylandWindowDecorations \
+    --enable-features=EnableExtensionAutoupdate,ProfilesReordering,SpatiandPageSeesItsWindow,WaylandWindowDecorations \
     --disable-features=SigninPromoOnAvatarPill \
     "$@"

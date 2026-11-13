@@ -26,6 +26,6 @@ exec "$here/spatimesh" --ozone-platform=wayland --user-data-dir="$HOME/.config/s
     --class=spatimesh-chromium \
     --password-store=basic --no-first-run --no-default-browser-check \
     --overscroll-history-navigation=0 \
-    --enable-features=AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,EnableExtensionAutoupdate,ProfilesReordering,VaapiIgnoreDriverChecks,WaylandWindowDecorations \
+    --enable-features=AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,EnableExtensionAutoupdate,ProfilesReordering,SpatiandPageSeesItsWindow,VaapiIgnoreDriverChecks,WaylandWindowDecorations \
     --disable-features=SigninPromoOnAvatarPill \
     "$@"
