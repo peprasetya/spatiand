@@ -288,6 +288,26 @@ impl Drop for IoHidPort {
     }
 }
 
+/// The interfaces picked for opening, until they are ports: each with whether it has been
+/// opened. Let go of here -- closed if open, and released -- when the opening goes no further,
+/// which is every way out of `open_glasses` but its last line (and the one that hands them to
+/// the run loop's thread). The room tries again every second while another program holds the
+/// glasses, and each try used to leave two references and whatever had opened.
+struct Picked(Vec<(Device, bool)>);
+
+impl Drop for Picked {
+    fn drop(&mut self) {
+        for (device, open) in &self.0 {
+            unsafe {
+                if *open {
+                    IOHIDDeviceClose(device.0, 0);
+                }
+                CFRelease(device.0);
+            }
+        }
+    }
+}
+
 /// Open the first supported pair of glasses: its table row, its IMU interface and its MCU one.
 pub fn open_glasses(driver: &str) -> Result<(&'static DeviceSpec, IoHidPort, IoHidPort)> {
     unsafe {
@@ -323,10 +343,12 @@ pub fn open_glasses(driver: &str) -> Result<(&'static DeviceSpec, IoHidPort, IoH
             }
         };
 
+        let mut picked = Picked(vec![(imu, false), (mcu, false)]);
         let mut opened: Vec<(Device, UnixDatagram, UnixDatagram, String)> = Vec::new();
-        for (device, interface) in [(imu, spec.imu_interface), (mcu, spec.mcu_interface)] {
+        for (n, (device, interface)) in [(imu, spec.imu_interface), (mcu, spec.mcu_interface)].into_iter().enumerate() {
             let name = format!("{} interface {interface}", spec.name);
             let status = IOHIDDeviceOpen(device.0, 0);
+            picked.0[n].1 = status == 0;
             if status != 0 {
                 return Err(HmdError::Io {
                     path: name,
@@ -363,6 +385,11 @@ pub fn open_glasses(driver: &str) -> Result<(&'static DeviceSpec, IoHidPort, IoH
         let (tx, rx) = mpsc::channel::<Device>();
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stopped = stop.clone();
+        // Set with `stop` when nobody waited for the run loop: the thread then closes the
+        // devices itself, being the one that may be in the middle of using them.
+        let abandoned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let left = abandoned.clone();
+        let devices: Vec<Device> = opened.iter().map(|(d, _, _, _)| *d).collect();
         std::thread::Builder::new()
             .name("glasses-hid".into())
             .spawn(move || {
@@ -393,13 +420,31 @@ pub fn open_glasses(driver: &str) -> Result<(&'static DeviceSpec, IoHidPort, IoH
                         std::thread::sleep(Duration::from_millis(50));
                     }
                 }
-                // Stopped: the ports are going, and have closed their devices.
+                // Stopped: the ports are going, and have closed their devices. Or there never
+                // were ports, and the devices and the run loop are this thread's to let go of.
+                if left.load(std::sync::atomic::Ordering::SeqCst) {
+                    for device in &devices {
+                        IOHIDDeviceClose(device.0, 0);
+                        CFRelease(device.0);
+                    }
+                    CFRelease(run_loop);
+                }
                 drop(kept);
             })
             .map_err(|source| HmdError::Io { path: "glasses-hid thread".into(), source })?;
-        let run_loop = rx
-            .recv_timeout(Duration::from_secs(2))
-            .map_err(|_| HmdError::Protocol("the HID run loop did not start".into()))?;
+        let run_loop = match rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(run_loop) => run_loop,
+            Err(_) => {
+                // The thread is left to end by itself and to close what it has scheduled: no
+                // `Loop` will ever stop it, and the devices are not closed under it from here.
+                picked.0.clear();
+                abandoned.store(true, std::sync::atomic::Ordering::SeqCst);
+                stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                return Err(HmdError::Protocol("the HID run loop did not start".into()));
+            }
+        };
+        // The ports' from here on, which close and release them as they go.
+        picked.0.clear();
         let shared = std::sync::Arc::new(Loop { run_loop, stop });
 
         let mut ports = opened.into_iter().map(|(device, ours, _theirs, name)| IoHidPort {
