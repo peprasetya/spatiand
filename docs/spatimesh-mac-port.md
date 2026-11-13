@@ -293,3 +293,22 @@ mac/wip/linux-ui.patch`, and `patch -p1` the libwayland one in `third_party/wayl
   `web_contents_view_aura.*`, which also has the port's own). A Mac tree made anew applies the wip
   alone, or 0024-0026 first and the wip with `git apply --3way`; they are committed into the Mac
   tree at the next rebase, when LASTCHANGE moves anyway.
+
+## 2026-11-13: the dead page's real cause, keys, what pages are told, the accessibility trap
+
+- **The page that took no clicks** (shared patch 0027): `WebContentsViewAura::StartDragging` gave
+  a drag up when the button was already up but left it noted as begun, and every later drag of the
+  tab was dropped without a word to the renderer. Rig: `links.html` with `drag:` (a press, movement
+  and release in one burst), then a slower press-move-release, then a click.
+- **Ctrl+A/C/V/X/Z and the Ctrl moves in a page's fields**: Blink's key table left them out under
+  `IS_MAC`, where Cocoa sends them as commands; let in for the Linux UI
+  (`editing_behavior.cc`). Up and Down go to a field's ends already (Blink's Mac editing behaviour,
+  kept). Rig: `edit.html`.
+- **Pages are told what the Deck's tells them**: `X11; Linux x86_64` in the user agent, `Linux` in
+  the client hints, `Linux x86_64` for `navigator.platform` (`user_agent_utils.cc`,
+  `navigator_id.cc`, `navigator_base.cc`), since the room sends the Deck's keys (Command as Ctrl).
+- **The browser died when a blocked pop-up's picture came into the address bar**: the Cocoa
+  accessibility node was notified and asked for an NSWindow, which the Linux UI has not
+  (`ax_virtual_view.cc`). Not notified now. Rig: `popup.html`.
+- **Not yet**: the browser's own shortcuts and the address bar's Cut/Copy/Paste are still Command's
+  (`EF_PLATFORM_ACCELERATOR`, `ui/events/event_constants.h`: a rebuild of nearly everything).

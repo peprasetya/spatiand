@@ -1,0 +1,11 @@
+<!doctype html><meta charset=utf-8><title>Edit keys</title>
+<!-- An input that says its value after every change, for Ctrl+A/C/V/X/Z sent by the rig (key:ctrl+30 ...). -->
+<input id=i value="abc" autofocus style="font:28px sans-serif;width:600px">
+<script>
+const i = document.getElementById("i"); i.focus(); i.setSelectionRange(3, 3);
+const say = w => console.log("[edit]", w, JSON.stringify(i.value), i.selectionStart, i.selectionEnd);
+for (const t of ["input", "select", "copy", "cut", "paste"]) i.addEventListener(t, () => say(t));
+document.addEventListener("selectionchange", () => say("caret"));
+console.log("[edit] platform", navigator.platform, "|", navigator.userAgentData && navigator.userAgentData.platform, "|", navigator.userAgent);
+addEventListener("keydown", e => console.log("[edit] key", e.key, e.ctrlKey ? "ctrl" : "", e.metaKey ? "meta" : ""));
+</script>

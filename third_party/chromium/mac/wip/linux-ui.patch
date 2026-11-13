@@ -7100,6 +7100,52 @@ index cd235694d9..de8232e561 100644
    return true;
  #else
    return false;
+diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedder_support/user_agent_utils.cc
+index 1cc9fad249..8bdbd5cc7a 100644
+--- a/components/embedder_support/user_agent_utils.cc
++++ b/components/embedder_support/user_agent_utils.cc
+@@ -279,6 +279,11 @@ blink::UserAgentBrandList ShuffleBrandList(
+ std::string GetUserAgentPlatform() {
+ #if BUILDFLAG(IS_WIN)
+   return "";
++#elif BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: the Linux UI on macOS is the Deck's browser and is sent the Deck's
++  // keys (Ctrl, not Command): pages are told what the Deck's tells them, or one
++  // that believes it is on a Mac waits for Command.
++  return "X11; ";
+ #elif BUILDFLAG(IS_MAC)
+   return "Macintosh; ";
+ #elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+@@ -315,6 +320,8 @@ std::string GetUnifiedPlatform() {
+   return "Linux; Android 10; K";
+ #elif BUILDFLAG(IS_CHROMEOS)
+   return kUnifiedPlatformChromeOSX64;
++#elif BUILDFLAG(IS_MAC_LINUX_UI)
++  return "X11; Linux x86_64";  // Spatiand: as the Deck, see GetUserAgentPlatform
+ #elif BUILDFLAG(IS_MAC)
+   return "Macintosh; Intel Mac OS X 10_15_7";
+ #elif BUILDFLAG(IS_WIN)
+@@ -601,7 +608,8 @@ std::string GetPlatformVersion() {
+ 
+ #if BUILDFLAG(IS_WIN)
+   return GetWindowsPlatformVersion();
+-#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_FUCHSIA)
++#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_FUCHSIA) || \
++    BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: as the Deck
+   return std::string();
+ #else
+ 
+@@ -625,7 +633,9 @@ std::string GetPlatformForUAMetadata() {
+   }
+ #endif
+ 
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++  return "Linux";  // Spatiand: as the Deck, see GetUserAgentPlatform
++#elif BUILDFLAG(IS_MAC)
+   // TODO(crbug.com/40704421): This can be removed/re-refactored once we use
+   // "macOS" by default
+   return "macOS";
 diff --git a/components/eye_dropper/eye_dropper_view.cc b/components/eye_dropper/eye_dropper_view.cc
 index 1bff11db91..8c4513e3e0 100644
 --- a/components/eye_dropper/eye_dropper_view.cc
@@ -8268,7 +8314,7 @@ index 2af8d9638d..78002cdf21 100644
        const gfx::Range& range,
        const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override;
 diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
-index 8e9457fe57..22197ab136 100644
+index 8e9457fe57..1e2ed41a87 100644
 --- a/content/browser/web_contents/web_contents_view_aura.cc
 +++ b/content/browser/web_contents/web_contents_view_aura.cc
 @@ -4,6 +4,8 @@
@@ -8291,7 +8337,51 @@ index 8e9457fe57..22197ab136 100644
    }
  
    void OnWindowRemovingFromRootWindow(aura::Window* window,
-@@ -1491,10 +1497,16 @@ void WebContentsViewAura::OnMouseEvent(ui::MouseEvent* event) {
+@@ -1222,6 +1228,10 @@ void WebContentsViewAura::StartDragging(
+       static_cast<RenderWidgetHostImpl*>(source_rfh.GetRenderWidgetHost());
+   // Disallow reentrant drag which could be an attempt to exploit drag state.
+   if (drag_security_info_.did_initiate()) {
++    // Spatiand: the renderer waits to hear that the drag it asked for is over
++    // and takes no press until it does: told so here too, where it was left
++    // waiting (the page then heard no click until it was loaded again).
++    web_contents_->SystemDragEnded(source_rwh);
+     return;
+   }
+   if (!aura::client::GetDragDropClient(root_window)) {
+@@ -1291,6 +1301,11 @@ void WebContentsViewAura::StartDragging(
+          !env->is_touch_down()) ||
+         (event_info.source == ui::mojom::DragEventSource::kMouse &&
+          !env->IsMouseButtonDown())) {
++      // Spatiand: this drag is over before it began (the button came up while
++      // the page was asking: a link clicked with the pointer moving, as a
++      // head moves it). Said to the security info too, or it held the drag as
++      // begun for good and every later drag of the page was dropped above.
++      drag_security_info_.OnDragEnded();
+       web_contents_->SystemDragEnded(source_rwh);
+       return;
+     }
+@@ -1305,6 +1320,7 @@ void WebContentsViewAura::StartDragging(
+     // visible.
+     if (!content_native_view->GetBoundsInScreen().Contains(trusted_location) ||
+         !content_native_view->IsVisible()) {
++      drag_security_info_.OnDragEnded();  // Spatiand: as above.
+       web_contents_->SystemDragEnded(source_rwh);
+       return;
+     }
+@@ -1333,6 +1349,12 @@ void WebContentsViewAura::StartDragging(
+   // If drag is still in progress that means we haven't received drop targeting
+   // callback yet. So we have to make sure to delay calling EndDrag until drop
+   // is done.
++  // Spatiand: a drag that ended with nothing taken has no drop of its own to
++  // wait for: its end is said now even if this view still holds a drag as
++  // being over it (an exit that did not come), instead of never.
++  if (drag_in_progress_ && result_op == DragOperation::kNone) {
++    OnDragExited();
++  }
+   if (!drag_in_progress_) {
+     EndDrag(std::move(source_rwh_weak_ptr), result_op);
+   } else {
+@@ -1491,10 +1513,16 @@ void WebContentsViewAura::OnMouseEvent(ui::MouseEvent* event) {
  // WebContentsViewAura, aura::client::DragDropDelegate implementation:
  
  void WebContentsViewAura::DragEnteredCallback(
@@ -8308,7 +8398,7 @@ index 8e9457fe57..22197ab136 100644
    drag_in_progress_ = true;
    dropped_in_this_web_contents_ = false;
    if (!target) {
-@@ -1572,7 +1584,8 @@ void WebContentsViewAura::OnDragEntered(const ui::DropTargetEvent& event) {
+@@ -1572,7 +1600,8 @@ void WebContentsViewAura::OnDragEntered(const ui::DropTargetEvent& event) {
        web_contents_->GetRenderViewHost()->GetWidget()->GetView(),
        event.location_f(),
        base::BindOnce(&WebContentsViewAura::DragEnteredCallback,
@@ -8318,7 +8408,7 @@ index 8e9457fe57..22197ab136 100644
                       std::move(drop_data)));
  }
  
-@@ -1622,7 +1635,8 @@ void WebContentsViewAura::DragUpdatedCallback(
+@@ -1622,7 +1651,8 @@ void WebContentsViewAura::DragUpdatedCallback(
        current_rwh_for_drag_->DragTargetDragLeave(transformed_leave_point,
                                                   screen_pt);
      }
@@ -8328,7 +8418,7 @@ index 8e9457fe57..22197ab136 100644
                          transformed_pt);
    }
  
-@@ -1679,6 +1693,7 @@ void WebContentsViewAura::OnDragExited() {
+@@ -1679,6 +1709,7 @@ void WebContentsViewAura::OnDragExited() {
      // Don't compute the results of exiting, but clean up the flag to avoid
      // hanging the renderer process. See crbug.com/434130454.
      drag_in_progress_ = false;
@@ -8336,7 +8426,7 @@ index 8e9457fe57..22197ab136 100644
      return;
    }
    CompleteDragExit();
-@@ -1686,6 +1701,7 @@ void WebContentsViewAura::OnDragExited() {
+@@ -1686,6 +1717,7 @@ void WebContentsViewAura::OnDragExited() {
  
  void WebContentsViewAura::CompleteDragExit() {
    drag_in_progress_ = false;
@@ -8344,7 +8434,7 @@ index 8e9457fe57..22197ab136 100644
  
    web_contents_->PreHandleDragExit();
  
-@@ -1708,6 +1724,7 @@ void WebContentsViewAura::CompleteDragExit() {
+@@ -1708,6 +1740,7 @@ void WebContentsViewAura::CompleteDragExit() {
  
  void WebContentsViewAura::OnDropExit() {
    drag_in_progress_ = false;
@@ -8352,7 +8442,7 @@ index 8e9457fe57..22197ab136 100644
    auto end_drag_runner = std::move(end_drag_runner_);
  }
  
-@@ -1787,7 +1804,8 @@ void WebContentsViewAura::PerformDropCallback(
+@@ -1787,7 +1820,8 @@ void WebContentsViewAura::PerformDropCallback(
  
      std::unique_ptr<DropData> drop_data = std::make_unique<DropData>();
      PrepareDropData(drop_data.get(), *data.get());
@@ -9477,6 +9567,58 @@ index c3af283ccd..2f53c23ebb 100644
 +; ($XDG_RUNTIME_DIR), and nothing else.
 +(allow network-outbound
 +  (remote unix-socket (path-regex #"/spatiand-(sound|mic)$")))
+diff --git a/third_party/blink/renderer/core/editing/editing_behavior.cc b/third_party/blink/renderer/core/editing/editing_behavior.cc
+index f7c75030b9..512a539ba1 100644
+--- a/third_party/blink/renderer/core/editing/editing_behavior.cc
++++ b/third_party/blink/renderer/core/editing/editing_behavior.cc
+@@ -116,7 +116,7 @@ const KeyboardCodeKeyDownEntry kKeyboardCodeKeyDownEntries[] = {
+     {VKEY_NEXT, kShiftKey, "MovePageDownAndModifySelection"},
+     {VKEY_UP, OPTION_OR_CTRL_KEY, "MoveParagraphBackward"},
+     {VKEY_DOWN, OPTION_OR_CTRL_KEY, "MoveParagraphForward"},
+-#if !BUILDFLAG(IS_MAC)
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand
+     {VKEY_UP, kCtrlKey | kShiftKey, "MoveParagraphBackwardAndModifySelection"},
+     {VKEY_DOWN, kCtrlKey | kShiftKey, "MoveParagraphForwardAndModifySelection"},
+     {VKEY_PRIOR, 0, "MovePageUp"},
+@@ -128,14 +128,14 @@ const KeyboardCodeKeyDownEntry kKeyboardCodeKeyDownEntries[] = {
+     {VKEY_PRIOR, kOptionKey, "MovePageUp"},
+     {VKEY_NEXT, kOptionKey, "MovePageDown"},
+ #endif
+-#if !BUILDFLAG(IS_MAC)
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand
+     {VKEY_HOME, kCtrlKey, "MoveToBeginningOfDocument"},
+     {VKEY_HOME, kCtrlKey | kShiftKey,
+      "MoveToBeginningOfDocumentAndModifySelection"},
+ #endif
+     {VKEY_END, 0, "MoveToEndOfLine"},
+     {VKEY_END, kShiftKey, "MoveToEndOfLineAndModifySelection"},
+-#if !BUILDFLAG(IS_MAC)
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand
+     {VKEY_END, kCtrlKey, "MoveToEndOfDocument"},
+     {VKEY_END, kCtrlKey | kShiftKey, "MoveToEndOfDocumentAndModifySelection"},
+ #endif
+@@ -168,7 +168,7 @@ const KeyboardCodeKeyDownEntry kKeyboardCodeKeyDownEntries[] = {
+     {VKEY_INSERT, kCtrlKey, "Copy"},
+     {VKEY_INSERT, kShiftKey, "Paste"},
+     {VKEY_DELETE, kShiftKey, "Cut"},
+-#if !BUILDFLAG(IS_MAC)
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand
+     // On OS X, we pipe these back to the browser, so that it can do menu item
+     // blinking.
+     {'C', kCtrlKey, "Copy"},
+diff --git a/third_party/blink/renderer/core/execution_context/navigator_base.cc b/third_party/blink/renderer/core/execution_context/navigator_base.cc
+index cccfafe8f9..81d2301a56 100644
+--- a/third_party/blink/renderer/core/execution_context/navigator_base.cc
++++ b/third_party/blink/renderer/core/execution_context/navigator_base.cc
+@@ -26,6 +26,8 @@ namespace {
+ String GetReducedNavigatorPlatform() {
+ #if BUILDFLAG(IS_ANDROID)
+   return "Linux armv81";
++#elif BUILDFLAG(IS_MAC_LINUX_UI)
++  return "Linux x86_64";  // Spatiand: as the Deck's, with the user agent
+ #elif BUILDFLAG(IS_MAC)
+   return "MacIntel";
+ #elif BUILDFLAG(IS_WIN)
 diff --git a/third_party/blink/renderer/core/exported/web_page_popup_impl.cc b/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
 index d340cb8910..ca54143c36 100644
 --- a/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
@@ -9520,6 +9662,22 @@ index d340cb8910..ca54143c36 100644
  }
  
  WebInputEventResult WebPagePopupImpl::DispatchBufferedTouchEvents() {
+diff --git a/third_party/blink/renderer/core/frame/navigator_id.cc b/third_party/blink/renderer/core/frame/navigator_id.cc
+index 22243ebf5e..9fd2833481 100644
+--- a/third_party/blink/renderer/core/frame/navigator_id.cc
++++ b/third_party/blink/renderer/core/frame/navigator_id.cc
+@@ -59,7 +59,10 @@ String NavigatorID::appVersion() {
+ }
+ 
+ String NavigatorID::platform() const {
+-#if BUILDFLAG(IS_MAC)
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: what the Deck's says (uname there), with the user agent.
++  return "Linux x86_64";
++#elif BUILDFLAG(IS_MAC)
+   // Match Safari and Mozilla on Mac x86.
+   return "MacIntel";
+ #elif BUILDFLAG(IS_WIN)
 diff --git a/third_party/blink/renderer/platform/theme/web_theme_engine_mac.cc b/third_party/blink/renderer/platform/theme/web_theme_engine_mac.cc
 index ecb2723266..a6788b3882 100644
 --- a/third_party/blink/renderer/platform/theme/web_theme_engine_mac.cc
@@ -23206,10 +23364,23 @@ index 3354c0c505..2441fcbe3b 100644
      }
  
 diff --git a/ui/views/accessibility/ax_virtual_view.cc b/ui/views/accessibility/ax_virtual_view.cc
-index cf8203006e..6efb19ada9 100644
+index cf8203006e..fbe5cfd45f 100644
 --- a/ui/views/accessibility/ax_virtual_view.cc
 +++ b/ui/views/accessibility/ax_virtual_view.cc
-@@ -360,7 +360,8 @@ gfx::NativeViewAccessible AXVirtualView::ChildAtIndex(size_t index) const {
+@@ -289,10 +289,12 @@ void AXVirtualView::NotifyEvent(ax::mojom::Event event_type,
+     }
+   }
+ 
++#if !BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand: no Cocoa accessibility in the Linux UI
+   if (!ViewAccessibility::IsViewsAccessibilityTreeEnabled()) {
+     DCHECK(ax_platform_node_);
+     ax_platform_node_->NotifyAccessibilityEvent(event_type);
+   }
++#endif
+ 
+   // This is used on platforms that don't have a native accessibility API.
+   AXUpdateNotifier::Get()->NotifyVirtualViewEvent(this, event_type);
+@@ -360,9 +362,15 @@ gfx::NativeViewAccessible AXVirtualView::ChildAtIndex(size_t index) const {
    NOTREACHED() << "|index| should be less than the child count.";
  }
  
@@ -23217,8 +23388,15 @@ index cf8203006e..6efb19ada9 100644
 +// Spatiand: no NSWindow on the Linux UI.
 +#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
  gfx::NativeViewAccessible AXVirtualView::GetNSWindow() {
++#if BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: asked by the Cocoa node (an announcement); there is none to give.
++  return gfx::NativeViewAccessible();
++#else
    NOTREACHED();
++#endif
  }
+ #endif
+ 
 diff --git a/ui/views/accessibility/tree/widget_ax_manager.cc b/ui/views/accessibility/tree/widget_ax_manager.cc
 index 1071b79408..baddb49a20 100644
 --- a/ui/views/accessibility/tree/widget_ax_manager.cc

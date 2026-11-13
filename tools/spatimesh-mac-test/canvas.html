@@ -1,0 +1,10 @@
+<!doctype html><meta charset=utf-8><title>Canvas</title>
+<!-- A canvas kept at the window's size as a spreadsheet's grid is: says what sizes the page is told at load,
+     at each resize and a second after it. -->
+<body style="margin:0;overflow:hidden;background:#000"><canvas id=c style="display:block"></canvas><script>
+const c = document.getElementById("c");
+function fit(why) { const d = devicePixelRatio; c.style.width = innerWidth + "px"; c.style.height = innerHeight + "px"; c.width = Math.round(innerWidth * d); c.height = Math.round(innerHeight * d);
+  const x = c.getContext("2d"); x.fillStyle = "#2a6"; x.fillRect(0, 0, c.width, c.height);
+  console.log("[canvas]", why, JSON.stringify({inner: [innerWidth, innerHeight], outer: [outerWidth, outerHeight], dpr: d, screen: [screen.width, screen.height], vv: [Math.round(visualViewport.width), Math.round(visualViewport.height)], doc: [document.documentElement.clientWidth, document.documentElement.clientHeight]})); }
+fit("load"); addEventListener("resize", () => { fit("resize"); setTimeout(() => fit("later"), 1000); });
+</script>

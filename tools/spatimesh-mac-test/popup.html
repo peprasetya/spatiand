@@ -1,0 +1,3 @@
+<!doctype html><meta charset=utf-8><title>Popup blocked</title>
+<!-- Opens a window with no press: blocked, and the address bar's "pop-up blocked" picture animates in. -->
+<h2>A pop-up is asked for at load</h2><script>addEventListener("load", () => { const w = window.open("done.html"); console.log("[popup] opened:", !!w); setTimeout(() => { document.title = "still here"; console.log("[popup] alive after 3 s"); }, 3000); });</script>
