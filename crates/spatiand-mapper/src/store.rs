@@ -1,4 +1,11 @@
 //! Where layouts live: one file per application, like Game Mode's per-game layouts.
+//!
+//! Two folders: this machine's own (`~/.config/spatiand/layouts`, where every layout was kept
+//! before 2026-11-14) and, where one is given, a folder every paired machine shares
+//! (`~/.config/spatiand/apps/layouts`, which `spatiand-sync` keeps the same on each). A layout
+//! is read from the shared folder first and from this machine's if it is not there; the editor
+//! saves into the shared one. Nothing is moved: a layout kept here before goes on working here,
+//! and goes to the other machines the first time it is saved again.
 
 use std::path::{Path, PathBuf};
 
@@ -72,19 +79,34 @@ impl AppKey {
 
 pub struct Store {
     dir: PathBuf,
+    /// The folder every paired machine shares, read first and saved into. See the module.
+    synced: Option<PathBuf>,
 }
 
 impl Store {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into() }
+        Self { dir: dir.into(), synced: None }
     }
 
+    /// Read layouts from `synced` before this machine's own folder, and save them there.
+    pub fn with_synced(mut self, synced: impl Into<PathBuf>) -> Self {
+        self.synced = Some(synced.into());
+        self
+    }
+
+    /// Where layouts are saved.
     pub fn dir(&self) -> &Path {
-        &self.dir
+        self.synced.as_deref().unwrap_or(&self.dir)
     }
 
+    /// Where this application's layout is saved.
     pub fn path(&self, app: &AppKey) -> PathBuf {
-        self.dir.join(format!("{}.toml", app.file_stem()))
+        self.dir().join(format!("{}.toml", app.file_stem()))
+    }
+
+    /// The folders read, the shared one first.
+    fn folders(&self) -> impl Iterator<Item = &Path> {
+        self.synced.as_deref().into_iter().chain(std::iter::once(self.dir.as_path()))
     }
 
     /// This application's own layout, if it has one that can be read.
@@ -93,15 +115,18 @@ impl Store {
     /// fallback is a working layout, and a typo in a hand edit must not leave a game with no
     /// controls at all.
     pub fn load(&self, app: &AppKey) -> Option<Layout> {
-        let path = self.path(app);
-        let text = std::fs::read_to_string(&path).ok()?;
-        match toml::from_str::<Layout>(&text) {
-            Ok(layout) => Some(layout.repaired()),
-            Err(e) => {
-                log::warn!("ignoring the layout in {}: {e}", path.display());
-                None
+        let name = format!("{}.toml", app.file_stem());
+        self.folders().find_map(|folder| {
+            let path = folder.join(&name);
+            let text = std::fs::read_to_string(&path).ok()?;
+            match toml::from_str::<Layout>(&text) {
+                Ok(layout) => Some(layout.repaired()),
+                Err(e) => {
+                    log::warn!("ignoring the layout in {}: {e}", path.display());
+                    None
+                }
             }
-        }
+        })
     }
 
     /// The layout in effect for an application, and whether it is the app's own.
@@ -115,7 +140,7 @@ impl Store {
     /// Written beside the destination and renamed over it, so a crash mid-write leaves the old
     /// layout rather than half a file.
     pub fn save(&self, app: &AppKey, layout: &Layout) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.dir)?;
+        std::fs::create_dir_all(self.dir())?;
         let text = toml::to_string_pretty(layout)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         let path = self.path(app);
@@ -131,34 +156,40 @@ impl Store {
     /// rather than failing the list.
     pub fn saved_except(&self, except: &AppKey) -> Vec<(String, Layout)> {
         let mine = except.file_stem();
-        let Ok(dir) = std::fs::read_dir(&self.dir) else {
-            return Vec::new();
-        };
-        let mut found: Vec<(String, String, Layout)> = dir
-            .filter_map(|entry| {
-                let path = entry.ok()?.path();
+        let mut found: Vec<(String, String, Layout)> = Vec::new();
+        for folder in self.folders() {
+            let Ok(dir) = std::fs::read_dir(folder) else { continue };
+            for entry in dir {
+                let Ok(entry) = entry else { continue };
+                let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) != Some("toml") {
-                    return None;
+                    continue;
                 }
-                let stem = path.file_stem()?.to_str()?.to_string();
-                if stem == mine {
-                    return None;
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else { continue };
+                // The shared folder's copy is the one in force.
+                if stem == mine || found.iter().any(|(s, _, _)| *s == stem) {
+                    continue;
                 }
-                let text = std::fs::read_to_string(&path).ok()?;
-                let layout: Layout = toml::from_str(&text).ok()?;
-                Some((stem.clone(), describe(&stem), layout))
-            })
-            .collect();
+                let Ok(text) = std::fs::read_to_string(&path) else { continue };
+                let Ok(layout) = toml::from_str::<Layout>(&text) else { continue };
+                found.push((stem.clone(), describe(&stem), layout));
+            }
+        }
         found.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
         found.into_iter().map(|(_, name, layout)| (name, layout)).collect()
     }
 
-    /// Go back to the default for this application.
+    /// Go back to the default for this application: from both folders, or the older copy
+    /// would come back in place of the default.
     pub fn forget(&self, app: &AppKey) -> std::io::Result<()> {
-        match std::fs::remove_file(self.path(app)) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
+        let name = format!("{}.toml", app.file_stem());
+        for folder in self.folders() {
+            match std::fs::remove_file(folder.join(&name)) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
         }
+        Ok(())
     }
 }
 
@@ -263,6 +294,42 @@ mod tests {
         assert_eq!(store.layout_for(&app).1, false);
         // Forgetting twice is not an error.
         store.forget(&app).unwrap();
+    }
+
+    #[test]
+    fn the_shared_folder_wins_and_is_saved_into_and_the_old_one_still_reads() {
+        let own = scratch("own");
+        let shared = scratch("shared");
+        let old = Store::new(&own);
+        let app = AppKey::App("spatimesh".into());
+        let mut before = templates::keyboard_and_mouse();
+        before.name = "Kept here".into();
+        old.save(&app, &before).unwrap();
+
+        // A layout from before the shared folder still applies, untouched where it is.
+        let store = Store::new(&own).with_synced(&shared);
+        assert_eq!(store.layout_for(&app), (before.clone(), true));
+        assert!(!shared.join("app-spatimesh.toml").exists());
+
+        // Saved again, it goes to the shared folder, and that copy is the one in force.
+        let mut after = before.clone();
+        after.name = "Shared".into();
+        store.save(&app, &after).unwrap();
+        assert!(shared.join("app-spatimesh.toml").exists());
+        assert_eq!(store.layout_for(&app), (after.clone(), true));
+        assert!(own.join("app-spatimesh.toml").exists(), "nothing moved or deleted");
+
+        // Offered for copying once, as the copy in force.
+        let other = AppKey::App("other".into());
+        let offered = store.saved_except(&other);
+        assert_eq!(offered.len(), 1);
+        assert_eq!(offered[0].1.name, "Shared");
+
+        // Forgetting it forgets both, so the default is what is left.
+        store.forget(&app).unwrap();
+        assert_eq!(store.layout_for(&app).1, false);
+        let _ = std::fs::remove_dir_all(&own);
+        let _ = std::fs::remove_dir_all(&shared);
     }
 
     #[test]

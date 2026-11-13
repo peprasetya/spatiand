@@ -34,7 +34,7 @@ pub mod templates;
 
 pub use editor::Editor;
 pub use engine::Engine;
-pub use input::{Button, Buttons, Rates, Snapshot, Touch};
+pub use input::{Button, Buttons, Device, Rates, Snapshot, Touch};
 pub use layout::{
     ActionSet, Activator, Binding, Controls, Curve, Group, GroupConfig, GyroAxis, GyroEnable,
     GyroOutput, Layer, Layout, Mode, ModeKind, ModeShift, RadialItem, When,
@@ -42,4 +42,5 @@ pub use layout::{
 pub use output::{
     Action, Command, Direction, Frame, MouseButton, PadButton, PadState, RadialView, Side,
 };
+pub use keys::Shortcut;
 pub use store::{AppKey, Store};

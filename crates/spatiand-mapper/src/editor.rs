@@ -9,7 +9,7 @@
 //! Edits apply at once — the compositor hands [`Editor::layout`] to the running engine after
 //! every [`Event::Changed`] — so a sensitivity can be tried while it is being set, as in Steam.
 
-use crate::input::Button;
+use crate::input::{Button, Device};
 use crate::keys;
 use crate::layout::{
     Activator, Binding, Controls, Curve, Group, GroupConfig, GyroAxis, GyroEnable, GyroOutput,
@@ -120,17 +120,19 @@ pub enum Category {
     Stick,
     Trigger,
     Keyboard,
+    Shortcut,
     Mouse,
     Sets,
     Spatiand,
 }
 
 impl Category {
-    const ALL: [Category; 7] = [
+    const ALL: [Category; 8] = [
         Category::Gamepad,
         Category::Stick,
         Category::Trigger,
         Category::Keyboard,
+        Category::Shortcut,
         Category::Mouse,
         Category::Sets,
         Category::Spatiand,
@@ -142,6 +144,7 @@ impl Category {
             Category::Stick => "Gamepad stick direction",
             Category::Trigger => "Gamepad trigger",
             Category::Keyboard => "Keyboard key",
+            Category::Shortcut => "Keyboard shortcut",
             Category::Mouse => "Mouse button or wheel",
             Category::Sets => "Action set or layer",
             Category::Spatiand => "Spatiand",
@@ -153,6 +156,8 @@ impl Category {
 enum Page {
     Root,
     Buttons,
+    /// A trackpad's clicks, by fingers and depth: only where a trackpad reports them.
+    PadPresses,
     Group { group: Group, shifted: bool },
     Modes { group: Group, shifted: bool },
     Binding(Target),
@@ -202,6 +207,9 @@ enum Field {
     Chord(Target, usize),
     Toggle(Target, usize),
     Turbo(Target, usize),
+    /// A shortcut action's modifiers, and its key: `(target, activator, action)`.
+    ShortcutMods(Target, usize, usize),
+    ShortcutKey(Target, usize, usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -252,6 +260,8 @@ pub struct Editor {
     set: usize,
     layer: Option<usize>,
     stack: Vec<(Page, usize)>,
+    /// Whether a controller here reports a trackpad's presses, so they are offered.
+    pad_presses: bool,
 }
 
 const TURBO_STEPS: [Option<u32>; 6] = [None, Some(50), Some(100), Some(150), Some(250), Some(500)];
@@ -260,6 +270,13 @@ impl Editor {
     /// Offer these layouts to copy from. See [`crate::store::Store::saved_except`].
     pub fn with_others(mut self, others: Vec<(String, Layout)>) -> Self {
         self.others = others;
+        self
+    }
+
+    /// Offer a trackpad's presses, by fingers and depth, as well as the controller's buttons:
+    /// where a controller here reports them (a Mac's trackpad).
+    pub fn with_pad_presses(mut self, reported: bool) -> Self {
+        self.pad_presses = reported;
         self
     }
 
@@ -274,6 +291,7 @@ impl Editor {
             set: 0,
             layer: None,
             stack: vec![(Page::Root, 0)],
+            pad_presses: false,
         }
     }
 
@@ -652,7 +670,8 @@ impl Editor {
     fn callouts(&self) -> Vec<(Callout, String)> {
         let effective = self.layout.effective(self.set, self.layer);
         let mut out = Vec::new();
-        for button in Button::ALL {
+        // The picture is the Deck's: a trackpad's presses have no place on it.
+        for button in Button::ALL.into_iter().filter(|b| b.device() != Device::Trackpad) {
             if let Some(binding) = effective.buttons.get(&button) {
                 let short = binding.short();
                 if !short.is_empty() {
@@ -677,6 +696,7 @@ impl Editor {
         match page {
             Page::Root => self.root_page(),
             Page::Buttons => self.buttons_page(),
+            Page::PadPresses => self.pad_presses_page(),
             Page::Group { group, shifted } => self.group_page(group, shifted),
             Page::Modes { group, shifted } => Built {
                 title: format!("{} mode", group.label()),
@@ -827,16 +847,31 @@ impl Editor {
             ),
         ]);
         let effective = self.layout.effective(self.set, self.layer);
-        let bound = Button::ALL
-            .iter()
-            .filter(|b| effective.buttons.get(b).is_some_and(|x| !x.is_empty()))
-            .count();
+        let count = |device: fn(Device) -> bool| {
+            let of: Vec<Button> = Button::ALL.into_iter().filter(|b| device(b.device())).collect();
+            let bound = of
+                .iter()
+                .filter(|b| effective.buttons.get(b).is_some_and(|x| !x.is_empty()))
+                .count();
+            format!("{bound} of {} bound", of.len())
+        };
         rows.push((
-            row("Buttons", Some(format!("{bound} of {} bound", Button::ALL.len()))),
+            row("Buttons", Some(count(|d| d != Device::Trackpad))),
             Op::Open(Page::Buttons),
             "Face buttons, D-pad, bumpers, back buttons, clicks and the glasses' buttons."
                 .to_string(),
         ));
+        // Only where a trackpad says its presses: a row for a device that is not here is a page
+        // of controls that cannot be pressed. A layout keeps what was bound to them either way.
+        if self.pad_presses {
+            rows.push((
+                row("Trackpad clicks", Some(count(|d| d == Device::Trackpad))),
+                Op::Open(Page::PadPresses),
+                "A click and a deep click, with one to five fingers. Unbound, each does what it \
+                 always did."
+                    .to_string(),
+            ));
+        }
         for group in Group::ALL {
             let config = self.group_config(group);
             let mode = config.map(|c| ModeKind::of(&c.mode)).unwrap_or(ModeKind::None);
@@ -879,11 +914,35 @@ impl Editor {
         }
     }
 
+    fn pad_presses_page(&self) -> Built {
+        Built {
+            title: "Trackpad clicks".into(),
+            rows: Button::ALL
+                .iter()
+                .filter(|b| b.device() == Device::Trackpad)
+                .map(|b| {
+                    (
+                        row(b.label(), Some(self.binding_summary(&self.binding(Target::Button(*b))))),
+                        Op::Open(Page::Binding(Target::Button(*b))),
+                        String::new(),
+                    )
+                })
+                .collect(),
+            detail: "Unbound, a click is the pointer's as always: one finger the left button, two \
+                     the right, three the drag. Bound here, it does this instead, for this \
+                     application. A deep click comes on top of its click, which is already \
+                     down: set the click to Release press for the deep click to replace it \
+                     (it can then no longer drag)."
+                .into(),
+        }
+    }
+
     fn buttons_page(&self) -> Built {
         Built {
             title: "Buttons".into(),
             rows: Button::ALL
                 .iter()
+                .filter(|b| b.device() != Device::Trackpad)
                 .map(|b| {
                     (
                         row(b.label(), Some(self.binding_summary(&self.binding(Target::Button(*b))))),
@@ -982,6 +1041,22 @@ impl Editor {
                 Op::Open(Page::Categories(target, index, Some(i))),
                 String::new(),
             ));
+            // A shortcut is made from the one chosen by changing what is held and the key.
+            if let Action::Shortcut { keys } = action {
+                rows.push((
+                    row("  Held with it", Some(modifiers_label(keys.mods))),
+                    Op::Cycle(Field::ShortcutMods(target, index, i), None),
+                    "Control, Shift, Alt and Super, in every combination.".to_string(),
+                ));
+                rows.push((
+                    row(
+                        "  Key",
+                        Some(keys::name(keys.key).map(String::from).unwrap_or_else(|| keys.key.to_string())),
+                    ),
+                    Op::Cycle(Field::ShortcutKey(target, index, i), None),
+                    String::new(),
+                ));
+            }
         }
         rows.push((
             row("Add an action", None),
@@ -1316,6 +1391,10 @@ impl Editor {
                 .iter()
                 .map(|(code, _)| Action::Key { code: *code })
                 .collect(),
+            Category::Shortcut => keys::SHORTCUTS
+                .iter()
+                .map(|keys| Action::Shortcut { keys: *keys })
+                .collect(),
             Category::Mouse => MouseButton::ALL
                 .iter()
                 .map(|b| Action::Mouse { button: *b })
@@ -1528,6 +1607,22 @@ impl Editor {
                     a.turbo_ms = TURBO_STEPS[cycle_index(at, TURBO_STEPS.len(), step)];
                 }
             }),
+            Field::ShortcutMods(target, index, slot) => self.with_binding(target, |b| {
+                if let Some(Action::Shortcut { keys }) =
+                    b.activators.get_mut(index).and_then(|a| a.actions.get_mut(slot))
+                {
+                    // Every combination of the four, from none: Ctrl, Shift, Ctrl+Shift, Alt, ...
+                    keys.mods = cycle_index(keys.mods as usize & 15, 16, step) as u8;
+                }
+            }),
+            Field::ShortcutKey(target, index, slot) => self.with_binding(target, |b| {
+                if let Some(Action::Shortcut { keys }) =
+                    b.activators.get_mut(index).and_then(|a| a.actions.get_mut(slot))
+                {
+                    let at = keys::KEYS.iter().position(|(c, _)| *c == keys.key).unwrap_or(0);
+                    keys.key = keys::KEYS[cycle_index(at, keys::KEYS.len(), step)].0;
+                }
+            }),
         }
         Event::Changed
     }
@@ -1691,6 +1786,20 @@ fn toggle(label: &str, on: bool, field: Field) -> (Row, Op, String) {
     (row(label, Some(on_off(on))), Op::Cycle(field, None), String::new())
 }
 
+/// `Ctrl+Shift`, or `Nothing`.
+fn modifiers_label(mods: u8) -> String {
+    let held: Vec<&str> = keys::MODIFIERS
+        .iter()
+        .filter(|(bit, _, _)| mods & bit != 0)
+        .map(|(_, _, name)| *name)
+        .collect();
+    if held.is_empty() {
+        "Nothing".into()
+    } else {
+        held.join("+")
+    }
+}
+
 fn on_off(on: bool) -> String {
     if on { "On" } else { "Off" }.into()
 }
@@ -1831,6 +1940,65 @@ mod tests {
         }
         assert!(view.rows.iter().any(|r| r.label == "Buttons"));
         assert!(!view.callouts.is_empty(), "the picture has labels");
+    }
+
+    #[test]
+    fn a_trackpads_clicks_are_offered_only_where_one_reports_them() {
+        let without = editor();
+        assert!(without.view().rows.iter().all(|r| r.label != "Trackpad clicks"));
+        let mut e = editor();
+        choose(&mut e, "Buttons");
+        assert!(e.view().rows.iter().all(|r| !r.label.starts_with("Trackpad")), "not among the pad's");
+
+        let mut e = editor().with_pad_presses(true);
+        assert_eq!(value_of(&e, "Trackpad clicks").as_deref(), Some("0 of 10 bound"));
+        choose(&mut e, "Trackpad clicks");
+        let labels: Vec<String> = e.view().rows.into_iter().map(|r| r.label).collect();
+        assert_eq!(labels.len(), 10);
+        assert_eq!(labels[1], "Trackpad: click, 2 fingers");
+        assert_eq!(labels[7], "Trackpad: deep click, 3 fingers");
+        assert!(e.view().callouts.is_empty(), "not on the Deck's picture");
+    }
+
+    #[test]
+    fn a_deep_click_is_given_a_shortcut_and_its_held_keys_changed() {
+        let mut e = editor().with_pad_presses(true);
+        choose(&mut e, "Trackpad clicks");
+        choose(&mut e, "Trackpad: deep click, 3 fingers");
+        choose(&mut e, "Add an activator");
+        choose(&mut e, "Add an action");
+        choose(&mut e, "Keyboard shortcut");
+        assert_eq!(choose(&mut e, "Ctrl+T"), Event::Changed);
+        assert_eq!(value_of(&e, "  Held with it").as_deref(), Some("Ctrl"));
+        // Ctrl -> Shift -> Ctrl+Shift.
+        select(&mut e, "  Held with it");
+        e.handle(Input::Right);
+        e.handle(Input::Right);
+        assert_eq!(value_of(&e, "Action 1").as_deref(), Some("Ctrl+Shift+T"));
+        let bound = &e.layout().sets[0].controls.buttons[&Button::PadDeepClick3];
+        assert_eq!(
+            bound.activators[0].actions,
+            vec![Action::Shortcut {
+                keys: keys::Shortcut::new(1 | 2, 20)
+            }]
+        );
+        // And the key itself steps through the keyboard.
+        select(&mut e, "  Key");
+        e.handle(Input::Right);
+        assert_ne!(value_of(&e, "Action 1").as_deref(), Some("Ctrl+Shift+T"));
+    }
+
+    #[test]
+    fn the_new_room_commands_are_offered() {
+        let mut e = editor();
+        choose(&mut e, "Buttons");
+        choose(&mut e, "R5 back button");
+        choose(&mut e, "Add an activator");
+        choose(&mut e, "Add an action");
+        choose(&mut e, "Spatiand");
+        for label in ["Close the window", "Hide the window", "Show the open windows", "Dictate", "Start or stop recording"] {
+            assert!(e.view().rows.iter().any(|r| r.label == label), "{label}");
+        }
     }
 
     #[test]

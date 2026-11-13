@@ -130,6 +130,14 @@ pub struct ControllerState {
     pub accel: [f32; 3],
     /// deg/s, device frame.
     pub gyro: [f32; 3],
+    /// The pointing pad's press going on, by how many fingers and how deep: what a layout can
+    /// bind as `pad_click1`..`pad_deep_click5` (`spatiand_mapper::Button`). Only from a
+    /// controller that counts the fingers of a press -- a Mac's trackpad; `None` from the Deck
+    /// and the phone, whose pads' clicks are the pointer's buttons and nothing else.
+    pub pad_press: Option<crate::pad_press::PadPress>,
+    /// Whether this controller reports [`Self::pad_press`] at all: what the layout editor asks
+    /// before it offers the presses to be bound.
+    pub reports_pad_presses: bool,
 }
 
 impl ControllerState {
@@ -178,6 +186,10 @@ impl ControllerState {
                 i16_at(32) as f32 * GYRO_FULL_SCALE_DPS / 32768.0,
                 i16_at(34) as f32 * GYRO_FULL_SCALE_DPS / 32768.0,
             ],
+            // The Deck's pads have a real pressure (`Pad::pressure`), and could say a deep press
+            // one day as `pad_press::PressReader` reads a Mac's; not yet.
+            pad_press: None,
+            reports_pad_presses: false,
         })
     }
 

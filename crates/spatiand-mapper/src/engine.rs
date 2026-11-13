@@ -101,6 +101,10 @@ pub struct Engine {
     /// until it is let go, so the press that switched action set, or closed a menu, does not
     /// also fire whatever the same button does in the new state.
     suppressed: Buttons,
+    /// Pad clicks a deep press went down on top of: their release and their tap are the deep
+    /// press's now, and do not fire. What lets a click bound to act on release be *replaced* by
+    /// a deep click of the same fingers, rather than followed by it.
+    swallowed: Buttons,
     last_buttons: Buttons,
     motion_remainder: (f64, f64),
 }
@@ -123,6 +127,7 @@ impl Engine {
             active_was: HashSet::new(),
             groups: HashMap::new(),
             suppressed: Buttons::default(),
+            swallowed: Buttons::default(),
             last_buttons: Buttons::default(),
             motion_remainder: (0.0, 0.0),
         }
@@ -238,6 +243,14 @@ impl Engine {
             }
         }
 
+        for b in Button::ALL {
+            if let Some(shallow) = b.shallow() {
+                if buttons.is_down(b) && buttons.is_down(shallow) {
+                    self.swallowed.set(shallow, true);
+                }
+            }
+        }
+
         self.refresh_effective();
         let controls = self.effective.clone();
         let mut frame = Frame::default();
@@ -275,6 +288,12 @@ impl Engine {
             );
         }
 
+        for b in Button::ALL {
+            if self.swallowed.is_down(b) && !buttons.is_down(b) {
+                self.swallowed.set(b, false);
+            }
+        }
+
         self.pulses.retain(|_, until| self.now < *until + 1.0);
         self.apply(actives, &mut frame);
 
@@ -309,6 +328,7 @@ impl Engine {
             _ => None,
         });
         let deferred = long_ms.is_some() || double_ms.is_some();
+        let swallowed = matches!(source, Source::Button(b) if self.swallowed.is_down(b));
 
         let track = self.tracks.entry(source).or_default();
         let rising = down && !track.down;
@@ -322,7 +342,7 @@ impl Engine {
         if falling {
             let held_ms = (now - track.pressed_at) * 1000.0;
             let was_long = long_ms.is_some_and(|ms| held_ms >= ms as f64);
-            if !track.second && !was_long {
+            if !track.second && !was_long && !swallowed {
                 match double_ms {
                     Some(ms) => track.double_until = Some(now + ms as f64 / 1000.0),
                     None => tap = true,
@@ -361,7 +381,7 @@ impl Engine {
             let pulse = match activator.when {
                 When::Press => deferred && tap,
                 When::StartPress => rising,
-                When::ReleasePress => falling,
+                When::ReleasePress => falling && !swallowed,
                 _ => false,
             };
             if pulse {
@@ -771,6 +791,9 @@ impl Engine {
                     },
                     Action::Key { code } => {
                         keys.insert(code);
+                    }
+                    Action::Shortcut { keys: shortcut } => {
+                        keys.extend(shortcut.codes());
                     }
                     Action::Mouse { button } => {
                         mouse.insert(button);
@@ -1387,6 +1410,103 @@ mod tests {
         // anything -- a window, a menu, the game's own buttons -- with it.
         for group in Group::ALL {
             assert!(!group.label().contains("trackpad"), "{group:?}");
+        }
+    }
+
+    /// A trackpad press as the controller reports it, frame by frame: the click down, then the
+    /// deep click on top of it, the deep click let go, the click let go.
+    fn pad_press_frames(fingers: u8) -> [Snapshot; 5] {
+        let click = Button::pad_press(fingers, false).unwrap();
+        let deep = Button::pad_press(fingers, true).unwrap();
+        [
+            pressing(&[click]),
+            pressing(&[click, deep]),
+            pressing(&[click]),
+            Snapshot::default(),
+            Snapshot::default(),
+        ]
+    }
+
+    const CTRL_SHIFT_T: Action = Action::Shortcut {
+        keys: crate::keys::Shortcut::new(1 | 2, 20),
+    };
+
+    #[test]
+    fn a_deep_click_goes_down_on_top_of_its_click_and_up_before_it() {
+        let mut c = Controls::default();
+        c.buttons.insert(Button::PadClick3, Binding::key(30));
+        c.buttons.insert(Button::PadDeepClick3, Binding::key(48));
+        let mut engine = Engine::new(layout_of(c));
+        let keys: Vec<Vec<u16>> = pad_press_frames(3)
+            .iter()
+            .map(|s| engine.step(s, FRAME).keys)
+            .collect();
+        assert_eq!(keys, vec![vec![30], vec![30, 48], vec![30], vec![], vec![]]);
+    }
+
+    #[test]
+    fn a_click_on_release_is_replaced_by_the_deep_click_and_fires_without_one() {
+        let mut c = Controls::default();
+        c.buttons.insert(
+            Button::PadClick1,
+            Binding {
+                activators: vec![binding(
+                    When::ReleasePress,
+                    Action::Mouse {
+                        button: MouseButton::Left,
+                    },
+                )],
+            },
+        );
+        c.buttons.insert(Button::PadDeepClick1, Binding::press(CTRL_SHIFT_T));
+        let mut engine = Engine::new(layout_of(c));
+
+        // Deep: the shortcut, and no click after it.
+        let mut seen = Vec::new();
+        for s in pad_press_frames(1) {
+            seen.push(engine.step(&s, FRAME));
+        }
+        seen.extend(frames(&mut engine, &Snapshot::default(), 0.2));
+        assert!(seen.iter().any(|f| f.keys == vec![20, 29, 42]), "the shortcut fired");
+        assert!(seen.iter().all(|f| f.mouse_buttons.is_empty()), "and the click did not");
+
+        // A click alone: the click, as it is let go.
+        let mut seen = Vec::new();
+        seen.push(engine.step(&pressing(&[Button::PadClick1]), FRAME));
+        assert!(seen[0].mouse_buttons.is_empty(), "nothing yet while it is held");
+        seen.extend(frames(&mut engine, &Snapshot::default(), 0.2));
+        assert!(seen.iter().any(|f| f.mouse_buttons == vec![MouseButton::Left]));
+        assert!(seen.iter().all(|f| f.keys.is_empty()));
+    }
+
+    #[test]
+    fn a_shortcut_holds_its_modifiers_and_its_key_while_pressed() {
+        let mut c = Controls::default();
+        c.buttons.insert(Button::PadDeepClick2, Binding::press(CTRL_SHIFT_T));
+        let mut engine = Engine::new(layout_of(c));
+        let f = engine.step(&pressing(&[Button::PadClick2, Button::PadDeepClick2]), FRAME);
+        assert_eq!(f.keys, vec![20, 29, 42]);
+        assert!(engine.step(&Snapshot::default(), FRAME).keys.is_empty());
+    }
+
+    #[test]
+    fn an_unbound_pad_press_does_nothing_in_any_template() {
+        for template in templates::all() {
+            let mut engine = Engine::new(template.clone());
+            for fingers in 1..=5 {
+                for s in pad_press_frames(fingers) {
+                    let f = engine.step(&s, FRAME);
+                    assert!(
+                        f.keys.is_empty() && f.mouse_buttons.is_empty() && f.commands.is_empty() && f.pad.is_neutral(),
+                        "{} did something with {fingers} fingers",
+                        template.name
+                    );
+                }
+            }
+            for fingers in 1..=5 {
+                assert!(!engine.binds(Button::pad_press(fingers, false).unwrap()));
+                assert!(!engine.binds(Button::pad_press(fingers, true).unwrap()));
+            }
         }
     }
 

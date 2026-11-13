@@ -1331,23 +1331,34 @@ pub fn run(
                     }
                 }
             }
+            // What a layout's Spatiand actions ask of the room (`controls::command_effect`, the
+            // same table in every room loop).
             for command in &delivery.commands {
-                use spatiand_mapper::Command;
-                let intent = match command {
-                    Command::Hud => Some(spatiand_shell::Intent::ToggleHud),
-                    Command::Launcher => Some(spatiand_shell::Intent::ToggleLauncher),
-                    Command::Keyboard => {
+                use crate::controls::Effect;
+                let intent = match crate::controls::command_effect(*command, runtime.state.layout.focused_id()) {
+                    Effect::Intent(intent) => Some(intent),
+                    Effect::Event(event) => {
+                        shell_events.push(event);
+                        None
+                    }
+                    Effect::Keyboard => {
                         keyboard.open = !keyboard.open;
                         None
                     }
-                    Command::Screenshot => {
+                    Effect::Screenshot => {
                         screenshot = true;
                         None
                     }
-                    Command::Recentre => {
-                        shell_events.push(ShellEvent::Hud(HudAction::Recentre));
+                    // The list is filled first: the shell opens it only with something in it.
+                    Effect::Switcher => {
+                        shell.set_windows(crate::remote::with_offered(runtime.state.open_windows()));
+                        Some(spatiand_shell::Intent::ToggleSwitcher)
+                    }
+                    Effect::Dictate => {
+                        dictation.press(&runtime.state);
                         None
                     }
+                    Effect::Nothing => None,
                 };
                 if let Some(event) = intent.and_then(|i| shell.handle(i)) {
                     shell_events.push(event);
@@ -3104,6 +3115,26 @@ pub fn run(
                             }
                         }
                     }
+
+                    // A trackpad's press that the application's layout binds is the layout's,
+                    // not the pointer's: the same in every room loop (`Controls::route_pad_press`).
+                    // The Deck's own pads report no such presses, so here this changes nothing.
+                    let (right_click, left_click) = controls.route_pad_press(
+                        p.pad_press,
+                        || {
+                            shell.menu_is_open()
+                                || keyboard_reach.iter().any(Option::is_some)
+                                || keyboard_resize.is_some()
+                                || pointers.drag.is_some()
+                                || right_aim.as_ref().is_some_and(|a| {
+                                    a.on_title
+                                        || a.zone.is_some_and(|z| z != Zone::Content)
+                                        || scene.notice_hit(&a.ray, orientation)
+                                })
+                        },
+                        right_click,
+                        left_click,
+                    );
 
                     // A resize in progress owns the pointer until it is let go.
                     if let (Some(start), Some(q)) = (keyboard_resize, keyboard_quad.as_ref()) {

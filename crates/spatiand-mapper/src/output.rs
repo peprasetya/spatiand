@@ -173,15 +173,30 @@ pub enum Command {
     Keyboard,
     Screenshot,
     Recentre,
+    /// Ask the window in front to close, as the cross on its bar does.
+    CloseWindow,
+    /// Put the window in front away, as the bar's hide button does; the window list brings it back.
+    HideWindow,
+    /// The list of open windows.
+    Switcher,
+    /// Start dictating into what has the keys, or stop, as the keyboard's microphone key does.
+    Dictate,
+    /// Start recording what the glasses show, or stop and save it.
+    Record,
 }
 
 impl Command {
-    pub const ALL: [Command; 5] = [
+    pub const ALL: [Command; 10] = [
         Command::Hud,
         Command::Launcher,
         Command::Keyboard,
         Command::Screenshot,
         Command::Recentre,
+        Command::CloseWindow,
+        Command::HideWindow,
+        Command::Switcher,
+        Command::Dictate,
+        Command::Record,
     ];
 
     pub fn label(self) -> &'static str {
@@ -191,6 +206,11 @@ impl Command {
             Command::Keyboard => "Show the keyboard",
             Command::Screenshot => "Take a screenshot",
             Command::Recentre => "Recentre",
+            Command::CloseWindow => "Close the window",
+            Command::HideWindow => "Hide the window",
+            Command::Switcher => "Show the open windows",
+            Command::Dictate => "Dictate",
+            Command::Record => "Start or stop recording",
         }
     }
 }
@@ -207,6 +227,8 @@ pub enum Action {
     Trigger { side: Side },
     /// A keyboard key, by evdev code.
     Key { code: u16 },
+    /// A key with modifiers held: a keyboard shortcut, `{ type = "shortcut", keys = "ctrl+t" }`.
+    Shortcut { keys: keys::Shortcut },
     Mouse { button: MouseButton },
     /// One notch of the mouse wheel each time it fires.
     Wheel { direction: Direction },
@@ -231,6 +253,7 @@ impl Action {
             Action::Key { code } => keys::name(code)
                 .map(|n| format!("Key {n}"))
                 .unwrap_or_else(|| format!("Key {code}")),
+            Action::Shortcut { keys } => keys.label(),
             Action::Mouse { button } => button.label().into(),
             Action::Wheel { direction } => format!("Scroll {}", direction.label()),
             Action::ActionSet { index } => format!("Action set {}", index + 1),

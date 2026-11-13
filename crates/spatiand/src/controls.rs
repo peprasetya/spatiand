@@ -7,14 +7,22 @@
 //! and `docs/input-mapper.md` — so it sees exactly one device, as it would in Game Mode.
 //!
 //! The layout follows focus: a Steam game by its app id, anything else by its app id or window
-//! class. Each is stored on its own in `~/.config/spatiand/layouts`.
+//! class. Each is stored on its own, in `~/.config/spatiand/apps/layouts` (shared with every
+//! paired machine) or, from before that, `~/.config/spatiand/layouts` -- see `Store`.
+//!
+//! **A trackpad's presses** (a Mac's: [`spatiand_input::PadPress`]) are the pointer's clicks
+//! unless the application's layout binds them. Where the press lands decides first: on the
+//! room's own things -- a title bar and its buttons, the keyboard, a notice, a menu, a drag going
+//! on -- it is the room's, as always. Anywhere else it is the application's, and if the layout
+//! binds that press it is the layout's alone: the click it would have made is held back. See
+//! [`Controls::route_pad_press`].
 
 use std::time::{Duration, Instant};
 
 use glam::DVec3;
 use spatiand_input::gamepad::{GamepadState, Gamepads};
 use spatiand_input::virtual_pad::{self, Report, VirtualPad};
-use spatiand_input::{Control, ControllerState};
+use spatiand_input::{Control, ControllerState, PadPress};
 use spatiand_mapper::editor::{self, Editor};
 use spatiand_mapper::{
     AppKey, Button, Command, Engine, Frame, MouseButton, PadButton, RadialView, Rates, Snapshot,
@@ -95,6 +103,139 @@ pub struct Controls {
     /// The last report built, whether or not there was a device here to take it. A remote
     /// application is played with this same report, sent to its host — see `remote::Remotes`.
     report: Report,
+    /// Where the trackpad's press going on went. See [`Controls::route_pad_press`].
+    route: PressRoute,
+    /// Whether other pads are read at all. See [`Controls::without_devices`].
+    devices: bool,
+    /// Whether a controller has said it reports a trackpad's presses, for the editor.
+    pad_presses_reported: bool,
+}
+
+/// Where a trackpad's press went, decided as it went down, and the clicks it held back.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct PressRoute {
+    /// The press this is about, by its fingers; 0 for none.
+    fingers: u8,
+    /// It went to the application: the layout reads it (a frame after it went down).
+    to_layout: bool,
+    /// The layout binds it, so the click it made is not the pointer's.
+    claimed: bool,
+    /// The pointer's two buttons as last seen, and whether each one's press is held back.
+    right_was: bool,
+    left_was: bool,
+    right_held_back: bool,
+    left_held_back: bool,
+}
+
+impl PressRoute {
+    /// One frame: the press as the controller says it, whether the pointer is on the room's own
+    /// things (asked only as a press begins), whether the layout binds a press, and the
+    /// pointer's two buttons as the controller made them. Returns the buttons the pointer is to
+    /// see: unchanged, except a press of either that began with a claimed press.
+    ///
+    /// Only a button's going down is held back, and then until it comes up: a button already
+    /// held -- the three-finger drag -- goes on being held whatever is pressed meanwhile.
+    pub fn frame(
+        &mut self,
+        press: Option<PadPress>,
+        room_pointed: impl FnOnce() -> bool,
+        binds: impl Fn(Button) -> bool,
+        right: bool,
+        left: bool,
+    ) -> (bool, bool) {
+        let fingers = press.map(|p| p.fingers).unwrap_or(0);
+        if fingers == 0 {
+            self.fingers = 0;
+            self.to_layout = false;
+            self.claimed = false;
+        } else if self.fingers == 0 {
+            self.fingers = fingers;
+            self.to_layout = !room_pointed();
+            self.claimed = self.to_layout
+                && Button::pad_press(fingers, false).is_some_and(&binds);
+        }
+        if self.claimed {
+            self.right_held_back |= right && !self.right_was;
+            self.left_held_back |= left && !self.left_was;
+        }
+        self.right_held_back &= right;
+        self.left_held_back &= left;
+        self.right_was = right;
+        self.left_was = left;
+        (right && !self.right_held_back, left && !self.left_held_back)
+    }
+
+    /// The press's buttons as the layout is to read them: only one that went to the
+    /// application, and only while it is the same press.
+    pub fn buttons(&self, press: Option<PadPress>) -> Vec<Button> {
+        match press {
+            Some(p) if self.to_layout && p.fingers == self.fingers => {
+                let mut out: Vec<Button> = Button::pad_press(p.fingers, false).into_iter().collect();
+                if p.deep {
+                    out.extend(Button::pad_press(p.fingers, true));
+                }
+                out
+            }
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// What a layout's Spatiand action asks of the room, for every room loop to do the same way.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Effect {
+    /// Hand the shell this, as a button of the room's would.
+    Intent(spatiand_shell::Intent),
+    /// Do this, as the shell's own rows do.
+    Event(spatiand_shell::ShellEvent),
+    /// Show or hide the room's keyboard.
+    Keyboard,
+    Screenshot,
+    /// Open the list of open windows, which is filled first.
+    Switcher,
+    /// The keyboard's microphone key: dictate into what has the keys, or stop.
+    Dictate,
+    /// Nothing to do it to: closing or hiding with no window in front.
+    Nothing,
+}
+
+/// What `command` does, with `focused` the window in front (`WindowLayout::focused_id`).
+pub fn command_effect(command: Command, focused: Option<usize>) -> Effect {
+    use spatiand_shell::{HudAction, Intent, ShellEvent};
+    match command {
+        Command::Hud => Effect::Intent(Intent::ToggleHud),
+        Command::Launcher => Effect::Intent(Intent::ToggleLauncher),
+        Command::Keyboard => Effect::Keyboard,
+        Command::Screenshot => Effect::Screenshot,
+        Command::Recentre => Effect::Event(ShellEvent::Hud(HudAction::Recentre)),
+        // The window in front, as the bar's cross and hide button do it.
+        Command::CloseWindow => focused.map_or(Effect::Nothing, |id| Effect::Event(ShellEvent::CloseWindow(id))),
+        Command::HideWindow => {
+            focused.map_or(Effect::Nothing, |id| Effect::Event(ShellEvent::HideWindow { id, hidden: true }))
+        }
+        Command::Switcher => Effect::Switcher,
+        Command::Dictate => Effect::Dictate,
+        Command::Record => Effect::Event(ShellEvent::Hud(HudAction::Record)),
+    }
+}
+
+/// What the keys held went from and to, as presses and releases in the order a keyboard makes
+/// them for a shortcut: modifiers down first, then the rest; the rest up first, then the
+/// modifiers. So a layout's Ctrl+Shift+T reaches the window as Control, Shift, T, and is let go
+/// as T, Shift, Control -- by code it would have been T first, a bare T.
+pub fn key_changes(was: &[u16], now: &[u16]) -> Vec<(u32, bool)> {
+    use spatiand_mapper::keys::is_modifier;
+    let up = |modifier: bool| {
+        was.iter()
+            .filter(move |c| !now.contains(c) && is_modifier(**c) == modifier)
+            .map(|c| (*c as u32, false))
+    };
+    let down = |modifier: bool| {
+        now.iter()
+            .filter(move |c| !was.contains(c) && is_modifier(**c) == modifier)
+            .map(|c| (*c as u32, true))
+    };
+    up(false).chain(up(true)).chain(down(true)).chain(down(false)).collect()
 }
 
 impl Controls {
@@ -106,9 +247,23 @@ impl Controls {
                 None
             }
         };
+        Self::with_pad(pad, true)
+    }
+
+    /// With no virtual gamepad made and no other pad read: the layouts and their keys, mouse and
+    /// commands alone. For the snapshot room's scripted presses, which must not make or take a
+    /// device on the machine they run on.
+    #[allow(dead_code)] // Only the snapshot room's; the Mac and the phone compile this file too.
+    pub fn without_devices() -> Self {
+        Self::with_pad(None, false)
+    }
+
+    fn with_pad(pad: Option<VirtualPad>, devices: bool) -> Self {
         let app = AppKey::App(String::new());
         Self {
-            store: Store::new(spatiand_track::config::config_dir().join("layouts")),
+            devices,
+            store: Store::new(spatiand_track::config::config_dir().join("layouts"))
+                .with_synced(spatiand_sync::default_folders().0.join("layouts")),
             engine: Engine::new(app.default_layout()),
             app,
             app_name: "the desktop".into(),
@@ -131,6 +286,8 @@ impl Controls {
             pad_complained: false,
             pad_buttons: (0, false, false, false, false),
             report: Report::default(),
+            route: PressRoute::default(),
+            pad_presses_reported: false,
         }
     }
 
@@ -174,11 +331,23 @@ impl Controls {
     /// Everything physical, merged.
     pub fn gather(&mut self, deck: Option<&ControllerState>) -> Snapshot {
         let mut snapshot = deck.map(deck_snapshot).unwrap_or_default();
+        // A trackpad's press, where it went to the application (`route_pad_press`, last frame).
+        let press = deck.and_then(|d| d.pad_press);
+        self.pad_presses_reported |= deck.is_some_and(|d| d.reports_pad_presses);
+        if press.is_none() {
+            self.route.fingers = 0;
+            self.route.to_layout = false;
+            self.route.claimed = false;
+        }
+        for button in self.route.buttons(press) {
+            snapshot.buttons.set(button, true);
+        }
         self.guide_now = false;
         self.pad_buttons_was = self.pad_buttons_now;
         self.pad_buttons_now = Default::default();
         self.touchpad = None;
-        for pad in self.gamepads.poll() {
+        let pads = if self.devices { self.gamepads.poll() } else { Vec::new() };
+        for pad in pads {
             self.guide_now |= pad.guide;
             let theirs = gamepad_snapshot(&pad);
             self.pad_buttons_now = self.pad_buttons_now.union(theirs.buttons);
@@ -268,16 +437,7 @@ impl Controls {
         }
 
         let mut delivery = Delivery::default();
-        for code in &self.keys {
-            if !frame.keys.contains(code) {
-                delivery.keys.push((*code as u32, false));
-            }
-        }
-        for code in &frame.keys {
-            if !self.keys.contains(code) {
-                delivery.keys.push((*code as u32, true));
-            }
-        }
+        delivery.keys = key_changes(&self.keys, &frame.keys);
         self.keys = frame.keys.clone();
         for button in &self.mouse {
             if !frame.mouse_buttons.contains(button) {
@@ -324,6 +484,28 @@ impl Controls {
             .iter()
             .find(|(b, _)| self.pad_buttons_now.is_down(*b))
             .map(|(_, c)| *c)
+    }
+
+    /// A trackpad's press, routed: called where the pointer's clicks are decided, once the
+    /// aim is known, with the press as the controller says it (`ControllerState::pad_press`),
+    /// whether the pointer is on the room's own things (a title bar or its buttons, the
+    /// keyboard, a notice, a menu, a drag going on), and the pointer's two buttons. Returns the
+    /// buttons the pointer is to act on.
+    ///
+    /// A press on the room's things is the room's, as it always was: the layout never hears
+    /// of it. Anywhere else it is the application's: the layout reads it from the next frame,
+    /// and if it binds that press, the click the press made is held back from the pointer. An
+    /// unbound press -- every press, in a layout that names none -- changes nothing at all,
+    /// and is not one frame late: the pointer acts on it in this frame, as before.
+    pub fn route_pad_press(
+        &mut self,
+        press: Option<PadPress>,
+        room_pointed: impl FnOnce() -> bool,
+        right: bool,
+        left: bool,
+    ) -> (bool, bool) {
+        let engine = &self.engine;
+        self.route.frame(press, room_pointed, |b| engine.binds(b), right, left)
     }
 
     /// Another pad's touchpad, as of the last [`Self::gather`]: what the right trackpad is on
@@ -373,7 +555,9 @@ impl Controls {
         // a layout saved for another application a minute ago has to be on the list.
         let others = self.store.saved_except(&self.app);
         self.editor = Some(
-            Editor::new(self.app.clone(), self.app_name.clone(), layout).with_others(others),
+            Editor::new(self.app.clone(), self.app_name.clone(), layout)
+                .with_others(others)
+                .with_pad_presses(self.pad_presses_reported),
         );
         self.reset_to_default = false;
     }
@@ -642,6 +826,90 @@ mod tests {
             frame.pad.buttons = button.bit();
             assert_eq!(report_of(&frame).buttons, 1 << i, "{button:?}");
         }
+    }
+
+    fn press(fingers: u8, deep: bool) -> Option<PadPress> {
+        Some(PadPress { fingers, deep })
+    }
+
+    #[test]
+    fn an_unbound_press_leaves_the_clicks_as_they_were_and_in_the_same_frame() {
+        let mut route = PressRoute::default();
+        let binds_nothing = |_: Button| false;
+        // One finger: the primary button, down with the press and up with it.
+        assert_eq!(route.frame(press(1, false), || false, binds_nothing, true, false), (true, false));
+        assert_eq!(route.frame(press(1, true), || false, binds_nothing, true, false), (true, false));
+        assert_eq!(route.frame(None, || false, binds_nothing, false, false), (false, false));
+        // Two fingers: the secondary, whichever way macOS was told to make it.
+        assert_eq!(route.frame(press(2, false), || false, binds_nothing, false, true), (false, true));
+        assert_eq!(route.frame(None, || false, binds_nothing, false, false), (false, false));
+        // A mouse's click, no press at all.
+        assert_eq!(route.frame(None, || unreachable!(), binds_nothing, true, false), (true, false));
+    }
+
+    #[test]
+    fn a_bound_press_holds_its_click_back_and_the_layout_reads_it() {
+        let mut route = PressRoute::default();
+        let binds_two = |b: Button| b == Button::PadClick2;
+        assert_eq!(route.frame(press(2, false), || false, binds_two, false, true), (false, false));
+        assert_eq!(route.buttons(press(2, false)), vec![Button::PadClick2]);
+        assert_eq!(route.buttons(press(2, true)), vec![Button::PadClick2, Button::PadDeepClick2]);
+        assert_eq!(route.frame(press(2, false), || false, binds_two, false, true), (false, false));
+        assert_eq!(route.frame(None, || false, binds_two, false, false), (false, false));
+        assert!(route.buttons(None).is_empty());
+        // And a one-finger press in the same layout is the click it always was.
+        assert_eq!(route.frame(press(1, false), || false, binds_two, true, false), (true, false));
+    }
+
+    #[test]
+    fn a_press_on_the_rooms_own_things_stays_the_rooms_even_when_bound() {
+        let mut route = PressRoute::default();
+        let binds_all = |_: Button| true;
+        assert_eq!(route.frame(press(1, false), || true, binds_all, true, false), (true, false));
+        assert!(route.buttons(press(1, true)).is_empty(), "the layout never hears of it");
+    }
+
+    #[test]
+    fn a_drag_already_held_goes_on_through_a_bound_press() {
+        let mut route = PressRoute::default();
+        let binds_three = |b: Button| b == Button::PadClick3;
+        // The three-finger drag holds the primary before any press.
+        assert_eq!(route.frame(None, || false, binds_three, true, false), (true, false));
+        assert_eq!(route.frame(press(3, false), || false, binds_three, true, false), (true, false));
+        assert_eq!(route.buttons(press(3, false)), vec![Button::PadClick3]);
+    }
+
+    #[test]
+    fn every_room_command_does_its_thing() {
+        use spatiand_shell::{HudAction, Intent, ShellEvent};
+        let expected = |command| match command {
+            Command::Hud => Effect::Intent(Intent::ToggleHud),
+            Command::Launcher => Effect::Intent(Intent::ToggleLauncher),
+            Command::Keyboard => Effect::Keyboard,
+            Command::Screenshot => Effect::Screenshot,
+            Command::Recentre => Effect::Event(ShellEvent::Hud(HudAction::Recentre)),
+            Command::CloseWindow => Effect::Event(ShellEvent::CloseWindow(7)),
+            Command::HideWindow => Effect::Event(ShellEvent::HideWindow { id: 7, hidden: true }),
+            Command::Switcher => Effect::Switcher,
+            Command::Dictate => Effect::Dictate,
+            Command::Record => Effect::Event(ShellEvent::Hud(HudAction::Record)),
+        };
+        for command in Command::ALL {
+            assert_eq!(command_effect(command, Some(7)), expected(command), "{command:?}");
+        }
+        // With no window in front there is nothing to close or hide.
+        assert_eq!(command_effect(Command::CloseWindow, None), Effect::Nothing);
+        assert_eq!(command_effect(Command::HideWindow, None), Effect::Nothing);
+    }
+
+    #[test]
+    fn a_shortcut_is_pressed_modifiers_first_and_let_go_modifiers_last() {
+        // Ctrl+Shift+T as the engine holds it: sorted by code, T first.
+        let held = [20u16, 29, 42];
+        assert_eq!(key_changes(&[], &held), vec![(29, true), (42, true), (20, true)]);
+        assert_eq!(key_changes(&held, &[]), vec![(20, false), (29, false), (42, false)]);
+        // Keys that stay down are not said again.
+        assert_eq!(key_changes(&[29], &[29, 46]), vec![(46, true)]);
     }
 
     #[test]

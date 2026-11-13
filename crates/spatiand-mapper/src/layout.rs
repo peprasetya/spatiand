@@ -742,6 +742,51 @@ mod tests {
     }
 
     #[test]
+    fn every_template_written_before_the_trackpad_presses_loads_as_it_was() {
+        // What `toml::to_string_pretty` made of each template before pad presses, shortcuts and
+        // the new commands: unchanged, and with nothing bound to a press.
+        for template in crate::templates::all() {
+            let text = toml::to_string_pretty(&template).unwrap();
+            assert!(!text.contains("pad_click") && !text.contains("shortcut"), "{}", template.name);
+            let back: Layout = toml::from_str(&text).unwrap();
+            assert_eq!(back, template);
+        }
+    }
+
+    #[test]
+    fn a_trackpad_press_and_a_shortcut_are_kept_as_a_person_would_write_them() {
+        let text = r#"
+            name = "Browser"
+            [[sets]]
+            name = "Default"
+            [sets.controls.buttons.pad_deep_click3]
+            activators = [{ actions = [{ type = "shortcut", keys = "ctrl+shift+t" }] }]
+            [sets.controls.buttons.pad_click1]
+            activators = [{ when = { kind = "release_press" }, actions = [{ type = "mouse", button = "left" }] }]
+            [sets.controls.buttons.pad_deep_click1]
+            activators = [{ actions = [{ type = "shell", command = "close_window" }] }]
+        "#;
+        let layout: Layout = toml::from_str(text).expect("parses");
+        let buttons = &layout.sets[0].controls.buttons;
+        assert_eq!(
+            buttons[&Button::PadDeepClick3],
+            Binding::press(Action::Shortcut {
+                keys: crate::keys::Shortcut::new(1 | 2, 20)
+            })
+        );
+        assert_eq!(buttons[&Button::PadClick1].activators[0].when, When::ReleasePress);
+        assert_eq!(
+            buttons[&Button::PadDeepClick1],
+            Binding::press(Action::Shell {
+                command: crate::output::Command::CloseWindow
+            })
+        );
+        let again = toml::to_string_pretty(&layout).unwrap();
+        assert!(again.contains("keys = \"ctrl+shift+t\""), "{again}");
+        assert_eq!(toml::from_str::<Layout>(&again).unwrap(), layout);
+    }
+
+    #[test]
     fn a_file_naming_only_a_mode_loads_with_every_default() {
         let text = r#"
             name = "Hand written"

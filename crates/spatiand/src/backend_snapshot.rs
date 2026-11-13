@@ -1724,8 +1724,11 @@ fn swipe_on_the_window(state: &mut Spatiand, windows: &[crate::scene::WindowQuad
 /// ```text
 /// click:u,v  rclick:u,v  back:u,v  forward:u,v  move:u,v  down:u,v  up:u,v  drag:u,v,u,v
 /// scroll:dx,dy  thumbs:dy,seconds,hover  pinch:1.5  key:28  key:ctrl+shift+20  keydown:42  keyup:42  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
-/// roomup  notice  dictate:/tmp/said.wav
+/// roomup  notice  dictate:/tmp/said.wav  pad:3,1
 /// ```
+///
+/// `pad:fingers,deep` is a trackpad's press, deep or not, through the room's controls and the
+/// window's application's layout: see [`pad_press`].
 ///
 /// `roomup` takes the pointer off every window and lets go of the left button there, on the room:
 /// how a drag is dropped onto nothing (an application's `.spatiapp` is offered for installing so).
@@ -1777,6 +1780,9 @@ enum Scripted {
     /// The window (`SPATIAND_WINDOW`'s, or the first) asked what it shows, as dictation and the
     /// assistant ask it (`xr::ask_description`); its answer logged as `describe: said ...`.
     Describe,
+    /// `pad:fingers,deep`: a trackpad's press, as a Mac's trackpad gives it to the room. See
+    /// [`pad_press`].
+    Pad(u8, bool),
 }
 
 fn scripted_steps() -> Vec<Scripted> {
@@ -1833,6 +1839,7 @@ fn scripted_steps() -> Vec<Scripted> {
                 ("notice", _) => Scripted::Notice,
                 ("dictate", _) => Scripted::Dictate(rest.to_string()),
                 ("describe", _) => Scripted::Describe,
+                ("pad", [fingers, deep]) if (1.0..=5.0).contains(fingers) => Scripted::Pad(*fingers as u8, *deep != 0.0),
                 ("window", _) => Scripted::Window(rest.to_string()),
                 _ => {
                     log::warn!("SPATIAND_STEPS: not understood: {step:?}");
@@ -2200,8 +2207,69 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
             }
         }
         Scripted::Hold(code, down) => key_event(state, *code, *down),
+        Scripted::Pad(fingers, deep) => pad_press(state, windows, *at, *fingers, *deep),
         Scripted::Wait(_) | Scripted::Dump(_) | Scripted::Window(_) => {}
     }
+}
+
+/// A trackpad's press on the chosen window where the pointer is, as a Mac's trackpad gives it to
+/// the room: the click down for a few frames, the deep click on top of it if `deep`, then both
+/// let go -- through the room's own controls at its frame rate: the press routed
+/// (`Controls::route_pad_press`, here never on the room's own things), the window's application's
+/// layout from the store, its keys pressed in order on the seat. The click the press makes -- the
+/// left button, or the right with two fingers, as macOS makes them -- reaches the window unless
+/// the layout has that press instead. What happened is logged as `pad:` lines.
+fn pad_press(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], at: (f64, f64), fingers: u8, deep: bool) {
+    use spatiand_input::{ControllerState, PadPress};
+    thread_local! {
+        static CONTROLS: std::cell::RefCell<Option<crate::controls::Controls>> = const { std::cell::RefCell::new(None) };
+    }
+    let Some(window) = chosen_window(state, windows).map(|w| w.window.clone()) else {
+        log::warn!("pad: no window to press on");
+        return;
+    };
+    state.focus_window(&window);
+    let app = crate::controls::app_key(state.pid_of(&window), state.app_id_of(&window).as_deref());
+    let press = |deep| Some(PadPress { fingers, deep });
+    let mut frames = vec![press(false); 3];
+    if deep {
+        frames.extend([press(true); 4]);
+    }
+    frames.extend([press(false); 2]);
+    frames.extend([None; 4]);
+    let button = if fingers == 2 { crate::pointer::BTN_RIGHT } else { crate::pointer::BTN_LEFT };
+    CONTROLS.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        let controls = cell.get_or_insert_with(crate::controls::Controls::without_devices);
+        controls.focus(app.clone(), "the chosen window");
+        let mut was_down = false;
+        let mut held_back = false;
+        for p in frames {
+            let controller = ControllerState { pad_press: p, reports_pad_presses: true, ..ControllerState::default() };
+            let snapshot = controls.gather(Some(&controller));
+            let clicked = p.is_some();
+            let (right, left) = controls.route_pad_press(p, || false, clicked && fingers != 2, clicked && fingers == 2);
+            let down = right || left;
+            if clicked && !down && !was_down && !held_back {
+                held_back = true;
+                log::info!("pad: {fingers} fingers: the click is held back for {app:?}'s layout");
+            }
+            if down != was_down {
+                log::info!("pad: {fingers} fingers: button {button:#x} {}", if down { "down" } else { "up" });
+                pointer_event(state, windows, at, Some((button, down)));
+                was_down = down;
+            }
+            let delivery = controls.step(&snapshot, false);
+            for (code, pressed) in &delivery.keys {
+                log::info!("pad: key {code} {}", if *pressed { "down" } else { "up" });
+                key_event(state, *code, *pressed);
+            }
+            for command in &delivery.commands {
+                log::info!("pad: command {command:?}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(14));
+        }
+    });
 }
 
 /// A window's texture, read straight back and written as a PNG: the application's own

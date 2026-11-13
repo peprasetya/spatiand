@@ -69,6 +69,18 @@ fn spot(callout: Callout) -> (f32, f32, Shape) {
             B::RPadTouch => (1215.0, 420.0, Shape::Circle(6.0)),
             B::GlassesUp => (1045.0, 610.0, Shape::Circle(9.0)),
             B::GlassesDown => (1045.0, 645.0, Shape::Circle(9.0)),
+            // A Mac trackpad's presses are not on the Deck's picture (they are left out where
+            // it is drawn); here only so that every button has a place.
+            B::PadClick1
+            | B::PadClick2
+            | B::PadClick3
+            | B::PadClick4
+            | B::PadClick5
+            | B::PadDeepClick1
+            | B::PadDeepClick2
+            | B::PadDeepClick3
+            | B::PadDeepClick4
+            | B::PadDeepClick5 => (1215.0, 420.0, Shape::Circle(6.0)),
         },
         Callout::Group(g) => match g {
             Group::LeftStick => (640.0, 240.0, Shape::Circle(44.0)),
@@ -184,7 +196,7 @@ pub fn render(text: &mut TextRenderer, callouts: &[(Callout, String)], scale: f3
         let c = Callout::Group(group);
         draw_shape(&mut pixmap, t, spot(c), if bound(c) { BOUND } else { CONTROL });
     }
-    for button in Button::ALL {
+    for button in Button::ALL.into_iter().filter(|b| b.device() != spatiand_mapper::input::Device::Trackpad) {
         let c = Callout::Button(button);
         let (x, y, shape) = spot(c);
         let tint = if bound(c) { BOUND } else { CONTROL };
