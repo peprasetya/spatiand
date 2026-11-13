@@ -974,7 +974,9 @@ public class MainActivity extends Activity implements SensorEventListener {
     void endFlat() {
         if (flatFrom < 0) return;
         Log.i(TAG, "the glasses are given back to the room");
-        if (flatOn >= 0) Shell.moveApp(flatOn, flatFrom);
+        // Even with no glasses' display to take it from (unplugged meanwhile): the helper knows
+        // the tasks it lent, and brings them back from wherever Android has put them.
+        Shell.moveApp(flatOn, flatFrom);
         flatFrom = -1;
         flatOn = -1;
         Native.flat(false);

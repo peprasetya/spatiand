@@ -106,6 +106,11 @@ public final class ShellHelper extends Binder {
         /** Its app's sound, taken off the speakers for the room (see {@link #sound}). */
         Object policy;
         AudioRecord record;
+        /**
+         * Its tasks while they are lent to another display (the glasses', for an app shown flat:
+         * {@link #moveTask}); empty otherwise. A display whose app is away is not an empty one.
+         */
+        volatile int[] lent = {};
     }
 
     final Map<Integer, Display> displays = new HashMap<>();
@@ -686,6 +691,8 @@ public final class ShellHelper extends Binder {
             if (now.length > 0 && round++ % 2 == 0) {
                 java.util.Set<Integer> secure = secureDisplays();
                 for (Display d : now) {
+                    // Its app is on the glasses: it has not stopped hiding its picture.
+                    if (d.lent.length > 0) continue;
                     boolean is = secure.contains(d.id);
                     if (is != d.secure) {
                         d.secure = is;
@@ -695,7 +702,13 @@ public final class ShellHelper extends Binder {
                 }
             }
             for (Display d : now) {
+                // Lent to the glasses, its display has no task on it, and its app is not closed:
+                // told empty, the room closed its window and let the display go within a second
+                // of lending it, and there was nowhere to give the app back to.
+                if (d.lent.length > 0) continue;
                 int tasks = tasksOn(d.id);
+                // Lent between the look above and this one.
+                if (d.lent.length > 0) continue;
                 if (tasks > 0) {
                     d.hadTask = true;
                 } else if (tasks == 0 && d.hadTask) {
@@ -754,17 +767,49 @@ public final class ShellHelper extends Binder {
      * whenever their display is added, as it is on each change of mode -- is taken down, or it
      * would cover the app (`xreal_preview_update`, docs/beam-pro.md); the room's own picture
      * covers it otherwise.
+     *
+     * <p>The tasks taken off one of the apps' own displays are remembered as lent, by their ids:
+     * that display is not watched for being empty meanwhile, and they are brought back to it
+     * from wherever they are by then -- the glasses' display they were put on, the one that
+     * replaced it when the glasses were plugged in again, or the phone's, where Android puts a
+     * display's tasks when it goes.
      */
     void moveTask(int from, int to) throws Exception {
-        Method all = activityTaskManager.getClass().getMethod("getAllRootTaskInfosOnDisplay", int.class);
-        java.util.List<?> tasks = (java.util.List<?>) all.invoke(activityTaskManager, from);
-        Method move = activityTaskManager.getClass().getMethod("moveRootTaskToDisplay", int.class, int.class);
-        for (Object task : tasks) {
-            int id = task.getClass().getField("taskId").getInt(task);
-            move.invoke(activityTaskManager, id, to);
-            log("task " + id + " from display " + from + " to " + to);
+        Display source, home;
+        synchronized (this) {
+            source = displays.get(from);
+            home = displays.get(to);
         }
-        if (!displays.containsKey(to)) {
+        int[] ids;
+        if (home != null && home.lent.length > 0) {
+            ids = home.lent;
+        } else if (source != null && source.lent.length > 0) {
+            ids = source.lent;
+        } else {
+            Method all = activityTaskManager.getClass().getMethod("getAllRootTaskInfosOnDisplay", int.class);
+            java.util.List<?> tasks = (java.util.List<?>) all.invoke(activityTaskManager, from);
+            ids = new int[tasks.size()];
+            for (int i = 0; i < ids.length; i++) {
+                Object task = tasks.get(i);
+                ids[i] = task.getClass().getField("taskId").getInt(task);
+            }
+        }
+        // Before the first of them leaves, so the watcher never finds the display just empty.
+        if (source != null) source.lent = ids;
+        Method move = activityTaskManager.getClass().getMethod("moveRootTaskToDisplay", int.class, int.class);
+        for (int id : ids) {
+            try {
+                move.invoke(activityTaskManager, id, to);
+                log("task " + id + " from display " + from + " to " + to);
+            } catch (Exception e) {
+                // Closed while it was away, or there already.
+                Throwable cause = e instanceof java.lang.reflect.InvocationTargetException ? e.getCause() : e;
+                log("task " + id + " not moved to display " + to + ": " + cause);
+            }
+        }
+        // Back home: watched again, and found empty if the app was closed while it was away.
+        if (home != null) home.lent = new int[0];
+        if (home == null) {
             Process placeholder = new ProcessBuilder("settings", "put", "system", "xreal_preview_update", "stop")
                     .redirectErrorStream(true).start();
             placeholder.waitFor();
