@@ -260,6 +260,10 @@ pub fn run(
                 Err(e) => Ended::Lost(e),
             };
             client.close_all();
+            // What the host was offering goes from the list of windows with the link, however it
+            // ended (lost, refused, taken over, the host forgotten): nobody is there to show one
+            // that is chosen, and a host that comes back says again what it has.
+            super::offered_gone(&config.host, None);
             if let Ok(mut v) = view.lock() {
                 v.quiet = false;
                 // A host gone mid-rumble never says stop, and the motors run until told.
