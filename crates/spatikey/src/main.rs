@@ -580,7 +580,12 @@ impl SpatiKey {
     /// looking again for its Mac.
     fn tick(&mut self) {
         if let Some(session) = self.session.clone() {
-            if self.used.elapsed() >= Duration::from_secs(self.settings.open_secs.max(30)) {
+            // A new recovery code is shown this once, to be typed by eye into another window:
+            // it is not taken down for this window's sitting unused meanwhile (the old code
+            // stopped working when it was made). The service closes the session by its own
+            // clock all the same, and the next thing asked here finds that out.
+            let code_shown = matches!(self.screen, Screen::Code(_));
+            if !code_shown && self.used.elapsed() >= Duration::from_secs(self.settings.open_secs.max(30)) {
                 let unused = ui::span(self.settings.open_secs).to_lowercase();
                 log::info!("SpatiKey sat unused for {unused}: shut");
                 self.lock();
