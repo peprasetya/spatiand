@@ -35,16 +35,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: FFmpeg, if an earlier run built it
         id: ffmpeg
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: third_party/ffmpeg/out/linux
           key: ffmpeg-${{ hashFiles('third_party/ffmpeg/versions.sh', 'third_party/ffmpeg/build.sh') }}-ubuntu-24.04
       - run: tools/ci-deps.sh linux ffmpeg
       - if: steps.ffmpeg.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: third_party/ffmpeg/out/linux
           key: ffmpeg-${{ hashFiles('third_party/ffmpeg/versions.sh', 'third_party/ffmpeg/build.sh') }}-ubuntu-24.04
@@ -60,7 +60,7 @@ jobs:
           . ~/.spatiand-ci-env; . "$HOME/.cargo/env" 2>/dev/null
           cargo build -p spatiand -p spatishelf --locked
           python3 -I tools/spatiand-dnd-e2e.py target/debug target/spatimesh-e2e/dnd
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: spatimesh-e2e
@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: tools/ci-deps.sh android
       - uses: Swatinem/rust-cache@v2
       - name: The library, for the Beam Pro
@@ -99,7 +99,7 @@ jobs:
           . ~/.spatiand-ci-env
           . "$HOME/.cargo/env" 2>/dev/null || true
           android/build.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: spatiand-apk
@@ -112,7 +112,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: crates/spatiand-mac
