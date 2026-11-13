@@ -162,7 +162,22 @@ impl Dictation {
 /// One phrase: what was heard (for steering the next), and what to type. `None` for nothing said.
 fn write(hemera: &Hemera, settings: &VoiceSettings, focus: &Description, recent: &[String], phrase: &[i16]) -> Result<Option<(String, String)>, String> {
     let prompt = whisper_prompt(focus, &settings.words, recent, settings.primer());
-    let heard = hemera.transcribe(&settings.transcription_model, phrase, RATE, settings.whisper_language(), &prompt)?;
+    let mut heard = hemera.transcribe(&settings.transcription_model, phrase, RATE, settings.whisper_language(), &prompt)?;
+    // **Whisper reads its prompt back.** The prompt ends with the wearer's last phrases and
+    // what the window shows, which after a while of dictating is mostly what was dictated: of
+    // a phrase it cannot make out -- a cough, a short word, a noise that moved like a voice --
+    // it then writes one of those again, and that went into the last phrases in its turn, so
+    // an old sentence came back again and again though it was said once. What was heard is
+    // already in the prompt, then it is asked again with none of the wearer's words in it:
+    // said twice, a sentence is heard twice; read back, it is not there the second time.
+    if echoes(&heard, recent, &focus.text) {
+        let mut bare = focus.clone();
+        bare.text.clear();
+        let prompt = whisper_prompt(&bare, &settings.words, &[], "");
+        let again = hemera.transcribe(&settings.transcription_model, phrase, RATE, settings.whisper_language(), &prompt)?;
+        log::info!("dictation: {heard:?} is in the prompt already; heard without it, {again:?}");
+        heard = again;
+    }
     if is_hallucination(&heard) {
         return Ok(None);
     }
@@ -181,6 +196,25 @@ fn write(hemera: &Hemera, settings: &VoiceSettings, focus: &Description, recent:
     };
     log::debug!("dictation: heard {heard:?}, by the rules {ruled:?}, typed {text:?}");
     Ok(Some((heard, text)))
+}
+
+/// Whether what was heard is words the prompt already had, in a row: an earlier phrase, some of
+/// one, or some of what the window shows. Three words or more -- "ya" and "oke lanjut" are said
+/// again all day, and are too short to be told from themselves.
+fn echoes(heard: &str, recent: &[String], shown: &str) -> bool {
+    fn words(text: &str) -> Vec<String> {
+        text.split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(str::to_lowercase)
+            .collect()
+    }
+    let heard = words(heard);
+    if heard.len() < 3 {
+        return false;
+    }
+    let has = |text: &str| words(text).windows(heard.len()).any(|run| run == heard.as_slice());
+    // As the prompt has them: the last phrases run together, and the end of what is shown.
+    has(&recent.join(" ")) || has(shown)
 }
 
 /// The small model's reading of a phrase said into a terminal.
@@ -216,4 +250,20 @@ fn cleanup(hemera: &Hemera, settings: &VoiceSettings, focus: &Description, heard
 fn tail_lines(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::echoes;
+
+    #[test]
+    fn a_phrase_read_back_from_the_prompt_is_known_and_a_new_one_is_not() {
+        let recent = vec!["Coba buka halaman yang tadi.".to_string(), "Terus scroll ke bawah sedikit.".to_string()];
+        assert!(echoes("coba buka halaman yang tadi", &recent, ""));
+        assert!(echoes("Halaman yang tadi. Terus scroll", &recent, ""));
+        assert!(echoes("install it on the Deck", &[], "ok, install it on the deck then"));
+        assert!(!echoes("Sekarang tutup jendelanya.", &recent, ""));
+        // Short answers are said again and again, and are not asked about twice.
+        assert!(!echoes("Terus scroll", &recent, ""));
+    }
 }
