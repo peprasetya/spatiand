@@ -764,9 +764,11 @@ final class RoomTap {
             // says of it, and with how many fingers on the pad, is what this finds out.
             if gesture.type == .pressure {
                 let stage = gesture.stage
+                pressureMost = max(pressureMost, gesture.pressure)
                 if stage != pressureStage {
-                    gestureNote(String(format: "pressure: stage %ld to %ld, pressure %.2f, %ld fingers on the pad", pressureStage, stage, gesture.pressure, lastCount))
+                    gestureNote(String(format: "pressure: stage %ld to %ld, pressure %.2f (most in the stage left: %.2f), %ld fingers on the pad", pressureStage, stage, gesture.pressure, pressureMost, lastCount))
                     pressureStage = stage
+                    pressureMost = 0
                 }
             }
             if gesture.type == .gesture {
@@ -786,6 +788,7 @@ final class RoomTap {
 
     private var gestureSeen = 0
     private var pressureStage = 0
+    private var pressureMost: Float = 0
 
     // **Palm rejection.** A touch is not a finger when it lands on the pad's edge (the sides, and
     // the far edge by the keyboard, where a palm or a thumb rests), or just after a key was
