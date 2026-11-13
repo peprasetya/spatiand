@@ -145,16 +145,32 @@ impl Identity {
         std::fs::create_dir_all(dir).map_err(|e| format!("could not make {}: {e}", dir.display()))?;
         std::fs::write(&cert_path, identity.certificate.as_ref())
             .map_err(|e| format!("could not write {}: {e}", cert_path.display()))?;
-        std::fs::write(&key_path, identity.key.secret_der())
-            .map_err(|e| format!("could not write {}: {e}", key_path.display()))?;
         // The key is readable by this user and nobody else. It is not a password — it cannot be
         // used away from a machine the other end has paired with — but it is still the thing
-        // that says "I am this host".
+        // that says "I am this host". Made that way, not made and then closed: between the two
+        // it was there for any other user of the machine to open, and a descriptor opened then
+        // goes on reading after the permissions change.
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
+            use std::io::Write;
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&key_path)
+                .map_err(|e| format!("could not write {}: {e}", key_path.display()))?;
+            // A file already there -- half an identity, its certificate lost -- keeps the
+            // permissions it had, so they are set before anything is written into it.
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| format!("could not close {} to others: {e}", key_path.display()))?;
+            file.write_all(identity.key.secret_der())
+                .map_err(|e| format!("could not write {}: {e}", key_path.display()))?;
         }
+        #[cfg(not(unix))]
+        std::fs::write(&key_path, identity.key.secret_der())
+            .map_err(|e| format!("could not write {}: {e}", key_path.display()))?;
         log::info!("new identity {}", identity.fingerprint());
         Ok(identity)
     }
@@ -635,6 +651,27 @@ mod tests {
             again.fingerprint(),
             "a host that forgets its identity has to be paired again every restart"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_key_on_disk_is_its_owners_alone_even_over_a_file_left_open_to_all() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("spatiand-identity-mode-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let key = dir.join("identity.key");
+        // Half an identity from before, readable by everybody: no certificate beside it, so a
+        // new one is made over it.
+        std::fs::write(&key, b"old").unwrap();
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o644)).unwrap();
+        Identity::load_or_create(&dir).unwrap();
+        assert_eq!(std::fs::metadata(&key).unwrap().permissions().mode() & 0o777, 0o600);
+        let _ = std::fs::remove_dir_all(&dir);
+        // And one made from nothing.
+        Identity::load_or_create(&dir).unwrap();
+        assert_eq!(std::fs::metadata(&key).unwrap().permissions().mode() & 0o777, 0o600);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
