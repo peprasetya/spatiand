@@ -291,6 +291,25 @@ impl XwmHandler for Spatiand {
         self.clipboard.copied_here(mime_types, true, None);
     }
 
+    /// The X11 application that held the clipboard is gone, or gave it up. The Wayland windows
+    /// here were offered its copy in `new_selection` above, and stop being offered it: the
+    /// default does nothing, which left them a paste that gave nothing.
+    fn cleared_selection(
+        &mut self,
+        _xwm: XwmId,
+        selection: smithay::wayland::selection::SelectionTarget,
+    ) {
+        if selection != smithay::wayland::selection::SelectionTarget::Clipboard {
+            return;
+        }
+        if self.clipboard.let_go_here(true, None) {
+            smithay::wayland::selection::data_device::clear_data_device_selection(
+                &self.display_handle,
+                &self.seat,
+            );
+        }
+    }
+
     fn send_selection(
         &mut self,
         _xwm: XwmId,

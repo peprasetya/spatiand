@@ -1936,9 +1936,16 @@ impl SelectionHandler for Spatiand {
         if ty != smithay::wayland::selection::SelectionTarget::Clipboard {
             return;
         }
-        if let Some(source) = source {
-            self.clipboard
-                .copied_here(source.mime_types(), false, self.xwm.as_mut());
+        match source {
+            Some(source) => {
+                self.clipboard
+                    .copied_here(source.mime_types(), false, self.xwm.as_mut())
+            }
+            // The window set its selection to nothing. The X11 windows here were offered it
+            // on its behalf, and are no longer.
+            None => {
+                self.clipboard.let_go_here(false, self.xwm.as_mut());
+            }
         }
     }
 

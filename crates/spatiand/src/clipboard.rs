@@ -174,6 +174,27 @@ impl Board {
         )
     }
 
+    /// The window here that held the clipboard let go of it: an X11 application that copied
+    /// and has exited (`x11`), or a Wayland one that set its selection to nothing.
+    ///
+    /// True when the clipboard was that kind of window's, and so is now nobody's; the caller
+    /// then withdraws what the other protocol's windows were offered on its behalf. False when
+    /// something else holds it -- a host, or a window of the other kind -- and nothing is to
+    /// change: X11 also reports the claim made here for a Wayland window being given up, and
+    /// that is this function's own doing, not a copy going away.
+    ///
+    /// Left as it was, the windows here went on being offered a paste that gave nothing.
+    pub fn let_go_here(&mut self, x11: bool, xwm: Option<&mut smithay::xwayland::X11Wm>) -> bool {
+        match (&self.owner, x11) {
+            (Some(Owner::Here(_)), false) => untell_x11(xwm),
+            (Some(Owner::HereX11(_)), true) => {}
+            _ => return false,
+        }
+        self.owner = None;
+        self.pending = None;
+        true
+    }
+
     /// A host says its clipboard changed.
     ///
     /// Returns what to pass on: every *other* host hears about it too, which is what lets two
@@ -433,8 +454,12 @@ impl Board {
     /// must change nothing unless `host` is the one holding the clipboard: the pastes waiting
     /// are waiting on the owner, and ending them because some *other* machine is off ended
     /// every picture pasted from a host while any second host was configured and not up.
-    pub fn host_left(&mut self, host: &str) {
-        if self.owner.as_ref() == Some(&Owner::Host(host.to_string())) {
+    ///
+    /// True when it was the owner that left, for the caller to withdraw the offer from the
+    /// windows here.
+    pub fn host_left(&mut self, host: &str) -> bool {
+        let owned = self.owner.as_ref() == Some(&Owner::Host(host.to_string()));
+        if owned {
             self.owner = None;
             self.held = None;
             self.announced = None;
@@ -443,6 +468,7 @@ impl Board {
             // out, by `expire`.
             self.waiting.clear();
         }
+        owned
     }
 
     /// Once a turn: collect what the reader threads finished, start announcing any copy made
@@ -597,7 +623,15 @@ pub fn exchange(remotes: &mut crate::remote::Remotes, state: &mut Spatiand) {
         }
     }
     for host in remotes.offline() {
-        state.clipboard.host_left(&host);
+        if state.clipboard.host_left(&host) {
+            // Its copy went with it, and the windows here are no longer offered it: a paste
+            // entry that is there and gives nothing is worse than one that is not there.
+            smithay::wayland::selection::data_device::clear_data_device_selection(
+                &state.display_handle,
+                &state.seat,
+            );
+            untell_x11(state.xwm.as_mut());
+        }
     }
     let mut said = state
         .clipboard
@@ -615,6 +649,15 @@ fn tell_x11(xwm: Option<&mut smithay::xwayland::X11Wm>, mime_types: &[String]) {
     let offered = clipboard::with_text_aliases(mime_types);
     if let Err(e) = xwm.new_selection(SelectionTarget::Clipboard, Some(offered)) {
         log::warn!("X11 here was not told about the clipboard: {e}");
+    }
+}
+
+/// Give up the X11 clipboard claimed by [`tell_x11`], when what it stood for is gone. Does
+/// nothing when an X11 window of its own holds the clipboard.
+fn untell_x11(xwm: Option<&mut smithay::xwayland::X11Wm>) {
+    let Some(xwm) = xwm else { return };
+    if let Err(e) = xwm.new_selection(SelectionTarget::Clipboard, None) {
+        log::warn!("X11 here was not told the clipboard is empty: {e}");
     }
 }
 
@@ -922,6 +965,31 @@ mod tests {
         assert!(!board.copied_here_is(&ours));
         board.owner = None;
         assert!(!board.copied_here_is(&ours));
+    }
+
+    #[test]
+    fn a_window_letting_go_of_the_clipboard_leaves_it_nobodys_and_only_its_own() {
+        // An X11 application that copied and exited.
+        let mut board = Board::new();
+        board.copied_here(vec!["text/plain".into()], true, None);
+        assert!(!board.let_go_here(false, None), "a Wayland clear is not X11's copy going");
+        assert!(board.owner.is_some());
+        assert!(board.let_go_here(true, None));
+        assert!(board.owner.is_none());
+        assert!(board.pending.is_none(), "a copy that is gone must not be announced");
+        assert!(!board.let_go_here(true, None), "nothing to let go of twice");
+        // A Wayland one clearing its selection.
+        board.copied_here(vec!["text/plain".into()], false, None);
+        assert!(!board.let_go_here(true, None));
+        assert!(board.let_go_here(false, None));
+        assert!(board.owner.is_none());
+        // What a host holds is not a window's to let go of.
+        let mut board = from_a_host("hello");
+        assert!(!board.let_go_here(true, None));
+        assert!(!board.let_go_here(false, None));
+        assert!(board.held.is_some());
+        assert!(!board.host_left("elsewhere"));
+        assert!(board.host_left("workshop"));
     }
 
     #[test]
