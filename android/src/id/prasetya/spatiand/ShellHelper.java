@@ -280,8 +280,20 @@ public final class ShellHelper extends Binder {
                 log("Spatiand has been updated since this started: going");
                 System.exit(0);
             }
+            IBinder before = app, now = reply.getBinder("app");
+            // A new process of the app knows nothing of what the one before it asked for.
+            if (before != null && !before.equals(now)) releaseAll("the app's process is new");
             appUid = reply.getInt("uid", -1);
-            app = reply.getBinder("app");
+            app = now;
+            if (now != null) {
+                try {
+                    now.linkToDeath(() -> {
+                        if (app == now) releaseAll("the app's process has ended");
+                    }, 0);
+                } catch (RemoteException gone) {
+                    releaseAll("the app's process has ended");
+                }
+            }
             log("attached to the app, uid " + appUid);
             return true;
         } catch (Exception e) {
@@ -511,6 +523,31 @@ public final class ShellHelper extends Binder {
         stopSound(d);
         releaseVirtualDisplay.invoke(displayManager, d.callback);
         log("display " + id + " released");
+    }
+
+    /**
+     * The app's process has gone -- swiped away, crashed, killed -- and with it the windows its
+     * displays were shown in and the readers of their sound: every display is let go of, its
+     * app closed with it and its sound back on the speakers. They stayed, the apps running on
+     * displays nobody showed and mute, for as long as this helper lived. An app lent the
+     * glasses is brought home first, to be closed with the rest.
+     */
+    void releaseAll(String why) {
+        Display[] all;
+        synchronized (this) {
+            all = displays.values().toArray(new Display[0]);
+        }
+        if (all.length == 0) return;
+        log(why + ": letting go of " + all.length + " display(s)");
+        for (Display d : all) {
+            try {
+                if (d.lent.length > 0) moveTask(-1, d.id);
+                releaseDisplay(d.id);
+            } catch (Exception e) {
+                Throwable cause = e instanceof java.lang.reflect.InvocationTargetException ? e.getCause() : e;
+                log("display " + d.id + ": " + cause);
+            }
+        }
     }
 
     // --- sound ---
