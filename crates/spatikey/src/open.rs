@@ -855,7 +855,9 @@ impl Edit {
         }
         if changed(SITES) {
             let mut sites: Vec<String> = Vec::new();
-            for site in list(&text(SITES)).iter().map(|s| site_of(s)).filter(|s| !s.is_empty()) {
+            for typed in list(&text(SITES)) {
+                // Said, rather than kept as something no page's address will ever match.
+                let site = site_of(&typed).ok_or_else(|| format!("\u{201C}{typed}\u{201D} is not a website: give its domain, like example.com, or its whole address."))?;
                 if !sites.contains(&site) {
                     sites.push(site);
                 }
@@ -912,19 +914,36 @@ fn list(text: &str) -> Vec<String> {
     text.split([',', ' ', '\n', ';']).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
 }
 
-/// A website as typed, as it is kept. With its scheme it is an address, and what is kept is what
-/// SpatiKey keeps for a login first used there (`site::site_for`): its registrable domain, or the
-/// whole origin where that is what must match. Without, it is the domain as typed, in small
-/// letters and without a "www.".
-fn site_of(typed: &str) -> String {
+/// A website as typed, as it is kept; None for what is not one. With its scheme it is an
+/// address, and what is kept is what SpatiKey keeps for a login first used there
+/// (`site::site_for`): its registrable domain, or the whole origin where that is what must
+/// match. Without, it is the domain as typed, in small letters and without a "www." -- and
+/// without the path an address copied from a browser's bar (which hides the "https://") brings
+/// with it: "accounts.example.com/signin" is accounts.example.com. With a port
+/// ("192.168.1.1:8443") it is read as the https address it would be, since a port is part of an
+/// origin and no domain has one.
+fn site_of(typed: &str) -> Option<String> {
+    use spatikey_core::site::site_for;
     let typed = typed.trim();
+    let kept = |site: String| (!site.is_empty()).then_some(site);
     if let Some(at) = typed.find("://") {
         let rest = &typed[at + 3..];
         let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-        return spatikey_core::site::site_for(&typed[..at + 3 + end]);
+        return kept(site_for(&typed[..at + 3 + end]));
     }
-    let lower = typed.trim_end_matches('/').to_ascii_lowercase();
-    lower.strip_prefix("www.").map(str::to_string).unwrap_or(lower)
+    let host = &typed[..typed.find(['/', '?', '#']).unwrap_or(typed.len())];
+    // An IPv6 address written bare is all colons and no port; `site_for` wants its brackets.
+    let v6 = host.parse::<std::net::Ipv6Addr>().is_ok();
+    if host.contains(':') && !v6 {
+        return kept(site_for(&format!("https://{host}")));
+    }
+    // Only what a page's host can be compared with (`site::site_matches`) is a site.
+    let as_address = if v6 { format!("https://[{host}]") } else { format!("https://{host}") };
+    if site_for(&as_address).is_empty() {
+        return None;
+    }
+    let lower = host.to_ascii_lowercase();
+    Some(lower.strip_prefix("www.").map(str::to_string).unwrap_or(lower))
 }
 
 /// The 2FA field as the wearer pastes it: an `otpauth://` link, or the bare secret.
@@ -1172,6 +1191,30 @@ mod tests {
         edit.fields[TITLE].set("Door code");
         edit.fields[NOTES].set("4711");
         assert_eq!(edit.entry().unwrap().kind, Kind::Note);
+    }
+
+    #[test]
+    fn a_website_typed_is_kept_as_what_a_page_matches() {
+        use spatikey_core::site::site_matches;
+        let site = |typed: &str| site_of(typed);
+        assert_eq!(site("www.GitHub.com/").as_deref(), Some("github.com"));
+        assert_eq!(site("https://www.github.com/login").as_deref(), Some("github.com"));
+        // As copied from a browser's bar, which hides the scheme.
+        assert_eq!(site("accounts.example.com/signin?next=1").as_deref(), Some("accounts.example.com"));
+        assert!(site_matches(&site("accounts.example.com/signin").unwrap(), "https://accounts.example.com"));
+        // A port is part of an origin.
+        assert_eq!(site("192.168.1.1:8443/admin").as_deref(), Some("https://192.168.1.1:8443"));
+        assert!(site_matches(&site("192.168.1.1:8443").unwrap(), "https://192.168.1.1:8443"));
+        assert!(site_matches(&site("192.168.1.1").unwrap(), "https://192.168.1.1"));
+        assert!(site_matches(&site("::1").unwrap(), "http://[::1]:5000"));
+        assert!(site_matches(&site("nas").unwrap(), "https://nas"));
+        // Not websites: said, not kept.
+        for bad in ["user@host", "exa mple.com", "https://", "a..b", "host:port"] {
+            assert_eq!(site(bad), None, "{bad}");
+        }
+        let mut edit = Edit::new();
+        edit.fields[SITES].set("user@host");
+        assert!(edit.entry().unwrap_err().contains("user@host"));
     }
 
     #[test]
