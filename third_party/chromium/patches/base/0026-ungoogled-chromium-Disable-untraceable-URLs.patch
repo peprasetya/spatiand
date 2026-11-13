@@ -14,7 +14,7 @@ FILE:ungoogled-chromium-Disable-untraceable-URLs.patch
  3 files changed, 3 insertions(+), 4 deletions(-)
 
 diff --git a/rlz/lib/financial_ping.cc b/rlz/lib/financial_ping.cc
-index 23b505ddb31..46fa8caf9f7 100644
+index 23b505ddb3..46fa8caf9f 100644
 --- a/rlz/lib/financial_ping.cc
 +++ b/rlz/lib/financial_ping.cc
 @@ -230,6 +230,7 @@ bool FinancialPing::SetURLLoaderFactory(
@@ -42,7 +42,7 @@ index 23b505ddb31..46fa8caf9f7 100644
    // Use a waitable event to cause this function to block, to match the
    // wininet implementation.
 diff --git a/rlz/lib/lib_values.cc b/rlz/lib/lib_values.cc
-index 21533afa755..8f71842a28e 100644
+index 21533afa75..8f71842a28 100644
 --- a/rlz/lib/lib_values.cc
 +++ b/rlz/lib/lib_values.cc
 @@ -43,7 +43,6 @@ const char kSetDccResponseVariable[] = "set_dcc";
@@ -54,7 +54,7 @@ index 21533afa755..8f71842a28e 100644
  
  // Ping times in 100-nanosecond intervals.
 diff --git a/rlz/lib/lib_values.h b/rlz/lib/lib_values.h
-index bdf7c626996..13ba3d65924 100644
+index bdf7c62699..13ba3d6592 100644
 --- a/rlz/lib/lib_values.h
 +++ b/rlz/lib/lib_values.h
 @@ -75,7 +75,6 @@ extern const char kSetDccResponseVariable[];

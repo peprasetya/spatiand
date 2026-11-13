@@ -77,7 +77,7 @@ FILE:Disable-all-predictors-code.patch
  .../core/hints/hints_fetcher.cc               |   1 +
  .../core/hints/hints_manager.cc               |   2 +
  .../private_ai_model_execution_fetcher.cc     |   4 +
- .../core/optimization_guide_features.cc       |  12 +-
+ .../core/optimization_guide_features.cc       |  17 ++-
  components/optimization_guide/features.gni    |   2 +-
  .../page_category_classifier_bridge_impl.cc   |   2 +
  .../page_category_classifier_bridge_impl.h    |   1 +
@@ -129,7 +129,7 @@ FILE:Disable-all-predictors-code.patch
  .../core/html/parser/html_document_parser.cc  |   1 +
  .../document_speculation_rules.cc             |   1 +
  .../platform/runtime_enabled_features.json5   |   2 +-
- 122 files changed, 419 insertions(+), 447 deletions(-)
+ 122 files changed, 424 insertions(+), 447 deletions(-)
  create mode 100644 cromite_flags/chrome/browser/browser_features_cc/Disable-all-predictors-code.inc
  create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-all-predictors-code.inc
  create mode 100644 cromite_flags/chrome/common/chrome_features_cc/Disable-all-predictors-code.inc
@@ -140,7 +140,7 @@ FILE:Disable-all-predictors-code.patch
  create mode 100644 cromite_flags/third_party/blink/common/features_cc/Disable-all-predictors-code.inc
 
 diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
-index 650fbfd748a..5f639d193cc 100644
+index 650fbfd748..5f639d193c 100644
 --- a/chrome/browser/about_flags.cc
 +++ b/chrome/browser/about_flags.cc
 @@ -9260,6 +9260,7 @@ const FeatureEntry kFeatureEntries[] = {
@@ -160,7 +160,7 @@ index 650fbfd748a..5f639d193cc 100644
  #if BUILDFLAG(IS_CHROMEOS)
      {"enable-component-updater-test-request",
 diff --git a/chrome/browser/android/tab_features.cc b/chrome/browser/android/tab_features.cc
-index 2c226b787e7..269fa937de8 100644
+index 2c226b787e..269fa937de 100644
 --- a/chrome/browser/android/tab_features.cc
 +++ b/chrome/browser/android/tab_features.cc
 @@ -464,9 +464,6 @@ TabFeatures::TabFeatures(content::WebContents* web_contents, Profile* profile) {
@@ -174,7 +174,7 @@ index 2c226b787e7..269fa937de8 100644
        std::make_unique<NavigationMetricsRecorder>(web_contents);
  
 diff --git a/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc b/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc
-index 8bea10bec0d..56eb329bea4 100644
+index 8bea10bec0..56eb329bea 100644
 --- a/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc
 +++ b/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc
 @@ -488,12 +488,12 @@ signin::IdentityManager* ChromeAutocompleteProviderClient::GetIdentityManager()
@@ -193,7 +193,7 @@ index 8bea10bec0d..56eb329bea4 100644
  
  ProviderStateService*
 diff --git a/chrome/browser/autofill/BUILD.gn b/chrome/browser/autofill/BUILD.gn
-index a6c2fc81b07..fbcd9e5c9cb 100644
+index a6c2fc81b0..fbcd9e5c9c 100644
 --- a/chrome/browser/autofill/BUILD.gn
 +++ b/chrome/browser/autofill/BUILD.gn
 @@ -40,8 +40,8 @@ static_library("autofill") {
@@ -208,7 +208,7 @@ index a6c2fc81b07..fbcd9e5c9cb 100644
      "one_time_token_service_factory.h",
      "otp_filling_safe_browsing_checker_client.cc",
 diff --git a/chrome/browser/autofill/autofill_field_classification_model_service_factory.cc b/chrome/browser/autofill/autofill_field_classification_model_service_factory.cc
-index def29c98596..22570a4fdc0 100644
+index def29c9859..22570a4fdc 100644
 --- a/chrome/browser/autofill/autofill_field_classification_model_service_factory.cc
 +++ b/chrome/browser/autofill/autofill_field_classification_model_service_factory.cc
 @@ -30,8 +30,7 @@ AutofillFieldClassificationModelServiceFactory::GetInstance() {
@@ -245,7 +245,7 @@ index def29c98596..22570a4fdc0 100644
  
  }  // namespace autofill
 diff --git a/chrome/browser/component_updater/ai_embeddings_component_installer.cc b/chrome/browser/component_updater/ai_embeddings_component_installer.cc
-index 52250fb8df7..de99ebd5c89 100644
+index 52250fb8df..de99ebd5c8 100644
 --- a/chrome/browser/component_updater/ai_embeddings_component_installer.cc
 +++ b/chrome/browser/component_updater/ai_embeddings_component_installer.cc
 @@ -106,28 +106,6 @@ class AIEmbeddingsComponentInstallerPolicy
@@ -307,7 +307,7 @@ index 52250fb8df7..de99ebd5c89 100644
                                  localstate::kEmbeddingApiModelDownloadEligible,
                              false);
 diff --git a/chrome/browser/download/background_download_service_factory.cc b/chrome/browser/download/background_download_service_factory.cc
-index 7fe4f837ba0..0e1873e8fef 100644
+index 7fe4f837ba..0e1873e8fe 100644
 --- a/chrome/browser/download/background_download_service_factory.cc
 +++ b/chrome/browser/download/background_download_service_factory.cc
 @@ -159,7 +159,7 @@ BackgroundDownloadServiceFactory::BuildServiceInstanceFor(
@@ -320,7 +320,7 @@ index 7fe4f837ba0..0e1873e8fef 100644
          download::DownloadClient::OPTIMIZATION_GUIDE_PREDICTION_MODELS,
          std::make_unique<download::DeferredClientWrapper>(
 diff --git a/chrome/browser/glic/suggestions/contextual_cueing_service.cc b/chrome/browser/glic/suggestions/contextual_cueing_service.cc
-index b0a5921699c..ce70500112e 100644
+index b0a5921699..ce70500112 100644
 --- a/chrome/browser/glic/suggestions/contextual_cueing_service.cc
 +++ b/chrome/browser/glic/suggestions/contextual_cueing_service.cc
 @@ -27,6 +27,7 @@
@@ -367,7 +367,7 @@ index b0a5921699c..ce70500112e 100644
          net::NetworkAnonymizationKey::CreateSameSite(
              net::SchemefulSite(mes_url_));
 diff --git a/chrome/browser/history_embeddings/history_embeddings_utils.cc b/chrome/browser/history_embeddings/history_embeddings_utils.cc
-index 02e39df2367..1c0aafb7626 100644
+index 02e39df236..1c0aafb762 100644
 --- a/chrome/browser/history_embeddings/history_embeddings_utils.cc
 +++ b/chrome/browser/history_embeddings/history_embeddings_utils.cc
 @@ -51,6 +51,7 @@ bool IsCountryAndLocale(const std::string& country, const std::string& locale) {
@@ -397,7 +397,7 @@ index 02e39df2367..1c0aafb7626 100644
  
  bool IsHistoryEmbeddingsSettingVisible(Profile* profile) {
 diff --git a/chrome/browser/optimization_guide/BUILD.gn b/chrome/browser/optimization_guide/BUILD.gn
-index 5e4f0840024..a592fc5ed77 100644
+index 5e4f084002..a592fc5ed7 100644
 --- a/chrome/browser/optimization_guide/BUILD.gn
 +++ b/chrome/browser/optimization_guide/BUILD.gn
 @@ -54,7 +54,7 @@ source_set("impl") {
@@ -419,7 +419,7 @@ index 5e4f0840024..a592fc5ed77 100644
    ]
  
 diff --git a/chrome/browser/optimization_guide/chrome_hints_manager.cc b/chrome/browser/optimization_guide/chrome_hints_manager.cc
-index bdf40d60778..d2bf28ca736 100644
+index bdf40d6077..d2bf28ca73 100644
 --- a/chrome/browser/optimization_guide/chrome_hints_manager.cc
 +++ b/chrome/browser/optimization_guide/chrome_hints_manager.cc
 @@ -24,6 +24,7 @@ namespace {
@@ -431,7 +431,7 @@ index bdf40d60778..d2bf28ca736 100644
        NavigationPredictorKeyedService::PredictionSource::
            kAnchorElementsParsedFromWebPage) {
 diff --git a/chrome/browser/optimization_guide/model_execution/optimization_guide_global_state.cc b/chrome/browser/optimization_guide/model_execution/optimization_guide_global_state.cc
-index 2fcf49e5880..8ff35dd0730 100644
+index 2fcf49e588..8ff35dd073 100644
 --- a/chrome/browser/optimization_guide/model_execution/optimization_guide_global_state.cc
 +++ b/chrome/browser/optimization_guide/model_execution/optimization_guide_global_state.cc
 @@ -183,7 +183,7 @@ OptimizationGuideGlobalState::OptimizationGuideGlobalState(
@@ -444,7 +444,7 @@ index 2fcf49e5880..8ff35dd0730 100644
        *g_browser_process->local_state(), model_provider());
  #else   // !BUILDFLAG(IS_ANDROID)
 diff --git a/chrome/browser/optimization_guide/model_validator_keyed_service.cc b/chrome/browser/optimization_guide/model_validator_keyed_service.cc
-index a145f025710..10c9ce074de 100644
+index a145f02571..10c9ce074d 100644
 --- a/chrome/browser/optimization_guide/model_validator_keyed_service.cc
 +++ b/chrome/browser/optimization_guide/model_validator_keyed_service.cc
 @@ -29,6 +29,7 @@
@@ -512,7 +512,7 @@ index a145f025710..10c9ce074de 100644
  
  void ModelValidatorKeyedService::OnDeviceModelExecuteResponse(
 diff --git a/chrome/browser/optimization_guide/optimization_guide_keyed_service.cc b/chrome/browser/optimization_guide/optimization_guide_keyed_service.cc
-index 16feab3a15a..c4dc0adca4c 100644
+index 16feab3a15..c4dc0adca4 100644
 --- a/chrome/browser/optimization_guide/optimization_guide_keyed_service.cc
 +++ b/chrome/browser/optimization_guide/optimization_guide_keyed_service.cc
 @@ -134,7 +134,8 @@ Profile* GetProfileForOTROptimizationGuide(Profile* profile) {
@@ -758,7 +758,7 @@ index 16feab3a15a..c4dc0adca4c 100644
  
  void OptimizationGuideKeyedService::
 diff --git a/chrome/browser/optimization_guide/optimization_guide_keyed_service.h b/chrome/browser/optimization_guide/optimization_guide_keyed_service.h
-index 5254040c8f5..a23af799d63 100644
+index 5254040c8f..a23af799d6 100644
 --- a/chrome/browser/optimization_guide/optimization_guide_keyed_service.h
 +++ b/chrome/browser/optimization_guide/optimization_guide_keyed_service.h
 @@ -282,7 +282,7 @@ class OptimizationGuideKeyedService
@@ -802,7 +802,7 @@ index 5254040c8f5..a23af799d63 100644
  #if BUILDFLAG(IS_ANDROID)
    // Manage and fetch the java object that wraps this OptimizationGuide on
 diff --git a/chrome/browser/password_manager/password_change_delegate_impl.cc b/chrome/browser/password_manager/password_change_delegate_impl.cc
-index abfb97dd011..0ee9fc09257 100644
+index abfb97dd01..0ee9fc0925 100644
 --- a/chrome/browser/password_manager/password_change_delegate_impl.cc
 +++ b/chrome/browser/password_manager/password_change_delegate_impl.cc
 @@ -346,8 +346,10 @@ void PasswordChangeDelegateImpl::StartPasswordChangeFlow() {
@@ -817,7 +817,7 @@ index abfb97dd011..0ee9fc09257 100644
  
  void PasswordChangeDelegateImpl::OnLoginStateCheckedWithoutPIResult(
 diff --git a/chrome/browser/password_manager/password_field_classification_model_handler_factory.cc b/chrome/browser/password_manager/password_field_classification_model_handler_factory.cc
-index 4ad01288ab5..e7403b20dde 100644
+index 4ad01288ab..e7403b20dd 100644
 --- a/chrome/browser/password_manager/password_field_classification_model_handler_factory.cc
 +++ b/chrome/browser/password_manager/password_field_classification_model_handler_factory.cc
 @@ -135,19 +135,5 @@ PasswordFieldClassificationModelHandlerFactory::GetBrowserContextToUse(
@@ -842,7 +842,7 @@ index 4ad01288ab5..e7403b20dde 100644
 +  return nullptr;
  }
 diff --git a/chrome/browser/permissions/BUILD.gn b/chrome/browser/permissions/BUILD.gn
-index 1c14e45bfe1..bff9acc589d 100644
+index 1c14e45bfe..bff9acc589 100644
 --- a/chrome/browser/permissions/BUILD.gn
 +++ b/chrome/browser/permissions/BUILD.gn
 @@ -45,12 +45,10 @@ source_set("permissions") {
@@ -907,7 +907,7 @@ index 1c14e45bfe1..bff9acc589d 100644
    if (safe_browsing_mode != 0) {
      sources += [
 diff --git a/chrome/browser/permissions/chrome_permissions_client.cc b/chrome/browser/permissions/chrome_permissions_client.cc
-index dc0b4bd9d70..c56b0ca72ff 100644
+index dc0b4bd9d7..c56b0ca72f 100644
 --- a/chrome/browser/permissions/chrome_permissions_client.cc
 +++ b/chrome/browser/permissions/chrome_permissions_client.cc
 @@ -556,8 +556,6 @@ ChromePermissionsClient::CreatePermissionUiSelectors(
@@ -920,7 +920,7 @@ index dc0b4bd9d70..c56b0ca72ff 100644
  }
  
 diff --git a/chrome/browser/permissions/prediction_service/passage_embedder_delegate.cc b/chrome/browser/permissions/prediction_service/passage_embedder_delegate.cc
-index 2cf5ac4fd70..b2548434f91 100644
+index 2cf5ac4fd7..b2548434f9 100644
 --- a/chrome/browser/permissions/prediction_service/passage_embedder_delegate.cc
 +++ b/chrome/browser/permissions/prediction_service/passage_embedder_delegate.cc
 @@ -26,6 +26,7 @@ PassageEmbedderDelegate::PassageEmbedderDelegate(Profile* profile)
@@ -940,7 +940,7 @@ index 2cf5ac4fd70..b2548434f91 100644
  }
  
 diff --git a/chrome/browser/permissions/prediction_service/permissions_ai_ui_selector.cc b/chrome/browser/permissions/prediction_service/permissions_ai_ui_selector.cc
-index 017593ef277..feb4c5a6653 100644
+index 017593ef27..feb4c5a665 100644
 --- a/chrome/browser/permissions/prediction_service/permissions_ai_ui_selector.cc
 +++ b/chrome/browser/permissions/prediction_service/permissions_ai_ui_selector.cc
 @@ -391,6 +391,7 @@ void PermissionsAiUiSelector::SelectUiToUse(
@@ -984,7 +984,7 @@ index 017593ef277..feb4c5a6653 100644
  void PermissionsAiUiSelector::set_snapshot_for_testing(SkBitmap snapshot) {
    CHECK_IS_TEST();
 diff --git a/chrome/browser/permissions/prediction_service/permissions_ai_ui_selector.h b/chrome/browser/permissions/prediction_service/permissions_ai_ui_selector.h
-index 14a0c120c0d..8683841f467 100644
+index 14a0c120c0..8683841f46 100644
 --- a/chrome/browser/permissions/prediction_service/permissions_ai_ui_selector.h
 +++ b/chrome/browser/permissions/prediction_service/permissions_ai_ui_selector.h
 @@ -111,13 +111,14 @@ class PermissionsAiUiSelector : public permissions::PermissionUiSelector {
@@ -1017,7 +1017,7 @@ index 14a0c120c0d..8683841f467 100644
    bool ShouldHoldBack(const PredictionRequestMetadata& request_metadata) const;
  
 diff --git a/chrome/browser/permissions/prediction_service/prediction_model_handler_provider.cc b/chrome/browser/permissions/prediction_service/prediction_model_handler_provider.cc
-index b47f437ed23..4ee36f1b3e0 100644
+index b47f437ed2..4ee36f1b3e 100644
 --- a/chrome/browser/permissions/prediction_service/prediction_model_handler_provider.cc
 +++ b/chrome/browser/permissions/prediction_service/prediction_model_handler_provider.cc
 @@ -26,6 +26,7 @@ using optimization_guide::proto::OptimizationTarget;
@@ -1102,7 +1102,7 @@ index b47f437ed23..4ee36f1b3e0 100644
  bool PredictionModelHandlerProvider::IsPassageEmbedderReady() const {
    return is_passage_embedder_ready_;
 diff --git a/chrome/browser/permissions/prediction_service/prediction_model_handler_provider.h b/chrome/browser/permissions/prediction_service/prediction_model_handler_provider.h
-index 88fca12286c..153a71e71eb 100644
+index 88fca12286..153a71e71e 100644
 --- a/chrome/browser/permissions/prediction_service/prediction_model_handler_provider.h
 +++ b/chrome/browser/permissions/prediction_service/prediction_model_handler_provider.h
 @@ -54,9 +54,11 @@ class PredictionModelHandlerProvider
@@ -1118,7 +1118,7 @@ index 88fca12286c..153a71e71eb 100644
    // LINT.IfChange(ModelHandlers)
    std::unique_ptr<PredictionModelHandler>
 diff --git a/chrome/browser/permissions/quiet_notification_permission_ui_state.cc b/chrome/browser/permissions/quiet_notification_permission_ui_state.cc
-index 105ec6f8aff..abc62b3e28e 100644
+index 105ec6f8af..abc62b3e28 100644
 --- a/chrome/browser/permissions/quiet_notification_permission_ui_state.cc
 +++ b/chrome/browser/permissions/quiet_notification_permission_ui_state.cc
 @@ -24,9 +24,9 @@ void QuietNotificationPermissionUiState::RegisterProfilePrefs(
@@ -1134,7 +1134,7 @@ index 105ec6f8aff..abc62b3e28e 100644
        prefs::kDidMigrateAdaptiveNotifiationQuietingToCPSS,
        /*default_value=*/false);
 diff --git a/chrome/browser/predictors/autocomplete_action_predictor.cc b/chrome/browser/predictors/autocomplete_action_predictor.cc
-index b084337f31a..1c2927916ed 100644
+index b084337f31..1c2927916e 100644
 --- a/chrome/browser/predictors/autocomplete_action_predictor.cc
 +++ b/chrome/browser/predictors/autocomplete_action_predictor.cc
 @@ -218,6 +218,8 @@ void AutocompleteActionPredictor::StartPrerendering(
@@ -1147,7 +1147,7 @@ index b084337f31a..1c2927916ed 100644
    // prerendering attempt for Prerender.
    content::PreloadingAttempt* preloading_attempt =
 diff --git a/chrome/browser/predictors/loading_predictor_config.cc b/chrome/browser/predictors/loading_predictor_config.cc
-index a878c25f851..24e28fec031 100644
+index a878c25f85..24e28fec03 100644
 --- a/chrome/browser/predictors/loading_predictor_config.cc
 +++ b/chrome/browser/predictors/loading_predictor_config.cc
 @@ -13,8 +13,8 @@
@@ -1162,7 +1162,7 @@ index a878c25f851..24e28fec031 100644
  
  bool IsPreconnectAllowed(Profile* profile) {
 diff --git a/chrome/browser/predictors/predictors_features.cc b/chrome/browser/predictors/predictors_features.cc
-index e0f558f6045..9a9235c0aec 100644
+index e0f558f604..9a9235c0ae 100644
 --- a/chrome/browser/predictors/predictors_features.cc
 +++ b/chrome/browser/predictors/predictors_features.cc
 @@ -12,8 +12,7 @@ namespace features {
@@ -1176,7 +1176,7 @@ index e0f558f6045..9a9235c0aec 100644
  }  // namespace
  
 diff --git a/chrome/browser/preloading/prefetch/search_prefetch/field_trial_settings.cc b/chrome/browser/preloading/prefetch/search_prefetch/field_trial_settings.cc
-index 4766c2438e3..3f2a75d5e98 100644
+index 4766c2438e..3f2a75d5e9 100644
 --- a/chrome/browser/preloading/prefetch/search_prefetch/field_trial_settings.cc
 +++ b/chrome/browser/preloading/prefetch/search_prefetch/field_trial_settings.cc
 @@ -272,3 +272,7 @@ bool ShouldSuppressPrefetchForUnsupportedMode(const AutocompleteMatch& match) {
@@ -1188,7 +1188,7 @@ index 4766c2438e3..3f2a75d5e98 100644
 +SET_CROMITE_FEATURE_DISABLED(kSearchPrefetchWithNoVarySearchDiskCache);
 +SET_CROMITE_FEATURE_DISABLED(kSearchNavigationPrefetch);
 diff --git a/chrome/browser/preloading/prefetch/search_prefetch/search_prefetch_url_loader_interceptor.cc b/chrome/browser/preloading/prefetch/search_prefetch/search_prefetch_url_loader_interceptor.cc
-index fd19a4fbead..a4fcfcccc34 100644
+index fd19a4fbea..a4fcfcccc3 100644
 --- a/chrome/browser/preloading/prefetch/search_prefetch/search_prefetch_url_loader_interceptor.cc
 +++ b/chrome/browser/preloading/prefetch/search_prefetch/search_prefetch_url_loader_interceptor.cc
 @@ -80,6 +80,7 @@ SearchPrefetchURLLoaderInterceptor::MaybeCreateLoaderForRequest(
@@ -1200,7 +1200,7 @@ index fd19a4fbead..a4fcfcccc34 100644
    if (!tentative_resource_request.is_outermost_main_frame) {
      // Use the is_outermost_main_frame flag instead of obtaining the
 diff --git a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
-index 08395e5c3fa..77632fa020f 100644
+index 08395e5c3f..77632fa020 100644
 --- a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
 +++ b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
 @@ -802,7 +802,7 @@ void ChromeBrowserMainExtraPartsProfiles::
@@ -1221,7 +1221,7 @@ index 08395e5c3fa..77632fa020f 100644
    predictors::AutocompleteActionPredictorFactory::GetInstance();
    predictors::LoadingPredictorFactory::GetInstance();
 diff --git a/chrome/browser/safe_browsing/BUILD.gn b/chrome/browser/safe_browsing/BUILD.gn
-index fb724d41c7c..0ceda3cbb19 100644
+index fb724d41c7..0ceda3cbb1 100644
 --- a/chrome/browser/safe_browsing/BUILD.gn
 +++ b/chrome/browser/safe_browsing/BUILD.gn
 @@ -74,7 +74,6 @@ static_library("safe_browsing") {
@@ -1233,7 +1233,7 @@ index fb724d41c7c..0ceda3cbb19 100644
      "//components/safe_browsing/content/browser/web_ui",
      "//components/safe_browsing/core/browser",
 diff --git a/chrome/browser/safe_browsing/client_side_detection_intelligent_scan_delegate_factory.cc b/chrome/browser/safe_browsing/client_side_detection_intelligent_scan_delegate_factory.cc
-index 76f1edca5d3..aee61aa778c 100644
+index 76f1edca5d..aee61aa778 100644
 --- a/chrome/browser/safe_browsing/client_side_detection_intelligent_scan_delegate_factory.cc
 +++ b/chrome/browser/safe_browsing/client_side_detection_intelligent_scan_delegate_factory.cc
 @@ -61,8 +61,7 @@ ClientSideDetectionIntelligentScanDelegateFactory::
@@ -1247,7 +1247,7 @@ index 76f1edca5d3..aee61aa778c 100644
    return std::make_unique<ClientSideDetectionIntelligentScanDelegateDesktop>(
        *profile->GetPrefs(), opt_guide,
 diff --git a/chrome/browser/safe_browsing/notification_content_detection/notification_content_detection_service_factory.cc b/chrome/browser/safe_browsing/notification_content_detection/notification_content_detection_service_factory.cc
-index d09804fdcf0..37e60e921b5 100644
+index d09804fdcf..37e60e921b 100644
 --- a/chrome/browser/safe_browsing/notification_content_detection/notification_content_detection_service_factory.cc
 +++ b/chrome/browser/safe_browsing/notification_content_detection/notification_content_detection_service_factory.cc
 @@ -17,6 +17,7 @@
@@ -1285,7 +1285,7 @@ index d09804fdcf0..37e60e921b5 100644
  
  }  // namespace safe_browsing
 diff --git a/chrome/browser/speech/chrome_speech_recognition_service.cc b/chrome/browser/speech/chrome_speech_recognition_service.cc
-index 1c888f6a1e4..c8075e7f760 100644
+index 1c888f6a1e..c8075e7f76 100644
 --- a/chrome/browser/speech/chrome_speech_recognition_service.cc
 +++ b/chrome/browser/speech/chrome_speech_recognition_service.cc
 @@ -111,6 +111,9 @@ void ChromeSpeechRecognitionService::BindRecognizer(
@@ -1317,7 +1317,7 @@ index 1c888f6a1e4..c8075e7f760 100644
  
  void ChromeSpeechRecognitionService::
 diff --git a/chrome/browser/speech/chrome_speech_recognition_service.h b/chrome/browser/speech/chrome_speech_recognition_service.h
-index 139efc10cb5..9595f8ff096 100644
+index 139efc10cb..9595f8ff09 100644
 --- a/chrome/browser/speech/chrome_speech_recognition_service.h
 +++ b/chrome/browser/speech/chrome_speech_recognition_service.h
 @@ -14,6 +14,7 @@
@@ -1339,7 +1339,7 @@ index 139efc10cb5..9595f8ff096 100644
        on_device_recognizers_;
  
 diff --git a/chrome/browser/speech/speech_recognition_small_expert_model_installer.cc b/chrome/browser/speech/speech_recognition_small_expert_model_installer.cc
-index a91399e79c4..99669f1c556 100644
+index a91399e79c..99669f1c55 100644
 --- a/chrome/browser/speech/speech_recognition_small_expert_model_installer.cc
 +++ b/chrome/browser/speech/speech_recognition_small_expert_model_installer.cc
 @@ -20,6 +20,7 @@
@@ -1413,7 +1413,7 @@ index a91399e79c4..99669f1c556 100644
    if (PrefService* local_state = GetLocalState()) {
      local_state->SetFilePath(prefs::kSpeechRecognitionSmallExpertModelPath,
 diff --git a/chrome/browser/speech/speech_recognition_small_expert_model_installer.h b/chrome/browser/speech/speech_recognition_small_expert_model_installer.h
-index 2e30ff43dca..a52862245fd 100644
+index 2e30ff43dc..a52862245f 100644
 --- a/chrome/browser/speech/speech_recognition_small_expert_model_installer.h
 +++ b/chrome/browser/speech/speech_recognition_small_expert_model_installer.h
 @@ -13,6 +13,7 @@
@@ -1435,7 +1435,7 @@ index 2e30ff43dca..a52862245fd 100644
        download_observer_receiver_{this};
  
 diff --git a/chrome/browser/ui/autofill/chrome_autofill_client.cc b/chrome/browser/ui/autofill/chrome_autofill_client.cc
-index 16ea5c50f44..d0e7550cf41 100644
+index 16ea5c50f4..d0e7550cf4 100644
 --- a/chrome/browser/ui/autofill/chrome_autofill_client.cc
 +++ b/chrome/browser/ui/autofill/chrome_autofill_client.cc
 @@ -1599,17 +1599,7 @@ PasswordFormClassification ChromeAutofillClient::ClassifyAsPasswordForm(
@@ -1457,7 +1457,7 @@ index 16ea5c50f44..d0e7550cf41 100644
  
  void ChromeAutofillClient::ShowEntityImportBubble(
 diff --git a/chrome/browser/ui/tabs/tab_features.cc b/chrome/browser/ui/tabs/tab_features.cc
-index a853f766421..6f266e8c7b7 100644
+index a853f76642..6f266e8c7b 100644
 --- a/chrome/browser/ui/tabs/tab_features.cc
 +++ b/chrome/browser/ui/tabs/tab_features.cc
 @@ -193,6 +193,7 @@
@@ -1488,7 +1488,7 @@ index a853f766421..6f266e8c7b7 100644
    navigation_metrics_recorder_ =
        std::make_unique<NavigationMetricsRecorder>(new_contents);
 diff --git a/chrome/browser/ui/webui/autofill_ml_internals/autofill_ml_internals_page_handler.cc b/chrome/browser/ui/webui/autofill_ml_internals/autofill_ml_internals_page_handler.cc
-index ddc2711fe74..db0cd02d003 100644
+index ddc2711fe7..db0cd02d00 100644
 --- a/chrome/browser/ui/webui/autofill_ml_internals/autofill_ml_internals_page_handler.cc
 +++ b/chrome/browser/ui/webui/autofill_ml_internals/autofill_ml_internals_page_handler.cc
 @@ -13,9 +13,11 @@ AutofillMlInternalsPageHandlerImpl::AutofillMlInternalsPageHandlerImpl(
@@ -1504,7 +1504,7 @@ index ddc2711fe74..db0cd02d003 100644
  
  void AutofillMlInternalsPageHandlerImpl::ProcessLog(
 diff --git a/chrome/browser/ui/webui/autofill_ml_internals/autofill_ml_internals_page_handler.h b/chrome/browser/ui/webui/autofill_ml_internals/autofill_ml_internals_page_handler.h
-index 6e970e20062..b83fc27b6b0 100644
+index 6e970e2006..b83fc27b6b 100644
 --- a/chrome/browser/ui/webui/autofill_ml_internals/autofill_ml_internals_page_handler.h
 +++ b/chrome/browser/ui/webui/autofill_ml_internals/autofill_ml_internals_page_handler.h
 @@ -8,6 +8,7 @@
@@ -1527,7 +1527,7 @@ index 6e970e20062..b83fc27b6b0 100644
  
  #endif  // CHROME_BROWSER_UI_WEBUI_AUTOFILL_ML_INTERNALS_AUTOFILL_ML_INTERNALS_PAGE_HANDLER_H_
 diff --git a/chrome/browser/ui/webui/autofill_ml_internals/autofill_ml_internals_ui.cc b/chrome/browser/ui/webui/autofill_ml_internals/autofill_ml_internals_ui.cc
-index 64fe06e02f9..aea57085ac5 100644
+index 64fe06e02f..aea57085ac 100644
 --- a/chrome/browser/ui/webui/autofill_ml_internals/autofill_ml_internals_ui.cc
 +++ b/chrome/browser/ui/webui/autofill_ml_internals/autofill_ml_internals_ui.cc
 @@ -11,6 +11,7 @@
@@ -1549,7 +1549,7 @@ index 64fe06e02f9..aea57085ac5 100644
  
  WEB_UI_CONTROLLER_TYPE_IMPL(AutofillMlInternalsUI)
 diff --git a/chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.cc b/chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.cc
-index da34724562d..da8495a0a10 100644
+index da34724562..da8495a0a1 100644
 --- a/chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.cc
 +++ b/chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.cc
 @@ -436,8 +436,8 @@ NewTabPageHandler::NewTabPageHandler(
@@ -1607,7 +1607,7 @@ index da34724562d..da8495a0a10 100644
  void NewTabPageHandler::OnAuthStateUpdated() {
    UpdateModulesLoadable();
 diff --git a/chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.h b/chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.h
-index 07503b9f263..752e8511b92 100644
+index 07503b9f26..752e8511b9 100644
 --- a/chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.h
 +++ b/chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.h
 @@ -79,7 +79,7 @@ class NewTabPageHandler
@@ -1630,7 +1630,7 @@ index 07503b9f263..752e8511b92 100644
    // MicrosoftAuthServiceObserver:
    void OnAuthStateUpdated() override;
 diff --git a/chrome/browser/ui/webui/omnibox_internals/omnibox_internals_page_handler.cc b/chrome/browser/ui/webui/omnibox_internals/omnibox_internals_page_handler.cc
-index c1f360dcea6..932034b39cd 100644
+index c1f360dcea..932034b39c 100644
 --- a/chrome/browser/ui/webui/omnibox_internals/omnibox_internals_page_handler.cc
 +++ b/chrome/browser/ui/webui/omnibox_internals/omnibox_internals_page_handler.cc
 @@ -290,8 +290,5 @@ OmniboxInternalsPageHandler::GetAutocompleteControllerType(
@@ -1644,7 +1644,7 @@ index c1f360dcea6..932034b39cd 100644
 +  return nullptr;
  }
 diff --git a/chrome/browser/ui/webui/on_device_internals/BUILD.gn b/chrome/browser/ui/webui/on_device_internals/BUILD.gn
-index 4d4b1342b26..af411d3f934 100644
+index 4d4b1342b2..af411d3f93 100644
 --- a/chrome/browser/ui/webui/on_device_internals/BUILD.gn
 +++ b/chrome/browser/ui/webui/on_device_internals/BUILD.gn
 @@ -37,6 +37,9 @@ source_set("on_device_internals") {
@@ -1658,7 +1658,7 @@ index 4d4b1342b26..af411d3f934 100644
      deps += [ "//chromeos/ash/components/mojo_service_manager" ]
    }
 diff --git a/chrome/renderer/accessibility/read_anything/read_aloud_app_model.cc b/chrome/renderer/accessibility/read_anything/read_aloud_app_model.cc
-index 60c373c08e2..82316828213 100644
+index 60c373c08e..8231682821 100644
 --- a/chrome/renderer/accessibility/read_anything/read_aloud_app_model.cc
 +++ b/chrome/renderer/accessibility/read_anything/read_aloud_app_model.cc
 @@ -16,7 +16,9 @@
@@ -1737,7 +1737,7 @@ index 60c373c08e2..82316828213 100644
  
  // TODO(crbug.com/40927698): Update to use AXRange to better handle multiple
 diff --git a/chrome/renderer/accessibility/read_anything/read_aloud_app_model.h b/chrome/renderer/accessibility/read_anything/read_aloud_app_model.h
-index 083b463f0e8..ae4778d5452 100644
+index 083b463f0e..ae4778d545 100644
 --- a/chrome/renderer/accessibility/read_anything/read_aloud_app_model.h
 +++ b/chrome/renderer/accessibility/read_anything/read_aloud_app_model.h
 @@ -9,7 +9,10 @@
@@ -1784,7 +1784,7 @@ index 083b463f0e8..ae4778d5452 100644
    // Which sentence (index into `processed_granularities_on_current_page`) is
    // currently being processed for phrases. -1 if none.
 diff --git a/chrome/renderer/accessibility/read_anything/read_anything_app_controller.cc b/chrome/renderer/accessibility/read_anything/read_anything_app_controller.cc
-index a550c2a958c..815c732c5db 100644
+index a550c2a958..815c732c5d 100644
 --- a/chrome/renderer/accessibility/read_anything/read_anything_app_controller.cc
 +++ b/chrome/renderer/accessibility/read_anything/read_anything_app_controller.cc
 @@ -31,7 +31,9 @@
@@ -1857,7 +1857,7 @@ index a550c2a958c..815c732c5db 100644
  void ReadAnythingAppController::OnTreeAdded(ui::AXTree* tree) {
    auto observation =
 diff --git a/chrome/renderer/accessibility/read_anything/read_anything_app_controller.h b/chrome/renderer/accessibility/read_anything/read_anything_app_controller.h
-index a55b044b1fa..4652a9e403a 100644
+index a55b044b1f..4652a9e403 100644
 --- a/chrome/renderer/accessibility/read_anything/read_anything_app_controller.h
 +++ b/chrome/renderer/accessibility/read_anything/read_anything_app_controller.h
 @@ -398,8 +398,10 @@ class ReadAnythingAppController
@@ -1872,7 +1872,7 @@ index a55b044b1fa..4652a9e403a 100644
    // Called when distillation has completed.
    void OnAXTreeDistilled(const ui::AXTreeID& tree_id,
 diff --git a/chrome/utility/BUILD.gn b/chrome/utility/BUILD.gn
-index 735669efe4e..ecc33ea0dce 100644
+index 735669efe4..ecc33ea0dc 100644
 --- a/chrome/utility/BUILD.gn
 +++ b/chrome/utility/BUILD.gn
 @@ -67,7 +67,7 @@ static_library("utility") {
@@ -1885,7 +1885,7 @@ index 735669efe4e..ecc33ea0dce 100644
      "//services/screen_ai/buildflags",
      "//services/service_manager/public/cpp",
 diff --git a/chrome/utility/services.cc b/chrome/utility/services.cc
-index 14cdd3f4877..85213c55dc0 100644
+index 14cdd3f487..85213c55dc 100644
 --- a/chrome/utility/services.cc
 +++ b/chrome/utility/services.cc
 @@ -277,13 +277,6 @@ auto RunRedirectionService(
@@ -1911,7 +1911,7 @@ index 14cdd3f4877..85213c55dc0 100644
  
  #if BUILDFLAG(IS_ANDROID)
 diff --git a/components/BUILD.gn b/components/BUILD.gn
-index e15ecd06aad..f67abca7572 100644
+index e15ecd06aa..f67abca757 100644
 --- a/components/BUILD.gn
 +++ b/components/BUILD.gn
 @@ -645,7 +645,7 @@ test("components_unittests") {
@@ -1924,7 +1924,7 @@ index e15ecd06aad..f67abca7572 100644
        "//components/safety_check:unit_tests",
        "//components/security_interstitials/content:unit_tests",
 diff --git a/components/autofill/core/browser/BUILD.gn b/components/autofill/core/browser/BUILD.gn
-index c39f9c75d8f..a9c156d461a 100644
+index c39f9c75d8..a9c156d461 100644
 --- a/components/autofill/core/browser/BUILD.gn
 +++ b/components/autofill/core/browser/BUILD.gn
 @@ -1000,18 +1000,18 @@ static_library("browser") {
@@ -1983,7 +1983,7 @@ index c39f9c75d8f..a9c156d461a 100644
      "//ui/gfx/geometry",
      "//ui/gfx/range",
 diff --git a/components/autofill/core/browser/foundations/autofill_manager.cc b/components/autofill/core/browser/foundations/autofill_manager.cc
-index 66c3d7c3a1c..b04df6ff23b 100644
+index 66c3d7c3a1..b04df6ff23 100644
 --- a/components/autofill/core/browser/foundations/autofill_manager.cc
 +++ b/components/autofill/core/browser/foundations/autofill_manager.cc
 @@ -56,8 +56,8 @@
@@ -2057,7 +2057,7 @@ index 66c3d7c3a1c..b04df6ff23b 100644
  
  }  // namespace autofill
 diff --git a/components/autofill/core/browser/foundations/autofill_manager.h b/components/autofill/core/browser/foundations/autofill_manager.h
-index f7b0e4fadbd..f6a1e8ced1c 100644
+index f7b0e4fadb..f6a1e8ced1 100644
 --- a/components/autofill/core/browser/foundations/autofill_manager.h
 +++ b/components/autofill/core/browser/foundations/autofill_manager.h
 @@ -52,6 +52,7 @@
@@ -2079,7 +2079,7 @@ index f7b0e4fadbd..f6a1e8ced1c 100644
   protected:
    explicit AutofillManager(AutofillDriver* driver);
 diff --git a/components/autofill/core/browser/integrators/optimization_guide/autofill_optimization_guide_decider.cc b/components/autofill/core/browser/integrators/optimization_guide/autofill_optimization_guide_decider.cc
-index 8d48312a61e..a8e4bb8a26e 100644
+index 8d48312a61..a8e4bb8a26 100644
 --- a/components/autofill/core/browser/integrators/optimization_guide/autofill_optimization_guide_decider.cc
 +++ b/components/autofill/core/browser/integrators/optimization_guide/autofill_optimization_guide_decider.cc
 @@ -322,6 +322,7 @@ void AutofillOptimizationGuideDecider::OnPaymentsDataLoaded(
@@ -2109,7 +2109,7 @@ index 8d48312a61e..a8e4bb8a26e 100644
          decider_->CanApplyOptimization(url, optimization_type,
                                         /*optimization_metadata=*/nullptr);
 diff --git a/components/autofill/core/browser/ml_model/field_classification_model_handler.cc b/components/autofill/core/browser/ml_model/field_classification_model_handler.cc
-index dc893ad7a4e..481d31a92c6 100644
+index dc893ad7a4..481d31a92c 100644
 --- a/components/autofill/core/browser/ml_model/field_classification_model_handler.cc
 +++ b/components/autofill/core/browser/ml_model/field_classification_model_handler.cc
 @@ -126,8 +126,7 @@ bool ParsingSupportsMultipleFieldsOfType(FieldType type) {
@@ -2175,7 +2175,7 @@ index dc893ad7a4e..481d31a92c6 100644
            },
            weak_ptr_factory_.GetWeakPtr(), std::move(prediction_log),
 diff --git a/components/autofill/core/browser/ml_model/field_classification_model_handler.h b/components/autofill/core/browser/ml_model/field_classification_model_handler.h
-index 4fce7dd415d..07050df230f 100644
+index 4fce7dd415..07050df230 100644
 --- a/components/autofill/core/browser/ml_model/field_classification_model_handler.h
 +++ b/components/autofill/core/browser/ml_model/field_classification_model_handler.h
 @@ -24,8 +24,10 @@
@@ -2221,7 +2221,7 @@ index 4fce7dd415d..07050df230f 100644
    base::WeakPtrFactory<FieldClassificationModelHandler> weak_ptr_factory_{this};
  };
 diff --git a/components/history_embeddings/core/history_embeddings_features.cc b/components/history_embeddings/core/history_embeddings_features.cc
-index 97a176308b0..33f5e0bde44 100644
+index 97a176308b..33f5e0bde4 100644
 --- a/components/history_embeddings/core/history_embeddings_features.cc
 +++ b/components/history_embeddings/core/history_embeddings_features.cc
 @@ -24,6 +24,7 @@ FeatureParameters& GetFeatureParametersMutable() {
@@ -2233,7 +2233,7 @@ index 97a176308b0..33f5e0bde44 100644
  // This feature specifies whether to answer queries using an answerer; it can be
  // considered a toggle for v2 answering functionality. Parameters are all kept
 diff --git a/components/omnibox/browser/aim_eligibility_service_features.cc b/components/omnibox/browser/aim_eligibility_service_features.cc
-index c23cef8903e..398fe54f7e8 100644
+index c23cef8903..398fe54f7e 100644
 --- a/components/omnibox/browser/aim_eligibility_service_features.cc
 +++ b/components/omnibox/browser/aim_eligibility_service_features.cc
 @@ -9,6 +9,7 @@
@@ -2245,7 +2245,7 @@ index c23cef8903e..398fe54f7e8 100644
  BASE_FEATURE(kAimServerEligibilityEnabled, base::FEATURE_ENABLED_BY_DEFAULT);
  
 diff --git a/components/omnibox/browser/autocomplete_controller.cc b/components/omnibox/browser/autocomplete_controller.cc
-index 24d140b2f2e..f80ec395c25 100644
+index 24d140b2f2..f80ec395c2 100644
 --- a/components/omnibox/browser/autocomplete_controller.cc
 +++ b/components/omnibox/browser/autocomplete_controller.cc
 @@ -54,7 +54,9 @@
@@ -2289,7 +2289,7 @@ index 24d140b2f2e..f80ec395c25 100644
  
  void RecordMlScoringElapsedTime(base::TimeDelta elapsed) {
 diff --git a/components/omnibox/browser/base_search_provider.cc b/components/omnibox/browser/base_search_provider.cc
-index fd96a1e5527..d925b0253ec 100644
+index fd96a1e552..d925b0253e 100644
 --- a/components/omnibox/browser/base_search_provider.cc
 +++ b/components/omnibox/browser/base_search_provider.cc
 @@ -121,14 +121,14 @@ BaseSearchProvider::BaseSearchProvider(AutocompleteProvider::Type type,
@@ -2310,7 +2310,7 @@ index fd96a1e5527..d925b0253ec 100644
  
  // static
 diff --git a/components/omnibox/browser/omnibox_field_trial.cc b/components/omnibox/browser/omnibox_field_trial.cc
-index 24910d88c98..b4f9a5f5766 100644
+index 24910d88c9..b4f9a5f576 100644
 --- a/components/omnibox/browser/omnibox_field_trial.cc
 +++ b/components/omnibox/browser/omnibox_field_trial.cc
 @@ -865,7 +865,7 @@ bool AreScoringSignalsAnnotatorsEnabled() {
@@ -2323,7 +2323,7 @@ index 24910d88c98..b4f9a5f5766 100644
  bool IsMlUrlScoringCounterfactual() {
    return IsMlUrlScoringEnabled() && GetMLConfig().ml_url_scoring_counterfactual;
 diff --git a/components/optimization_guide/core/delivery/prediction_model_download_manager.cc b/components/optimization_guide/core/delivery/prediction_model_download_manager.cc
-index 850f64d85cc..d701a2781cd 100644
+index 850f64d85c..d701a2781c 100644
 --- a/components/optimization_guide/core/delivery/prediction_model_download_manager.cc
 +++ b/components/optimization_guide/core/delivery/prediction_model_download_manager.cc
 @@ -62,7 +62,7 @@ bool ShouldSkipModelDownloadVerificationForTesting() {
@@ -2361,7 +2361,7 @@ index 850f64d85cc..d701a2781cd 100644
      // Verify that the |download_file_path| contains a valid CRX file.
      std::string public_key;
 diff --git a/components/optimization_guide/core/delivery/prediction_model_fetcher_impl.cc b/components/optimization_guide/core/delivery/prediction_model_fetcher_impl.cc
-index 4320688dfea..65e265f2f2c 100644
+index 4320688dfe..65e265f2f2 100644
 --- a/components/optimization_guide/core/delivery/prediction_model_fetcher_impl.cc
 +++ b/components/optimization_guide/core/delivery/prediction_model_fetcher_impl.cc
 @@ -55,6 +55,7 @@ bool PredictionModelFetcherImpl::FetchOptimizationGuideServiceModels(
@@ -2373,7 +2373,7 @@ index 4320688dfea..65e265f2f2c 100644
  
    TRACE_EVENT(
 diff --git a/components/optimization_guide/core/hints/hints_fetcher.cc b/components/optimization_guide/core/hints/hints_fetcher.cc
-index 2ee269e3bb5..433ec639389 100644
+index 2ee269e3bb..433ec63938 100644
 --- a/components/optimization_guide/core/hints/hints_fetcher.cc
 +++ b/components/optimization_guide/core/hints/hints_fetcher.cc
 @@ -211,6 +211,7 @@ bool HintsFetcher::FetchOptimizationGuideServiceHints(
@@ -2385,7 +2385,7 @@ index 2ee269e3bb5..433ec639389 100644
    DCHECK_GT(optimization_types.size(), 0u);
    request_context_ = request_context;
 diff --git a/components/optimization_guide/core/hints/hints_manager.cc b/components/optimization_guide/core/hints/hints_manager.cc
-index 3b55abeba77..ad3743af507 100644
+index 3b55abeba7..ad3743af50 100644
 --- a/components/optimization_guide/core/hints/hints_manager.cc
 +++ b/components/optimization_guide/core/hints/hints_manager.cc
 @@ -512,6 +512,7 @@ void HintsManager::Shutdown() {
@@ -2403,7 +2403,7 @@ index 3b55abeba77..ad3743af507 100644
 +SET_CROMITE_FEATURE_DISABLED(kHintsBatchUpdateForActiveTabsAndTopHosts);
  }  // namespace optimization_guide
 diff --git a/components/optimization_guide/core/model_execution/private_ai_model_execution_fetcher.cc b/components/optimization_guide/core/model_execution/private_ai_model_execution_fetcher.cc
-index 10e3385a1b1..4e677aaef05 100644
+index 10e3385a1b..4e677aaef0 100644
 --- a/components/optimization_guide/core/model_execution/private_ai_model_execution_fetcher.cc
 +++ b/components/optimization_guide/core/model_execution/private_ai_model_execution_fetcher.cc
 @@ -84,6 +84,10 @@ void PrivateAiModelExecutionFetcher::ExecuteModel(
@@ -2418,7 +2418,7 @@ index 10e3385a1b1..4e677aaef05 100644
  
    private_ai::proto::PaicMessage paic_message;
 diff --git a/components/optimization_guide/core/optimization_guide_features.cc b/components/optimization_guide/core/optimization_guide_features.cc
-index 377cfa80b09..169160eddba 100644
+index 377cfa80b0..f6843947ab 100644
 --- a/components/optimization_guide/core/optimization_guide_features.cc
 +++ b/components/optimization_guide/core/optimization_guide_features.cc
 @@ -47,11 +47,7 @@ constexpr char kOptimizationGuideServiceAPIKeySwitch[] =
@@ -2443,7 +2443,7 @@ index 377cfa80b09..169160eddba 100644
  }
  
  RequestContextSet GetAllowedContextsForPersonalizedMetadata() {
-@@ -492,4 +487,9 @@ std::optional<base::TimeDelta> GetAIPageContentGetImageBytesTimeout() {
+@@ -492,4 +487,14 @@ std::optional<base::TimeDelta> GetAIPageContentGetImageBytesTimeout() {
    return kGetAIPageContentGetImageBytesTimeoutParam.Get();
  }
  
@@ -2451,10 +2451,15 @@ index 377cfa80b09..169160eddba 100644
 +SET_CROMITE_FEATURE_DISABLED(kOptimizationTargetPrediction);
 +SET_CROMITE_FEATURE_DISABLED(kPreventLongRunningPredictionModels);
 +SET_CROMITE_FEATURE_DISABLED(kOptimizationGuideFetchingForSRP);
++// Spatiand: no model execution, on the device (Gemini Nano: IsOnDeviceExecutionEnabled()
++// follows this since kOptimizationGuideOnDeviceModel went in 157) or on Google's service, and
++// no model quality logs.
++SET_CROMITE_FEATURE_DISABLED(kOptimizationGuideModelExecution);
++SET_CROMITE_FEATURE_DISABLED(kModelQualityLogging);
 +SET_CROMITE_FEATURE_DISABLED(kLogOnDeviceMetricsOnStartup);
  }  // namespace optimization_guide::features
 diff --git a/components/optimization_guide/features.gni b/components/optimization_guide/features.gni
-index cd69f740f0b..cecd51cb43d 100644
+index cd69f740f0..cecd51cb43 100644
 --- a/components/optimization_guide/features.gni
 +++ b/components/optimization_guide/features.gni
 @@ -48,5 +48,5 @@ declare_args() {
@@ -2465,7 +2470,7 @@ index cd69f740f0b..cecd51cb43d 100644
 +  build_with_model_execution =  false
  }
 diff --git a/components/page_content_annotations/content/page_category_classifier_bridge_impl.cc b/components/page_content_annotations/content/page_category_classifier_bridge_impl.cc
-index 947e8bf0f3e..5ef1de60d89 100644
+index 947e8bf0f3..5ef1de60d8 100644
 --- a/components/page_content_annotations/content/page_category_classifier_bridge_impl.cc
 +++ b/components/page_content_annotations/content/page_category_classifier_bridge_impl.cc
 @@ -40,6 +40,7 @@ PageCategoryClassifierBridgeImpl::GetUsageMode() const {
@@ -2485,7 +2490,7 @@ index 947e8bf0f3e..5ef1de60d89 100644
  
  }  // namespace page_content_annotations
 diff --git a/components/page_content_annotations/content/page_category_classifier_bridge_impl.h b/components/page_content_annotations/content/page_category_classifier_bridge_impl.h
-index 6b58ffe2940..9c0df6f2dd6 100644
+index 6b58ffe294..9c0df6f2dd 100644
 --- a/components/page_content_annotations/content/page_category_classifier_bridge_impl.h
 +++ b/components/page_content_annotations/content/page_category_classifier_bridge_impl.h
 @@ -7,6 +7,7 @@
@@ -2497,7 +2502,7 @@ index 6b58ffe2940..9c0df6f2dd6 100644
  #include "components/page_content_annotations/core/page_category_classifier_bridge.h"
  
 diff --git a/components/page_content_annotations/core/page_content_annotations_features.cc b/components/page_content_annotations/core/page_content_annotations_features.cc
-index 0e082438f22..ee1db7c66c4 100644
+index 0e082438f2..ee1db7c66c 100644
 --- a/components/page_content_annotations/core/page_content_annotations_features.cc
 +++ b/components/page_content_annotations/core/page_content_annotations_features.cc
 @@ -60,6 +60,7 @@ const base::FeatureParam<std::string> kPageContentExtractionTriggeringMode{
@@ -2540,7 +2545,7 @@ index 0e082438f22..ee1db7c66c4 100644
 +SET_CROMITE_FEATURE_DISABLED(kPageContentAnnotationsValidation);
  }  // namespace page_content_annotations::features
 diff --git a/components/page_content_annotations/core/page_content_annotations_model_manager.cc b/components/page_content_annotations/core/page_content_annotations_model_manager.cc
-index 8fd2ec95bc6..9139767858c 100644
+index 8fd2ec95bc..9139767858 100644
 --- a/components/page_content_annotations/core/page_content_annotations_model_manager.cc
 +++ b/components/page_content_annotations/core/page_content_annotations_model_manager.cc
 @@ -40,6 +40,7 @@ PageContentAnnotationsModelManager::~PageContentAnnotationsModelManager() =
@@ -2552,7 +2557,7 @@ index 8fd2ec95bc6..9139767858c 100644
      return;
  
 diff --git a/components/page_content_annotations/core/page_content_annotations_service.cc b/components/page_content_annotations/core/page_content_annotations_service.cc
-index 69c0777114b..77adc82dff6 100644
+index 69c0777114..77adc82dff 100644
 --- a/components/page_content_annotations/core/page_content_annotations_service.cc
 +++ b/components/page_content_annotations/core/page_content_annotations_service.cc
 @@ -199,6 +199,7 @@ PageContentAnnotationsService::PageContentAnnotationsService(
@@ -2600,7 +2605,7 @@ index 69c0777114b..77adc82dff6 100644
  bool PageContentAnnotationsService::MaybeStartAnnotateVisitBatch() {
    bool is_full_batch_available =
 diff --git a/components/page_content_annotations/core/page_content_annotations_service.h b/components/page_content_annotations/core/page_content_annotations_service.h
-index d3823c1cd3d..0511147826a 100644
+index d3823c1cd3..0511147826 100644
 --- a/components/page_content_annotations/core/page_content_annotations_service.h
 +++ b/components/page_content_annotations/core/page_content_annotations_service.h
 @@ -126,8 +126,11 @@ enum class PageContentAnnotationsType {
@@ -2630,7 +2635,7 @@ index d3823c1cd3d..0511147826a 100644
   private:
    // Updates whether the category classifier bridge should be observing based on
 diff --git a/components/permissions/prediction_service/BUILD.gn b/components/permissions/prediction_service/BUILD.gn
-index 843eccdcc1e..7ff01d16d63 100644
+index 843eccdcc1..7ff01d16d6 100644
 --- a/components/permissions/prediction_service/BUILD.gn
 +++ b/components/permissions/prediction_service/BUILD.gn
 @@ -19,37 +19,37 @@ source_set("prediction_service") {
@@ -2689,7 +2694,7 @@ index 843eccdcc1e..7ff01d16d63 100644
    public_deps = [
      ":prediction_service_messages_proto",
 diff --git a/components/safe_browsing/content/browser/notification_content_detection/BUILD.gn b/components/safe_browsing/content/browser/notification_content_detection/BUILD.gn
-index 6952f9dfbf8..a020bfc6700 100644
+index 6952f9dfbf..a020bfc670 100644
 --- a/components/safe_browsing/content/browser/notification_content_detection/BUILD.gn
 +++ b/components/safe_browsing/content/browser/notification_content_detection/BUILD.gn
 @@ -23,10 +23,6 @@ source_set("notification_content_detection") {
@@ -2704,7 +2709,7 @@ index 6952f9dfbf8..a020bfc6700 100644
  
    deps = [
 diff --git a/components/safe_browsing/core/browser/client_side_phishing_model.cc b/components/safe_browsing/core/browser/client_side_phishing_model.cc
-index 218b10de593..50fb7e0845b 100644
+index 218b10de59..50fb7e0845 100644
 --- a/components/safe_browsing/core/browser/client_side_phishing_model.cc
 +++ b/components/safe_browsing/core/browser/client_side_phishing_model.cc
 @@ -588,7 +588,7 @@ void ClientSidePhishingModel::OnImageEmbeddingModelFileAndEmbeddingListLoaded(
@@ -2734,7 +2739,7 @@ index 218b10de593..50fb7e0845b 100644
    // not present, so we will only send to the renderer when that is the case.
    if (visual_tflite_model_ && image_embedding_model_) {
 diff --git a/components/translate/core/language_detection/BUILD.gn b/components/translate/core/language_detection/BUILD.gn
-index 3631745e8e5..c83acf11c9f 100644
+index 3631745e8e..c83acf11c9 100644
 --- a/components/translate/core/language_detection/BUILD.gn
 +++ b/components/translate/core/language_detection/BUILD.gn
 @@ -18,7 +18,6 @@ static_library("language_detection") {
@@ -2754,7 +2759,7 @@ index 3631745e8e5..c83acf11c9f 100644
      "//components/translate/core/common",
      "//testing/gtest",
 diff --git a/components/viz/service/BUILD.gn b/components/viz/service/BUILD.gn
-index 42fc3926fd9..c81cf161737 100644
+index 42fc3926fd..c81cf16173 100644
 --- a/components/viz/service/BUILD.gn
 +++ b/components/viz/service/BUILD.gn
 @@ -322,8 +322,8 @@ viz_component("service") {
@@ -2769,7 +2774,7 @@ index 42fc3926fd9..c81cf161737 100644
      "//skia:skcms",
      "//third_party/blink/public/common",
 diff --git a/components/viz/service/gl/gpu_service_impl.cc b/components/viz/service/gl/gpu_service_impl.cc
-index 5b9d412e584..1e07beb138d 100644
+index 5b9d412e58..1e07beb138 100644
 --- a/components/viz/service/gl/gpu_service_impl.cc
 +++ b/components/viz/service/gl/gpu_service_impl.cc
 @@ -695,27 +695,9 @@ void GpuServiceImpl::BindWebNNContextProvider(
@@ -2812,7 +2817,7 @@ index 5b9d412e584..1e07beb138d 100644
  
  void GpuServiceImpl::GetVideoMemoryUsageStats(
 diff --git a/content/browser/BUILD.gn b/content/browser/BUILD.gn
-index 46c49c49098..402cebb230f 100644
+index 46c49c4909..402cebb230 100644
 --- a/content/browser/BUILD.gn
 +++ b/content/browser/BUILD.gn
 @@ -311,10 +311,10 @@ source_set("browser") {
@@ -2830,7 +2835,7 @@ index 46c49c49098..402cebb230f 100644
      "//skia/public/mojom",
      "//sql",
 diff --git a/content/browser/gpu/gpu_process_host.cc b/content/browser/gpu/gpu_process_host.cc
-index 1b29f20028b..7832a7dc1da 100644
+index 1b29f20028..7832a7dc1d 100644
 --- a/content/browser/gpu/gpu_process_host.cc
 +++ b/content/browser/gpu/gpu_process_host.cc
 @@ -1392,9 +1392,9 @@ bool GpuProcessHost::LaunchGpuProcess() {
@@ -2847,7 +2852,7 @@ index 1b29f20028b..7832a7dc1da 100644
    if (browser_command_line.HasSwitch(switches::kDisableFrameRateLimit))
      cmd_line->AppendSwitch(switches::kDisableGpuVsync);
 diff --git a/content/browser/service_worker/service_worker_main_resource_loader.cc b/content/browser/service_worker/service_worker_main_resource_loader.cc
-index 51300c75b08..0c92ff0d133 100644
+index 51300c75b0..0c92ff0d13 100644
 --- a/content/browser/service_worker/service_worker_main_resource_loader.cc
 +++ b/content/browser/service_worker/service_worker_main_resource_loader.cc
 @@ -587,6 +587,7 @@ bool ServiceWorkerMainResourceLoader::StartRaceNetworkRequest(
@@ -2859,7 +2864,7 @@ index 51300c75b08..0c92ff0d133 100644
    // RaceNetworkRequest is enabled.
    service_worker_client_->set_fetch_handler_bypass_option(
 diff --git a/content/utility/services.cc b/content/utility/services.cc
-index e51384c4602..e079a2647cb 100644
+index e51384c460..e079a2647c 100644
 --- a/content/utility/services.cc
 +++ b/content/utility/services.cc
 @@ -291,13 +291,6 @@ auto RunMediaFoundationServiceBroker(
@@ -2903,7 +2908,7 @@ index e51384c4602..e079a2647cb 100644
                            (BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)))
    services.Add(RunShapeDetectionService);
 diff --git a/content/utility/webnn/webnn_sandbox_init.cc b/content/utility/webnn/webnn_sandbox_init.cc
-index 46f9a37800d..7d27a34ac4e 100644
+index 46f9a37800..7d27a34ac4 100644
 --- a/content/utility/webnn/webnn_sandbox_init.cc
 +++ b/content/utility/webnn/webnn_sandbox_init.cc
 @@ -23,6 +23,13 @@ namespace webnn {
@@ -2922,7 +2927,7 @@ index 46f9a37800d..7d27a34ac4e 100644
    // the third-party execution-provider preload helper. This runs after
 diff --git a/cromite_flags/chrome/browser/browser_features_cc/Disable-all-predictors-code.inc b/cromite_flags/chrome/browser/browser_features_cc/Disable-all-predictors-code.inc
 new file mode 100644
-index 00000000000..7144380be7c
+index 0000000000..7144380be7
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/browser_features_cc/Disable-all-predictors-code.inc
 @@ -0,0 +1,2 @@
@@ -2930,14 +2935,14 @@ index 00000000000..7144380be7c
 +SET_CROMITE_FEATURE_DISABLED(kNewTabPageTriggerForPrerender2);
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-all-predictors-code.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-all-predictors-code.inc
 new file mode 100644
-index 00000000000..fab17ac780e
+index 0000000000..fab17ac780
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-all-predictors-code.inc
 @@ -0,0 +1 @@
 +// Empty file
 diff --git a/cromite_flags/chrome/common/chrome_features_cc/Disable-all-predictors-code.inc b/cromite_flags/chrome/common/chrome_features_cc/Disable-all-predictors-code.inc
 new file mode 100644
-index 00000000000..babf395b8b2
+index 0000000000..babf395b8b
 --- /dev/null
 +++ b/cromite_flags/chrome/common/chrome_features_cc/Disable-all-predictors-code.inc
 @@ -0,0 +1,2 @@
@@ -2945,14 +2950,14 @@ index 00000000000..babf395b8b2
 +SET_CROMITE_FEATURE_DISABLED(kGoogleSearchAiModeWorkspace);
 diff --git a/cromite_flags/components/password_manager/core/browser/features/password_features_cc/Disable-all-predictors-code.inc b/cromite_flags/components/password_manager/core/browser/features/password_features_cc/Disable-all-predictors-code.inc
 new file mode 100644
-index 00000000000..4bd8276f349
+index 0000000000..4bd8276f34
 --- /dev/null
 +++ b/cromite_flags/components/password_manager/core/browser/features/password_features_cc/Disable-all-predictors-code.inc
 @@ -0,0 +1 @@
 +// empty file
 diff --git a/cromite_flags/components/permissions/features_cc/Disable-all-predictors-code.inc b/cromite_flags/components/permissions/features_cc/Disable-all-predictors-code.inc
 new file mode 100644
-index 00000000000..eb90ff58e2c
+index 0000000000..eb90ff58e2
 --- /dev/null
 +++ b/cromite_flags/components/permissions/features_cc/Disable-all-predictors-code.inc
 @@ -0,0 +1,5 @@
@@ -2963,27 +2968,27 @@ index 00000000000..eb90ff58e2c
 +#endif
 diff --git a/cromite_flags/net/base/features_cc/Disable-all-predictors-code.inc b/cromite_flags/net/base/features_cc/Disable-all-predictors-code.inc
 new file mode 100644
-index 00000000000..68aa89715bb
+index 0000000000..68aa89715b
 --- /dev/null
 +++ b/cromite_flags/net/base/features_cc/Disable-all-predictors-code.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_DISABLED(kHttpCacheNoVarySearch);
 diff --git a/cromite_flags/services/network/public/cpp/features_cc/Disable-all-predictors-code.inc b/cromite_flags/services/network/public/cpp/features_cc/Disable-all-predictors-code.inc
 new file mode 100644
-index 00000000000..e18ea911175
+index 0000000000..e18ea91117
 --- /dev/null
 +++ b/cromite_flags/services/network/public/cpp/features_cc/Disable-all-predictors-code.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_DISABLED(kNetworkContextPrefetch);
 diff --git a/cromite_flags/third_party/blink/common/features_cc/Disable-all-predictors-code.inc b/cromite_flags/third_party/blink/common/features_cc/Disable-all-predictors-code.inc
 new file mode 100644
-index 00000000000..10893086f5f
+index 0000000000..10893086f5
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_cc/Disable-all-predictors-code.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_DISABLED(kNavigationPredictor);
 diff --git a/media/webrtc/BUILD.gn b/media/webrtc/BUILD.gn
-index a9fa4df036e..aeff38c2bda 100644
+index a9fa4df036..aeff38c2bd 100644
 --- a/media/webrtc/BUILD.gn
 +++ b/media/webrtc/BUILD.gn
 @@ -4,6 +4,7 @@
@@ -2995,7 +3000,7 @@ index a9fa4df036e..aeff38c2bda 100644
  component("webrtc") {
    _configs = configs
 diff --git a/media/webrtc/helpers.cc b/media/webrtc/helpers.cc
-index 2be0defec93..93607cd183a 100644
+index 2be0defec9..93607cd183 100644
 --- a/media/webrtc/helpers.cc
 +++ b/media/webrtc/helpers.cc
 @@ -13,6 +13,7 @@
@@ -3007,7 +3012,7 @@ index 2be0defec93..93607cd183a 100644
  #include "media/webrtc/webrtc_features.h"
  #include "third_party/webrtc/api/audio/audio_processing.h"
 diff --git a/services/on_device_model/BUILD.gn b/services/on_device_model/BUILD.gn
-index 54911d971b8..7fe87e69744 100644
+index 54911d971b..7fe87e6974 100644
 --- a/services/on_device_model/BUILD.gn
 +++ b/services/on_device_model/BUILD.gn
 @@ -25,6 +25,8 @@ component("backend_interfaces") {
@@ -3047,7 +3052,7 @@ index 54911d971b8..7fe87e69744 100644
        "//services/on_device_model/public/mojom",
        "//testing/gmock",
 diff --git a/services/on_device_model/fake/BUILD.gn b/services/on_device_model/fake/BUILD.gn
-index 27f174c5649..357a35d4030 100644
+index 27f174c564..357a35d403 100644
 --- a/services/on_device_model/fake/BUILD.gn
 +++ b/services/on_device_model/fake/BUILD.gn
 @@ -12,14 +12,16 @@ if (use_blink || (is_ios && build_with_internal_optimization_guide)) {
@@ -3072,7 +3077,7 @@ index 27f174c5649..357a35d4030 100644
        "//skia:skia_core_public_headers",
      ]
 diff --git a/services/on_device_model/fake/fake_chrome_ml_api.cc b/services/on_device_model/fake/fake_chrome_ml_api.cc
-index cdbdf433e90..ef01cb6550d 100644
+index cdbdf433e9..ef01cb6550 100644
 --- a/services/on_device_model/fake/fake_chrome_ml_api.cc
 +++ b/services/on_device_model/fake/fake_chrome_ml_api.cc
 @@ -141,7 +141,9 @@ bool g_calculate_tokens_decoded = false;
@@ -3096,7 +3101,7 @@ index cdbdf433e90..ef01cb6550d 100644
      .SetFatalErrorFn = &SetFatalErrorFn,
      .DestroyModel = &DestroyModel,
 diff --git a/services/on_device_model/fake/on_device_model_fake.cc b/services/on_device_model/fake/on_device_model_fake.cc
-index 8fa95a9b35d..f812ff16096 100644
+index 8fa95a9b35..f812ff1609 100644
 --- a/services/on_device_model/fake/on_device_model_fake.cc
 +++ b/services/on_device_model/fake/on_device_model_fake.cc
 @@ -12,9 +12,7 @@ namespace fake_ml {
@@ -3111,7 +3116,7 @@ index 8fa95a9b35d..f812ff16096 100644
  
  }  // namespace fake_ml
 diff --git a/services/on_device_model/ml/BUILD.gn b/services/on_device_model/ml/BUILD.gn
-index b8b1ddd6648..ee0494225ce 100644
+index b8b1ddd664..ee0494225c 100644
 --- a/services/on_device_model/ml/BUILD.gn
 +++ b/services/on_device_model/ml/BUILD.gn
 @@ -6,6 +6,8 @@ import("//build/config/features.gni")
@@ -3124,7 +3129,7 @@ index b8b1ddd6648..ee0494225ce 100644
    public = [
      "chrome_ml_api.h",
 diff --git a/services/on_device_model/ml/chrome_ml.cc b/services/on_device_model/ml/chrome_ml.cc
-index de958722b7f..32d321782b8 100644
+index de958722b7..32d321782b 100644
 --- a/services/on_device_model/ml/chrome_ml.cc
 +++ b/services/on_device_model/ml/chrome_ml.cc
 @@ -208,7 +208,7 @@ std::unique_ptr<ChromeML> ChromeML::Create(
@@ -3137,7 +3142,7 @@ index de958722b7f..32d321782b8 100644
      return nullptr;
    }
 diff --git a/services/on_device_model/ml/chrome_ml.h b/services/on_device_model/ml/chrome_ml.h
-index f9459adbb90..c6935a6928c 100644
+index f9459adbb9..c6935a6928 100644
 --- a/services/on_device_model/ml/chrome_ml.h
 +++ b/services/on_device_model/ml/chrome_ml.h
 @@ -44,10 +44,12 @@ class COMPONENT_EXPORT(ON_DEVICE_MODEL_ML) ChromeML {
@@ -3154,7 +3159,7 @@ index f9459adbb90..c6935a6928c 100644
    DISABLE_CFI_DLSYM
    void SetMetricsFns(const ChromeMLMetricsFns* fns) const {
 diff --git a/services/on_device_model/ml/chrome_ml_api.h b/services/on_device_model/ml/chrome_ml_api.h
-index de168c73c33..597c3e9de9a 100644
+index de168c73c3..597c3e9de9 100644
 --- a/services/on_device_model/ml/chrome_ml_api.h
 +++ b/services/on_device_model/ml/chrome_ml_api.h
 @@ -12,7 +12,9 @@
@@ -3185,7 +3190,7 @@ index de168c73c33..597c3e9de9a 100644
    // Sets functions which can be used to log metrics from within the library.
    void (*SetMetricsFns)(const ChromeMLMetricsFns* fns);
 diff --git a/services/on_device_model/on_device_model.gni b/services/on_device_model/on_device_model.gni
-index 142e8008cbd..5fc68ce92df 100644
+index 142e8008cb..5fc68ce92d 100644
 --- a/services/on_device_model/on_device_model.gni
 +++ b/services/on_device_model/on_device_model.gni
 @@ -14,7 +14,7 @@ declare_args() {
@@ -3205,7 +3210,7 @@ index 142e8008cbd..5fc68ce92df 100644
 +  use_mlkit_for_aicore = false
  }
 diff --git a/services/on_device_model/on_device_model_service.cc b/services/on_device_model/on_device_model_service.cc
-index a1ca9302607..652052565e0 100644
+index a1ca930260..652052565e 100644
 --- a/services/on_device_model/on_device_model_service.cc
 +++ b/services/on_device_model/on_device_model_service.cc
 @@ -32,14 +32,7 @@ const base::FeatureParam<bool> kForceFastestInference{
@@ -3225,7 +3230,7 @@ index a1ca9302607..652052565e0 100644
  
  }  // namespace
 diff --git a/services/on_device_model/public/cpp/features.cc b/services/on_device_model/public/cpp/features.cc
-index 93c3fe2841b..bd12042e4a1 100644
+index 93c3fe2841..bd12042e4a 100644
 --- a/services/on_device_model/public/cpp/features.cc
 +++ b/services/on_device_model/public/cpp/features.cc
 @@ -7,10 +7,12 @@
@@ -3242,7 +3247,7 @@ index 93c3fe2841b..bd12042e4a1 100644
  BASE_FEATURE(kOnDeviceModelConversationBackend,
               base::FEATURE_DISABLED_BY_DEFAULT);
 diff --git a/services/on_device_model/public/cpp/test_support/BUILD.gn b/services/on_device_model/public/cpp/test_support/BUILD.gn
-index 03d8a48a48e..7d59dd893db 100644
+index 03d8a48a48..7d59dd893d 100644
 --- a/services/on_device_model/public/cpp/test_support/BUILD.gn
 +++ b/services/on_device_model/public/cpp/test_support/BUILD.gn
 @@ -14,7 +14,7 @@ source_set("test_support") {
@@ -3255,7 +3260,7 @@ index 03d8a48a48e..7d59dd893db 100644
      "//services/on_device_model/public/mojom",
      "//third_party/re2",
 diff --git a/services/on_device_model/public/mojom/BUILD.gn b/services/on_device_model/public/mojom/BUILD.gn
-index 8dfdabadf86..f95b13aa843 100644
+index 8dfdabadf8..f95b13aa84 100644
 --- a/services/on_device_model/public/mojom/BUILD.gn
 +++ b/services/on_device_model/public/mojom/BUILD.gn
 @@ -72,7 +72,7 @@ mojom("mojom") {
@@ -3268,7 +3273,7 @@ index 8dfdabadf86..f95b13aa843 100644
        ]
      },
 diff --git a/services/on_device_model/safety/BUILD.gn b/services/on_device_model/safety/BUILD.gn
-index eab5afd3562..a656136f29e 100644
+index eab5afd356..a656136f29 100644
 --- a/services/on_device_model/safety/BUILD.gn
 +++ b/services/on_device_model/safety/BUILD.gn
 @@ -2,7 +2,7 @@
@@ -3281,7 +3286,7 @@ index eab5afd3562..a656136f29e 100644
      _configs = configs
      configs = []
 diff --git a/services/on_device_model/safety/safety_model_holder.cc b/services/on_device_model/safety/safety_model_holder.cc
-index 69da9b3981c..330597f98fd 100644
+index 69da9b3981..330597f98f 100644
 --- a/services/on_device_model/safety/safety_model_holder.cc
 +++ b/services/on_device_model/safety/safety_model_holder.cc
 @@ -29,6 +29,7 @@ void SafetyModelHolder::Reset(
@@ -3293,7 +3298,7 @@ index 69da9b3981c..330597f98fd 100644
    if (impl) {
      model_.Add(std::move(impl), std::move(model));
 diff --git a/services/passage_embeddings/passage_embeddings_service.cc b/services/passage_embeddings/passage_embeddings_service.cc
-index ff21ed0d40d..4b3d1d9ac98 100644
+index ff21ed0d40..4b3d1d9ac9 100644
 --- a/services/passage_embeddings/passage_embeddings_service.cc
 +++ b/services/passage_embeddings/passage_embeddings_service.cc
 @@ -36,6 +36,10 @@ void PassageEmbeddingsService::LoadModels(
@@ -3308,7 +3313,7 @@ index ff21ed0d40d..4b3d1d9ac98 100644
        std::move(receiver), std::move(embedder_params),
        base::BindOnce(&PassageEmbeddingsService::OnEmbedderDisconnect,
 diff --git a/services/webnn/BUILD.gn b/services/webnn/BUILD.gn
-index 074e88a9a7c..0109e2d29cc 100644
+index 074e88a9a7..0109e2d29c 100644
 --- a/services/webnn/BUILD.gn
 +++ b/services/webnn/BUILD.gn
 @@ -46,7 +46,7 @@ source_set("webnn_service_base") {
@@ -3375,7 +3380,7 @@ index 074e88a9a7c..0109e2d29cc 100644
      }
    }
 diff --git a/services/webnn/features.gni b/services/webnn/features.gni
-index 8f3c3956b73..9f140f5caf1 100644
+index 8f3c3956b7..9f140f5caf 100644
 --- a/services/webnn/features.gni
 +++ b/services/webnn/features.gni
 @@ -9,7 +9,7 @@ assert(use_blink)
@@ -3388,7 +3393,7 @@ index 8f3c3956b73..9f140f5caf1 100644
    # LiteRT matches TFLite.
    webnn_use_litert = is_android || is_chromeos || is_linux || is_apple || is_win
 diff --git a/services/webnn/webnn_context_impl.cc b/services/webnn/webnn_context_impl.cc
-index 6b13269a7d1..b3e76c94b56 100644
+index 6b13269a7d..b3e76c94b5 100644
 --- a/services/webnn/webnn_context_impl.cc
 +++ b/services/webnn/webnn_context_impl.cc
 @@ -206,8 +206,7 @@ WebNNContextImpl::~WebNNContextImpl() {
@@ -3439,7 +3444,7 @@ index 6b13269a7d1..b3e76c94b56 100644
    if (!main_task_runner_->RunsTasksInCurrentSequence()) {
      main_task_runner_->PostTask(FROM_HERE, std::move(create_task));
 diff --git a/services/webnn/webnn_context_provider_impl.cc b/services/webnn/webnn_context_provider_impl.cc
-index 997fbfc9881..8306a2e81b1 100644
+index 997fbfc988..8306a2e81b 100644
 --- a/services/webnn/webnn_context_provider_impl.cc
 +++ b/services/webnn/webnn_context_provider_impl.cc
 @@ -304,7 +304,7 @@ void WebNNContextProviderImpl::GetAvailableExecutionProvidersDetails(
@@ -3496,7 +3501,7 @@ index 997fbfc9881..8306a2e81b1 100644
  
  void WebNNContextProviderImpl::
 diff --git a/third_party/blink/renderer/core/html/parser/html_document_parser.cc b/third_party/blink/renderer/core/html/parser/html_document_parser.cc
-index efa0234d53d..ba8a593aa8f 100644
+index efa0234d53..ba8a593aa8 100644
 --- a/third_party/blink/renderer/core/html/parser/html_document_parser.cc
 +++ b/third_party/blink/renderer/core/html/parser/html_document_parser.cc
 @@ -1806,6 +1806,7 @@ bool HTMLDocumentParser::ShouldPumpTokenizerNowForFinishAppend() const {
@@ -3508,7 +3513,7 @@ index efa0234d53d..ba8a593aa8f 100644
    auto* document = GetDocument();
    if (const auto* context = document->GetExecutionContext()) {
 diff --git a/third_party/blink/renderer/core/speculation_rules/document_speculation_rules.cc b/third_party/blink/renderer/core/speculation_rules/document_speculation_rules.cc
-index 5520fc0c376..7f2922c9f3f 100644
+index 5520fc0c37..7f2922c9f3 100644
 --- a/third_party/blink/renderer/core/speculation_rules/document_speculation_rules.cc
 +++ b/third_party/blink/renderer/core/speculation_rules/document_speculation_rules.cc
 @@ -843,6 +843,7 @@ void DocumentSpeculationRules::UpdateSpeculationCandidates() {
@@ -3520,7 +3525,7 @@ index 5520fc0c376..7f2922c9f3f 100644
    auto push_candidates = [&candidates, &document, this](
                               mojom::blink::SpeculationAction action,
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 2bd1dc62251..cddf98b9fd6 100644
+index 2bd1dc6225..cddf98b9fd 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -5158,7 +5158,7 @@

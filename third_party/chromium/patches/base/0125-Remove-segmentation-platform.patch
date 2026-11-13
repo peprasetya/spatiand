@@ -14,7 +14,7 @@ FILE:Remove-segmentation-platform.patch
  2 files changed, 8 insertions(+)
 
 diff --git a/chrome/browser/segmentation_platform/chrome_browser_main_extra_parts_segmentation_platform.cc b/chrome/browser/segmentation_platform/chrome_browser_main_extra_parts_segmentation_platform.cc
-index 7a6085506dd..b392a55b921 100644
+index 7a6085506d..b392a55b92 100644
 --- a/chrome/browser/segmentation_platform/chrome_browser_main_extra_parts_segmentation_platform.cc
 +++ b/chrome/browser/segmentation_platform/chrome_browser_main_extra_parts_segmentation_platform.cc
 @@ -12,11 +12,13 @@
@@ -48,7 +48,7 @@ index 7a6085506dd..b392a55b921 100644
        .PostMessageLoopRun();
  }
 diff --git a/components/segmentation_platform/public/features.cc b/components/segmentation_platform/public/features.cc
-index 01abb4a9b8b..2c97e114c68 100644
+index 01abb4a9b8..2c97e114c6 100644
 --- a/components/segmentation_platform/public/features.cc
 +++ b/components/segmentation_platform/public/features.cc
 @@ -283,4 +283,8 @@ bool IsMagicStackTipsV2IosActionableEnabled() {

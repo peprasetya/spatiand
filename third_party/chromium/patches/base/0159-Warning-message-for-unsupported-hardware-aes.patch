@@ -27,7 +27,7 @@ FILE:Warning-message-for-unsupported-hardware-aes.patch
  create mode 100644 cromite_flags/content/public/common/content_features_h/Warning-message-for-unsupported-hardware-aes.inc
 
 diff --git a/base/base_switches.h b/base/base_switches.h
-index 9d544c40c69..f829af31c3d 100644
+index 9d544c40c6..f829af31c3 100644
 --- a/base/base_switches.h
 +++ b/base/base_switches.h
 @@ -132,6 +132,8 @@ inline constexpr char kWaitForDebugger[] = "wait-for-debugger";
@@ -40,7 +40,7 @@ index 9d544c40c69..f829af31c3d 100644
  // Disable high-resolution timer on Windows.
  inline constexpr char kDisableHighResTimer[] = "disable-highres-timer";
 diff --git a/chrome/BUILD.gn b/chrome/BUILD.gn
-index f1d133b6cda..ea114499f94 100644
+index f1d133b6cd..ea114499f9 100644
 --- a/chrome/BUILD.gn
 +++ b/chrome/BUILD.gn
 @@ -1823,6 +1823,8 @@ if (is_android) {
@@ -53,7 +53,7 @@ index f1d133b6cda..ea114499f94 100644
        "//components/minidump_uploader",
        "//components/safe_browsing:buildflags",
 diff --git a/chrome/app/chrome_main_delegate.cc b/chrome/app/chrome_main_delegate.cc
-index 0447c4084b0..641ec29b5a0 100644
+index 0447c4084b..641ec29b5a 100644
 --- a/chrome/app/chrome_main_delegate.cc
 +++ b/chrome/app/chrome_main_delegate.cc
 @@ -10,6 +10,7 @@
@@ -102,7 +102,7 @@ index 0447c4084b0..641ec29b5a0 100644
    // Give the browser process a longer treadmill, since crashes
    // there have more impact.
 diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
-index f659bbdb317..1d1a040cdff 100644
+index f659bbdb31..1d1a040cdf 100644
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
 @@ -7210,6 +7210,10 @@ Keep your key file in a safe place. You will need it to create new versions of y
@@ -117,7 +117,7 @@ index f659bbdb317..1d1a040cdff 100644
        <message name="IDS_BAD_ENVIRONMENT_VARIABLES_WARNING_MESSAGE" desc="Message shown when an unsupported environment variable is used [Keep it short so it fits in the infobar.]">
          You are using an unsupported environment variable: <ph name="BAD_VAR">$1<ex>SSLKEYLOGFILE</ex></ph>. Stability and security will suffer.
 diff --git a/chrome/browser/ui/startup/bad_flags_prompt.cc b/chrome/browser/ui/startup/bad_flags_prompt.cc
-index e978ec9cf1d..5f63f915773 100644
+index e978ec9cf1..5f63f91577 100644
 --- a/chrome/browser/ui/startup/bad_flags_prompt.cc
 +++ b/chrome/browser/ui/startup/bad_flags_prompt.cc
 @@ -347,6 +347,15 @@ void ShowBadFlagsPrompt(content::WebContents* web_contents) {
@@ -137,7 +137,7 @@ index e978ec9cf1d..5f63f915773 100644
  
  void ShowBadFlagsInfoBar(content::WebContents* web_contents,
 diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
-index 200e0ab673c..048e8a41686 100644
+index 200e0ab673..048e8a4168 100644
 --- a/content/browser/renderer_host/render_process_host_impl.cc
 +++ b/content/browser/renderer_host/render_process_host_impl.cc
 @@ -4094,6 +4094,7 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
@@ -150,7 +150,7 @@ index 200e0ab673c..048e8a41686 100644
  
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Warning-message-for-unsupported-hardware-aes.inc b/cromite_flags/chrome/browser/about_flags_cc/Warning-message-for-unsupported-hardware-aes.inc
 new file mode 100644
-index 00000000000..eff9a455f5c
+index 0000000000..eff9a455f5
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Warning-message-for-unsupported-hardware-aes.inc
 @@ -0,0 +1,10 @@
@@ -166,7 +166,7 @@ index 00000000000..eff9a455f5c
 +#endif
 diff --git a/cromite_flags/content/public/common/content_features_cc/Warning-message-for-unsupported-hardware-aes.inc b/cromite_flags/content/public/common/content_features_cc/Warning-message-for-unsupported-hardware-aes.inc
 new file mode 100644
-index 00000000000..a5fe1b29072
+index 0000000000..a5fe1b2907
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_cc/Warning-message-for-unsupported-hardware-aes.inc
 @@ -0,0 +1,4 @@
@@ -176,7 +176,7 @@ index 00000000000..a5fe1b29072
 +                base::FEATURE_ENABLED_BY_DEFAULT);
 diff --git a/cromite_flags/content/public/common/content_features_h/Warning-message-for-unsupported-hardware-aes.inc b/cromite_flags/content/public/common/content_features_h/Warning-message-for-unsupported-hardware-aes.inc
 new file mode 100644
-index 00000000000..8d2111d7fdb
+index 0000000000..8d2111d7fd
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_h/Warning-message-for-unsupported-hardware-aes.inc
 @@ -0,0 +1 @@

@@ -29,7 +29,7 @@ FILE:JIT-site-settings.patch
 
 diff --git a/components/browser_ui/strings/bromite_content_settings/javascript_jit.grdp b/components/browser_ui/strings/bromite_content_settings/javascript_jit.grdp
 new file mode 100644
-index 00000000000..2c39f79ef91
+index 0000000000..2c39f79ef9
 --- /dev/null
 +++ b/components/browser_ui/strings/bromite_content_settings/javascript_jit.grdp
 @@ -0,0 +1,21 @@
@@ -56,7 +56,7 @@ index 00000000000..2c39f79ef91
 +</grit-part>
 diff --git a/components/content_settings/core/browser/bromite_content_settings/javascript_jit.inc b/components/content_settings/core/browser/bromite_content_settings/javascript_jit.inc
 new file mode 100644
-index 00000000000..23333c500ff
+index 0000000000..23333c500f
 --- /dev/null
 +++ b/components/content_settings/core/browser/bromite_content_settings/javascript_jit.inc
 @@ -0,0 +1,12 @@
@@ -73,7 +73,7 @@ index 00000000000..23333c500ff
 +    .set_blocked_exceptions_ui(IDS_WEBSITE_SETTINGS_ADD_SITE_DESCRIPTION_JAVASCRIPT_JIT_BLOCK)
 +    .set_mid_sentence_ui(IDS_JAVASCRIPT_JIT_PERMISSION_TITLE);
 diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
-index e822af4b1d2..94175212f88 100644
+index e822af4b1d..94175212f8 100644
 --- a/components/content_settings/core/browser/content_settings_registry.cc
 +++ b/components/content_settings/core/browser/content_settings_registry.cc
 @@ -559,7 +559,7 @@ void ContentSettingsRegistry::Init() {
@@ -86,7 +86,7 @@ index e822af4b1d2..94175212f88 100644
             /*valid_settings=*/{CONTENT_SETTING_ALLOW, CONTENT_SETTING_BLOCK},
             WebsiteSettingsInfo::TOP_ORIGIN_ONLY_SCOPE,
 diff --git a/content/browser/renderer_host/navigation_request.cc b/content/browser/renderer_host/navigation_request.cc
-index b7f06ce38c6..fdd3bc8f72f 100644
+index b7f06ce38c..fdd3bc8f72 100644
 --- a/content/browser/renderer_host/navigation_request.cc
 +++ b/content/browser/renderer_host/navigation_request.cc
 @@ -4721,11 +4721,17 @@ UrlInfo NavigationRequest::GetUrlInfo() {
@@ -109,7 +109,7 @@ index b7f06ce38c6..fdd3bc8f72f 100644
    if (base::FeatureList::IsEnabled(features::kExcludeAdsFromOriginIsolation)) {
      // When excluding ads from origin isolation, an ad navigation is treated as
 diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
-index 048e8a41686..c545e964e2b 100644
+index 048e8a4168..c545e964e2 100644
 --- a/content/browser/renderer_host/render_process_host_impl.cc
 +++ b/content/browser/renderer_host/render_process_host_impl.cc
 @@ -3857,6 +3857,9 @@ void RenderProcessHostImpl::AppendRendererCommandLine(
@@ -123,7 +123,7 @@ index 048e8a41686..c545e964e2b 100644
      AppendToCommaSeparatedSwitch(command_line,
                                   blink::switches::kJavaScriptFlags,
 diff --git a/content/browser/site_info.cc b/content/browser/site_info.cc
-index c74fd505701..d8aa05d792d 100644
+index c74fd50570..d8aa05d792 100644
 --- a/content/browser/site_info.cc
 +++ b/content/browser/site_info.cc
 @@ -350,6 +350,13 @@ SiteInfo SiteInfo::Create(const IsolationContext& isolation_context,
@@ -141,7 +141,7 @@ index c74fd505701..d8aa05d792d 100644
        browser_context, isolation_context.browsing_instance_id(),
        url_info.process_selection_user_data, agent_cluster_url_or_default);
 diff --git a/content/browser/url_info.cc b/content/browser/url_info.cc
-index 4cbf5e41510..6ca88b00abc 100644
+index 4cbf5e4151..6ca88b00ab 100644
 --- a/content/browser/url_info.cc
 +++ b/content/browser/url_info.cc
 @@ -28,6 +28,7 @@ UrlInfo::UrlInfo(const UrlInfoInit& init)
@@ -165,7 +165,7 @@ index 4cbf5e41510..6ca88b00abc 100644
    is_sandboxed_ = is_sandboxed;
    return *this;
 diff --git a/content/browser/url_info.h b/content/browser/url_info.h
-index fbb53c374f3..558a722b62b 100644
+index fbb53c374f..558a722b62 100644
 --- a/content/browser/url_info.h
 +++ b/content/browser/url_info.h
 @@ -128,6 +128,7 @@ struct CONTENT_EXPORT UrlInfo {

@@ -16,7 +16,7 @@ FILE:dns-send-IPv6-connectivity-probes-to-RIPE-DNS.patch
  2 files changed, 10 insertions(+), 5 deletions(-)
 
 diff --git a/net/dns/host_resolver_manager.cc b/net/dns/host_resolver_manager.cc
-index ab286b869b8..ccf7fed6042 100644
+index ab286b869b..ccf7fed604 100644
 --- a/net/dns/host_resolver_manager.cc
 +++ b/net/dns/host_resolver_manager.cc
 @@ -152,12 +152,12 @@ const size_t kMaxHostLength = 4096;
@@ -38,7 +38,7 @@ index ab286b869b8..ccf7fed6042 100644
  // True if |hostname| ends with either ".local" or ".local.".
  bool ResemblesMulticastDNSName(std::string_view hostname) {
 diff --git a/net/dns/host_resolver_manager_request_impl.cc b/net/dns/host_resolver_manager_request_impl.cc
-index 14e9e1db950..22a11af993a 100644
+index 14e9e1db95..22a11af993 100644
 --- a/net/dns/host_resolver_manager_request_impl.cc
 +++ b/net/dns/host_resolver_manager_request_impl.cc
 @@ -35,6 +35,8 @@

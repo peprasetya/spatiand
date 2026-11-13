@@ -15,7 +15,7 @@ FILE:ungoogled-chromium-Disable-Network-Time-Tracker.patch
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/components/network_time/network_time_tracker.cc b/components/network_time/network_time_tracker.cc
-index 3bb0f023780..c1fd7e33e13 100644
+index 3bb0f02378..c1fd7e33e1 100644
 --- a/components/network_time/network_time_tracker.cc
 +++ b/components/network_time/network_time_tracker.cc
 @@ -76,6 +76,7 @@ BASE_FEATURE(kNetworkTimeServiceQuerying, base::FEATURE_DISABLED_BY_DEFAULT);

@@ -14,7 +14,7 @@ FILE:Add-support-for-writing-URIs.patch
  2 files changed, 14 insertions(+)
 
 diff --git a/base/android/content_uri_utils.cc b/base/android/content_uri_utils.cc
-index 82c59768fec..328148f4df6 100644
+index 82c59768fe..328148f4df 100644
 --- a/base/android/content_uri_utils.cc
 +++ b/base/android/content_uri_utils.cc
 @@ -157,6 +157,16 @@ bool IsContentUriFromThisApp(const FilePath& content_uri) {
@@ -35,7 +35,7 @@ index 82c59768fec..328148f4df6 100644
    JNIEnv* env = android::AttachCurrentThread();
    return Java_ContentUriUtils_getMimeType(env, content_uri.value());
 diff --git a/base/android/content_uri_utils.h b/base/android/content_uri_utils.h
-index 1ab9af4432c..d622e439c76 100644
+index 1ab9af4432..d622e439c7 100644
 --- a/base/android/content_uri_utils.h
 +++ b/base/android/content_uri_utils.h
 @@ -46,6 +46,10 @@ int ContentUriGetFd(

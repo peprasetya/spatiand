@@ -18,13 +18,13 @@ FILE:Disable-css-preferred-text-scale.patch
 
 diff --git a/cromite_flags/third_party/blink/common/features_cc/Disable-CSSPreferredTextScale.inc b/cromite_flags/third_party/blink/common/features_cc/Disable-CSSPreferredTextScale.inc
 new file mode 100644
-index 00000000000..b551c64c02b
+index 0000000000..b551c64c02
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_cc/Disable-CSSPreferredTextScale.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_DISABLED(kCSSPreferredTextScale);
 diff --git a/third_party/blink/renderer/core/css/document_style_environment_variables.cc b/third_party/blink/renderer/core/css/document_style_environment_variables.cc
-index ff8127792aa..33bd28b5b8a 100644
+index ff8127792a..33bd28b5b8 100644
 --- a/third_party/blink/renderer/core/css/document_style_environment_variables.cc
 +++ b/third_party/blink/renderer/core/css/document_style_environment_variables.cc
 @@ -95,6 +95,7 @@ void DocumentStyleEnvironmentVariables::RecordVariableUsage(
@@ -36,7 +36,7 @@ index ff8127792aa..33bd28b5b8a 100644
  
    Settings* settings = document_->GetSettings();
 diff --git a/third_party/blink/renderer/core/css/style_environment_variables.cc b/third_party/blink/renderer/core/css/style_environment_variables.cc
-index fac008246a1..17603b31153 100644
+index fac008246a..17603b3115 100644
 --- a/third_party/blink/renderer/core/css/style_environment_variables.cc
 +++ b/third_party/blink/renderer/core/css/style_environment_variables.cc
 @@ -50,7 +50,9 @@ void SetDefaultEnvironmentVariables(StyleEnvironmentVariables* instance) {
@@ -51,7 +51,7 @@ index fac008246a1..17603b31153 100644
  
  }  // namespace.
 diff --git a/third_party/blink/renderer/core/page/page.cc b/third_party/blink/renderer/core/page/page.cc
-index bed7908c76f..84b6c9e3cb8 100644
+index bed7908c76..84b6c9e3cb 100644
 --- a/third_party/blink/renderer/core/page/page.cc
 +++ b/third_party/blink/renderer/core/page/page.cc
 @@ -1037,7 +1037,9 @@ void Page::SettingsChanged(ChangeType change_type) {
@@ -66,7 +66,7 @@ index bed7908c76f..84b6c9e3cb8 100644
             frame = frame->Tree().TraverseNext()) {
          LocalFrame* local_frame = DynamicTo<LocalFrame>(frame);
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index e07146d990c..345ffa7173c 100644
+index e07146d990..345ffa7173 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -1987,6 +1987,9 @@

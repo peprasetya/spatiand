@@ -20,7 +20,7 @@ FILE:Re-introduce-modal-dialog-flag-to-close-all-tabs.patch
  create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Re-introduce-modal-dialog-flag-to-close-all-tabs.inc
 
 diff --git a/chrome/browser/flags/android/chrome_feature_list.cc b/chrome/browser/flags/android/chrome_feature_list.cc
-index 92372bf8084..2943bb5c80b 100644
+index 92372bf808..2943bb5c80 100644
 --- a/chrome/browser/flags/android/chrome_feature_list.cc
 +++ b/chrome/browser/flags/android/chrome_feature_list.cc
 @@ -382,6 +382,7 @@ const base::Feature* const kFeaturesExposedToJava[] = {
@@ -33,7 +33,7 @@ index 92372bf8084..2943bb5c80b 100644
      &kCompositorViewShrinkWhenKeyboardHidden,
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Re-introduce-modal-dialog-flag-to-close-all-tabs.inc b/cromite_flags/chrome/browser/about_flags_cc/Re-introduce-modal-dialog-flag-to-close-all-tabs.inc
 new file mode 100644
-index 00000000000..9d263cce1db
+index 0000000000..9d263cce1d
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Re-introduce-modal-dialog-flag-to-close-all-tabs.inc
 @@ -0,0 +1,13 @@
@@ -52,7 +52,7 @@ index 00000000000..9d263cce1db
 +#endif
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Re-introduce-modal-dialog-flag-to-close-all-tabs.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Re-introduce-modal-dialog-flag-to-close-all-tabs.inc
 new file mode 100644
-index 00000000000..102fe0df115
+index 0000000000..102fe0df11
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Re-introduce-modal-dialog-flag-to-close-all-tabs.inc
 @@ -0,0 +1,7 @@
@@ -65,7 +65,7 @@ index 00000000000..102fe0df115
 +#endif
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Re-introduce-modal-dialog-flag-to-close-all-tabs.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Re-introduce-modal-dialog-flag-to-close-all-tabs.inc
 new file mode 100644
-index 00000000000..95dfc28b2fe
+index 0000000000..95dfc28b2f
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Re-introduce-modal-dialog-flag-to-close-all-tabs.inc
 @@ -0,0 +1,5 @@

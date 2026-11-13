@@ -10,7 +10,7 @@ Cromite's 'Disable visited pseudo class' made every link report not visited and 
  2 files changed, 4 insertions(+), 5 deletions(-)
 
 diff --git a/components/visitedlink/browser/visitedlink_writer.cc b/components/visitedlink/browser/visitedlink_writer.cc
-index 3855b0d8427..002bdd73ba7 100644
+index 3855b0d842..002bdd73ba 100644
 --- a/components/visitedlink/browser/visitedlink_writer.cc
 +++ b/components/visitedlink/browser/visitedlink_writer.cc
 @@ -233,7 +233,7 @@ VisitedLinkWriter::VisitedLinkWriter(content::BrowserContext* browser_context,
@@ -52,7 +52,7 @@ index 3855b0d8427..002bdd73ba7 100644
  }
  
 diff --git a/components/visitedlink/common/visitedlink_common.cc b/components/visitedlink/common/visitedlink_common.cc
-index 20cbf101b2c..f81b469c579 100644
+index 20cbf101b2..f81b469c57 100644
 --- a/components/visitedlink/common/visitedlink_common.cc
 +++ b/components/visitedlink/common/visitedlink_common.cc
 @@ -76,7 +76,6 @@ bool VisitedLinkCommon::IsVisited(const GURL& link_url,

@@ -22,7 +22,7 @@ FILE:Close-Sessions-On-Ip-Change.patch
  create mode 100644 cromite_flags/net/base/features_h/Close-Sessions-On-Ip-Change.inc
 
 diff --git a/components/network_session_configurator/browser/network_session_configurator.cc b/components/network_session_configurator/browser/network_session_configurator.cc
-index 4ede8ae2ed6..e2135068bcf 100644
+index 4ede8ae2ed..e2135068bc 100644
 --- a/components/network_session_configurator/browser/network_session_configurator.cc
 +++ b/components/network_session_configurator/browser/network_session_configurator.cc
 @@ -221,9 +221,8 @@ quic::QuicTagVector GetQuicClientConnectionOptions(
@@ -53,7 +53,7 @@ index 4ede8ae2ed6..e2135068bcf 100644
  bool ShouldQuicUseNewAlpsCodepoint(
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Close-Sessions-On-Ip-Change.inc b/cromite_flags/chrome/browser/about_flags_cc/Close-Sessions-On-Ip-Change.inc
 new file mode 100644
-index 00000000000..c2f6018e0e1
+index 0000000000..c2f6018e0e
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Close-Sessions-On-Ip-Change.inc
 @@ -0,0 +1,14 @@
@@ -73,7 +73,7 @@ index 00000000000..c2f6018e0e1
 +#endif
 diff --git a/cromite_flags/net/base/features_cc/Close-Sessions-On-Ip-Change.inc b/cromite_flags/net/base/features_cc/Close-Sessions-On-Ip-Change.inc
 new file mode 100644
-index 00000000000..aef1a0db8d0
+index 0000000000..aef1a0db8d
 --- /dev/null
 +++ b/cromite_flags/net/base/features_cc/Close-Sessions-On-Ip-Change.inc
 @@ -0,0 +1,5 @@
@@ -84,7 +84,7 @@ index 00000000000..aef1a0db8d0
 +SET_CROMITE_FEATURE_DISABLED(kMigrateSessionsOnNetworkChangeV2);
 diff --git a/cromite_flags/net/base/features_h/Close-Sessions-On-Ip-Change.inc b/cromite_flags/net/base/features_h/Close-Sessions-On-Ip-Change.inc
 new file mode 100644
-index 00000000000..895133d4467
+index 0000000000..895133d446
 --- /dev/null
 +++ b/cromite_flags/net/base/features_h/Close-Sessions-On-Ip-Change.inc
 @@ -0,0 +1,3 @@
@@ -92,7 +92,7 @@ index 00000000000..895133d4467
 +
 +NET_EXPORT BASE_DECLARE_FEATURE(kMigrateSessionsOnNetworkChangeV2);
 diff --git a/net/base/features.cc b/net/base/features.cc
-index 543be408546..d1cbab1122b 100644
+index 543be40854..d1cbab1122 100644
 --- a/net/base/features.cc
 +++ b/net/base/features.cc
 @@ -404,7 +404,7 @@ BASE_FEATURE(kRelatedWebsitePartitionAPI, base::FEATURE_DISABLED_BY_DEFAULT);

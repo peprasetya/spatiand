@@ -11,7 +11,7 @@ FILE:Disable-feeds-support-by-default.patch
  2 files changed, 4 insertions(+), 1 deletion(-)
 
 diff --git a/components/feed/core/shared_prefs/pref_names.cc b/components/feed/core/shared_prefs/pref_names.cc
-index b91658fc384..c80632a001c 100644
+index b91658fc38..c80632a001 100644
 --- a/components/feed/core/shared_prefs/pref_names.cc
 +++ b/components/feed/core/shared_prefs/pref_names.cc
 @@ -26,7 +26,7 @@ const char kEnableSnippetsByDse[] = "ntp_snippets_by_dse.enable";
@@ -24,7 +24,7 @@ index b91658fc384..c80632a001c 100644
  
  }  // namespace prefs
 diff --git a/components/feed/feed_feature_list.cc b/components/feed/feed_feature_list.cc
-index 1a91713c7ef..719f4433a10 100644
+index 1a91713c7e..719f4433a1 100644
 --- a/components/feed/feed_feature_list.cc
 +++ b/components/feed/feed_feature_list.cc
 @@ -69,4 +69,7 @@ BASE_FEATURE(kFeedNullItemAnimatorOnScrollRestore,

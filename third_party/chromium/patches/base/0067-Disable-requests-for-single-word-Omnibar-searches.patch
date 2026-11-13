@@ -12,7 +12,7 @@ FILE:Disable-requests-for-single-word-Omnibar-searches.patch
  1 file changed, 21 deletions(-)
 
 diff --git a/chrome/browser/omnibox/chrome_omnibox_navigation_observer_base.cc b/chrome/browser/omnibox/chrome_omnibox_navigation_observer_base.cc
-index 6802e362f90..c25bcb5d850 100644
+index 6802e362f9..c25bcb5d85 100644
 --- a/chrome/browser/omnibox/chrome_omnibox_navigation_observer_base.cc
 +++ b/chrome/browser/omnibox/chrome_omnibox_navigation_observer_base.cc
 @@ -77,19 +77,6 @@ bool OnlyChangeIsFromHTTPToHTTPS(const GURL& origin, const GURL& destination) {

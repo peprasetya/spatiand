@@ -10,7 +10,7 @@ own strings included.
  1 file changed, 15 insertions(+), 8 deletions(-)
 
 diff --git a/tools/grit/grit/grd_reader.py b/tools/grit/grit/grd_reader.py
-index 46b1b31bc8f..d0f9d98b698 100755
+index 46b1b31bc8..d0f9d98b69 100755
 --- a/tools/grit/grit/grd_reader.py
 +++ b/tools/grit/grit/grd_reader.py
 @@ -158,14 +158,20 @@ class GrdContentHandler(xml.sax.handler.ContentHandler):

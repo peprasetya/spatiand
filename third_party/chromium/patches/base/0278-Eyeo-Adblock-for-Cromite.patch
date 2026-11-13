@@ -47,7 +47,7 @@ FILE:Eyeo-Adblock-for-Cromite.patch
  .../adblock_telemetry_service_factory.cc      |    7 -
  .../browser/factories/embedding_utils.cc      |    2 -
  .../browser/factories/embedding_utils.h       |    7 +-
- .../factories/subscription_service_factory.cc |   22 +-
+ .../factories/subscription_service_factory.cc |   49 +-
  .../factories/subscription_service_factory.h  |    1 +
  .../browser/frame_hierarchy_builder.cc        |    1 +
  .../content/browser/page_view_stats.cc        |   87 +-
@@ -93,8 +93,8 @@ FILE:Eyeo-Adblock-for-Cromite.patch
  .../adblock/core/subscription/subscription.cc |   20 +
  .../adblock/core/subscription/subscription.h  |    3 +
  .../subscription_collection_impl.cc           |    7 +-
- .../core/subscription/subscription_config.cc  |   88 +-
- .../core/subscription/subscription_config.h   |    6 +-
+ .../core/subscription/subscription_config.cc  |  216 +-
+ .../core/subscription/subscription_config.h   |   16 +-
  .../subscription_downloader_impl.cc           |   19 +-
  .../subscription_persistent_metadata.h        |    1 +
  .../subscription_persistent_metadata_impl.cc  |   11 +-
@@ -121,7 +121,7 @@ FILE:Eyeo-Adblock-for-Cromite.patch
  .../renderer/core/exported/web_document.cc    |   13 +-
  .../blink/renderer/core/html/html_element.cc  |    8 +-
  .../definitions/adblock_private.d.ts          |   14 +
- 114 files changed, 9203 insertions(+), 644 deletions(-)
+ 114 files changed, 9343 insertions(+), 669 deletions(-)
  create mode 100644 chrome/browser/resources/settings/adblock_page/adblock_page.html
  create mode 100644 chrome/browser/resources/settings/adblock_page/adblock_page.ts
  create mode 100644 components/adblock/content/browser/adblock_blocking_page.cc
@@ -134,7 +134,7 @@ FILE:Eyeo-Adblock-for-Cromite.patch
  create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Stricter-popup-blocker.inc
 
 diff --git a/chrome/browser/adblock/adblock_chrome_content_browser_client.cc b/chrome/browser/adblock/adblock_chrome_content_browser_client.cc
-index c911980ccbd..9b2ff768f8c 100644
+index c911980ccb..9b2ff768f8 100644
 --- a/chrome/browser/adblock/adblock_chrome_content_browser_client.cc
 +++ b/chrome/browser/adblock/adblock_chrome_content_browser_client.cc
 @@ -25,3 +25,9 @@ AdblockChromeContentBrowserClient::GetBrowserContextForEyeoFactories(
@@ -148,7 +148,7 @@ index c911980ccbd..9b2ff768f8c 100644
 +  return HostContentSettingsMapFactory::GetForProfile(current_browser_context);
 +}
 diff --git a/chrome/browser/adblock/adblock_chrome_content_browser_client.h b/chrome/browser/adblock/adblock_chrome_content_browser_client.h
-index a93a0ffa982..e0ee0fb32a7 100644
+index a93a0ffa98..e0ee0fb32a 100644
 --- a/chrome/browser/adblock/adblock_chrome_content_browser_client.h
 +++ b/chrome/browser/adblock/adblock_chrome_content_browser_client.h
 @@ -20,12 +20,16 @@
@@ -169,7 +169,7 @@ index a93a0ffa982..e0ee0fb32a7 100644
  
  #endif  // CHROME_BROWSER_ADBLOCK_ADBLOCK_CHROME_CONTENT_BROWSER_CLIENT_H_
 diff --git a/chrome/browser/adblock/android/adblock_strings.grd b/chrome/browser/adblock/android/adblock_strings.grd
-index 7e4226f4938..0750d264ae0 100644
+index 7e4226f493..1161e840cc 100644
 --- a/chrome/browser/adblock/android/adblock_strings.grd
 +++ b/chrome/browser/adblock/android/adblock_strings.grd
 @@ -15,7 +15,7 @@
@@ -200,7 +200,7 @@ index 7e4226f4938..0750d264ae0 100644
 +      <message name="IDS_ADBLOCK_SETTINGS_PRIVILEGED_FILTERS_ENABLED_SUMMARY" desc="">
 +        Snippets are pieces of JavaScript code, injected by the Adblock Plus, that execute within the context of a website and combat advanced ads that circumvent ordinary blocking.
 +The functionality is ONLY allowed for the list
-+https://uazo.github.io/cromite/filters/abp-filters-anti-cv.txt
++https://easylist-downloads.adblockplus.org/abp-filters-anti-cv.txt
 +which is activated by this setting.
 +      </message>
 +      <message name="IDS_ADBLOCK_SETTINGS_OPEN_REPO_URL_TEXT" desc="">
@@ -263,7 +263,7 @@ index 7e4226f4938..0750d264ae0 100644
      </messages>
    </release>
 diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
-index 219c7c87128..4838c8ede69 100644
+index 219c7c8712..4838c8ede6 100644
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
 @@ -7041,7 +7041,9 @@ ChromeContentBrowserClient::
@@ -290,7 +290,7 @@ index 219c7c87128..4838c8ede69 100644
      const std::optional<std::string>& user_agent,
      mojo::PendingRemote<network::mojom::WebSocketHandshakeClient>
 diff --git a/chrome/browser/chrome_content_browser_client.h b/chrome/browser/chrome_content_browser_client.h
-index 8ba370793b2..45f835db4ae 100644
+index 8ba370793b..45f835db4a 100644
 --- a/chrome/browser/chrome_content_browser_client.h
 +++ b/chrome/browser/chrome_content_browser_client.h
 @@ -729,13 +729,17 @@ class ChromeContentBrowserClient : public content::ContentBrowserClient {
@@ -313,7 +313,7 @@ index 8ba370793b2..45f835db4ae 100644
        const std::optional<std::string>& user_agent,
        mojo::PendingRemote<network::mojom::WebSocketHandshakeClient>
 diff --git a/chrome/browser/extensions/api/adblock_private/adblock_private_api.cc b/chrome/browser/extensions/api/adblock_private/adblock_private_api.cc
-index b0ce7b8b7ca..e2c8edef338 100644
+index b0ce7b8b7c..e2c8edef33 100644
 --- a/chrome/browser/extensions/api/adblock_private/adblock_private_api.cc
 +++ b/chrome/browser/extensions/api/adblock_private/adblock_private_api.cc
 @@ -17,6 +17,7 @@
@@ -432,7 +432,7 @@ index b0ce7b8b7ca..e2c8edef338 100644
  }
  
 diff --git a/chrome/browser/extensions/api/adblock_private/adblock_private_api.h b/chrome/browser/extensions/api/adblock_private/adblock_private_api.h
-index a1f1bab92b5..7a0e704b693 100644
+index a1f1bab92b..7a0e704b69 100644
 --- a/chrome/browser/extensions/api/adblock_private/adblock_private_api.h
 +++ b/chrome/browser/extensions/api/adblock_private/adblock_private_api.h
 @@ -58,6 +58,55 @@ void BrowserContextKeyedAPIFactory<
@@ -492,7 +492,7 @@ index a1f1bab92b5..7a0e704b693 100644
   public:
    DECLARE_EXTENSION_FUNCTION("adblockPrivate.setEnabled", UNKNOWN)
 diff --git a/chrome/browser/extensions/api/eyeo_filtering_private/eyeo_filtering_private_api.cc b/chrome/browser/extensions/api/eyeo_filtering_private/eyeo_filtering_private_api.cc
-index 33e5d57abfd..e2c9a6e6721 100644
+index 33e5d57abf..e2c9a6e672 100644
 --- a/chrome/browser/extensions/api/eyeo_filtering_private/eyeo_filtering_private_api.cc
 +++ b/chrome/browser/extensions/api/eyeo_filtering_private/eyeo_filtering_private_api.cc
 @@ -17,8 +17,10 @@
@@ -555,7 +555,7 @@ index 33e5d57abfd..e2c9a6e6721 100644
    }
    return result;
 diff --git a/chrome/browser/extensions/api/settings_private/prefs_util.cc b/chrome/browser/extensions/api/settings_private/prefs_util.cc
-index f6d98afb7c5..293d0424ce7 100644
+index f6d98afb7c..293d0424ce 100644
 --- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
 +++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
 @@ -37,6 +37,7 @@
@@ -587,7 +587,7 @@ index f6d98afb7c5..293d0424ce7 100644
    (*s_allowlist)[::embedder_support::kAlternateErrorPagesEnabled] =
        settings_api::PrefType::kBoolean;
 diff --git a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
-index 550df9671ca..ee524b766b5 100644
+index 550df9671c..ee524b766b 100644
 --- a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
 +++ b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
 @@ -304,7 +304,6 @@
@@ -607,7 +607,7 @@ index 550df9671ca..ee524b766b5 100644
    adblock::ContentSecurityPolicyInjectorFactory::GetInstance();
    adblock::ElementHiderFactory::GetInstance();
 diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resources/settings/BUILD.gn
-index 8c77f67ec4c..201d50e702b 100644
+index 8c77f67ec4..201d50e702 100644
 --- a/chrome/browser/resources/settings/BUILD.gn
 +++ b/chrome/browser/resources/settings/BUILD.gn
 @@ -51,6 +51,7 @@ build_webui("build") {
@@ -628,7 +628,7 @@ index 8c77f67ec4c..201d50e702b 100644
      "//tools/typescript/definitions/management.d.ts",
 diff --git a/chrome/browser/resources/settings/adblock_page/adblock_page.html b/chrome/browser/resources/settings/adblock_page/adblock_page.html
 new file mode 100644
-index 00000000000..ae0f5e2e9c2
+index 0000000000..9f35d062d9
 --- /dev/null
 +++ b/chrome/browser/resources/settings/adblock_page/adblock_page.html
 @@ -0,0 +1,218 @@
@@ -679,7 +679,7 @@ index 00000000000..ae0f5e2e9c2
 +                <div class="cr-secondary-text">
 +                    Snippets are pieces of JavaScript code, injected by the Adblock Plus, that execute within the context of a website and combat advanced ads that circumvent ordinary blocking.
 +                    The functionality is ONLY allowed for the list
-+                    <a href="https://uazo.github.io/cromite/filters/abp-filters-anti-cv.txt">abp-filters-anti-cv.txt</a>
++                    <a href="https://easylist-downloads.adblockplus.org/abp-filters-anti-cv.txt">abp-filters-anti-cv.txt</a>
 +                    which is activated by this setting.
 +                    <br><a href="https://gitlab.com/eyeo/anti-cv/abp-filters-anti-cv">Open ABP anti-circumvention filter list repo</a>
 +                    <br><a href="https://developers.eyeo.com/snippets/snippets-overview">Open ABP Snippets Overview</a>
@@ -852,7 +852,7 @@ index 00000000000..ae0f5e2e9c2
 +</settings-section>
 diff --git a/chrome/browser/resources/settings/adblock_page/adblock_page.ts b/chrome/browser/resources/settings/adblock_page/adblock_page.ts
 new file mode 100644
-index 00000000000..f453cd5a031
+index 0000000000..f453cd5a03
 --- /dev/null
 +++ b/chrome/browser/resources/settings/adblock_page/adblock_page.ts
 @@ -0,0 +1,324 @@
@@ -1181,7 +1181,7 @@ index 00000000000..f453cd5a031
 +customElements.define(
 +   SettingsAdblockPageElement.is, SettingsAdblockPageElement);
 diff --git a/chrome/browser/resources/settings/page_visibility.ts b/chrome/browser/resources/settings/page_visibility.ts
-index feff9bdf645..cc0f60a264e 100644
+index feff9bdf64..cc0f60a264 100644
 --- a/chrome/browser/resources/settings/page_visibility.ts
 +++ b/chrome/browser/resources/settings/page_visibility.ts
 @@ -9,6 +9,7 @@ import {loadTimeData} from './i18n_setup.js';
@@ -1193,7 +1193,7 @@ index feff9bdf645..cc0f60a264e 100644
    appearance?: boolean|AppearancePageVisibility;
    autofill?: boolean;
 diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
-index 17bb7a4de24..ea3824cd754 100644
+index 17bb7a4de2..ea3824cd75 100644
 --- a/chrome/browser/resources/settings/route.ts
 +++ b/chrome/browser/resources/settings/route.ts
 @@ -262,6 +262,10 @@ function createRoutes(): SettingsRoutes {
@@ -1208,7 +1208,7 @@ index 17bb7a4de24..ea3824cd754 100644
    r.ADVANCED = new Route('/advanced');
  
 diff --git a/chrome/browser/resources/settings/router.ts b/chrome/browser/resources/settings/router.ts
-index 5e34aaad656..880bf19b12d 100644
+index 5e34aaad65..880bf19b12 100644
 --- a/chrome/browser/resources/settings/router.ts
 +++ b/chrome/browser/resources/settings/router.ts
 @@ -15,6 +15,7 @@ import {loadTimeData} from './i18n_setup.js';
@@ -1220,7 +1220,7 @@ index 5e34aaad656..880bf19b12d 100644
    ADDRESSES: Route;
    ADVANCED: Route;
 diff --git a/chrome/browser/resources/settings/settings.ts b/chrome/browser/resources/settings/settings.ts
-index baafaf94a60..8a2cf1dfe28 100644
+index baafaf94a6..8a2cf1dfe2 100644
 --- a/chrome/browser/resources/settings/settings.ts
 +++ b/chrome/browser/resources/settings/settings.ts
 @@ -78,6 +78,7 @@ export {SettingsAutofillPageIndexElement} from './autofill_page/autofill_page_in
@@ -1232,7 +1232,7 @@ index baafaf94a60..8a2cf1dfe28 100644
  // <if expr="not is_chromeos">
  export {DefaultBrowserBrowserProxyImpl} from './default_browser_page/default_browser_browser_proxy.js';
 diff --git a/chrome/browser/resources/settings/settings_main/settings_main.html b/chrome/browser/resources/settings/settings_main/settings_main.html
-index db5a40e8bdc..8a4a2dfdff5 100644
+index db5a40e8bd..8a4a2dfdff 100644
 --- a/chrome/browser/resources/settings/settings_main/settings_main.html
 +++ b/chrome/browser/resources/settings/settings_main/settings_main.html
 @@ -175,6 +175,13 @@
@@ -1250,7 +1250,7 @@ index db5a40e8bdc..8a4a2dfdff5 100644
    <template is="dom-if" if="[[showPage_(pageVisibility_.system)]]">
      <div slot="view" id="system">
 diff --git a/chrome/browser/resources/settings/settings_main/settings_main.ts b/chrome/browser/resources/settings/settings_main/settings_main.ts
-index 34b2cae7e95..a970ebb52ef 100644
+index 34b2cae7e9..a970ebb52e 100644
 --- a/chrome/browser/resources/settings/settings_main/settings_main.ts
 +++ b/chrome/browser/resources/settings/settings_main/settings_main.ts
 @@ -20,6 +20,7 @@ import '../performance_page/performance_page_index.js';
@@ -1262,7 +1262,7 @@ index 34b2cae7e95..a970ebb52ef 100644
  import '../default_browser_page/default_browser_page.js';
  
 diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
-index cf04bff754d..8014c545a0f 100644
+index cf04bff754..8014c545a0 100644
 --- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
 +++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
 @@ -94,6 +94,12 @@
@@ -1279,7 +1279,7 @@ index cf04bff754d..8014c545a0f 100644
          <a role="menuitem" id="system" href="/system" class="cr-nav-menu-item"
              ?hidden="${this.shouldHideMenuItem_(this.pageVisibility_?.system)}">
 diff --git a/chrome/browser/ui/tab_helpers.cc b/chrome/browser/ui/tab_helpers.cc
-index 4c3b87ffb59..1226627a5e2 100644
+index 4c3b87ffb5..1226627a5e 100644
 --- a/chrome/browser/ui/tab_helpers.cc
 +++ b/chrome/browser/ui/tab_helpers.cc
 @@ -111,7 +111,9 @@ void TabHelpers::AttachTabHelpers(WebContents* web_contents,
@@ -1294,7 +1294,7 @@ index 4c3b87ffb59..1226627a5e2 100644
    // AutofillClientProvider initializes ContentAutofillClient for web_contents,
    // which is gated by enable_browser_autofill.
 diff --git a/chrome/common/extensions/api/_permission_features.json b/chrome/common/extensions/api/_permission_features.json
-index 0137bf8c4b6..a4c026e34f8 100644
+index 0137bf8c4b..a4c026e34f 100644
 --- a/chrome/common/extensions/api/_permission_features.json
 +++ b/chrome/common/extensions/api/_permission_features.json
 @@ -61,13 +61,6 @@
@@ -1326,7 +1326,7 @@ index 0137bf8c4b6..a4c026e34f8 100644
      "channel": "stable",
      "component_extensions_auto_granted": false,
 diff --git a/chrome/common/extensions/api/adblock_private.idl b/chrome/common/extensions/api/adblock_private.idl
-index 6cad537a202..f970aee2438 100644
+index 6cad537a20..f970aee243 100644
 --- a/chrome/common/extensions/api/adblock_private.idl
 +++ b/chrome/common/extensions/api/adblock_private.idl
 @@ -48,6 +48,8 @@ dictionary Subscription {
@@ -1352,7 +1352,7 @@ index 6cad537a202..f970aee2438 100644
    static void setEnabled(boolean enabled);
    // Returns whether Adblock is on.
 diff --git a/components/adblock/android/adblock_controller_jni.cc b/components/adblock/android/adblock_controller_jni.cc
-index aa0340dae79..14bcfb1aa89 100644
+index aa0340dae7..14bcfb1aa8 100644
 --- a/components/adblock/android/adblock_controller_jni.cc
 +++ b/components/adblock/android/adblock_controller_jni.cc
 @@ -23,6 +23,8 @@
@@ -1513,7 +1513,7 @@ index aa0340dae79..14bcfb1aa89 100644
 +
 +DEFINE_JNI(AdblockController)
 diff --git a/components/adblock/content/browser/BUILD.gn b/components/adblock/content/browser/BUILD.gn
-index f562501f90b..42962546526 100644
+index f562501f90..4296254652 100644
 --- a/components/adblock/content/browser/BUILD.gn
 +++ b/components/adblock/content/browser/BUILD.gn
 @@ -14,15 +14,8 @@
@@ -1580,7 +1580,7 @@ index f562501f90b..42962546526 100644
  }
 diff --git a/components/adblock/content/browser/adblock_blocking_page.cc b/components/adblock/content/browser/adblock_blocking_page.cc
 new file mode 100644
-index 00000000000..e342e1fda09
+index 0000000000..e342e1fda0
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_blocking_page.cc
 @@ -0,0 +1,183 @@
@@ -1769,7 +1769,7 @@ index 00000000000..e342e1fda09
 +}
 diff --git a/components/adblock/content/browser/adblock_blocking_page.h b/components/adblock/content/browser/adblock_blocking_page.h
 new file mode 100644
-index 00000000000..d690fba51ff
+index 0000000000..d690fba51f
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_blocking_page.h
 @@ -0,0 +1,75 @@
@@ -1849,7 +1849,7 @@ index 00000000000..d690fba51ff
 +
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_ADBLOCK_BLOCKING_PAGE_H_
 diff --git a/components/adblock/content/browser/adblock_content_browser_client.h b/components/adblock/content/browser/adblock_content_browser_client.h
-index 86e1ae1f358..5c53450b7e5 100644
+index 86e1ae1f35..5c53450b7e 100644
 --- a/components/adblock/content/browser/adblock_content_browser_client.h
 +++ b/components/adblock/content/browser/adblock_content_browser_client.h
 @@ -27,6 +27,7 @@
@@ -2235,7 +2235,7 @@ index 86e1ae1f358..5c53450b7e5 100644
    return false;
  }
 diff --git a/components/adblock/content/browser/adblock_internals_page_handler.cc b/components/adblock/content/browser/adblock_internals_page_handler.cc
-index f1bde9829d1..4e06a9ab83b 100644
+index f1bde9829d..4e06a9ab83 100644
 --- a/components/adblock/content/browser/adblock_internals_page_handler.cc
 +++ b/components/adblock/content/browser/adblock_internals_page_handler.cc
 @@ -19,7 +19,6 @@
@@ -2262,7 +2262,7 @@ index f1bde9829d1..4e06a9ab83b 100644
  
  void AdblockInternalsPageHandler::ToggleTestpagesFLSubscription(
 diff --git a/components/adblock/content/browser/adblock_url_loader_factory.cc b/components/adblock/content/browser/adblock_url_loader_factory.cc
-index 0844ba03f51..6239acbfd93 100644
+index 0844ba03f5..6239acbfd9 100644
 --- a/components/adblock/content/browser/adblock_url_loader_factory.cc
 +++ b/components/adblock/content/browser/adblock_url_loader_factory.cc
 @@ -114,9 +114,10 @@ ContentType ToAdblockResourceType(const network::ResourceRequest& request) {
@@ -2440,7 +2440,7 @@ index 0844ba03f51..6239acbfd93 100644
        // We blocked a subresource request. Collapse whitespace around the
        // blocked element.
 diff --git a/components/adblock/content/browser/adblock_web_ui_controller_factory.cc b/components/adblock/content/browser/adblock_web_ui_controller_factory.cc
-index 0e883d9a04f..f1963c95abc 100644
+index 0e883d9a04..f1963c95ab 100644
 --- a/components/adblock/content/browser/adblock_web_ui_controller_factory.cc
 +++ b/components/adblock/content/browser/adblock_web_ui_controller_factory.cc
 @@ -20,6 +20,7 @@
@@ -2452,7 +2452,7 @@ index 0e883d9a04f..f1963c95abc 100644
  namespace adblock {
  
 diff --git a/components/adblock/content/browser/adblock_webcontents_observer.cc b/components/adblock/content/browser/adblock_webcontents_observer.cc
-index f3b2a6a6cd7..5d11d42d55a 100644
+index f3b2a6a6cd..5d11d42d55 100644
 --- a/components/adblock/content/browser/adblock_webcontents_observer.cc
 +++ b/components/adblock/content/browser/adblock_webcontents_observer.cc
 @@ -22,10 +22,16 @@
@@ -2564,7 +2564,7 @@ index f3b2a6a6cd7..5d11d42d55a 100644
      // Element hiding for ordinary main frame (or iframe)
      DVLOG(3) << "[eyeo] Ready to inject element hiding to " << url.spec();
 diff --git a/components/adblock/content/browser/adblock_webcontents_observer.h b/components/adblock/content/browser/adblock_webcontents_observer.h
-index 93babc61dcd..56a88adb312 100644
+index 93babc61dc..56a88adb31 100644
 --- a/components/adblock/content/browser/adblock_webcontents_observer.h
 +++ b/components/adblock/content/browser/adblock_webcontents_observer.h
 @@ -23,6 +23,7 @@
@@ -2594,7 +2594,7 @@ index 93babc61dcd..56a88adb312 100644
  
  }  // namespace adblock
 diff --git a/components/adblock/content/browser/element_hider_impl.cc b/components/adblock/content/browser/element_hider_impl.cc
-index cf0b1c08cd7..6bdc950add6 100644
+index cf0b1c08cd..6bdc950add 100644
 --- a/components/adblock/content/browser/element_hider_impl.cc
 +++ b/components/adblock/content/browser/element_hider_impl.cc
 @@ -133,7 +133,7 @@ void GenerateElemHidingEmuJavaScript(const GURL& url,
@@ -2676,7 +2676,7 @@ index cf0b1c08cd7..6bdc950add6 100644
    DVLOG(1) << "[eyeo] Element hiding - executed JS in frame" << " '"
             << render_frame_host->GetFrameName() << "'";
 diff --git a/components/adblock/content/browser/eyeo_document_info.cc b/components/adblock/content/browser/eyeo_document_info.cc
-index d07af8bea23..ab25d07e893 100644
+index d07af8bea2..ab25d07e89 100644
 --- a/components/adblock/content/browser/eyeo_document_info.cc
 +++ b/components/adblock/content/browser/eyeo_document_info.cc
 @@ -47,4 +47,19 @@ void EyeoDocumentInfo::SetElementHidingDone() {
@@ -2700,7 +2700,7 @@ index d07af8bea23..ab25d07e893 100644
 +
  }  // namespace adblock
 diff --git a/components/adblock/content/browser/eyeo_document_info.h b/components/adblock/content/browser/eyeo_document_info.h
-index 91b350f32db..0f2ff96b15f 100644
+index 91b350f32d..0f2ff96b15 100644
 --- a/components/adblock/content/browser/eyeo_document_info.h
 +++ b/components/adblock/content/browser/eyeo_document_info.h
 @@ -19,6 +19,7 @@
@@ -2732,7 +2732,7 @@ index 91b350f32db..0f2ff96b15f 100644
    friend DocumentUserData;
    DOCUMENT_USER_DATA_KEY_DECL();
 diff --git a/components/adblock/content/browser/factories/adblock_request_throttle_factory.cc b/components/adblock/content/browser/factories/adblock_request_throttle_factory.cc
-index 84fb86da428..c04c952f237 100644
+index 84fb86da42..c04c952f23 100644
 --- a/components/adblock/content/browser/factories/adblock_request_throttle_factory.cc
 +++ b/components/adblock/content/browser/factories/adblock_request_throttle_factory.cc
 @@ -56,7 +56,7 @@ AdblockRequestThrottleFactory::BuildServiceInstanceForBrowserContext(
@@ -2745,7 +2745,7 @@ index 84fb86da428..c04c952f237 100644
    return std::move(throttle);
  }
 diff --git a/components/adblock/content/browser/factories/adblock_telemetry_service_factory.cc b/components/adblock/content/browser/factories/adblock_telemetry_service_factory.cc
-index 212dd3290a5..df57d1133d3 100644
+index 212dd3290a..df57d1133d 100644
 --- a/components/adblock/content/browser/factories/adblock_telemetry_service_factory.cc
 +++ b/components/adblock/content/browser/factories/adblock_telemetry_service_factory.cc
 @@ -45,13 +45,6 @@ base::TimeDelta GetCheckInterval() {
@@ -2763,7 +2763,7 @@ index 212dd3290a5..df57d1133d3 100644
  AdblockTelemetryServiceFactory* AdblockTelemetryServiceFactory::GetInstance() {
    static base::NoDestructor<AdblockTelemetryServiceFactory> instance;
 diff --git a/components/adblock/content/browser/factories/embedding_utils.cc b/components/adblock/content/browser/factories/embedding_utils.cc
-index 8b514aa9bfd..35fc283ac7b 100644
+index 8b514aa9bf..35fc283ac7 100644
 --- a/components/adblock/content/browser/factories/embedding_utils.cc
 +++ b/components/adblock/content/browser/factories/embedding_utils.cc
 @@ -20,7 +20,6 @@
@@ -2783,7 +2783,7 @@ index 8b514aa9bfd..35fc283ac7b 100644
    SitekeyStorageFactory::GetForBrowserContext(browser_context);
  }
 diff --git a/components/adblock/content/browser/factories/embedding_utils.h b/components/adblock/content/browser/factories/embedding_utils.h
-index 436fc54ba17..4bfe3984654 100644
+index 436fc54ba1..4bfe398465 100644
 --- a/components/adblock/content/browser/factories/embedding_utils.h
 +++ b/components/adblock/content/browser/factories/embedding_utils.h
 @@ -23,6 +23,7 @@
@@ -2813,10 +2813,10 @@ index 436fc54ba17..4bfe3984654 100644
  
  // Ensures that all background services are started for the given browser
 diff --git a/components/adblock/content/browser/factories/subscription_service_factory.cc b/components/adblock/content/browser/factories/subscription_service_factory.cc
-index 1daa96e4598..2d8b721d0d3 100644
+index 1daa96e459..874ba2ff4c 100644
 --- a/components/adblock/content/browser/factories/subscription_service_factory.cc
 +++ b/components/adblock/content/browser/factories/subscription_service_factory.cc
-@@ -23,6 +23,7 @@
+@@ -23,9 +23,11 @@
  #include <vector>
  
  #include "absl/types/optional.h"
@@ -2824,7 +2824,11 @@ index 1daa96e4598..2d8b721d0d3 100644
  #include "base/command_line.h"
  #include "base/files/file_util.h"
  #include "base/functional/bind.h"
-@@ -65,7 +66,7 @@ base::TimeDelta GetUpdateCheckInterval() {
++#include "base/logging.h"
+ #include "base/task/thread_pool.h"
+ #include "base/threading/thread_restrictions.h"
+ #include "base/trace_event/trace_event.h"
+@@ -65,7 +67,7 @@ base::TimeDelta GetUpdateCheckInterval() {
    static base::TimeDelta kCheckInterval =
        g_update_check_interval_for_testing
            ? g_update_check_interval_for_testing.value()
@@ -2833,7 +2837,7 @@ index 1daa96e4598..2d8b721d0d3 100644
    return kCheckInterval;
  }
  
-@@ -93,7 +94,8 @@ std::unique_ptr<AdblockResourceRequest> MakeSubscriptionRequest(
+@@ -93,7 +95,8 @@ std::unique_ptr<AdblockResourceRequest> MakeSubscriptionRequest(
  ConversionResult ConvertFilterFile(
      const scoped_refptr<FlatbufferConverter>& converter,
      const GURL& subscription_url,
@@ -2843,7 +2847,7 @@ index 1daa96e4598..2d8b721d0d3 100644
    TRACE_EVENT1("eyeo", "ConvertFileToFlatbuffer", "url",
                 subscription_url.spec());
    ConversionResult result;
-@@ -105,7 +107,7 @@ ConversionResult ConvertFilterFile(
+@@ -105,7 +108,7 @@ ConversionResult ConvertFilterFile(
    } else {
      result =
          converter->Convert(input_stream, subscription_url,
@@ -2852,7 +2856,7 @@ index 1daa96e4598..2d8b721d0d3 100644
    }
    base::DeleteFile(path);
    return result;
-@@ -167,6 +169,7 @@ void CleanupPersistedConfiguration(PrefService* prefs,
+@@ -167,6 +170,7 @@ void CleanupPersistedConfiguration(PrefService* prefs,
  
  void InstallFirstRunDefaultAdblockSubscription(
      std::unique_ptr<FilteringConfiguration>& adblock_filtering_configuration) {
@@ -2860,7 +2864,7 @@ index 1daa96e4598..2d8b721d0d3 100644
    if (std::ranges::any_of(config::GetKnownSubscriptions(),
                             [&](const KnownSubscriptionInfo& subscription) {
                               return subscription.url ==
-@@ -188,16 +191,8 @@ bool InstallFirstRunAdblockSubscriptionsCheckingLocale(
+@@ -188,16 +192,8 @@ bool InstallFirstRunAdblockSubscriptionsCheckingLocale(
    bool language_specific_subscription_installed = false;
    // On first run, install additional subscriptions.
    for (const auto& subscription : adblock::config::GetKnownSubscriptions()) {
@@ -2878,7 +2882,62 @@ index 1daa96e4598..2d8b721d0d3 100644
        adblock_filtering_configuration->AddFilterList(subscription.url);
      }
    }
-@@ -451,11 +446,12 @@ SubscriptionServiceFactory::ConvertCustomFilters(
+@@ -331,6 +327,27 @@ void CheckAndMigrateSettings(
+   }
+ }
+ 
++// Spatiand: a profile made while the lists came from Cromite's hosting has those URLs stored;
++// each moves to where its list comes from now (and Cromite's own list, which has no other
++// source, goes). Whatever else is subscribed, and whether filtering is on, stays as it was.
++void MoveFilterListsFromCromite(
++    FilteringConfiguration* adblock_filtering_configuration) {
++  for (const auto& url : adblock_filtering_configuration->GetFilterLists()) {
++    const auto moved = config::FilterListMovedFromCromite(url);
++    if (!moved) {
++      continue;
++    }
++    adblock_filtering_configuration->RemoveFilterList(url);
++    if (moved->is_valid()) {
++      adblock_filtering_configuration->AddFilterList(*moved);
++      LOG(INFO) << "[eyeo] Filter list moved from Cromite's hosting: " << url
++                << " -> " << *moved;
++    } else {
++      LOG(INFO) << "[eyeo] Filter list from Cromite's hosting dropped: " << url;
++    }
++  }
++}
++
+ void TranslateCombinedFilterListsToStandalone(
+     FilteringConfiguration* adblock_filtering_configuration) {
+   for (const auto& url : adblock_filtering_configuration->GetFilterLists()) {
+@@ -342,8 +359,9 @@ void TranslateCombinedFilterListsToStandalone(
+         // Note: we resolve using `AdblockBaseFilterListUrl()` not `url` as in
+         // browser tests `url` can be invalid referring to previous instance
+         // (port) of test http server
++        // Spatiand: through the lists' own URLs, as not all are on eyeo's server.
+         auto filter_list_url =
+-            AdblockBaseFilterListUrl().Resolve(standalone_list);
++            config::FilterListUrlForFileName(standalone_list);
+         VLOG(1) << "[eyeo] Adding standalone list: " << filter_list_url;
+         adblock_filtering_configuration->AddFilterList(filter_list_url);
+       }
+@@ -408,6 +426,7 @@ SubscriptionServiceFactory::BuildServiceInstanceForBrowserContext(
+     if (persisted_configuration->GetName() ==
+         kAdblockFilteringConfigurationName) {
+       CheckAdblockCliSwitches(persisted_configuration.get());
++      MoveFilterListsFromCromite(persisted_configuration.get());
+       TranslateCombinedFilterListsToStandalone(persisted_configuration.get());
+     }
+     subscription_service->InstallFilteringConfiguration(
+@@ -429,6 +448,7 @@ SubscriptionServiceFactory::BuildServiceInstanceForBrowserContext(
+       if (start_disabled) {
+         adblock_filtering_configuration->SetEnabled(false);
+       }
++      MoveFilterListsFromCromite(adblock_filtering_configuration.get());
+       TranslateCombinedFilterListsToStandalone(
+           adblock_filtering_configuration.get());
+       subscription_service->InstallFilteringConfiguration(
+@@ -451,11 +471,12 @@ SubscriptionServiceFactory::ConvertCustomFilters(
  void SubscriptionServiceFactory::ConvertFilterListFile(
      const GURL& subscription_url,
      const base::FilePath& path,
@@ -2893,7 +2952,7 @@ index 1daa96e4598..2d8b721d0d3 100644
  }
  
 diff --git a/components/adblock/content/browser/factories/subscription_service_factory.h b/components/adblock/content/browser/factories/subscription_service_factory.h
-index 5bc14d70d27..05da24b792f 100644
+index 5bc14d70d2..05da24b792 100644
 --- a/components/adblock/content/browser/factories/subscription_service_factory.h
 +++ b/components/adblock/content/browser/factories/subscription_service_factory.h
 @@ -43,6 +43,7 @@ class SubscriptionServiceFactory : public BrowserContextKeyedServiceFactory,
@@ -2905,7 +2964,7 @@ index 5bc14d70d27..05da24b792f 100644
  
   protected:
 diff --git a/components/adblock/content/browser/frame_hierarchy_builder.cc b/components/adblock/content/browser/frame_hierarchy_builder.cc
-index a1fbd9dd58b..18f1506ef6b 100644
+index a1fbd9dd58..18f1506ef6 100644
 --- a/components/adblock/content/browser/frame_hierarchy_builder.cc
 +++ b/components/adblock/content/browser/frame_hierarchy_builder.cc
 @@ -66,6 +66,7 @@ GURL GetUrlAsReferrer(content::RenderFrameHost* frame_host) {
@@ -2917,7 +2976,7 @@ index a1fbd9dd58b..18f1506ef6b 100644
      auto last_commited_referrer = GetUrlAsReferrer(iter);
      if (IsValidForFrameHierarchy(last_commited_referrer)) {
 diff --git a/components/adblock/content/browser/page_view_stats.cc b/components/adblock/content/browser/page_view_stats.cc
-index 7ff7b9589ad..37e032faacc 100644
+index 7ff7b9589a..37e032faac 100644
 --- a/components/adblock/content/browser/page_view_stats.cc
 +++ b/components/adblock/content/browser/page_view_stats.cc
 @@ -57,47 +57,26 @@ const char kBlockedStatsCountKey[] = "blocked_pageviews";
@@ -3062,7 +3121,7 @@ index 7ff7b9589ad..37e032faacc 100644
  
  base::RepeatingCallback<void(content::RenderFrameHost*)>
 diff --git a/components/adblock/content/browser/resource_classification_runner.h b/components/adblock/content/browser/resource_classification_runner.h
-index 3447aa34d59..03329e3d7a5 100644
+index 3447aa34d5..03329e3d7a 100644
 --- a/components/adblock/content/browser/resource_classification_runner.h
 +++ b/components/adblock/content/browser/resource_classification_runner.h
 @@ -78,9 +78,16 @@ class ResourceClassificationRunner : public KeyedService {
@@ -3083,7 +3142,7 @@ index 3447aa34d59..03329e3d7a5 100644
        const RequestInitiator& request_initiator,
        CheckFilterMatchCallback callback) = 0;
 diff --git a/components/adblock/content/browser/resource_classification_runner_impl.cc b/components/adblock/content/browser/resource_classification_runner_impl.cc
-index f2b8a7db49f..1bb01d87ede 100644
+index f2b8a7db49..1bb01d87ed 100644
 --- a/components/adblock/content/browser/resource_classification_runner_impl.cc
 +++ b/components/adblock/content/browser/resource_classification_runner_impl.cc
 @@ -21,6 +21,7 @@
@@ -3213,7 +3272,7 @@ index f2b8a7db49f..1bb01d87ede 100644
      observer.OnRequestMatched(
          url, result, parent_frame_urls, static_cast<ContentType>(content_type),
 diff --git a/components/adblock/content/browser/resource_classification_runner_impl.h b/components/adblock/content/browser/resource_classification_runner_impl.h
-index 0b69f921c71..3864578e046 100644
+index 0b69f921c7..3864578e04 100644
 --- a/components/adblock/content/browser/resource_classification_runner_impl.h
 +++ b/components/adblock/content/browser/resource_classification_runner_impl.h
 @@ -56,6 +56,7 @@ class ResourceClassificationRunnerImpl final
@@ -3246,7 +3305,7 @@ index 0b69f921c71..3864578e046 100644
        ContentType adblock_resource_type,
        const SiteKey sitekey);
 diff --git a/components/adblock/core/BUILD.gn b/components/adblock/core/BUILD.gn
-index c4c49ef78b3..4f918437062 100644
+index c4c49ef78b..4f91843706 100644
 --- a/components/adblock/core/BUILD.gn
 +++ b/components/adblock/core/BUILD.gn
 @@ -14,7 +14,6 @@
@@ -3327,7 +3386,7 @@ index c4c49ef78b3..4f918437062 100644
 -  configs += [ ":eyeo_telemetry_config" ]
  }
 diff --git a/components/adblock/core/common/BUILD.gn b/components/adblock/core/common/BUILD.gn
-index 870ac453401..4335a6ef31a 100644
+index 870ac45340..4335a6ef31 100644
 --- a/components/adblock/core/common/BUILD.gn
 +++ b/components/adblock/core/common/BUILD.gn
 @@ -34,14 +34,6 @@ config("eyeo_filtering_config") {
@@ -3346,7 +3405,7 @@ index 870ac453401..4335a6ef31a 100644
  
  source_set("common") {
 diff --git a/components/adblock/core/common/adblock_constants.cc b/components/adblock/core/common/adblock_constants.cc
-index f849681d110..a9f5132c59b 100644
+index f849681d11..a9f5132c59 100644
 --- a/components/adblock/core/common/adblock_constants.cc
 +++ b/components/adblock/core/common/adblock_constants.cc
 @@ -17,14 +17,13 @@
@@ -3394,7 +3453,7 @@ index f849681d110..a9f5132c59b 100644
  
  std::string_view RewriteUrl(flat::AbpResource type) {
 diff --git a/components/adblock/core/common/adblock_constants.h b/components/adblock/core/common/adblock_constants.h
-index 0e192c4e7ef..ad9d4bd43ab 100644
+index 0e192c4e7e..ad9d4bd43a 100644
 --- a/components/adblock/core/common/adblock_constants.h
 +++ b/components/adblock/core/common/adblock_constants.h
 @@ -29,7 +29,6 @@ namespace flat {
@@ -3406,7 +3465,7 @@ index 0e192c4e7ef..ad9d4bd43ab 100644
  extern const char kAdblockFilteringConfigurationName[];
  
 diff --git a/components/adblock/core/common/adblock_prefs.cc b/components/adblock/core/common/adblock_prefs.cc
-index a889e822ec2..7a77170686f 100644
+index a889e822ec..7a77170686 100644
 --- a/components/adblock/core/common/adblock_prefs.cc
 +++ b/components/adblock/core/common/adblock_prefs.cc
 @@ -17,13 +17,16 @@
@@ -3529,7 +3588,7 @@ index a889e822ec2..7a77170686f 100644
  
  }  // namespace adblock::common::prefs
 diff --git a/components/adblock/core/common/adblock_prefs.h b/components/adblock/core/common/adblock_prefs.h
-index 13d3992818d..a62285149ce 100644
+index 13d3992818..a62285149c 100644
 --- a/components/adblock/core/common/adblock_prefs.h
 +++ b/components/adblock/core/common/adblock_prefs.h
 @@ -26,6 +26,7 @@ class PrefRegistrySimple;
@@ -3562,7 +3621,7 @@ index 13d3992818d..a62285149ce 100644
  }  // namespace adblock::common::prefs
  
 diff --git a/components/adblock/core/common/app_info.cc b/components/adblock/core/common/app_info.cc
-index 83503890781..ee39fbfe21e 100644
+index 8350389078..ee39fbfe21 100644
 --- a/components/adblock/core/common/app_info.cc
 +++ b/components/adblock/core/common/app_info.cc
 @@ -17,6 +17,7 @@
@@ -3600,7 +3659,7 @@ index 83503890781..ee39fbfe21e 100644
  
  }  // namespace adblock
 diff --git a/components/adblock/core/common/app_info.h b/components/adblock/core/common/app_info.h
-index a1bb2a67596..ea0e1aca7c6 100644
+index a1bb2a6759..ea0e1aca7c 100644
 --- a/components/adblock/core/common/app_info.h
 +++ b/components/adblock/core/common/app_info.h
 @@ -34,7 +34,6 @@ class AppInfo {
@@ -3612,7 +3671,7 @@ index a1bb2a67596..ea0e1aca7c6 100644
  };
  
 diff --git a/components/adblock/core/configuration/filtering_configuration.h b/components/adblock/core/configuration/filtering_configuration.h
-index a7e525f25f3..d9096199013 100644
+index a7e525f25f..d909619901 100644
 --- a/components/adblock/core/configuration/filtering_configuration.h
 +++ b/components/adblock/core/configuration/filtering_configuration.h
 @@ -66,6 +66,9 @@ class FilteringConfiguration {
@@ -3635,7 +3694,7 @@ index a7e525f25f3..d9096199013 100644
  
  }  // namespace adblock
 diff --git a/components/adblock/core/configuration/persistent_filtering_configuration.cc b/components/adblock/core/configuration/persistent_filtering_configuration.cc
-index c309eb97ae2..2287094bde2 100644
+index c309eb97ae..2287094bde 100644
 --- a/components/adblock/core/configuration/persistent_filtering_configuration.cc
 +++ b/components/adblock/core/configuration/persistent_filtering_configuration.cc
 @@ -21,10 +21,12 @@
@@ -3776,7 +3835,7 @@ index c309eb97ae2..2287094bde2 100644
  }
  
 diff --git a/components/adblock/core/configuration/persistent_filtering_configuration.h b/components/adblock/core/configuration/persistent_filtering_configuration.h
-index 20d40e87ae9..7be6d025bb4 100644
+index 20d40e87ae..7be6d025bb 100644
 --- a/components/adblock/core/configuration/persistent_filtering_configuration.h
 +++ b/components/adblock/core/configuration/persistent_filtering_configuration.h
 @@ -48,6 +48,9 @@ class PersistentFilteringConfiguration final : public FilteringConfiguration {
@@ -3809,7 +3868,7 @@ index 20d40e87ae9..7be6d025bb4 100644
  
  }  // namespace adblock
 diff --git a/components/adblock/core/converter/flatbuffer_converter.cc b/components/adblock/core/converter/flatbuffer_converter.cc
-index b94a8e3e9c1..ac6e7679a49 100644
+index b94a8e3e9c..ac6e7679a4 100644
 --- a/components/adblock/core/converter/flatbuffer_converter.cc
 +++ b/components/adblock/core/converter/flatbuffer_converter.cc
 @@ -144,7 +144,7 @@ void FlatbufferConverter::ConvertFilter(
@@ -3822,7 +3881,7 @@ index b94a8e3e9c1..ac6e7679a49 100644
        break;
    }
 diff --git a/components/adblock/core/converter/parser/filter_classifier.cc b/components/adblock/core/converter/parser/filter_classifier.cc
-index f572091a49d..ccaf0ee753b 100644
+index f572091a49..ccaf0ee753 100644
 --- a/components/adblock/core/converter/parser/filter_classifier.cc
 +++ b/components/adblock/core/converter/parser/filter_classifier.cc
 @@ -17,6 +17,7 @@
@@ -3845,7 +3904,7 @@ index f572091a49d..ccaf0ee753b 100644
      } else {
        return FilterType::InlineCss;
 diff --git a/components/adblock/core/converter/parser/metadata.cc b/components/adblock/core/converter/parser/metadata.cc
-index 6cd60d73db2..66165a6fd51 100644
+index 6cd60d73db..66165a6fd5 100644
 --- a/components/adblock/core/converter/parser/metadata.cc
 +++ b/components/adblock/core/converter/parser/metadata.cc
 @@ -19,6 +19,7 @@
@@ -3908,7 +3967,7 @@ index 6cd60d73db2..66165a6fd51 100644
              << ". Will use default value of "
 diff --git a/components/adblock/core/converter/parser/test/test_rules.txt b/components/adblock/core/converter/parser/test/test_rules.txt
 new file mode 100644
-index 00000000000..e07e4aaff2d
+index 0000000000..e07e4aaff2
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/test/test_rules.txt
 @@ -0,0 +1,21 @@
@@ -3934,7 +3993,7 @@ index 00000000000..e07e4aaff2d
 +parenting.pl,echirurgia.pl,dobreprogramy.pl,abczdrowie.pl,wp.pl#$#override-property-read
 +parenting.pl,echirurgia.pl,dobreprogramy.pl,abczdrowie.pl,wp.pl#$#override-property-read 1 pippo
 diff --git a/components/adblock/core/converter/parser/url_filter.cc b/components/adblock/core/converter/parser/url_filter.cc
-index 9aefa1ffcfe..ad1e9b2d870 100644
+index 9aefa1ffcf..ad1e9b2d87 100644
 --- a/components/adblock/core/converter/parser/url_filter.cc
 +++ b/components/adblock/core/converter/parser/url_filter.cc
 @@ -19,6 +19,7 @@
@@ -3996,7 +4055,7 @@ index 9aefa1ffcfe..ad1e9b2d870 100644
    }
  
 diff --git a/components/adblock/core/converter/parser/url_filter_options.cc b/components/adblock/core/converter/parser/url_filter_options.cc
-index 10e903afb02..857a6a2e10e 100644
+index 10e903afb0..857a6a2e10 100644
 --- a/components/adblock/core/converter/parser/url_filter_options.cc
 +++ b/components/adblock/core/converter/parser/url_filter_options.cc
 @@ -17,6 +17,7 @@
@@ -4075,7 +4134,7 @@ index 10e903afb02..857a6a2e10e 100644
  
  // static
 diff --git a/components/adblock/core/converter/serializer/filter_keyword_extractor.cc b/components/adblock/core/converter/serializer/filter_keyword_extractor.cc
-index df5f6479d7e..a7895acb83d 100644
+index df5f6479d7..a7895acb83 100644
 --- a/components/adblock/core/converter/serializer/filter_keyword_extractor.cc
 +++ b/components/adblock/core/converter/serializer/filter_keyword_extractor.cc
 @@ -20,6 +20,7 @@
@@ -4110,7 +4169,7 @@ index df5f6479d7e..a7895acb83d 100644
        continue;
      }
 diff --git a/components/adblock/core/converter/serializer/flatbuffer_serializer.cc b/components/adblock/core/converter/serializer/flatbuffer_serializer.cc
-index aabef2e640f..620a80a7c8e 100644
+index aabef2e640..620a80a7c8 100644
 --- a/components/adblock/core/converter/serializer/flatbuffer_serializer.cc
 +++ b/components/adblock/core/converter/serializer/flatbuffer_serializer.cc
 @@ -20,6 +20,7 @@
@@ -4253,7 +4312,7 @@ index aabef2e640f..620a80a7c8e 100644
      switch (exception_type) {
        case UrlFilterOptions::ExceptionType::Genericblock:
 diff --git a/components/adblock/core/features.cc b/components/adblock/core/features.cc
-index a105cc1c111..2ee12e25ac5 100644
+index a105cc1c11..2ee12e25ac 100644
 --- a/components/adblock/core/features.cc
 +++ b/components/adblock/core/features.cc
 @@ -19,8 +19,8 @@
@@ -4269,7 +4328,7 @@ index a105cc1c111..2ee12e25ac5 100644
  
  }  // namespace adblock
 diff --git a/components/adblock/core/net/adblock_resource_request_impl.cc b/components/adblock/core/net/adblock_resource_request_impl.cc
-index 9b327afb393..c75ef3f5818 100644
+index 9b327afb39..c75ef3f581 100644
 --- a/components/adblock/core/net/adblock_resource_request_impl.cc
 +++ b/components/adblock/core/net/adblock_resource_request_impl.cc
 @@ -31,7 +31,7 @@ namespace adblock {
@@ -4328,14 +4387,14 @@ index 9b327afb393..c75ef3f5818 100644
    // response_callback_ may delete this, do not call any member variables now.
  }
 diff --git a/components/adblock/core/resources/.gitignore b/components/adblock/core/resources/.gitignore
-index a7d8e0acefd..ffecd383ca7 100644
+index a7d8e0acef..ffecd383ca 100644
 --- a/components/adblock/core/resources/.gitignore
 +++ b/components/adblock/core/resources/.gitignore
 @@ -1 +1 @@
 -snippets
 +# snippets
 diff --git a/components/adblock/core/resources/BUILD.gn b/components/adblock/core/resources/BUILD.gn
-index fe6fbbb731a..c7eb8878e0a 100644
+index fe6fbbb731..c7eb8878e0 100644
 --- a/components/adblock/core/resources/BUILD.gn
 +++ b/components/adblock/core/resources/BUILD.gn
 @@ -54,7 +54,7 @@ make_preloaded_subscription("make_anticv") {
@@ -4358,7 +4417,7 @@ index fe6fbbb731a..c7eb8878e0a 100644
    ]
    output_dir = "$root_gen_dir/components/adblock/core/resources"
 diff --git a/components/adblock/core/resources/adblock_resources.grd b/components/adblock/core/resources/adblock_resources.grd
-index dd4d8ab937a..0e5f436a1c5 100644
+index dd4d8ab937..0e5f436a1c 100644
 --- a/components/adblock/core/resources/adblock_resources.grd
 +++ b/components/adblock/core/resources/adblock_resources.grd
 @@ -15,7 +15,7 @@
@@ -4381,7 +4440,7 @@ index dd4d8ab937a..0e5f436a1c5 100644
    </release>
  </grit>
 diff --git a/components/adblock/core/resources/elemhide_for_selector.jst b/components/adblock/core/resources/elemhide_for_selector.jst
-index 7e313363c30..8e4b75daa18 100644
+index 7e313363c3..8e4b75daa1 100644
 --- a/components/adblock/core/resources/elemhide_for_selector.jst
 +++ b/components/adblock/core/resources/elemhide_for_selector.jst
 @@ -34,7 +34,7 @@ if (typeof(elemhideForSelector) !== typeof(Function))
@@ -4401,7 +4460,7 @@ index 7e313363c30..8e4b75daa18 100644
 \ No newline at end of file
 +})("{{url}}", "{{filename_with_query}}");
 diff --git a/components/adblock/core/resources/elemhideemu.jst b/components/adblock/core/resources/elemhideemu.jst
-index 1c6b6fffc60..dd0aaf9c11d 100644
+index 1c6b6fffc6..dd0aaf9c11 100644
 --- a/components/adblock/core/resources/elemhideemu.jst
 +++ b/components/adblock/core/resources/elemhideemu.jst
 @@ -1,3 +1,4 @@
@@ -4416,7 +4475,7 @@ index 1c6b6fffc60..dd0aaf9c11d 100644
 +})()
 diff --git a/components/adblock/core/resources/snippets/dist/dependencies.jst b/components/adblock/core/resources/snippets/dist/dependencies.jst
 new file mode 100644
-index 00000000000..f999b9045ed
+index 0000000000..f999b9045e
 --- /dev/null
 +++ b/components/adblock/core/resources/snippets/dist/dependencies.jst
 @@ -0,0 +1,1690 @@
@@ -6112,7 +6171,7 @@ index 00000000000..f999b9045ed
 +/**! End hide-if-matches-xpath3 dependency !**/
 diff --git a/components/adblock/core/resources/snippets/dist/isolated-first-all.source.jst b/components/adblock/core/resources/snippets/dist/isolated-first-all.source.jst
 new file mode 100644
-index 00000000000..a91add7d8b2
+index 0000000000..a91add7d8b
 --- /dev/null
 +++ b/components/adblock/core/resources/snippets/dist/isolated-first-all.source.jst
 @@ -0,0 +1,5256 @@
@@ -11374,7 +11433,7 @@ index 00000000000..a91add7d8b2
 +}
 diff --git a/components/adblock/core/sha256_file.py b/components/adblock/core/sha256_file.py
 new file mode 100644
-index 00000000000..28cf00d5687
+index 0000000000..28cf00d568
 --- /dev/null
 +++ b/components/adblock/core/sha256_file.py
 @@ -0,0 +1,75 @@
@@ -11454,7 +11513,7 @@ index 00000000000..28cf00d5687
 +if __name__ == '__main__':
 +    sys.exit(main(sys.argv))
 diff --git a/components/adblock/core/sitekey_storage_impl.cc b/components/adblock/core/sitekey_storage_impl.cc
-index 442b7b15ec1..ad929de917f 100644
+index 442b7b15ec..ad929de917 100644
 --- a/components/adblock/core/sitekey_storage_impl.cc
 +++ b/components/adblock/core/sitekey_storage_impl.cc
 @@ -23,8 +23,9 @@
@@ -11541,7 +11600,7 @@ index 442b7b15ec1..ad929de917f 100644
  
    DLOG(WARNING) << "[eyeo] Verifier initialization failed";
 diff --git a/components/adblock/core/subscription/conversion_executors.h b/components/adblock/core/subscription/conversion_executors.h
-index 317624d4bb2..6c57c23df0c 100644
+index 317624d4bb..6c57c23df0 100644
 --- a/components/adblock/core/subscription/conversion_executors.h
 +++ b/components/adblock/core/subscription/conversion_executors.h
 @@ -40,6 +40,7 @@ class ConversionExecutors {
@@ -11553,7 +11612,7 @@ index 317624d4bb2..6c57c23df0c 100644
  
    virtual ~ConversionExecutors() = default;
 diff --git a/components/adblock/core/subscription/filtering_configuration_maintainer.h b/components/adblock/core/subscription/filtering_configuration_maintainer.h
-index 34f81cf2376..4d200dd4cea 100644
+index 34f81cf237..4d200dd4ce 100644
 --- a/components/adblock/core/subscription/filtering_configuration_maintainer.h
 +++ b/components/adblock/core/subscription/filtering_configuration_maintainer.h
 @@ -24,6 +24,7 @@
@@ -11575,7 +11634,7 @@ index 34f81cf2376..4d200dd4cea 100644
    // ongoing downloads, preloaded subscriptions and installed subscriptions.
    virtual std::vector<scoped_refptr<Subscription>> GetCurrentSubscriptions()
 diff --git a/components/adblock/core/subscription/filtering_configuration_maintainer_impl.cc b/components/adblock/core/subscription/filtering_configuration_maintainer_impl.cc
-index 3e851a4e4d5..264ea2fece1 100644
+index 3e851a4e4d..264ea2fece 100644
 --- a/components/adblock/core/subscription/filtering_configuration_maintainer_impl.cc
 +++ b/components/adblock/core/subscription/filtering_configuration_maintainer_impl.cc
 @@ -19,6 +19,7 @@
@@ -11669,7 +11728,7 @@ index 3e851a4e4d5..264ea2fece1 100644
                            std::back_inserter(filters),
                            &CreateDomainAllowlistingFilter);
 diff --git a/components/adblock/core/subscription/filtering_configuration_maintainer_impl.h b/components/adblock/core/subscription/filtering_configuration_maintainer_impl.h
-index e32b836cf98..18efeb6e80a 100644
+index e32b836cf9..18efeb6e80 100644
 --- a/components/adblock/core/subscription/filtering_configuration_maintainer_impl.h
 +++ b/components/adblock/core/subscription/filtering_configuration_maintainer_impl.h
 @@ -61,6 +61,9 @@ class FilteringConfigurationMaintainerImpl
@@ -11691,7 +11750,7 @@ index e32b836cf98..18efeb6e80a 100644
    void UninstallSubscription(const GURL& subscription_url);
    bool UninstallSubscriptionInternal(const GURL& subscription_url);
 diff --git a/components/adblock/core/subscription/preloaded_subscription_provider_impl.cc b/components/adblock/core/subscription/preloaded_subscription_provider_impl.cc
-index b133cbb6dcb..25313c12948 100644
+index b133cbb6dc..25313c1294 100644
 --- a/components/adblock/core/subscription/preloaded_subscription_provider_impl.cc
 +++ b/components/adblock/core/subscription/preloaded_subscription_provider_impl.cc
 @@ -63,10 +63,10 @@ class PreloadedSubscriptionProviderImpl::SingleSubscriptionProvider {
@@ -11708,7 +11767,7 @@ index b133cbb6dcb..25313c12948 100644
        subscription_.reset();
      }
 diff --git a/components/adblock/core/subscription/recommended_subscription_installer_impl.cc b/components/adblock/core/subscription/recommended_subscription_installer_impl.cc
-index 3a00e543f33..624e3b54dfa 100644
+index 3a00e543f3..624e3b54df 100644
 --- a/components/adblock/core/subscription/recommended_subscription_installer_impl.cc
 +++ b/components/adblock/core/subscription/recommended_subscription_installer_impl.cc
 @@ -69,6 +69,7 @@ void RecommendedSubscriptionInstallerImpl::RunUpdateCheck() {
@@ -11720,7 +11779,7 @@ index 3a00e543f33..624e3b54dfa 100644
    return pref_service_->GetBoolean(
               common::prefs::kEnableAutoInstalledSubscriptions) &&
 diff --git a/components/adblock/core/subscription/subscription.cc b/components/adblock/core/subscription/subscription.cc
-index 34068dc11b6..c1a1243b799 100644
+index 34068dc11b..c1a1243b79 100644
 --- a/components/adblock/core/subscription/subscription.cc
 +++ b/components/adblock/core/subscription/subscription.cc
 @@ -16,9 +16,29 @@
@@ -11754,7 +11813,7 @@ index 34068dc11b6..c1a1243b799 100644
 +
  }  // namespace adblock
 diff --git a/components/adblock/core/subscription/subscription.h b/components/adblock/core/subscription/subscription.h
-index 10b43342922..a02a634b423 100644
+index 10b4334292..a02a634b42 100644
 --- a/components/adblock/core/subscription/subscription.h
 +++ b/components/adblock/core/subscription/subscription.h
 @@ -71,6 +71,9 @@ class Subscription : public base::RefCountedThreadSafe<Subscription> {
@@ -11768,7 +11827,7 @@ index 10b43342922..a02a634b423 100644
    friend class base::RefCountedThreadSafe<Subscription>;
    virtual ~Subscription();
 diff --git a/components/adblock/core/subscription/subscription_collection_impl.cc b/components/adblock/core/subscription/subscription_collection_impl.cc
-index a834989f8d1..500b3805828 100644
+index a834989f8d..500b380582 100644
 --- a/components/adblock/core/subscription/subscription_collection_impl.cc
 +++ b/components/adblock/core/subscription/subscription_collection_impl.cc
 @@ -260,16 +260,16 @@ SubscriptionCollectionImpl::GetElementHideEmulationData(
@@ -11800,30 +11859,99 @@ index a834989f8d1..500b3805828 100644
      subscription->FindHeaderFilters(
          request_url, content_type, DocumentDomain(request_url, frame_hierarchy),
 diff --git a/components/adblock/core/subscription/subscription_config.cc b/components/adblock/core/subscription/subscription_config.cc
-index 87a7755e50b..bd3c234a7aa 100644
+index 87a7755e50..1936401e06 100644
 --- a/components/adblock/core/subscription/subscription_config.cc
 +++ b/components/adblock/core/subscription/subscription_config.cc
-@@ -19,6 +19,8 @@
+@@ -18,18 +18,27 @@
+ #include "components/adblock/core/subscription/subscription_config.h"
  
  #include <map>
++#include <optional>
++#include <string_view>
  
 +#include "base/no_destructor.h"
 +#include "base/strings/string_number_conversions.h"
  #include "base/strings/string_split.h"
  #include "base/strings/string_util.h"
  #include "components/adblock/core/common/adblock_constants.h"
-@@ -29,7 +31,7 @@ namespace {
+ #include "components/adblock/core/resources/grit/adblock_resources.h"
+ #include "net/base/url_util.h"
++#include "url/url_constants.h"
+ 
+ namespace {
  int g_port_for_testing = 0;
  
++// Spatiand: each list comes from where its maintainers publish it, as registered in eyeo's
++// subscription list (gitlab.com/eyeo/filterlists/subscriptionlist, "list=").  The EasyList
++// family and eyeo's own lists are published on eyeo's server, the base below; the others are
++// named in full in kListsElsewhere.  (Cromite fetched them all from its own once-a-day mirror.)
  std::string GetHost() {
 -  GURL url("https://easylist-downloads.adblockplus.org");
-+  GURL url("https://uazo.github.io/cromite/filters/");
++  GURL url("https://easylist-downloads.adblockplus.org/");
    if (!g_port_for_testing) {
      return url.spec();
    }
-@@ -43,29 +45,29 @@ std::string GetHost() {
+@@ -38,34 +47,87 @@ std::string GetHost() {
+   replacements.SetPortStr(port_str);
+   return url.ReplaceComponents(replacements).spec();
+ }
++// The lists not on eyeo's server, by the file name each has there (and had on Cromite's
++// mirror, which kept those names).
++constexpr struct {
++  std::string_view file_name;
++  std::string_view url;
++} kListsElsewhere[] = {
++    {"badblock_lite.txt", "https://badblock.celenity.dev/abp/badblock_lite.txt"},
++    {"badmojr-1Hosts-master-Lite-adblock.txt",
++     "https://badmojr.github.io/1Hosts/Lite/adblock.txt"},
++    {"abpindo.txt",
++     "https://raw.githubusercontent.com/ABPindo/indonesianadblockrules/master/"
++     "subscriptions/abpindo.txt"},
++    {"abpvn.txt",
++     "https://raw.githubusercontent.com/abpvn/abpvn/master/filter/abpvn.txt"},
++    // Not offered (no licence stated); kept so a profile that had it moves to its source.
++    {"bulgarian_list.txt", "https://stanev.org/abp/adblock_bg.txt"},
++    // Not offered (Dandelicence is not a free licence); kept so a profile that had it moves
++    // to its source.
++    {"dandelion_sprouts_nordic_filters.txt",
++     "https://raw.githubusercontent.com/DandelionSprout/adfilt/master/"
++     "NorwegianExperimentalList%20alternate%20versions/NordicFiltersABP-Inclusion.txt"},
++    {"easylistczechslovak.txt",
++     "https://raw.githubusercontent.com/tomasko126/easylistczechandslovak/master/"
++     "filters.txt"},
++    {"israellist.txt",
++     "https://raw.githubusercontent.com/easylist/EasyListHebrew/master/"
++     "EasyListHebrew.txt"},
++    {"hufilter.txt",
++     "https://cdn.jsdelivr.net/gh/hufilter/hufilter@gh-pages/hufilter.txt"},
++    {"easylistlithuania.txt",
++     "https://raw.githubusercontent.com/EasyList-Lithuania/easylist_lithuania/master/"
++     "easylistlithuania.txt"},
++    {"latvianlist.txt",
++     "https://raw.githubusercontent.com/Latvian-List/adblock-latvian/master/lists/"
++     "latvian-list.txt"},
++    {"rolist.txt", "https://www.zoso.ro/pages/rolist.txt"},
++};
++
++// Lists on eyeo's server under another name than the one they had on Cromite's mirror.
++constexpr struct {
++  std::string_view file_name;
++  std::string_view eyeo_name;
++} kRenamedOnEyeo[] = {
++    {"liste_ar.txt", "Liste_AR.txt"},
++    {"ruadlist.txt", "advblock.txt"},
++};
++
+ }  // namespace
+ 
  namespace adblock {
  
++namespace {
++GURL ListUrl(std::string_view file_name) {
++  return config::FilterListUrlForFileName(file_name);
++}
++}  // namespace
++
  const GURL& AdblockBaseFilterListUrl() {
 -  static GURL kAdblockBaseFilterListUrl(GetHost());
 -  return kAdblockBaseFilterListUrl;
@@ -11861,7 +11989,7 @@ index 87a7755e50b..bd3c234a7aa 100644
  }
  
  KnownSubscriptionInfo::KnownSubscriptionInfo() = default;
-@@ -103,12 +105,24 @@ const std::vector<KnownSubscriptionInfo>& config::GetKnownSubscriptions() {
+@@ -103,34 +165,34 @@ const std::vector<KnownSubscriptionInfo>& config::GetKnownSubscriptions() {
    // The list isn't updated very often. If it starts to become a burden to
    // align the C++ representation, better to update it manually because it also
    // contains visibility and first run behavior options.
@@ -11873,22 +12001,112 @@ index 87a7755e50b..bd3c234a7aa 100644
         SubscriptionUiVisibility::Visible,
 -       SubscriptionFirstRunBehavior::Subscribe,
 +       SubscriptionFirstRunBehavior::SubscribeAtFirstRun,
-+       SubscriptionPrivilegedFilterStatus::Forbidden},
-+      {GURL(GetHost() + "badblock_lite.txt"),
+        SubscriptionPrivilegedFilterStatus::Forbidden},
+-      {GURL(GetHost() + "abpindo.txt"),
+-       "ABPindo",
+-       {"id", "ms"},
++      {ListUrl("badblock_lite.txt"),
 +       "Celenity/BadBlock Lite",
 +       {"en"},
-+       SubscriptionUiVisibility::Visible,
-+       SubscriptionFirstRunBehavior::SubscribeAtFirstRun,
-+       SubscriptionPrivilegedFilterStatus::Forbidden},
-+      {GURL(GetHost() + "badmojr-1Hosts-master-Lite-adblock.txt"),
-+       "badmojr/1Hosts",
-+       {"en"},
-+       SubscriptionUiVisibility::Visible,
+        SubscriptionUiVisibility::Visible,
+-       SubscriptionFirstRunBehavior::SubscribeIfLocaleMatch,
 +       SubscriptionFirstRunBehavior::SubscribeAtFirstRun,
         SubscriptionPrivilegedFilterStatus::Forbidden},
-       {GURL(GetHost() + "abpindo.txt"),
-        "ABPindo",
-@@ -262,23 +276,23 @@ const std::vector<KnownSubscriptionInfo>& config::GetKnownSubscriptions() {
+-      {GURL(GetHost() + "abpvn.txt"),
+-       "ABPVN List",
+-       {"vi"},
++      {ListUrl("badmojr-1Hosts-master-Lite-adblock.txt"),
++       "badmojr/1Hosts",
++       {"en"},
+        SubscriptionUiVisibility::Visible,
+-       SubscriptionFirstRunBehavior::SubscribeIfLocaleMatch,
++       SubscriptionFirstRunBehavior::SubscribeAtFirstRun,
+        SubscriptionPrivilegedFilterStatus::Forbidden},
+-      {GURL(GetHost() + "bulgarian_list.txt"),
+-       "Bulgarian list",
+-       {"bg"},
++      {ListUrl("abpindo.txt"),
++       "ABPindo",
++       {"id", "ms"},
+        SubscriptionUiVisibility::Visible,
+        SubscriptionFirstRunBehavior::SubscribeIfLocaleMatch,
+        SubscriptionPrivilegedFilterStatus::Forbidden},
+-      {GURL(GetHost() + "dandelion_sprouts_nordic_filters.txt"),
+-       "Dandelion Sprout's Nordic Filters",
+-       {"no", "nb", "nn", "da", "is", "fo", "kl"},
++      {ListUrl("abpvn.txt"),
++       "ABPVN List",
++       {"vi"},
+        SubscriptionUiVisibility::Visible,
+        SubscriptionFirstRunBehavior::SubscribeIfLocaleMatch,
+        SubscriptionPrivilegedFilterStatus::Forbidden},
+@@ -140,7 +202,7 @@ const std::vector<KnownSubscriptionInfo>& config::GetKnownSubscriptions() {
+        SubscriptionUiVisibility::Visible,
+        SubscriptionFirstRunBehavior::SubscribeIfLocaleMatch,
+        SubscriptionPrivilegedFilterStatus::Forbidden},
+-      {GURL(GetHost() + "easylistczechslovak.txt"),
++      {ListUrl("easylistczechslovak.txt"),
+        "EasyList Czech and Slovak",
+        {"cs", "sk"},
+        SubscriptionUiVisibility::Visible,
+@@ -158,13 +220,13 @@ const std::vector<KnownSubscriptionInfo>& config::GetKnownSubscriptions() {
+        SubscriptionUiVisibility::Visible,
+        SubscriptionFirstRunBehavior::SubscribeIfLocaleMatch,
+        SubscriptionPrivilegedFilterStatus::Forbidden},
+-      {GURL(GetHost() + "israellist.txt"),
++      {ListUrl("israellist.txt"),
+        "EasyList Hebrew",
+        {"he"},
+        SubscriptionUiVisibility::Visible,
+        SubscriptionFirstRunBehavior::SubscribeIfLocaleMatch,
+        SubscriptionPrivilegedFilterStatus::Forbidden},
+-      {GURL(GetHost() + "hufilter.txt"),
++      {ListUrl("hufilter.txt"),
+        "EasyList Hungarian",
+        {"hu"},
+        SubscriptionUiVisibility::Visible,
+@@ -176,7 +238,7 @@ const std::vector<KnownSubscriptionInfo>& config::GetKnownSubscriptions() {
+        SubscriptionUiVisibility::Visible,
+        SubscriptionFirstRunBehavior::SubscribeIfLocaleMatch,
+        SubscriptionPrivilegedFilterStatus::Forbidden},
+-      {GURL(GetHost() + "easylistlithuania.txt"),
++      {ListUrl("easylistlithuania.txt"),
+        "EasyList Lithuania",
+        {"lt"},
+        SubscriptionUiVisibility::Visible,
+@@ -225,13 +287,13 @@ const std::vector<KnownSubscriptionInfo>& config::GetKnownSubscriptions() {
+        SubscriptionUiVisibility::Visible,
+        SubscriptionFirstRunBehavior::SubscribeIfLocaleMatch,
+        SubscriptionPrivilegedFilterStatus::Forbidden},
+-      {GURL(GetHost() + "latvianlist.txt"),
++      {ListUrl("latvianlist.txt"),
+        "Latvian List",
+        {"lv"},
+        SubscriptionUiVisibility::Visible,
+        SubscriptionFirstRunBehavior::SubscribeIfLocaleMatch,
+        SubscriptionPrivilegedFilterStatus::Forbidden},
+-      {GURL(GetHost() + "liste_ar.txt"),
++      {ListUrl("liste_ar.txt"),
+        "Liste AR",
+        {"ar"},
+        SubscriptionUiVisibility::Visible,
+@@ -243,13 +305,13 @@ const std::vector<KnownSubscriptionInfo>& config::GetKnownSubscriptions() {
+        SubscriptionUiVisibility::Visible,
+        SubscriptionFirstRunBehavior::SubscribeIfLocaleMatch,
+        SubscriptionPrivilegedFilterStatus::Forbidden},
+-      {GURL(GetHost() + "rolist.txt"),
++      {ListUrl("rolist.txt"),
+        "ROList",
+        {"ro"},
+        SubscriptionUiVisibility::Visible,
+        SubscriptionFirstRunBehavior::SubscribeIfLocaleMatch,
+        SubscriptionPrivilegedFilterStatus::Forbidden},
+-      {GURL(GetHost() + "ruadlist.txt"),
++      {ListUrl("ruadlist.txt"),
+        "RuAdList",
+        {"ru", "uk", "uz", "kk"},
+        SubscriptionUiVisibility::Visible,
+@@ -262,23 +324,17 @@ const std::vector<KnownSubscriptionInfo>& config::GetKnownSubscriptions() {
         SubscriptionFirstRunBehavior::SubscribeIfLocaleMatch,
         SubscriptionPrivilegedFilterStatus::Forbidden},
        {AcceptableAdsUrl(),
@@ -11907,12 +12125,8 @@ index 87a7755e50b..bd3c234a7aa 100644
 -       SubscriptionPrivilegedFilterStatus::Allowed},
 -      {GURL(GetHost() + "i_dont_care_about_cookies.txt"),
 -       "I don't care about cookies",
-+       SubscriptionFirstRunBehavior::SubscribeAtFirstRun,
-+       SubscriptionPrivilegedFilterStatus::AllowedAndChecked},
-+      {GURL("https://raw.githubusercontent.com/uazo/cromite/master/tools/filters/experimental-cromite-filters.txt"),
-+       "Cromite experimental filters",
-        {},
-        SubscriptionUiVisibility::Visible,
+-       {},
+-       SubscriptionUiVisibility::Visible,
 -       SubscriptionFirstRunBehavior::Ignore,
 -       SubscriptionPrivilegedFilterStatus::Forbidden},
 +       SubscriptionFirstRunBehavior::SubscribeAtFirstRun,
@@ -11920,7 +12134,7 @@ index 87a7755e50b..bd3c234a7aa 100644
        {GURL(GetHost() + ""
                          "fanboy-notifications.txt"),
         "Fanboy's Notifications Blocking List",
-@@ -303,13 +317,13 @@ const std::vector<KnownSubscriptionInfo>& config::GetKnownSubscriptions() {
+@@ -303,13 +359,13 @@ const std::vector<KnownSubscriptionInfo>& config::GetKnownSubscriptions() {
         {},
         SubscriptionUiVisibility::Invisible,
         SubscriptionFirstRunBehavior::Ignore,
@@ -11936,7 +12150,7 @@ index 87a7755e50b..bd3c234a7aa 100644
  
        // You can customize subscriptions available on first run and in settings
        // here. Items are displayed in settings in order declared here. See
-@@ -329,9 +343,9 @@ const std::vector<KnownSubscriptionInfo>& config::GetKnownSubscriptions() {
+@@ -329,9 +385,9 @@ const std::vector<KnownSubscriptionInfo>& config::GetKnownSubscriptions() {
        */
        // clang-format on
  
@@ -11948,7 +12162,7 @@ index 87a7755e50b..bd3c234a7aa 100644
  }
  
  bool config::AllowPrivilegedFilters(const GURL& url) {
-@@ -346,7 +360,7 @@ bool config::AllowPrivilegedFilters(const GURL& url) {
+@@ -346,7 +402,7 @@ bool config::AllowPrivilegedFilters(const GURL& url) {
    for (const auto& cur : GetKnownSubscriptions()) {
      if (cur.url == url) {
        return cur.privileged_status ==
@@ -11957,7 +12171,7 @@ index 87a7755e50b..bd3c234a7aa 100644
      }
    }
  
-@@ -356,9 +370,7 @@ bool config::AllowPrivilegedFilters(const GURL& url) {
+@@ -356,22 +412,59 @@ bool config::AllowPrivilegedFilters(const GURL& url) {
  const std::vector<PreloadedSubscriptionInfo>&
  config::GetPreloadedSubscriptionConfiguration() {
    static const std::vector<PreloadedSubscriptionInfo> preloaded_subscriptions =
@@ -11968,7 +12182,47 @@ index 87a7755e50b..bd3c234a7aa 100644
    return preloaded_subscriptions;
  }
  
-@@ -368,10 +380,11 @@ void SetFilterListServerPortForTesting(int port_for_testing) {
++GURL config::FilterListUrlForFileName(std::string_view file_name) {
++  for (const auto& list : kListsElsewhere) {
++    if (list.file_name == file_name) {
++      return GURL(list.url);
++    }
++  }
++  for (const auto& list : kRenamedOnEyeo) {
++    if (list.file_name == file_name) {
++      return AdblockBaseFilterListUrl().Resolve(list.eyeo_name);
++    }
++  }
++  return AdblockBaseFilterListUrl().Resolve(file_name);
++}
++
++std::optional<GURL> config::FilterListMovedFromCromite(const GURL& url) {
++  // Cromite's mirror (its GitHub Pages site, /cromite/filters/<file>), which copied each
++  // list from the URLs above under the same file names.
++  constexpr std::string_view kMirrorPath = "/cromite/filters/";
++  if (url.SchemeIs(url::kHttpsScheme) && url.host().ends_with(".github.io") &&
++      url.path().starts_with(kMirrorPath)) {
++    const std::string path(url.path());
++    std::string_view file_name(path);
++    file_name.remove_prefix(kMirrorPath.size());
++    if (file_name.empty() || file_name.find('/') != std::string_view::npos) {
++      return GURL();
++    }
++    return FilterListUrlForFileName(file_name);
++  }
++  // Cromite's own "experimental filters" (its edit of the distribution-partners part of ABP
++  // filters, which the anti-circumvention list already carries): no source but Cromite.
++  if (url.SchemeIs(url::kHttpsScheme) && url.host() == "raw.githubusercontent.com" &&
++      url.path().ends_with(
++          "/cromite/master/tools/filters/experimental-cromite-filters.txt")) {
++    return GURL();
++  }
++  return std::nullopt;
++}
++
+ void SetFilterListServerPortForTesting(int port_for_testing) {
+   g_port_for_testing = port_for_testing;
+ }
  
  const std::vector<std::string_view>& config::MaybeSplitCombinedAdblockList(
      const GURL& filter_list) {
@@ -11984,7 +12238,7 @@ index 87a7755e50b..bd3c234a7aa 100644
            {"abpindo+easylist.txt", {"abpindo.txt", VALUE_EASYLIST_EN}},
            {"abpvn+easylist", {"abpvn.txt", VALUE_EASYLIST_EN}},
            {"bulgarian_list+easylist.",
-@@ -410,11 +423,11 @@ const std::vector<std::string_view>& config::MaybeSplitCombinedAdblockList(
+@@ -410,11 +503,11 @@ const std::vector<std::string_view>& config::MaybeSplitCombinedAdblockList(
            {"rolist+easylist.txt", {"rolist.txt", VALUE_EASYLIST_EN}},
            {"ruadlist+easylist.txt", {"ruadlist.txt", VALUE_EASYLIST_EN}},
            {"turkish+easylist.txt", {"turkish.txt", VALUE_EASYLIST_EN}},
@@ -11999,7 +12253,7 @@ index 87a7755e50b..bd3c234a7aa 100644
    auto path =
        base::TrimString(filter_list.path(), "/", base::TRIM_LEADING);
  
-@@ -422,7 +435,8 @@ const std::vector<std::string_view>& config::MaybeSplitCombinedAdblockList(
+@@ -422,7 +515,8 @@ const std::vector<std::string_view>& config::MaybeSplitCombinedAdblockList(
    if (it == filter_lists_map->end()) {
      return *EMPTY_VALUE;
    }
@@ -12010,10 +12264,18 @@ index 87a7755e50b..bd3c234a7aa 100644
  
  }  // namespace adblock
 diff --git a/components/adblock/core/subscription/subscription_config.h b/components/adblock/core/subscription/subscription_config.h
-index 6ef77a4c083..0043f488a78 100644
+index 6ef77a4c08..027ac9c4ae 100644
 --- a/components/adblock/core/subscription/subscription_config.h
 +++ b/components/adblock/core/subscription/subscription_config.h
-@@ -39,7 +39,7 @@ enum class SubscriptionUiVisibility { Visible, Invisible };
+@@ -18,6 +18,7 @@
+ #ifndef COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_CONFIG_H_
+ #define COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_CONFIG_H_
+ 
++#include <optional>
+ #include <string_view>
+ #include <vector>
+ 
+@@ -39,7 +40,7 @@ enum class SubscriptionUiVisibility { Visible, Invisible };
  
  enum class SubscriptionFirstRunBehavior {
    // Download and install as soon as possible.
@@ -12022,7 +12284,7 @@ index 6ef77a4c083..0043f488a78 100644
    // Download and install as soon as possible but only if the device's region
    // matches one of the |languages| defined in KnownSubscriptionInfo.
    SubscribeIfLocaleMatch,
-@@ -50,7 +50,7 @@ enum class SubscriptionFirstRunBehavior {
+@@ -50,7 +51,7 @@ enum class SubscriptionFirstRunBehavior {
  // Privileged filters include:
  // - Snippet filters
  // - Header filters
@@ -12031,7 +12293,7 @@ index 6ef77a4c083..0043f488a78 100644
  
  // Description of a subscription that's known to exist in the Internet.
  // Can be used to populate a list of proposed or recommended subscriptions in
-@@ -74,7 +74,7 @@ struct KnownSubscriptionInfo {
+@@ -74,7 +75,7 @@ struct KnownSubscriptionInfo {
    std::vector<std::string> languages;
    SubscriptionUiVisibility ui_visibility = SubscriptionUiVisibility::Visible;
    SubscriptionFirstRunBehavior first_run =
@@ -12040,8 +12302,24 @@ index 6ef77a4c083..0043f488a78 100644
    SubscriptionPrivilegedFilterStatus privileged_status =
        SubscriptionPrivilegedFilterStatus::Forbidden;
  };
+@@ -124,6 +125,15 @@ GetPreloadedSubscriptionConfiguration();
+ const std::vector<std::string_view>& MaybeSplitCombinedAdblockList(
+     const GURL& filter_list);
+ 
++// Spatiand: the URL this build fetches the list known by |file_name| on eyeo's server (or on
++// Cromite's former mirror, which kept those names) from: its maintainers' own, or eyeo's.
++GURL FilterListUrlForFileName(std::string_view file_name);
++
++// Spatiand: for a filter list URL on Cromite's hosting, where that list is fetched from now
++// (an empty GURL if it has no source other than Cromite and is dropped); std::nullopt for
++// any other URL.
++std::optional<GURL> FilterListMovedFromCromite(const GURL& url);
++
+ }  // namespace config
+ 
+ }  // namespace adblock
 diff --git a/components/adblock/core/subscription/subscription_downloader_impl.cc b/components/adblock/core/subscription/subscription_downloader_impl.cc
-index 245eb475b64..98254a02ea3 100644
+index 245eb475b6..98254a02ea 100644
 --- a/components/adblock/core/subscription/subscription_downloader_impl.cc
 +++ b/components/adblock/core/subscription/subscription_downloader_impl.cc
 @@ -53,6 +53,7 @@ std::string BuildSubscriptionQueryParams(
@@ -12120,7 +12398,7 @@ index 245eb475b64..98254a02ea3 100644
    std::move(std::get<DownloadCompletedCallback>(ongoing_download_it->second))
        .Run(nullptr);
 diff --git a/components/adblock/core/subscription/subscription_persistent_metadata.h b/components/adblock/core/subscription/subscription_persistent_metadata.h
-index c58ab8c54d4..dee6b3e877c 100644
+index c58ab8c54d..dee6b3e877 100644
 --- a/components/adblock/core/subscription/subscription_persistent_metadata.h
 +++ b/components/adblock/core/subscription/subscription_persistent_metadata.h
 @@ -74,6 +74,7 @@ class SubscriptionPersistentMetadata : public KeyedService {
@@ -12132,7 +12410,7 @@ index c58ab8c54d4..dee6b3e877c 100644
    virtual int GetDownloadErrorCount(const GURL& subscription_url) const = 0;
    // Mark the subscription as auto installed. Auto installed subscriptions have
 diff --git a/components/adblock/core/subscription/subscription_persistent_metadata_impl.cc b/components/adblock/core/subscription/subscription_persistent_metadata_impl.cc
-index e7f036ec013..3cb590dd2e9 100644
+index e7f036ec01..3cb590dd2e 100644
 --- a/components/adblock/core/subscription/subscription_persistent_metadata_impl.cc
 +++ b/components/adblock/core/subscription/subscription_persistent_metadata_impl.cc
 @@ -24,6 +24,7 @@
@@ -12169,7 +12447,7 @@ index e7f036ec013..3cb590dd2e9 100644
    const base::Value& dict =
        prefs_->GetValue(common::prefs::kSubscriptionMetadata);
 diff --git a/components/adblock/core/subscription/subscription_persistent_metadata_impl.h b/components/adblock/core/subscription/subscription_persistent_metadata_impl.h
-index 69987daf630..631c62d90ad 100644
+index 69987daf63..631c62d90a 100644
 --- a/components/adblock/core/subscription/subscription_persistent_metadata_impl.h
 +++ b/components/adblock/core/subscription/subscription_persistent_metadata_impl.h
 @@ -44,6 +44,7 @@ class SubscriptionPersistentMetadataImpl final
@@ -12181,7 +12459,7 @@ index 69987daf630..631c62d90ad 100644
  
    void SetAutoInstalledExpirationInterval(const GURL& subscription_url,
 diff --git a/components/adblock/core/subscription/subscription_persistent_storage_impl.cc b/components/adblock/core/subscription/subscription_persistent_storage_impl.cc
-index 3f0409e519f..534380b34d4 100644
+index 3f0409e519..534380b34d 100644
 --- a/components/adblock/core/subscription/subscription_persistent_storage_impl.cc
 +++ b/components/adblock/core/subscription/subscription_persistent_storage_impl.cc
 @@ -99,7 +99,7 @@ SubscriptionPersistentStorageImpl::ReadSubscriptionsFromDirectory(
@@ -12230,7 +12508,7 @@ index 3f0409e519f..534380b34d4 100644
    return result;
  }
 diff --git a/components/adblock/core/subscription/subscription_service.h b/components/adblock/core/subscription/subscription_service.h
-index 0bff5183da1..453d73379bd 100644
+index 0bff5183da..453d73379b 100644
 --- a/components/adblock/core/subscription/subscription_service.h
 +++ b/components/adblock/core/subscription/subscription_service.h
 @@ -38,6 +38,17 @@ namespace adblock {
@@ -12252,7 +12530,7 @@ index 0bff5183da1..453d73379bd 100644
    class SubscriptionObserver : public base::CheckedObserver {
     public:
 diff --git a/components/adblock/core/subscription/subscription_service_impl.cc b/components/adblock/core/subscription/subscription_service_impl.cc
-index 861952c09ac..11aeb59fb80 100644
+index 861952c09a..11aeb59fb8 100644
 --- a/components/adblock/core/subscription/subscription_service_impl.cc
 +++ b/components/adblock/core/subscription/subscription_service_impl.cc
 @@ -34,9 +34,23 @@
@@ -12367,7 +12645,7 @@ index 861952c09ac..11aeb59fb80 100644
    if (config->IsEnabled()) {
      // Enable the configuration by creating a new
 diff --git a/components/adblock/core/subscription/subscription_service_impl.h b/components/adblock/core/subscription/subscription_service_impl.h
-index 4f642d1ed02..f97952ca423 100644
+index 4f642d1ed0..f97952ca42 100644
 --- a/components/adblock/core/subscription/subscription_service_impl.h
 +++ b/components/adblock/core/subscription/subscription_service_impl.h
 @@ -42,6 +42,16 @@ namespace adblock {
@@ -12388,7 +12666,7 @@ index 4f642d1ed02..f97952ca423 100644
    using SubscriptionUpdatedCallback =
        base::RepeatingCallback<void(const GURL& subscription_url)>;
 diff --git a/components/adblock/core/subscription/subscription_validator_impl.cc b/components/adblock/core/subscription/subscription_validator_impl.cc
-index 8dbcbed5121..6fd575567e3 100644
+index 8dbcbed512..6fd575567e 100644
 --- a/components/adblock/core/subscription/subscription_validator_impl.cc
 +++ b/components/adblock/core/subscription/subscription_validator_impl.cc
 @@ -57,17 +57,17 @@ void ClearSignaturesIfSchemaVersionChanged(
@@ -12413,7 +12691,7 @@ index 8dbcbed5121..6fd575567e3 100644
    }
    return true;
 diff --git a/components/adblock/features.gni b/components/adblock/features.gni
-index a9e7e76ca04..edfb8c8066d 100644
+index a9e7e76ca0..edfb8c8066 100644
 --- a/components/adblock/features.gni
 +++ b/components/adblock/features.gni
 @@ -47,5 +47,5 @@ declare_args() {
@@ -12424,7 +12702,7 @@ index a9e7e76ca04..edfb8c8066d 100644
 +  eyeo_disable_aa_by_default = true
  }
 diff --git a/components/blocked_content/popup_blocker.cc b/components/blocked_content/popup_blocker.cc
-index f05813942f4..13d534fc8d7 100644
+index f05813942f..13d534fc8d 100644
 --- a/components/blocked_content/popup_blocker.cc
 +++ b/components/blocked_content/popup_blocker.cc
 @@ -20,6 +20,11 @@
@@ -12451,7 +12729,7 @@ index f05813942f4..13d534fc8d7 100644
  
  }  // namespace
 diff --git a/components/blocked_content/popup_blocker.h b/components/blocked_content/popup_blocker.h
-index 50ace4637cd..1be27edbb23 100644
+index 50ace4637c..1be27edbb2 100644
 --- a/components/blocked_content/popup_blocker.h
 +++ b/components/blocked_content/popup_blocker.h
 @@ -5,6 +5,7 @@
@@ -12473,7 +12751,7 @@ index 50ace4637cd..1be27edbb23 100644
  // Classifies what caused a popup to be blocked.
 diff --git a/components/content_settings/core/browser/bromite_content_settings/ads.inc b/components/content_settings/core/browser/bromite_content_settings/ads.inc
 new file mode 100644
-index 00000000000..10fb48b5e76
+index 0000000000..10fb48b5e7
 --- /dev/null
 +++ b/components/content_settings/core/browser/bromite_content_settings/ads.inc
 @@ -0,0 +1,3 @@
@@ -12481,7 +12759,7 @@ index 00000000000..10fb48b5e76
 +    ->GetMutable(ContentSettingsType::ADS)
 +    ->set_show_into_info_page();
 diff --git a/components/error_page_strings.grdp b/components/error_page_strings.grdp
-index a695329f233..0412f5db841 100644
+index a695329f23..0412f5db84 100644
 --- a/components/error_page_strings.grdp
 +++ b/components/error_page_strings.grdp
 @@ -263,6 +263,22 @@
@@ -12508,7 +12786,7 @@ index a695329f233..0412f5db841 100644
      This content is blocked. Contact the site owner to fix the issue.
    </message>
 diff --git a/components/security_interstitials/core/browser/resources/interstitial_enterprisewarn.css b/components/security_interstitials/core/browser/resources/interstitial_enterprisewarn.css
-index c0bf4a0e795..bc8ab15d609 100644
+index c0bf4a0e79..bc8ab15d60 100644
 --- a/components/security_interstitials/core/browser/resources/interstitial_enterprisewarn.css
 +++ b/components/security_interstitials/core/browser/resources/interstitial_enterprisewarn.css
 @@ -14,3 +14,10 @@
@@ -12523,7 +12801,7 @@ index c0bf4a0e795..bc8ab15d609 100644
 +    padding: 14px;
 +}
 diff --git a/content/browser/websockets/websocket_connector_impl.cc b/content/browser/websockets/websocket_connector_impl.cc
-index e756aaf3ee0..674388068f9 100644
+index e756aaf3ee..674388068f 100644
 --- a/content/browser/websockets/websocket_connector_impl.cc
 +++ b/content/browser/websockets/websocket_connector_impl.cc
 @@ -143,10 +143,12 @@ void WebSocketConnectorImpl::Connect(
@@ -12543,7 +12821,7 @@ index e756aaf3ee0..674388068f9 100644
    }
  
 diff --git a/content/public/browser/content_browser_client.cc b/content/public/browser/content_browser_client.cc
-index 8ce3bac8508..a85a38e2453 100644
+index 8ce3bac850..a85a38e245 100644
 --- a/content/public/browser/content_browser_client.cc
 +++ b/content/public/browser/content_browser_client.cc
 @@ -1123,7 +1123,7 @@ void ContentBrowserClient::WillCreateURLLoaderFactory(
@@ -12568,7 +12846,7 @@ index 8ce3bac8508..a85a38e2453 100644
      const std::optional<std::string>& user_agent,
      mojo::PendingRemote<network::mojom::WebSocketHandshakeClient>
 diff --git a/content/public/browser/content_browser_client.h b/content/public/browser/content_browser_client.h
-index 9a920eb24de..364d5642c42 100644
+index 9a920eb24d..364d5642c4 100644
 --- a/content/public/browser/content_browser_client.h
 +++ b/content/public/browser/content_browser_client.h
 @@ -2020,7 +2020,9 @@ class CONTENT_EXPORT ContentBrowserClient {
@@ -12595,7 +12873,7 @@ index 9a920eb24de..364d5642c42 100644
        const std::optional<std::string>& user_agent,
        mojo::PendingRemote<network::mojom::WebSocketHandshakeClient>
 diff --git a/content/public/common/isolated_world_ids.h b/content/public/common/isolated_world_ids.h
-index 0148c6b3309..f1ba69e94a3 100644
+index 0148c6b330..f1ba69e94a 100644
 --- a/content/public/common/isolated_world_ids.h
 +++ b/content/public/common/isolated_world_ids.h
 @@ -21,7 +21,7 @@ enum IsolatedWorldIDs : int32_t {
@@ -12609,7 +12887,7 @@ index 0148c6b3309..f1ba69e94a3 100644
    ISOLATED_WORLD_ID_CONTENT_END,
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Stricter-popup-blocker.inc b/cromite_flags/chrome/browser/about_flags_cc/Stricter-popup-blocker.inc
 new file mode 100644
-index 00000000000..86f63bcdb56
+index 0000000000..86f63bcdb5
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Stricter-popup-blocker.inc
 @@ -0,0 +1,14 @@
@@ -12628,7 +12906,7 @@ index 00000000000..86f63bcdb56
 +
 +#endif // ifdef FLAG_SECTION
 diff --git a/third_party/blink/renderer/core/css/style_engine.cc b/third_party/blink/renderer/core/css/style_engine.cc
-index 362b1229a47..93bff2d0c62 100644
+index 362b1229a4..93bff2d0c6 100644
 --- a/third_party/blink/renderer/core/css/style_engine.cc
 +++ b/third_party/blink/renderer/core/css/style_engine.cc
 @@ -654,6 +654,14 @@ void StyleEngine::PrepareUpdateActiveStyleSheetsInShadow(
@@ -12647,7 +12925,7 @@ index 362b1229a47..93bff2d0c62 100644
    DCHECK(user_style_dirty_);
  
 diff --git a/third_party/blink/renderer/core/css/style_engine.h b/third_party/blink/renderer/core/css/style_engine.h
-index 752c72e16c2..714bf92cf3a 100644
+index 752c72e16c..714bf92cf3 100644
 --- a/third_party/blink/renderer/core/css/style_engine.h
 +++ b/third_party/blink/renderer/core/css/style_engine.h
 @@ -298,6 +298,7 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
@@ -12659,7 +12937,7 @@ index 752c72e16c2..714bf92cf3a 100644
                     StyleSheetContents*,
                     WebCssOrigin = WebCssOrigin::kAuthor);
 diff --git a/third_party/blink/renderer/core/dom/events/event_target.cc b/third_party/blink/renderer/core/dom/events/event_target.cc
-index 76198e320bf..f8a42527d8d 100644
+index 76198e320b..f8a42527d8 100644
 --- a/third_party/blink/renderer/core/dom/events/event_target.cc
 +++ b/third_party/blink/renderer/core/dom/events/event_target.cc
 @@ -874,10 +874,7 @@ bool EventTarget::dispatchEventForBindings(Event* event,
@@ -12675,7 +12953,7 @@ index 76198e320bf..f8a42527d8d 100644
    // Return whether the event was cancelled or not to JS not that it
    // might have actually been default handled; so check only against
 diff --git a/third_party/blink/renderer/core/exported/web_document.cc b/third_party/blink/renderer/core/exported/web_document.cc
-index 4092c8b9e0e..bd168f5951f 100644
+index 4092c8b9e0..bd168f5951 100644
 --- a/third_party/blink/renderer/core/exported/web_document.cc
 +++ b/third_party/blink/renderer/core/exported/web_document.cc
 @@ -323,6 +323,16 @@ WebStyleSheetKey WebDocument::InsertAbpElemhideStylesheet(
@@ -12706,7 +12984,7 @@ index 4092c8b9e0e..bd168f5951f 100644
    return injection_key;
  }
 diff --git a/third_party/blink/renderer/core/html/html_element.cc b/third_party/blink/renderer/core/html/html_element.cc
-index 4c27b7e6bcd..379c4609b42 100644
+index 4c27b7e6bc..379c4609b4 100644
 --- a/third_party/blink/renderer/core/html/html_element.cc
 +++ b/third_party/blink/renderer/core/html/html_element.cc
 @@ -3737,13 +3737,7 @@ void HTMLElement::setSpellcheck(bool enable) {
@@ -12725,7 +13003,7 @@ index 4c27b7e6bcd..379c4609b42 100644
      UseCounter::Count(GetDocument(),
                        WebFeature::kHTMLInputElementSimulatedClick);
 diff --git a/tools/typescript/definitions/adblock_private.d.ts b/tools/typescript/definitions/adblock_private.d.ts
-index 71a5100cf4b..8e25a354970 100644
+index 71a5100cf4..8e25a35497 100644
 --- a/tools/typescript/definitions/adblock_private.d.ts
 +++ b/tools/typescript/definitions/adblock_private.d.ts
 @@ -33,8 +33,22 @@ declare global {

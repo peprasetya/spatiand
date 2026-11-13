@@ -18,7 +18,7 @@ the Deck, where Chromium's own default is 12.
  3 files changed, 48 insertions(+), 2 deletions(-)
 
 diff --git a/ui/linux/fallback_linux_ui.cc b/ui/linux/fallback_linux_ui.cc
-index e9f8975c82d..d88a4b7b461 100644
+index e9f8975c82..d88a4b7b46 100644
 --- a/ui/linux/fallback_linux_ui.cc
 +++ b/ui/linux/fallback_linux_ui.cc
 @@ -53,7 +53,10 @@ bool FallbackLinuxUi::Initialize() {
@@ -34,7 +34,7 @@ index e9f8975c82d..d88a4b7b461 100644
    query.weight = gfx::Font::Weight::NORMAL;
    query.device_scale_factor = display_config().primary_scale;
 diff --git a/ui/linux/portal_settings_linux.cc b/ui/linux/portal_settings_linux.cc
-index 9d35aff4e9b..51f9e2f4b6e 100644
+index 9d35aff4e9..51f9e2f4b6 100644
 --- a/ui/linux/portal_settings_linux.cc
 +++ b/ui/linux/portal_settings_linux.cc
 @@ -35,6 +35,7 @@
@@ -107,7 +107,7 @@ index 9d35aff4e9b..51f9e2f4b6e 100644
                          : NativeTheme::PreferredColorScheme::kLight);
    }
 diff --git a/ui/linux/portal_settings_linux.h b/ui/linux/portal_settings_linux.h
-index 104ab948125..8e827b90f80 100644
+index 104ab94812..8e827b90f8 100644
 --- a/ui/linux/portal_settings_linux.h
 +++ b/ui/linux/portal_settings_linux.h
 @@ -5,6 +5,7 @@

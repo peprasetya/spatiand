@@ -9,7 +9,7 @@ FILE:WIN-Disable-first-run.patch
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/chrome/browser/ui/startup/first_run_service.cc b/chrome/browser/ui/startup/first_run_service.cc
-index 7e1709c6744..617ad494d7e 100644
+index 7e1709c674..617ad494d7 100644
 --- a/chrome/browser/ui/startup/first_run_service.cc
 +++ b/chrome/browser/ui/startup/first_run_service.cc
 @@ -80,7 +80,7 @@ bool IsFirstRunMarkedFinishedInPrefs() {

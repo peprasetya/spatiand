@@ -14,7 +14,7 @@ FILE:Add-kill-switch-for-unsupported-clangd-flags.patch
  2 files changed, 19 insertions(+), 2 deletions(-)
 
 diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
-index 6a7e14b9a0d..7daac0ff96c 100644
+index 6a7e14b9a0..7daac0ff96 100644
 --- a/build/config/compiler/BUILD.gn
 +++ b/build/config/compiler/BUILD.gn
 @@ -682,7 +682,7 @@ config("compiler") {
@@ -62,7 +62,7 @@ index 6a7e14b9a0d..7daac0ff96c 100644
      # ccache, or both. This warning appears frequently when compiling
      # files that use GNU-style line markers with Clang and Icecc. It can
 diff --git a/build_overrides/build.gni b/build_overrides/build.gni
-index 533726228c4..6f809282ff1 100644
+index 533726228c..6f809282ff 100644
 --- a/build_overrides/build.gni
 +++ b/build_overrides/build.gni
 @@ -54,6 +54,11 @@ declare_args() {

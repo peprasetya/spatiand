@@ -10,7 +10,7 @@ FILE:do-not-hide-.orig-files.patch
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/.gitignore b/.gitignore
-index 5b3019f681b..2457ffbf762 100644
+index 5b3019f681..2457ffbf76 100644
 --- a/.gitignore
 +++ b/.gitignore
 @@ -5,7 +5,7 @@

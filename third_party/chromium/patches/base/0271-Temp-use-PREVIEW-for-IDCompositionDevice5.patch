@@ -16,7 +16,7 @@ FILE:Temp-use-PREVIEW-for-IDCompositionDevice5.patch
  3 files changed, 6 insertions(+), 3 deletions(-)
 
 diff --git a/components/viz/service/display_embedder/skia_output_device_dcomp.cc b/components/viz/service/display_embedder/skia_output_device_dcomp.cc
-index d20a7745332..ce21db60004 100644
+index d20a774533..ce21db6000 100644
 --- a/components/viz/service/display_embedder/skia_output_device_dcomp.cc
 +++ b/components/viz/service/display_embedder/skia_output_device_dcomp.cc
 @@ -27,6 +27,7 @@
@@ -37,7 +37,7 @@ index d20a7745332..ce21db60004 100644
        return OutputSurface::DCSupportLevel::kDCompDynamicTexture;
      }
 diff --git a/ui/gl/dc_layer_tree.cc b/ui/gl/dc_layer_tree.cc
-index eaf7e35e245..dabb3214095 100644
+index eaf7e35e24..dabb321409 100644
 --- a/ui/gl/dc_layer_tree.cc
 +++ b/ui/gl/dc_layer_tree.cc
 @@ -18,6 +18,7 @@
@@ -58,7 +58,7 @@ index eaf7e35e245..dabb3214095 100644
      hr = dcomp_device5->CreateDynamicTexture(&primary_plane_surface_);
      if (FAILED(hr)) {
 diff --git a/ui/gl/dc_layer_tree.h b/ui/gl/dc_layer_tree.h
-index 01de95cef05..b53f72e839f 100644
+index 01de95cef0..b53f72e839 100644
 --- a/ui/gl/dc_layer_tree.h
 +++ b/ui/gl/dc_layer_tree.h
 @@ -20,6 +20,7 @@

@@ -19,7 +19,7 @@ FILE:Use-browser-navigation-handler.patch
 
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Use-browser-navigation-handler.inc b/cromite_flags/chrome/browser/about_flags_cc/Use-browser-navigation-handler.inc
 new file mode 100644
-index 00000000000..02c7f144e58
+index 0000000000..02c7f144e5
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Use-browser-navigation-handler.inc
 @@ -0,0 +1,12 @@
@@ -37,7 +37,7 @@ index 00000000000..02c7f144e58
 +#endif
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Use-browser-navigation-handler.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Use-browser-navigation-handler.inc
 new file mode 100644
-index 00000000000..404f9eb20dd
+index 0000000000..404f9eb20d
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Use-browser-navigation-handler.inc
 @@ -0,0 +1,3 @@
@@ -46,7 +46,7 @@ index 00000000000..404f9eb20dd
 +                base::FEATURE_DISABLED_BY_DEFAULT);
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Use-browser-navigation-handler.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Use-browser-navigation-handler.inc
 new file mode 100644
-index 00000000000..81f2c4418d7
+index 0000000000..81f2c4418d
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Use-browser-navigation-handler.inc
 @@ -0,0 +1 @@

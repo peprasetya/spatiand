@@ -15,7 +15,7 @@ FILE:Disable-media-router-and-remoting-by-default.patch
  5 files changed, 12 insertions(+), 10 deletions(-)
 
 diff --git a/chrome/browser/media/router/media_router_feature.cc b/chrome/browser/media/router/media_router_feature.cc
-index d39e225f776..a14e4c865e9 100644
+index d39e225f77..a14e4c865e 100644
 --- a/chrome/browser/media/router/media_router_feature.cc
 +++ b/chrome/browser/media/router/media_router_feature.cc
 @@ -100,6 +100,7 @@ void ClearMediaRouterStoredPrefsForTesting() {
@@ -44,7 +44,7 @@ index d39e225f776..a14e4c865e9 100644
 +#endif
  }  // namespace media_router
 diff --git a/chrome/browser/profiles/profile_impl.cc b/chrome/browser/profiles/profile_impl.cc
-index 5a8551da810..d5badceb0ac 100644
+index 5a8551da81..d5badceb0a 100644
 --- a/chrome/browser/profiles/profile_impl.cc
 +++ b/chrome/browser/profiles/profile_impl.cc
 @@ -455,7 +455,7 @@ void ProfileImpl::RegisterProfilePrefs(
@@ -57,7 +57,7 @@ index 5a8551da810..d5badceb0ac 100644
    registry->RegisterBooleanPref(prefs::kShowCastIconInToolbar, false);
  #endif  // !BUILDFLAG(IS_ANDROID)
 diff --git a/content/child/runtime_features.cc b/content/child/runtime_features.cc
-index 7fae0a62056..918cf28078b 100644
+index 7fae0a6205..918cf28078 100644
 --- a/content/child/runtime_features.cc
 +++ b/content/child/runtime_features.cc
 @@ -476,6 +476,8 @@ void SetCustomizedRuntimeFeaturesFromCombinedArgs(
@@ -70,7 +70,7 @@ index 7fae0a62056..918cf28078b 100644
        content::IsBackForwardCacheEnabled());
  
 diff --git a/third_party/blink/renderer/modules/remoteplayback/remote_playback.cc b/third_party/blink/renderer/modules/remoteplayback/remote_playback.cc
-index 76ad9958cf6..8bc242d4816 100644
+index 76ad9958cf..8bc242d481 100644
 --- a/third_party/blink/renderer/modules/remoteplayback/remote_playback.cc
 +++ b/third_party/blink/renderer/modules/remoteplayback/remote_playback.cc
 @@ -96,7 +96,7 @@ KURL GetAvailabilityUrl(const KURL& source,
@@ -83,7 +83,7 @@ index 76ad9958cf6..8bc242d4816 100644
  
  void RemotingStarting(HTMLMediaElement& media_element) {
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 7703bacf91e..a5fffc4c384 100644
+index 7703bacf91..a5fffc4c38 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -5385,14 +5385,10 @@

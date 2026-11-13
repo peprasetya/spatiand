@@ -10,7 +10,7 @@ FILE:translate-disable-fetching-of-languages-from-server.patch
  1 file changed, 2 insertions(+)
 
 diff --git a/components/translate/core/browser/translate_language_list.cc b/components/translate/core/browser/translate_language_list.cc
-index a99374b961e..de361afb4d4 100644
+index a99374b961..de361afb4d 100644
 --- a/components/translate/core/browser/translate_language_list.cc
 +++ b/components/translate/core/browser/translate_language_list.cc
 @@ -274,6 +274,7 @@ GURL TranslateLanguageList::TranslateLanguageUrl() {

@@ -15,7 +15,7 @@ FILE:Do-not-compile-QR-code-sharing.patch
  6 files changed, 7 insertions(+), 6 deletions(-)
 
 diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
-index 261db8159f0..55900e6aa35 100644
+index 261db8159f..55900e6aa3 100644
 --- a/chrome/browser/prefs/browser_prefs.cc
 +++ b/chrome/browser/prefs/browser_prefs.cc
 @@ -1966,7 +1966,7 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
@@ -28,7 +28,7 @@ index 261db8159f0..55900e6aa35 100644
    registry->RegisterIntegerPref(prefs::kChromeDataRegionSetting, 0);
  
 diff --git a/chrome/browser/share/BUILD.gn b/chrome/browser/share/BUILD.gn
-index 736632cc44c..5066089c343 100644
+index 736632cc44..5066089c34 100644
 --- a/chrome/browser/share/BUILD.gn
 +++ b/chrome/browser/share/BUILD.gn
 @@ -62,7 +62,6 @@ source_set("impl") {
@@ -40,7 +40,7 @@ index 736632cc44c..5066089c343 100644
        "share_ranking.cc",
      ]
 diff --git a/chrome/browser/sharing_hub/sharing_hub_features.cc b/chrome/browser/sharing_hub/sharing_hub_features.cc
-index 4ae3f73a0b9..7d6f4ee0340 100644
+index 4ae3f73a0b..7d6f4ee034 100644
 --- a/chrome/browser/sharing_hub/sharing_hub_features.cc
 +++ b/chrome/browser/sharing_hub/sharing_hub_features.cc
 @@ -70,7 +70,7 @@ BASE_FEATURE(kDesktopScreenshots, base::FEATURE_DISABLED_BY_DEFAULT);
@@ -53,7 +53,7 @@ index 4ae3f73a0b9..7d6f4ee0340 100644
  #endif
  
 diff --git a/chrome/browser/ui/browser_command_controller.cc b/chrome/browser/ui/browser_command_controller.cc
-index 8db56950966..eee8ca151cc 100644
+index 8db5695096..eee8ca151c 100644
 --- a/chrome/browser/ui/browser_command_controller.cc
 +++ b/chrome/browser/ui/browser_command_controller.cc
 @@ -2480,10 +2480,10 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode() {
@@ -71,7 +71,7 @@ index 8db56950966..eee8ca151cc 100644
    command_updater_->UpdateCommandEnabled(IDC_SHOW_MANAGEMENT_PAGE, true);
  
 diff --git a/chrome/browser/ui/browser_commands.cc b/chrome/browser/ui/browser_commands.cc
-index 365dcd789df..8588363a65f 100644
+index 365dcd789d..8588363a65 100644
 --- a/chrome/browser/ui/browser_commands.cc
 +++ b/chrome/browser/ui/browser_commands.cc
 @@ -2377,6 +2377,7 @@ void SendTabToSelf(BrowserWindowInterface* browser) {
@@ -83,7 +83,7 @@ index 365dcd789df..8588363a65f 100644
           qrcode_generator::QRCodeGeneratorBubbleController::
               IsGeneratorAvailable(browser->GetTabStripModel()
 diff --git a/chrome/browser/ui/qrcode_generator/qrcode_generator_bubble_controller.cc b/chrome/browser/ui/qrcode_generator/qrcode_generator_bubble_controller.cc
-index ccfc9c792b4..995d0dc4a95 100644
+index ccfc9c792b..995d0dc4a9 100644
 --- a/chrome/browser/ui/qrcode_generator/qrcode_generator_bubble_controller.cc
 +++ b/chrome/browser/ui/qrcode_generator/qrcode_generator_bubble_controller.cc
 @@ -38,6 +38,7 @@ QRCodeGeneratorBubbleController::~QRCodeGeneratorBubbleController() {

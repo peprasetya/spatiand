@@ -12,7 +12,7 @@ The dark mode manager reads the look Spatiand's other applications read, every s
  3 files changed, 91 insertions(+), 5 deletions(-)
 
 diff --git a/chrome/browser/extensions/external_provider_impl.cc b/chrome/browser/extensions/external_provider_impl.cc
-index 81dd40bc0fd..4ced42c874d 100644
+index 81dd40bc0f..4ced42c874 100644
 --- a/chrome/browser/extensions/external_provider_impl.cc
 +++ b/chrome/browser/extensions/external_provider_impl.cc
 @@ -882,7 +882,9 @@ void ExternalProviderImpl::CreateExternalProviders(
@@ -27,7 +27,7 @@ index 81dd40bc0fd..4ced42c874d 100644
          service,
          base::MakeRefCounted<ExternalPrefLoader>(
 diff --git a/ui/linux/portal_settings_linux.cc b/ui/linux/portal_settings_linux.cc
-index d897dd0b318..9d35aff4e9b 100644
+index d897dd0b31..9d35aff4e9 100644
 --- a/ui/linux/portal_settings_linux.cc
 +++ b/ui/linux/portal_settings_linux.cc
 @@ -4,6 +4,19 @@
@@ -144,7 +144,7 @@ index d897dd0b318..9d35aff4e9b 100644
  NativeTheme::PreferredColorScheme
  PortalSettingsLinux::FreedesktopColorSchemeToNativeThemeColorScheme(
 diff --git a/ui/linux/portal_settings_linux.h b/ui/linux/portal_settings_linux.h
-index bd941983577..104ab948125 100644
+index bd94198357..104ab94812 100644
 --- a/ui/linux/portal_settings_linux.h
 +++ b/ui/linux/portal_settings_linux.h
 @@ -13,6 +13,7 @@

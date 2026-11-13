@@ -10,7 +10,7 @@ FILE:Disable-minidump-upload-scheduling.patch
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/components/endpoint_fetcher/endpoint_fetcher.cc b/components/endpoint_fetcher/endpoint_fetcher.cc
-index d0dfb13a83a..917df265df5 100644
+index d0dfb13a83..917df265df 100644
 --- a/components/endpoint_fetcher/endpoint_fetcher.cc
 +++ b/components/endpoint_fetcher/endpoint_fetcher.cc
 @@ -386,7 +386,7 @@ void EndpointFetcher::OnResponseFetched(

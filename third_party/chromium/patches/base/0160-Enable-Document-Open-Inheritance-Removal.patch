@@ -11,7 +11,7 @@ FILE:Enable-Document-Open-Inheritance-Removal.patch
  2 files changed, 65 deletions(-)
 
 diff --git a/third_party/blink/renderer/core/dom/document.cc b/third_party/blink/renderer/core/dom/document.cc
-index d8e1dbbc7a1..bc422547f0b 100644
+index d8e1dbbc7a..bc422547f0 100644
 --- a/third_party/blink/renderer/core/dom/document.cc
 +++ b/third_party/blink/renderer/core/dom/document.cc
 @@ -3927,70 +3927,6 @@ void Document::open(LocalDOMWindow* entered_window,
@@ -86,7 +86,7 @@ index d8e1dbbc7a1..bc422547f0b 100644
    }
  
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 9424578f105..57159fe5d2c 100644
+index 9424578f10..57159fe5d2 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -2641,7 +2641,6 @@

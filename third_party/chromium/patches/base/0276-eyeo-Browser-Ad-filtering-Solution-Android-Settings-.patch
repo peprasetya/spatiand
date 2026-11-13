@@ -177,7 +177,7 @@ FILE:eyeo-133.0.6943.49-android_settings.patch
 
 diff --git a/chrome/browser/adblock/android/README.md b/chrome/browser/adblock/android/README.md
 new file mode 100644
-index 00000000000..faaa3ec773e
+index 0000000000..faaa3ec773
 --- /dev/null
 +++ b/chrome/browser/adblock/android/README.md
 @@ -0,0 +1,13 @@
@@ -196,7 +196,7 @@ index 00000000000..faaa3ec773e
 +in [xtb files](translations) (`translation id` value).
 diff --git a/chrome/browser/adblock/android/adblock_strings.grd b/chrome/browser/adblock/android/adblock_strings.grd
 new file mode 100644
-index 00000000000..7e4226f4938
+index 0000000000..7e4226f493
 --- /dev/null
 +++ b/chrome/browser/adblock/android/adblock_strings.grd
 @@ -0,0 +1,244 @@
@@ -446,7 +446,7 @@ index 00000000000..7e4226f4938
 +</grit>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_af.xtb b/chrome/browser/adblock/android/translations/adblock_strings_af.xtb
 new file mode 100644
-index 00000000000..0861004fdc6
+index 0000000000..0861004fdc
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_af.xtb
 @@ -0,0 +1,4 @@
@@ -456,7 +456,7 @@ index 00000000000..0861004fdc6
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_am.xtb b/chrome/browser/adblock/android/translations/adblock_strings_am.xtb
 new file mode 100644
-index 00000000000..a8188ff56b8
+index 0000000000..a8188ff56b
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_am.xtb
 @@ -0,0 +1,13 @@
@@ -475,7 +475,7 @@ index 00000000000..a8188ff56b8
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ar.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ar.xtb
 new file mode 100644
-index 00000000000..2500a499757
+index 0000000000..2500a49975
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_ar.xtb
 @@ -0,0 +1,13 @@
@@ -494,7 +494,7 @@ index 00000000000..2500a499757
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_as.xtb b/chrome/browser/adblock/android/translations/adblock_strings_as.xtb
 new file mode 100644
-index 00000000000..3ad7206d197
+index 0000000000..3ad7206d19
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_as.xtb
 @@ -0,0 +1,4 @@
@@ -504,7 +504,7 @@ index 00000000000..3ad7206d197
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_az.xtb b/chrome/browser/adblock/android/translations/adblock_strings_az.xtb
 new file mode 100644
-index 00000000000..6d09f4cde0b
+index 0000000000..6d09f4cde0
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_az.xtb
 @@ -0,0 +1,4 @@
@@ -514,7 +514,7 @@ index 00000000000..6d09f4cde0b
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_be.xtb b/chrome/browser/adblock/android/translations/adblock_strings_be.xtb
 new file mode 100644
-index 00000000000..09e9a3adc2b
+index 0000000000..09e9a3adc2
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_be.xtb
 @@ -0,0 +1,4 @@
@@ -524,7 +524,7 @@ index 00000000000..09e9a3adc2b
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_bg.xtb b/chrome/browser/adblock/android/translations/adblock_strings_bg.xtb
 new file mode 100644
-index 00000000000..ec97ea06903
+index 0000000000..ec97ea0690
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_bg.xtb
 @@ -0,0 +1,16 @@
@@ -546,7 +546,7 @@ index 00000000000..ec97ea06903
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_bn.xtb b/chrome/browser/adblock/android/translations/adblock_strings_bn.xtb
 new file mode 100644
-index 00000000000..79c1a9ebe56
+index 0000000000..79c1a9ebe5
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_bn.xtb
 @@ -0,0 +1,13 @@
@@ -565,7 +565,7 @@ index 00000000000..79c1a9ebe56
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_bs.xtb b/chrome/browser/adblock/android/translations/adblock_strings_bs.xtb
 new file mode 100644
-index 00000000000..ffac4da0a50
+index 0000000000..ffac4da0a5
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_bs.xtb
 @@ -0,0 +1,13 @@
@@ -584,7 +584,7 @@ index 00000000000..ffac4da0a50
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ca.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ca.xtb
 new file mode 100644
-index 00000000000..82d7ab531ad
+index 0000000000..82d7ab531a
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_ca.xtb
 @@ -0,0 +1,13 @@
@@ -603,7 +603,7 @@ index 00000000000..82d7ab531ad
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_cs.xtb b/chrome/browser/adblock/android/translations/adblock_strings_cs.xtb
 new file mode 100644
-index 00000000000..8f35b764209
+index 0000000000..8f35b76420
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_cs.xtb
 @@ -0,0 +1,13 @@
@@ -622,7 +622,7 @@ index 00000000000..8f35b764209
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_da.xtb b/chrome/browser/adblock/android/translations/adblock_strings_da.xtb
 new file mode 100644
-index 00000000000..39c978aec9a
+index 0000000000..39c978aec9
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_da.xtb
 @@ -0,0 +1,13 @@
@@ -641,7 +641,7 @@ index 00000000000..39c978aec9a
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_de.xtb b/chrome/browser/adblock/android/translations/adblock_strings_de.xtb
 new file mode 100644
-index 00000000000..f20c25a3ad1
+index 0000000000..f20c25a3ad
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_de.xtb
 @@ -0,0 +1,13 @@
@@ -660,7 +660,7 @@ index 00000000000..f20c25a3ad1
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_el.xtb b/chrome/browser/adblock/android/translations/adblock_strings_el.xtb
 new file mode 100644
-index 00000000000..a021bc0a318
+index 0000000000..a021bc0a31
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_el.xtb
 @@ -0,0 +1,13 @@
@@ -679,7 +679,7 @@ index 00000000000..a021bc0a318
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_en-GB.xtb b/chrome/browser/adblock/android/translations/adblock_strings_en-GB.xtb
 new file mode 100644
-index 00000000000..a34364dbb1e
+index 0000000000..a34364dbb1
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_en-GB.xtb
 @@ -0,0 +1,13 @@
@@ -698,7 +698,7 @@ index 00000000000..a34364dbb1e
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_es-419.xtb b/chrome/browser/adblock/android/translations/adblock_strings_es-419.xtb
 new file mode 100644
-index 00000000000..63261027585
+index 0000000000..6326102758
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_es-419.xtb
 @@ -0,0 +1,13 @@
@@ -717,7 +717,7 @@ index 00000000000..63261027585
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_es.xtb b/chrome/browser/adblock/android/translations/adblock_strings_es.xtb
 new file mode 100644
-index 00000000000..f46c833cbdd
+index 0000000000..f46c833cbd
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_es.xtb
 @@ -0,0 +1,13 @@
@@ -736,7 +736,7 @@ index 00000000000..f46c833cbdd
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_et.xtb b/chrome/browser/adblock/android/translations/adblock_strings_et.xtb
 new file mode 100644
-index 00000000000..5fab16e2f34
+index 0000000000..5fab16e2f3
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_et.xtb
 @@ -0,0 +1,13 @@
@@ -755,7 +755,7 @@ index 00000000000..5fab16e2f34
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_eu.xtb b/chrome/browser/adblock/android/translations/adblock_strings_eu.xtb
 new file mode 100644
-index 00000000000..981c85fbc66
+index 0000000000..981c85fbc6
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_eu.xtb
 @@ -0,0 +1,4 @@
@@ -765,7 +765,7 @@ index 00000000000..981c85fbc66
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_fa.xtb b/chrome/browser/adblock/android/translations/adblock_strings_fa.xtb
 new file mode 100644
-index 00000000000..88874d3f232
+index 0000000000..88874d3f23
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_fa.xtb
 @@ -0,0 +1,13 @@
@@ -784,7 +784,7 @@ index 00000000000..88874d3f232
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_fi.xtb b/chrome/browser/adblock/android/translations/adblock_strings_fi.xtb
 new file mode 100644
-index 00000000000..09249abbf69
+index 0000000000..09249abbf6
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_fi.xtb
 @@ -0,0 +1,13 @@
@@ -803,7 +803,7 @@ index 00000000000..09249abbf69
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_fil.xtb b/chrome/browser/adblock/android/translations/adblock_strings_fil.xtb
 new file mode 100644
-index 00000000000..5369d4b31da
+index 0000000000..5369d4b31d
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_fil.xtb
 @@ -0,0 +1,13 @@
@@ -822,7 +822,7 @@ index 00000000000..5369d4b31da
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_fr-CA.xtb b/chrome/browser/adblock/android/translations/adblock_strings_fr-CA.xtb
 new file mode 100644
-index 00000000000..226196f3074
+index 0000000000..226196f307
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_fr-CA.xtb
 @@ -0,0 +1,13 @@
@@ -841,7 +841,7 @@ index 00000000000..226196f3074
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_fr.xtb b/chrome/browser/adblock/android/translations/adblock_strings_fr.xtb
 new file mode 100644
-index 00000000000..ceda9835910
+index 0000000000..ceda983591
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_fr.xtb
 @@ -0,0 +1,13 @@
@@ -860,7 +860,7 @@ index 00000000000..ceda9835910
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_gl.xtb b/chrome/browser/adblock/android/translations/adblock_strings_gl.xtb
 new file mode 100644
-index 00000000000..ad1197af41f
+index 0000000000..ad1197af41
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_gl.xtb
 @@ -0,0 +1,4 @@
@@ -870,7 +870,7 @@ index 00000000000..ad1197af41f
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_gu.xtb b/chrome/browser/adblock/android/translations/adblock_strings_gu.xtb
 new file mode 100644
-index 00000000000..7d8a4df1b08
+index 0000000000..7d8a4df1b0
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_gu.xtb
 @@ -0,0 +1,4 @@
@@ -880,7 +880,7 @@ index 00000000000..7d8a4df1b08
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_hi.xtb b/chrome/browser/adblock/android/translations/adblock_strings_hi.xtb
 new file mode 100644
-index 00000000000..016f89e5f41
+index 0000000000..016f89e5f4
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_hi.xtb
 @@ -0,0 +1,13 @@
@@ -899,7 +899,7 @@ index 00000000000..016f89e5f41
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_hr.xtb b/chrome/browser/adblock/android/translations/adblock_strings_hr.xtb
 new file mode 100644
-index 00000000000..0cd45dd05f5
+index 0000000000..0cd45dd05f
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_hr.xtb
 @@ -0,0 +1,13 @@
@@ -918,7 +918,7 @@ index 00000000000..0cd45dd05f5
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_hu.xtb b/chrome/browser/adblock/android/translations/adblock_strings_hu.xtb
 new file mode 100644
-index 00000000000..b56f841b679
+index 0000000000..b56f841b67
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_hu.xtb
 @@ -0,0 +1,13 @@
@@ -937,7 +937,7 @@ index 00000000000..b56f841b679
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_hy.xtb b/chrome/browser/adblock/android/translations/adblock_strings_hy.xtb
 new file mode 100644
-index 00000000000..2ae4ee10755
+index 0000000000..2ae4ee1075
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_hy.xtb
 @@ -0,0 +1,4 @@
@@ -947,7 +947,7 @@ index 00000000000..2ae4ee10755
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_id.xtb b/chrome/browser/adblock/android/translations/adblock_strings_id.xtb
 new file mode 100644
-index 00000000000..9399a0ba13e
+index 0000000000..9399a0ba13
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_id.xtb
 @@ -0,0 +1,13 @@
@@ -966,7 +966,7 @@ index 00000000000..9399a0ba13e
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_is.xtb b/chrome/browser/adblock/android/translations/adblock_strings_is.xtb
 new file mode 100644
-index 00000000000..b93d5071f77
+index 0000000000..b93d5071f7
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_is.xtb
 @@ -0,0 +1,4 @@
@@ -976,7 +976,7 @@ index 00000000000..b93d5071f77
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_it.xtb b/chrome/browser/adblock/android/translations/adblock_strings_it.xtb
 new file mode 100644
-index 00000000000..79fec663887
+index 0000000000..79fec66388
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_it.xtb
 @@ -0,0 +1,13 @@
@@ -995,7 +995,7 @@ index 00000000000..79fec663887
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_iw.xtb b/chrome/browser/adblock/android/translations/adblock_strings_iw.xtb
 new file mode 100644
-index 00000000000..da68556aa00
+index 0000000000..da68556aa0
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_iw.xtb
 @@ -0,0 +1,13 @@
@@ -1014,7 +1014,7 @@ index 00000000000..da68556aa00
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ja.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ja.xtb
 new file mode 100644
-index 00000000000..b6add6b2add
+index 0000000000..b6add6b2ad
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_ja.xtb
 @@ -0,0 +1,13 @@
@@ -1033,7 +1033,7 @@ index 00000000000..b6add6b2add
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ka.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ka.xtb
 new file mode 100644
-index 00000000000..57c55dddd2e
+index 0000000000..57c55dddd2
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_ka.xtb
 @@ -0,0 +1,4 @@
@@ -1043,7 +1043,7 @@ index 00000000000..57c55dddd2e
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_kk.xtb b/chrome/browser/adblock/android/translations/adblock_strings_kk.xtb
 new file mode 100644
-index 00000000000..4fa047f61d1
+index 0000000000..4fa047f61d
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_kk.xtb
 @@ -0,0 +1,13 @@
@@ -1062,7 +1062,7 @@ index 00000000000..4fa047f61d1
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_km.xtb b/chrome/browser/adblock/android/translations/adblock_strings_km.xtb
 new file mode 100644
-index 00000000000..553178f99ad
+index 0000000000..553178f99a
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_km.xtb
 @@ -0,0 +1,13 @@
@@ -1081,7 +1081,7 @@ index 00000000000..553178f99ad
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_kn.xtb b/chrome/browser/adblock/android/translations/adblock_strings_kn.xtb
 new file mode 100644
-index 00000000000..cc3643a208f
+index 0000000000..cc3643a208
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_kn.xtb
 @@ -0,0 +1,4 @@
@@ -1091,7 +1091,7 @@ index 00000000000..cc3643a208f
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ko.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ko.xtb
 new file mode 100644
-index 00000000000..e378e72c03c
+index 0000000000..e378e72c03
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_ko.xtb
 @@ -0,0 +1,13 @@
@@ -1110,7 +1110,7 @@ index 00000000000..e378e72c03c
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ky.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ky.xtb
 new file mode 100644
-index 00000000000..71a08837d26
+index 0000000000..71a08837d2
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_ky.xtb
 @@ -0,0 +1,4 @@
@@ -1120,7 +1120,7 @@ index 00000000000..71a08837d26
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_lo.xtb b/chrome/browser/adblock/android/translations/adblock_strings_lo.xtb
 new file mode 100644
-index 00000000000..eb6216c2e6f
+index 0000000000..eb6216c2e6
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_lo.xtb
 @@ -0,0 +1,4 @@
@@ -1130,7 +1130,7 @@ index 00000000000..eb6216c2e6f
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_lt.xtb b/chrome/browser/adblock/android/translations/adblock_strings_lt.xtb
 new file mode 100644
-index 00000000000..0d29766aba3
+index 0000000000..0d29766aba
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_lt.xtb
 @@ -0,0 +1,13 @@
@@ -1149,7 +1149,7 @@ index 00000000000..0d29766aba3
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_lv.xtb b/chrome/browser/adblock/android/translations/adblock_strings_lv.xtb
 new file mode 100644
-index 00000000000..5e764380096
+index 0000000000..5e76438009
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_lv.xtb
 @@ -0,0 +1,13 @@
@@ -1168,7 +1168,7 @@ index 00000000000..5e764380096
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_mk.xtb b/chrome/browser/adblock/android/translations/adblock_strings_mk.xtb
 new file mode 100644
-index 00000000000..c5726c83fc3
+index 0000000000..c5726c83fc
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_mk.xtb
 @@ -0,0 +1,13 @@
@@ -1187,7 +1187,7 @@ index 00000000000..c5726c83fc3
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ml.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ml.xtb
 new file mode 100644
-index 00000000000..f7db3152e4c
+index 0000000000..f7db3152e4
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_ml.xtb
 @@ -0,0 +1,4 @@
@@ -1197,7 +1197,7 @@ index 00000000000..f7db3152e4c
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_mn.xtb b/chrome/browser/adblock/android/translations/adblock_strings_mn.xtb
 new file mode 100644
-index 00000000000..a22186757ac
+index 0000000000..a22186757a
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_mn.xtb
 @@ -0,0 +1,4 @@
@@ -1207,7 +1207,7 @@ index 00000000000..a22186757ac
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_mr.xtb b/chrome/browser/adblock/android/translations/adblock_strings_mr.xtb
 new file mode 100644
-index 00000000000..098d29c9921
+index 0000000000..098d29c992
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_mr.xtb
 @@ -0,0 +1,4 @@
@@ -1217,7 +1217,7 @@ index 00000000000..098d29c9921
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ms.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ms.xtb
 new file mode 100644
-index 00000000000..4f7cde48bfd
+index 0000000000..4f7cde48bf
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_ms.xtb
 @@ -0,0 +1,13 @@
@@ -1236,7 +1236,7 @@ index 00000000000..4f7cde48bfd
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_my.xtb b/chrome/browser/adblock/android/translations/adblock_strings_my.xtb
 new file mode 100644
-index 00000000000..915e955d418
+index 0000000000..915e955d41
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_my.xtb
 @@ -0,0 +1,13 @@
@@ -1255,7 +1255,7 @@ index 00000000000..915e955d418
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ne.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ne.xtb
 new file mode 100644
-index 00000000000..30c7e0657e9
+index 0000000000..30c7e0657e
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_ne.xtb
 @@ -0,0 +1,4 @@
@@ -1265,7 +1265,7 @@ index 00000000000..30c7e0657e9
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_nl.xtb b/chrome/browser/adblock/android/translations/adblock_strings_nl.xtb
 new file mode 100644
-index 00000000000..6bed94a9d1a
+index 0000000000..6bed94a9d1
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_nl.xtb
 @@ -0,0 +1,13 @@
@@ -1284,7 +1284,7 @@ index 00000000000..6bed94a9d1a
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_no.xtb b/chrome/browser/adblock/android/translations/adblock_strings_no.xtb
 new file mode 100644
-index 00000000000..913638ba4e9
+index 0000000000..913638ba4e
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_no.xtb
 @@ -0,0 +1,4 @@
@@ -1294,7 +1294,7 @@ index 00000000000..913638ba4e9
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_or.xtb b/chrome/browser/adblock/android/translations/adblock_strings_or.xtb
 new file mode 100644
-index 00000000000..fe2ddbc9936
+index 0000000000..fe2ddbc993
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_or.xtb
 @@ -0,0 +1,4 @@
@@ -1304,7 +1304,7 @@ index 00000000000..fe2ddbc9936
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_pa.xtb b/chrome/browser/adblock/android/translations/adblock_strings_pa.xtb
 new file mode 100644
-index 00000000000..5c7ac50d575
+index 0000000000..5c7ac50d57
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_pa.xtb
 @@ -0,0 +1,4 @@
@@ -1314,7 +1314,7 @@ index 00000000000..5c7ac50d575
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_pl.xtb b/chrome/browser/adblock/android/translations/adblock_strings_pl.xtb
 new file mode 100644
-index 00000000000..b37947e5ed2
+index 0000000000..b37947e5ed
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_pl.xtb
 @@ -0,0 +1,13 @@
@@ -1333,7 +1333,7 @@ index 00000000000..b37947e5ed2
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_pt-BR.xtb b/chrome/browser/adblock/android/translations/adblock_strings_pt-BR.xtb
 new file mode 100644
-index 00000000000..0185a74b082
+index 0000000000..0185a74b08
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_pt-BR.xtb
 @@ -0,0 +1,13 @@
@@ -1352,7 +1352,7 @@ index 00000000000..0185a74b082
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_pt-PT.xtb b/chrome/browser/adblock/android/translations/adblock_strings_pt-PT.xtb
 new file mode 100644
-index 00000000000..914f6e0aa9e
+index 0000000000..914f6e0aa9
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_pt-PT.xtb
 @@ -0,0 +1,13 @@
@@ -1371,7 +1371,7 @@ index 00000000000..914f6e0aa9e
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ro.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ro.xtb
 new file mode 100644
-index 00000000000..12d057707a5
+index 0000000000..12d057707a
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_ro.xtb
 @@ -0,0 +1,13 @@
@@ -1390,7 +1390,7 @@ index 00000000000..12d057707a5
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ru.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ru.xtb
 new file mode 100644
-index 00000000000..c92bc24fbee
+index 0000000000..c92bc24fbe
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_ru.xtb
 @@ -0,0 +1,13 @@
@@ -1409,7 +1409,7 @@ index 00000000000..c92bc24fbee
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_si.xtb b/chrome/browser/adblock/android/translations/adblock_strings_si.xtb
 new file mode 100644
-index 00000000000..712d8907201
+index 0000000000..712d890720
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_si.xtb
 @@ -0,0 +1,4 @@
@@ -1419,7 +1419,7 @@ index 00000000000..712d8907201
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_sk.xtb b/chrome/browser/adblock/android/translations/adblock_strings_sk.xtb
 new file mode 100644
-index 00000000000..49373744e63
+index 0000000000..49373744e6
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_sk.xtb
 @@ -0,0 +1,13 @@
@@ -1438,7 +1438,7 @@ index 00000000000..49373744e63
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_sl.xtb b/chrome/browser/adblock/android/translations/adblock_strings_sl.xtb
 new file mode 100644
-index 00000000000..16ced370e78
+index 0000000000..16ced370e7
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_sl.xtb
 @@ -0,0 +1,13 @@
@@ -1457,7 +1457,7 @@ index 00000000000..16ced370e78
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_sq.xtb b/chrome/browser/adblock/android/translations/adblock_strings_sq.xtb
 new file mode 100644
-index 00000000000..3fecfc5f819
+index 0000000000..3fecfc5f81
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_sq.xtb
 @@ -0,0 +1,4 @@
@@ -1467,7 +1467,7 @@ index 00000000000..3fecfc5f819
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_sr-Latn.xtb b/chrome/browser/adblock/android/translations/adblock_strings_sr-Latn.xtb
 new file mode 100644
-index 00000000000..14178c31f3a
+index 0000000000..14178c31f3
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_sr-Latn.xtb
 @@ -0,0 +1,4 @@
@@ -1477,7 +1477,7 @@ index 00000000000..14178c31f3a
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_sr.xtb b/chrome/browser/adblock/android/translations/adblock_strings_sr.xtb
 new file mode 100644
-index 00000000000..0ed2dfa087f
+index 0000000000..0ed2dfa087
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_sr.xtb
 @@ -0,0 +1,13 @@
@@ -1496,7 +1496,7 @@ index 00000000000..0ed2dfa087f
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_sv.xtb b/chrome/browser/adblock/android/translations/adblock_strings_sv.xtb
 new file mode 100644
-index 00000000000..49ab1852b15
+index 0000000000..49ab1852b1
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_sv.xtb
 @@ -0,0 +1,13 @@
@@ -1515,7 +1515,7 @@ index 00000000000..49ab1852b15
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_sw.xtb b/chrome/browser/adblock/android/translations/adblock_strings_sw.xtb
 new file mode 100644
-index 00000000000..48641e0840b
+index 0000000000..48641e0840
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_sw.xtb
 @@ -0,0 +1,13 @@
@@ -1534,7 +1534,7 @@ index 00000000000..48641e0840b
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ta.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ta.xtb
 new file mode 100644
-index 00000000000..ef90687762c
+index 0000000000..ef90687762
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_ta.xtb
 @@ -0,0 +1,4 @@
@@ -1544,7 +1544,7 @@ index 00000000000..ef90687762c
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_te.xtb b/chrome/browser/adblock/android/translations/adblock_strings_te.xtb
 new file mode 100644
-index 00000000000..48c714ba18f
+index 0000000000..48c714ba18
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_te.xtb
 @@ -0,0 +1,4 @@
@@ -1554,7 +1554,7 @@ index 00000000000..48c714ba18f
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_th.xtb b/chrome/browser/adblock/android/translations/adblock_strings_th.xtb
 new file mode 100644
-index 00000000000..cbd45f67214
+index 0000000000..cbd45f6721
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_th.xtb
 @@ -0,0 +1,13 @@
@@ -1573,7 +1573,7 @@ index 00000000000..cbd45f67214
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_tr.xtb b/chrome/browser/adblock/android/translations/adblock_strings_tr.xtb
 new file mode 100644
-index 00000000000..3d8d36735e7
+index 0000000000..3d8d36735e
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_tr.xtb
 @@ -0,0 +1,13 @@
@@ -1592,7 +1592,7 @@ index 00000000000..3d8d36735e7
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_uk.xtb b/chrome/browser/adblock/android/translations/adblock_strings_uk.xtb
 new file mode 100644
-index 00000000000..a5e5540c360
+index 0000000000..a5e5540c36
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_uk.xtb
 @@ -0,0 +1,13 @@
@@ -1611,7 +1611,7 @@ index 00000000000..a5e5540c360
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ur.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ur.xtb
 new file mode 100644
-index 00000000000..fd24b10fac1
+index 0000000000..fd24b10fac
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_ur.xtb
 @@ -0,0 +1,13 @@
@@ -1630,7 +1630,7 @@ index 00000000000..fd24b10fac1
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_uz.xtb b/chrome/browser/adblock/android/translations/adblock_strings_uz.xtb
 new file mode 100644
-index 00000000000..1d58ed4c6d7
+index 0000000000..1d58ed4c6d
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_uz.xtb
 @@ -0,0 +1,4 @@
@@ -1640,7 +1640,7 @@ index 00000000000..1d58ed4c6d7
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_vi.xtb b/chrome/browser/adblock/android/translations/adblock_strings_vi.xtb
 new file mode 100644
-index 00000000000..6874fed6d97
+index 0000000000..6874fed6d9
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_vi.xtb
 @@ -0,0 +1,13 @@
@@ -1659,7 +1659,7 @@ index 00000000000..6874fed6d97
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_zh-CN.xtb b/chrome/browser/adblock/android/translations/adblock_strings_zh-CN.xtb
 new file mode 100644
-index 00000000000..9d3d00822e4
+index 0000000000..9d3d00822e
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_zh-CN.xtb
 @@ -0,0 +1,13 @@
@@ -1678,7 +1678,7 @@ index 00000000000..9d3d00822e4
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_zh-HK.xtb b/chrome/browser/adblock/android/translations/adblock_strings_zh-HK.xtb
 new file mode 100644
-index 00000000000..3ecd9e371ad
+index 0000000000..3ecd9e371a
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_zh-HK.xtb
 @@ -0,0 +1,4 @@
@@ -1688,7 +1688,7 @@ index 00000000000..3ecd9e371ad
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_zh-TW.xtb b/chrome/browser/adblock/android/translations/adblock_strings_zh-TW.xtb
 new file mode 100644
-index 00000000000..b085469ba6b
+index 0000000000..b085469ba6
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_zh-TW.xtb
 @@ -0,0 +1,13 @@
@@ -1707,7 +1707,7 @@ index 00000000000..b085469ba6b
 +</translationbundle>
 diff --git a/chrome/browser/adblock/android/translations/adblock_strings_zu.xtb b/chrome/browser/adblock/android/translations/adblock_strings_zu.xtb
 new file mode 100644
-index 00000000000..f9c1cd322fb
+index 0000000000..f9c1cd322f
 --- /dev/null
 +++ b/chrome/browser/adblock/android/translations/adblock_strings_zu.xtb
 @@ -0,0 +1,4 @@

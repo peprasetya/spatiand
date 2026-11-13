@@ -19,7 +19,7 @@ nothing copied. H.264, HEVC (8 and 10 bit), VP8, VP9 and AV1, as far as the GPU 
  create mode 100644 media/gpu/vaapi/spatiand_video_decoder.h
 
 diff --git a/media/gpu/chromeos/video_decoder_pipeline.cc b/media/gpu/chromeos/video_decoder_pipeline.cc
-index 0b9f7f46421..5a167e2c523 100644
+index 0b9f7f4642..5a167e2c52 100644
 --- a/media/gpu/chromeos/video_decoder_pipeline.cc
 +++ b/media/gpu/chromeos/video_decoder_pipeline.cc
 @@ -38,6 +38,7 @@
@@ -42,7 +42,7 @@ index 0b9f7f46421..5a167e2c523 100644
  #endif  // BUILDFLAG(USE_VAAPI)
  #if BUILDFLAG(USE_V4L2_CODEC)
 diff --git a/media/gpu/vaapi/BUILD.gn b/media/gpu/vaapi/BUILD.gn
-index 0dae890813c..43736ea3419 100644
+index 0dae890813..43736ea341 100644
 --- a/media/gpu/vaapi/BUILD.gn
 +++ b/media/gpu/vaapi/BUILD.gn
 @@ -51,6 +51,8 @@ source_set("vaapi") {
@@ -64,7 +64,7 @@ index 0dae890813c..43736ea3419 100644
      "//third_party/libyuv",
 diff --git a/media/gpu/vaapi/spatiand_video_decoder.cc b/media/gpu/vaapi/spatiand_video_decoder.cc
 new file mode 100644
-index 00000000000..5767233bd18
+index 0000000000..5767233bd1
 --- /dev/null
 +++ b/media/gpu/vaapi/spatiand_video_decoder.cc
 @@ -0,0 +1,589 @@
@@ -659,7 +659,7 @@ index 00000000000..5767233bd18
 +}  // namespace media
 diff --git a/media/gpu/vaapi/spatiand_video_decoder.h b/media/gpu/vaapi/spatiand_video_decoder.h
 new file mode 100644
-index 00000000000..c2308da2f27
+index 0000000000..c2308da2f2
 --- /dev/null
 +++ b/media/gpu/vaapi/spatiand_video_decoder.h
 @@ -0,0 +1,141 @@
@@ -805,7 +805,7 @@ index 00000000000..c2308da2f27
 +
 +#endif  // MEDIA_GPU_VAAPI_SPATIAND_VIDEO_DECODER_H_
 diff --git a/media/gpu/vaapi/vaapi_wrapper.h b/media/gpu/vaapi/vaapi_wrapper.h
-index 8c5c3482ae5..acfbf7ca832 100644
+index 8c5c3482ae..acfbf7ca83 100644
 --- a/media/gpu/vaapi/vaapi_wrapper.h
 +++ b/media/gpu/vaapi/vaapi_wrapper.h
 @@ -471,6 +471,10 @@ class MEDIA_GPU_EXPORT VaapiWrapper

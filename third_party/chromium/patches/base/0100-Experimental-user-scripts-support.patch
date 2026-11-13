@@ -194,7 +194,7 @@ FILE:Experimental-user-scripts-support.patch
  create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Experimental-user-scripts-support.inc
 
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 3c09575961d..2aad2bbf53b 100644
+index 3c09575961..2aad2bbf53 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -2880,6 +2880,11 @@ source_set("browser") {
@@ -210,7 +210,7 @@ index 3c09575961d..2aad2bbf53b 100644
      #!is_android
      deps += [
 diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
-index 129e767bce6..650fbfd748a 100644
+index 129e767bce..650fbfd748 100644
 --- a/chrome/browser/about_flags.cc
 +++ b/chrome/browser/about_flags.cc
 @@ -211,6 +211,7 @@
@@ -222,7 +222,7 @@ index 129e767bce6..650fbfd748a 100644
  #include "components/visited_url_ranking/public/features.h"
  #include "components/viz/common/features.h"
 diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
-index b08c53e79ee..fb79b556083 100644
+index b08c53e79e..fb79b55608 100644
 --- a/chrome/browser/prefs/browser_prefs.cc
 +++ b/chrome/browser/prefs/browser_prefs.cc
 @@ -305,6 +305,7 @@
@@ -244,7 +244,7 @@ index b08c53e79ee..fb79b556083 100644
  #if BUILDFLAG(ENABLE_SESSION_SERVICE)
    RegisterSessionServiceLogProfilePrefs(registry);
 diff --git a/chrome/browser/profiles/BUILD.gn b/chrome/browser/profiles/BUILD.gn
-index 75afd49aa2b..a5b92f53dc7 100644
+index 75afd49aa2..a5b92f53dc 100644
 --- a/chrome/browser/profiles/BUILD.gn
 +++ b/chrome/browser/profiles/BUILD.gn
 @@ -431,6 +431,9 @@ source_set("profile") {
@@ -258,7 +258,7 @@ index 75afd49aa2b..a5b92f53dc7 100644
      deps += [ "//extensions/browser" ]
    }
 diff --git a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
-index a281709c54c..08395e5c3fa 100644
+index a281709c54..08395e5c3f 100644
 --- a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
 +++ b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
 @@ -654,6 +654,11 @@
@@ -285,7 +285,7 @@ index a281709c54c..08395e5c3fa 100644
  
  void ChromeBrowserMainExtraPartsProfiles::PreProfileInit() {
 diff --git a/chrome/browser/profiles/profile_manager.cc b/chrome/browser/profiles/profile_manager.cc
-index 9701dc82472..8bb161c6311 100644
+index 9701dc8247..8bb161c631 100644
 --- a/chrome/browser/profiles/profile_manager.cc
 +++ b/chrome/browser/profiles/profile_manager.cc
 @@ -120,6 +120,10 @@
@@ -315,7 +315,7 @@ index 9701dc82472..8bb161c6311 100644
    NavigationPredictorKeyedServiceFactory::GetForProfile(profile);
  
 diff --git a/chrome/browser/profiles/renderer_updater.cc b/chrome/browser/profiles/renderer_updater.cc
-index caa836b7e96..f96969ba5cc 100644
+index caa836b7e9..f96969ba5c 100644
 --- a/chrome/browser/profiles/renderer_updater.cc
 +++ b/chrome/browser/profiles/renderer_updater.cc
 @@ -47,6 +47,8 @@
@@ -369,7 +369,7 @@ index caa836b7e96..f96969ba5cc 100644
    );
  }
 diff --git a/chrome/browser/profiles/renderer_updater.h b/chrome/browser/profiles/renderer_updater.h
-index 3f48f57c45c..7e5947a8cef 100644
+index 3f48f57c45..7e5947a8ce 100644
 --- a/chrome/browser/profiles/renderer_updater.h
 +++ b/chrome/browser/profiles/renderer_updater.h
 @@ -116,6 +116,9 @@ class RendererUpdater : public KeyedService
@@ -383,7 +383,7 @@ index 3f48f57c45c..7e5947a8cef 100644
    StringPrefMember allowed_domains_for_apps_;
  
 diff --git a/chrome/browser/ui/webui/chrome_web_ui_configs.cc b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
-index addffcc5cca..f3807cd01d3 100644
+index addffcc5cc..f3807cd01d 100644
 --- a/chrome/browser/ui/webui/chrome_web_ui_configs.cc
 +++ b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
 @@ -50,6 +50,10 @@
@@ -409,7 +409,7 @@ index addffcc5cca..f3807cd01d3 100644
    map.AddWebUIConfig(std::make_unique<WatermarkUIConfig>());
  #endif
 diff --git a/chrome/chrome_paks.gni b/chrome/chrome_paks.gni
-index 150c570d3ea..1ecc282a881 100644
+index 150c570d3e..1ecc282a88 100644
 --- a/chrome/chrome_paks.gni
 +++ b/chrome/chrome_paks.gni
 @@ -150,6 +150,7 @@ template("chrome_extra_paks") {
@@ -429,7 +429,7 @@ index 150c570d3ea..1ecc282a881 100644
      if (defined(invoker.deps)) {
        deps += invoker.deps
 diff --git a/chrome/common/renderer_configuration.mojom b/chrome/common/renderer_configuration.mojom
-index b5631d2a8d9..289cc5e4989 100644
+index b5631d2a8d..289cc5e498 100644
 --- a/chrome/common/renderer_configuration.mojom
 +++ b/chrome/common/renderer_configuration.mojom
 @@ -43,6 +43,7 @@ struct DynamicParams {
@@ -441,7 +441,7 @@ index b5631d2a8d9..289cc5e4989 100644
  
  // The renderer configuration parameters are set during the process lock update
 diff --git a/chrome/renderer/BUILD.gn b/chrome/renderer/BUILD.gn
-index a28d0ae008c..14b6da895ed 100644
+index a28d0ae008..14b6da895e 100644
 --- a/chrome/renderer/BUILD.gn
 +++ b/chrome/renderer/BUILD.gn
 @@ -246,6 +246,12 @@ static_library("renderer") {
@@ -458,7 +458,7 @@ index a28d0ae008c..14b6da895ed 100644
  
    if (enable_bound_session_credentials) {
 diff --git a/chrome/renderer/chrome_content_renderer_client.cc b/chrome/renderer/chrome_content_renderer_client.cc
-index f209aa84054..6cb52f10750 100644
+index f209aa8405..6cb52f1075 100644
 --- a/chrome/renderer/chrome_content_renderer_client.cc
 +++ b/chrome/renderer/chrome_content_renderer_client.cc
 @@ -280,6 +280,11 @@
@@ -559,7 +559,7 @@ index f209aa84054..6cb52f10750 100644
  
  void ChromeContentRendererClient::
 diff --git a/chrome/renderer/chrome_render_thread_observer.cc b/chrome/renderer/chrome_render_thread_observer.cc
-index e8a78b8b848..4639a4ee6a5 100644
+index e8a78b8b84..4639a4ee6a 100644
 --- a/chrome/renderer/chrome_render_thread_observer.cc
 +++ b/chrome/renderer/chrome_render_thread_observer.cc
 @@ -57,6 +57,10 @@
@@ -584,7 +584,7 @@ index e8a78b8b848..4639a4ee6a5 100644
  
  void ChromeRenderThreadObserver::SetConfigurationOnProcessLockUpdate(
 diff --git a/components/components_strings.grd b/components/components_strings.grd
-index a1a35c53077..341c9c8b944 100644
+index a1a35c5307..341c9c8b94 100644
 --- a/components/components_strings.grd
 +++ b/components/components_strings.grd
 @@ -343,6 +343,7 @@
@@ -597,7 +597,7 @@ index a1a35c53077..341c9c8b944 100644
        <part file="contextual_tasks_strings.grdp" />
 diff --git a/components/user_scripts/README.md b/components/user_scripts/README.md
 new file mode 100644
-index 00000000000..257241678f0
+index 0000000000..257241678f
 --- /dev/null
 +++ b/components/user_scripts/README.md
 @@ -0,0 +1,150 @@
@@ -753,7 +753,7 @@ index 00000000000..257241678f0
 +See also: https://github.com/bromite/bromite/pull/857
 diff --git a/components/user_scripts/android/user_scripts_bridge.cc b/components/user_scripts/android/user_scripts_bridge.cc
 new file mode 100644
-index 00000000000..1ae7160cb1c
+index 0000000000..1ae7160cb1
 --- /dev/null
 +++ b/components/user_scripts/android/user_scripts_bridge.cc
 @@ -0,0 +1,174 @@
@@ -933,7 +933,7 @@ index 00000000000..1ae7160cb1c
 +}
 diff --git a/components/user_scripts/android/user_scripts_bridge.h b/components/user_scripts/android/user_scripts_bridge.h
 new file mode 100644
-index 00000000000..48b60487709
+index 0000000000..48b6048770
 --- /dev/null
 +++ b/components/user_scripts/android/user_scripts_bridge.h
 @@ -0,0 +1,31 @@
@@ -971,7 +971,7 @@ index 00000000000..48b60487709
 \ No newline at end of file
 diff --git a/components/user_scripts/assets/Allow-playing-videos-in-background.user.js b/components/user_scripts/assets/Allow-playing-videos-in-background.user.js
 new file mode 100644
-index 00000000000..5a92f829484
+index 0000000000..5a92f82948
 --- /dev/null
 +++ b/components/user_scripts/assets/Allow-playing-videos-in-background.user.js
 @@ -0,0 +1,25 @@
@@ -1002,7 +1002,7 @@ index 00000000000..5a92f829484
 +})();
 diff --git a/components/user_scripts/assets/Dont-track-me-Google.user.js b/components/user_scripts/assets/Dont-track-me-Google.user.js
 new file mode 100644
-index 00000000000..0b1ede4c0be
+index 0000000000..0b1ede4c0b
 --- /dev/null
 +++ b/components/user_scripts/assets/Dont-track-me-Google.user.js
 @@ -0,0 +1,826 @@
@@ -1834,7 +1834,7 @@ index 00000000000..0b1ede4c0be
 +}
 diff --git a/components/user_scripts/assets/disable-amp.user.js b/components/user_scripts/assets/disable-amp.user.js
 new file mode 100644
-index 00000000000..641376c29eb
+index 0000000000..641376c29e
 --- /dev/null
 +++ b/components/user_scripts/assets/disable-amp.user.js
 @@ -0,0 +1,127 @@
@@ -1968,7 +1968,7 @@ index 00000000000..641376c29eb
 \ No newline at end of file
 diff --git a/components/user_scripts/browser/BUILD.gn b/components/user_scripts/browser/BUILD.gn
 new file mode 100755
-index 00000000000..bf8f6e40459
+index 0000000000..bf8f6e4045
 --- /dev/null
 +++ b/components/user_scripts/browser/BUILD.gn
 @@ -0,0 +1,79 @@
@@ -2053,7 +2053,7 @@ index 00000000000..bf8f6e40459
 +}
 diff --git a/components/user_scripts/browser/file_task_runner.cc b/components/user_scripts/browser/file_task_runner.cc
 new file mode 100755
-index 00000000000..1273751f2a1
+index 0000000000..1273751f2a
 --- /dev/null
 +++ b/components/user_scripts/browser/file_task_runner.cc
 @@ -0,0 +1,40 @@
@@ -2099,7 +2099,7 @@ index 00000000000..1273751f2a1
 +}  // namespace user_scripts
 diff --git a/components/user_scripts/browser/file_task_runner.h b/components/user_scripts/browser/file_task_runner.h
 new file mode 100755
-index 00000000000..72d6e6521b7
+index 0000000000..72d6e6521b
 --- /dev/null
 +++ b/components/user_scripts/browser/file_task_runner.h
 @@ -0,0 +1,34 @@
@@ -2139,7 +2139,7 @@ index 00000000000..72d6e6521b7
 +#endif  // USERSCRIPTS_BROWSER_FILE_TASK_RUNNER_H_
 diff --git a/components/user_scripts/browser/renderer_startup_helper.cc b/components/user_scripts/browser/renderer_startup_helper.cc
 new file mode 100644
-index 00000000000..13c7d8d182a
+index 0000000000..13c7d8d182
 --- /dev/null
 +++ b/components/user_scripts/browser/renderer_startup_helper.cc
 @@ -0,0 +1,102 @@
@@ -2247,7 +2247,7 @@ index 00000000000..13c7d8d182a
 +}
 diff --git a/components/user_scripts/browser/renderer_startup_helper.h b/components/user_scripts/browser/renderer_startup_helper.h
 new file mode 100644
-index 00000000000..d372b81fbec
+index 0000000000..d372b81fbe
 --- /dev/null
 +++ b/components/user_scripts/browser/renderer_startup_helper.h
 @@ -0,0 +1,105 @@
@@ -2358,7 +2358,7 @@ index 00000000000..d372b81fbec
 +#endif
 diff --git a/components/user_scripts/browser/resources/browser_resources.grd b/components/user_scripts/browser/resources/browser_resources.grd
 new file mode 100644
-index 00000000000..8589873e91a
+index 0000000000..8589873e91
 --- /dev/null
 +++ b/components/user_scripts/browser/resources/browser_resources.grd
 @@ -0,0 +1,14 @@
@@ -2378,7 +2378,7 @@ index 00000000000..8589873e91a
 +</grit>
 diff --git a/components/user_scripts/browser/resources/user-script-ui/BUILD.gn b/components/user_scripts/browser/resources/user-script-ui/BUILD.gn
 new file mode 100644
-index 00000000000..54a5eb306a9
+index 0000000000..54a5eb306a
 --- /dev/null
 +++ b/components/user_scripts/browser/resources/user-script-ui/BUILD.gn
 @@ -0,0 +1,8 @@
@@ -2392,7 +2392,7 @@ index 00000000000..54a5eb306a9
 +}
 diff --git a/components/user_scripts/browser/resources/user-script-ui/user-scripts-ui.html b/components/user_scripts/browser/resources/user-script-ui/user-scripts-ui.html
 new file mode 100644
-index 00000000000..13e768de149
+index 0000000000..13e768de14
 --- /dev/null
 +++ b/components/user_scripts/browser/resources/user-script-ui/user-scripts-ui.html
 @@ -0,0 +1,14 @@
@@ -2412,7 +2412,7 @@ index 00000000000..13e768de149
 +</html>
 diff --git a/components/user_scripts/browser/resources/user-script-ui/user-scripts-ui.js b/components/user_scripts/browser/resources/user-script-ui/user-scripts-ui.js
 new file mode 100644
-index 00000000000..5799687f582
+index 0000000000..5799687f58
 --- /dev/null
 +++ b/components/user_scripts/browser/resources/user-script-ui/user-scripts-ui.js
 @@ -0,0 +1,9 @@
@@ -2427,7 +2427,7 @@ index 00000000000..5799687f582
 +});
 diff --git a/components/user_scripts/browser/ui/user_scripts_ui.cc b/components/user_scripts/browser/ui/user_scripts_ui.cc
 new file mode 100644
-index 00000000000..859697d985b
+index 0000000000..859697d985
 --- /dev/null
 +++ b/components/user_scripts/browser/ui/user_scripts_ui.cc
 @@ -0,0 +1,146 @@
@@ -2579,7 +2579,7 @@ index 00000000000..859697d985b
 +}
 diff --git a/components/user_scripts/browser/ui/user_scripts_ui.h b/components/user_scripts/browser/ui/user_scripts_ui.h
 new file mode 100644
-index 00000000000..69695ff3c89
+index 0000000000..69695ff3c8
 --- /dev/null
 +++ b/components/user_scripts/browser/ui/user_scripts_ui.h
 @@ -0,0 +1,46 @@
@@ -2631,7 +2631,7 @@ index 00000000000..69695ff3c89
 +#endif
 diff --git a/components/user_scripts/browser/user_script_loader.cc b/components/user_scripts/browser/user_script_loader.cc
 new file mode 100755
-index 00000000000..22b8de8bf37
+index 0000000000..22b8de8bf3
 --- /dev/null
 +++ b/components/user_scripts/browser/user_script_loader.cc
 @@ -0,0 +1,727 @@
@@ -3364,7 +3364,7 @@ index 00000000000..22b8de8bf37
 +}  // namespace extensions
 diff --git a/components/user_scripts/browser/user_script_loader.h b/components/user_scripts/browser/user_script_loader.h
 new file mode 100755
-index 00000000000..3d6593907a0
+index 0000000000..3d6593907a
 --- /dev/null
 +++ b/components/user_scripts/browser/user_script_loader.h
 @@ -0,0 +1,168 @@
@@ -3538,7 +3538,7 @@ index 00000000000..3d6593907a0
 +#endif  // USERSCRIPTS_BROWSER_USER_SCRIPT_LOADER_H_
 diff --git a/components/user_scripts/browser/user_script_pref_info.cc b/components/user_scripts/browser/user_script_pref_info.cc
 new file mode 100644
-index 00000000000..fc78f8ff84a
+index 0000000000..fc78f8ff84
 --- /dev/null
 +++ b/components/user_scripts/browser/user_script_pref_info.cc
 @@ -0,0 +1,34 @@
@@ -3578,7 +3578,7 @@ index 00000000000..fc78f8ff84a
 +}
 diff --git a/components/user_scripts/browser/user_script_pref_info.h b/components/user_scripts/browser/user_script_pref_info.h
 new file mode 100644
-index 00000000000..94f32fa65f8
+index 0000000000..94f32fa65f
 --- /dev/null
 +++ b/components/user_scripts/browser/user_script_pref_info.h
 @@ -0,0 +1,72 @@
@@ -3656,7 +3656,7 @@ index 00000000000..94f32fa65f8
 +#endif // USERSCRIPTS_BROWSER_USERSCRIPT_PREF_INFO_H_
 diff --git a/components/user_scripts/browser/user_script_prefs.cc b/components/user_scripts/browser/user_script_prefs.cc
 new file mode 100644
-index 00000000000..8be601b40b1
+index 0000000000..8be601b40b
 --- /dev/null
 +++ b/components/user_scripts/browser/user_script_prefs.cc
 @@ -0,0 +1,277 @@
@@ -3939,7 +3939,7 @@ index 00000000000..8be601b40b1
 +}
 diff --git a/components/user_scripts/browser/user_script_prefs.h b/components/user_scripts/browser/user_script_prefs.h
 new file mode 100644
-index 00000000000..9780ba97e23
+index 0000000000..9780ba97e2
 --- /dev/null
 +++ b/components/user_scripts/browser/user_script_prefs.h
 @@ -0,0 +1,62 @@
@@ -4007,7 +4007,7 @@ index 00000000000..9780ba97e23
 +#endif // USERSCRIPTS_BROWSER_USERSCRIPT_PREFS_H_
 diff --git a/components/user_scripts/browser/userscripts_browser_client.cc b/components/user_scripts/browser/userscripts_browser_client.cc
 new file mode 100755
-index 00000000000..751b016447a
+index 0000000000..751b016447
 --- /dev/null
 +++ b/components/user_scripts/browser/userscripts_browser_client.cc
 @@ -0,0 +1,78 @@
@@ -4091,7 +4091,7 @@ index 00000000000..751b016447a
 +}  // namespace user_scripts
 diff --git a/components/user_scripts/browser/userscripts_browser_client.h b/components/user_scripts/browser/userscripts_browser_client.h
 new file mode 100755
-index 00000000000..52b169c1e15
+index 0000000000..52b169c1e1
 --- /dev/null
 +++ b/components/user_scripts/browser/userscripts_browser_client.h
 @@ -0,0 +1,62 @@
@@ -4159,7 +4159,7 @@ index 00000000000..52b169c1e15
 +#endif  // USERSCRIPTS_BROWSER_USERSCRIPTS_BROWSER_CLIENT_H_
 diff --git a/components/user_scripts/common/BUILD.gn b/components/user_scripts/common/BUILD.gn
 new file mode 100755
-index 00000000000..68f2bb19015
+index 0000000000..68f2bb1901
 --- /dev/null
 +++ b/components/user_scripts/common/BUILD.gn
 @@ -0,0 +1,57 @@
@@ -4222,7 +4222,7 @@ index 00000000000..68f2bb19015
 +}
 diff --git a/components/user_scripts/common/constants.h b/components/user_scripts/common/constants.h
 new file mode 100755
-index 00000000000..a12ed45a2ec
+index 0000000000..a12ed45a2e
 --- /dev/null
 +++ b/components/user_scripts/common/constants.h
 @@ -0,0 +1,15 @@
@@ -4243,7 +4243,7 @@ index 00000000000..a12ed45a2ec
 +#endif  // USERSCRIPTS_COMMON_CONSTANTS_H_
 diff --git a/components/user_scripts/common/error_utils.cc b/components/user_scripts/common/error_utils.cc
 new file mode 100755
-index 00000000000..9d7d07ff8d9
+index 0000000000..9d7d07ff8d
 --- /dev/null
 +++ b/components/user_scripts/common/error_utils.cc
 @@ -0,0 +1,54 @@
@@ -4303,7 +4303,7 @@ index 00000000000..9d7d07ff8d9
 +}  // namespace user_scripts
 diff --git a/components/user_scripts/common/error_utils.h b/components/user_scripts/common/error_utils.h
 new file mode 100755
-index 00000000000..0e6fbd623f1
+index 0000000000..0e6fbd623f
 --- /dev/null
 +++ b/components/user_scripts/common/error_utils.h
 @@ -0,0 +1,22 @@
@@ -4331,7 +4331,7 @@ index 00000000000..0e6fbd623f1
 +#endif  // USERSCRIPTS_COMMON_ERROR_UTILS_H_
 diff --git a/components/user_scripts/common/host_id.cc b/components/user_scripts/common/host_id.cc
 new file mode 100755
-index 00000000000..3f284589391
+index 0000000000..3f28458939
 --- /dev/null
 +++ b/components/user_scripts/common/host_id.cc
 @@ -0,0 +1,31 @@
@@ -4368,7 +4368,7 @@ index 00000000000..3f284589391
 +}
 diff --git a/components/user_scripts/common/host_id.h b/components/user_scripts/common/host_id.h
 new file mode 100755
-index 00000000000..b5e4c9dcfee
+index 0000000000..b5e4c9dcfe
 --- /dev/null
 +++ b/components/user_scripts/common/host_id.h
 @@ -0,0 +1,35 @@
@@ -4409,7 +4409,7 @@ index 00000000000..b5e4c9dcfee
 +#endif  // USERSCRIPTS_COMMON_HOST_ID_H_
 diff --git a/components/user_scripts/common/mojom/renderer.mojom b/components/user_scripts/common/mojom/renderer.mojom
 new file mode 100644
-index 00000000000..4a7cdbfeb79
+index 0000000000..4a7cdbfeb7
 --- /dev/null
 +++ b/components/user_scripts/common/mojom/renderer.mojom
 @@ -0,0 +1,12 @@
@@ -4427,7 +4427,7 @@ index 00000000000..4a7cdbfeb79
 +};
 diff --git a/components/user_scripts/common/script_constants.h b/components/user_scripts/common/script_constants.h
 new file mode 100755
-index 00000000000..6b05e2d7cde
+index 0000000000..6b05e2d7cd
 --- /dev/null
 +++ b/components/user_scripts/common/script_constants.h
 @@ -0,0 +1,33 @@
@@ -4466,7 +4466,7 @@ index 00000000000..6b05e2d7cde
 +#endif  // USERSCRIPTS_COMMON_SCRIPT_CONSTANTS_H_
 diff --git a/components/user_scripts/common/url_pattern.cc b/components/user_scripts/common/url_pattern.cc
 new file mode 100755
-index 00000000000..eb06ed91bfd
+index 0000000000..eb06ed91bf
 --- /dev/null
 +++ b/components/user_scripts/common/url_pattern.cc
 @@ -0,0 +1,813 @@
@@ -5285,7 +5285,7 @@ index 00000000000..eb06ed91bfd
 +}
 diff --git a/components/user_scripts/common/url_pattern.h b/components/user_scripts/common/url_pattern.h
 new file mode 100755
-index 00000000000..bc54c6eccb6
+index 0000000000..bc54c6eccb
 --- /dev/null
 +++ b/components/user_scripts/common/url_pattern.h
 @@ -0,0 +1,306 @@
@@ -5597,7 +5597,7 @@ index 00000000000..bc54c6eccb6
 +#endif  // USERSCRIPTS_COMMON_URL_PATTERN_H_
 diff --git a/components/user_scripts/common/url_pattern_set.cc b/components/user_scripts/common/url_pattern_set.cc
 new file mode 100755
-index 00000000000..4b468cf0395
+index 0000000000..4b468cf039
 --- /dev/null
 +++ b/components/user_scripts/common/url_pattern_set.cc
 @@ -0,0 +1,229 @@
@@ -5832,7 +5832,7 @@ index 00000000000..4b468cf0395
 +}  // namespace extensions
 diff --git a/components/user_scripts/common/url_pattern_set.h b/components/user_scripts/common/url_pattern_set.h
 new file mode 100755
-index 00000000000..52aee760b88
+index 0000000000..52aee760b8
 --- /dev/null
 +++ b/components/user_scripts/common/url_pattern_set.h
 @@ -0,0 +1,103 @@
@@ -5941,7 +5941,7 @@ index 00000000000..52aee760b88
 +#endif  // USERSCRIPTS_COMMON_URL_PATTERN_SET_H_
 diff --git a/components/user_scripts/common/user_script.cc b/components/user_scripts/common/user_script.cc
 new file mode 100755
-index 00000000000..ebe3e68ff4a
+index 0000000000..ebe3e68ff4
 --- /dev/null
 +++ b/components/user_scripts/common/user_script.cc
 @@ -0,0 +1,330 @@
@@ -6277,7 +6277,7 @@ index 00000000000..ebe3e68ff4a
 +}  // namespace extensions
 diff --git a/components/user_scripts/common/user_script.h b/components/user_scripts/common/user_script.h
 new file mode 100755
-index 00000000000..e5b9d29d885
+index 0000000000..e5b9d29d88
 --- /dev/null
 +++ b/components/user_scripts/common/user_script.h
 @@ -0,0 +1,402 @@
@@ -6685,7 +6685,7 @@ index 00000000000..e5b9d29d885
 +#endif  // USERSCRIPTS_COMMON_USER_SCRIPT_H_
 diff --git a/components/user_scripts/common/user_scripts_features.cc b/components/user_scripts/common/user_scripts_features.cc
 new file mode 100644
-index 00000000000..21ff96b73a7
+index 0000000000..21ff96b73a
 --- /dev/null
 +++ b/components/user_scripts/common/user_scripts_features.cc
 @@ -0,0 +1,32 @@
@@ -6723,7 +6723,7 @@ index 00000000000..21ff96b73a7
 +}
 diff --git a/components/user_scripts/common/user_scripts_features.h b/components/user_scripts/common/user_scripts_features.h
 new file mode 100644
-index 00000000000..bf72a547ee4
+index 0000000000..bf72a547ee
 --- /dev/null
 +++ b/components/user_scripts/common/user_scripts_features.h
 @@ -0,0 +1,36 @@
@@ -6765,7 +6765,7 @@ index 00000000000..bf72a547ee4
 +#endif
 diff --git a/components/user_scripts/common/view_type.cc b/components/user_scripts/common/view_type.cc
 new file mode 100755
-index 00000000000..0898595e41c
+index 0000000000..0898595e41
 --- /dev/null
 +++ b/components/user_scripts/common/view_type.cc
 @@ -0,0 +1,37 @@
@@ -6808,7 +6808,7 @@ index 00000000000..0898595e41c
 +}  // namespace extensions
 diff --git a/components/user_scripts/common/view_type.h b/components/user_scripts/common/view_type.h
 new file mode 100755
-index 00000000000..977318725b9
+index 0000000000..977318725b
 --- /dev/null
 +++ b/components/user_scripts/common/view_type.h
 @@ -0,0 +1,48 @@
@@ -6862,7 +6862,7 @@ index 00000000000..977318725b9
 +#endif  // USERSCRIPTS_COMMON_VIEW_TYPE_H_
 diff --git a/components/user_scripts/renderer/BUILD.gn b/components/user_scripts/renderer/BUILD.gn
 new file mode 100755
-index 00000000000..868757daf63
+index 0000000000..868757daf6
 --- /dev/null
 +++ b/components/user_scripts/renderer/BUILD.gn
 @@ -0,0 +1,65 @@
@@ -6933,7 +6933,7 @@ index 00000000000..868757daf63
 +}
 diff --git a/components/user_scripts/renderer/extension_frame_helper.cc b/components/user_scripts/renderer/extension_frame_helper.cc
 new file mode 100755
-index 00000000000..fe105fb0e7e
+index 0000000000..fe105fb0e7
 --- /dev/null
 +++ b/components/user_scripts/renderer/extension_frame_helper.cc
 @@ -0,0 +1,95 @@
@@ -7034,7 +7034,7 @@ index 00000000000..fe105fb0e7e
 +}  // namespace user_scripts
 diff --git a/components/user_scripts/renderer/extension_frame_helper.h b/components/user_scripts/renderer/extension_frame_helper.h
 new file mode 100755
-index 00000000000..741e4dda031
+index 0000000000..741e4dda03
 --- /dev/null
 +++ b/components/user_scripts/renderer/extension_frame_helper.h
 @@ -0,0 +1,90 @@
@@ -7130,7 +7130,7 @@ index 00000000000..741e4dda031
 +#endif  // USERSCRIPTS_RENDERER_EXTENSION_FRAME_HELPER_H_
 diff --git a/components/user_scripts/renderer/injection_host.cc b/components/user_scripts/renderer/injection_host.cc
 new file mode 100755
-index 00000000000..65e67a8d826
+index 0000000000..65e67a8d82
 --- /dev/null
 +++ b/components/user_scripts/renderer/injection_host.cc
 @@ -0,0 +1,16 @@
@@ -7152,7 +7152,7 @@ index 00000000000..65e67a8d826
 +}
 diff --git a/components/user_scripts/renderer/injection_host.h b/components/user_scripts/renderer/injection_host.h
 new file mode 100755
-index 00000000000..d679e151fc6
+index 0000000000..d679e151fc
 --- /dev/null
 +++ b/components/user_scripts/renderer/injection_host.h
 @@ -0,0 +1,41 @@
@@ -7199,7 +7199,7 @@ index 00000000000..d679e151fc6
 +#endif  // USERSCRIPTS_RENDERER_INJECTION_HOST_H_
 diff --git a/components/user_scripts/renderer/resources/greasemonkey_api.js b/components/user_scripts/renderer/resources/greasemonkey_api.js
 new file mode 100755
-index 00000000000..bc09911571a
+index 0000000000..bc09911571
 --- /dev/null
 +++ b/components/user_scripts/renderer/resources/greasemonkey_api.js
 @@ -0,0 +1,82 @@
@@ -7287,7 +7287,7 @@ index 00000000000..bc09911571a
 +})();
 diff --git a/components/user_scripts/renderer/resources/user_scripts_renderer_resources.grd b/components/user_scripts/renderer/resources/user_scripts_renderer_resources.grd
 new file mode 100755
-index 00000000000..5aafaba38a7
+index 0000000000..5aafaba38a
 --- /dev/null
 +++ b/components/user_scripts/renderer/resources/user_scripts_renderer_resources.grd
 @@ -0,0 +1,14 @@
@@ -7307,7 +7307,7 @@ index 00000000000..5aafaba38a7
 +</grit>
 diff --git a/components/user_scripts/renderer/script_context.cc b/components/user_scripts/renderer/script_context.cc
 new file mode 100755
-index 00000000000..205ba40f5be
+index 0000000000..205ba40f5b
 --- /dev/null
 +++ b/components/user_scripts/renderer/script_context.cc
 @@ -0,0 +1,190 @@
@@ -7503,7 +7503,7 @@ index 00000000000..205ba40f5be
 +}  // namespace extensions
 diff --git a/components/user_scripts/renderer/script_context.h b/components/user_scripts/renderer/script_context.h
 new file mode 100755
-index 00000000000..96f99d12ec1
+index 0000000000..96f99d12ec
 --- /dev/null
 +++ b/components/user_scripts/renderer/script_context.h
 @@ -0,0 +1,67 @@
@@ -7576,7 +7576,7 @@ index 00000000000..96f99d12ec1
 +#endif  // USERSCRIPTS_RENDERER_SCRIPT_CONTEXT_H_
 diff --git a/components/user_scripts/renderer/script_injection.cc b/components/user_scripts/renderer/script_injection.cc
 new file mode 100755
-index 00000000000..3a0be29161d
+index 0000000000..3a0be29161
 --- /dev/null
 +++ b/components/user_scripts/renderer/script_injection.cc
 @@ -0,0 +1,296 @@
@@ -7878,7 +7878,7 @@ index 00000000000..3a0be29161d
 +}  // namespace extensions
 diff --git a/components/user_scripts/renderer/script_injection.h b/components/user_scripts/renderer/script_injection.h
 new file mode 100755
-index 00000000000..1aeb294218e
+index 0000000000..1aeb294218
 --- /dev/null
 +++ b/components/user_scripts/renderer/script_injection.h
 @@ -0,0 +1,155 @@
@@ -8039,7 +8039,7 @@ index 00000000000..1aeb294218e
 +#endif  // USERSCRIPTS_RENDERER_SCRIPT_INJECTION_H_
 diff --git a/components/user_scripts/renderer/script_injection_manager.cc b/components/user_scripts/renderer/script_injection_manager.cc
 new file mode 100755
-index 00000000000..a56d49c478b
+index 0000000000..a56d49c478
 --- /dev/null
 +++ b/components/user_scripts/renderer/script_injection_manager.cc
 @@ -0,0 +1,413 @@
@@ -8458,7 +8458,7 @@ index 00000000000..a56d49c478b
 +}  // namespace extensions
 diff --git a/components/user_scripts/renderer/script_injection_manager.h b/components/user_scripts/renderer/script_injection_manager.h
 new file mode 100755
-index 00000000000..8ad2d093dab
+index 0000000000..8ad2d093da
 --- /dev/null
 +++ b/components/user_scripts/renderer/script_injection_manager.h
 @@ -0,0 +1,100 @@
@@ -8564,7 +8564,7 @@ index 00000000000..8ad2d093dab
 +}
 diff --git a/components/user_scripts/renderer/script_injector.h b/components/user_scripts/renderer/script_injector.h
 new file mode 100755
-index 00000000000..ec71cd87f26
+index 0000000000..ec71cd87f2
 --- /dev/null
 +++ b/components/user_scripts/renderer/script_injector.h
 @@ -0,0 +1,100 @@
@@ -8670,7 +8670,7 @@ index 00000000000..ec71cd87f26
 +#endif  // USERSCRIPTS_RENDERER_SCRIPT_INJECTOR_H_
 diff --git a/components/user_scripts/renderer/scripts_run_info.cc b/components/user_scripts/renderer/scripts_run_info.cc
 new file mode 100755
-index 00000000000..8380dc21a10
+index 0000000000..8380dc21a1
 --- /dev/null
 +++ b/components/user_scripts/renderer/scripts_run_info.cc
 @@ -0,0 +1,31 @@
@@ -8707,7 +8707,7 @@ index 00000000000..8380dc21a10
 +}  // namespace extensions
 diff --git a/components/user_scripts/renderer/scripts_run_info.h b/components/user_scripts/renderer/scripts_run_info.h
 new file mode 100755
-index 00000000000..f2a7ac628f6
+index 0000000000..f2a7ac628f
 --- /dev/null
 +++ b/components/user_scripts/renderer/scripts_run_info.h
 @@ -0,0 +1,70 @@
@@ -8783,7 +8783,7 @@ index 00000000000..f2a7ac628f6
 +#endif  // USERSCRIPTS_RENDERER_SCRIPTS_RUN_INFO_H_
 diff --git a/components/user_scripts/renderer/user_script_injector.cc b/components/user_scripts/renderer/user_script_injector.cc
 new file mode 100755
-index 00000000000..787cc80a8b6
+index 0000000000..787cc80a8b
 --- /dev/null
 +++ b/components/user_scripts/renderer/user_script_injector.cc
 @@ -0,0 +1,227 @@
@@ -9016,7 +9016,7 @@ index 00000000000..787cc80a8b6
 +}  // namespace extensions
 diff --git a/components/user_scripts/renderer/user_script_injector.h b/components/user_scripts/renderer/user_script_injector.h
 new file mode 100755
-index 00000000000..5bba79341ae
+index 0000000000..5bba79341a
 --- /dev/null
 +++ b/components/user_scripts/renderer/user_script_injector.h
 @@ -0,0 +1,86 @@
@@ -9108,7 +9108,7 @@ index 00000000000..5bba79341ae
 +#endif  // USERSCRIPTS_RENDERER_USER_SCRIPT_INJECTOR_H_
 diff --git a/components/user_scripts/renderer/user_script_set.cc b/components/user_scripts/renderer/user_script_set.cc
 new file mode 100755
-index 00000000000..1665a642892
+index 0000000000..1665a64289
 --- /dev/null
 +++ b/components/user_scripts/renderer/user_script_set.cc
 @@ -0,0 +1,260 @@
@@ -9374,7 +9374,7 @@ index 00000000000..1665a642892
 +}  // namespace extensions
 diff --git a/components/user_scripts/renderer/user_script_set.h b/components/user_scripts/renderer/user_script_set.h
 new file mode 100755
-index 00000000000..3b6703a6d27
+index 0000000000..3b6703a6d2
 --- /dev/null
 +++ b/components/user_scripts/renderer/user_script_set.h
 @@ -0,0 +1,101 @@
@@ -9481,7 +9481,7 @@ index 00000000000..3b6703a6d27
 +#endif  // USERSCRIPTS_RENDERER_USER_SCRIPT_SET_H_
 diff --git a/components/user_scripts/renderer/user_script_set_manager.cc b/components/user_scripts/renderer/user_script_set_manager.cc
 new file mode 100755
-index 00000000000..ddbb104f76a
+index 0000000000..ddbb104f76
 --- /dev/null
 +++ b/components/user_scripts/renderer/user_script_set_manager.cc
 @@ -0,0 +1,65 @@
@@ -9552,7 +9552,7 @@ index 00000000000..ddbb104f76a
 +}
 diff --git a/components/user_scripts/renderer/user_script_set_manager.h b/components/user_scripts/renderer/user_script_set_manager.h
 new file mode 100755
-index 00000000000..3643c117387
+index 0000000000..3643c11738
 --- /dev/null
 +++ b/components/user_scripts/renderer/user_script_set_manager.h
 @@ -0,0 +1,56 @@
@@ -9614,7 +9614,7 @@ index 00000000000..3643c117387
 +#endif
 diff --git a/components/user_scripts/renderer/user_scripts_dispatcher.cc b/components/user_scripts/renderer/user_scripts_dispatcher.cc
 new file mode 100755
-index 00000000000..85b5a84d388
+index 0000000000..85b5a84d38
 --- /dev/null
 +++ b/components/user_scripts/renderer/user_scripts_dispatcher.cc
 @@ -0,0 +1,64 @@
@@ -9684,7 +9684,7 @@ index 00000000000..85b5a84d388
 +}
 diff --git a/components/user_scripts/renderer/user_scripts_dispatcher.h b/components/user_scripts/renderer/user_scripts_dispatcher.h
 new file mode 100755
-index 00000000000..2e9e834a970
+index 0000000000..2e9e834a97
 --- /dev/null
 +++ b/components/user_scripts/renderer/user_scripts_dispatcher.h
 @@ -0,0 +1,67 @@
@@ -9757,7 +9757,7 @@ index 00000000000..2e9e834a970
 +#endif
 diff --git a/components/user_scripts/renderer/user_scripts_renderer_client.cc b/components/user_scripts/renderer/user_scripts_renderer_client.cc
 new file mode 100755
-index 00000000000..2166cb0e0eb
+index 0000000000..2166cb0e0e
 --- /dev/null
 +++ b/components/user_scripts/renderer/user_scripts_renderer_client.cc
 @@ -0,0 +1,108 @@
@@ -9871,7 +9871,7 @@ index 00000000000..2166cb0e0eb
 +}
 diff --git a/components/user_scripts/renderer/user_scripts_renderer_client.h b/components/user_scripts/renderer/user_scripts_renderer_client.h
 new file mode 100755
-index 00000000000..4733292c8bf
+index 0000000000..4733292c8b
 --- /dev/null
 +++ b/components/user_scripts/renderer/user_scripts_renderer_client.h
 @@ -0,0 +1,38 @@
@@ -9915,7 +9915,7 @@ index 00000000000..4733292c8bf
 +#endif
 diff --git a/components/user_scripts/renderer/web_ui_injection_host.cc b/components/user_scripts/renderer/web_ui_injection_host.cc
 new file mode 100755
-index 00000000000..f9853be9a17
+index 0000000000..f9853be9a1
 --- /dev/null
 +++ b/components/user_scripts/renderer/web_ui_injection_host.cc
 @@ -0,0 +1,40 @@
@@ -9961,7 +9961,7 @@ index 00000000000..f9853be9a17
 +}
 diff --git a/components/user_scripts/renderer/web_ui_injection_host.h b/components/user_scripts/renderer/web_ui_injection_host.h
 new file mode 100755
-index 00000000000..5268bd500b8
+index 0000000000..5268bd500b
 --- /dev/null
 +++ b/components/user_scripts/renderer/web_ui_injection_host.h
 @@ -0,0 +1,31 @@
@@ -9998,7 +9998,7 @@ index 00000000000..5268bd500b8
 +#endif  // USERSCRIPTS_RENDERER_WEB_UI_INJECTION_HOST_H_
 diff --git a/components/user_scripts/strings/userscripts_strings.grdp b/components/user_scripts/strings/userscripts_strings.grdp
 new file mode 100755
-index 00000000000..a512c68c964
+index 0000000000..a512c68c96
 --- /dev/null
 +++ b/components/user_scripts/strings/userscripts_strings.grdp
 @@ -0,0 +1,54 @@
@@ -10058,7 +10058,7 @@ index 00000000000..a512c68c964
 +</grit-part>
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Experimental-user-scripts-support.inc b/cromite_flags/chrome/browser/about_flags_cc/Experimental-user-scripts-support.inc
 new file mode 100644
-index 00000000000..6bcffabf57d
+index 0000000000..6bcffabf57
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Experimental-user-scripts-support.inc
 @@ -0,0 +1,13 @@
@@ -10076,7 +10076,7 @@ index 00000000000..6bcffabf57d
 +
 +#endif
 diff --git a/tools/gritsettings/resource_ids.spec b/tools/gritsettings/resource_ids.spec
-index 52b97ceee9e..29f242c8806 100644
+index 52b97ceee9..29f242c880 100644
 --- a/tools/gritsettings/resource_ids.spec
 +++ b/tools/gritsettings/resource_ids.spec
 @@ -1405,6 +1405,12 @@

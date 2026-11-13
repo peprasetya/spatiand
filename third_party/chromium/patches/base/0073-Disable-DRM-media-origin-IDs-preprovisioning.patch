@@ -12,7 +12,7 @@ FILE:Disable-DRM-media-origin-IDs-preprovisioning.patch
 
 diff --git a/cromite_flags/media/base/media_switches_cc/disable-DRM-media-origin-IDs-preprovisioning.inc b/cromite_flags/media/base/media_switches_cc/disable-DRM-media-origin-IDs-preprovisioning.inc
 new file mode 100644
-index 00000000000..127e26879f3
+index 0000000000..127e26879f
 --- /dev/null
 +++ b/cromite_flags/media/base/media_switches_cc/disable-DRM-media-origin-IDs-preprovisioning.inc
 @@ -0,0 +1,5 @@

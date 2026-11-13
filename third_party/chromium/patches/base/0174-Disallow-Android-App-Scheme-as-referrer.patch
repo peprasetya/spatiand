@@ -9,7 +9,7 @@ FILE:Disallow-Android-App-Scheme-as-referrer.patch
  1 file changed, 5 deletions(-)
 
 diff --git a/chrome/renderer/chrome_content_renderer_client.cc b/chrome/renderer/chrome_content_renderer_client.cc
-index 6cb52f10750..2eb7c469324 100644
+index 6cb52f1075..2eb7c46932 100644
 --- a/chrome/renderer/chrome_content_renderer_client.cc
 +++ b/chrome/renderer/chrome_content_renderer_client.cc
 @@ -614,11 +614,6 @@ void ChromeContentRendererClient::RenderThreadStarted() {

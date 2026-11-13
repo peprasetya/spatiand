@@ -10,7 +10,7 @@ FILE:Disable-Feeback-Collector.patch
  1 file changed, 4 insertions(+), 4 deletions(-)
 
 diff --git a/chrome/browser/feedback/BUILD.gn b/chrome/browser/feedback/BUILD.gn
-index 08b7aee10ef..e65f0072e52 100644
+index 08b7aee10e..e65f0072e5 100644
 --- a/chrome/browser/feedback/BUILD.gn
 +++ b/chrome/browser/feedback/BUILD.gn
 @@ -26,10 +26,10 @@ source_set("feedback") {

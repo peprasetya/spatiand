@@ -16,7 +16,7 @@ FILE:Multi-Screen-Window-Placement-API-fix.patch
  4 files changed, 53 insertions(+), 6 deletions(-)
 
 diff --git a/third_party/blink/renderer/core/frame/cached_permission_status.cc b/third_party/blink/renderer/core/frame/cached_permission_status.cc
-index 2da5ef102e6..77953322ef2 100644
+index 2da5ef102e..77953322ef 100644
 --- a/third_party/blink/renderer/core/frame/cached_permission_status.cc
 +++ b/third_party/blink/renderer/core/frame/cached_permission_status.cc
 @@ -38,9 +38,9 @@ CachedPermissionStatus::CachedPermissionStatus(ExecutionContext* context)
@@ -33,7 +33,7 @@ index 2da5ef102e6..77953322ef2 100644
  
  void CachedPermissionStatus::Trace(Visitor* visitor) const {
 diff --git a/third_party/blink/renderer/core/frame/cached_permission_status.h b/third_party/blink/renderer/core/frame/cached_permission_status.h
-index b58b5910892..ad3094e9827 100644
+index b58b591089..ad3094e982 100644
 --- a/third_party/blink/renderer/core/frame/cached_permission_status.h
 +++ b/third_party/blink/renderer/core/frame/cached_permission_status.h
 @@ -73,6 +73,7 @@ class CORE_EXPORT CachedPermissionStatus final
@@ -45,7 +45,7 @@ index b58b5910892..ad3094e9827 100644
    friend class CachedPermissionStatusTest;
  
 diff --git a/third_party/blink/renderer/core/frame/screen.cc b/third_party/blink/renderer/core/frame/screen.cc
-index ed5028943e3..2c67debf4fa 100644
+index ed5028943e..2c67debf4f 100644
 --- a/third_party/blink/renderer/core/frame/screen.cc
 +++ b/third_party/blink/renderer/core/frame/screen.cc
 @@ -42,7 +42,18 @@
@@ -103,7 +103,7 @@ index ed5028943e3..2c67debf4fa 100644
 +
  }  // namespace blink
 diff --git a/third_party/blink/renderer/core/frame/screen.h b/third_party/blink/renderer/core/frame/screen.h
-index 787aa750ae6..1e2dac72d35 100644
+index 787aa750ae..1e2dac72d3 100644
 --- a/third_party/blink/renderer/core/frame/screen.h
 +++ b/third_party/blink/renderer/core/frame/screen.h
 @@ -32,11 +32,16 @@

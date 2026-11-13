@@ -15,7 +15,7 @@ FILE:Remove-EV-certificates.patch
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/net/cert/ev_root_ca_metadata.h b/net/cert/ev_root_ca_metadata.h
-index aed2bc6534f..09c66fcde35 100644
+index aed2bc6534..09c66fcde3 100644
 --- a/net/cert/ev_root_ca_metadata.h
 +++ b/net/cert/ev_root_ca_metadata.h
 @@ -20,7 +20,7 @@

@@ -30,7 +30,7 @@ FILE:Disable-speechSynthesis-getVoices-API.patch
  create mode 100644 cromite_flags/third_party/blink/common/features_h/Disable-speechSynthesis-getVoices-API.inc
 
 diff --git a/chrome/renderer/chrome_content_renderer_client.cc b/chrome/renderer/chrome_content_renderer_client.cc
-index 2eb7c469324..cf5fde9f76a 100644
+index 2eb7c46932..cf5fde9f76 100644
 --- a/chrome/renderer/chrome_content_renderer_client.cc
 +++ b/chrome/renderer/chrome_content_renderer_client.cc
 @@ -1503,7 +1503,7 @@ ChromeContentRendererClient::CreateWorkerContentSettingsClient(
@@ -43,7 +43,7 @@ index 2eb7c469324..cf5fde9f76a 100644
  #endif  // BUILDFLAG(ENABLE_SPEECH_SERVICE)
  
 diff --git a/components/content_settings/renderer/content_settings_agent_impl.cc b/components/content_settings/renderer/content_settings_agent_impl.cc
-index 371380b9206..0041bbd1b89 100644
+index 371380b920..0041bbd1b8 100644
 --- a/components/content_settings/renderer/content_settings_agent_impl.cc
 +++ b/components/content_settings/renderer/content_settings_agent_impl.cc
 @@ -526,6 +526,14 @@ void ContentSettingsAgentImpl::ClearBlockedContentSettings() {
@@ -70,7 +70,7 @@ index 371380b9206..0041bbd1b89 100644
  
  bool ContentSettingsAgentImpl::UpdateTimeZoneOverride(
 diff --git a/components/content_settings/renderer/content_settings_agent_impl.h b/components/content_settings/renderer/content_settings_agent_impl.h
-index 72aa13e3157..b6713421637 100644
+index 72aa13e315..b671342163 100644
 --- a/components/content_settings/renderer/content_settings_agent_impl.h
 +++ b/components/content_settings/renderer/content_settings_agent_impl.h
 @@ -113,6 +113,8 @@ class ContentSettingsAgentImpl
@@ -83,7 +83,7 @@ index 72aa13e3157..b6713421637 100644
    // Allow this to be overridden by tests.
    virtual void BindContentSettingsManager(
 diff --git a/content/browser/speech/tts_android.cc b/content/browser/speech/tts_android.cc
-index b4273252b19..f11dc9f5058 100644
+index b4273252b1..f11dc9f505 100644
 --- a/content/browser/speech/tts_android.cc
 +++ b/content/browser/speech/tts_android.cc
 @@ -44,7 +44,7 @@ TtsPlatformImplAndroid::~TtsPlatformImplAndroid() {
@@ -97,7 +97,7 @@ index b4273252b19..f11dc9f5058 100644
  bool TtsPlatformImplAndroid::PlatformImplInitialized() {
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Disable-speechSynthesis-getVoices-API.inc b/cromite_flags/chrome/browser/about_flags_cc/Disable-speechSynthesis-getVoices-API.inc
 new file mode 100644
-index 00000000000..c39928f07a4
+index 0000000000..c39928f07a
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Disable-speechSynthesis-getVoices-API.inc
 @@ -0,0 +1,8 @@
@@ -111,7 +111,7 @@ index 00000000000..c39928f07a4
 +#endif
 diff --git a/cromite_flags/media/base/media_switches_cc/Disable-speechSynthesis-getVoices-API.inc b/cromite_flags/media/base/media_switches_cc/Disable-speechSynthesis-getVoices-API.inc
 new file mode 100644
-index 00000000000..2080c9d584b
+index 0000000000..2080c9d584
 --- /dev/null
 +++ b/cromite_flags/media/base/media_switches_cc/Disable-speechSynthesis-getVoices-API.inc
 @@ -0,0 +1,2 @@
@@ -119,7 +119,7 @@ index 00000000000..2080c9d584b
 +SET_CROMITE_FEATURE_DISABLED(kLiveCaptionWebAudio);
 diff --git a/cromite_flags/third_party/blink/common/features_cc/Disable-speechSynthesis-getVoices-API.inc b/cromite_flags/third_party/blink/common/features_cc/Disable-speechSynthesis-getVoices-API.inc
 new file mode 100644
-index 00000000000..ac7080a3bc3
+index 0000000000..ac7080a3bc
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_cc/Disable-speechSynthesis-getVoices-API.inc
 @@ -0,0 +1,3 @@
@@ -128,13 +128,13 @@ index 00000000000..ac7080a3bc3
 +                base::FEATURE_ENABLED_BY_DEFAULT);
 diff --git a/cromite_flags/third_party/blink/common/features_h/Disable-speechSynthesis-getVoices-API.inc b/cromite_flags/third_party/blink/common/features_h/Disable-speechSynthesis-getVoices-API.inc
 new file mode 100644
-index 00000000000..2f9644512ee
+index 0000000000..2f9644512e
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_h/Disable-speechSynthesis-getVoices-API.inc
 @@ -0,0 +1 @@
 +BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kDisableSpeechSynthesisVoiceList);
 diff --git a/third_party/blink/public/platform/web_content_settings_client.h b/third_party/blink/public/platform/web_content_settings_client.h
-index 47c43646985..3df601b85c2 100644
+index 47c4364698..3df601b85c 100644
 --- a/third_party/blink/public/platform/web_content_settings_client.h
 +++ b/third_party/blink/public/platform/web_content_settings_client.h
 @@ -99,6 +99,8 @@ class WebContentSettingsClient {
@@ -147,7 +147,7 @@ index 47c43646985..3df601b85c2 100644
  };
  
 diff --git a/third_party/blink/renderer/modules/speech/speech_synthesis.cc b/third_party/blink/renderer/modules/speech/speech_synthesis.cc
-index 891a81543be..ab44139bc9b 100644
+index 891a81543b..ab44139bc9 100644
 --- a/third_party/blink/renderer/modules/speech/speech_synthesis.cc
 +++ b/third_party/blink/renderer/modules/speech/speech_synthesis.cc
 @@ -28,9 +28,11 @@

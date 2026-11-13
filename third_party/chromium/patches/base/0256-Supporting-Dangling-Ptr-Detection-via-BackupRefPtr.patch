@@ -29,7 +29,7 @@ FILE:Supporting-Dangling-Ptr-Detection-via-BackupRefPtr.patch
  create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Enable-Partition-Alloc-BRP-Checks.inc
 
 diff --git a/base/allocator/partition_alloc_features.cc b/base/allocator/partition_alloc_features.cc
-index 28809964805..3118e31c651 100644
+index 2880996480..3118e31c65 100644
 --- a/base/allocator/partition_alloc_features.cc
 +++ b/base/allocator/partition_alloc_features.cc
 @@ -100,6 +100,7 @@ BASE_FEATURE_PARAM(int,
@@ -57,7 +57,7 @@ index 28809964805..3118e31c651 100644
  constexpr FeatureParam<MemtagMode>::Option kMemtagModeOptions[] = {
      {MemtagMode::kSync, "sync"},
 diff --git a/base/allocator/partition_alloc_support.cc b/base/allocator/partition_alloc_support.cc
-index 48cb9f77dfd..630566b478b 100644
+index 48cb9f77df..630566b478 100644
 --- a/base/allocator/partition_alloc_support.cc
 +++ b/base/allocator/partition_alloc_support.cc
 @@ -317,6 +317,20 @@ void StartMemoryReclaimer(scoped_refptr<SequencedTaskRunner> task_runner) {
@@ -116,7 +116,7 @@ index 48cb9f77dfd..630566b478b 100644
  }
  
 diff --git a/base/allocator/partition_allocator/partition_alloc.gni b/base/allocator/partition_allocator/partition_alloc.gni
-index fdf65be88fa..0b6d95c775f 100644
+index fdf65be88f..0b6d95c775 100644
 --- a/base/allocator/partition_allocator/partition_alloc.gni
 +++ b/base/allocator/partition_allocator/partition_alloc.gni
 @@ -244,8 +244,8 @@ declare_args() {
@@ -140,7 +140,7 @@ index fdf65be88fa..0b6d95c775f 100644
  
  # We want to provide assertions that guard against inconsistent build
 diff --git a/base/observer_list_types.cc b/base/observer_list_types.cc
-index 1bf40ec735f..ba4ab1f0380 100644
+index 1bf40ec735..ba4ab1f038 100644
 --- a/base/observer_list_types.cc
 +++ b/base/observer_list_types.cc
 @@ -3,11 +3,22 @@
@@ -167,7 +167,7 @@ index 1bf40ec735f..ba4ab1f0380 100644
  bool CheckedObserver::IsInObserverList() const {
    return factory_.HasWeakPtrs();
 diff --git a/base/profiler/stack_sampling_profiler.cc b/base/profiler/stack_sampling_profiler.cc
-index 740ebf4bb8c..242857f5426 100644
+index 740ebf4bb8..242857f542 100644
 --- a/base/profiler/stack_sampling_profiler.cc
 +++ b/base/profiler/stack_sampling_profiler.cc
 @@ -853,6 +853,8 @@ TimeTicks StackSamplingProfiler::TestPeer::GetNextSampleTime(
@@ -180,7 +180,7 @@ index 740ebf4bb8c..242857f5426 100644
      (BUILDFLAG(IS_IOS) && defined(ARCH_CPU_64_BITS)) ||                     \
      (BUILDFLAG(IS_ANDROID) &&                                               \
 diff --git a/build_overrides/partition_alloc.gni b/build_overrides/partition_alloc.gni
-index 8c23148854c..8e695f6f952 100644
+index 8c23148854..8e695f6f95 100644
 --- a/build_overrides/partition_alloc.gni
 +++ b/build_overrides/partition_alloc.gni
 @@ -104,7 +104,7 @@ use_partition_alloc_as_malloc_default =
@@ -201,7 +201,7 @@ index 8c23148854c..8e695f6f952 100644
  raw_ptr_zero_on_construct_default = true
  raw_ptr_zero_on_move_default = true
 diff --git a/components/viz/service/frame_sinks/frame_sink_manager_impl.cc b/components/viz/service/frame_sinks/frame_sink_manager_impl.cc
-index fd2f7e5ec5f..14d810398bd 100644
+index fd2f7e5ec5..14d810398b 100644
 --- a/components/viz/service/frame_sinks/frame_sink_manager_impl.cc
 +++ b/components/viz/service/frame_sinks/frame_sink_manager_impl.cc
 @@ -444,6 +444,7 @@ void FrameSinkManagerImpl::CreateCompositorFrameSink(
@@ -214,7 +214,7 @@ index fd2f7e5ec5f..14d810398bd 100644
    std::move(callback).Run();
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Enable-Partition-Alloc-BRP-Checks.inc b/cromite_flags/chrome/browser/about_flags_cc/Enable-Partition-Alloc-BRP-Checks.inc
 new file mode 100644
-index 00000000000..265f9cff259
+index 0000000000..265f9cff25
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Enable-Partition-Alloc-BRP-Checks.inc
 @@ -0,0 +1,11 @@
@@ -230,7 +230,7 @@ index 00000000000..265f9cff259
 +
 +#endif
 diff --git a/third_party/blink/renderer/platform/wtf/allocator/partitions.cc b/third_party/blink/renderer/platform/wtf/allocator/partitions.cc
-index e9ea6e98a2e..ce27d230c7a 100644
+index e9ea6e98a2..ce27d230c7 100644
 --- a/third_party/blink/renderer/platform/wtf/allocator/partitions.cc
 +++ b/third_party/blink/renderer/platform/wtf/allocator/partitions.cc
 @@ -87,16 +87,8 @@ partition_alloc::PartitionOptions PartitionOptionsFromFeatures() {

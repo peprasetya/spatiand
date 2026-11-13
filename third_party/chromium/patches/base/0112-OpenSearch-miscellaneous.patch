@@ -21,7 +21,7 @@ FILE:OpenSearch-miscellaneous.patch
  6 files changed, 67 insertions(+), 24 deletions(-)
 
 diff --git a/chrome/browser/ui/search_engines/search_engine_tab_helper.cc b/chrome/browser/ui/search_engines/search_engine_tab_helper.cc
-index 6be6ddd1db3..d0c5676b393 100644
+index 6be6ddd1db..d0c5676b39 100644
 --- a/chrome/browser/ui/search_engines/search_engine_tab_helper.cc
 +++ b/chrome/browser/ui/search_engines/search_engine_tab_helper.cc
 @@ -6,6 +6,7 @@
@@ -154,7 +154,7 @@ index 6be6ddd1db3..d0c5676b393 100644
      return;
    }
 diff --git a/chrome/renderer/chrome_render_frame_observer.cc b/chrome/renderer/chrome_render_frame_observer.cc
-index f773945b679..54dbf7737c9 100644
+index f773945b67..54dbf7737c 100644
 --- a/chrome/renderer/chrome_render_frame_observer.cc
 +++ b/chrome/renderer/chrome_render_frame_observer.cc
 @@ -16,6 +16,7 @@
@@ -174,7 +174,7 @@ index f773945b679..54dbf7737c9 100644
          osdd_handler;
      render_frame()->GetBrowserInterfaceBroker().GetInterface(
 diff --git a/components/search_engines/template_url_fetcher.cc b/components/search_engines/template_url_fetcher.cc
-index 34bdaf00051..02261edc94b 100644
+index 34bdaf0005..02261edc94 100644
 --- a/components/search_engines/template_url_fetcher.cc
 +++ b/components/search_engines/template_url_fetcher.cc
 @@ -73,7 +73,8 @@ class TemplateURLFetcher::RequestDelegate {
@@ -273,7 +273,7 @@ index 34bdaf00051..02261edc94b 100644
  
  void TemplateURLFetcher::RequestCompleted(RequestDelegate* request) {
 diff --git a/components/search_engines/template_url_fetcher.h b/components/search_engines/template_url_fetcher.h
-index 488ec822804..bd17a636310 100644
+index 488ec82280..bd17a63631 100644
 --- a/components/search_engines/template_url_fetcher.h
 +++ b/components/search_engines/template_url_fetcher.h
 @@ -48,7 +48,7 @@ class TemplateURLFetcher : public KeyedService {
@@ -286,7 +286,7 @@ index 488ec822804..bd17a636310 100644
                          const GURL& favicon_url,
                          const url::Origin& initiator,
 diff --git a/components/search_engines/template_url_parser.cc b/components/search_engines/template_url_parser.cc
-index 31238edfe8a..9811628b1a2 100644
+index 31238edfe8..9811628b1a 100644
 --- a/components/search_engines/template_url_parser.cc
 +++ b/components/search_engines/template_url_parser.cc
 @@ -176,7 +176,7 @@ void SafeTemplateURLParser::OnXmlParseComplete(
@@ -299,7 +299,7 @@ index 31238edfe8a..9811628b1a2 100644
                         return nullptr;
                       });
 diff --git a/components/search_engines/template_url_service.h b/components/search_engines/template_url_service.h
-index a8f5bddd41f..1ecc359213c 100644
+index a8f5bddd41..1ecc359213 100644
 --- a/components/search_engines/template_url_service.h
 +++ b/components/search_engines/template_url_service.h
 @@ -392,7 +392,10 @@ class TemplateURLService final : public WebDataServiceConsumer,

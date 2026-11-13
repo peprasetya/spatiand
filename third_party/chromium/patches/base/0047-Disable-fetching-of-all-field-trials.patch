@@ -31,7 +31,7 @@ FILE:Disable-fetching-of-all-field-trials.patch
  create mode 100644 cromite_flags/services/network/public/cpp/features_cc/Disable-fetching-of-all-field-trials.inc
 
 diff --git a/chrome/browser/metrics/chrome_browser_sampling_trials.cc b/chrome/browser/metrics/chrome_browser_sampling_trials.cc
-index 01735fe6fda..110766df0d7 100644
+index 01735fe6fd..110766df0d 100644
 --- a/chrome/browser/metrics/chrome_browser_sampling_trials.cc
 +++ b/chrome/browser/metrics/chrome_browser_sampling_trials.cc
 @@ -69,6 +69,8 @@ void CreateFallbackSamplingTrial(
@@ -53,7 +53,7 @@ index 01735fe6fda..110766df0d7 100644
    static const char kSampledGroup_Other[] = "Sampled_NoSeed_Other";
    const char* sampled_group = kSampledGroup_Other;
 diff --git a/chrome/browser/net/system_network_context_manager.cc b/chrome/browser/net/system_network_context_manager.cc
-index c63ded57e07..ce884c3b241 100644
+index c63ded57e0..ce884c3b24 100644
 --- a/chrome/browser/net/system_network_context_manager.cc
 +++ b/chrome/browser/net/system_network_context_manager.cc
 @@ -983,8 +983,6 @@ void SystemNetworkContextManager::AddSSLConfigToNetworkContextParams(
@@ -66,7 +66,7 @@ index c63ded57e07..ce884c3b241 100644
            variations::VariationsIdsProvider::GetInstance()) {
      network_context_params->initial_variations_headers =
 diff --git a/chrome/browser/origin_trials/origin_trials_factory.cc b/chrome/browser/origin_trials/origin_trials_factory.cc
-index 55d4825a6c4..3451ed7cc5b 100644
+index 55d4825a6c..3451ed7cc5 100644
 --- a/chrome/browser/origin_trials/origin_trials_factory.cc
 +++ b/chrome/browser/origin_trials/origin_trials_factory.cc
 @@ -23,6 +23,7 @@ base::LazyInstance<OriginTrialsFactory>::DestructorAtExit
@@ -78,7 +78,7 @@ index 55d4825a6c4..3451ed7cc5b 100644
        GetInstance()->GetServiceForBrowserContext(context, true));
  }
 diff --git a/components/ukm/ukm_recorder_impl.cc b/components/ukm/ukm_recorder_impl.cc
-index 6692965d606..ab6582869a7 100644
+index 6692965d60..ab6582869a 100644
 --- a/components/ukm/ukm_recorder_impl.cc
 +++ b/components/ukm/ukm_recorder_impl.cc
 @@ -193,6 +193,9 @@ std::string WebDXFeaturesToStringForDebug(const std::set<int32_t>& features) {
@@ -92,7 +92,7 @@ index 6692965d606..ab6582869a7 100644
        static_cast<size_t>(base::GetFieldTrialParamByFeatureAsInt(
            kUkmFeature, "MaxKeptSources", max_kept_sources_));
 diff --git a/components/variations/net/BUILD.gn b/components/variations/net/BUILD.gn
-index a22c51ccff4..549111f8b18 100644
+index a22c51ccff..549111f8b1 100644
 --- a/components/variations/net/BUILD.gn
 +++ b/components/variations/net/BUILD.gn
 @@ -36,8 +36,6 @@ static_library("net") {
@@ -105,7 +105,7 @@ index a22c51ccff4..549111f8b18 100644
      deps += [
        "//components/variations:variations_mojom",
 diff --git a/components/variations/net/variations_http_headers.cc b/components/variations/net/variations_http_headers.cc
-index 5d35d51f56c..c20f10baac2 100644
+index 5d35d51f56..c20f10baac 100644
 --- a/components/variations/net/variations_http_headers.cc
 +++ b/components/variations/net/variations_http_headers.cc
 @@ -141,7 +141,7 @@ bool ShouldAppendVariationsHeader(const GURL& url, InIncognito incognito) {
@@ -118,7 +118,7 @@ index 5d35d51f56c..c20f10baac2 100644
    }
  
 diff --git a/components/variations/net/variations_url_loader_throttle.cc b/components/variations/net/variations_url_loader_throttle.cc
-index da904891a1a..3af1fa638b9 100644
+index da904891a1..3af1fa638b 100644
 --- a/components/variations/net/variations_url_loader_throttle.cc
 +++ b/components/variations/net/variations_url_loader_throttle.cc
 @@ -48,6 +48,7 @@ VariationsURLLoaderThrottle::~VariationsURLLoaderThrottle() = default;
@@ -130,7 +130,7 @@ index da904891a1a..3af1fa638b9 100644
      return;
    }
 diff --git a/components/variations/service/variations_field_trial_creator.cc b/components/variations/service/variations_field_trial_creator.cc
-index 42f411cf236..39ec5679af2 100644
+index 42f411cf23..39ec5679af 100644
 --- a/components/variations/service/variations_field_trial_creator.cc
 +++ b/components/variations/service/variations_field_trial_creator.cc
 @@ -130,6 +130,7 @@ Study::CpuArchitecture GetCurrentCpuArchitecture() {
@@ -168,7 +168,7 @@ index 42f411cf236..39ec5679af2 100644
    JSONFileValueDeserializer file_deserializer(json_seed_path);
    int error_code;
 diff --git a/components/variations/service/variations_service.cc b/components/variations/service/variations_service.cc
-index d96dc4596f1..504992a824f 100644
+index d96dc4596f..504992a824 100644
 --- a/components/variations/service/variations_service.cc
 +++ b/components/variations/service/variations_service.cc
 @@ -276,22 +276,7 @@ bool GetInstanceManipulations(const net::HttpResponseHeaders* headers,
@@ -207,7 +207,7 @@ index d96dc4596f1..504992a824f 100644
    safe_seed_manager_.RecordFetchStarted(state_manager_->startup_visibility());
  
 diff --git a/content/browser/loader/url_loader_throttles.cc b/content/browser/loader/url_loader_throttles.cc
-index b5e38a8f1d0..f7f90dc74d4 100644
+index b5e38a8f1d..f7f90dc74d 100644
 --- a/content/browser/loader/url_loader_throttles.cc
 +++ b/content/browser/loader/url_loader_throttles.cc
 @@ -53,8 +53,6 @@ CreateContentBrowserURLLoaderThrottles(
@@ -232,7 +232,7 @@ index b5e38a8f1d0..f7f90dc74d4 100644
    return throttles;
  }
 diff --git a/content/browser/origin_trials/origin_trials_utils.cc b/content/browser/origin_trials/origin_trials_utils.cc
-index 4749baf011b..4247171cd1b 100644
+index 4749baf011..4247171cd1 100644
 --- a/content/browser/origin_trials/origin_trials_utils.cc
 +++ b/content/browser/origin_trials/origin_trials_utils.cc
 @@ -15,7 +15,7 @@ namespace {
@@ -245,7 +245,7 @@ index 4749baf011b..4247171cd1b 100644
    }
    size_t iter = 0;
 diff --git a/content/browser/renderer_host/navigation_request.cc b/content/browser/renderer_host/navigation_request.cc
-index 63ce1500216..54a856a892c 100644
+index 63ce150021..54a856a892 100644
 --- a/content/browser/renderer_host/navigation_request.cc
 +++ b/content/browser/renderer_host/navigation_request.cc
 @@ -878,6 +878,7 @@ void PersistOriginTrialsFromHeaders(
@@ -257,7 +257,7 @@ index 63ce1500216..54a856a892c 100644
    // information for them.
    if (origin.opaque()) {
 diff --git a/content/renderer/variations_render_thread_observer.cc b/content/renderer/variations_render_thread_observer.cc
-index 4ea52b92e4c..8f4ecde1445 100644
+index 4ea52b92e4..8f4ecde144 100644
 --- a/content/renderer/variations_render_thread_observer.cc
 +++ b/content/renderer/variations_render_thread_observer.cc
 @@ -54,14 +54,6 @@ VariationsRenderThreadObserver::~VariationsRenderThreadObserver() = default;
@@ -277,20 +277,20 @@ index 4ea52b92e4c..8f4ecde1445 100644
  void VariationsRenderThreadObserver::RegisterMojoInterfaces(
 diff --git a/cromite_flags/net/base/features_cc/Disable-fetching-of-all-field-trials.inc b/cromite_flags/net/base/features_cc/Disable-fetching-of-all-field-trials.inc
 new file mode 100644
-index 00000000000..4bd8276f349
+index 0000000000..4bd8276f34
 --- /dev/null
 +++ b/cromite_flags/net/base/features_cc/Disable-fetching-of-all-field-trials.inc
 @@ -0,0 +1 @@
 +// empty file
 diff --git a/cromite_flags/services/network/public/cpp/features_cc/Disable-fetching-of-all-field-trials.inc b/cromite_flags/services/network/public/cpp/features_cc/Disable-fetching-of-all-field-trials.inc
 new file mode 100644
-index 00000000000..4bd8276f349
+index 0000000000..4bd8276f34
 --- /dev/null
 +++ b/cromite_flags/services/network/public/cpp/features_cc/Disable-fetching-of-all-field-trials.inc
 @@ -0,0 +1 @@
 +// empty file
 diff --git a/third_party/blink/renderer/core/loader/document_loader.cc b/third_party/blink/renderer/core/loader/document_loader.cc
-index feb3a3d9ab1..c5c9d22e9a5 100644
+index feb3a3d9ab..c5c9d22e9a 100644
 --- a/third_party/blink/renderer/core/loader/document_loader.cc
 +++ b/third_party/blink/renderer/core/loader/document_loader.cc
 @@ -221,13 +221,6 @@ std::vector<int> CopyInitiatorOriginTrials(
@@ -308,7 +308,7 @@ index feb3a3d9ab1..c5c9d22e9a5 100644
  }
  
 diff --git a/third_party/blink/renderer/platform/loader/fetch/resource_request.h b/third_party/blink/renderer/platform/loader/fetch/resource_request.h
-index 6eeb8218954..17e6064ab25 100644
+index 6eeb821895..17e6064ab2 100644
 --- a/third_party/blink/renderer/platform/loader/fetch/resource_request.h
 +++ b/third_party/blink/renderer/platform/loader/fetch/resource_request.h
 @@ -543,7 +543,6 @@ class PLATFORM_EXPORT ResourceRequestHead {

@@ -15,7 +15,7 @@ window. Found on the Mac (2026-11-11), seen on the Beam Pro (2026-11-09).
  1 file changed, 23 insertions(+), 1 deletion(-)
 
 diff --git a/third_party/blink/renderer/core/exported/web_page_popup_impl.cc b/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
-index 6d9edd6ef15..632497d8822 100644
+index 6d9edd6ef1..632497d882 100644
 --- a/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
 +++ b/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
 @@ -29,6 +29,8 @@

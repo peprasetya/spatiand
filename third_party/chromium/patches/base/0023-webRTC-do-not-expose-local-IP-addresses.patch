@@ -18,7 +18,7 @@ FILE:webRTC-do-not-expose-local-IP-addresses.patch
  3 files changed, 6 insertions(+), 3 deletions(-)
 
 diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
-index 82253815922..d83fdc2bbf1 100644
+index 8225381592..d83fdc2bbf 100644
 --- a/chrome/browser/ui/browser_ui_prefs.cc
 +++ b/chrome/browser/ui/browser_ui_prefs.cc
 @@ -158,7 +158,7 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
@@ -31,7 +31,7 @@ index 82253815922..d83fdc2bbf1 100644
    registry->RegisterBooleanPref(prefs::kWebRTCPostQuantumKeyAgreement, false);
    registry->RegisterStringPref(prefs::kWebRTCUDPPortRange, std::string());
 diff --git a/third_party/blink/common/peerconnection/webrtc_ip_handling_policy.cc b/third_party/blink/common/peerconnection/webrtc_ip_handling_policy.cc
-index 3c2475d75f4..a342c816278 100644
+index 3c2475d75f..a342c81627 100644
 --- a/third_party/blink/common/peerconnection/webrtc_ip_handling_policy.cc
 +++ b/third_party/blink/common/peerconnection/webrtc_ip_handling_policy.cc
 @@ -30,7 +30,10 @@ blink::mojom::WebRtcIpHandlingPolicy ToWebRTCIPHandlingPolicy(
@@ -47,7 +47,7 @@ index 3c2475d75f4..a342c816278 100644
  
  const char* ToString(blink::mojom::WebRtcIpHandlingPolicy policy) {
 diff --git a/third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.cc b/third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.cc
-index ba3d20ad798..d99253b2940 100644
+index ba3d20ad79..d99253b294 100644
 --- a/third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.cc
 +++ b/third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.cc
 @@ -1111,7 +1111,7 @@ PeerConnectionDependencyFactory::CreatePortAllocator(

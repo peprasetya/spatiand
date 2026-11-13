@@ -14,7 +14,7 @@ FILE:allow-the-download-of-clang-for-windows-crossbuild.patch
  1 file changed, 12 insertions(+), 3 deletions(-)
 
 diff --git a/tools/clang/scripts/update.py b/tools/clang/scripts/update.py
-index 200845370e7..0aebfd50290 100755
+index 200845370e..0aebfd5029 100755
 --- a/tools/clang/scripts/update.py
 +++ b/tools/clang/scripts/update.py
 @@ -12,6 +12,8 @@ near-tip-of-tree clang version:

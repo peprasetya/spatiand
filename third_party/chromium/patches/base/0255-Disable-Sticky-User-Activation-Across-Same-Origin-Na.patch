@@ -15,7 +15,7 @@ FILE:Disable-Sticky-User-Activation-Across-Same-Origin-Navigation.patch
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 70225983713..f95fcf49a7a 100644
+index 7022598371..f95fcf49a7 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -6323,8 +6323,8 @@

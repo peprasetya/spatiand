@@ -18,7 +18,7 @@ FILE:Revert-flags-remove-disable-pull-to-refresh-effect.patch
  create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Revert-flags-remove-disable-pull-to-refresh-effect.inc
 
 diff --git a/chrome/browser/flag-metadata.json b/chrome/browser/flag-metadata.json
-index 91593e7785d..604495711d0 100644
+index 91593e7785..604495711d 100644
 --- a/chrome/browser/flag-metadata.json
 +++ b/chrome/browser/flag-metadata.json
 @@ -3120,6 +3120,10 @@
@@ -33,7 +33,7 @@ index 91593e7785d..604495711d0 100644
      "name": "disable-virtual-keyboard",
      "owners": [ "dvallet@chromium.org", "essential-inputs-team@google.com" ],
 diff --git a/content/browser/android/overscroll_controller_android.cc b/content/browser/android/overscroll_controller_android.cc
-index e105328c396..215b645978b 100644
+index e105328c39..215b645978 100644
 --- a/content/browser/android/overscroll_controller_android.cc
 +++ b/content/browser/android/overscroll_controller_android.cc
 @@ -72,14 +72,15 @@ std::unique_ptr<OverscrollGlow> CreateGlowEffect(OverscrollGlowClient* client) {
@@ -56,7 +56,7 @@ index e105328c396..215b645978b 100644
  }  // namespace
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Revert-flags-remove-disable-pull-to-refresh-effect.inc b/cromite_flags/chrome/browser/about_flags_cc/Revert-flags-remove-disable-pull-to-refresh-effect.inc
 new file mode 100644
-index 00000000000..d1ceaf2f01a
+index 0000000000..d1ceaf2f01
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Revert-flags-remove-disable-pull-to-refresh-effect.inc
 @@ -0,0 +1,12 @@
@@ -73,7 +73,7 @@ index 00000000000..d1ceaf2f01a
 +
 +#endif
 diff --git a/ui/android/overscroll_refresh.cc b/ui/android/overscroll_refresh.cc
-index 3770f3e8869..6c8fcdd6e74 100644
+index 3770f3e886..6c8fcdd6e7 100644
 --- a/ui/android/overscroll_refresh.cc
 +++ b/ui/android/overscroll_refresh.cc
 @@ -39,9 +39,10 @@ const float kWeightAngle30 = 1.73f;
@@ -98,7 +98,7 @@ index 3770f3e8869..6c8fcdd6e74 100644
        type = OverscrollAction::kPullFromBottomEdge;
      }
 diff --git a/ui/android/overscroll_refresh.h b/ui/android/overscroll_refresh.h
-index 7ebfb246372..452791217bf 100644
+index 7ebfb24637..452791217b 100644
 --- a/ui/android/overscroll_refresh.h
 +++ b/ui/android/overscroll_refresh.h
 @@ -65,7 +65,7 @@ class UI_ANDROID_EXPORT OverscrollRefresh {

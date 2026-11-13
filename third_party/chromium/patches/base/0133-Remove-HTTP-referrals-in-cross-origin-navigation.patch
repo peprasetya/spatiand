@@ -31,7 +31,7 @@ FILE:Remove-HTTP-referrals-in-cross-origin-navigation.patch
  create mode 100644 components/cromite_components_strings_grd/Remove-HTTP-referrals-in-cross-origin-navigation.grdp
 
 diff --git a/chrome/browser/extensions/api/settings_private/prefs_util.cc b/chrome/browser/extensions/api/settings_private/prefs_util.cc
-index 2304eb1c542..804504dd813 100644
+index 2304eb1c54..804504dd81 100644
 --- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
 +++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
 @@ -319,6 +319,11 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
@@ -47,7 +47,7 @@ index 2304eb1c542..804504dd813 100644
    (*s_allowlist)[::prefs::kCtrlTabMru] = settings_api::PrefType::kBoolean;
    (*s_allowlist)[::prefs::kCurrentThemeID] = settings_api::PrefType::kString;
 diff --git a/chrome/browser/net/system_network_context_manager.cc b/chrome/browser/net/system_network_context_manager.cc
-index df8469f8639..ad24272e000 100644
+index df8469f863..ad24272e00 100644
 --- a/chrome/browser/net/system_network_context_manager.cc
 +++ b/chrome/browser/net/system_network_context_manager.cc
 @@ -693,6 +693,9 @@ SystemNetworkContextManager::SystemNetworkContextManager(
@@ -69,7 +69,7 @@ index df8469f8639..ad24272e000 100644
    registry->RegisterBooleanPref(prefs::kQuickCheckEnabled, true);
  
 diff --git a/chrome/browser/renderer_preferences_util.cc b/chrome/browser/renderer_preferences_util.cc
-index 680a3df2d51..29afa0a564a 100644
+index 680a3df2d5..29afa0a564 100644
 --- a/chrome/browser/renderer_preferences_util.cc
 +++ b/chrome/browser/renderer_preferences_util.cc
 @@ -153,6 +153,7 @@ void UpdateFromSystemSettings(blink::RendererPreferences* prefs,
@@ -81,7 +81,7 @@ index 680a3df2d51..29afa0a564a 100644
        pref_service->GetBoolean(prefs::kEnableDoNotTrack);
    // TODO(crbug.com/40745270): Clean up kGlobalPrivacyControlForce &
 diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page.html b/chrome/browser/resources/settings/privacy_page/privacy_page.html
-index fb69dc0a9c6..cce403896c6 100644
+index fb69dc0a9c..cce403896c 100644
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page.html
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page.html
 @@ -47,8 +47,18 @@
@@ -106,7 +106,7 @@ index fb69dc0a9c6..cce403896c6 100644
      </div>
      <cr-toast id="deleteBrowsingDataToast" duration="5000">
 diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page.ts b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
-index 41b621d9173..076541eddec 100644
+index 41b621d917..076541edde 100644
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page.ts
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
 @@ -16,6 +16,7 @@ import '../privacy_icons.html.js';
@@ -195,7 +195,7 @@ index 41b621d9173..076541eddec 100644
      Router.getInstance().navigateTo(routes.CLEAR_BROWSER_DATA.parent!);
  
 diff --git a/chrome/browser/ui/prefs/pref_watcher.cc b/chrome/browser/ui/prefs/pref_watcher.cc
-index 1974afa754a..3bed2a37ab3 100644
+index 1974afa754..3bed2a37ab 100644
 --- a/chrome/browser/ui/prefs/pref_watcher.cc
 +++ b/chrome/browser/ui/prefs/pref_watcher.cc
 @@ -139,6 +139,8 @@ PrefWatcher::PrefWatcher(Profile* profile) : profile_(profile) {
@@ -208,7 +208,7 @@ index 1974afa754a..3bed2a37ab3 100644
                                       renderer_callback);
    profile_pref_change_registrar_.Add(prefs::kWebRTCIPHandlingPolicy,
 diff --git a/chrome/browser/ui/prefs/prefs_tab_helper.cc b/chrome/browser/ui/prefs/prefs_tab_helper.cc
-index 66eede68f09..5421cb6e7b4 100644
+index 66eede68f0..5421cb6e7b 100644
 --- a/chrome/browser/ui/prefs/prefs_tab_helper.cc
 +++ b/chrome/browser/ui/prefs/prefs_tab_helper.cc
 @@ -388,6 +388,8 @@ void PrefsTabHelper::RegisterProfilePrefs(
@@ -221,7 +221,7 @@ index 66eede68f09..5421cb6e7b4 100644
    registry->RegisterBooleanPref(prefs::kScrollToTextFragmentEnabled, false);
  #if BUILDFLAG(IS_ANDROID)
 diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-index a0b236d0459..5764c33b632 100644
+index a0b236d045..5764c33b63 100644
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 @@ -2712,6 +2712,10 @@ void AddPrivacyStrings(content::WebUIDataSource* html_source,
@@ -236,7 +236,7 @@ index a0b236d0459..5764c33b632 100644
        {"safeBrowsingStandardDescProxy",
         IDS_SETTINGS_SAFEBROWSING_STANDARD_DESC_PROXY},
 diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
-index 5fa8d8b23bd..fde03e39d46 100644
+index 5fa8d8b23b..fde03e39d4 100644
 --- a/chrome/common/pref_names.h
 +++ b/chrome/common/pref_names.h
 @@ -910,6 +910,9 @@ inline constexpr char kEnableDoNotTrack[] = "enable_do_not_track";
@@ -251,7 +251,7 @@ index 5fa8d8b23bd..fde03e39d46 100644
  inline constexpr char kImportAutofillFormData[] = "import_autofill_form_data";
 diff --git a/components/cromite_components_strings_grd/Remove-HTTP-referrals-in-cross-origin-navigation.grdp b/components/cromite_components_strings_grd/Remove-HTTP-referrals-in-cross-origin-navigation.grdp
 new file mode 100644
-index 00000000000..379e4f09d81
+index 0000000000..379e4f09d8
 --- /dev/null
 +++ b/components/cromite_components_strings_grd/Remove-HTTP-referrals-in-cross-origin-navigation.grdp
 @@ -0,0 +1,18 @@
@@ -274,7 +274,7 @@ index 00000000000..379e4f09d81
 +  </message>
 +</grit-part>
 diff --git a/components/download/content/internal/context_menu_download.cc b/components/download/content/internal/context_menu_download.cc
-index 55f56605e57..6cb1a5fce06 100644
+index 55f56605e5..6cb1a5fce0 100644
 --- a/components/download/content/internal/context_menu_download.cc
 +++ b/components/download/content/internal/context_menu_download.cc
 @@ -14,6 +14,8 @@
@@ -302,7 +302,7 @@ index 55f56605e57..6cb1a5fce06 100644
    dl_params->set_referrer_policy(
        content::Referrer::ReferrerPolicyForUrlRequest(referrer.policy));
 diff --git a/content/browser/renderer_host/navigation_request.cc b/content/browser/renderer_host/navigation_request.cc
-index dbf2dad75a4..b7f06ce38c6 100644
+index dbf2dad75a..b7f06ce38c 100644
 --- a/content/browser/renderer_host/navigation_request.cc
 +++ b/content/browser/renderer_host/navigation_request.cc
 @@ -425,6 +425,15 @@ void AddAdditionalRequestHeaders(
@@ -322,7 +322,7 @@ index dbf2dad75a4..b7f06ce38c6 100644
    std::optional<std::string> existing_origin =
        headers->GetHeader(net::HttpRequestHeaders::kOrigin);
 diff --git a/services/network/public/cpp/resource_request.h b/services/network/public/cpp/resource_request.h
-index 684b6e2f5bc..8c31c71be49 100644
+index 684b6e2f5b..8c31c71be4 100644
 --- a/services/network/public/cpp/resource_request.h
 +++ b/services/network/public/cpp/resource_request.h
 @@ -215,7 +215,7 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE) ResourceRequest {
@@ -335,7 +335,7 @@ index 684b6e2f5bc..8c31c71be49 100644
    net::HttpRequestHeaders cors_exempt_headers;
    int load_flags = 0;
 diff --git a/third_party/blink/public/common/renderer_preferences/renderer_preferences.h b/third_party/blink/public/common/renderer_preferences/renderer_preferences.h
-index 0fdf8029f82..b7bad104b62 100644
+index 0fdf8029f8..b7bad104b6 100644
 --- a/third_party/blink/public/common/renderer_preferences/renderer_preferences.h
 +++ b/third_party/blink/public/common/renderer_preferences/renderer_preferences.h
 @@ -51,6 +51,7 @@ struct BLINK_COMMON_EXPORT RendererPreferences {

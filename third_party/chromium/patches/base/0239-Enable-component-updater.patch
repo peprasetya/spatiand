@@ -13,7 +13,7 @@ FILE:Enable-component-updater.patch
  .../browser/component_updater/registration.cc |  2 +
  .../component_updater/component_installer.cc  | 54 ++++++++++++-------
  .../component_updater/component_installer.h   |  6 +--
- .../component_updater_url_constants.cc        |  4 +-
+ .../component_updater_url_constants.cc        |  8 ++-
  .../component_updater/configurator_impl.cc    |  8 +--
  .../component_updater/configurator_impl.h     |  2 -
  components/crx_file/crx_build_action_main.cc  | 10 +++-
@@ -33,10 +33,10 @@ FILE:Enable-component-updater.patch
  components/update_client/update_engine.cc     |  9 ++++
  components/update_client/utils.cc             |  4 ++
  extensions/browser/sandboxed_unpacker.cc      |  2 +-
- 23 files changed, 133 insertions(+), 53 deletions(-)
+ 23 files changed, 137 insertions(+), 53 deletions(-)
 
 diff --git a/chrome/browser/component_updater/registration.cc b/chrome/browser/component_updater/registration.cc
-index 9cf5a226c7f..4b1d30e6c8e 100644
+index 9cf5a226c7..4b1d30e6c8 100644
 --- a/chrome/browser/component_updater/registration.cc
 +++ b/chrome/browser/component_updater/registration.cc
 @@ -144,6 +144,8 @@ void DeleteOldComponents(const base::FilePath& user_data_dir) {
@@ -49,7 +49,7 @@ index 9cf5a226c7f..4b1d30e6c8e 100644
    RegisterRecoveryImprovedComponent(cus, g_browser_process->local_state());
  #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 diff --git a/components/component_updater/component_installer.cc b/components/component_updater/component_installer.cc
-index cc7858e826d..cb1cef860d5 100644
+index cc7858e826..cb1cef860d 100644
 --- a/components/component_updater/component_installer.cc
 +++ b/components/component_updater/component_installer.cc
 @@ -103,7 +103,9 @@ ComponentInstaller::ComponentInstaller(
@@ -240,7 +240,7 @@ index cc7858e826d..cb1cef860d5 100644
    installer_policy_->ComponentReady(current_version_, current_install_dir_,
                                      std::move(manifest));
 diff --git a/components/component_updater/component_installer.h b/components/component_updater/component_installer.h
-index 6383d33c9e1..a41bb7b2792 100644
+index 6383d33c9e..a41bb7b279 100644
 --- a/components/component_updater/component_installer.h
 +++ b/components/component_updater/component_installer.h
 @@ -152,7 +152,7 @@ class ComponentInstaller final : public update_client::CrxInstaller {
@@ -271,15 +271,20 @@ index 6383d33c9e1..a41bb7b2792 100644
                            RegisterCallback register_callback,
                            base::OnceClosure callback);
 diff --git a/components/component_updater/component_updater_url_constants.cc b/components/component_updater/component_updater_url_constants.cc
-index 95c0d489426..7a19a8a6394 100644
+index 95c0d48942..5d676e287a 100644
 --- a/components/component_updater/component_updater_url_constants.cc
 +++ b/components/component_updater/component_updater_url_constants.cc
-@@ -15,9 +15,9 @@ namespace component_updater {
+@@ -14,10 +14,14 @@ namespace component_updater {
+ //
  // The value of |kDefaultUrlSource| can be overridden with
  // --component-updater=url-source=someurl.
++//
++// Spatiand: no update service. This was Cromite's (its Android fonts pack, which no build of
++// SpatiMesh registers); about:blank, like the fallback, is dropped by RemoveUnsecureUrls, so
++// any update check ends at once with MISSING_URLS and nothing is requested.
  const char kUpdaterJSONDefaultUrl[] =
 -    "https://update.googleapis.com/service/update2/json";
-+    "https://uazo.github.io/cromite/components/query4_0.json";
++    "about:blank";
  
  const char kUpdaterJSONFallbackUrl[] =
 -    "http://update.googleapis.com/service/update2/json";
@@ -287,7 +292,7 @@ index 95c0d489426..7a19a8a6394 100644
  
  }  // namespace component_updater
 diff --git a/components/component_updater/configurator_impl.cc b/components/component_updater/configurator_impl.cc
-index 2d595664a6c..6b58289b914 100644
+index 2d595664a6..6b58289b91 100644
 --- a/components/component_updater/configurator_impl.cc
 +++ b/components/component_updater/configurator_impl.cc
 @@ -40,8 +40,6 @@ ConfiguratorImpl::ConfiguratorImpl(
@@ -319,7 +324,7 @@ index 2d595664a6c..6b58289b914 100644
  
  const base::Version& ConfiguratorImpl::GetBrowserVersion() const {
 diff --git a/components/component_updater/configurator_impl.h b/components/component_updater/configurator_impl.h
-index 8dd8f15bf87..d9b0037eae6 100644
+index 8dd8f15bf8..d9b0037eae 100644
 --- a/components/component_updater/configurator_impl.h
 +++ b/components/component_updater/configurator_impl.h
 @@ -109,8 +109,6 @@ class ConfiguratorImpl {
@@ -332,7 +337,7 @@ index 8dd8f15bf87..d9b0037eae6 100644
    const base::TimeDelta initial_delay_;
  };
 diff --git a/components/crx_file/crx_build_action_main.cc b/components/crx_file/crx_build_action_main.cc
-index 6db3373ac52..2303d1917b9 100644
+index 6db3373ac5..2303d1917b 100644
 --- a/components/crx_file/crx_build_action_main.cc
 +++ b/components/crx_file/crx_build_action_main.cc
 @@ -11,6 +11,7 @@
@@ -360,7 +365,7 @@ index 6db3373ac52..2303d1917b9 100644
 +      signing_key.get()));
  }
 diff --git a/components/crx_file/crx_verifier.cc b/components/crx_file/crx_verifier.cc
-index 4ae922a8a28..1d75426a6cb 100644
+index 4ae922a8a2..1d75426a6c 100644
 --- a/components/crx_file/crx_verifier.cc
 +++ b/components/crx_file/crx_verifier.cc
 @@ -19,6 +19,7 @@
@@ -446,7 +451,7 @@ index 4ae922a8a28..1d75426a6cb 100644
      result = VerifierResult::ERROR_HEADER_INVALID;
    }
 diff --git a/components/crx_file/crx_verifier.h b/components/crx_file/crx_verifier.h
-index 0bf25996e17..4594b676bf6 100644
+index 0bf25996e1..4594b676bf 100644
 --- a/components/crx_file/crx_verifier.h
 +++ b/components/crx_file/crx_verifier.h
 @@ -51,7 +51,7 @@ VerifierResult Verify(
@@ -459,7 +464,7 @@ index 0bf25996e17..4594b676bf6 100644
  }  // namespace crx_file
  
 diff --git a/components/optimization_guide/core/delivery/prediction_model_download_manager.cc b/components/optimization_guide/core/delivery/prediction_model_download_manager.cc
-index d701a2781cd..5a1bdabccb0 100644
+index d701a2781c..5a1bdabccb 100644
 --- a/components/optimization_guide/core/delivery/prediction_model_download_manager.cc
 +++ b/components/optimization_guide/core/delivery/prediction_model_download_manager.cc
 @@ -319,7 +319,7 @@ bool PredictionModelDownloadManager::VerifyDownload(
@@ -472,7 +477,7 @@ index d701a2781cd..5a1bdabccb0 100644
        RecordPredictionModelDownloadStatus(
            PredictionModelDownloadStatus::kFailedCrxVerification);
 diff --git a/components/update_client/component.cc b/components/update_client/component.cc
-index 1c0abde897a..188998699c7 100644
+index 1c0abde897..188998699c 100644
 --- a/components/update_client/component.cc
 +++ b/components/update_client/component.cc
 @@ -380,6 +380,19 @@ void Component::StateChecking::DoHandle() {
@@ -496,7 +501,7 @@ index 1c0abde897a..188998699c7 100644
      TransitionState(std::make_unique<StateCanUpdate>(&component));
      return;
 diff --git a/components/update_client/crx_downloader.cc b/components/update_client/crx_downloader.cc
-index 091339d81d6..944d39b6956 100644
+index 091339d81d..944d39b695 100644
 --- a/components/update_client/crx_downloader.cc
 +++ b/components/update_client/crx_downloader.cc
 @@ -36,6 +36,7 @@
@@ -526,7 +531,7 @@ index 091339d81d6..944d39b6956 100644
            },
            result.response, expected_hash_),
 diff --git a/components/update_client/net/network_impl.cc b/components/update_client/net/network_impl.cc
-index e6569f86dad..acc68e5de06 100644
+index e6569f86da..acc68e5de0 100644
 --- a/components/update_client/net/network_impl.cc
 +++ b/components/update_client/net/network_impl.cc
 @@ -127,7 +127,7 @@ void NetworkFetcherImpl::PostRequest(
@@ -549,7 +554,7 @@ index e6569f86dad..acc68e5de06 100644
        &NetworkFetcherImpl::OnResponseStartedCallback,
        weak_ptr_factory_.GetWeakPtr(), std::move(response_started_callback)));
 diff --git a/components/update_client/op_install.cc b/components/update_client/op_install.cc
-index adc56093089..4f247bee0c5 100644
+index adc5609308..4f247bee0c 100644
 --- a/components/update_client/op_install.cc
 +++ b/components/update_client/op_install.cc
 @@ -203,7 +203,7 @@ void Unpack(base::OnceCallback<void(const Unpacker::Result&)> callback,
@@ -562,7 +567,7 @@ index adc56093089..4f247bee0c5 100644
  }
  
 diff --git a/components/update_client/protocol_parser.cc b/components/update_client/protocol_parser.cc
-index 0f8b394c796..02148b8fd0e 100644
+index 0f8b394c79..02148b8fd0 100644
 --- a/components/update_client/protocol_parser.cc
 +++ b/components/update_client/protocol_parser.cc
 @@ -7,6 +7,8 @@
@@ -583,7 +588,7 @@ index 0f8b394c796..02148b8fd0e 100644
  
  bool ProtocolParser::Parse(const std::string& response) {
 diff --git a/components/update_client/protocol_parser_json.cc b/components/update_client/protocol_parser_json.cc
-index bbc419fd2f1..da616ba11ae 100644
+index bbc419fd2f..da616ba11a 100644
 --- a/components/update_client/protocol_parser_json.cc
 +++ b/components/update_client/protocol_parser_json.cc
 @@ -14,6 +14,7 @@
@@ -603,7 +608,7 @@ index bbc419fd2f1..da616ba11ae 100644
      ParseError("Empty JSON.");
      return false;
 diff --git a/components/update_client/request_sender.cc b/components/update_client/request_sender.cc
-index f5df951a958..63b7a02a928 100644
+index f5df951a95..63b7a02a92 100644
 --- a/components/update_client/request_sender.cc
 +++ b/components/update_client/request_sender.cc
 @@ -249,7 +249,8 @@ void RequestSender::SendInternal() {
@@ -628,7 +633,7 @@ index f5df951a958..63b7a02a928 100644
    if (!error) {
      if (!use_signing_) {
 diff --git a/components/update_client/unpacker.cc b/components/update_client/unpacker.cc
-index b0d12e3a060..dc292224f35 100644
+index b0d12e3a06..dc292224f3 100644
 --- a/components/update_client/unpacker.cc
 +++ b/components/update_client/unpacker.cc
 @@ -72,16 +72,17 @@ void Unpacker::Unpack(const std::string& app_id,
@@ -661,7 +666,7 @@ index b0d12e3a060..dc292224f35 100644
      EndUnpacking(UnpackerError::kInvalidFile, static_cast<int>(result));
      return;
 diff --git a/components/update_client/unpacker.h b/components/update_client/unpacker.h
-index f9a043909be..b96828918bc 100644
+index f9a043909b..b96828918b 100644
 --- a/components/update_client/unpacker.h
 +++ b/components/update_client/unpacker.h
 @@ -75,6 +75,7 @@ class Unpacker : public base::RefCountedThreadSafe<Unpacker> {
@@ -683,7 +688,7 @@ index f9a043909be..b96828918bc 100644
    // The next step of unpacking is to unzip. Triggers `EndUnzipping` if
    // successful. Triggers `EndUnpacking` if an early error is encountered.
 diff --git a/components/update_client/update_checker.cc b/components/update_client/update_checker.cc
-index 83d5c223fab..e4fc6074b7f 100644
+index 83d5c223fa..e4fc6074b7 100644
 --- a/components/update_client/update_checker.cc
 +++ b/components/update_client/update_checker.cc
 @@ -261,6 +261,10 @@ void UpdateCheckerImpl::CheckForUpdatesHelper(
@@ -707,7 +712,7 @@ index 83d5c223fab..e4fc6074b7f 100644
                       &UpdateCheckerImpl::OnRequestSenderComplete,
                       weak_factory_.GetWeakPtr(), context,
 diff --git a/components/update_client/update_engine.cc b/components/update_client/update_engine.cc
-index f76cb9e9294..9838c26e9e5 100644
+index f76cb9e929..9838c26e9e 100644
 --- a/components/update_client/update_engine.cc
 +++ b/components/update_client/update_engine.cc
 @@ -223,6 +223,15 @@ void UpdateEngine::StartOperation(
@@ -727,7 +732,7 @@ index f76cb9e9294..9838c26e9e5 100644
      } else {
        // |CrxDataCallback| did not return a CrxComponent instance for this
 diff --git a/components/update_client/utils.cc b/components/update_client/utils.cc
-index 81e002f0923..a31a34958a2 100644
+index 81e002f092..a31a34958a 100644
 --- a/components/update_client/utils.cc
 +++ b/components/update_client/utils.cc
 @@ -24,6 +24,7 @@
@@ -749,7 +754,7 @@ index 81e002f0923..a31a34958a2 100644
  }
  
 diff --git a/extensions/browser/sandboxed_unpacker.cc b/extensions/browser/sandboxed_unpacker.cc
-index f590c5f00af..b3a247ca285 100644
+index f590c5f00a..b3a247ca28 100644
 --- a/extensions/browser/sandboxed_unpacker.cc
 +++ b/extensions/browser/sandboxed_unpacker.cc
 @@ -915,7 +915,7 @@ bool SandboxedUnpacker::ValidateSignature(

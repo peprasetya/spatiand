@@ -11,7 +11,7 @@ It finds a tab's window through aura, which Android has not got, and only Linux 
  1 file changed, 9 insertions(+), 2 deletions(-)
 
 diff --git a/content/browser/BUILD.gn b/content/browser/BUILD.gn
-index dbdc7054516..04ea6d84fda 100644
+index dbdc705451..04ea6d84fd 100644
 --- a/content/browser/BUILD.gn
 +++ b/content/browser/BUILD.gn
 @@ -1248,8 +1248,6 @@ source_set("browser") {

@@ -10,7 +10,7 @@ FILE:Enable-Do-Not-Track-by-default.patch
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
-index 8c609c5ade2..bde2ba98a77 100644
+index 8c609c5ade..bde2ba98a7 100644
 --- a/chrome/browser/ui/browser_ui_prefs.cc
 +++ b/chrome/browser/ui/browser_ui_prefs.cc
 @@ -153,7 +153,7 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {

@@ -13,7 +13,7 @@ FILE:Disable-all-promo-dialogs.patch
  4 files changed, 5 insertions(+), 1 deletion(-)
 
 diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
-index 5f4a2859cbc..cfcf46dedbc 100644
+index 5f4a2859cb..cfcf46dedb 100644
 --- a/chrome/browser/ui/browser_ui_prefs.cc
 +++ b/chrome/browser/ui/browser_ui_prefs.cc
 @@ -203,7 +203,7 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
@@ -26,7 +26,7 @@ index 5f4a2859cbc..cfcf46dedbc 100644
        prefs::kExternalProtocolDialogShowAlwaysOpenCheckbox, true);
    registry->RegisterBooleanPref(prefs::kScreenCaptureAllowed, true);
 diff --git a/chrome/browser/user_education/user_education_service_factory.cc b/chrome/browser/user_education/user_education_service_factory.cc
-index 41d1ff9404f..6011c679a61 100644
+index 41d1ff9404..6011c679a6 100644
 --- a/chrome/browser/user_education/user_education_service_factory.cc
 +++ b/chrome/browser/user_education/user_education_service_factory.cc
 @@ -113,6 +113,7 @@ UserEducationServiceFactory::BuildServiceInstanceForBrowserContextImpl(
@@ -38,7 +38,7 @@ index 41d1ff9404f..6011c679a61 100644
    if (!chrome_for_testing::IsEnableUserEducationUI()) {
      return false;
 diff --git a/components/user_education/common/feature_promo/feature_promo_registry.cc b/components/user_education/common/feature_promo/feature_promo_registry.cc
-index 3925a2f3d3c..07d3c34e77f 100644
+index 3925a2f3d3..07d3c34e77 100644
 --- a/components/user_education/common/feature_promo/feature_promo_registry.cc
 +++ b/components/user_education/common/feature_promo/feature_promo_registry.cc
 @@ -19,6 +19,7 @@ FeaturePromoRegistry& FeaturePromoRegistry::operator=(
@@ -58,7 +58,7 @@ index 3925a2f3d3c..07d3c34e77f 100644
    CHECK(iph_feature);
    FeatureRegistry<NewBadgeSpecification>::RegisterFeature(*iph_feature,
 diff --git a/components/user_education/common/feature_promo/impl/feature_promo_queue.cc b/components/user_education/common/feature_promo/impl/feature_promo_queue.cc
-index f6a35bd152b..ae80d5d9544 100644
+index f6a35bd152..ae80d5d954 100644
 --- a/components/user_education/common/feature_promo/impl/feature_promo_queue.cc
 +++ b/components/user_education/common/feature_promo/impl/feature_promo_queue.cc
 @@ -76,6 +76,7 @@ FeaturePromoResult FeaturePromoQueue::CanShow(

@@ -12,7 +12,7 @@ FILE:Temp-disable-UseContextSnapshot.patch
  1 file changed, 1 insertion(+)
 
 diff --git a/content/public/common/content_features.cc b/content/public/common/content_features.cc
-index 5fca62d66f9..1e76f052ba6 100644
+index 5fca62d66f..1e76f052ba 100644
 --- a/content/public/common/content_features.cc
 +++ b/content/public/common/content_features.cc
 @@ -1308,6 +1308,7 @@ BASE_FEATURE(kUnrestrictedSharedArrayBuffer, base::FEATURE_DISABLED_BY_DEFAULT);

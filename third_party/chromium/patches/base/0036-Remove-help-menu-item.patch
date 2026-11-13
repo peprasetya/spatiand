@@ -10,7 +10,7 @@ FILE:Remove-help-menu-item.patch
  1 file changed, 9 insertions(+)
 
 diff --git a/chrome/browser/ui/chrome_pages.cc b/chrome/browser/ui/chrome_pages.cc
-index 3f270ac926d..7ff6bae5616 100644
+index 3f270ac926..7ff6bae561 100644
 --- a/chrome/browser/ui/chrome_pages.cc
 +++ b/chrome/browser/ui/chrome_pages.cc
 @@ -143,6 +143,15 @@ void LaunchReleaseNotesImpl(Profile* profile, apps::LaunchSource source) {

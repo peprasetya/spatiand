@@ -10,7 +10,7 @@ FILE:ungoogled-chromium-Disable-webRTC-log-uploader.patch
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
-index d83fdc2bbf1..5f4a2859cbc 100644
+index d83fdc2bbf..5f4a2859cb 100644
 --- a/chrome/browser/ui/browser_ui_prefs.cc
 +++ b/chrome/browser/ui/browser_ui_prefs.cc
 @@ -164,7 +164,7 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {

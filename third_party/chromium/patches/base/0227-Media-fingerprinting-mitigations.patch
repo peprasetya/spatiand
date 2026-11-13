@@ -13,7 +13,7 @@ FILE:Media-fingerprinting-mitigations.patch
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/third_party/blink/renderer/modules/webcodecs/video_decoder.cc b/third_party/blink/renderer/modules/webcodecs/video_decoder.cc
-index 99864431eba..7b413e14cc1 100644
+index 99864431eb..7b413e14cc 100644
 --- a/third_party/blink/renderer/modules/webcodecs/video_decoder.cc
 +++ b/third_party/blink/renderer/modules/webcodecs/video_decoder.cc
 @@ -300,7 +300,7 @@ ScriptPromise<VideoDecoderSupport> VideoDecoder::isConfigSupported(

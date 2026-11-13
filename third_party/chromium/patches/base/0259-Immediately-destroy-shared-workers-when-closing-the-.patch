@@ -16,7 +16,7 @@ FILE:Immediately-destroy-shared-workers-when-closing-the-page.patch
  1 file changed, 1 insertion(+), 22 deletions(-)
 
 diff --git a/content/browser/worker_host/shared_worker_host.cc b/content/browser/worker_host/shared_worker_host.cc
-index dcbf9f96ece..d8827174c60 100644
+index dcbf9f96ec..d8827174c6 100644
 --- a/content/browser/worker_host/shared_worker_host.cc
 +++ b/content/browser/worker_host/shared_worker_host.cc
 @@ -75,7 +75,7 @@ namespace {

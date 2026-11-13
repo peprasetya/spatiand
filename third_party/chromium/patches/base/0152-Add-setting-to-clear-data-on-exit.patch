@@ -47,7 +47,7 @@ FILE:Add-setting-to-clear-data-on-exit.patch
  create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Add-setting-to-clear-data-on-exit.inc
 
 diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
-index 20ab26dea7b..a95e514f94f 100644
+index 20ab26dea7..a95e514f94 100644
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
 @@ -171,6 +171,14 @@
@@ -66,7 +66,7 @@ index 20ab26dea7b..a95e514f94f 100644
        <message name="IDS_SETTINGS_OVERSCROLL_HISTORY_NAVIGATION_SUBTITLE" desc="Subtitle for the overscroll history navigation setting, which allows you to navigate back and forward by swiping left or right with a touch device.">
          Navigate back and forward with a swipe gesture
 diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
-index 61a6bc58dda..083fc5f35a9 100644
+index 61a6bc58dd..083fc5f35a 100644
 --- a/chrome/browser/about_flags.cc
 +++ b/chrome/browser/about_flags.cc
 @@ -122,6 +122,7 @@
@@ -78,7 +78,7 @@ index 61a6bc58dda..083fc5f35a9 100644
  #include "components/feature_engagement/public/feature_list.h"
  #include "components/feed/feed_feature_list.h"
 diff --git a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
-index 2594391ee96..014b141d868 100644
+index 2594391ee9..014b141d86 100644
 --- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
 +++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
 @@ -329,8 +329,25 @@ void ChromeBrowsingDataLifetimeManager::Shutdown() {
@@ -118,7 +118,7 @@ index 2594391ee96..014b141d868 100644
    // Condition is satisfied if sync is fully disabled by policy.
    if (sync_disabled) {
 diff --git a/chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.cc b/chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.cc
-index a3038fa051d..e031193a42a 100644
+index a3038fa051..e031193a42 100644
 --- a/chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.cc
 +++ b/chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.cc
 @@ -328,6 +328,7 @@ void ChromeBrowsingDataRemoverDelegate::RemoveEmbedderData(
@@ -161,7 +161,7 @@ index a3038fa051d..e031193a42a 100644
  
    //////////////////////////////////////////////////////////////////////////////
 diff --git a/chrome/browser/extensions/api/browsing_data/browsing_data_api.cc b/chrome/browser/extensions/api/browsing_data/browsing_data_api.cc
-index 7b304dea45b..5c91a43d24f 100644
+index 7b304dea45..5c91a43d24 100644
 --- a/chrome/browser/extensions/api/browsing_data/browsing_data_api.cc
 +++ b/chrome/browser/extensions/api/browsing_data/browsing_data_api.cc
 @@ -117,7 +117,7 @@ bool BrowsingDataSettingsFunction::isDataTypeSelected(
@@ -174,7 +174,7 @@ index 7b304dea45b..5c91a43d24f 100644
  }
  
 diff --git a/chrome/browser/extensions/api/settings_private/prefs_util.cc b/chrome/browser/extensions/api/settings_private/prefs_util.cc
-index 804504dd813..25d3abeeab9 100644
+index 804504dd81..25d3abeeab 100644
 --- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
 +++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
 @@ -642,6 +642,22 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
@@ -209,7 +209,7 @@ index 804504dd813..25d3abeeab9 100644
    (*s_allowlist)[ash::prefs::kAccessibilityAutoclickDelayMs] =
        settings_api::PrefType::kNumber;
 diff --git a/chrome/browser/profiles/android/profile_manager_utils.cc b/chrome/browser/profiles/android/profile_manager_utils.cc
-index 30ba500175f..58a73a8bab7 100644
+index 30ba500175..58a73a8bab 100644
 --- a/chrome/browser/profiles/android/profile_manager_utils.cc
 +++ b/chrome/browser/profiles/android/profile_manager_utils.cc
 @@ -71,4 +71,9 @@ static void JNI_ProfileManagerUtils_RemoveSessionCookiesForAllProfiles(
@@ -223,7 +223,7 @@ index 30ba500175f..58a73a8bab7 100644
 +
  DEFINE_JNI(ProfileManagerUtils)
 diff --git a/chrome/browser/profiles/profile_manager.cc b/chrome/browser/profiles/profile_manager.cc
-index 8bb161c6311..f9b77d9bd44 100644
+index 8bb161c631..f9b77d9bd4 100644
 --- a/chrome/browser/profiles/profile_manager.cc
 +++ b/chrome/browser/profiles/profile_manager.cc
 @@ -1557,6 +1557,19 @@ void ProfileManager::DoFinalInit(ProfileInfo* profile_info,
@@ -259,7 +259,7 @@ index 8bb161c6311..f9b77d9bd44 100644
          }
          return !has_other_window;
 diff --git a/chrome/browser/profiles/profile_manager.h b/chrome/browser/profiles/profile_manager.h
-index 5f49c6e87f2..0296323263a 100644
+index 5f49c6e87f..0296323263 100644
 --- a/chrome/browser/profiles/profile_manager.h
 +++ b/chrome/browser/profiles/profile_manager.h
 @@ -261,6 +261,8 @@ class ProfileManager : public Profile::Delegate {
@@ -272,7 +272,7 @@ index 5f49c6e87f2..0296323263a 100644
    // fully initialized, return a pointer to the corresponding Profile object;
    // otherwise return null.
 diff --git a/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_browser_proxy.ts b/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_browser_proxy.ts
-index dfc4a47f196..4e9e6c5143b 100644
+index dfc4a47f19..4e9e6c5143 100644
 --- a/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_browser_proxy.ts
 +++ b/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_browser_proxy.ts
 @@ -42,6 +42,7 @@ export enum BrowsingDataType {
@@ -284,7 +284,7 @@ index dfc4a47f196..4e9e6c5143b 100644
    SKILLS = 9,
  }
 diff --git a/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_dialog.css b/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_dialog.css
-index d58e6e19636..fcfdef68d97 100644
+index d58e6e1963..fcfdef68d9 100644
 --- a/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_dialog.css
 +++ b/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_dialog.css
 @@ -54,6 +54,8 @@
@@ -297,7 +297,7 @@ index d58e6e19636..fcfdef68d97 100644
  
  #deletingDataAlert {
 diff --git a/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_dialog.html.ts b/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_dialog.html.ts
-index 927ca0bf11f..f75ece1d8a2 100644
+index 927ca0bf11..f75ece1d8a 100644
 --- a/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_dialog.html.ts
 +++ b/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_dialog.html.ts
 @@ -12,17 +12,24 @@ export function getHtml(this: SettingsClearBrowsingDataDialogElement) {
@@ -361,7 +361,7 @@ index 927ca0bf11f..f75ece1d8a2 100644
          ?disabled="${this.shouldDisableDeleteButton_()}">
        ${this.computeDeleteButtonLabel_()}
 diff --git a/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_dialog.ts b/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_dialog.ts
-index 4d7fa1f1fe2..d520eaab336 100644
+index 4d7fa1f1fe..d520eaab33 100644
 --- a/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_dialog.ts
 +++ b/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_dialog.ts
 @@ -92,6 +92,16 @@ const ALL_BROWSING_DATATYPES_LIST: BrowsingDataType[] = [
@@ -494,7 +494,7 @@ index 4d7fa1f1fe2..d520eaab336 100644
      return canDeleteAccountData(this.syncStatus_) ?
          loadTimeData.getString('clearData') :
 diff --git a/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_time_picker.ts b/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_time_picker.ts
-index 6dc559f8ea7..cd3a56a2039 100644
+index 6dc559f8ea..cd3a56a203 100644
 --- a/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_time_picker.ts
 +++ b/chrome/browser/resources/settings/clear_browsing_data_dialog/clear_browsing_data_time_picker.ts
 @@ -92,19 +92,19 @@ export class SettingsClearBrowsingDataTimePickerElement extends
@@ -529,7 +529,7 @@ index 6dc559f8ea7..cd3a56a2039 100644
    private accessor timePeriodPref_:
        chrome.settingsPrivate.PrefObject<TimePeriod>|undefined;
 diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page.html b/chrome/browser/resources/settings/privacy_page/privacy_page.html
-index cce403896c6..282d7f31fa1 100644
+index cce403896c..282d7f31fa 100644
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page.html
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page.html
 @@ -5,6 +5,12 @@
@@ -567,7 +567,7 @@ index cce403896c6..282d7f31fa1 100644
      </div>
      <cr-toast id="deleteBrowsingDataToast" duration="5000">
 diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page.ts b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
-index 076541eddec..64b90c49c2b 100644
+index 076541edde..64b90c49c2 100644
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page.ts
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
 @@ -78,6 +78,7 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
@@ -617,7 +617,7 @@ index 076541eddec..64b90c49c2b 100644
          Number((e.target as SettingsDropdownMenuElement).getSelectedValue());
      PrefService.getInstance().setPrefValue('enable_referrers', policy !== 0);
 diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts b/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts
-index 4bb2e2e950d..45f5d272d2a 100644
+index 4bb2e2e950..45f5d272d2 100644
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts
 @@ -225,7 +225,7 @@ export class SettingsPrivacyPageIndexElement extends
@@ -630,7 +630,7 @@ index 4bb2e2e950d..45f5d272d2a 100644
        nestedRoutes.push(routes.PRIVACY_GUIDE);
      }
 diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
-index 75f95f35d55..813eddcd55b 100644
+index 75f95f35d5..813eddcd55 100644
 --- a/chrome/browser/resources/settings/route.ts
 +++ b/chrome/browser/resources/settings/route.ts
 @@ -17,6 +17,8 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
@@ -643,7 +643,7 @@ index 75f95f35d55..813eddcd55b 100644
    const visibility = pageVisibility || {};
  
 diff --git a/chrome/browser/resources/settings/router.ts b/chrome/browser/resources/settings/router.ts
-index 47b4a045f34..5e34aaad656 100644
+index 47b4a045f3..5e34aaad65 100644
 --- a/chrome/browser/resources/settings/router.ts
 +++ b/chrome/browser/resources/settings/router.ts
 @@ -26,6 +26,7 @@ export interface SettingsRoutes {
@@ -655,7 +655,7 @@ index 47b4a045f34..5e34aaad656 100644
    CONTACT_INFO: Route;
    COOKIES: Route;
 diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-index 5764c33b632..817b9d6e52e 100644
+index 5764c33b63..817b9d6e52 100644
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 @@ -2673,6 +2673,12 @@ void AddPrivacyStrings(content::WebUIDataSource* html_source,
@@ -672,7 +672,7 @@ index 5764c33b632..817b9d6e52e 100644
        {"safeBrowsingEnableExtendedReportingDesc",
         IDS_SETTINGS_SAFEBROWSING_ENABLE_REPORTING_DESC},
 diff --git a/components/browsing_data/content/browsing_data_helper.cc b/components/browsing_data/content/browsing_data_helper.cc
-index ff585164b9c..18c7862877d 100644
+index ff585164b9..18c7862877 100644
 --- a/components/browsing_data/content/browsing_data_helper.cc
 +++ b/components/browsing_data/content/browsing_data_helper.cc
 @@ -44,8 +44,13 @@ bool WebsiteSettingsFilterAdapter(
@@ -692,7 +692,7 @@ index ff585164b9c..18c7862877d 100644
  }
  
 diff --git a/components/browsing_data/core/BUILD.gn b/components/browsing_data/core/BUILD.gn
-index adb48084b75..6f4433f15da 100644
+index adb48084b7..6f4433f15d 100644
 --- a/components/browsing_data/core/BUILD.gn
 +++ b/components/browsing_data/core/BUILD.gn
 @@ -62,6 +62,10 @@ if (is_android) {
@@ -715,7 +715,7 @@ index adb48084b75..6f4433f15da 100644
      ]
      deps = [ "//third_party/androidx:androidx_annotation_annotation_java" ]
 diff --git a/components/browsing_data/core/browsing_data_policies_utils.cc b/components/browsing_data/core/browsing_data_policies_utils.cc
-index 200ef0ccf42..1822a369c05 100644
+index 200ef0ccf4..1822a369c0 100644
 --- a/components/browsing_data/core/browsing_data_policies_utils.cc
 +++ b/components/browsing_data/core/browsing_data_policies_utils.cc
 @@ -17,21 +17,21 @@
@@ -751,7 +751,7 @@ index 200ef0ccf42..1822a369c05 100644
  // are automatically disabled.
  constexpr char kDisabledSyncTypesLogFormat[] =
 diff --git a/components/browsing_data/core/browsing_data_policies_utils.h b/components/browsing_data/core/browsing_data_policies_utils.h
-index e8bbdb84e10..bce41eb5247 100644
+index e8bbdb84e1..bce41eb524 100644
 --- a/components/browsing_data/core/browsing_data_policies_utils.h
 +++ b/components/browsing_data/core/browsing_data_policies_utils.h
 @@ -12,6 +12,17 @@
@@ -773,7 +773,7 @@ index e8bbdb84e10..bce41eb5247 100644
  enum class PolicyDataType {
    kBrowsingHistory = 0,
 diff --git a/components/browsing_data/core/browsing_data_utils.cc b/components/browsing_data/core/browsing_data_utils.cc
-index 28f19decb37..579b1806519 100644
+index 28f19decb3..579b180651 100644
 --- a/components/browsing_data/core/browsing_data_utils.cc
 +++ b/components/browsing_data/core/browsing_data_utils.cc
 @@ -3,6 +3,7 @@
@@ -826,7 +826,7 @@ index 28f19decb37..579b1806519 100644
      case BrowsingDataType::HISTORY:
        *out_pref = prefs::kDeleteBrowsingHistory;
 diff --git a/components/browsing_data/core/browsing_data_utils.h b/components/browsing_data/core/browsing_data_utils.h
-index 43b2630229f..a4c2e76092f 100644
+index 43b2630229..a4c2e76092 100644
 --- a/components/browsing_data/core/browsing_data_utils.h
 +++ b/components/browsing_data/core/browsing_data_utils.h
 @@ -10,6 +10,7 @@
@@ -847,7 +847,7 @@ index 43b2630229f..a4c2e76092f 100644
  // Returns a BrowsingDataType if a type matching |pref_name| is found.
 diff --git a/components/browsing_data/core/clear_browsing_data_tab.h b/components/browsing_data/core/clear_browsing_data_tab.h
 new file mode 100644
-index 00000000000..bbe46a27c41
+index 0000000000..bbe46a27c4
 --- /dev/null
 +++ b/components/browsing_data/core/clear_browsing_data_tab.h
 @@ -0,0 +1,21 @@
@@ -874,7 +874,7 @@ index 00000000000..bbe46a27c41
 +#endif  // COMPONENTS_BROWSING_DATA_CORE_CLEAR_BROWSING_DATA_TAB_H_
 \ No newline at end of file
 diff --git a/components/browsing_data/core/pref_names.cc b/components/browsing_data/core/pref_names.cc
-index 680510bebdc..b5a940cde52 100644
+index 680510bebd..b5a940cde5 100644
 --- a/components/browsing_data/core/pref_names.cc
 +++ b/components/browsing_data/core/pref_names.cc
 @@ -31,6 +31,23 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
@@ -902,7 +902,7 @@ index 680510bebdc..b5a940cde52 100644
    registry->RegisterBooleanPref(kDeleteDownloadHistory, true);
    registry->RegisterBooleanPref(kDeleteHostedAppsData, false);
 diff --git a/components/browsing_data/core/pref_names.h b/components/browsing_data/core/pref_names.h
-index 0206f21631d..706abcd7673 100644
+index 0206f21631..706abcd767 100644
 --- a/components/browsing_data/core/pref_names.h
 +++ b/components/browsing_data/core/pref_names.h
 @@ -32,6 +32,22 @@ inline constexpr char kClearBrowsingDataOnExitDeletionPending[] =
@@ -929,7 +929,7 @@ index 0206f21631d..706abcd7673 100644
  inline constexpr char kDeleteTimePeriod[] = "browser.clear_data.time_period";
  
 diff --git a/components/favicon/core/favicon_database.cc b/components/favicon/core/favicon_database.cc
-index 91a41c693e0..d0292583535 100644
+index 91a41c693e..d029258353 100644
 --- a/components/favicon/core/favicon_database.cc
 +++ b/components/favicon/core/favicon_database.cc
 @@ -38,6 +38,10 @@
@@ -956,7 +956,7 @@ index 91a41c693e0..d0292583535 100644
      end = base::Time::Max();
    sql::Statement statement(
 diff --git a/components/favicon/core/favicon_database.h b/components/favicon/core/favicon_database.h
-index 68b0794e3cc..c544875f802 100644
+index 68b0794e3c..c544875f80 100644
 --- a/components/favicon/core/favicon_database.h
 +++ b/components/favicon/core/favicon_database.h
 @@ -9,6 +9,7 @@
@@ -977,7 +977,7 @@ index 68b0794e3cc..c544875f802 100644
  // history thread.
  class FaviconDatabase {
 diff --git a/components/search_engines/template_url_service.cc b/components/search_engines/template_url_service.cc
-index 6a8e8db36d1..44cde414540 100644
+index 6a8e8db36d..44cde41454 100644
 --- a/components/search_engines/template_url_service.cc
 +++ b/components/search_engines/template_url_service.cc
 @@ -977,6 +977,7 @@ void TemplateURLService::RemoveAutoGeneratedForUrlsBetween(
@@ -989,7 +989,7 @@ index 6a8e8db36d1..44cde414540 100644
              template_url_starter_pack_data::StarterPackId::kNone &&
          !MatchesDefaultSearchProvider(turl) &&
 diff --git a/content/browser/btm/btm_service_impl.cc b/content/browser/btm/btm_service_impl.cc
-index b3e6ed95862..946ca2a0c05 100644
+index b3e6ed9586..946ca2a0c0 100644
 --- a/content/browser/btm/btm_service_impl.cc
 +++ b/content/browser/btm/btm_service_impl.cc
 @@ -234,7 +234,7 @@ class StateClearer : public BrowsingDataRemover::Observer {
@@ -1002,7 +1002,7 @@ index b3e6ed95862..946ca2a0c05 100644
              BrowsingDataRemover::ORIGIN_TYPE_PROTECTED_WEB,
          std::move(filter), clearer);
 diff --git a/content/browser/storage_partition_impl.cc b/content/browser/storage_partition_impl.cc
-index 7b69ec7f354..342ef42a353 100644
+index 7b69ec7f35..342ef42a35 100644
 --- a/content/browser/storage_partition_impl.cc
 +++ b/content/browser/storage_partition_impl.cc
 @@ -19,6 +19,7 @@
@@ -1022,7 +1022,7 @@ index 7b69ec7f354..342ef42a353 100644
                                                 settings.size_in_bytes());
    }
 diff --git a/content/public/browser/browsing_data_remover.h b/content/public/browser/browsing_data_remover.h
-index e5d8e5285ca..2992f6737c0 100644
+index e5d8e5285c..2992f6737c 100644
 --- a/content/public/browser/browsing_data_remover.h
 +++ b/content/public/browser/browsing_data_remover.h
 @@ -154,6 +154,11 @@ class BrowsingDataRemover {
@@ -1039,7 +1039,7 @@ index e5d8e5285ca..2992f6737c0 100644
        DATA_TYPE_TRUST_TOKENS | DATA_TYPE_INTEREST_GROUPS |
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Add-setting-to-clear-data-on-exit.inc b/cromite_flags/chrome/browser/about_flags_cc/Add-setting-to-clear-data-on-exit.inc
 new file mode 100644
-index 00000000000..f448153ad23
+index 0000000000..f448153ad2
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Add-setting-to-clear-data-on-exit.inc
 @@ -0,0 +1,8 @@

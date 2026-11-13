@@ -20,7 +20,7 @@ FILE:Enable-network-isolation-features.patch
  create mode 100644 cromite_flags/services/network/public/cpp/features_cc/Enable-network-isolation-features.inc
 
 diff --git a/chrome/browser/net/profile_network_context_service.cc b/chrome/browser/net/profile_network_context_service.cc
-index 62ff3787b22..29f00b4931c 100644
+index 62ff3787b2..29f00b4931 100644
 --- a/chrome/browser/net/profile_network_context_service.cc
 +++ b/chrome/browser/net/profile_network_context_service.cc
 @@ -473,8 +473,8 @@ bool GetHttpCacheBackendResetParam(
@@ -36,7 +36,7 @@ index 62ff3787b22..29f00b4931c 100644
    // DiskCacheBackendResetCacheOnGroupChange param is true.
 diff --git a/cromite_flags/net/base/features_cc/Enable-network-isolation-features.inc b/cromite_flags/net/base/features_cc/Enable-network-isolation-features.inc
 new file mode 100644
-index 00000000000..b735ce1a5b7
+index 0000000000..b735ce1a5b
 --- /dev/null
 +++ b/cromite_flags/net/base/features_cc/Enable-network-isolation-features.inc
 @@ -0,0 +1,7 @@
@@ -49,13 +49,13 @@ index 00000000000..b735ce1a5b7
 +SET_CROMITE_FEATURE_ENABLED(kSplitCacheByNetworkIsolationKey);
 diff --git a/cromite_flags/services/network/public/cpp/features_cc/Enable-network-isolation-features.inc b/cromite_flags/services/network/public/cpp/features_cc/Enable-network-isolation-features.inc
 new file mode 100644
-index 00000000000..e820d67b869
+index 0000000000..e820d67b86
 --- /dev/null
 +++ b/cromite_flags/services/network/public/cpp/features_cc/Enable-network-isolation-features.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_ENABLED(kSplitAuthCacheByNetworkIsolationKey);
 diff --git a/net/http/http_cache.cc b/net/http/http_cache.cc
-index fb45d1fd8c4..6a3f99bccd1 100644
+index fb45d1fd8c..6a3f99bccd 100644
 --- a/net/http/http_cache.cc
 +++ b/net/http/http_cache.cc
 @@ -852,6 +852,10 @@ std::optional<std::string> HttpCache::GenerateCacheKey(

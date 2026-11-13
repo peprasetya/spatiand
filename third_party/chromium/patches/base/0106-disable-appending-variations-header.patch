@@ -10,7 +10,7 @@ FILE:disable-appending-variations-header.patch
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/components/variations/net/variations_http_headers.cc b/components/variations/net/variations_http_headers.cc
-index c20f10baac2..2317607bed9 100644
+index c20f10baac..2317607bed 100644
 --- a/components/variations/net/variations_http_headers.cc
 +++ b/components/variations/net/variations_http_headers.cc
 @@ -132,7 +132,7 @@ bool ShouldAppendVariationsHeader(const GURL& url, InIncognito incognito) {

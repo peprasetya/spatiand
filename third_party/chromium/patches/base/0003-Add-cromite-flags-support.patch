@@ -117,7 +117,7 @@ FILE:Add-cromite-flags-support.patch
  create mode 100755 cromite_flags/ui/base/features_h/placeholder.txt
 
 diff --git a/base/BUILD.gn b/base/BUILD.gn
-index d33624c29ff..e70d0028fa3 100644
+index d33624c29f..e70d0028fa 100644
 --- a/base/BUILD.gn
 +++ b/base/BUILD.gn
 @@ -243,6 +243,8 @@ source_set("asan_raw_ptr_service") {
@@ -147,7 +147,7 @@ index d33624c29ff..e70d0028fa3 100644
        "android/java/src/org/chromium/base/MutableParamWithSafeDefault.java",
      ]
 diff --git a/base/android/feature_map.cc b/base/android/feature_map.cc
-index 0f0ca8a2092..91f7c4199c7 100644
+index 0f0ca8a209..91f7c4199c 100644
 --- a/base/android/feature_map.cc
 +++ b/base/android/feature_map.cc
 @@ -47,6 +47,11 @@ const Feature* FeatureMap::FindFeatureExposedToJava(
@@ -163,7 +163,7 @@ index 0f0ca8a2092..91f7c4199c7 100644
    const base::Feature* feature =
        feature_map->FindFeatureExposedToJava(feature_name);
 diff --git a/base/feature.h b/base/feature.h
-index 9053669fa63..95b6d9748a9 100644
+index 9053669fa6..95b6d9748a 100644
 --- a/base/feature.h
 +++ b/base/feature.h
 @@ -7,7 +7,9 @@
@@ -321,7 +321,7 @@ index 9053669fa63..95b6d9748a9 100644
 +
  #endif  // BASE_FEATURE_H_
 diff --git a/base/feature_list.cc b/base/feature_list.cc
-index 6ae9d0d2a48..879ae9463f6 100644
+index 6ae9d0d2a4..879ae9463f 100644
 --- a/base/feature_list.cc
 +++ b/base/feature_list.cc
 @@ -46,6 +46,31 @@
@@ -422,7 +422,7 @@ index 6ae9d0d2a48..879ae9463f6 100644
    field_trial_list_ = FieldTrialList::GetInstance();
    BuildTrialToFeaturesIndex();
 diff --git a/base/feature_list.h b/base/feature_list.h
-index c7908af8743..455198d9648 100644
+index c7908af874..455198d964 100644
 --- a/base/feature_list.h
 +++ b/base/feature_list.h
 @@ -505,6 +505,11 @@ class BASE_EXPORT FeatureList {
@@ -438,7 +438,7 @@ index c7908af8743..455198d9648 100644
    // associated field trial names, as they are used as special characters for
    // command-line serialization. This function checks that the strings are ASCII
 diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
-index 0d8a6e98a2b..5c43440bf94 100644
+index 0d8a6e98a2..5c43440bf9 100644
 --- a/chrome/browser/about_flags.cc
 +++ b/chrome/browser/about_flags.cc
 @@ -427,6 +427,10 @@ using flags_ui::kOsLinux;
@@ -474,7 +474,7 @@ index 0d8a6e98a2b..5c43440bf94 100644
  #include "chrome/browser/unexpire_flags_gen.inc"
      {switches::kEnableBenchmarking, flag_descriptions::kEnableBenchmarkingName,
 diff --git a/chrome/browser/browser_features.cc b/chrome/browser/browser_features.cc
-index a69dbb8784a..0433f89a19b 100644
+index a69dbb8784..0433f89a19 100644
 --- a/chrome/browser/browser_features.cc
 +++ b/chrome/browser/browser_features.cc
 @@ -245,4 +245,5 @@ const base::FeatureParam<base::TimeDelta>
@@ -484,7 +484,7 @@ index a69dbb8784a..0433f89a19b 100644
 +#include "cromite_flags/chrome_browser_browser_features_cc.inc"
  }  // namespace features
 diff --git a/chrome/browser/browser_features.h b/chrome/browser/browser_features.h
-index 62894e09a68..5238641d268 100644
+index 62894e09a6..5238641d26 100644
 --- a/chrome/browser/browser_features.h
 +++ b/chrome/browser/browser_features.h
 @@ -118,6 +118,7 @@ BASE_DECLARE_FEATURE(kRemovalOfIWAsFromTabCapture);
@@ -496,7 +496,7 @@ index 62894e09a68..5238641d268 100644
  
  #endif  // CHROME_BROWSER_BROWSER_FEATURES_H_
 diff --git a/chrome/browser/flags/BUILD.gn b/chrome/browser/flags/BUILD.gn
-index e31335f8be8..a0cdf843c8a 100644
+index e31335f8be..a0cdf843c8 100644
 --- a/chrome/browser/flags/BUILD.gn
 +++ b/chrome/browser/flags/BUILD.gn
 @@ -14,9 +14,14 @@ android_library("java") {
@@ -537,7 +537,7 @@ index e31335f8be8..a0cdf843c8a 100644
    sources = [ "android/java/src/org/chromium/chrome/browser/flags/CromiteNativeUtils.java" ]
    sources += [
 diff --git a/chrome/browser/flags/android/chrome_feature_list.cc b/chrome/browser/flags/android/chrome_feature_list.cc
-index ce8e87cdf83..ba61bc67316 100644
+index ce8e87cdf8..ba61bc6731 100644
 --- a/chrome/browser/flags/android/chrome_feature_list.cc
 +++ b/chrome/browser/flags/android/chrome_feature_list.cc
 @@ -1018,6 +1018,7 @@ BASE_FEATURE(kYourSavedInfoSettingsPageAndroid, base::FEATURE_ENABLED_BY_DEFAULT
@@ -549,7 +549,7 @@ index ce8e87cdf83..ba61bc67316 100644
  }  // namespace chrome
  
 diff --git a/chrome/browser/ui/ui_features.cc b/chrome/browser/ui/ui_features.cc
-index 1f958582a08..516a7137197 100644
+index 1f958582a0..516a713719 100644
 --- a/chrome/browser/ui/ui_features.cc
 +++ b/chrome/browser/ui/ui_features.cc
 @@ -589,4 +589,5 @@ BASE_FEATURE(kOSCryptAsyncAvailabilityInfoBar,
@@ -559,7 +559,7 @@ index 1f958582a08..516a7137197 100644
 +#include "cromite_flags/chrome_browser_ui_ui_features_cc.inc"
  }  // namespace features
 diff --git a/chrome/browser/unexpire_flags.cc b/chrome/browser/unexpire_flags.cc
-index 47f3f1e95f8..6ec71706e97 100644
+index 47f3f1e95f..6ec71706e9 100644
 --- a/chrome/browser/unexpire_flags.cc
 +++ b/chrome/browser/unexpire_flags.cc
 @@ -10,6 +10,7 @@
@@ -592,7 +592,7 @@ index 47f3f1e95f8..6ec71706e97 100644
  
  namespace testing {
 diff --git a/chrome/common/chrome_features.cc b/chrome/common/chrome_features.cc
-index a86fd814017..49718d417de 100644
+index a86fd81401..49718d417d 100644
 --- a/chrome/common/chrome_features.cc
 +++ b/chrome/common/chrome_features.cc
 @@ -2140,4 +2140,5 @@ BASE_FEATURE(kRelaunchWaitForParentProcess, base::FEATURE_DISABLED_BY_DEFAULT);
@@ -602,7 +602,7 @@ index a86fd814017..49718d417de 100644
 +#include "cromite_flags/chrome_common_chrome_features_cc.inc"
  }  // namespace features
 diff --git a/components/components_strings.grd b/components/components_strings.grd
-index 20e017ea86d..a1a35c53077 100644
+index 20e017ea86..a1a35c5307 100644
 --- a/components/components_strings.grd
 +++ b/components/components_strings.grd
 @@ -282,6 +282,7 @@
@@ -614,7 +614,7 @@ index 20e017ea86d..a1a35c53077 100644
        <part file="autofill_payments_strings.grdp" />
        <part file="autofill_strings.grdp" />
 diff --git a/components/content_settings/core/common/features.cc b/components/content_settings/core/common/features.cc
-index 088951616f5..c1b2c0e77ff 100644
+index 088951616f..c1b2c0e77f 100644
 --- a/components/content_settings/core/common/features.cc
 +++ b/components/content_settings/core/common/features.cc
 @@ -55,5 +55,6 @@ BASE_FEATURE(kLeftHandSideSensorActivityIndicators,
@@ -626,13 +626,13 @@ index 088951616f5..c1b2c0e77ff 100644
  }  // namespace content_settings
 diff --git a/components/cromite_components_strings_grd/placeholder.txt b/components/cromite_components_strings_grd/placeholder.txt
 new file mode 100644
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/components/cromite_components_strings_grd/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/components/offline_pages/core/offline_page_feature.cc b/components/offline_pages/core/offline_page_feature.cc
-index 620d597c9df..cd26de83fa7 100644
+index 620d597c9d..cd26de83fa 100644
 --- a/components/offline_pages/core/offline_page_feature.cc
 +++ b/components/offline_pages/core/offline_page_feature.cc
 @@ -41,4 +41,5 @@ bool IsOnTheFlyMhtmlHashComputationEnabled() {
@@ -642,7 +642,7 @@ index 620d597c9df..cd26de83fa7 100644
 +#include "cromite_flags/components_offline_pages_core_offline_page_feature_cc.inc"
  }  // namespace offline_pages
 diff --git a/components/offline_pages/core/offline_page_feature.h b/components/offline_pages/core/offline_page_feature.h
-index e97c7728d2b..152eb7c75c1 100644
+index e97c7728d2..152eb7c75c 100644
 --- a/components/offline_pages/core/offline_page_feature.h
 +++ b/components/offline_pages/core/offline_page_feature.h
 @@ -37,6 +37,7 @@ std::string GetPrefetchingOfflinePagesExperimentTag();
@@ -654,7 +654,7 @@ index e97c7728d2b..152eb7c75c1 100644
  
  #endif  // COMPONENTS_OFFLINE_PAGES_CORE_OFFLINE_PAGE_FEATURE_H_
 diff --git a/components/password_manager/core/browser/features/password_features.cc b/components/password_manager/core/browser/features/password_features.cc
-index a00844fba80..ec182a33e96 100644
+index a00844fba8..ec182a33e9 100644
 --- a/components/password_manager/core/browser/features/password_features.cc
 +++ b/components/password_manager/core/browser/features/password_features.cc
 @@ -235,4 +235,5 @@ BASE_FEATURE(kUseDetachedWidget, base::FEATURE_ENABLED_BY_DEFAULT);
@@ -664,7 +664,7 @@ index a00844fba80..ec182a33e96 100644
 +#include "cromite_flags/components_password_manager_core_browser_features_password_features_cc.inc"
  }  // namespace password_manager::features
 diff --git a/components/permissions/features.cc b/components/permissions/features.cc
-index 4af77bfbb20..4f2d407f147 100644
+index 4af77bfbb2..4f2d407f14 100644
 --- a/components/permissions/features.cc
 +++ b/components/permissions/features.cc
 @@ -128,6 +128,7 @@ BASE_FEATURE(kPermanentNotificationSubscribeInPageInfo,
@@ -676,7 +676,7 @@ index 4af77bfbb20..4f2d407f147 100644
  
  namespace feature_params {
 diff --git a/components/variations/synthetic_trials_active_group_id_provider.cc b/components/variations/synthetic_trials_active_group_id_provider.cc
-index 6d94012d584..e899901d408 100644
+index 6d94012d58..e899901d40 100644
 --- a/components/variations/synthetic_trials_active_group_id_provider.cc
 +++ b/components/variations/synthetic_trials_active_group_id_provider.cc
 @@ -27,7 +27,7 @@ SyntheticTrialsActiveGroupIdProvider::GetActiveGroupIds() {
@@ -698,7 +698,7 @@ index 6d94012d584..e899901d408 100644
  #endif  // !defined(NDEBUG)
    }
 diff --git a/components/variations/synthetic_trials_active_group_id_provider.h b/components/variations/synthetic_trials_active_group_id_provider.h
-index b4a999731d9..ef17ac66696 100644
+index b4a999731d..ef17ac6669 100644
 --- a/components/variations/synthetic_trials_active_group_id_provider.h
 +++ b/components/variations/synthetic_trials_active_group_id_provider.h
 @@ -36,7 +36,7 @@ class COMPONENT_EXPORT(VARIATIONS) SyntheticTrialsActiveGroupIdProvider
@@ -720,7 +720,7 @@ index b4a999731d9..ef17ac66696 100644
    // in chrome://version.
    std::vector<SyntheticTrialGroup> groups_;  // GUARDED_BY(lock_);
 diff --git a/components/webui/flags/flags_state.cc b/components/webui/flags/flags_state.cc
-index 1d89b275465..2adb43faa75 100644
+index 1d89b27546..2adb43faa7 100644
 --- a/components/webui/flags/flags_state.cc
 +++ b/components/webui/flags/flags_state.cc
 @@ -387,6 +387,21 @@ void FlagsState::GetSwitchesAndFeaturesFromFlags(
@@ -818,7 +818,7 @@ index 1d89b275465..2adb43faa75 100644
  
      if (entry->type == FeatureEntry::FEATURE_VALUE ||
 diff --git a/components/webui/flags/resources/app.css b/components/webui/flags/resources/app.css
-index 1e42b9bb58e..051b32f4259 100644
+index 1e42b9bb58..051b32f425 100644
 --- a/components/webui/flags/resources/app.css
 +++ b/components/webui/flags/resources/app.css
 @@ -417,3 +417,35 @@ cr-toast {
@@ -858,7 +858,7 @@ index 1e42b9bb58e..051b32f4259 100644
 +  display: none;
 +}
 diff --git a/components/webui/flags/resources/app.html.ts b/components/webui/flags/resources/app.html.ts
-index 9e16b140a9b..ac126f25051 100644
+index 9e16b140a9..ac126f2505 100644
 --- a/components/webui/flags/resources/app.html.ts
 +++ b/components/webui/flags/resources/app.html.ts
 @@ -9,6 +9,7 @@ import type {AppElement} from './app.js';
@@ -911,7 +911,7 @@ index 9e16b140a9b..ac126f25051 100644
    // clang-format on
  }
 diff --git a/components/webui/flags/resources/app.ts b/components/webui/flags/resources/app.ts
-index 0cb2ee44a7a..a2f0bd88e80 100644
+index 0cb2ee44a7..a2f0bd88e8 100644
 --- a/components/webui/flags/resources/app.ts
 +++ b/components/webui/flags/resources/app.ts
 @@ -163,6 +163,7 @@ export class FlagsAppElement extends CrLitElement {
@@ -975,7 +975,7 @@ index 0cb2ee44a7a..a2f0bd88e80 100644
        this.nonDefaultFeatures = nonDefaultFeatures;
  
 diff --git a/components/webui/flags/resources/experiment.css b/components/webui/flags/resources/experiment.css
-index 9021acd5243..7bb6656d4e2 100644
+index 9021acd524..7bb6656d4e 100644
 --- a/components/webui/flags/resources/experiment.css
 +++ b/components/webui/flags/resources/experiment.css
 @@ -26,6 +26,7 @@
@@ -1023,7 +1023,7 @@ index 9021acd5243..7bb6656d4e2 100644
    }
  
 diff --git a/components/webui/flags/resources/experiment.html.ts b/components/webui/flags/resources/experiment.html.ts
-index 24b2e47dcdd..a62dfc6f4c2 100644
+index 24b2e47dcd..a62dfc6f4c 100644
 --- a/components/webui/flags/resources/experiment.html.ts
 +++ b/components/webui/flags/resources/experiment.html.ts
 @@ -10,7 +10,8 @@ export function getHtml(this: ExperimentElement) {
@@ -1048,7 +1048,7 @@ index 24b2e47dcdd..a62dfc6f4c2 100644
            `)}
          </select>
 diff --git a/components/webui/flags/resources/experiment.ts b/components/webui/flags/resources/experiment.ts
-index 3d5db777372..c0c56a57393 100644
+index 3d5db77737..c0c56a5739 100644
 --- a/components/webui/flags/resources/experiment.ts
 +++ b/components/webui/flags/resources/experiment.ts
 @@ -85,6 +85,11 @@ export class ExperimentElement extends CrLitElement {
@@ -1079,7 +1079,7 @@ index 3d5db777372..c0c56a57393 100644
  
      return '';
 diff --git a/components/webui/flags/resources/flags_browser_proxy.ts b/components/webui/flags/resources/flags_browser_proxy.ts
-index e2d2e87b439..eab8f461f29 100644
+index e2d2e87b43..eab8f461f2 100644
 --- a/components/webui/flags/resources/flags_browser_proxy.ts
 +++ b/components/webui/flags/resources/flags_browser_proxy.ts
 @@ -16,6 +16,11 @@ export interface Feature {
@@ -1095,7 +1095,7 @@ index e2d2e87b439..eab8f461f29 100644
    origin_list_value?: string;
    string_value?: string;
 diff --git a/components/webui/version/version_handler_helper.cc b/components/webui/version/version_handler_helper.cc
-index 7a02c7dde34..944342b9db3 100644
+index 7a02c7dde3..944342b9db 100644
 --- a/components/webui/version/version_handler_helper.cc
 +++ b/components/webui/version/version_handler_helper.cc
 @@ -21,7 +21,7 @@
@@ -1117,7 +1117,7 @@ index 7a02c7dde34..944342b9db3 100644
      variations.push_back(GetActiveGroupNameAsString(group));
    }
 diff --git a/content/common/features.cc b/content/common/features.cc
-index e68d280c717..b75eb6180a0 100644
+index e68d280c71..b75eb6180a 100644
 --- a/content/common/features.cc
 +++ b/content/common/features.cc
 @@ -915,4 +915,5 @@ bool IsEnforceSameDocumentOriginInvariantsEnabled() {
@@ -1127,7 +1127,7 @@ index e68d280c717..b75eb6180a0 100644
 +#include "cromite_flags/content_common_features_cc.inc"
  }  // namespace features
 diff --git a/content/public/common/content_features.cc b/content/public/common/content_features.cc
-index 71b25d1f89c..5fca62d66f9 100644
+index 71b25d1f89..5fca62d66f 100644
 --- a/content/public/common/content_features.cc
 +++ b/content/public/common/content_features.cc
 @@ -1683,4 +1683,5 @@ bool IsFluidResizeEnabled() {
@@ -1137,7 +1137,7 @@ index 71b25d1f89c..5fca62d66f9 100644
 +#include "cromite_flags/content_public_common_content_features_cc.inc"
  }  // namespace features
 diff --git a/content/public/common/content_features.h b/content/public/common/content_features.h
-index 635c719cebb..89d59584c5a 100644
+index 635c719ceb..89d59584c5 100644
 --- a/content/public/common/content_features.h
 +++ b/content/public/common/content_features.h
 @@ -494,6 +494,7 @@ CONTENT_EXPORT bool IsPushSubscriptionChangeEventEnabled();
@@ -1150,7 +1150,7 @@ index 635c719cebb..89d59584c5a 100644
  #endif  // CONTENT_PUBLIC_COMMON_CONTENT_FEATURES_H_
 diff --git a/cromite_flags/BUILD.gn b/cromite_flags/BUILD.gn
 new file mode 100755
-index 00000000000..82b9b3e1a86
+index 0000000000..82b9b3e1a8
 --- /dev/null
 +++ b/cromite_flags/BUILD.gn
 @@ -0,0 +1,174 @@
@@ -1330,188 +1330,188 @@ index 00000000000..82b9b3e1a86
 +}
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/placeholder.txt b/cromite_flags/chrome/browser/about_flags_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/chrome/browser/browser_features_cc/placeholder.txt b/cromite_flags/chrome/browser/browser_features_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/browser_features_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/chrome/browser/browser_features_h/placeholder.txt b/cromite_flags/chrome/browser/browser_features_h/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/browser_features_h/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/placeholder.txt b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/placeholder.txt b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/chrome/browser/ui/ui_features_cc/placeholder.txt b/cromite_flags/chrome/browser/ui/ui_features_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/ui/ui_features_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/chrome/common/chrome_features_cc/placeholder.txt b/cromite_flags/chrome/common/chrome_features_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/chrome/common/chrome_features_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/chrome/common/chrome_features_h/placeholder.txt b/cromite_flags/chrome/common/chrome_features_h/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/chrome/common/chrome_features_h/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/components/content_settings/core/common/features_cc/placeholder.txt b/cromite_flags/components/content_settings/core/common/features_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/components/content_settings/core/common/features_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/components/offline_pages/core/offline_page_feature_cc/placeholder.txt b/cromite_flags/components/offline_pages/core/offline_page_feature_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/components/offline_pages/core/offline_page_feature_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/components/offline_pages/core/offline_page_feature_h/placeholder.txt b/cromite_flags/components/offline_pages/core/offline_page_feature_h/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/components/offline_pages/core/offline_page_feature_h/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/components/password_manager/core/browser/features/password_features_cc/placeholder.txt b/cromite_flags/components/password_manager/core/browser/features/password_features_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/components/password_manager/core/browser/features/password_features_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/components/permissions/features_cc/placeholder.txt b/cromite_flags/components/permissions/features_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/components/permissions/features_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/content/common/features_cc/placeholder.txt b/cromite_flags/content/common/features_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/content/common/features_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/content/public/common/content_features_cc/placeholder.txt b/cromite_flags/content/public/common/content_features_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/content/public/common/content_features_h/placeholder.txt b/cromite_flags/content/public/common/content_features_h/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_h/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/media/base/media_switches_cc/placeholder.txt b/cromite_flags/media/base/media_switches_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/media/base/media_switches_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/media/base/media_switches_h/placeholder.txt b/cromite_flags/media/base/media_switches_h/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/media/base/media_switches_h/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/net/base/features_cc/placeholder.txt b/cromite_flags/net/base/features_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/net/base/features_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/net/base/features_h/placeholder.txt b/cromite_flags/net/base/features_h/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/net/base/features_h/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/services/network/public/cpp/features_cc/placeholder.txt b/cromite_flags/services/network/public/cpp/features_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/services/network/public/cpp/features_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/services/network/public/cpp/features_h/placeholder.txt b/cromite_flags/services/network/public/cpp/features_h/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/services/network/public/cpp/features_h/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/third_party/blink/common/features_cc/placeholder.txt b/cromite_flags/third_party/blink/common/features_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/third_party/blink/common/features_h/placeholder.txt b/cromite_flags/third_party/blink/common/features_h/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_h/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/ui/base/features_cc/placeholder.txt b/cromite_flags/ui/base/features_cc/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/ui/base/features_cc/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/cromite_flags/ui/base/features_h/placeholder.txt b/cromite_flags/ui/base/features_h/placeholder.txt
 new file mode 100755
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/cromite_flags/ui/base/features_h/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/media/base/media_switches.cc b/media/base/media_switches.cc
-index af08e2530c8..a950c45fce9 100644
+index af08e2530c..a950c45fce 100644
 --- a/media/base/media_switches.cc
 +++ b/media/base/media_switches.cc
 @@ -2042,4 +2042,5 @@ bool IsMacAVFoundationPlaybackSupported(const AudioParameters& params) {
@@ -1521,7 +1521,7 @@ index af08e2530c8..a950c45fce9 100644
 +#include "cromite_flags/media_base_media_switches_cc.inc"
  }  // namespace media
 diff --git a/media/base/media_switches.h b/media/base/media_switches.h
-index 594f0e80678..0f0b3d4e1f5 100644
+index 594f0e8067..0f0b3d4e1f 100644
 --- a/media/base/media_switches.h
 +++ b/media/base/media_switches.h
 @@ -633,5 +633,6 @@ MEDIA_EXPORT base::TimeDelta GetAecAddedDelay();
@@ -1532,7 +1532,7 @@ index 594f0e80678..0f0b3d4e1f5 100644
  
  #endif  // MEDIA_BASE_MEDIA_SWITCHES_H_
 diff --git a/net/base/features.cc b/net/base/features.cc
-index 59c6ac9e179..543be408546 100644
+index 59c6ac9e17..543be40854 100644
 --- a/net/base/features.cc
 +++ b/net/base/features.cc
 @@ -1086,5 +1086,6 @@ BASE_FEATURE_PARAM(int,
@@ -1543,7 +1543,7 @@ index 59c6ac9e179..543be408546 100644
  }  // namespace net::features
  
 diff --git a/net/base/features.h b/net/base/features.h
-index 377ae9e8fc3..729d6a63437 100644
+index 377ae9e8fc..729d6a6343 100644
 --- a/net/base/features.h
 +++ b/net/base/features.h
 @@ -1075,6 +1075,7 @@ NET_EXPORT BASE_DECLARE_FEATURE(kEnableWindowsTcpLoopbackFastFail);
@@ -1555,7 +1555,7 @@ index 377ae9e8fc3..729d6a63437 100644
  
  #endif  // NET_BASE_FEATURES_H_
 diff --git a/services/network/public/cpp/features.cc b/services/network/public/cpp/features.cc
-index df3dc88555b..7694362310b 100644
+index df3dc88555..7694362310 100644
 --- a/services/network/public/cpp/features.cc
 +++ b/services/network/public/cpp/features.cc
 @@ -560,4 +560,5 @@ BASE_FEATURE(kEnforceIsolatedWorldOriginLock, base::FEATURE_ENABLED_BY_DEFAULT);
@@ -1565,7 +1565,7 @@ index df3dc88555b..7694362310b 100644
 +#include "cromite_flags/services_network_public_cpp_features_cc.inc"
  }  // namespace network::features
 diff --git a/services/network/public/cpp/features.h b/services/network/public/cpp/features.h
-index 895d23fce3e..1c77e23e58d 100644
+index 895d23fce3..1c77e23e58 100644
 --- a/services/network/public/cpp/features.h
 +++ b/services/network/public/cpp/features.h
 @@ -401,6 +401,7 @@ BASE_DECLARE_FEATURE(kEnforceIsolatedWorldOriginLock);
@@ -1577,7 +1577,7 @@ index 895d23fce3e..1c77e23e58d 100644
  
  #endif  // SERVICES_NETWORK_PUBLIC_CPP_FEATURES_H_
 diff --git a/third_party/blink/common/features.cc b/third_party/blink/common/features.cc
-index 6dca1ba06fd..8133ed5a78f 100644
+index 6dca1ba06f..8133ed5a78 100644
 --- a/third_party/blink/common/features.cc
 +++ b/third_party/blink/common/features.cc
 @@ -2559,4 +2559,5 @@ bool IsXrDevice() {
@@ -1587,7 +1587,7 @@ index 6dca1ba06fd..8133ed5a78f 100644
 +#include "cromite_flags/third_party_blink_common_features_cc.inc"
  }  // namespace blink::features
 diff --git a/third_party/blink/public/common/features.h b/third_party/blink/public/common/features.h
-index c5a2caebba7..d612b505b88 100644
+index c5a2caebba..d612b505b8 100644
 --- a/third_party/blink/public/common/features.h
 +++ b/third_party/blink/public/common/features.h
 @@ -1912,6 +1912,7 @@ BLINK_COMMON_EXPORT bool IsXrDevice();
@@ -1599,7 +1599,7 @@ index c5a2caebba7..d612b505b88 100644
  }  // namespace blink
  
 diff --git a/ui/base/ui_base_features.cc b/ui/base/ui_base_features.cc
-index 3ee35e743d8..a10856c4490 100644
+index 3ee35e743d..a10856c449 100644
 --- a/ui/base/ui_base_features.cc
 +++ b/ui/base/ui_base_features.cc
 @@ -566,4 +566,5 @@ bool IsColorIdCssStyleSheetOptimizationEnabled() {
@@ -1609,7 +1609,7 @@ index 3ee35e743d8..a10856c4490 100644
 +#include "cromite_flags/ui_base_features_cc.inc"
  }  // namespace features
 diff --git a/ui/base/ui_base_features.h b/ui/base/ui_base_features.h
-index da93c9ce930..40a7a819d7a 100644
+index da93c9ce93..40a7a819d7 100644
 --- a/ui/base/ui_base_features.h
 +++ b/ui/base/ui_base_features.h
 @@ -386,6 +386,7 @@ bool IsWebUIRoundedIconsEnabled();

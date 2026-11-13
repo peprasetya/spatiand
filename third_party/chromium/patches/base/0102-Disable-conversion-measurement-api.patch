@@ -30,7 +30,7 @@ FILE:Disable-conversion-measurement-api.patch
  create mode 100644 cromite_flags/third_party/blink/common/features_cc/Disable-conversion-measurement-api.inc
 
 diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page_index.html b/chrome/browser/resources/settings/privacy_page/privacy_page_index.html
-index 7e32733631c..c0e488b4d3e 100644
+index 7e32733631..c0e488b4d3 100644
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page_index.html
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page_index.html
 @@ -114,15 +114,6 @@
@@ -50,7 +50,7 @@ index 7e32733631c..c0e488b4d3e 100644
        routes_.SITE_SETTINGS_AUTO_PICTURE_IN_PICTURE, currentRoute,
        inSearchMode)]]" update-when-false>
 diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
-index 257eee5f0e7..75f95f35d55 100644
+index 257eee5f0e..75f95f35d5 100644
 --- a/chrome/browser/resources/settings/route.ts
 +++ b/chrome/browser/resources/settings/route.ts
 @@ -63,7 +63,7 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
@@ -63,7 +63,7 @@ index 257eee5f0e7..75f95f35d55 100644
        r.SITE_SETTINGS.createChild('backgroundSync');
    r.SITE_SETTINGS_CAMERA = r.SITE_SETTINGS.createChild('camera');
 diff --git a/chrome/browser/resources/settings/site_settings/site_settings_page.ts b/chrome/browser/resources/settings/site_settings/site_settings_page.ts
-index a0a088f19dc..8bed6495847 100644
+index a0a088f19d..8bed649584 100644
 --- a/chrome/browser/resources/settings/site_settings/site_settings_page.ts
 +++ b/chrome/browser/resources/settings/site_settings/site_settings_page.ts
 @@ -67,6 +67,7 @@ function getCategoryItemMap(): Map<ContentSettingsTypes, CategoryListItem> {
@@ -75,7 +75,7 @@ index a0a088f19dc..8bed6495847 100644
        enabledLabel: 'siteSettingsAntiAbuseEnabledSubLabel',
        disabledLabel: 'siteSettingsAntiAbuseDisabledSubLabel',
 diff --git a/components/attribution_reporting/features.cc b/components/attribution_reporting/features.cc
-index b199e7682ad..a5929da4e4b 100644
+index b199e7682a..a5929da4e4 100644
 --- a/components/attribution_reporting/features.cc
 +++ b/components/attribution_reporting/features.cc
 @@ -11,4 +11,5 @@ namespace attribution_reporting::features {
@@ -85,7 +85,7 @@ index b199e7682ad..a5929da4e4b 100644
 +SET_CROMITE_FEATURE_DISABLED(kConversionMeasurement);
  }  // namespace attribution_reporting::features
 diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
-index 9ef0c605b03..5aa23a8b92e 100644
+index 9ef0c605b0..5aa23a8b92 100644
 --- a/components/content_settings/core/browser/content_settings_registry.cc
 +++ b/components/content_settings/core/browser/content_settings_registry.cc
 @@ -629,7 +629,7 @@ void ContentSettingsRegistry::Init() {
@@ -98,7 +98,7 @@ index 9ef0c605b03..5aa23a8b92e 100644
             /*allowlisted_primary_schemes=*/{},
             /*valid_settings=*/{CONTENT_SETTING_ALLOW, CONTENT_SETTING_BLOCK},
 diff --git a/components/embedder_support/origin_trials/features.cc b/components/embedder_support/origin_trials/features.cc
-index df26d9e8817..89237d70dcf 100644
+index df26d9e881..89237d70dc 100644
 --- a/components/embedder_support/origin_trials/features.cc
 +++ b/components/embedder_support/origin_trials/features.cc
 @@ -15,4 +15,5 @@ namespace embedder_support {
@@ -108,7 +108,7 @@ index df26d9e8817..89237d70dcf 100644
 +SET_CROMITE_FEATURE_DISABLED(kOriginTrialsSampleAPIThirdPartyAlternativeUsage);
  }  // namespace embedder_support
 diff --git a/content/browser/renderer_host/render_frame_host_impl.cc b/content/browser/renderer_host/render_frame_host_impl.cc
-index fbc3875616a..7644822472b 100644
+index fbc3875616..7644822472 100644
 --- a/content/browser/renderer_host/render_frame_host_impl.cc
 +++ b/content/browser/renderer_host/render_frame_host_impl.cc
 @@ -15156,6 +15156,16 @@ void RenderFrameHostImpl::BindTrustTokenQueryAnswerer(
@@ -130,21 +130,21 @@ index fbc3875616a..7644822472b 100644
    // bind request "is coming from a secure context"---but there's currently no
 diff --git a/cromite_flags/services/network/public/cpp/features_cc/Disable-conversion-measurement-api.inc b/cromite_flags/services/network/public/cpp/features_cc/Disable-conversion-measurement-api.inc
 new file mode 100644
-index 00000000000..6aad184154a
+index 0000000000..6aad184154
 --- /dev/null
 +++ b/cromite_flags/services/network/public/cpp/features_cc/Disable-conversion-measurement-api.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_DISABLED(kBrowsingTopics);
 diff --git a/cromite_flags/third_party/blink/common/features_cc/Disable-conversion-measurement-api.inc b/cromite_flags/third_party/blink/common/features_cc/Disable-conversion-measurement-api.inc
 new file mode 100644
-index 00000000000..d6c1874a15f
+index 0000000000..d6c1874a15
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_cc/Disable-conversion-measurement-api.inc
 @@ -0,0 +1,2 @@
 +SET_CROMITE_FEATURE_DISABLED(kFledge);
 +SET_CROMITE_FEATURE_DISABLED(kAllowURNsInIframes);
 diff --git a/services/network/network_context.cc b/services/network/network_context.cc
-index 6b871193fc1..4e317912e2a 100644
+index 6b871193fc..4e317912e2 100644
 --- a/services/network/network_context.cc
 +++ b/services/network/network_context.cc
 @@ -1406,6 +1406,10 @@ void NetworkContext::ClearTrustTokenData(mojom::ClearDataFilterPtr filter,
@@ -186,7 +186,7 @@ index 6b871193fc1..4e317912e2a 100644
    std::unique_ptr<net::StaticHttpUserAgentSettings> user_agent_settings =
        std::make_unique<net::StaticHttpUserAgentSettings>(
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 83e3fc84d2f..4eb9428c435 100644
+index 83e3fc84d2..4eb9428c43 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -773,8 +773,8 @@
@@ -225,7 +225,7 @@ index 83e3fc84d2f..4eb9428c435 100644
      // This feature allows touch dragging and a context menu to occur
      // simultaneously, with the assumption that the menu is non-modal.  Without
 diff --git a/ui/events/android/motion_event_android.cc b/ui/events/android/motion_event_android.cc
-index 4931c35def4..1a90972db30 100644
+index 4931c35def..1a90972db3 100644
 --- a/ui/events/android/motion_event_android.cc
 +++ b/ui/events/android/motion_event_android.cc
 @@ -30,8 +30,12 @@ namespace ui {

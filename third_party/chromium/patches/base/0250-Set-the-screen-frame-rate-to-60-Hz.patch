@@ -30,7 +30,7 @@ FILE:Set-the-screen-frame-rate-to-60-Hz.patch
  create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Set-the-screen-frame-rate-to-60-Hz.inc
 
 diff --git a/cc/base/features.cc b/cc/base/features.cc
-index 3bbdef63aa5..f535f6df225 100644
+index 3bbdef63aa..f535f6df22 100644
 --- a/cc/base/features.cc
 +++ b/cc/base/features.cc
 @@ -154,6 +154,7 @@ BASE_FEATURE(kInitImageDecodeLastUseTime, base::FEATURE_ENABLED_BY_DEFAULT);
@@ -57,7 +57,7 @@ index 3bbdef63aa5..f535f6df225 100644
  #if BUILDFLAG(IS_ANDROID)
  BASE_FEATURE(kThrottleMainFrameTo60HzWebView,
 diff --git a/cc/scheduler/scheduler_state_machine.cc b/cc/scheduler/scheduler_state_machine.cc
-index 96dfe9dd452..e052d065759 100644
+index 96dfe9dd45..e052d06575 100644
 --- a/cc/scheduler/scheduler_state_machine.cc
 +++ b/cc/scheduler/scheduler_state_machine.cc
 @@ -37,11 +37,7 @@ constexpr float kFrameThrottlingSlackFactor = 0.9;
@@ -109,7 +109,7 @@ index 96dfe9dd452..e052d065759 100644
      return base::TimeDelta();
    } else {
 diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
-index acc36add26c..904b2bbe50e 100644
+index acc36add26..904b2bbe50 100644
 --- a/chrome/browser/about_flags.cc
 +++ b/chrome/browser/about_flags.cc
 @@ -11344,9 +11344,9 @@ const FeatureEntry kFeatureEntries[] = {
@@ -126,7 +126,7 @@ index acc36add26c..904b2bbe50e 100644
       flag_descriptions::kThrottleRepeatedNoDamageFramesName,
       flag_descriptions::kThrottleRepeatedNoDamageFramesDescription, kOsAll,
 diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
-index e819bcd2dcd..eebb28fc854 100644
+index e819bcd2dc..eebb28fc85 100644
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
 @@ -56,6 +56,7 @@
@@ -162,7 +162,7 @@ index e819bcd2dcd..eebb28fc854 100644
      content::RenderProcessHost* process =
          content::RenderProcessHost::FromID(child_process_id);
 diff --git a/components/viz/common/features.cc b/components/viz/common/features.cc
-index e424e6dba57..a8392e32084 100644
+index e424e6dba5..a8392e3208 100644
 --- a/components/viz/common/features.cc
 +++ b/components/viz/common/features.cc
 @@ -22,6 +22,7 @@
@@ -183,7 +183,7 @@ index e424e6dba57..a8392e32084 100644
  }
  
 diff --git a/components/viz/common/frame_sinks/begin_frame_source.cc b/components/viz/common/frame_sinks/begin_frame_source.cc
-index 9b5c568c31a..da61a4065ed 100644
+index 9b5c568c31..da61a4065e 100644
 --- a/components/viz/common/frame_sinks/begin_frame_source.cc
 +++ b/components/viz/common/frame_sinks/begin_frame_source.cc
 @@ -24,6 +24,7 @@
@@ -222,7 +222,7 @@ index 9b5c568c31a..da61a4065ed 100644
        BEGINFRAME_FROM_HERE, source_id(), next_sequence_number_, frame_time,
        frame_time + interval, interval, BeginFrameArgs::NORMAL, vsync_interval_);
 diff --git a/components/viz/common/frame_sinks/begin_frame_source.h b/components/viz/common/frame_sinks/begin_frame_source.h
-index 6c80d236d73..a2e934baaf8 100644
+index 6c80d236d7..a2e934baaf 100644
 --- a/components/viz/common/frame_sinks/begin_frame_source.h
 +++ b/components/viz/common/frame_sinks/begin_frame_source.h
 @@ -372,6 +372,7 @@ class VIZ_COMMON_EXPORT BackToBackBeginFrameSource
@@ -234,7 +234,7 @@ index 6c80d236d73..a2e934baaf8 100644
    base::WeakPtrFactory<BackToBackBeginFrameSource> weak_factory_{this};
  };
 diff --git a/components/viz/common/frame_sinks/delay_based_time_source.cc b/components/viz/common/frame_sinks/delay_based_time_source.cc
-index 19b7132b9fc..b24c660f562 100644
+index 19b7132b9f..b24c660f56 100644
 --- a/components/viz/common/frame_sinks/delay_based_time_source.cc
 +++ b/components/viz/common/frame_sinks/delay_based_time_source.cc
 @@ -165,7 +165,7 @@ void DelayBasedTimeSource::PostNextTickTask(base::TimeTicks now) {
@@ -247,7 +247,7 @@ index 19b7132b9fc..b24c660f562 100644
  
      DCHECK_GT(next_tick_time_, now);
 diff --git a/components/viz/service/display/display.cc b/components/viz/service/display/display.cc
-index 57fee59c6d5..30a052fa24f 100644
+index 57fee59c6d..30a052fa24 100644
 --- a/components/viz/service/display/display.cc
 +++ b/components/viz/service/display/display.cc
 @@ -34,6 +34,7 @@
@@ -283,7 +283,7 @@ index 57fee59c6d5..30a052fa24f 100644
    }
    // Can be nullptr in unittests.
 diff --git a/components/viz/service/frame_sinks/external_begin_frame_source_android.cc b/components/viz/service/frame_sinks/external_begin_frame_source_android.cc
-index 472fc190167..58ec019c1fc 100644
+index 472fc19016..58ec019c1f 100644
 --- a/components/viz/service/frame_sinks/external_begin_frame_source_android.cc
 +++ b/components/viz/service/frame_sinks/external_begin_frame_source_android.cc
 @@ -25,6 +25,7 @@
@@ -321,7 +321,7 @@ index 472fc190167..58ec019c1fc 100644
    // really pick a deadline from `possible_deadlines`. However some code
    // still assume the deadline is a multiple of interval from frame time.
 diff --git a/components/viz/service/frame_sinks/external_begin_frame_source_android.h b/components/viz/service/frame_sinks/external_begin_frame_source_android.h
-index cfb17ab878a..eb13cb88ec9 100644
+index cfb17ab878..eb13cb88ec 100644
 --- a/components/viz/service/frame_sinks/external_begin_frame_source_android.h
 +++ b/components/viz/service/frame_sinks/external_begin_frame_source_android.h
 @@ -55,6 +55,8 @@ class VIZ_SERVICE_EXPORT ExternalBeginFrameSourceAndroid
@@ -334,7 +334,7 @@ index cfb17ab878a..eb13cb88ec9 100644
  
  }  // namespace viz
 diff --git a/components/viz/service/frame_sinks/root_compositor_frame_sink_impl.cc b/components/viz/service/frame_sinks/root_compositor_frame_sink_impl.cc
-index a7b06724021..d1410894d36 100644
+index a7b0672402..d1410894d3 100644
 --- a/components/viz/service/frame_sinks/root_compositor_frame_sink_impl.cc
 +++ b/components/viz/service/frame_sinks/root_compositor_frame_sink_impl.cc
 @@ -21,6 +21,7 @@
@@ -370,7 +370,7 @@ index a7b06724021..d1410894d36 100644
    }
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Set-the-screen-frame-rate-to-60-Hz.inc b/cromite_flags/chrome/browser/about_flags_cc/Set-the-screen-frame-rate-to-60-Hz.inc
 new file mode 100644
-index 00000000000..2341c524ab8
+index 0000000000..2341c524ab
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Set-the-screen-frame-rate-to-60-Hz.inc
 @@ -0,0 +1,7 @@
@@ -382,7 +382,7 @@ index 00000000000..2341c524ab8
 +
 +#endif
 diff --git a/third_party/blink/renderer/core/animation/animation_clock.cc b/third_party/blink/renderer/core/animation/animation_clock.cc
-index 47b9d05e8b0..cd6bb8e49f2 100644
+index 47b9d05e8b..cd6bb8e49f 100644
 --- a/third_party/blink/renderer/core/animation/animation_clock.cc
 +++ b/third_party/blink/renderer/core/animation/animation_clock.cc
 @@ -29,6 +29,7 @@
@@ -411,7 +411,7 @@ index 47b9d05e8b0..cd6bb8e49f2 100644
    }
    UpdateTime(new_time);
 diff --git a/third_party/blink/renderer/core/view_transition/view_transition.cc b/third_party/blink/renderer/core/view_transition/view_transition.cc
-index 4a32925a981..ef89b693767 100644
+index 4a32925a98..ef89b69376 100644
 --- a/third_party/blink/renderer/core/view_transition/view_transition.cc
 +++ b/third_party/blink/renderer/core/view_transition/view_transition.cc
 @@ -1311,7 +1311,9 @@ void ViewTransition::WillCommitCompositorFrame() {

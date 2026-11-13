@@ -16,7 +16,7 @@ software where there is no GPU decoder for it, and Dolby Digital (Plus).
  6 files changed, 55 insertions(+), 33 deletions(-)
 
 diff --git a/build/linux/unbundle/ffmpeg.gn b/build/linux/unbundle/ffmpeg.gn
-index c0f0e21620c..e29b9a7e37d 100644
+index c0f0e21620..e29b9a7e37 100644
 --- a/build/linux/unbundle/ffmpeg.gn
 +++ b/build/linux/unbundle/ffmpeg.gn
 @@ -2,15 +2,30 @@
@@ -71,7 +71,7 @@ index c0f0e21620c..e29b9a7e37d 100644
 +  all_dependent_configs = [ ":system_ffmpeg_link" ]
  }
 diff --git a/media/base/supported_types.cc b/media/base/supported_types.cc
-index efc7246c8cd..f78f0937960 100644
+index efc7246c8c..f78f093796 100644
 --- a/media/base/supported_types.cc
 +++ b/media/base/supported_types.cc
 @@ -234,17 +234,8 @@ bool IsDecoderHevcProfileSupported(const VideoType& type) {
@@ -94,7 +94,7 @@ index efc7246c8cd..f78f0937960 100644
    return false;
  #endif  // BUILDFLAG(ENABLE_PLATFORM_HEVC)
 diff --git a/media/ffmpeg/ffmpeg_common.cc b/media/ffmpeg/ffmpeg_common.cc
-index e4c443001db..b05f744b7a0 100644
+index e4c443001d..b05f744b7a 100644
 --- a/media/ffmpeg/ffmpeg_common.cc
 +++ b/media/ffmpeg/ffmpeg_common.cc
 @@ -65,7 +65,8 @@ VideoColorSpace GetGuessedColorSpace(const VideoColorSpace& color_space) {
@@ -133,7 +133,7 @@ index e4c443001db..b05f744b7a0 100644
  
    return kAllowedAudioCodecs.data();
 diff --git a/media/filters/ffmpeg_demuxer.cc b/media/filters/ffmpeg_demuxer.cc
-index 1f4bdee44d6..31c116111d6 100644
+index 1f4bdee44d..31c116111d 100644
 --- a/media/filters/ffmpeg_demuxer.cc
 +++ b/media/filters/ffmpeg_demuxer.cc
 @@ -56,6 +56,11 @@
@@ -201,7 +201,7 @@ index 1f4bdee44d6..31c116111d6 100644
        stream->discard = AVDISCARD_ALL;
        continue;
 diff --git a/media/filters/ffmpeg_glue.cc b/media/filters/ffmpeg_glue.cc
-index fcacae3add9..73aeffcacdf 100644
+index fcacae3add..73aeffcacd 100644
 --- a/media/filters/ffmpeg_glue.cc
 +++ b/media/filters/ffmpeg_glue.cc
 @@ -122,7 +122,9 @@ FFmpegGlue::FFmpegGlue(FFmpegURLProtocol* protocol) {
@@ -215,7 +215,7 @@ index fcacae3add9..73aeffcacdf 100644
    // Ensures format parsing errors will bail out. From an audit on 11/2017, all
    // instances were real failures. Solves bugs like http://crbug.com/710791.
 diff --git a/media/filters/ffmpeg_video_decoder.cc b/media/filters/ffmpeg_video_decoder.cc
-index b13e1aabd62..f754854f55e 100644
+index b13e1aabd6..f754854f55 100644
 --- a/media/filters/ffmpeg_video_decoder.cc
 +++ b/media/filters/ffmpeg_video_decoder.cc
 @@ -74,7 +74,6 @@ static int GetFFmpegVideoDecoderThreadCount(const VideoDecoderConfig& config) {

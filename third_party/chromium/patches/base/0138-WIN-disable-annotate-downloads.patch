@@ -9,7 +9,7 @@ FILE:WIN-disable-annotate-downloads.patch
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/components/download/internal/common/download_file_impl.cc b/components/download/internal/common/download_file_impl.cc
-index feac44591de..319d882d49f 100644
+index feac44591d..319d882d49 100644
 --- a/components/download/internal/common/download_file_impl.cc
 +++ b/components/download/internal/common/download_file_impl.cc
 @@ -418,8 +418,8 @@ void DownloadFileImpl::RenameAndAnnotate(

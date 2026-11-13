@@ -20,7 +20,7 @@ Mac in the room (2026-11-12); the code is every platform's.
  2 files changed, 26 insertions(+), 4 deletions(-)
 
 diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
-index 6b652423307..92e00d7c66c 100644
+index 6b65242330..92e00d7c66 100644
 --- a/content/browser/web_contents/web_contents_view_aura.cc
 +++ b/content/browser/web_contents/web_contents_view_aura.cc
 @@ -1507,10 +1507,16 @@ void WebContentsViewAura::OnMouseEvent(ui::MouseEvent* event) {
@@ -95,7 +95,7 @@ index 6b652423307..92e00d7c66c 100644
    }
  
 diff --git a/content/browser/web_contents/web_contents_view_aura.h b/content/browser/web_contents/web_contents_view_aura.h
-index f9000188dd9..7c8102878e1 100644
+index f9000188dd..7c8102878e 100644
 --- a/content/browser/web_contents/web_contents_view_aura.h
 +++ b/content/browser/web_contents/web_contents_view_aura.h
 @@ -340,7 +340,8 @@ class CONTENT_EXPORT WebContentsViewAura

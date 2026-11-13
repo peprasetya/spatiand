@@ -13,7 +13,7 @@ FILE:Override-the-MV2-deprecation.patch
  2 files changed, 1 insertion(+), 7 deletions(-)
 
 diff --git a/extensions/browser/manifest_v2_handler.cc b/extensions/browser/manifest_v2_handler.cc
-index 5841d3dfbc8..5e6b5c88e27 100644
+index 5841d3dfbc..5e6b5c88e2 100644
 --- a/extensions/browser/manifest_v2_handler.cc
 +++ b/extensions/browser/manifest_v2_handler.cc
 @@ -32,7 +32,7 @@ namespace extensions {
@@ -26,7 +26,7 @@ index 5841d3dfbc8..5e6b5c88e27 100644
  // Returns the suffix to use for histograms related to the manifest location
  // grouping.
 diff --git a/extensions/common/extension.cc b/extensions/common/extension.cc
-index 28a3cac3756..538a937aca0 100644
+index 28a3cac375..538a937aca 100644
 --- a/extensions/common/extension.cc
 +++ b/extensions/common/extension.cc
 @@ -97,12 +97,6 @@ bool IsManifestSupported(int manifest_version,

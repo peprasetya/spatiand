@@ -43,7 +43,7 @@ FILE:Android-fonts-fingerprinting-mitigation.patch
  create mode 100644 cromite_flags/third_party/blink/common/features_h/Android-fonts-fingerprinting-mitigation.inc
 
 diff --git a/build/config/freetype/freetype.gni b/build/config/freetype/freetype.gni
-index dd89ad075d9..5399e4e0878 100644
+index dd89ad075d..5399e4e087 100644
 --- a/build/config/freetype/freetype.gni
 +++ b/build/config/freetype/freetype.gni
 @@ -24,5 +24,5 @@ declare_args() {
@@ -54,7 +54,7 @@ index dd89ad075d9..5399e4e0878 100644
 +  enable_freetype = is_android || (!is_ios && !is_castos && !is_fuchsia)
  }
 diff --git a/chrome/browser/component_updater/registration.cc b/chrome/browser/component_updater/registration.cc
-index 4b1d30e6c8e..8a3a902a898 100644
+index 4b1d30e6c8..8a3a902a89 100644
 --- a/chrome/browser/component_updater/registration.cc
 +++ b/chrome/browser/component_updater/registration.cc
 @@ -109,6 +109,11 @@
@@ -82,7 +82,7 @@ index 4b1d30e6c8e..8a3a902a898 100644
    if ((true)) return;
  
 diff --git a/chrome/browser/ui/prefs/prefs_tab_helper.cc b/chrome/browser/ui/prefs/prefs_tab_helper.cc
-index 5421cb6e7b4..7816a968379 100644
+index 5421cb6e7b..7816a96837 100644
 --- a/chrome/browser/ui/prefs/prefs_tab_helper.cc
 +++ b/chrome/browser/ui/prefs/prefs_tab_helper.cc
 @@ -65,8 +65,7 @@
@@ -109,7 +109,7 @@ index 5421cb6e7b4..7816a968379 100644
        registry->RegisterStringPref(pref.pref_name, value);
        fonts_with_defaults.insert(pref.pref_name);
 diff --git a/chrome/renderer/BUILD.gn b/chrome/renderer/BUILD.gn
-index 14b6da895ed..f63d6d2a47e 100644
+index 14b6da895e..f63d6d2a47 100644
 --- a/chrome/renderer/BUILD.gn
 +++ b/chrome/renderer/BUILD.gn
 @@ -271,6 +271,10 @@ static_library("renderer") {
@@ -124,7 +124,7 @@ index 14b6da895ed..f63d6d2a47e 100644
      deps += [
        "//components/pdf/renderer",
 diff --git a/components/component_updater/installer_policies/BUILD.gn b/components/component_updater/installer_policies/BUILD.gn
-index 645f1457832..1454a7012af 100644
+index 645f145783..1454a7012a 100644
 --- a/components/component_updater/installer_policies/BUILD.gn
 +++ b/components/component_updater/installer_policies/BUILD.gn
 @@ -30,6 +30,13 @@ static_library("installer_policies_no_content_deps") {
@@ -157,7 +157,7 @@ index 645f1457832..1454a7012af 100644
      "//base",
 diff --git a/components/component_updater/installer_policies/fonts_pack_component_installer.cc b/components/component_updater/installer_policies/fonts_pack_component_installer.cc
 new file mode 100644
-index 00000000000..14f89c3d7bb
+index 0000000000..14f89c3d7b
 --- /dev/null
 +++ b/components/component_updater/installer_policies/fonts_pack_component_installer.cc
 @@ -0,0 +1,96 @@
@@ -259,7 +259,7 @@ index 00000000000..14f89c3d7bb
 +}  // namespace component_updater
 diff --git a/components/component_updater/installer_policies/fonts_pack_component_installer.h b/components/component_updater/installer_policies/fonts_pack_component_installer.h
 new file mode 100644
-index 00000000000..c892ecf2746
+index 0000000000..c892ecf274
 --- /dev/null
 +++ b/components/component_updater/installer_policies/fonts_pack_component_installer.h
 @@ -0,0 +1,60 @@
@@ -324,7 +324,7 @@ index 00000000000..c892ecf2746
 +
 +#endif  // COMPONENTS_COMPONENT_UPDATER_INSTALLER_POLICIES_FONTS_PACK_COMPONENT_INSTALLER_H_
 diff --git a/components/services/font/BUILD.gn b/components/services/font/BUILD.gn
-index 91cf027212d..ce6218af48c 100644
+index 91cf027212..ce6218af48 100644
 --- a/components/services/font/BUILD.gn
 +++ b/components/services/font/BUILD.gn
 @@ -23,6 +23,16 @@ source_set("lib") {
@@ -345,7 +345,7 @@ index 91cf027212d..ce6218af48c 100644
  
    if (enable_pdf && (is_linux || is_chromeos)) {
 diff --git a/components/services/font/font_service_app.cc b/components/services/font/font_service_app.cc
-index 230acc6465f..7bd7059370c 100644
+index 230acc6465..7bd7059370 100644
 --- a/components/services/font/font_service_app.cc
 +++ b/components/services/font/font_service_app.cc
 @@ -4,7 +4,9 @@
@@ -458,7 +458,7 @@ index 230acc6465f..7bd7059370c 100644
  
  #if BUILDFLAG(ENABLE_PDF)
 diff --git a/components/services/font/font_service_app.h b/components/services/font/font_service_app.h
-index 12568201559..d3282deb2a2 100644
+index 1256820155..d3282deb2a 100644
 --- a/components/services/font/font_service_app.h
 +++ b/components/services/font/font_service_app.h
 @@ -36,6 +36,7 @@ class FontServiceApp : public mojom::FontService {
@@ -470,7 +470,7 @@ index 12568201559..d3282deb2a2 100644
        uint32_t character,
        const std::string& locale,
 diff --git a/components/services/font/public/cpp/font_loader.cc b/components/services/font/public/cpp/font_loader.cc
-index 5963a740725..2eedd719e47 100644
+index 5963a74072..2eedd719e4 100644
 --- a/components/services/font/public/cpp/font_loader.cc
 +++ b/components/services/font/public/cpp/font_loader.cc
 @@ -66,6 +66,15 @@ SkStreamAsset* FontLoader::openStream(const FontIdentity& identity) {
@@ -490,7 +490,7 @@ index 5963a740725..2eedd719e47 100644
                                             sk_sp<SkFontMgr> mgr) {
    TRACE_EVENT0("fonts", "FontServiceThread::makeTypeface");
 diff --git a/components/services/font/public/cpp/font_loader.h b/components/services/font/public/cpp/font_loader.h
-index 08d9cc6c49a..d2e01f92a34 100644
+index 08d9cc6c49..d2e01f92a3 100644
 --- a/components/services/font/public/cpp/font_loader.h
 +++ b/components/services/font/public/cpp/font_loader.h
 @@ -55,6 +55,7 @@ class FontLoader : public SkFontConfigInterface {
@@ -502,7 +502,7 @@ index 08d9cc6c49a..d2e01f92a34 100644
                                   sk_sp<SkFontMgr> mgr) override
        LOCKS_EXCLUDED(typeface_cache_lock_);
 diff --git a/components/services/font/public/cpp/font_service_thread.cc b/components/services/font/public/cpp/font_service_thread.cc
-index 170aee80a4c..c817a5b3269 100644
+index 170aee80a4..c817a5b326 100644
 --- a/components/services/font/public/cpp/font_service_thread.cc
 +++ b/components/services/font/public/cpp/font_service_thread.cc
 @@ -247,6 +247,54 @@ void FontServiceThread::OpenStreamImpl(base::WaitableEvent* done_event,
@@ -561,7 +561,7 @@ index 170aee80a4c..c817a5b3269 100644
                                               base::File* output_file,
                                               base::File file) {
 diff --git a/components/services/font/public/cpp/font_service_thread.h b/components/services/font/public/cpp/font_service_thread.h
-index b9d772211fe..170119da733 100644
+index b9d772211f..170119da73 100644
 --- a/components/services/font/public/cpp/font_service_thread.h
 +++ b/components/services/font/public/cpp/font_service_thread.h
 @@ -57,6 +57,8 @@ class FontServiceThread : public base::RefCountedThreadSafe<FontServiceThread> {
@@ -584,7 +584,7 @@ index b9d772211fe..170119da733 100644
                              base::File* output_file,
                              base::File file);
 diff --git a/components/services/font/public/mojom/font_service.mojom b/components/services/font/public/mojom/font_service.mojom
-index bcd4838ee92..73614008b7b 100644
+index bcd4838ee9..73614008b7 100644
 --- a/components/services/font/public/mojom/font_service.mojom
 +++ b/components/services/font/public/mojom/font_service.mojom
 @@ -66,6 +66,8 @@ interface FontService {
@@ -597,7 +597,7 @@ index bcd4838ee92..73614008b7b 100644
    // and locale. If no fallback font can be found, returns a null identity.
    FallbackFontForCharacter(uint32 character, string locale)
 diff --git a/content/browser/BUILD.gn b/content/browser/BUILD.gn
-index 402cebb230f..4a38ed3525e 100644
+index 402cebb230..4a38ed3525 100644
 --- a/content/browser/BUILD.gn
 +++ b/content/browser/BUILD.gn
 @@ -2472,6 +2472,17 @@ source_set("browser") {
@@ -633,7 +633,7 @@ index 402cebb230f..4a38ed3525e 100644
      sources += [ "media/oop_video_decoder_factory.cc" ]
      deps += [ "//media/mojo/mojom" ]
 diff --git a/content/browser/renderer_host/render_process_host_impl_receiver_bindings.cc b/content/browser/renderer_host/render_process_host_impl_receiver_bindings.cc
-index 203ededeac9..6164808d2fa 100644
+index 203ededeac..6164808d2f 100644
 --- a/content/browser/renderer_host/render_process_host_impl_receiver_bindings.cc
 +++ b/content/browser/renderer_host/render_process_host_impl_receiver_bindings.cc
 @@ -59,6 +59,11 @@
@@ -663,7 +663,7 @@ index 203ededeac9..6164808d2fa 100644
    if (auto font_receiver = receiver.As<font_service::mojom::FontService>()) {
      ConnectToFontService(std::move(font_receiver));
 diff --git a/content/child/BUILD.gn b/content/child/BUILD.gn
-index 5e8aae1dcec..aa9a5147d11 100644
+index 5e8aae1dce..aa9a5147d1 100644
 --- a/content/child/BUILD.gn
 +++ b/content/child/BUILD.gn
 @@ -140,6 +140,13 @@ target(link_target_type, "child") {
@@ -681,7 +681,7 @@ index 5e8aae1dcec..aa9a5147d11 100644
      sources += [
        "child_process_sandbox_support_impl_win.cc",
 diff --git a/content/renderer/BUILD.gn b/content/renderer/BUILD.gn
-index a63c3bea226..72a141c7315 100644
+index a63c3bea22..72a141c731 100644
 --- a/content/renderer/BUILD.gn
 +++ b/content/renderer/BUILD.gn
 @@ -350,6 +350,10 @@ target(link_target_type, "renderer") {
@@ -696,7 +696,7 @@ index a63c3bea226..72a141c7315 100644
      deps += [ "//components/services/font/public/cpp" ]
    }
 diff --git a/content/renderer/renderer_blink_platform_impl.cc b/content/renderer/renderer_blink_platform_impl.cc
-index 063cec06ba0..9253bf791e6 100644
+index 063cec06ba..9253bf791e 100644
 --- a/content/renderer/renderer_blink_platform_impl.cc
 +++ b/content/renderer/renderer_blink_platform_impl.cc
 @@ -143,6 +143,23 @@
@@ -786,7 +786,7 @@ index 063cec06ba0..9253bf791e6 100644
  
  #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 diff --git a/content/renderer/renderer_main.cc b/content/renderer/renderer_main.cc
-index 3066ee6c667..dad851060a1 100644
+index 3066ee6c66..dad851060a 100644
 --- a/content/renderer/renderer_main.cc
 +++ b/content/renderer/renderer_main.cc
 @@ -187,8 +187,6 @@ int RendererMain(MainFunctionParams parameters) {
@@ -800,7 +800,7 @@ index 3066ee6c667..dad851060a1 100644
    // This function allows pausing execution using the --renderer-startup-dialog
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Android-fonts-fingerprinting-mitigation.inc b/cromite_flags/chrome/browser/about_flags_cc/Android-fonts-fingerprinting-mitigation.inc
 new file mode 100644
-index 00000000000..705cc5aae66
+index 0000000000..705cc5aae6
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Android-fonts-fingerprinting-mitigation.inc
 @@ -0,0 +1,12 @@
@@ -818,7 +818,7 @@ index 00000000000..705cc5aae66
 +#endif
 diff --git a/cromite_flags/third_party/blink/common/features_cc/Android-fonts-fingerprinting-mitigation.inc b/cromite_flags/third_party/blink/common/features_cc/Android-fonts-fingerprinting-mitigation.inc
 new file mode 100644
-index 00000000000..a5b9a08b233
+index 0000000000..a5b9a08b23
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_cc/Android-fonts-fingerprinting-mitigation.inc
 @@ -0,0 +1,7 @@
@@ -831,7 +831,7 @@ index 00000000000..a5b9a08b233
 +#endif
 diff --git a/cromite_flags/third_party/blink/common/features_h/Android-fonts-fingerprinting-mitigation.inc b/cromite_flags/third_party/blink/common/features_h/Android-fonts-fingerprinting-mitigation.inc
 new file mode 100644
-index 00000000000..f663a286a18
+index 0000000000..f663a286a1
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_h/Android-fonts-fingerprinting-mitigation.inc
 @@ -0,0 +1,5 @@
@@ -841,7 +841,7 @@ index 00000000000..f663a286a18
 +
 +#endif
 diff --git a/skia/BUILD.gn b/skia/BUILD.gn
-index 1b586df72fa..3c0175f78c6 100644
+index 1b586df72f..3c0175f78c 100644
 --- a/skia/BUILD.gn
 +++ b/skia/BUILD.gn
 @@ -463,6 +463,18 @@ component("skia") {
@@ -864,7 +864,7 @@ index 1b586df72fa..3c0175f78c6 100644
      # Retain the files for the SkFontMgr_Android on linux to emulate android
      # fonts. See content/zygote/zygote_main_linux.cc
 diff --git a/skia/ext/font_utils.cc b/skia/ext/font_utils.cc
-index eeea5dd2d15..20478ae470f 100644
+index eeea5dd2d1..20478ae470 100644
 --- a/skia/ext/font_utils.cc
 +++ b/skia/ext/font_utils.cc
 @@ -65,6 +65,7 @@ SkFontMgr* g_fontmgr_override = nullptr;
@@ -876,7 +876,7 @@ index eeea5dd2d15..20478ae470f 100644
  
  }  // namespace
 diff --git a/third_party/freetype/include/freetype-custom/freetype/config/ftoption.h b/third_party/freetype/include/freetype-custom/freetype/config/ftoption.h
-index 7d4e20137fd..ff3c17382ac 100644
+index 7d4e20137f..ff3c17382a 100644
 --- a/third_party/freetype/include/freetype-custom/freetype/config/ftoption.h
 +++ b/third_party/freetype/include/freetype-custom/freetype/config/ftoption.h
 @@ -625,7 +625,7 @@ FT_BEGIN_HEADER

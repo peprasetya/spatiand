@@ -29,7 +29,7 @@ FILE:bromite-build-utils.patch
 
 diff --git a/build/bromite/bromite_utils.gni b/build/bromite/bromite_utils.gni
 new file mode 100644
-index 00000000000..114b812e4c4
+index 0000000000..114b812e4c
 --- /dev/null
 +++ b/build/bromite/bromite_utils.gni
 @@ -0,0 +1,79 @@
@@ -114,7 +114,7 @@ index 00000000000..114b812e4c4
 +}
 diff --git a/build/bromite/gyp/cpp_bromite_include.py b/build/bromite/gyp/cpp_bromite_include.py
 new file mode 100644
-index 00000000000..d3dfbaadcd6
+index 0000000000..d3dfbaadcd
 --- /dev/null
 +++ b/build/bromite/gyp/cpp_bromite_include.py
 @@ -0,0 +1,35 @@
@@ -155,7 +155,7 @@ index 00000000000..d3dfbaadcd6
 +  _Main(sys.argv[1:])
 diff --git a/build/bromite/gyp/cpp_bromite_include.pydeps b/build/bromite/gyp/cpp_bromite_include.pydeps
 new file mode 100644
-index 00000000000..b5adeb538b3
+index 0000000000..b5adeb538b
 --- /dev/null
 +++ b/build/bromite/gyp/cpp_bromite_include.pydeps
 @@ -0,0 +1,9 @@
@@ -170,7 +170,7 @@ index 00000000000..b5adeb538b3
 +cpp_bromite_include.py
 diff --git a/build/bromite/gyp/java_bromite_impl.py b/build/bromite/gyp/java_bromite_impl.py
 new file mode 100644
-index 00000000000..9525ecd1d4e
+index 0000000000..9525ecd1d4
 --- /dev/null
 +++ b/build/bromite/gyp/java_bromite_impl.py
 @@ -0,0 +1,107 @@
@@ -283,7 +283,7 @@ index 00000000000..9525ecd1d4e
 +  _Main(sys.argv[1:])
 diff --git a/build/bromite/gyp/java_bromite_impl.pydeps b/build/bromite/gyp/java_bromite_impl.pydeps
 new file mode 100644
-index 00000000000..cfaccd9373e
+index 0000000000..cfaccd9373
 --- /dev/null
 +++ b/build/bromite/gyp/java_bromite_impl.pydeps
 @@ -0,0 +1,9 @@
@@ -297,7 +297,7 @@ index 00000000000..cfaccd9373e
 +../../zip_helpers.py
 +java_bromite_impl.py
 diff --git a/build/config/BUILDCONFIG.gn b/build/config/BUILDCONFIG.gn
-index a8dcb4d4675..9193673b4eb 100644
+index a8dcb4d467..9193673b4e 100644
 --- a/build/config/BUILDCONFIG.gn
 +++ b/build/config/BUILDCONFIG.gn
 @@ -903,3 +903,5 @@ if (is_component_build) {
@@ -307,7 +307,7 @@ index a8dcb4d4675..9193673b4eb 100644
 +
 +import("//build/bromite/bromite_utils.gni")
 diff --git a/chrome/browser/flags/BUILD.gn b/chrome/browser/flags/BUILD.gn
-index 8829f31808e..e31335f8be8 100644
+index 8829f31808..e31335f8be 100644
 --- a/chrome/browser/flags/BUILD.gn
 +++ b/chrome/browser/flags/BUILD.gn
 @@ -8,7 +8,8 @@ import("//extensions/buildflags/buildflags.gni")
@@ -341,7 +341,7 @@ index 8829f31808e..e31335f8be8 100644
      "android/chrome_session_state.h",
 diff --git a/chrome/browser/flags/android/cromite_native_utils.cc b/chrome/browser/flags/android/cromite_native_utils.cc
 new file mode 100755
-index 00000000000..085dace41b8
+index 0000000000..085dace41b
 --- /dev/null
 +++ b/chrome/browser/flags/android/cromite_native_utils.cc
 @@ -0,0 +1,94 @@
@@ -441,7 +441,7 @@ index 00000000000..085dace41b8
 +DEFINE_JNI(CromiteNativeUtils)
 diff --git a/chrome/browser/flags/android/cromite_native_utils.h b/chrome/browser/flags/android/cromite_native_utils.h
 new file mode 100755
-index 00000000000..db44defd1ec
+index 0000000000..db44defd1e
 --- /dev/null
 +++ b/chrome/browser/flags/android/cromite_native_utils.h
 @@ -0,0 +1,14 @@
@@ -460,7 +460,7 @@ index 00000000000..db44defd1ec
 +
 +#endif  // CHROME_BROWSER_FLAGS_ANDROID_CROMITE_NATIVE_UTILS_H_
 diff --git a/mojo/public/tools/mojom/mojom_parser.py b/mojo/public/tools/mojom/mojom_parser.py
-index a6cf62db60b..b54da93cd44 100755
+index a6cf62db60..b54da93cd4 100755
 --- a/mojo/public/tools/mojom/mojom_parser.py
 +++ b/mojo/public/tools/mojom/mojom_parser.py
 @@ -19,6 +19,7 @@ import os
@@ -517,7 +517,7 @@ index a6cf62db60b..b54da93cd44 100755
    )
    for mojom_abspath, ast in _Shard(_ParseAstHelper, map_args):
 diff --git a/tools/grit/grit/grd_reader.py b/tools/grit/grit/grd_reader.py
-index 6a9f69e8c14..03d16ada293 100755
+index 6a9f69e8c1..03d16ada29 100755
 --- a/tools/grit/grit/grd_reader.py
 +++ b/tools/grit/grit/grd_reader.py
 @@ -106,11 +106,28 @@ class GrdContentHandler(xml.sax.handler.ContentHandler):
@@ -555,7 +555,7 @@ index 6a9f69e8c14..03d16ada293 100755
      if self.debug:
        print("End parsing of element %s" % name)
 diff --git a/tools/grit/grit_rule.gni b/tools/grit/grit_rule.gni
-index f64e5189520..4a06cc0de17 100644
+index f64e518952..4a06cc0de1 100644
 --- a/tools/grit/grit_rule.gni
 +++ b/tools/grit/grit_rule.gni
 @@ -365,7 +365,7 @@ template("grit") {
@@ -568,7 +568,7 @@ index f64e5189520..4a06cc0de17 100644
    }
  
 diff --git a/tools/grit/preprocess_if_expr.py b/tools/grit/preprocess_if_expr.py
-index 37ae315a570..54207aa6c7e 100644
+index 37ae315a57..54207aa6c7 100644
 --- a/tools/grit/preprocess_if_expr.py
 +++ b/tools/grit/preprocess_if_expr.py
 @@ -8,6 +8,7 @@ import io

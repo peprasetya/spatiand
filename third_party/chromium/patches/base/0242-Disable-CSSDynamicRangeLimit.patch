@@ -15,7 +15,7 @@ FILE:Disable-CSSDynamicRangeLimit.patch
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 6591731b164..e07146d990c 100644
+index 6591731b16..e07146d990 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -1769,7 +1769,7 @@

@@ -10,7 +10,7 @@ FILE:Disable-Device-Attributes-API.patch
  1 file changed, 5 insertions(+)
 
 diff --git a/chrome/browser/device_api/device_service_impl.cc b/chrome/browser/device_api/device_service_impl.cc
-index eb368359044..e6dc79e5f6c 100644
+index eb36835904..e6dc79e5f6 100644
 --- a/chrome/browser/device_api/device_service_impl.cc
 +++ b/chrome/browser/device_api/device_service_impl.cc
 @@ -127,6 +127,7 @@ bool IsAffiliatedUser(Profile* profile) {

@@ -16,7 +16,7 @@ FILE:Add-a-flag-to-disable-GamePad-API.patch
  create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Add-a-flag-to-disable-GamePad-API.inc
 
 diff --git a/content/child/runtime_features.cc b/content/child/runtime_features.cc
-index b82ab5e52ff..94a8fbf6944 100644
+index b82ab5e52f..94a8fbf694 100644
 --- a/content/child/runtime_features.cc
 +++ b/content/child/runtime_features.cc
 @@ -191,6 +191,8 @@ void SetRuntimeFeaturesFromChromiumFeatures() {
@@ -30,7 +30,7 @@ index b82ab5e52ff..94a8fbf6944 100644
            {wf::EnableSecurePaymentConfirmationDebug,
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Add-a-flag-to-disable-GamePad-API.inc b/cromite_flags/chrome/browser/about_flags_cc/Add-a-flag-to-disable-GamePad-API.inc
 new file mode 100644
-index 00000000000..27fed0d1c81
+index 0000000000..27fed0d1c8
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Add-a-flag-to-disable-GamePad-API.inc
 @@ -0,0 +1,7 @@
@@ -42,7 +42,7 @@ index 00000000000..27fed0d1c81
 +
 +#endif
 diff --git a/device/gamepad/public/cpp/gamepad_features.cc b/device/gamepad/public/cpp/gamepad_features.cc
-index c625ddc61aa..641f95e8f46 100644
+index c625ddc61a..641f95e8f4 100644
 --- a/device/gamepad/public/cpp/gamepad_features.cc
 +++ b/device/gamepad/public/cpp/gamepad_features.cc
 @@ -71,4 +71,12 @@ bool IsGamepadMultitouchEnabled() {
@@ -59,7 +59,7 @@ index c625ddc61aa..641f95e8f46 100644
 +
  }  // namespace features
 diff --git a/device/gamepad/public/cpp/gamepad_features.h b/device/gamepad/public/cpp/gamepad_features.h
-index e5dc4babaeb..f5f7d0566e6 100644
+index e5dc4babae..f5f7d0566e 100644
 --- a/device/gamepad/public/cpp/gamepad_features.h
 +++ b/device/gamepad/public/cpp/gamepad_features.h
 @@ -17,6 +17,7 @@ GAMEPAD_FEATURES_EXPORT BASE_DECLARE_FEATURE(
@@ -79,7 +79,7 @@ index e5dc4babaeb..f5f7d0566e6 100644
  }  // namespace features
  
 diff --git a/third_party/blink/renderer/modules/gamepad/navigator_gamepad.cc b/third_party/blink/renderer/modules/gamepad/navigator_gamepad.cc
-index cce530646bf..0244f3b70ae 100644
+index cce530646b..0244f3b70a 100644
 --- a/third_party/blink/renderer/modules/gamepad/navigator_gamepad.cc
 +++ b/third_party/blink/renderer/modules/gamepad/navigator_gamepad.cc
 @@ -28,6 +28,7 @@

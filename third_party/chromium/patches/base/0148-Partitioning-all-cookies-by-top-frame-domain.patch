@@ -45,7 +45,7 @@ FILE:Partitioning-all-cookies-by-top-frame-domain.patch
  create mode 100644 cromite_flags/services/network/public/cpp/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 
 diff --git a/chrome/browser/net/profile_network_context_service.cc b/chrome/browser/net/profile_network_context_service.cc
-index 29f00b4931c..8b82a1dfa46 100644
+index 29f00b4931..8b82a1dfa4 100644
 --- a/chrome/browser/net/profile_network_context_service.cc
 +++ b/chrome/browser/net/profile_network_context_service.cc
 @@ -1119,8 +1119,8 @@ ProfileNetworkContextService::CreateCookieManagerParams(
@@ -75,7 +75,7 @@ index 29f00b4931c..8b82a1dfa46 100644
  
    HostContentSettingsMap* host_content_settings_map =
 diff --git a/chrome/browser/storage_access_api/storage_access_grant_permission_context.cc b/chrome/browser/storage_access_api/storage_access_grant_permission_context.cc
-index dc1294b9ff5..cd013696764 100644
+index dc1294b9ff..cd01369676 100644
 --- a/chrome/browser/storage_access_api/storage_access_grant_permission_context.cc
 +++ b/chrome/browser/storage_access_api/storage_access_grant_permission_context.cc
 @@ -197,6 +197,7 @@ FederatedIdentityPermissionContext* IsAutograntViaFedCmAllowed(
@@ -106,7 +106,7 @@ index dc1294b9ff5..cd013696764 100644
      switch (metadata.top_frame_entry()->site_type()) {
        case net::SiteType::kPrimary:
 diff --git a/components/content_settings/core/common/cookie_settings_base.cc b/components/content_settings/core/common/cookie_settings_base.cc
-index 2c67a2ff7ed..b3d37734636 100644
+index 2c67a2ff7e..b3d3773463 100644
 --- a/components/content_settings/core/common/cookie_settings_base.cc
 +++ b/components/content_settings/core/common/cookie_settings_base.cc
 @@ -405,32 +405,11 @@ CookieSettingsBase::DecideAccess(const GURL& url,
@@ -153,28 +153,28 @@ index 2c67a2ff7ed..b3d37734636 100644
                                       /*is_third_party_request=*/false};
 diff --git a/cromite_flags/components/content_settings/core/common/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc b/cromite_flags/components/content_settings/core/common/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 new file mode 100644
-index 00000000000..4bd8276f349
+index 0000000000..4bd8276f34
 --- /dev/null
 +++ b/cromite_flags/components/content_settings/core/common/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 @@ -0,0 +1 @@
 +// empty file
 diff --git a/cromite_flags/components/permissions/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc b/cromite_flags/components/permissions/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 new file mode 100644
-index 00000000000..59d549b5687
+index 0000000000..59d549b568
 --- /dev/null
 +++ b/cromite_flags/components/permissions/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_ENABLED(kShowRelatedWebsiteSetsPermissionGrants);
 diff --git a/cromite_flags/content/public/common/content_features_cc/Partitioning-all-cookies-by-top-frame-domain.inc b/cromite_flags/content/public/common/content_features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 new file mode 100644
-index 00000000000..4bd8276f349
+index 0000000000..4bd8276f34
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 @@ -0,0 +1 @@
 +// empty file
 diff --git a/cromite_flags/net/base/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc b/cromite_flags/net/base/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 new file mode 100644
-index 00000000000..3c52a2c9109
+index 0000000000..3c52a2c910
 --- /dev/null
 +++ b/cromite_flags/net/base/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 @@ -0,0 +1,12 @@
@@ -192,13 +192,13 @@ index 00000000000..3c52a2c9109
 +// SET_CROMITE_FEATURE_DISABLED(kStorageAccessHeaderRetry);
 diff --git a/cromite_flags/services/network/public/cpp/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc b/cromite_flags/services/network/public/cpp/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 new file mode 100644
-index 00000000000..d11c69f812a
+index 0000000000..d11c69f812
 --- /dev/null
 +++ b/cromite_flags/services/network/public/cpp/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 @@ -0,0 +1 @@
 +// intentionally empty
 diff --git a/extensions/browser/api/cookies/cookies_helpers.cc b/extensions/browser/api/cookies/cookies_helpers.cc
-index d99b2804594..838120e98a6 100644
+index d99b280459..838120e98a 100644
 --- a/extensions/browser/api/cookies/cookies_helpers.cc
 +++ b/extensions/browser/api/cookies/cookies_helpers.cc
 @@ -372,6 +372,10 @@ ToNetCookiePartitionKey(
@@ -213,7 +213,7 @@ index d99b2804594..838120e98a6 100644
      return cookie_partition_key_collection.ContainsAllKeys() ||
             cookie_partition_key_collection.IsEmpty();
 diff --git a/net/cookies/canonical_cookie.cc b/net/cookies/canonical_cookie.cc
-index 50d4ffd90e7..3bb66df0cf9 100644
+index 50d4ffd90e..3bb66df0cf 100644
 --- a/net/cookies/canonical_cookie.cc
 +++ b/net/cookies/canonical_cookie.cc
 @@ -1116,11 +1116,6 @@ CanonicalCookie::IsCanonicalForFromStorage(
@@ -229,7 +229,7 @@ index 50d4ffd90e7..3bb66df0cf9 100644
  }
  
 diff --git a/net/cookies/cookie_deletion_info.cc b/net/cookies/cookie_deletion_info.cc
-index 1b0aaf3a873..a91fd7130bb 100644
+index 1b0aaf3a87..a91fd7130b 100644
 --- a/net/cookies/cookie_deletion_info.cc
 +++ b/net/cookies/cookie_deletion_info.cc
 @@ -131,7 +131,8 @@ bool CookieDeletionInfo::Matches(const CanonicalCookie& cookie,
@@ -243,7 +243,7 @@ index 1b0aaf3a873..a91fd7130bb 100644
      return false;
    }
 diff --git a/net/cookies/cookie_monster.cc b/net/cookies/cookie_monster.cc
-index e8e83353e74..f224ed5c46d 100644
+index e8e83353e7..f224ed5c46 100644
 --- a/net/cookies/cookie_monster.cc
 +++ b/net/cookies/cookie_monster.cc
 @@ -2265,6 +2265,7 @@ size_t CookieMonster::GarbageCollectPartitionedCookies(
@@ -255,7 +255,7 @@ index e8e83353e74..f224ed5c46d 100644
            kPerPartitionDomainMaxCookieBytes ||
        cookie_partition_it->second->count(key) > kPerPartitionDomainMaxCookies) {
 diff --git a/net/cookies/cookie_util.cc b/net/cookies/cookie_util.cc
-index 42d7b91751c..08da2bf342a 100644
+index 42d7b91751..08da2bf342 100644
 --- a/net/cookies/cookie_util.cc
 +++ b/net/cookies/cookie_util.cc
 @@ -833,6 +833,7 @@ bool IsCookiePartitionedValid(
@@ -267,7 +267,7 @@ index 42d7b91751c..08da2bf342a 100644
      return true;
    }
 diff --git a/net/cookies/cookie_util.h b/net/cookies/cookie_util.h
-index d33ec3866d6..5b3daaa4e5a 100644
+index d33ec3866d..5b3daaa4e5 100644
 --- a/net/cookies/cookie_util.h
 +++ b/net/cookies/cookie_util.h
 @@ -89,7 +89,7 @@ enum class StorageAccessStatusOutcome {
@@ -280,7 +280,7 @@ index d33ec3866d6..5b3daaa4e5a 100644
    // header, but its corresponding request either has an omitted storage access
    // status, or has a storage access status of `none`.
 diff --git a/net/cookies/parsed_cookie.h b/net/cookies/parsed_cookie.h
-index 9f17634ea6c..aa67922ac40 100644
+index 9f17634ea6..aa67922ac4 100644
 --- a/net/cookies/parsed_cookie.h
 +++ b/net/cookies/parsed_cookie.h
 @@ -14,6 +14,7 @@
@@ -304,7 +304,7 @@ index 9f17634ea6c..aa67922ac40 100644
    std::optional<NamelessCookieLineParseType>
    NamelessCookieLineParseTypeForMetrics() const {
 diff --git a/net/extras/sqlite/sqlite_persistent_cookie_store.cc b/net/extras/sqlite/sqlite_persistent_cookie_store.cc
-index bb61afb851a..d908350a986 100644
+index bb61afb851..d908350a98 100644
 --- a/net/extras/sqlite/sqlite_persistent_cookie_store.cc
 +++ b/net/extras/sqlite/sqlite_persistent_cookie_store.cc
 @@ -857,6 +857,14 @@ bool SQLitePersistentCookieStore::Backend::DoInitializeDatabase() {
@@ -323,7 +323,7 @@ index bb61afb851a..d908350a986 100644
  }
  
 diff --git a/net/url_request/url_request.cc b/net/url_request/url_request.cc
-index 3ae12b5b081..5445a29e9b2 100644
+index 3ae12b5b08..5445a29e9b 100644
 --- a/net/url_request/url_request.cc
 +++ b/net/url_request/url_request.cc
 @@ -1453,8 +1453,7 @@ StorageAccessStatusCache URLRequest::CalculateStorageAccessStatus() const {
@@ -337,7 +337,7 @@ index 3ae12b5b081..5445a29e9b2 100644
        "API.StorageAccessHeader.StorageAccessStatusOutcome",
        storage_access_status
 diff --git a/net/url_request/url_request_http_job.cc b/net/url_request/url_request_http_job.cc
-index c46244a7300..94e74c1f86d 100644
+index c46244a730..94e74c1f86 100644
 --- a/net/url_request/url_request_http_job.cc
 +++ b/net/url_request/url_request_http_job.cc
 @@ -1607,6 +1607,8 @@ bool URLRequestHttpJob::NeedsAuth() {
@@ -350,7 +350,7 @@ index c46244a7300..94e74c1f86d 100644
    // `Activate-Storage-Access` response header, the request may include cookies,
    // and the prior request had the appropriate status without any of the
 diff --git a/services/network/cookie_settings.cc b/services/network/cookie_settings.cc
-index b4a7741e1a4..124f74fb54b 100644
+index b4a7741e1a..124f74fb54 100644
 --- a/services/network/cookie_settings.cc
 +++ b/services/network/cookie_settings.cc
 @@ -42,8 +42,7 @@ namespace network {
@@ -374,7 +374,7 @@ index b4a7741e1a4..124f74fb54b 100644
  
  // static
 diff --git a/services/network/cors/cors_url_loader.cc b/services/network/cors/cors_url_loader.cc
-index 237985a6c15..e81fbe5583b 100644
+index 237985a6c1..e81fbe5583 100644
 --- a/services/network/cors/cors_url_loader.cc
 +++ b/services/network/cors/cors_url_loader.cc
 @@ -1190,6 +1190,7 @@ bool CorsURLLoader::ShouldIncludeOriginHeader() const {
@@ -386,7 +386,7 @@ index 237985a6c15..e81fbe5583b 100644
            net::cookie_util::StorageAccessStatus::kInactive) {
      // Lower layers will add the Sec-Fetch-Storage-Access header, and the
 diff --git a/services/network/url_loader.cc b/services/network/url_loader.cc
-index 747330be85f..aa9fc69b827 100644
+index 747330be85..aa9fc69b82 100644
 --- a/services/network/url_loader.cc
 +++ b/services/network/url_loader.cc
 @@ -2613,6 +2613,7 @@ bool URLLoader::ShouldSetLoadWithStorageAccess() const {
@@ -398,7 +398,7 @@ index 747330be85f..aa9fc69b827 100644
        url_request_->set_storage_access_status(
            url_request_->CalculateStorageAccessStatus());
 diff --git a/third_party/blink/renderer/modules/cookie_store/cookie_init.idl b/third_party/blink/renderer/modules/cookie_store/cookie_init.idl
-index 59725a39a56..f1f5ac02259 100644
+index 59725a39a5..f1f5ac0225 100644
 --- a/third_party/blink/renderer/modules/cookie_store/cookie_init.idl
 +++ b/third_party/blink/renderer/modules/cookie_store/cookie_init.idl
 @@ -17,6 +17,6 @@ dictionary CookieInit {
@@ -410,7 +410,7 @@ index 59725a39a56..f1f5ac02259 100644
    [RuntimeEnabled=CookieStoreAPIMaxAge] long long? maxAge;
  };
 diff --git a/third_party/blink/renderer/modules/cookie_store/cookie_store.cc b/third_party/blink/renderer/modules/cookie_store/cookie_store.cc
-index 4ebdbfa717f..db08585150b 100644
+index 4ebdbfa717..db08585150 100644
 --- a/third_party/blink/renderer/modules/cookie_store/cookie_store.cc
 +++ b/third_party/blink/renderer/modules/cookie_store/cookie_store.cc
 @@ -405,6 +405,7 @@ ScriptPromise<IDLUndefined> CookieStore::set(ScriptState* script_state,
@@ -438,7 +438,7 @@ index 4ebdbfa717f..db08585150b 100644
  }
  
 diff --git a/third_party/blink/renderer/modules/cookie_store/cookie_store_delete_options.idl b/third_party/blink/renderer/modules/cookie_store/cookie_store_delete_options.idl
-index c3768bb9be9..83801a3c8c5 100644
+index c3768bb9be..83801a3c8c 100644
 --- a/third_party/blink/renderer/modules/cookie_store/cookie_store_delete_options.idl
 +++ b/third_party/blink/renderer/modules/cookie_store/cookie_store_delete_options.idl
 @@ -8,5 +8,5 @@ dictionary CookieStoreDeleteOptions {
@@ -449,7 +449,7 @@ index c3768bb9be9..83801a3c8c5 100644
 +  boolean partitioned = true;
  };
 diff --git a/ui/webui/webui_allowlist.cc b/ui/webui/webui_allowlist.cc
-index 0b297c6f76f..b65c969a0f1 100644
+index 0b297c6f76..b65c969a0f 100644
 --- a/ui/webui/webui_allowlist.cc
 +++ b/ui/webui/webui_allowlist.cc
 @@ -75,6 +75,7 @@ void WebUIAllowlist::RegisterAutoGrantedPermissions(
@@ -461,7 +461,7 @@ index 0b297c6f76f..b65c969a0f1 100644
    DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
  
 diff --git a/url/url_features.cc b/url/url_features.cc
-index 35ead394ffd..8f8632a077a 100644
+index 35ead394ff..8f8632a077 100644
 --- a/url/url_features.cc
 +++ b/url/url_features.cc
 @@ -9,6 +9,7 @@ namespace url {

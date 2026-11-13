@@ -15,7 +15,7 @@ FILE:Enable-Cert-Management-UI.patch
  create mode 100644 cromite_flags/chrome/common/chrome_features_cc/Enable-Cert-Management-UI.inc
 
 diff --git a/chrome/browser/net/profile_network_context_service.cc b/chrome/browser/net/profile_network_context_service.cc
-index 2e67dc3abde..a3cf6472670 100644
+index 2e67dc3abd..a3cf647267 100644
 --- a/chrome/browser/net/profile_network_context_service.cc
 +++ b/chrome/browser/net/profile_network_context_service.cc
 @@ -663,7 +663,12 @@ void ProfileNetworkContextService::RegisterProfilePrefs(
@@ -34,7 +34,7 @@ index 2e67dc3abde..a3cf6472670 100644
    // SSLConfigServiceManager) and here as Profile prefs. The Profile-scoped pref
 diff --git a/cromite_flags/chrome/common/chrome_features_cc/Enable-Cert-Management-UI.inc b/cromite_flags/chrome/common/chrome_features_cc/Enable-Cert-Management-UI.inc
 new file mode 100644
-index 00000000000..fab17ac780e
+index 0000000000..fab17ac780
 --- /dev/null
 +++ b/cromite_flags/chrome/common/chrome_features_cc/Enable-Cert-Management-UI.inc
 @@ -0,0 +1 @@

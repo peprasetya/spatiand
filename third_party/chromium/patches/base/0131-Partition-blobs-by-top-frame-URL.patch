@@ -60,7 +60,7 @@ FILE:Partition-blobs-by-top-frame-URL.patch
  create mode 100644 cromite_flags/third_party/blink/common/features_cc/Partition-blobs-by-top-frame-URL.inc
 
 diff --git a/content/browser/renderer_host/render_frame_host_impl.cc b/content/browser/renderer_host/render_frame_host_impl.cc
-index 15ca3ffb4b8..396665ae4dd 100644
+index 15ca3ffb4b..396665ae4d 100644
 --- a/content/browser/renderer_host/render_frame_host_impl.cc
 +++ b/content/browser/renderer_host/render_frame_host_impl.cc
 @@ -13472,6 +13472,8 @@ void RenderFrameHostImpl::ReportBlockingCrossPartitionBlobURL(
@@ -74,13 +74,13 @@ index 15ca3ffb4b8..396665ae4dd 100644
        GetLastCommittedURL(), GetStorageKey(), GetCookieSettingOverrides());
 diff --git a/cromite_flags/third_party/blink/common/features_cc/Partition-blobs-by-top-frame-URL.inc b/cromite_flags/third_party/blink/common/features_cc/Partition-blobs-by-top-frame-URL.inc
 new file mode 100644
-index 00000000000..a8ad245bda2
+index 0000000000..a8ad245bda
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_cc/Partition-blobs-by-top-frame-URL.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_ENABLED(kEnforceNoopenerOnBlobURLNavigation);
 diff --git a/storage/browser/blob/blob_url_registry.cc b/storage/browser/blob/blob_url_registry.cc
-index c3ebb81bb70..f88b7eef92d 100644
+index c3ebb81bb7..f88b7eef92 100644
 --- a/storage/browser/blob/blob_url_registry.cc
 +++ b/storage/browser/blob/blob_url_registry.cc
 @@ -93,13 +93,18 @@ bool BlobUrlRegistry::AddUrlMapping(
@@ -142,7 +142,7 @@ index c3ebb81bb70..f88b7eef92d 100644
      const GURL& url) {
    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 diff --git a/storage/browser/blob/blob_url_registry.h b/storage/browser/blob/blob_url_registry.h
-index e0273ae700d..f9f6d451753 100644
+index e0273ae700..f9f6d45175 100644
 --- a/storage/browser/blob/blob_url_registry.h
 +++ b/storage/browser/blob/blob_url_registry.h
 @@ -99,7 +99,9 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobUrlRegistry {
@@ -178,7 +178,7 @@ index e0273ae700d..f9f6d451753 100644
             std::pair<GURL, mojo::PendingRemote<blink::mojom::Blob>>>
        token_to_url_and_blob_;
 diff --git a/storage/browser/blob/blob_url_store_impl.cc b/storage/browser/blob/blob_url_store_impl.cc
-index 46670222106..ccc43caa30c 100644
+index 4667022210..ccc43caa30 100644
 --- a/storage/browser/blob/blob_url_store_impl.cc
 +++ b/storage/browser/blob/blob_url_store_impl.cc
 @@ -116,19 +116,43 @@ BlobURLStoreImpl::~BlobURLStoreImpl() {
@@ -308,7 +308,7 @@ index 46670222106..ccc43caa30c 100644
  }
  
 diff --git a/storage/browser/blob/blob_url_store_impl.h b/storage/browser/blob/blob_url_store_impl.h
-index 5e341b30c5a..5db3c297b5f 100644
+index 5e341b30c5..5db3c297b5 100644
 --- a/storage/browser/blob/blob_url_store_impl.h
 +++ b/storage/browser/blob/blob_url_store_impl.h
 @@ -54,16 +54,22 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobURLStoreImpl
@@ -349,7 +349,7 @@ index 5e341b30c5a..5db3c297b5f 100644
    // The origin used by the worker/document associated with this BlobURLStore on
    // the renderer side. This will almost always be the same as `storage_key_`'s
 diff --git a/storage/browser/blob/features.cc b/storage/browser/blob/features.cc
-index f5292443be9..ce5b5a0281d 100644
+index f5292443be..ce5b5a0281 100644
 --- a/storage/browser/blob/features.cc
 +++ b/storage/browser/blob/features.cc
 @@ -14,6 +14,7 @@ BASE_FEATURE(kBlobURLFetchRangeHeaderValidation,
@@ -361,7 +361,7 @@ index f5292443be9..ce5b5a0281d 100644
  // Please keep features in alphabetical order.
  
 diff --git a/third_party/blink/public/mojom/blob/blob_url_store.mojom b/third_party/blink/public/mojom/blob/blob_url_store.mojom
-index f9ae50996b9..b12998c704b 100644
+index f9ae50996b..b12998c704 100644
 --- a/third_party/blink/public/mojom/blob/blob_url_store.mojom
 +++ b/third_party/blink/public/mojom/blob/blob_url_store.mojom
 @@ -4,6 +4,7 @@
@@ -406,7 +406,7 @@ index f9ae50996b9..b12998c704b 100644
  
  // A token representing a Blob URL. The browser process can use this to look up
 diff --git a/third_party/blink/renderer/core/fileapi/public_url_manager.cc b/third_party/blink/renderer/core/fileapi/public_url_manager.cc
-index 52a3a0c2ed8..4dc903b5f13 100644
+index 52a3a0c2ed..4dc903b5f1 100644
 --- a/third_party/blink/renderer/core/fileapi/public_url_manager.cc
 +++ b/third_party/blink/renderer/core/fileapi/public_url_manager.cc
 @@ -39,8 +39,10 @@

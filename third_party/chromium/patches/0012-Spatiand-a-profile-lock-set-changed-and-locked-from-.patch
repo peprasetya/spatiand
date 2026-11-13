@@ -16,7 +16,7 @@ Subject: [PATCH 292/310] Spatiand: a profile lock set, changed and locked from
  8 files changed, 470 insertions(+), 110 deletions(-)
 
 diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
-index a803c69e262..acb5857c524 100644
+index a803c69e26..acb5857c52 100644
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
 @@ -3650,7 +3650,7 @@ Please note that it only applies to the states of California (under CCPA and CPR
@@ -29,7 +29,7 @@ index a803c69e262..acb5857c524 100644
      <message name="IDS_SETTINGS_CHANGE_PICTURE_PROFILE_PHOTO" desc="The text on the Google profile photo of the user.">
        Google Profile photo
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 0a379630b4e..4aa5d41e98a 100644
+index 0a379630b4..4aa5d41e98 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -1414,6 +1414,7 @@ source_set("core") {
@@ -41,7 +41,7 @@ index 0a379630b4e..4aa5d41e98a 100644
      "//components/spellcheck/browser",
      "//components/spellcheck/common",
 diff --git a/chrome/browser/resources/settings/people_page/people_page.html.ts b/chrome/browser/resources/settings/people_page/people_page.html.ts
-index b3303085acf..40179b1d958 100644
+index b3303085ac..40179b1d95 100644
 --- a/chrome/browser/resources/settings/people_page/people_page.html.ts
 +++ b/chrome/browser/resources/settings/people_page/people_page.html.ts
 @@ -4,8 +4,6 @@
@@ -164,7 +164,7 @@ index b3303085acf..40179b1d958 100644
  
        </div>
 diff --git a/chrome/browser/spatiand/profile_lock_dialog.cc b/chrome/browser/spatiand/profile_lock_dialog.cc
-index 2acc69b61af..160c2f0dccf 100644
+index 2acc69b61a..160c2f0dcc 100644
 --- a/chrome/browser/spatiand/profile_lock_dialog.cc
 +++ b/chrome/browser/spatiand/profile_lock_dialog.cc
 @@ -3,6 +3,7 @@
@@ -539,7 +539,7 @@ index 2acc69b61af..160c2f0dccf 100644
        ->Show();
  }
 diff --git a/chrome/browser/spatiand/profile_lock_dialog.h b/chrome/browser/spatiand/profile_lock_dialog.h
-index 2350d3f8434..3c8938fd503 100644
+index 2350d3f843..3c8938fd50 100644
 --- a/chrome/browser/spatiand/profile_lock_dialog.h
 +++ b/chrome/browser/spatiand/profile_lock_dialog.h
 @@ -11,14 +11,28 @@
@@ -574,7 +574,7 @@ index 2350d3f8434..3c8938fd503 100644
  
  #endif  // CHROME_BROWSER_SPATIAND_PROFILE_LOCK_DIALOG_H_
 diff --git a/chrome/browser/spatiand/profiles_sync.cc b/chrome/browser/spatiand/profiles_sync.cc
-index b90c819ccb0..443e40ab5ac 100644
+index b90c819ccb..443e40ab5a 100644
 --- a/chrome/browser/spatiand/profiles_sync.cc
 +++ b/chrome/browser/spatiand/profiles_sync.cc
 @@ -25,6 +25,9 @@
@@ -755,7 +755,7 @@ index b90c819ccb0..443e40ab5ac 100644
    }
    // Not opened: its waiting windows go, never having been seen.
 diff --git a/chrome/browser/spatiand/profiles_sync.h b/chrome/browser/spatiand/profiles_sync.h
-index 464c9166cab..9c79c611de5 100644
+index 464c9166ca..9c79c611de 100644
 --- a/chrome/browser/spatiand/profiles_sync.h
 +++ b/chrome/browser/spatiand/profiles_sync.h
 @@ -25,6 +25,10 @@
@@ -809,7 +809,7 @@ index 464c9166cab..9c79c611de5 100644
  
    base::ScopedObservation<ProfileAttributesStorage, ProfileAttributesStorage::Observer>
 diff --git a/chrome/browser/ui/views/profiles/profile_menu_view.cc b/chrome/browser/ui/views/profiles/profile_menu_view.cc
-index d30e925c6b8..b7c81171812 100644
+index d30e925c6b..b7c8117181 100644
 --- a/chrome/browser/ui/views/profiles/profile_menu_view.cc
 +++ b/chrome/browser/ui/views/profiles/profile_menu_view.cc
 @@ -4,6 +4,8 @@

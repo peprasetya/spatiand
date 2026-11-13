@@ -18,7 +18,7 @@ FILE:profile-resetter-disable-send-settings.patch
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/chrome/browser/profile_resetter/reset_report_uploader.cc b/chrome/browser/profile_resetter/reset_report_uploader.cc
-index 38cd08856f1..2627eceb3bb 100644
+index 38cd08856f..2627eceb3b 100644
 --- a/chrome/browser/profile_resetter/reset_report_uploader.cc
 +++ b/chrome/browser/profile_resetter/reset_report_uploader.cc
 @@ -24,7 +24,7 @@

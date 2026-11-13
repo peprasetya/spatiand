@@ -41,7 +41,7 @@ FILE:Bromite-auto-updater.patch
  create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Bromite-auto-updater.inc
 
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 975574458f2..3c09575961d 100644
+index 975574458f..3c09575961 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -1850,6 +1850,7 @@ source_set("core") {
@@ -62,7 +62,7 @@ index 975574458f2..3c09575961d 100644
        "//chrome/browser/finds/core",
 diff --git a/chrome/browser/endpoint_fetcher/BUILD.gn b/chrome/browser/endpoint_fetcher/BUILD.gn
 new file mode 100644
-index 00000000000..b4aeff3c57f
+index 0000000000..b4aeff3c57
 --- /dev/null
 +++ b/chrome/browser/endpoint_fetcher/BUILD.gn
 @@ -0,0 +1,32 @@
@@ -100,7 +100,7 @@ index 00000000000..b4aeff3c57f
 +}
 diff --git a/chrome/browser/endpoint_fetcher/DEPS b/chrome/browser/endpoint_fetcher/DEPS
 new file mode 100644
-index 00000000000..a4c57a27abd
+index 0000000000..a4c57a27ab
 --- /dev/null
 +++ b/chrome/browser/endpoint_fetcher/DEPS
 @@ -0,0 +1,3 @@
@@ -109,14 +109,14 @@ index 00000000000..a4c57a27abd
 +]
 diff --git a/chrome/browser/endpoint_fetcher/OWNERS b/chrome/browser/endpoint_fetcher/OWNERS
 new file mode 100644
-index 00000000000..dcc7ea70336
+index 0000000000..dcc7ea7033
 --- /dev/null
 +++ b/chrome/browser/endpoint_fetcher/OWNERS
 @@ -0,0 +1 @@
 +file://chrome/browser/complex_tasks/OWNERS
 diff --git a/chrome/browser/endpoint_fetcher/endpoint_fetcher_android.cc b/chrome/browser/endpoint_fetcher/endpoint_fetcher_android.cc
 new file mode 100644
-index 00000000000..35cbf424f9a
+index 0000000000..35cbf424f9
 --- /dev/null
 +++ b/chrome/browser/endpoint_fetcher/endpoint_fetcher_android.cc
 @@ -0,0 +1,109 @@
@@ -230,7 +230,7 @@ index 00000000000..35cbf424f9a
 +
 +DEFINE_JNI(EndpointFetcher)
 diff --git a/chrome/browser/media/router/discovery/access_code/access_code_cast_discovery_interface.cc b/chrome/browser/media/router/discovery/access_code/access_code_cast_discovery_interface.cc
-index 9e76ad78579..21bd5f7cc1f 100644
+index 9e76ad7857..21bd5f7cc1 100644
 --- a/chrome/browser/media/router/discovery/access_code/access_code_cast_discovery_interface.cc
 +++ b/chrome/browser/media/router/discovery/access_code/access_code_cast_discovery_interface.cc
 @@ -265,7 +265,7 @@ AccessCodeCastDiscoveryInterface::CreateEndpointFetcher(
@@ -243,7 +243,7 @@ index 9e76ad78579..21bd5f7cc1f 100644
  
  void AccessCodeCastDiscoveryInterface::ValidateDiscoveryAccessCode(
 diff --git a/chrome/browser/save_to_drive/drive_uploader.cc b/chrome/browser/save_to_drive/drive_uploader.cc
-index 1f3fc800598..dfe858eaa48 100644
+index 1f3fc80059..dfe858eaa4 100644
 --- a/chrome/browser/save_to_drive/drive_uploader.cc
 +++ b/chrome/browser/save_to_drive/drive_uploader.cc
 @@ -290,7 +290,7 @@ DriveUploader::CreateEndpointFetcher(
@@ -256,7 +256,7 @@ index 1f3fc800598..dfe858eaa48 100644
  
  DriveUploaderType DriveUploader::get_drive_uploader_type() const {
 diff --git a/chrome/browser/ui/lens/lens_overlay_query_controller.cc b/chrome/browser/ui/lens/lens_overlay_query_controller.cc
-index 59b56106b03..8600db147f0 100644
+index 59b56106b0..8600db147f 100644
 --- a/chrome/browser/ui/lens/lens_overlay_query_controller.cc
 +++ b/chrome/browser/ui/lens/lens_overlay_query_controller.cc
 @@ -737,7 +737,7 @@ LensOverlayQueryController::CreateEndpointFetcher(
@@ -269,7 +269,7 @@ index 59b56106b03..8600db147f0 100644
  
  void LensOverlayQueryController::SendLatencyGen204IfEnabled(
 diff --git a/components/browser_actuator/internal/transport/upstream_message_client/upstream_message_client.cc b/components/browser_actuator/internal/transport/upstream_message_client/upstream_message_client.cc
-index bb688820279..dc16b1178ab 100644
+index bb68882027..dc16b1178a 100644
 --- a/components/browser_actuator/internal/transport/upstream_message_client/upstream_message_client.cc
 +++ b/components/browser_actuator/internal/transport/upstream_message_client/upstream_message_client.cc
 @@ -98,7 +98,8 @@ ActuatorUpstreamMessage UpstreamMessageClient::SendUpstreamMessage(
@@ -283,7 +283,7 @@ index bb688820279..dc16b1178ab 100644
    auto* fetcher_ptr = fetcher.get();
    pending_requests_.emplace(fetcher_ptr, std::move(fetcher));
 diff --git a/components/commerce/core/account_checker.cc b/components/commerce/core/account_checker.cc
-index 2e8c5ed947e..cd012a065a6 100644
+index 2e8c5ed947..cd012a065a 100644
 --- a/components/commerce/core/account_checker.cc
 +++ b/components/commerce/core/account_checker.cc
 @@ -324,7 +324,7 @@ std::unique_ptr<EndpointFetcher> AccountChecker::CreateEndpointFetcher(
@@ -296,7 +296,7 @@ index 2e8c5ed947e..cd012a065a6 100644
  
  }  // namespace commerce
 diff --git a/components/commerce/core/subscriptions/subscriptions_server_proxy.cc b/components/commerce/core/subscriptions/subscriptions_server_proxy.cc
-index d19075a8ede..25a17f966f2 100644
+index d19075a8ed..25a17f966f 100644
 --- a/components/commerce/core/subscriptions/subscriptions_server_proxy.cc
 +++ b/components/commerce/core/subscriptions/subscriptions_server_proxy.cc
 @@ -300,7 +300,7 @@ SubscriptionsServerProxy::CreateEndpointFetcher(
@@ -309,7 +309,7 @@ index d19075a8ede..25a17f966f2 100644
  
  void SubscriptionsServerProxy::HandleManageSubscriptionsResponses(
 diff --git a/components/contextual_search/internal/composebox_query_controller.cc b/components/contextual_search/internal/composebox_query_controller.cc
-index 43584aff985..2d08b825d2c 100644
+index 43584aff98..2d08b825d2 100644
 --- a/components/contextual_search/internal/composebox_query_controller.cc
 +++ b/components/contextual_search/internal/composebox_query_controller.cc
 @@ -1636,7 +1636,7 @@ ComposeboxQueryController::CreateEndpointFetcher(
@@ -322,7 +322,7 @@ index 43584aff985..2d08b825d2c 100644
  
  lens::LensOverlayClientContext ComposeboxQueryController::CreateClientContext()
 diff --git a/components/data_sharing/internal/data_sharing_network_loader_impl.cc b/components/data_sharing/internal/data_sharing_network_loader_impl.cc
-index 2cfe2b2225b..e2d528b0c22 100644
+index 2cfe2b2225..e2d528b0c2 100644
 --- a/components/data_sharing/internal/data_sharing_network_loader_impl.cc
 +++ b/components/data_sharing/internal/data_sharing_network_loader_impl.cc
 @@ -376,7 +376,7 @@ DataSharingNetworkLoaderImpl::CreateEndpointFetcher(
@@ -335,7 +335,7 @@ index 2cfe2b2225b..e2d528b0c22 100644
  
  void DataSharingNetworkLoaderImpl::OnDownloadComplete(
 diff --git a/components/data_sharing/internal/preview_server_proxy.cc b/components/data_sharing/internal/preview_server_proxy.cc
-index b8a9719dbc9..4eb98ec9672 100644
+index b8a9719dbc..4eb98ec967 100644
 --- a/components/data_sharing/internal/preview_server_proxy.cc
 +++ b/components/data_sharing/internal/preview_server_proxy.cc
 @@ -336,7 +336,7 @@ std::unique_ptr<EndpointFetcher> PreviewServerProxy::CreateEndpointFetcher(
@@ -348,7 +348,7 @@ index b8a9719dbc9..4eb98ec9672 100644
  
  void PreviewServerProxy::HandleServerResponse(
 diff --git a/components/endpoint_fetcher/endpoint_fetcher.cc b/components/endpoint_fetcher/endpoint_fetcher.cc
-index f8e5c0e42cb..d0dfb13a83a 100644
+index f8e5c0e42c..d0dfb13a83 100644
 --- a/components/endpoint_fetcher/endpoint_fetcher.cc
 +++ b/components/endpoint_fetcher/endpoint_fetcher.cc
 @@ -29,6 +29,11 @@
@@ -558,7 +558,7 @@ index f8e5c0e42cb..d0dfb13a83a 100644
 +
  }  // namespace endpoint_fetcher
 diff --git a/components/endpoint_fetcher/endpoint_fetcher.h b/components/endpoint_fetcher/endpoint_fetcher.h
-index 3aee428601e..5f75ff45476 100644
+index 3aee428601..5f75ff4547 100644
 --- a/components/endpoint_fetcher/endpoint_fetcher.h
 +++ b/components/endpoint_fetcher/endpoint_fetcher.h
 @@ -19,6 +19,9 @@
@@ -644,7 +644,7 @@ index 3aee428601e..5f75ff45476 100644
  };
  
 diff --git a/components/manta/base_provider.cc b/components/manta/base_provider.cc
-index 8b84627531f..29ab86c04d0 100644
+index 8b84627531..29ab86c04d 100644
 --- a/components/manta/base_provider.cc
 +++ b/components/manta/base_provider.cc
 @@ -140,7 +140,7 @@ std::unique_ptr<EndpointFetcher> BaseProvider::CreateEndpointFetcher(
@@ -666,7 +666,7 @@ index 8b84627531f..29ab86c04d0 100644
  
  }  // namespace manta
 diff --git a/components/notebooks/internal/notebooks_network_service_impl.cc b/components/notebooks/internal/notebooks_network_service_impl.cc
-index ca9e60653a1..a9b42140a88 100644
+index ca9e60653a..a9b42140a8 100644
 --- a/components/notebooks/internal/notebooks_network_service_impl.cc
 +++ b/components/notebooks/internal/notebooks_network_service_impl.cc
 @@ -129,7 +129,7 @@ NotebooksNetworkServiceImpl::CreateEndpointFetcher(
@@ -679,7 +679,7 @@ index ca9e60653a1..a9b42140a88 100644
  
  GURL NotebooksNetworkServiceImpl::ConstructServiceURL(std::string_view path) {
 diff --git a/components/site_token_provider/site_token_provider.cc b/components/site_token_provider/site_token_provider.cc
-index 8d3491b2075..6025da58e07 100644
+index 8d3491b207..6025da58e0 100644
 --- a/components/site_token_provider/site_token_provider.cc
 +++ b/components/site_token_provider/site_token_provider.cc
 @@ -128,7 +128,8 @@ class SiteTokenProviderImpl : public SiteTokenProvider {
@@ -693,7 +693,7 @@ index 8d3491b2075..6025da58e07 100644
      endpoint_fetcher_->Fetch(
          base::BindOnce(&SiteTokenProviderImpl::OnFetchComplete,
 diff --git a/components/webauthn/core/browser/device_authorization/device_authorization_keys_fetcher.cc b/components/webauthn/core/browser/device_authorization/device_authorization_keys_fetcher.cc
-index acb1a2c5f05..62ddaa7699c 100644
+index acb1a2c5f0..62ddaa7699 100644
 --- a/components/webauthn/core/browser/device_authorization/device_authorization_keys_fetcher.cc
 +++ b/components/webauthn/core/browser/device_authorization/device_authorization_keys_fetcher.cc
 @@ -98,7 +98,8 @@ void DeviceAuthorizationKeysFetcher::FetchDeviceAuthorizationKeys(
@@ -708,7 +708,7 @@ index acb1a2c5f05..62ddaa7699c 100644
                       base::Unretained(this), std::move(callback)));
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Bromite-auto-updater.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Bromite-auto-updater.inc
 new file mode 100644
-index 00000000000..9a3c770bd60
+index 0000000000..9a3c770bd6
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Bromite-auto-updater.inc
 @@ -0,0 +1,3 @@
@@ -717,7 +717,7 @@ index 00000000000..9a3c770bd60
 +                base::FEATURE_ENABLED_BY_DEFAULT);
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Bromite-auto-updater.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Bromite-auto-updater.inc
 new file mode 100644
-index 00000000000..80de6b672c2
+index 0000000000..80de6b672c
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Bromite-auto-updater.inc
 @@ -0,0 +1 @@

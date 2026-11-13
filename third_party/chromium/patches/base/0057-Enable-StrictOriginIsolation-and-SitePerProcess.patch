@@ -20,7 +20,7 @@ FILE:Enable-StrictOriginIsolation-and-SitePerProcess.patch
  create mode 100644 cromite_flags/content/public/common/content_features_cc/Enable-StrictOriginIsolation-and-SitePerProcess.inc
 
 diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
-index 43201db35cc..a7ff03b8b81 100644
+index 43201db35c..a7ff03b8b8 100644
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
 @@ -1630,7 +1630,7 @@ void ChromeContentBrowserClient::RegisterLocalStatePrefs(
@@ -42,7 +42,7 @@ index 43201db35cc..a7ff03b8b81 100644
        site_isolation::prefs::kUserTriggeredIsolatedOrigins);
    registry->RegisterDictionaryPref(
 diff --git a/components/site_isolation/site_isolation_policy.cc b/components/site_isolation/site_isolation_policy.cc
-index 54476866669..61a79741879 100644
+index 5447686666..61a7974187 100644
 --- a/components/site_isolation/site_isolation_policy.cc
 +++ b/components/site_isolation/site_isolation_policy.cc
 @@ -39,6 +39,7 @@ struct IsolationDisableDecisions {
@@ -71,14 +71,14 @@ index 54476866669..61a79741879 100644
    }
 diff --git a/cromite_flags/chrome/common/chrome_features_cc/Enable-StrictOriginIsolation-and-SitePerProcess.inc b/cromite_flags/chrome/common/chrome_features_cc/Enable-StrictOriginIsolation-and-SitePerProcess.inc
 new file mode 100644
-index 00000000000..fdc54a9692f
+index 0000000000..fdc54a9692
 --- /dev/null
 +++ b/cromite_flags/chrome/common/chrome_features_cc/Enable-StrictOriginIsolation-and-SitePerProcess.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_ENABLED(kSitePerProcess);
 diff --git a/cromite_flags/content/public/common/content_features_cc/Enable-StrictOriginIsolation-and-SitePerProcess.inc b/cromite_flags/content/public/common/content_features_cc/Enable-StrictOriginIsolation-and-SitePerProcess.inc
 new file mode 100644
-index 00000000000..1ed38aee158
+index 0000000000..1ed38aee15
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_cc/Enable-StrictOriginIsolation-and-SitePerProcess.inc
 @@ -0,0 +1 @@

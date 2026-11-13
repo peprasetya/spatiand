@@ -26,7 +26,7 @@ FILE:disable-battery-status-updater.patch
  1 file changed, 1 insertion(+), 11 deletions(-)
 
 diff --git a/services/device/battery/battery_status_service.cc b/services/device/battery/battery_status_service.cc
-index 2098570e0fe..b03be3a8caf 100644
+index 2098570e0f..b03be3a8ca 100644
 --- a/services/device/battery/battery_status_service.cc
 +++ b/services/device/battery/battery_status_service.cc
 @@ -43,17 +43,7 @@ base::CallbackListSubscription BatteryStatusService::AddCallback(

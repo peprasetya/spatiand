@@ -11,7 +11,7 @@ FILE:Disable-PrivacyGuide.patch
  2 files changed, 2 insertions(+), 4 deletions(-)
 
 diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
-index 8bb3b38db3e..c3f27677530 100644
+index 8bb3b38db3..c3f2767753 100644
 --- a/chrome/browser/prefs/browser_prefs.cc
 +++ b/chrome/browser/prefs/browser_prefs.cc
 @@ -2473,7 +2473,7 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
@@ -24,7 +24,7 @@ index 8bb3b38db3e..c3f27677530 100644
    RegisterProfilePrefsForMigration(registry);
  
 diff --git a/chrome/browser/ui/webui/settings/settings_ui.cc b/chrome/browser/ui/webui/settings/settings_ui.cc
-index 0e2111a106d..9ab115e67fd 100644
+index 0e2111a106..9ab115e67f 100644
 --- a/chrome/browser/ui/webui/settings/settings_ui.cc
 +++ b/chrome/browser/ui/webui/settings/settings_ui.cc
 @@ -374,9 +374,7 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)

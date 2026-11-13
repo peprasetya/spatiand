@@ -12,7 +12,7 @@ FILE:WIN-Disable-TabHoverCard-images.patch
 
 diff --git a/cromite_flags/chrome/browser/ui/ui_features_cc/WIN-Disable-TabHoverCard-images.inc b/cromite_flags/chrome/browser/ui/ui_features_cc/WIN-Disable-TabHoverCard-images.inc
 new file mode 100755
-index 00000000000..0fbca46983b
+index 0000000000..0fbca46983
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/ui/ui_features_cc/WIN-Disable-TabHoverCard-images.inc
 @@ -0,0 +1 @@

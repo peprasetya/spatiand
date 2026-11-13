@@ -25,7 +25,7 @@ FILE:Revert-remove-allowscript-content-setting-secondary-url.patch
  15 files changed, 144 insertions(+), 39 deletions(-)
 
 diff --git a/chrome/renderer/worker_content_settings_client.cc b/chrome/renderer/worker_content_settings_client.cc
-index 6ea8ca7287d..d64b037472e 100644
+index 6ea8ca7287..d64b037472 100644
 --- a/chrome/renderer/worker_content_settings_client.cc
 +++ b/chrome/renderer/worker_content_settings_client.cc
 @@ -117,6 +117,41 @@ bool WorkerContentSettingsClient::AllowRunningInsecureContent(
@@ -71,7 +71,7 @@ index 6ea8ca7287d..d64b037472e 100644
    if (content_setting_rules_) {
      if (content_setting_rules_->mixed_content_rules.size() > 0)
 diff --git a/chrome/renderer/worker_content_settings_client.h b/chrome/renderer/worker_content_settings_client.h
-index 45d18966ae8..b6b321731e1 100644
+index 45d18966ae..b6b321731e 100644
 --- a/chrome/renderer/worker_content_settings_client.h
 +++ b/chrome/renderer/worker_content_settings_client.h
 @@ -37,6 +37,8 @@ class WorkerContentSettingsClient : public blink::WebContentSettingsClient {
@@ -84,7 +84,7 @@ index 45d18966ae8..b6b321731e1 100644
  
   private:
 diff --git a/components/content_settings/renderer/content_settings_agent_impl.cc b/components/content_settings/renderer/content_settings_agent_impl.cc
-index f367c973e87..409a918cfd5 100644
+index f367c973e8..409a918cfd 100644
 --- a/components/content_settings/renderer/content_settings_agent_impl.cc
 +++ b/components/content_settings/renderer/content_settings_agent_impl.cc
 @@ -162,7 +162,7 @@ void ContentSettingsAgentImpl::DidCommitProvisionalLoad(
@@ -147,7 +147,7 @@ index f367c973e87..409a918cfd5 100644
  
  }  // namespace content_settings
 diff --git a/components/content_settings/renderer/content_settings_agent_impl.h b/components/content_settings/renderer/content_settings_agent_impl.h
-index c083ea28bd0..a5bf1a26a83 100644
+index c083ea28bd..a5bf1a26a8 100644
 --- a/components/content_settings/renderer/content_settings_agent_impl.h
 +++ b/components/content_settings/renderer/content_settings_agent_impl.h
 @@ -85,6 +85,9 @@ class ContentSettingsAgentImpl
@@ -171,7 +171,7 @@ index c083ea28bd0..a5bf1a26a83 100644
    // for usage logging, to avoid sending redundant IPCs.
    base::flat_set<StoragePermissionsKey> storage_accessed_;
 diff --git a/third_party/blink/public/platform/web_content_settings_client.h b/third_party/blink/public/platform/web_content_settings_client.h
-index 8b9ec0f94a3..47c43646985 100644
+index 8b9ec0f94a..47c4364698 100644
 --- a/third_party/blink/public/platform/web_content_settings_client.h
 +++ b/third_party/blink/public/platform/web_content_settings_client.h
 @@ -60,6 +60,18 @@ class WebContentSettingsClient {
@@ -194,7 +194,7 @@ index 8b9ec0f94a3..47c43646985 100644
    virtual bool AllowRunningInsecureContent(bool enabled_per_settings,
                                             const WebURL&) {
 diff --git a/third_party/blink/renderer/core/frame/local_dom_window.cc b/third_party/blink/renderer/core/frame/local_dom_window.cc
-index f2aeb1ac0c5..52de3ab4fa9 100644
+index f2aeb1ac0c..52de3ab4fa 100644
 --- a/third_party/blink/renderer/core/frame/local_dom_window.cc
 +++ b/third_party/blink/renderer/core/frame/local_dom_window.cc
 @@ -51,6 +51,7 @@
@@ -218,7 +218,7 @@ index f2aeb1ac0c5..52de3ab4fa9 100644
      WebContentSettingsClient* settings_client =
          GetFrame()->GetContentSettingsClient();
 diff --git a/third_party/blink/renderer/core/frame/local_frame.cc b/third_party/blink/renderer/core/frame/local_frame.cc
-index 5f1d2d4c912..e5dc9ffc5e3 100644
+index 5f1d2d4c91..e5dc9ffc5e 100644
 --- a/third_party/blink/renderer/core/frame/local_frame.cc
 +++ b/third_party/blink/renderer/core/frame/local_frame.cc
 @@ -4460,19 +4460,6 @@ bool LocalFrame::IsSameOrigin() {
@@ -242,7 +242,7 @@ index 5f1d2d4c912..e5dc9ffc5e3 100644
    // If this fails, it's probably because nobody called StartPrinting().
    CHECK(GetDocument()->Printing());
 diff --git a/third_party/blink/renderer/core/frame/local_frame.h b/third_party/blink/renderer/core/frame/local_frame.h
-index ec7f3300a51..f628039a817 100644
+index ec7f3300a5..f628039a81 100644
 --- a/third_party/blink/renderer/core/frame/local_frame.h
 +++ b/third_party/blink/renderer/core/frame/local_frame.h
 @@ -978,12 +978,6 @@ class CORE_EXPORT LocalFrame final
@@ -259,7 +259,7 @@ index ec7f3300a51..f628039a817 100644
  
    // Returns the `Frame` for which `provisional_frame_ == this`. May only be
 diff --git a/third_party/blink/renderer/core/html/html_meta_element.cc b/third_party/blink/renderer/core/html/html_meta_element.cc
-index 21aa5717834..81fa831ea60 100644
+index 21aa571783..81fa831ea6 100644
 --- a/third_party/blink/renderer/core/html/html_meta_element.cc
 +++ b/third_party/blink/renderer/core/html/html_meta_element.cc
 @@ -861,7 +861,9 @@ void HTMLMetaElement::ProcessMetaCH(Document& document,
@@ -274,7 +274,7 @@ index 21aa5717834..81fa831ea60 100644
      return;
    }
 diff --git a/third_party/blink/renderer/core/loader/base_fetch_context.cc b/third_party/blink/renderer/core/loader/base_fetch_context.cc
-index d76d4831dd6..867363be54f 100644
+index d76d4831dd..867363be54 100644
 --- a/third_party/blink/renderer/core/loader/base_fetch_context.cc
 +++ b/third_party/blink/renderer/core/loader/base_fetch_context.cc
 @@ -295,7 +295,7 @@ BaseFetchContext::CanRequestInternal(
@@ -287,7 +287,7 @@ index d76d4831dd6..867363be54f 100644
        // this check has nothing to do with CSP. https://crbug.com/600795
        return ResourceRequestBlockedReason::kCSP;
 diff --git a/third_party/blink/renderer/core/loader/base_fetch_context.h b/third_party/blink/renderer/core/loader/base_fetch_context.h
-index b4a3efc1e7f..9c4a52267c7 100644
+index b4a3efc1e7..9c4a52267c 100644
 --- a/third_party/blink/renderer/core/loader/base_fetch_context.h
 +++ b/third_party/blink/renderer/core/loader/base_fetch_context.h
 @@ -111,7 +111,7 @@ class CORE_EXPORT BaseFetchContext : public FetchContext {
@@ -300,7 +300,7 @@ index b4a3efc1e7f..9c4a52267c7 100644
    // Note: subclasses are expected to override following methods.
    // Used in the default implementation for CanRequest, CanFollowRedirect
 diff --git a/third_party/blink/renderer/core/loader/frame_fetch_context.cc b/third_party/blink/renderer/core/loader/frame_fetch_context.cc
-index 0716bcba68b..c80bc8ec646 100644
+index 0716bcba68..c80bc8ec64 100644
 --- a/third_party/blink/renderer/core/loader/frame_fetch_context.cc
 +++ b/third_party/blink/renderer/core/loader/frame_fetch_context.cc
 @@ -641,7 +641,8 @@ void FrameFetchContext::AddClientHintsIfNecessary(
@@ -349,7 +349,7 @@ index 0716bcba68b..c80bc8ec646 100644
  
  bool FrameFetchContext::IsFirstPartyOrigin(
 diff --git a/third_party/blink/renderer/core/loader/frame_fetch_context.h b/third_party/blink/renderer/core/loader/frame_fetch_context.h
-index 5ccce864b6a..52aa295b635 100644
+index 5ccce864b6..52aa295b63 100644
 --- a/third_party/blink/renderer/core/loader/frame_fetch_context.h
 +++ b/third_party/blink/renderer/core/loader/frame_fetch_context.h
 @@ -68,6 +68,17 @@ class WebContentSettingsClient;
@@ -380,7 +380,7 @@ index 5ccce864b6a..52aa295b635 100644
    void DispatchDidBlockRequest(const ResourceRequest&,
                                 const ResourceLoaderOptions&,
 diff --git a/third_party/blink/renderer/core/loader/worker_fetch_context.cc b/third_party/blink/renderer/core/loader/worker_fetch_context.cc
-index 1945140c552..bb3588a76f5 100644
+index 1945140c55..bb3588a76f 100644
 --- a/third_party/blink/renderer/core/loader/worker_fetch_context.cc
 +++ b/third_party/blink/renderer/core/loader/worker_fetch_context.cc
 @@ -81,10 +81,14 @@ SubresourceFilter* WorkerFetchContext::GetSubresourceFilter() const {
@@ -403,7 +403,7 @@ index 1945140c552..bb3588a76f5 100644
  
  bool WorkerFetchContext::ShouldBlockRequestByInspector(const KURL& url) const {
 diff --git a/third_party/blink/renderer/core/loader/worker_fetch_context.h b/third_party/blink/renderer/core/loader/worker_fetch_context.h
-index 63b09c40571..9f52d99f913 100644
+index 63b09c4057..9f52d99f91 100644
 --- a/third_party/blink/renderer/core/loader/worker_fetch_context.h
 +++ b/third_party/blink/renderer/core/loader/worker_fetch_context.h
 @@ -50,7 +50,7 @@ class CORE_EXPORT WorkerFetchContext final : public BaseFetchContext {

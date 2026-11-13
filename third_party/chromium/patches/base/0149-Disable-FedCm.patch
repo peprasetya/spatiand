@@ -17,7 +17,7 @@ FILE:Disable-FedCm.patch
  create mode 100644 cromite_flags/third_party/blink/common/features_cc/Disable-FedCm.inc
 
 diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
-index 5aa23a8b92e..42580f75732 100644
+index 5aa23a8b92..42580f7573 100644
 --- a/components/content_settings/core/browser/content_settings_registry.cc
 +++ b/components/content_settings/core/browser/content_settings_registry.cc
 @@ -620,7 +620,7 @@ void ContentSettingsRegistry::Init() {
@@ -31,27 +31,27 @@ index 5aa23a8b92e..42580f75732 100644
             /*valid_settings=*/{CONTENT_SETTING_ALLOW, CONTENT_SETTING_BLOCK},
 diff --git a/cromite_flags/content/public/common/content_features_cc/Disable-FedCm.inc b/cromite_flags/content/public/common/content_features_cc/Disable-FedCm.inc
 new file mode 100644
-index 00000000000..d9bd3cf7965
+index 0000000000..d9bd3cf796
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_cc/Disable-FedCm.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_DISABLED(kFedCm);
 diff --git a/cromite_flags/services/network/public/cpp/features_cc/Disable-FedCm.inc b/cromite_flags/services/network/public/cpp/features_cc/Disable-FedCm.inc
 new file mode 100644
-index 00000000000..c6c9d0276db
+index 0000000000..c6c9d0276d
 --- /dev/null
 +++ b/cromite_flags/services/network/public/cpp/features_cc/Disable-FedCm.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_ENABLED(kSendSameSiteLaxForFedCM);
 diff --git a/cromite_flags/third_party/blink/common/features_cc/Disable-FedCm.inc b/cromite_flags/third_party/blink/common/features_cc/Disable-FedCm.inc
 new file mode 100644
-index 00000000000..8b1a393741c
+index 0000000000..8b1a393741
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_cc/Disable-FedCm.inc
 @@ -0,0 +1 @@
 +// empty
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 3ff76c5bb6d..9424578f105 100644
+index 3ff76c5bb6..9424578f10 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -2985,7 +2985,7 @@

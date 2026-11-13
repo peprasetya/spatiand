@@ -10,7 +10,7 @@ FILE:Disable-NTP-remote-suggestions-by-default.patch
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/components/feed/core/shared_prefs/pref_names.cc b/components/feed/core/shared_prefs/pref_names.cc
-index 50f880e7154..b91658fc384 100644
+index 50f880e715..b91658fc38 100644
 --- a/components/feed/core/shared_prefs/pref_names.cc
 +++ b/components/feed/core/shared_prefs/pref_names.cc
 @@ -24,8 +24,8 @@ const char kArticlesListVisible[] = "ntp_snippets.list_visible";

@@ -63,7 +63,7 @@ than removing it from every machine; clearing browsing data is told apart by the
  create mode 100644 chrome/browser/spatiand/spatikey_window.h
 
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index a3addd8e760..0a379630b4e 100644
+index a3addd8e76..0a379630b4 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -1826,6 +1826,28 @@ source_set("core") {
@@ -96,7 +96,7 @@ index a3addd8e760..0a379630b4e 100644
        "icon_loader_auralinux.cc",
        "shell_integration_linux.cc",
 diff --git a/chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.cc b/chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.cc
-index e031193a42a..e495cd5e139 100644
+index e031193a42..e495cd5e13 100644
 --- a/chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.cc
 +++ b/chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.cc
 @@ -116,6 +116,7 @@
@@ -118,7 +118,7 @@ index e031193a42a..e495cd5e139 100644
  
      network::mojom::NetworkContext* safe_browsing_context = nullptr;
 diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
-index 6dcbe8c1908..e54c515bc71 100644
+index 6dcbe8c190..e54c515bc7 100644
 --- a/chrome/browser/chrome_browser_main.cc
 +++ b/chrome/browser/chrome_browser_main.cc
 @@ -345,6 +345,7 @@
@@ -139,7 +139,7 @@ index 6dcbe8c1908..e54c515bc71 100644
    main_parts->AddParts(std::make_unique<ChromeBrowserMainExtraPartsOzone>());
  #endif
 diff --git a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
-index e31e8574933..9ce84f26e12 100644
+index e31e857493..9ce84f26e1 100644
 --- a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
 +++ b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
 @@ -440,6 +440,9 @@
@@ -164,7 +164,7 @@ index e31e8574933..9ce84f26e12 100644
    OidcAuthenticationSigninInterceptorFactory::GetInstance();
 diff --git a/chrome/browser/spatiand/bookmark_sync.cc b/chrome/browser/spatiand/bookmark_sync.cc
 new file mode 100644
-index 00000000000..595bbf0e26e
+index 0000000000..595bbf0e26
 --- /dev/null
 +++ b/chrome/browser/spatiand/bookmark_sync.cc
 @@ -0,0 +1,578 @@
@@ -748,7 +748,7 @@ index 00000000000..595bbf0e26e
 +}  // namespace spatiand
 diff --git a/chrome/browser/spatiand/bookmark_sync.h b/chrome/browser/spatiand/bookmark_sync.h
 new file mode 100644
-index 00000000000..4d0d5f29a37
+index 0000000000..4d0d5f29a3
 --- /dev/null
 +++ b/chrome/browser/spatiand/bookmark_sync.h
 @@ -0,0 +1,125 @@
@@ -879,7 +879,7 @@ index 00000000000..4d0d5f29a37
 +#endif  // CHROME_BROWSER_SPATIAND_BOOKMARK_SYNC_H_
 diff --git a/chrome/browser/spatiand/cookie_sync.cc b/chrome/browser/spatiand/cookie_sync.cc
 new file mode 100644
-index 00000000000..424679e2800
+index 0000000000..424679e280
 --- /dev/null
 +++ b/chrome/browser/spatiand/cookie_sync.cc
 @@ -0,0 +1,529 @@
@@ -1414,7 +1414,7 @@ index 00000000000..424679e2800
 +}  // namespace spatiand
 diff --git a/chrome/browser/spatiand/cookie_sync.h b/chrome/browser/spatiand/cookie_sync.h
 new file mode 100644
-index 00000000000..7058ed21a8d
+index 0000000000..7058ed21a8
 --- /dev/null
 +++ b/chrome/browser/spatiand/cookie_sync.h
 @@ -0,0 +1,100 @@
@@ -1520,7 +1520,7 @@ index 00000000000..7058ed21a8d
 +#endif  // CHROME_BROWSER_SPATIAND_COOKIE_SYNC_H_
 diff --git a/chrome/browser/spatiand/extension_sync.cc b/chrome/browser/spatiand/extension_sync.cc
 new file mode 100644
-index 00000000000..b5f0aa3d4f1
+index 0000000000..b5f0aa3d4f
 --- /dev/null
 +++ b/chrome/browser/spatiand/extension_sync.cc
 @@ -0,0 +1,402 @@
@@ -1928,7 +1928,7 @@ index 00000000000..b5f0aa3d4f1
 +}  // namespace spatiand
 diff --git a/chrome/browser/spatiand/extension_sync.h b/chrome/browser/spatiand/extension_sync.h
 new file mode 100644
-index 00000000000..76397ec120d
+index 0000000000..76397ec120
 --- /dev/null
 +++ b/chrome/browser/spatiand/extension_sync.h
 @@ -0,0 +1,92 @@
@@ -2026,7 +2026,7 @@ index 00000000000..76397ec120d
 +#endif  // CHROME_BROWSER_SPATIAND_EXTENSION_SYNC_H_
 diff --git a/chrome/browser/spatiand/history_sync.cc b/chrome/browser/spatiand/history_sync.cc
 new file mode 100644
-index 00000000000..34c3fe94311
+index 0000000000..34c3fe9431
 --- /dev/null
 +++ b/chrome/browser/spatiand/history_sync.cc
 @@ -0,0 +1,437 @@
@@ -2469,7 +2469,7 @@ index 00000000000..34c3fe94311
 +}  // namespace spatiand
 diff --git a/chrome/browser/spatiand/history_sync.h b/chrome/browser/spatiand/history_sync.h
 new file mode 100644
-index 00000000000..825ff9cb2c3
+index 0000000000..825ff9cb2c
 --- /dev/null
 +++ b/chrome/browser/spatiand/history_sync.h
 @@ -0,0 +1,96 @@
@@ -2571,7 +2571,7 @@ index 00000000000..825ff9cb2c3
 +#endif  // CHROME_BROWSER_SPATIAND_HISTORY_SYNC_H_
 diff --git a/chrome/browser/spatiand/main_parts.cc b/chrome/browser/spatiand/main_parts.cc
 new file mode 100644
-index 00000000000..c5262fd921b
+index 0000000000..c5262fd921
 --- /dev/null
 +++ b/chrome/browser/spatiand/main_parts.cc
 @@ -0,0 +1,16 @@
@@ -2593,7 +2593,7 @@ index 00000000000..c5262fd921b
 +}  // namespace spatiand
 diff --git a/chrome/browser/spatiand/main_parts.h b/chrome/browser/spatiand/main_parts.h
 new file mode 100644
-index 00000000000..9722f8c1208
+index 0000000000..9722f8c120
 --- /dev/null
 +++ b/chrome/browser/spatiand/main_parts.h
 @@ -0,0 +1,25 @@
@@ -2624,7 +2624,7 @@ index 00000000000..9722f8c1208
 +#endif  // CHROME_BROWSER_SPATIAND_MAIN_PARTS_H_
 diff --git a/chrome/browser/spatiand/profile_lock_dialog.cc b/chrome/browser/spatiand/profile_lock_dialog.cc
 new file mode 100644
-index 00000000000..2acc69b61af
+index 0000000000..2acc69b61a
 --- /dev/null
 +++ b/chrome/browser/spatiand/profile_lock_dialog.cc
 @@ -0,0 +1,132 @@
@@ -2762,7 +2762,7 @@ index 00000000000..2acc69b61af
 +}  // namespace spatiand
 diff --git a/chrome/browser/spatiand/profile_lock_dialog.h b/chrome/browser/spatiand/profile_lock_dialog.h
 new file mode 100644
-index 00000000000..2350d3f8434
+index 0000000000..2350d3f843
 --- /dev/null
 +++ b/chrome/browser/spatiand/profile_lock_dialog.h
 @@ -0,0 +1,24 @@
@@ -2792,7 +2792,7 @@ index 00000000000..2350d3f8434
 +#endif  // CHROME_BROWSER_SPATIAND_PROFILE_LOCK_DIALOG_H_
 diff --git a/chrome/browser/spatiand/profile_service.cc b/chrome/browser/spatiand/profile_service.cc
 new file mode 100644
-index 00000000000..909a380a510
+index 0000000000..909a380a51
 --- /dev/null
 +++ b/chrome/browser/spatiand/profile_service.cc
 @@ -0,0 +1,81 @@
@@ -2879,7 +2879,7 @@ index 00000000000..909a380a510
 +}  // namespace spatiand
 diff --git a/chrome/browser/spatiand/profile_service.h b/chrome/browser/spatiand/profile_service.h
 new file mode 100644
-index 00000000000..f5c06ba9632
+index 0000000000..f5c06ba963
 --- /dev/null
 +++ b/chrome/browser/spatiand/profile_service.h
 @@ -0,0 +1,64 @@
@@ -2949,7 +2949,7 @@ index 00000000000..f5c06ba9632
 +#endif  // CHROME_BROWSER_SPATIAND_PROFILE_SERVICE_H_
 diff --git a/chrome/browser/spatiand/profiles_sync.cc b/chrome/browser/spatiand/profiles_sync.cc
 new file mode 100644
-index 00000000000..b90c819ccb0
+index 0000000000..b90c819ccb
 --- /dev/null
 +++ b/chrome/browser/spatiand/profiles_sync.cc
 @@ -0,0 +1,598 @@
@@ -3553,7 +3553,7 @@ index 00000000000..b90c819ccb0
 +}  // namespace spatiand
 diff --git a/chrome/browser/spatiand/profiles_sync.h b/chrome/browser/spatiand/profiles_sync.h
 new file mode 100644
-index 00000000000..464c9166cab
+index 0000000000..464c9166ca
 --- /dev/null
 +++ b/chrome/browser/spatiand/profiles_sync.h
 @@ -0,0 +1,139 @@
@@ -3698,7 +3698,7 @@ index 00000000000..464c9166cab
 +#endif  // CHROME_BROWSER_SPATIAND_PROFILES_SYNC_H_
 diff --git a/chrome/browser/spatiand/settings_sync.cc b/chrome/browser/spatiand/settings_sync.cc
 new file mode 100644
-index 00000000000..898c55b9481
+index 0000000000..898c55b948
 --- /dev/null
 +++ b/chrome/browser/spatiand/settings_sync.cc
 @@ -0,0 +1,352 @@
@@ -4056,7 +4056,7 @@ index 00000000000..898c55b9481
 +}  // namespace spatiand
 diff --git a/chrome/browser/spatiand/settings_sync.h b/chrome/browser/spatiand/settings_sync.h
 new file mode 100644
-index 00000000000..bdad8719a6a
+index 0000000000..bdad8719a6
 --- /dev/null
 +++ b/chrome/browser/spatiand/settings_sync.h
 @@ -0,0 +1,80 @@
@@ -4142,7 +4142,7 @@ index 00000000000..bdad8719a6a
 +#endif  // CHROME_BROWSER_SPATIAND_SETTINGS_SYNC_H_
 diff --git a/chrome/browser/spatiand/shared_folder.cc b/chrome/browser/spatiand/shared_folder.cc
 new file mode 100644
-index 00000000000..e9309f81cc6
+index 0000000000..e9309f81cc
 --- /dev/null
 +++ b/chrome/browser/spatiand/shared_folder.cc
 @@ -0,0 +1,214 @@
@@ -4362,7 +4362,7 @@ index 00000000000..e9309f81cc6
 +}  // namespace spatiand
 diff --git a/chrome/browser/spatiand/shared_folder.h b/chrome/browser/spatiand/shared_folder.h
 new file mode 100644
-index 00000000000..8ef28e4f245
+index 0000000000..8ef28e4f24
 --- /dev/null
 +++ b/chrome/browser/spatiand/shared_folder.h
 @@ -0,0 +1,57 @@
@@ -4425,7 +4425,7 @@ index 00000000000..8ef28e4f245
 +#endif  // CHROME_BROWSER_SPATIAND_SHARED_FOLDER_H_
 diff --git a/chrome/browser/spatiand/spatikey_window.cc b/chrome/browser/spatiand/spatikey_window.cc
 new file mode 100644
-index 00000000000..f1dbd321f10
+index 0000000000..f1dbd321f1
 --- /dev/null
 +++ b/chrome/browser/spatiand/spatikey_window.cc
 @@ -0,0 +1,105 @@
@@ -4536,7 +4536,7 @@ index 00000000000..f1dbd321f10
 +}  // namespace spatiand
 diff --git a/chrome/browser/spatiand/spatikey_window.h b/chrome/browser/spatiand/spatikey_window.h
 new file mode 100644
-index 00000000000..0d2e091f9e7
+index 0000000000..0d2e091f9e
 --- /dev/null
 +++ b/chrome/browser/spatiand/spatikey_window.h
 @@ -0,0 +1,26 @@
@@ -4567,7 +4567,7 @@ index 00000000000..0d2e091f9e7
 +
 +#endif  // CHROME_BROWSER_SPATIAND_SPATIKEY_WINDOW_H_
 diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
-index d441b8a76bd..5ed781a7b02 100644
+index d441b8a76b..5ed781a7b0 100644
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
 @@ -4,6 +4,10 @@
@@ -4615,7 +4615,7 @@ index d441b8a76bd..5ed781a7b02 100644
      browser_widget_->ShowInactive();
    }
 diff --git a/components/browsing_data/core/pref_names.cc b/components/browsing_data/core/pref_names.cc
-index b5a940cde52..ba218957152 100644
+index b5a940cde5..ba21895715 100644
 --- a/components/browsing_data/core/pref_names.cc
 +++ b/components/browsing_data/core/pref_names.cc
 @@ -53,9 +53,8 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {

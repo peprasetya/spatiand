@@ -14,7 +14,7 @@ FILE:Enable-darken-websites-checkbox-in-themes.patch
  create mode 100644 cromite_flags/components/content_settings/core/common/features_cc/Enable-darken-websites-checkbox-in-themes.inc
 
 diff --git a/chrome/browser/flag-metadata.json b/chrome/browser/flag-metadata.json
-index 604495711d0..70b5e2f884c 100644
+index 604495711d..70b5e2f884 100644
 --- a/chrome/browser/flag-metadata.json
 +++ b/chrome/browser/flag-metadata.json
 @@ -2704,9 +2704,9 @@
@@ -32,7 +32,7 @@ index 604495711d0..70b5e2f884c 100644
      "name": "data-controls-search-with",
 diff --git a/cromite_flags/components/content_settings/core/common/features_cc/Enable-darken-websites-checkbox-in-themes.inc b/cromite_flags/components/content_settings/core/common/features_cc/Enable-darken-websites-checkbox-in-themes.inc
 new file mode 100644
-index 00000000000..e4c1a035ab2
+index 0000000000..e4c1a035ab
 --- /dev/null
 +++ b/cromite_flags/components/content_settings/core/common/features_cc/Enable-darken-websites-checkbox-in-themes.inc
 @@ -0,0 +1,5 @@

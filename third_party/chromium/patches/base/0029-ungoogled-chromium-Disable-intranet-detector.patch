@@ -14,7 +14,7 @@ FILE:ungoogled-chromium-Disable-intranet-detector.patch
  1 file changed, 1 insertion(+), 3 deletions(-)
 
 diff --git a/chrome/browser/intranet_redirect_detector.cc b/chrome/browser/intranet_redirect_detector.cc
-index 935d24eb60c..0381c323664 100644
+index 935d24eb60..0381c32366 100644
 --- a/chrome/browser/intranet_redirect_detector.cc
 +++ b/chrome/browser/intranet_redirect_detector.cc
 @@ -117,9 +117,7 @@ void IntranetRedirectDetector::FinishSleep() {

@@ -700,7 +700,7 @@ FILE:eyeo-133.0.6943.49-base.patch
  create mode 100755 tools/eyeo/update_git_grafts.py
 
 diff --git a/DEPS b/DEPS
-index 5a1b6829a2c..e8e8baa4412 100644
+index 5a1b6829a2..e8e8baa441 100644
 --- a/DEPS
 +++ b/DEPS
 @@ -313,6 +313,7 @@ vars = {
@@ -736,7 +736,7 @@ index 5a1b6829a2c..e8e8baa4412 100644
      'url': Var('chromium_git') + '/website.git' + '@' + 'f1913ba8be7e2f05851aa2f3624ad055c13243cf',
    },
 diff --git a/LICENSE b/LICENSE
-index 2249a28657f..bc6e1d08527 100644
+index 2249a28657..bc6e1d0852 100644
 --- a/LICENSE
 +++ b/LICENSE
 @@ -25,3 +25,18 @@
@@ -759,7 +759,7 @@ index 2249a28657f..bc6e1d08527 100644
 +// You should have received a copy of the GNU General Public License
 +// along with eyeo Chromium SDK.  If not, see <http://www.gnu.org/licenses/>.
 diff --git a/README.md b/README.md
-index 590f4c94f20..8ff34471587 100644
+index 590f4c94f2..8ff3447158 100644
 --- a/README.md
 +++ b/README.md
 @@ -19,3 +19,15 @@ Android WebView, Ash). Even if these products have multiple executables, the
@@ -779,7 +779,7 @@ index 590f4c94f20..8ff34471587 100644
 +as well as the changelog, license and technical documentation about
 +architecture and integration steps.
 diff --git a/base/threading/thread_restrictions.h b/base/threading/thread_restrictions.h
-index cc087c73765..5f4600003a4 100644
+index cc087c7376..5f4600003a 100644
 --- a/base/threading/thread_restrictions.h
 +++ b/base/threading/thread_restrictions.h
 @@ -1,6 +1,10 @@
@@ -813,7 +813,7 @@ index cc087c73765..5f4600003a4 100644
    friend Profile* ::GetLastProfileMac();  // http://crbug.com/1176734
    // Note: This function return syntax is required so the "::" doesn't get
 diff --git a/base/trace_event/builtin_categories.h b/base/trace_event/builtin_categories.h
-index 9377661e94e..3126d085d57 100644
+index 9377661e94..3126d085d5 100644
 --- a/base/trace_event/builtin_categories.h
 +++ b/base/trace_event/builtin_categories.h
 @@ -144,6 +144,7 @@ PERFETTO_DEFINE_CATEGORIES_IN_NAMESPACE_WITH_ATTRS(
@@ -825,7 +825,7 @@ index 9377661e94e..3126d085d57 100644
      perfetto::Category("file_system_provider"),
      perfetto::Category("fledge"),
 diff --git a/components/BUILD.gn b/components/BUILD.gn
-index f67abca7572..60c0092f686 100644
+index f67abca757..60c0092f68 100644
 --- a/components/BUILD.gn
 +++ b/components/BUILD.gn
 @@ -1159,6 +1159,7 @@ if (use_blink) {
@@ -838,7 +838,7 @@ index f67abca7572..60c0092f686 100644
        "//components/autofill/content/renderer",
 diff --git a/components/adblock/BUILD.gn b/components/adblock/BUILD.gn
 new file mode 100644
-index 00000000000..2e05b4eb776
+index 0000000000..2e05b4eb77
 --- /dev/null
 +++ b/components/adblock/BUILD.gn
 @@ -0,0 +1,36 @@
@@ -880,7 +880,7 @@ index 00000000000..2e05b4eb776
 +}
 diff --git a/components/adblock/CHANGELOG.md b/components/adblock/CHANGELOG.md
 new file mode 100644
-index 00000000000..926e1789c63
+index 0000000000..926e1789c6
 --- /dev/null
 +++ b/components/adblock/CHANGELOG.md
 @@ -0,0 +1,746 @@
@@ -1632,7 +1632,7 @@ index 00000000000..926e1789c63
 +* Base release of ad blocking integration
 diff --git a/components/adblock/LICENSE b/components/adblock/LICENSE
 new file mode 100644
-index 00000000000..ee2a3f5f56c
+index 0000000000..ee2a3f5f56
 --- /dev/null
 +++ b/components/adblock/LICENSE
 @@ -0,0 +1,674 @@
@@ -2313,7 +2313,7 @@ index 00000000000..ee2a3f5f56c
 \ No newline at end of file
 diff --git a/components/adblock/README.md b/components/adblock/README.md
 new file mode 100644
-index 00000000000..145c6b50cb2
+index 0000000000..145c6b50cb
 --- /dev/null
 +++ b/components/adblock/README.md
 @@ -0,0 +1,80 @@
@@ -2399,7 +2399,7 @@ index 00000000000..145c6b50cb2
 +General information for developers, like options for logging, testing, etc, can be found in the [developer notes](docs/developer-notes.md).
 diff --git a/components/adblock/content/BUILD.gn b/components/adblock/content/BUILD.gn
 new file mode 100644
-index 00000000000..b73f4930095
+index 0000000000..b73f493009
 --- /dev/null
 +++ b/components/adblock/content/BUILD.gn
 @@ -0,0 +1,22 @@
@@ -2427,7 +2427,7 @@ index 00000000000..b73f4930095
 +}
 diff --git a/components/adblock/content/browser/BUILD.gn b/components/adblock/content/browser/BUILD.gn
 new file mode 100644
-index 00000000000..f562501f90b
+index 0000000000..f562501f90
 --- /dev/null
 +++ b/components/adblock/content/browser/BUILD.gn
 @@ -0,0 +1,226 @@
@@ -2659,7 +2659,7 @@ index 00000000000..f562501f90b
 +}
 diff --git a/components/adblock/content/browser/adblock_content_browser_client.h b/components/adblock/content/browser/adblock_content_browser_client.h
 new file mode 100644
-index 00000000000..86e1ae1f358
+index 0000000000..86e1ae1f35
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_content_browser_client.h
 @@ -0,0 +1,350 @@
@@ -3015,7 +3015,7 @@ index 00000000000..86e1ae1f358
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_ADBLOCK_CONTENT_BROWSER_CLIENT_H_
 diff --git a/components/adblock/content/browser/adblock_context_data.cc b/components/adblock/content/browser/adblock_context_data.cc
 new file mode 100644
-index 00000000000..86b1181ee1e
+index 0000000000..86b1181ee1
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_context_data.cc
 @@ -0,0 +1,87 @@
@@ -3108,7 +3108,7 @@ index 00000000000..86b1181ee1e
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/adblock_context_data.h b/components/adblock/content/browser/adblock_context_data.h
 new file mode 100644
-index 00000000000..826604c06c7
+index 0000000000..826604c06c
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_context_data.h
 @@ -0,0 +1,63 @@
@@ -3177,7 +3177,7 @@ index 00000000000..826604c06c7
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_ADBLOCK_CONTEXT_DATA_H_
 diff --git a/components/adblock/content/browser/adblock_filter_match.h b/components/adblock/content/browser/adblock_filter_match.h
 new file mode 100644
-index 00000000000..73bec32d3a4
+index 0000000000..73bec32d3a
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_filter_match.h
 @@ -0,0 +1,30 @@
@@ -3213,7 +3213,7 @@ index 00000000000..73bec32d3a4
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_ADBLOCK_FILTER_MATCH_H_
 diff --git a/components/adblock/content/browser/adblock_internals_page_handler.cc b/components/adblock/content/browser/adblock_internals_page_handler.cc
 new file mode 100644
-index 00000000000..f1bde9829d1
+index 0000000000..f1bde9829d
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_internals_page_handler.cc
 @@ -0,0 +1,171 @@
@@ -3390,7 +3390,7 @@ index 00000000000..f1bde9829d1
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/adblock_internals_page_handler.h b/components/adblock/content/browser/adblock_internals_page_handler.h
 new file mode 100644
-index 00000000000..11578fe88ec
+index 0000000000..11578fe88e
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_internals_page_handler.h
 @@ -0,0 +1,61 @@
@@ -3457,7 +3457,7 @@ index 00000000000..11578fe88ec
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_ADBLOCK_INTERNALS_PAGE_HANDLER_H_
 diff --git a/components/adblock/content/browser/adblock_internals_ui.cc b/components/adblock/content/browser/adblock_internals_ui.cc
 new file mode 100644
-index 00000000000..d6387dc2455
+index 0000000000..d6387dc245
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_internals_ui.cc
 @@ -0,0 +1,67 @@
@@ -3530,7 +3530,7 @@ index 00000000000..d6387dc2455
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/adblock_internals_ui.h b/components/adblock/content/browser/adblock_internals_ui.h
 new file mode 100644
-index 00000000000..8437305e801
+index 0000000000..8437305e80
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_internals_ui.h
 @@ -0,0 +1,49 @@
@@ -3585,7 +3585,7 @@ index 00000000000..8437305e801
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_ADBLOCK_INTERNALS_UI_H_
 diff --git a/components/adblock/content/browser/adblock_url_loader_factory.cc b/components/adblock/content/browser/adblock_url_loader_factory.cc
 new file mode 100644
-index 00000000000..0844ba03f51
+index 0000000000..0844ba03f5
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_url_loader_factory.cc
 @@ -0,0 +1,807 @@
@@ -4398,7 +4398,7 @@ index 00000000000..0844ba03f51
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/adblock_url_loader_factory.h b/components/adblock/content/browser/adblock_url_loader_factory.h
 new file mode 100644
-index 00000000000..b537fd87966
+index 0000000000..b537fd8796
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_url_loader_factory.h
 @@ -0,0 +1,100 @@
@@ -4504,7 +4504,7 @@ index 00000000000..b537fd87966
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_ADBLOCK_URL_LOADER_FACTORY_H_
 diff --git a/components/adblock/content/browser/adblock_url_loader_factory_for_test.cc b/components/adblock/content/browser/adblock_url_loader_factory_for_test.cc
 new file mode 100644
-index 00000000000..3abc7fa43d1
+index 0000000000..3abc7fa43d
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_url_loader_factory_for_test.cc
 @@ -0,0 +1,466 @@
@@ -4976,7 +4976,7 @@ index 00000000000..3abc7fa43d1
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/adblock_url_loader_factory_for_test.h b/components/adblock/content/browser/adblock_url_loader_factory_for_test.h
 new file mode 100644
-index 00000000000..83772018137
+index 0000000000..8377201813
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_url_loader_factory_for_test.h
 @@ -0,0 +1,78 @@
@@ -5060,7 +5060,7 @@ index 00000000000..83772018137
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_ADBLOCK_URL_LOADER_FACTORY_FOR_TEST_H_
 diff --git a/components/adblock/content/browser/adblock_web_ui_controller_factory.cc b/components/adblock/content/browser/adblock_web_ui_controller_factory.cc
 new file mode 100644
-index 00000000000..0e883d9a04f
+index 0000000000..0e883d9a04
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_web_ui_controller_factory.cc
 @@ -0,0 +1,62 @@
@@ -5128,7 +5128,7 @@ index 00000000000..0e883d9a04f
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/adblock_web_ui_controller_factory.h b/components/adblock/content/browser/adblock_web_ui_controller_factory.h
 new file mode 100644
-index 00000000000..24f7e6f716b
+index 0000000000..24f7e6f716
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_web_ui_controller_factory.h
 @@ -0,0 +1,58 @@
@@ -5192,7 +5192,7 @@ index 00000000000..24f7e6f716b
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_ADBLOCK_WEB_UI_CONTROLLER_FACTORY_H_
 diff --git a/components/adblock/content/browser/adblock_webcontents_observer.cc b/components/adblock/content/browser/adblock_webcontents_observer.cc
 new file mode 100644
-index 00000000000..f3b2a6a6cd7
+index 0000000000..f3b2a6a6cd
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_webcontents_observer.cc
 @@ -0,0 +1,217 @@
@@ -5415,7 +5415,7 @@ index 00000000000..f3b2a6a6cd7
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/adblock_webcontents_observer.h b/components/adblock/content/browser/adblock_webcontents_observer.h
 new file mode 100644
-index 00000000000..93babc61dcd
+index 0000000000..93babc61dc
 --- /dev/null
 +++ b/components/adblock/content/browser/adblock_webcontents_observer.h
 @@ -0,0 +1,93 @@
@@ -5514,7 +5514,7 @@ index 00000000000..93babc61dcd
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_ADBLOCK_WEBCONTENTS_OBSERVER_H_
 diff --git a/components/adblock/content/browser/content_security_policy_injector.h b/components/adblock/content/browser/content_security_policy_injector.h
 new file mode 100644
-index 00000000000..18e566f59ae
+index 0000000000..18e566f59a
 --- /dev/null
 +++ b/components/adblock/content/browser/content_security_policy_injector.h
 @@ -0,0 +1,61 @@
@@ -5581,7 +5581,7 @@ index 00000000000..18e566f59ae
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_CONTENT_SECURITY_POLICY_INJECTOR_H_
 diff --git a/components/adblock/content/browser/content_security_policy_injector_impl.cc b/components/adblock/content/browser/content_security_policy_injector_impl.cc
 new file mode 100644
-index 00000000000..5ca2eb32b91
+index 0000000000..5ca2eb32b9
 --- /dev/null
 +++ b/components/adblock/content/browser/content_security_policy_injector_impl.cc
 @@ -0,0 +1,111 @@
@@ -5698,7 +5698,7 @@ index 00000000000..5ca2eb32b91
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/content_security_policy_injector_impl.h b/components/adblock/content/browser/content_security_policy_injector_impl.h
 new file mode 100644
-index 00000000000..52a1be348cb
+index 0000000000..52a1be348c
 --- /dev/null
 +++ b/components/adblock/content/browser/content_security_policy_injector_impl.h
 @@ -0,0 +1,65 @@
@@ -5769,7 +5769,7 @@ index 00000000000..52a1be348cb
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_CONTENT_SECURITY_POLICY_INJECTOR_IMPL_H_
 diff --git a/components/adblock/content/browser/element_hider.h b/components/adblock/content/browser/element_hider.h
 new file mode 100644
-index 00000000000..561ec2d0c6c
+index 0000000000..561ec2d0c6
 --- /dev/null
 +++ b/components/adblock/content/browser/element_hider.h
 @@ -0,0 +1,70 @@
@@ -5845,7 +5845,7 @@ index 00000000000..561ec2d0c6c
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_ELEMENT_HIDER_H_
 diff --git a/components/adblock/content/browser/element_hider_impl.cc b/components/adblock/content/browser/element_hider_impl.cc
 new file mode 100644
-index 00000000000..cf0b1c08cd7
+index 0000000000..cf0b1c08cd
 --- /dev/null
 +++ b/components/adblock/content/browser/element_hider_impl.cc
 @@ -0,0 +1,367 @@
@@ -6218,7 +6218,7 @@ index 00000000000..cf0b1c08cd7
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/element_hider_impl.h b/components/adblock/content/browser/element_hider_impl.h
 new file mode 100644
-index 00000000000..263e61943ff
+index 0000000000..263e61943f
 --- /dev/null
 +++ b/components/adblock/content/browser/element_hider_impl.h
 @@ -0,0 +1,55 @@
@@ -6279,7 +6279,7 @@ index 00000000000..263e61943ff
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_ELEMENT_HIDER_IMPL_H_
 diff --git a/components/adblock/content/browser/eyeo_document_info.cc b/components/adblock/content/browser/eyeo_document_info.cc
 new file mode 100644
-index 00000000000..d07af8bea23
+index 0000000000..d07af8bea2
 --- /dev/null
 +++ b/components/adblock/content/browser/eyeo_document_info.cc
 @@ -0,0 +1,50 @@
@@ -6335,7 +6335,7 @@ index 00000000000..d07af8bea23
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/eyeo_document_info.h b/components/adblock/content/browser/eyeo_document_info.h
 new file mode 100644
-index 00000000000..91b350f32db
+index 0000000000..91b350f32d
 --- /dev/null
 +++ b/components/adblock/content/browser/eyeo_document_info.h
 @@ -0,0 +1,58 @@
@@ -6399,7 +6399,7 @@ index 00000000000..91b350f32db
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_EYEO_DOCUMENT_INFO_H_
 diff --git a/components/adblock/content/browser/eyeo_page_info.cc b/components/adblock/content/browser/eyeo_page_info.cc
 new file mode 100644
-index 00000000000..169b6f33883
+index 0000000000..169b6f3388
 --- /dev/null
 +++ b/components/adblock/content/browser/eyeo_page_info.cc
 @@ -0,0 +1,38 @@
@@ -6443,7 +6443,7 @@ index 00000000000..169b6f33883
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/eyeo_page_info.h b/components/adblock/content/browser/eyeo_page_info.h
 new file mode 100644
-index 00000000000..6787ab3ddd7
+index 0000000000..6787ab3ddd
 --- /dev/null
 +++ b/components/adblock/content/browser/eyeo_page_info.h
 @@ -0,0 +1,53 @@
@@ -6502,7 +6502,7 @@ index 00000000000..6787ab3ddd7
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_EYEO_PAGE_INFO_H_
 diff --git a/components/adblock/content/browser/factories/adblock_request_throttle_factory.cc b/components/adblock/content/browser/factories/adblock_request_throttle_factory.cc
 new file mode 100644
-index 00000000000..84fb86da428
+index 0000000000..84fb86da42
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/adblock_request_throttle_factory.cc
 @@ -0,0 +1,72 @@
@@ -6580,7 +6580,7 @@ index 00000000000..84fb86da428
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/factories/adblock_request_throttle_factory.h b/components/adblock/content/browser/factories/adblock_request_throttle_factory.h
 new file mode 100644
-index 00000000000..012097e49ca
+index 0000000000..012097e49c
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/adblock_request_throttle_factory.h
 @@ -0,0 +1,51 @@
@@ -6637,7 +6637,7 @@ index 00000000000..012097e49ca
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_FACTORIES_ADBLOCK_REQUEST_THROTTLE_FACTORY_H_
 diff --git a/components/adblock/content/browser/factories/adblock_telemetry_service_factory.cc b/components/adblock/content/browser/factories/adblock_telemetry_service_factory.cc
 new file mode 100644
-index 00000000000..212dd3290a5
+index 0000000000..212dd3290a
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/adblock_telemetry_service_factory.cc
 @@ -0,0 +1,122 @@
@@ -6765,7 +6765,7 @@ index 00000000000..212dd3290a5
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/factories/adblock_telemetry_service_factory.h b/components/adblock/content/browser/factories/adblock_telemetry_service_factory.h
 new file mode 100644
-index 00000000000..04a52d0ca81
+index 0000000000..04a52d0ca8
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/adblock_telemetry_service_factory.h
 @@ -0,0 +1,55 @@
@@ -6826,7 +6826,7 @@ index 00000000000..04a52d0ca81
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_FACTORIES_ADBLOCK_TELEMETRY_SERVICE_FACTORY_H_
 diff --git a/components/adblock/content/browser/factories/content_security_policy_injector_factory.cc b/components/adblock/content/browser/factories/content_security_policy_injector_factory.cc
 new file mode 100644
-index 00000000000..8923e6c887f
+index 0000000000..8923e6c887
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/content_security_policy_injector_factory.cc
 @@ -0,0 +1,71 @@
@@ -6903,7 +6903,7 @@ index 00000000000..8923e6c887f
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/factories/content_security_policy_injector_factory.h b/components/adblock/content/browser/factories/content_security_policy_injector_factory.h
 new file mode 100644
-index 00000000000..a99a0f46cd8
+index 0000000000..a99a0f46cd
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/content_security_policy_injector_factory.h
 @@ -0,0 +1,49 @@
@@ -6958,7 +6958,7 @@ index 00000000000..a99a0f46cd8
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_FACTORIES_CONTENT_SECURITY_POLICY_INJECTOR_FACTORY_H_
 diff --git a/components/adblock/content/browser/factories/element_hider_factory.cc b/components/adblock/content/browser/factories/element_hider_factory.cc
 new file mode 100644
-index 00000000000..e49bae1ccfb
+index 0000000000..e49bae1ccf
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/element_hider_factory.cc
 @@ -0,0 +1,65 @@
@@ -7029,7 +7029,7 @@ index 00000000000..e49bae1ccfb
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/factories/element_hider_factory.h b/components/adblock/content/browser/factories/element_hider_factory.h
 new file mode 100644
-index 00000000000..783db732029
+index 0000000000..783db73202
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/element_hider_factory.h
 @@ -0,0 +1,47 @@
@@ -7082,7 +7082,7 @@ index 00000000000..783db732029
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_FACTORIES_ELEMENT_HIDER_FACTORY_H_
 diff --git a/components/adblock/content/browser/factories/embedding_utils.cc b/components/adblock/content/browser/factories/embedding_utils.cc
 new file mode 100644
-index 00000000000..8b514aa9bfd
+index 0000000000..8b514aa9bf
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/embedding_utils.cc
 @@ -0,0 +1,42 @@
@@ -7130,7 +7130,7 @@ index 00000000000..8b514aa9bfd
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/factories/embedding_utils.h b/components/adblock/content/browser/factories/embedding_utils.h
 new file mode 100644
-index 00000000000..436fc54ba17
+index 0000000000..436fc54ba1
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/embedding_utils.h
 @@ -0,0 +1,50 @@
@@ -7186,7 +7186,7 @@ index 00000000000..436fc54ba17
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_FACTORIES_EMBEDDING_UTILS_H_
 diff --git a/components/adblock/content/browser/factories/resource_classification_runner_factory.cc b/components/adblock/content/browser/factories/resource_classification_runner_factory.cc
 new file mode 100644
-index 00000000000..b6005f0a018
+index 0000000000..b6005f0a01
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/resource_classification_runner_factory.cc
 @@ -0,0 +1,73 @@
@@ -7265,7 +7265,7 @@ index 00000000000..b6005f0a018
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/factories/resource_classification_runner_factory.h b/components/adblock/content/browser/factories/resource_classification_runner_factory.h
 new file mode 100644
-index 00000000000..55c967072d9
+index 0000000000..55c967072d
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/resource_classification_runner_factory.h
 @@ -0,0 +1,49 @@
@@ -7320,7 +7320,7 @@ index 00000000000..55c967072d9
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_FACTORIES_RESOURCE_CLASSIFICATION_RUNNER_FACTORY_H_
 diff --git a/components/adblock/content/browser/factories/session_stats_factory.cc b/components/adblock/content/browser/factories/session_stats_factory.cc
 new file mode 100644
-index 00000000000..8a656355a41
+index 0000000000..8a656355a4
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/session_stats_factory.cc
 @@ -0,0 +1,66 @@
@@ -7392,7 +7392,7 @@ index 00000000000..8a656355a41
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/factories/session_stats_factory.h b/components/adblock/content/browser/factories/session_stats_factory.h
 new file mode 100644
-index 00000000000..fa1af111444
+index 0000000000..fa1af11144
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/session_stats_factory.h
 @@ -0,0 +1,47 @@
@@ -7445,7 +7445,7 @@ index 00000000000..fa1af111444
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_FACTORIES_SESSION_STATS_FACTORY_H_
 diff --git a/components/adblock/content/browser/factories/sitekey_storage_factory.cc b/components/adblock/content/browser/factories/sitekey_storage_factory.cc
 new file mode 100644
-index 00000000000..19b224690d2
+index 0000000000..19b224690d
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/sitekey_storage_factory.cc
 @@ -0,0 +1,61 @@
@@ -7512,7 +7512,7 @@ index 00000000000..19b224690d2
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/factories/sitekey_storage_factory.h b/components/adblock/content/browser/factories/sitekey_storage_factory.h
 new file mode 100644
-index 00000000000..c7c7a334df7
+index 0000000000..c7c7a334df
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/sitekey_storage_factory.h
 @@ -0,0 +1,47 @@
@@ -7565,7 +7565,7 @@ index 00000000000..c7c7a334df7
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_FACTORIES_SITEKEY_STORAGE_FACTORY_H_
 diff --git a/components/adblock/content/browser/factories/subscription_persistent_metadata_factory.cc b/components/adblock/content/browser/factories/subscription_persistent_metadata_factory.cc
 new file mode 100644
-index 00000000000..ab55b634f2f
+index 0000000000..ab55b634f2
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/subscription_persistent_metadata_factory.cc
 @@ -0,0 +1,66 @@
@@ -7637,7 +7637,7 @@ index 00000000000..ab55b634f2f
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/factories/subscription_persistent_metadata_factory.h b/components/adblock/content/browser/factories/subscription_persistent_metadata_factory.h
 new file mode 100644
-index 00000000000..874d7fd7fc2
+index 0000000000..874d7fd7fc
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/subscription_persistent_metadata_factory.h
 @@ -0,0 +1,49 @@
@@ -7692,7 +7692,7 @@ index 00000000000..874d7fd7fc2
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_FACTORIES_SUBSCRIPTION_PERSISTENT_METADATA_FACTORY_H_
 diff --git a/components/adblock/content/browser/factories/subscription_service_factory.cc b/components/adblock/content/browser/factories/subscription_service_factory.cc
 new file mode 100644
-index 00000000000..1daa96e4598
+index 0000000000..1daa96e459
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/subscription_service_factory.cc
 @@ -0,0 +1,500 @@
@@ -8198,7 +8198,7 @@ index 00000000000..1daa96e4598
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/factories/subscription_service_factory.h b/components/adblock/content/browser/factories/subscription_service_factory.h
 new file mode 100644
-index 00000000000..5bc14d70d27
+index 0000000000..5bc14d70d2
 --- /dev/null
 +++ b/components/adblock/content/browser/factories/subscription_service_factory.h
 @@ -0,0 +1,76 @@
@@ -8280,7 +8280,7 @@ index 00000000000..5bc14d70d27
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_FACTORIES_SUBSCRIPTION_SERVICE_FACTORY_H_
 diff --git a/components/adblock/content/browser/frame_hierarchy_builder.cc b/components/adblock/content/browser/frame_hierarchy_builder.cc
 new file mode 100644
-index 00000000000..a1fbd9dd58b
+index 0000000000..a1fbd9dd58
 --- /dev/null
 +++ b/components/adblock/content/browser/frame_hierarchy_builder.cc
 @@ -0,0 +1,137 @@
@@ -8423,7 +8423,7 @@ index 00000000000..a1fbd9dd58b
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/frame_hierarchy_builder.h b/components/adblock/content/browser/frame_hierarchy_builder.h
 new file mode 100644
-index 00000000000..c947819ae05
+index 0000000000..c947819ae0
 --- /dev/null
 +++ b/components/adblock/content/browser/frame_hierarchy_builder.h
 @@ -0,0 +1,66 @@
@@ -8495,7 +8495,7 @@ index 00000000000..c947819ae05
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_FRAME_HIERARCHY_BUILDER_H_
 diff --git a/components/adblock/content/browser/frame_opener_info.cc b/components/adblock/content/browser/frame_opener_info.cc
 new file mode 100644
-index 00000000000..fd1914afde5
+index 0000000000..fd1914afde
 --- /dev/null
 +++ b/components/adblock/content/browser/frame_opener_info.cc
 @@ -0,0 +1,37 @@
@@ -8538,7 +8538,7 @@ index 00000000000..fd1914afde5
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/frame_opener_info.h b/components/adblock/content/browser/frame_opener_info.h
 new file mode 100644
-index 00000000000..ba35b87626b
+index 0000000000..ba35b87626
 --- /dev/null
 +++ b/components/adblock/content/browser/frame_opener_info.h
 @@ -0,0 +1,45 @@
@@ -8589,7 +8589,7 @@ index 00000000000..ba35b87626b
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_FRAME_OPENER_INFO_H_
 diff --git a/components/adblock/content/browser/mojom/BUILD.gn b/components/adblock/content/browser/mojom/BUILD.gn
 new file mode 100644
-index 00000000000..bab0247e189
+index 0000000000..bab0247e18
 --- /dev/null
 +++ b/components/adblock/content/browser/mojom/BUILD.gn
 @@ -0,0 +1,22 @@
@@ -8617,7 +8617,7 @@ index 00000000000..bab0247e189
 +}
 diff --git a/components/adblock/content/browser/mojom/adblock_internals.mojom b/components/adblock/content/browser/mojom/adblock_internals.mojom
 new file mode 100644
-index 00000000000..bf057664af9
+index 0000000000..bf057664af
 --- /dev/null
 +++ b/components/adblock/content/browser/mojom/adblock_internals.mojom
 @@ -0,0 +1,22 @@
@@ -8645,7 +8645,7 @@ index 00000000000..bf057664af9
 +};
 diff --git a/components/adblock/content/browser/page_view_stats.cc b/components/adblock/content/browser/page_view_stats.cc
 new file mode 100644
-index 00000000000..7ff7b9589ad
+index 0000000000..7ff7b9589a
 --- /dev/null
 +++ b/components/adblock/content/browser/page_view_stats.cc
 @@ -0,0 +1,291 @@
@@ -8942,7 +8942,7 @@ index 00000000000..7ff7b9589ad
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/page_view_stats.h b/components/adblock/content/browser/page_view_stats.h
 new file mode 100644
-index 00000000000..5f15cc44dbe
+index 0000000000..5f15cc44db
 --- /dev/null
 +++ b/components/adblock/content/browser/page_view_stats.h
 @@ -0,0 +1,131 @@
@@ -9079,7 +9079,7 @@ index 00000000000..5f15cc44dbe
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_PAGE_VIEW_STATS_H_
 diff --git a/components/adblock/content/browser/request_initiator.cc b/components/adblock/content/browser/request_initiator.cc
 new file mode 100644
-index 00000000000..0ce731ff13b
+index 0000000000..0ce731ff13
 --- /dev/null
 +++ b/components/adblock/content/browser/request_initiator.cc
 @@ -0,0 +1,58 @@
@@ -9143,7 +9143,7 @@ index 00000000000..0ce731ff13b
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/request_initiator.h b/components/adblock/content/browser/request_initiator.h
 new file mode 100644
-index 00000000000..4b1132424de
+index 0000000000..4b1132424d
 --- /dev/null
 +++ b/components/adblock/content/browser/request_initiator.h
 @@ -0,0 +1,69 @@
@@ -9218,7 +9218,7 @@ index 00000000000..4b1132424de
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_REQUEST_INITIATOR_H_
 diff --git a/components/adblock/content/browser/resource_classification_runner.h b/components/adblock/content/browser/resource_classification_runner.h
 new file mode 100644
-index 00000000000..3447aa34d59
+index 0000000000..3447aa34d5
 --- /dev/null
 +++ b/components/adblock/content/browser/resource_classification_runner.h
 @@ -0,0 +1,108 @@
@@ -9332,7 +9332,7 @@ index 00000000000..3447aa34d59
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_RESOURCE_CLASSIFICATION_RUNNER_H_
 diff --git a/components/adblock/content/browser/resource_classification_runner_impl.cc b/components/adblock/content/browser/resource_classification_runner_impl.cc
 new file mode 100644
-index 00000000000..f2b8a7db49f
+index 0000000000..f2b8a7db49
 --- /dev/null
 +++ b/components/adblock/content/browser/resource_classification_runner_impl.cc
 @@ -0,0 +1,431 @@
@@ -9769,7 +9769,7 @@ index 00000000000..f2b8a7db49f
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/resource_classification_runner_impl.h b/components/adblock/content/browser/resource_classification_runner_impl.h
 new file mode 100644
-index 00000000000..0b69f921c71
+index 0000000000..0b69f921c7
 --- /dev/null
 +++ b/components/adblock/content/browser/resource_classification_runner_impl.h
 @@ -0,0 +1,153 @@
@@ -9928,7 +9928,7 @@ index 00000000000..0b69f921c71
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_RESOURCE_CLASSIFICATION_RUNNER_IMPL_H_
 diff --git a/components/adblock/content/browser/session_stats_impl.cc b/components/adblock/content/browser/session_stats_impl.cc
 new file mode 100644
-index 00000000000..98349148770
+index 0000000000..9834914877
 --- /dev/null
 +++ b/components/adblock/content/browser/session_stats_impl.cc
 @@ -0,0 +1,87 @@
@@ -10021,7 +10021,7 @@ index 00000000000..98349148770
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/session_stats_impl.h b/components/adblock/content/browser/session_stats_impl.h
 new file mode 100644
-index 00000000000..7362be349ff
+index 0000000000..7362be349f
 --- /dev/null
 +++ b/components/adblock/content/browser/session_stats_impl.h
 @@ -0,0 +1,71 @@
@@ -10098,7 +10098,7 @@ index 00000000000..7362be349ff
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_SESSION_STATS_IMPL_H_
 diff --git a/components/adblock/content/browser/test/adblock_acceptable_ads_browsertest.cc b/components/adblock/content/browser/test/adblock_acceptable_ads_browsertest.cc
 new file mode 100644
-index 00000000000..d0cd7e4e56a
+index 0000000000..d0cd7e4e56
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_acceptable_ads_browsertest.cc
 @@ -0,0 +1,211 @@
@@ -10315,7 +10315,7 @@ index 00000000000..d0cd7e4e56a
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_browsertest_base.cc b/components/adblock/content/browser/test/adblock_browsertest_base.cc
 new file mode 100644
-index 00000000000..38bb76336fd
+index 0000000000..38bb76336f
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_browsertest_base.cc
 @@ -0,0 +1,219 @@
@@ -10540,7 +10540,7 @@ index 00000000000..38bb76336fd
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_browsertest_base.h b/components/adblock/content/browser/test/adblock_browsertest_base.h
 new file mode 100644
-index 00000000000..ae0f239e2c6
+index 0000000000..ae0f239e2c
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_browsertest_base.h
 @@ -0,0 +1,128 @@
@@ -10674,7 +10674,7 @@ index 00000000000..ae0f239e2c6
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_TEST_ADBLOCK_BROWSERTEST_BASE_H_
 diff --git a/components/adblock/content/browser/test/adblock_content_browser_client_browsertest.cc b/components/adblock/content/browser/test/adblock_content_browser_client_browsertest.cc
 new file mode 100644
-index 00000000000..b8e576fbf74
+index 0000000000..b8e576fbf7
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_content_browser_client_browsertest.cc
 @@ -0,0 +1,110 @@
@@ -10790,7 +10790,7 @@ index 00000000000..b8e576fbf74
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_content_filters_browsertest.cc b/components/adblock/content/browser/test/adblock_content_filters_browsertest.cc
 new file mode 100644
-index 00000000000..9453d9355a9
+index 0000000000..9453d9355a
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_content_filters_browsertest.cc
 @@ -0,0 +1,290 @@
@@ -11086,7 +11086,7 @@ index 00000000000..9453d9355a9
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_debug_url_browsertest.cc b/components/adblock/content/browser/test/adblock_debug_url_browsertest.cc
 new file mode 100644
-index 00000000000..39898b94be2
+index 0000000000..39898b94be
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_debug_url_browsertest.cc
 @@ -0,0 +1,331 @@
@@ -11423,7 +11423,7 @@ index 00000000000..39898b94be2
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_filter_list_browsertest.cc b/components/adblock/content/browser/test/adblock_filter_list_browsertest.cc
 new file mode 100644
-index 00000000000..525bb9cd6ac
+index 0000000000..525bb9cd6a
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_filter_list_browsertest.cc
 @@ -0,0 +1,710 @@
@@ -12139,7 +12139,7 @@ index 00000000000..525bb9cd6ac
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_filtering_configurations_browsertest.cc b/components/adblock/content/browser/test/adblock_filtering_configurations_browsertest.cc
 new file mode 100644
-index 00000000000..5ea16c97c26
+index 0000000000..5ea16c97c2
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_filtering_configurations_browsertest.cc
 @@ -0,0 +1,666 @@
@@ -12811,7 +12811,7 @@ index 00000000000..5ea16c97c26
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_non_ascii_browsertest.cc b/components/adblock/content/browser/test/adblock_non_ascii_browsertest.cc
 new file mode 100644
-index 00000000000..133036bc867
+index 0000000000..133036bc86
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_non_ascii_browsertest.cc
 @@ -0,0 +1,67 @@
@@ -12884,7 +12884,7 @@ index 00000000000..133036bc867
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_page_view_stats_browsertest.cc b/components/adblock/content/browser/test/adblock_page_view_stats_browsertest.cc
 new file mode 100644
-index 00000000000..24ad4226476
+index 0000000000..24ad422647
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_page_view_stats_browsertest.cc
 @@ -0,0 +1,840 @@
@@ -13730,7 +13730,7 @@ index 00000000000..24ad4226476
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_request_throttle_browsertest.cc b/components/adblock/content/browser/test/adblock_request_throttle_browsertest.cc
 new file mode 100644
-index 00000000000..ff396fe5120
+index 0000000000..ff396fe512
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_request_throttle_browsertest.cc
 @@ -0,0 +1,127 @@
@@ -13863,7 +13863,7 @@ index 00000000000..ff396fe5120
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_service_workers_browsertest.cc b/components/adblock/content/browser/test/adblock_service_workers_browsertest.cc
 new file mode 100644
-index 00000000000..458bba9bffe
+index 0000000000..458bba9bff
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_service_workers_browsertest.cc
 @@ -0,0 +1,208 @@
@@ -14077,7 +14077,7 @@ index 00000000000..458bba9bffe
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_sitekey_browsertest.cc b/components/adblock/content/browser/test/adblock_sitekey_browsertest.cc
 new file mode 100644
-index 00000000000..b65a99db988
+index 0000000000..b65a99db98
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_sitekey_browsertest.cc
 @@ -0,0 +1,177 @@
@@ -14260,7 +14260,7 @@ index 00000000000..b65a99db988
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_snippets_browsertest.cc b/components/adblock/content/browser/test/adblock_snippets_browsertest.cc
 new file mode 100644
-index 00000000000..3f84d660407
+index 0000000000..3f84d66040
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_snippets_browsertest.cc
 @@ -0,0 +1,76 @@
@@ -14342,7 +14342,7 @@ index 00000000000..3f84d660407
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_subscription_service_browsertest.cc b/components/adblock/content/browser/test/adblock_subscription_service_browsertest.cc
 new file mode 100644
-index 00000000000..e6f7a9e2add
+index 0000000000..e6f7a9e2ad
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_subscription_service_browsertest.cc
 @@ -0,0 +1,202 @@
@@ -14550,7 +14550,7 @@ index 00000000000..e6f7a9e2add
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_telemetry_service_browsertest.cc b/components/adblock/content/browser/test/adblock_telemetry_service_browsertest.cc
 new file mode 100644
-index 00000000000..ac82750b4b4
+index 0000000000..ac82750b4b
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_telemetry_service_browsertest.cc
 @@ -0,0 +1,280 @@
@@ -14836,7 +14836,7 @@ index 00000000000..ac82750b4b4
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_trusted_events_browsertest.cc b/components/adblock/content/browser/test/adblock_trusted_events_browsertest.cc
 new file mode 100644
-index 00000000000..ba0d99d76b7
+index 0000000000..ba0d99d76b
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_trusted_events_browsertest.cc
 @@ -0,0 +1,135 @@
@@ -14977,7 +14977,7 @@ index 00000000000..ba0d99d76b7
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_url_loader_factory_test.cc b/components/adblock/content/browser/test/adblock_url_loader_factory_test.cc
 new file mode 100644
-index 00000000000..67af266f495
+index 0000000000..67af266f49
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_url_loader_factory_test.cc
 @@ -0,0 +1,512 @@
@@ -15495,7 +15495,7 @@ index 00000000000..67af266f495
 +                                         MakeRedirection::No));
 diff --git a/components/adblock/content/browser/test/adblock_web_bundle_browsertest.cc b/components/adblock/content/browser/test/adblock_web_bundle_browsertest.cc
 new file mode 100644
-index 00000000000..aeed131bcf1
+index 0000000000..aeed131bcf
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_web_bundle_browsertest.cc
 @@ -0,0 +1,425 @@
@@ -15926,7 +15926,7 @@ index 00000000000..aeed131bcf1
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_web_ui_browsertest.cc b/components/adblock/content/browser/test/adblock_web_ui_browsertest.cc
 new file mode 100644
-index 00000000000..2eeca70ebc4
+index 0000000000..2eeca70ebc
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_web_ui_browsertest.cc
 @@ -0,0 +1,58 @@
@@ -15990,7 +15990,7 @@ index 00000000000..2eeca70ebc4
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/adblock_webcontents_observer_test.cc b/components/adblock/content/browser/test/adblock_webcontents_observer_test.cc
 new file mode 100644
-index 00000000000..9dfb3f4e0cf
+index 0000000000..9dfb3f4e0c
 --- /dev/null
 +++ b/components/adblock/content/browser/test/adblock_webcontents_observer_test.cc
 @@ -0,0 +1,189 @@
@@ -16185,7 +16185,7 @@ index 00000000000..9dfb3f4e0cf
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/content_security_policy_injector_impl_test.cc b/components/adblock/content/browser/test/content_security_policy_injector_impl_test.cc
 new file mode 100644
-index 00000000000..4d91fd08a6d
+index 0000000000..4d91fd08a6
 --- /dev/null
 +++ b/components/adblock/content/browser/test/content_security_policy_injector_impl_test.cc
 @@ -0,0 +1,218 @@
@@ -16409,7 +16409,7 @@ index 00000000000..4d91fd08a6d
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/element_hider_impl_test.cc b/components/adblock/content/browser/test/element_hider_impl_test.cc
 new file mode 100644
-index 00000000000..7b33d34027b
+index 0000000000..7b33d34027
 --- /dev/null
 +++ b/components/adblock/content/browser/test/element_hider_impl_test.cc
 @@ -0,0 +1,433 @@
@@ -16848,7 +16848,7 @@ index 00000000000..7b33d34027b
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/frame_hierarchy_builder_test.cc b/components/adblock/content/browser/test/frame_hierarchy_builder_test.cc
 new file mode 100644
-index 00000000000..c0949d01ffe
+index 0000000000..c0949d01ff
 --- /dev/null
 +++ b/components/adblock/content/browser/test/frame_hierarchy_builder_test.cc
 @@ -0,0 +1,131 @@
@@ -16985,7 +16985,7 @@ index 00000000000..c0949d01ffe
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/mock_adblock_content_security_policy_injector.cc b/components/adblock/content/browser/test/mock_adblock_content_security_policy_injector.cc
 new file mode 100644
-index 00000000000..2592215670e
+index 0000000000..2592215670
 --- /dev/null
 +++ b/components/adblock/content/browser/test/mock_adblock_content_security_policy_injector.cc
 @@ -0,0 +1,28 @@
@@ -17019,7 +17019,7 @@ index 00000000000..2592215670e
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/mock_adblock_content_security_policy_injector.h b/components/adblock/content/browser/test/mock_adblock_content_security_policy_injector.h
 new file mode 100644
-index 00000000000..06f97102bb3
+index 0000000000..06f97102bb
 --- /dev/null
 +++ b/components/adblock/content/browser/test/mock_adblock_content_security_policy_injector.h
 @@ -0,0 +1,44 @@
@@ -17069,7 +17069,7 @@ index 00000000000..06f97102bb3
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_TEST_MOCK_ADBLOCK_CONTENT_SECURITY_POLICY_INJECTOR_H_
 diff --git a/components/adblock/content/browser/test/mock_element_hider.cc b/components/adblock/content/browser/test/mock_element_hider.cc
 new file mode 100644
-index 00000000000..d3db401bb66
+index 0000000000..d3db401bb6
 --- /dev/null
 +++ b/components/adblock/content/browser/test/mock_element_hider.cc
 @@ -0,0 +1,26 @@
@@ -17101,7 +17101,7 @@ index 00000000000..d3db401bb66
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/mock_element_hider.h b/components/adblock/content/browser/test/mock_element_hider.h
 new file mode 100644
-index 00000000000..55e285439d7
+index 0000000000..55e285439d
 --- /dev/null
 +++ b/components/adblock/content/browser/test/mock_element_hider.h
 @@ -0,0 +1,55 @@
@@ -17162,7 +17162,7 @@ index 00000000000..55e285439d7
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_TEST_MOCK_ELEMENT_HIDER_H_
 diff --git a/components/adblock/content/browser/test/mock_frame_hierarchy_builder.cc b/components/adblock/content/browser/test/mock_frame_hierarchy_builder.cc
 new file mode 100644
-index 00000000000..2a096939393
+index 0000000000..2a09693939
 --- /dev/null
 +++ b/components/adblock/content/browser/test/mock_frame_hierarchy_builder.cc
 @@ -0,0 +1,26 @@
@@ -17194,7 +17194,7 @@ index 00000000000..2a096939393
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/mock_frame_hierarchy_builder.h b/components/adblock/content/browser/test/mock_frame_hierarchy_builder.h
 new file mode 100644
-index 00000000000..4c01824afc6
+index 0000000000..4c01824afc
 --- /dev/null
 +++ b/components/adblock/content/browser/test/mock_frame_hierarchy_builder.h
 @@ -0,0 +1,46 @@
@@ -17246,7 +17246,7 @@ index 00000000000..4c01824afc6
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_TEST_MOCK_FRAME_HIERARCHY_BUILDER_H_
 diff --git a/components/adblock/content/browser/test/mock_resource_classification_runner.cc b/components/adblock/content/browser/test/mock_resource_classification_runner.cc
 new file mode 100644
-index 00000000000..766eba29639
+index 0000000000..766eba2963
 --- /dev/null
 +++ b/components/adblock/content/browser/test/mock_resource_classification_runner.cc
 @@ -0,0 +1,49 @@
@@ -17301,7 +17301,7 @@ index 00000000000..766eba29639
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/mock_resource_classification_runner.h b/components/adblock/content/browser/test/mock_resource_classification_runner.h
 new file mode 100644
-index 00000000000..b970eaeef19
+index 0000000000..b970eaeef1
 --- /dev/null
 +++ b/components/adblock/content/browser/test/mock_resource_classification_runner.h
 @@ -0,0 +1,96 @@
@@ -17403,7 +17403,7 @@ index 00000000000..b970eaeef19
 +#endif  // COMPONENTS_ADBLOCK_CONTENT_BROWSER_TEST_MOCK_RESOURCE_CLASSIFICATION_RUNNER_H_
 diff --git a/components/adblock/content/browser/test/page_view_stats_test.cc b/components/adblock/content/browser/test/page_view_stats_test.cc
 new file mode 100644
-index 00000000000..e782cb11225
+index 0000000000..e782cb1122
 --- /dev/null
 +++ b/components/adblock/content/browser/test/page_view_stats_test.cc
 @@ -0,0 +1,334 @@
@@ -17743,7 +17743,7 @@ index 00000000000..e782cb11225
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/resource_classification_runner_impl_test.cc b/components/adblock/content/browser/test/resource_classification_runner_impl_test.cc
 new file mode 100644
-index 00000000000..2ec3ee4eef1
+index 0000000000..2ec3ee4eef
 --- /dev/null
 +++ b/components/adblock/content/browser/test/resource_classification_runner_impl_test.cc
 @@ -0,0 +1,422 @@
@@ -18171,7 +18171,7 @@ index 00000000000..2ec3ee4eef1
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/session_stats_impl_test.cc b/components/adblock/content/browser/test/session_stats_impl_test.cc
 new file mode 100644
-index 00000000000..6f8ba7647b0
+index 0000000000..6f8ba7647b
 --- /dev/null
 +++ b/components/adblock/content/browser/test/session_stats_impl_test.cc
 @@ -0,0 +1,74 @@
@@ -18251,7 +18251,7 @@ index 00000000000..6f8ba7647b0
 +}  // namespace adblock
 diff --git a/components/adblock/content/browser/test/subscription_service_factory_test.cc b/components/adblock/content/browser/test/subscription_service_factory_test.cc
 new file mode 100644
-index 00000000000..be78c038971
+index 0000000000..be78c03897
 --- /dev/null
 +++ b/components/adblock/content/browser/test/subscription_service_factory_test.cc
 @@ -0,0 +1,488 @@
@@ -18745,7 +18745,7 @@ index 00000000000..be78c038971
 +}  // namespace adblock
 diff --git a/components/adblock/content/resources/adblock_internals/BUILD.gn b/components/adblock/content/resources/adblock_internals/BUILD.gn
 new file mode 100644
-index 00000000000..d5536ccb6f7
+index 0000000000..d5536ccb6f
 --- /dev/null
 +++ b/components/adblock/content/resources/adblock_internals/BUILD.gn
 @@ -0,0 +1,32 @@
@@ -18783,7 +18783,7 @@ index 00000000000..d5536ccb6f7
 +}
 diff --git a/components/adblock/content/resources/adblock_internals/adblock_internals.html b/components/adblock/content/resources/adblock_internals/adblock_internals.html
 new file mode 100644
-index 00000000000..346cca2c7a8
+index 0000000000..346cca2c7a
 --- /dev/null
 +++ b/components/adblock/content/resources/adblock_internals/adblock_internals.html
 @@ -0,0 +1,45 @@
@@ -18834,7 +18834,7 @@ index 00000000000..346cca2c7a8
 +</html>
 diff --git a/components/adblock/content/resources/adblock_internals/adblock_internals.ts b/components/adblock/content/resources/adblock_internals/adblock_internals.ts
 new file mode 100644
-index 00000000000..2697dcb0596
+index 0000000000..2697dcb059
 --- /dev/null
 +++ b/components/adblock/content/resources/adblock_internals/adblock_internals.ts
 @@ -0,0 +1,65 @@
@@ -18905,7 +18905,7 @@ index 00000000000..2697dcb0596
 +document.addEventListener('DOMContentLoaded', initializeTestpagesFLSubscriptionButtonText);
 diff --git a/components/adblock/core/BUILD.gn b/components/adblock/core/BUILD.gn
 new file mode 100644
-index 00000000000..c4c49ef78b3
+index 0000000000..c4c49ef78b
 --- /dev/null
 +++ b/components/adblock/core/BUILD.gn
 @@ -0,0 +1,156 @@
@@ -19067,7 +19067,7 @@ index 00000000000..c4c49ef78b3
 +}
 diff --git a/components/adblock/core/activeping_telemetry_topic_provider.cc b/components/adblock/core/activeping_telemetry_topic_provider.cc
 new file mode 100644
-index 00000000000..b3fdcd47da8
+index 0000000000..b3fdcd47da
 --- /dev/null
 +++ b/components/adblock/core/activeping_telemetry_topic_provider.cc
 @@ -0,0 +1,299 @@
@@ -19372,7 +19372,7 @@ index 00000000000..b3fdcd47da8
 +}  // namespace adblock
 diff --git a/components/adblock/core/activeping_telemetry_topic_provider.h b/components/adblock/core/activeping_telemetry_topic_provider.h
 new file mode 100644
-index 00000000000..e0edd51597c
+index 0000000000..e0edd51597
 --- /dev/null
 +++ b/components/adblock/core/activeping_telemetry_topic_provider.h
 @@ -0,0 +1,94 @@
@@ -19472,7 +19472,7 @@ index 00000000000..e0edd51597c
 +#endif  // COMPONENTS_ADBLOCK_CORE_ACTIVEPING_TELEMETRY_TOPIC_PROVIDER_H_
 diff --git a/components/adblock/core/adblock_telemetry_service.cc b/components/adblock/core/adblock_telemetry_service.cc
 new file mode 100644
-index 00000000000..27aac57931b
+index 0000000000..27aac57931
 --- /dev/null
 +++ b/components/adblock/core/adblock_telemetry_service.cc
 @@ -0,0 +1,308 @@
@@ -19786,7 +19786,7 @@ index 00000000000..27aac57931b
 +}  // namespace adblock
 diff --git a/components/adblock/core/adblock_telemetry_service.h b/components/adblock/core/adblock_telemetry_service.h
 new file mode 100644
-index 00000000000..8c7d3190e48
+index 0000000000..8c7d3190e4
 --- /dev/null
 +++ b/components/adblock/core/adblock_telemetry_service.h
 @@ -0,0 +1,132 @@
@@ -19924,7 +19924,7 @@ index 00000000000..8c7d3190e48
 +#endif  // COMPONENTS_ADBLOCK_CORE_ADBLOCK_TELEMETRY_SERVICE_H_
 diff --git a/components/adblock/core/classifier/BUILD.gn b/components/adblock/core/classifier/BUILD.gn
 new file mode 100644
-index 00000000000..a109cdfc9e0
+index 0000000000..a109cdfc9e
 --- /dev/null
 +++ b/components/adblock/core/classifier/BUILD.gn
 @@ -0,0 +1,77 @@
@@ -20007,7 +20007,7 @@ index 00000000000..a109cdfc9e0
 +}
 diff --git a/components/adblock/core/classifier/resource_classifier.cc b/components/adblock/core/classifier/resource_classifier.cc
 new file mode 100644
-index 00000000000..e87f4822612
+index 0000000000..e87f482261
 --- /dev/null
 +++ b/components/adblock/core/classifier/resource_classifier.cc
 @@ -0,0 +1,24 @@
@@ -20037,7 +20037,7 @@ index 00000000000..e87f4822612
 +}  // namespace adblock
 diff --git a/components/adblock/core/classifier/resource_classifier.h b/components/adblock/core/classifier/resource_classifier.h
 new file mode 100644
-index 00000000000..a84350324da
+index 0000000000..a84350324d
 --- /dev/null
 +++ b/components/adblock/core/classifier/resource_classifier.h
 @@ -0,0 +1,90 @@
@@ -20133,7 +20133,7 @@ index 00000000000..a84350324da
 +#endif  // COMPONENTS_ADBLOCK_CORE_CLASSIFIER_RESOURCE_CLASSIFIER_H_
 diff --git a/components/adblock/core/classifier/resource_classifier_impl.cc b/components/adblock/core/classifier/resource_classifier_impl.cc
 new file mode 100644
-index 00000000000..103e6211949
+index 0000000000..103e621194
 --- /dev/null
 +++ b/components/adblock/core/classifier/resource_classifier_impl.cc
 @@ -0,0 +1,406 @@
@@ -20545,7 +20545,7 @@ index 00000000000..103e6211949
 +}  // namespace adblock
 diff --git a/components/adblock/core/classifier/resource_classifier_impl.h b/components/adblock/core/classifier/resource_classifier_impl.h
 new file mode 100644
-index 00000000000..402a3214a72
+index 0000000000..402a3214a7
 --- /dev/null
 +++ b/components/adblock/core/classifier/resource_classifier_impl.h
 @@ -0,0 +1,64 @@
@@ -20615,7 +20615,7 @@ index 00000000000..402a3214a72
 +#endif  // COMPONENTS_ADBLOCK_CORE_CLASSIFIER_RESOURCE_CLASSIFIER_IMPL_H_
 diff --git a/components/adblock/core/classifier/test/mock_resource_classifier.cc b/components/adblock/core/classifier/test/mock_resource_classifier.cc
 new file mode 100644
-index 00000000000..591173d7684
+index 0000000000..591173d768
 --- /dev/null
 +++ b/components/adblock/core/classifier/test/mock_resource_classifier.cc
 @@ -0,0 +1,26 @@
@@ -20647,7 +20647,7 @@ index 00000000000..591173d7684
 +}  // namespace adblock
 diff --git a/components/adblock/core/classifier/test/mock_resource_classifier.h b/components/adblock/core/classifier/test/mock_resource_classifier.h
 new file mode 100644
-index 00000000000..74c3bfd0b6c
+index 0000000000..74c3bfd0b6
 --- /dev/null
 +++ b/components/adblock/core/classifier/test/mock_resource_classifier.h
 @@ -0,0 +1,66 @@
@@ -20719,7 +20719,7 @@ index 00000000000..74c3bfd0b6c
 +#endif  // COMPONENTS_ADBLOCK_CORE_CLASSIFIER_TEST_MOCK_RESOURCE_CLASSIFIER_H_
 diff --git a/components/adblock/core/classifier/test/resource_classifier_impl_test.cc b/components/adblock/core/classifier/test/resource_classifier_impl_test.cc
 new file mode 100644
-index 00000000000..ab40261d1b3
+index 0000000000..ab40261d1b
 --- /dev/null
 +++ b/components/adblock/core/classifier/test/resource_classifier_impl_test.cc
 @@ -0,0 +1,626 @@
@@ -21351,7 +21351,7 @@ index 00000000000..ab40261d1b3
 +}  // namespace adblock
 diff --git a/components/adblock/core/classifier/test/resource_classifier_perftest.cc b/components/adblock/core/classifier/test/resource_classifier_perftest.cc
 new file mode 100644
-index 00000000000..aa1de696bce
+index 0000000000..aa1de696bc
 --- /dev/null
 +++ b/components/adblock/core/classifier/test/resource_classifier_perftest.cc
 @@ -0,0 +1,394 @@
@@ -21751,7 +21751,7 @@ index 00000000000..aa1de696bce
 +}  // namespace adblock
 diff --git a/components/adblock/core/common/BUILD.gn b/components/adblock/core/common/BUILD.gn
 new file mode 100644
-index 00000000000..870ac453401
+index 0000000000..870ac45340
 --- /dev/null
 +++ b/components/adblock/core/common/BUILD.gn
 @@ -0,0 +1,139 @@
@@ -21896,7 +21896,7 @@ index 00000000000..870ac453401
 +}
 diff --git a/components/adblock/core/common/adblock_constants.cc b/components/adblock/core/common/adblock_constants.cc
 new file mode 100644
-index 00000000000..f849681d110
+index 0000000000..f849681d11
 --- /dev/null
 +++ b/components/adblock/core/common/adblock_constants.cc
 @@ -0,0 +1,174 @@
@@ -22076,7 +22076,7 @@ index 00000000000..f849681d110
 +}  // namespace adblock
 diff --git a/components/adblock/core/common/adblock_constants.h b/components/adblock/core/common/adblock_constants.h
 new file mode 100644
-index 00000000000..0e192c4e7ef
+index 0000000000..0e192c4e7e
 --- /dev/null
 +++ b/components/adblock/core/common/adblock_constants.h
 @@ -0,0 +1,54 @@
@@ -22136,7 +22136,7 @@ index 00000000000..0e192c4e7ef
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_ADBLOCK_CONSTANTS_H_
 diff --git a/components/adblock/core/common/adblock_prefs.cc b/components/adblock/core/common/adblock_prefs.cc
 new file mode 100644
-index 00000000000..a889e822ec2
+index 0000000000..a889e822ec
 --- /dev/null
 +++ b/components/adblock/core/common/adblock_prefs.cc
 @@ -0,0 +1,167 @@
@@ -22309,7 +22309,7 @@ index 00000000000..a889e822ec2
 +}  // namespace adblock::common::prefs
 diff --git a/components/adblock/core/common/adblock_prefs.h b/components/adblock/core/common/adblock_prefs.h
 new file mode 100644
-index 00000000000..13d3992818d
+index 0000000000..13d3992818
 --- /dev/null
 +++ b/components/adblock/core/common/adblock_prefs.h
 @@ -0,0 +1,55 @@
@@ -22370,7 +22370,7 @@ index 00000000000..13d3992818d
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_ADBLOCK_PREFS_H_
 diff --git a/components/adblock/core/common/adblock_switches.cc b/components/adblock/core/common/adblock_switches.cc
 new file mode 100644
-index 00000000000..e9d3a48e757
+index 0000000000..e9d3a48e75
 --- /dev/null
 +++ b/components/adblock/core/common/adblock_switches.cc
 @@ -0,0 +1,28 @@
@@ -22404,7 +22404,7 @@ index 00000000000..e9d3a48e757
 +}  // namespace adblock::switches
 diff --git a/components/adblock/core/common/adblock_switches.h b/components/adblock/core/common/adblock_switches.h
 new file mode 100644
-index 00000000000..fe02f68a006
+index 0000000000..fe02f68a00
 --- /dev/null
 +++ b/components/adblock/core/common/adblock_switches.h
 @@ -0,0 +1,31 @@
@@ -22441,7 +22441,7 @@ index 00000000000..fe02f68a006
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_ADBLOCK_SWITCHES_H_
 diff --git a/components/adblock/core/common/adblock_utils.cc b/components/adblock/core/common/adblock_utils.cc
 new file mode 100644
-index 00000000000..d42c14ace6f
+index 0000000000..d42c14ace6
 --- /dev/null
 +++ b/components/adblock/core/common/adblock_utils.cc
 @@ -0,0 +1,80 @@
@@ -22527,7 +22527,7 @@ index 00000000000..d42c14ace6f
 +}  // namespace adblock::utils
 diff --git a/components/adblock/core/common/adblock_utils.h b/components/adblock/core/common/adblock_utils.h
 new file mode 100644
-index 00000000000..84ff49f4b53
+index 0000000000..84ff49f4b5
 --- /dev/null
 +++ b/components/adblock/core/common/adblock_utils.h
 @@ -0,0 +1,43 @@
@@ -22576,7 +22576,7 @@ index 00000000000..84ff49f4b53
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_ADBLOCK_UTILS_H_
 diff --git a/components/adblock/core/common/app_info.cc b/components/adblock/core/common/app_info.cc
 new file mode 100644
-index 00000000000..83503890781
+index 0000000000..8350389078
 --- /dev/null
 +++ b/components/adblock/core/common/app_info.cc
 @@ -0,0 +1,46 @@
@@ -22628,7 +22628,7 @@ index 00000000000..83503890781
 +}  // namespace adblock
 diff --git a/components/adblock/core/common/app_info.h b/components/adblock/core/common/app_info.h
 new file mode 100644
-index 00000000000..a1bb2a67596
+index 0000000000..a1bb2a6759
 --- /dev/null
 +++ b/components/adblock/core/common/app_info.h
 @@ -0,0 +1,43 @@
@@ -22677,7 +22677,7 @@ index 00000000000..a1bb2a67596
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_APP_INFO_H_
 diff --git a/components/adblock/core/common/content_type.cc b/components/adblock/core/common/content_type.cc
 new file mode 100644
-index 00000000000..9093cd13d4f
+index 0000000000..9093cd13d4
 --- /dev/null
 +++ b/components/adblock/core/common/content_type.cc
 @@ -0,0 +1,91 @@
@@ -22774,7 +22774,7 @@ index 00000000000..9093cd13d4f
 +}  // namespace adblock
 diff --git a/components/adblock/core/common/content_type.h b/components/adblock/core/common/content_type.h
 new file mode 100644
-index 00000000000..bf29416bbe0
+index 0000000000..bf29416bbe
 --- /dev/null
 +++ b/components/adblock/core/common/content_type.h
 @@ -0,0 +1,48 @@
@@ -22828,7 +22828,7 @@ index 00000000000..bf29416bbe0
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_CONTENT_TYPE_H_
 diff --git a/components/adblock/core/common/flatbuffer_data.cc b/components/adblock/core/common/flatbuffer_data.cc
 new file mode 100644
-index 00000000000..7cec5ae210c
+index 0000000000..7cec5ae210
 --- /dev/null
 +++ b/components/adblock/core/common/flatbuffer_data.cc
 @@ -0,0 +1,105 @@
@@ -22939,7 +22939,7 @@ index 00000000000..7cec5ae210c
 +}  // namespace adblock
 diff --git a/components/adblock/core/common/flatbuffer_data.h b/components/adblock/core/common/flatbuffer_data.h
 new file mode 100644
-index 00000000000..469746082ad
+index 0000000000..469746082a
 --- /dev/null
 +++ b/components/adblock/core/common/flatbuffer_data.h
 @@ -0,0 +1,90 @@
@@ -23035,7 +23035,7 @@ index 00000000000..469746082ad
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_FLATBUFFER_DATA_H_
 diff --git a/components/adblock/core/common/header_filter_data.h b/components/adblock/core/common/header_filter_data.h
 new file mode 100644
-index 00000000000..2e6a9c21a84
+index 0000000000..2e6a9c21a8
 --- /dev/null
 +++ b/components/adblock/core/common/header_filter_data.h
 @@ -0,0 +1,38 @@
@@ -23079,7 +23079,7 @@ index 00000000000..2e6a9c21a84
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_HEADER_FILTER_DATA_H_
 diff --git a/components/adblock/core/common/keyword_extractor_utils.cc b/components/adblock/core/common/keyword_extractor_utils.cc
 new file mode 100644
-index 00000000000..ed923a97454
+index 0000000000..ed923a9745
 --- /dev/null
 +++ b/components/adblock/core/common/keyword_extractor_utils.cc
 @@ -0,0 +1,29 @@
@@ -23114,7 +23114,7 @@ index 00000000000..ed923a97454
 +}  // namespace adblock
 diff --git a/components/adblock/core/common/keyword_extractor_utils.h b/components/adblock/core/common/keyword_extractor_utils.h
 new file mode 100644
-index 00000000000..20ec944c62c
+index 0000000000..20ec944c62
 --- /dev/null
 +++ b/components/adblock/core/common/keyword_extractor_utils.h
 @@ -0,0 +1,31 @@
@@ -23151,7 +23151,7 @@ index 00000000000..20ec944c62c
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_KEYWORD_EXTRACTOR_UTILS_H_
 diff --git a/components/adblock/core/common/regex_filter_pattern.cc b/components/adblock/core/common/regex_filter_pattern.cc
 new file mode 100644
-index 00000000000..626da8f3a25
+index 0000000000..626da8f3a2
 --- /dev/null
 +++ b/components/adblock/core/common/regex_filter_pattern.cc
 @@ -0,0 +1,31 @@
@@ -23188,7 +23188,7 @@ index 00000000000..626da8f3a25
 +}  // namespace adblock
 diff --git a/components/adblock/core/common/regex_filter_pattern.h b/components/adblock/core/common/regex_filter_pattern.h
 new file mode 100644
-index 00000000000..09dcd55703e
+index 0000000000..09dcd55703
 --- /dev/null
 +++ b/components/adblock/core/common/regex_filter_pattern.h
 @@ -0,0 +1,34 @@
@@ -23228,7 +23228,7 @@ index 00000000000..09dcd55703e
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_REGEX_FILTER_PATTERN_H_
 diff --git a/components/adblock/core/common/sitekey.h b/components/adblock/core/common/sitekey.h
 new file mode 100644
-index 00000000000..dc6808a92fa
+index 0000000000..dc6808a92f
 --- /dev/null
 +++ b/components/adblock/core/common/sitekey.h
 @@ -0,0 +1,29 @@
@@ -23263,7 +23263,7 @@ index 00000000000..dc6808a92fa
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_SITEKEY_H_
 diff --git a/components/adblock/core/common/task_scheduler.h b/components/adblock/core/common/task_scheduler.h
 new file mode 100644
-index 00000000000..38594f8be54
+index 0000000000..38594f8be5
 --- /dev/null
 +++ b/components/adblock/core/common/task_scheduler.h
 @@ -0,0 +1,35 @@
@@ -23304,7 +23304,7 @@ index 00000000000..38594f8be54
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_TASK_SCHEDULER_H_
 diff --git a/components/adblock/core/common/task_scheduler_impl.cc b/components/adblock/core/common/task_scheduler_impl.cc
 new file mode 100644
-index 00000000000..b5f6f1e3af2
+index 0000000000..b5f6f1e3af
 --- /dev/null
 +++ b/components/adblock/core/common/task_scheduler_impl.cc
 @@ -0,0 +1,59 @@
@@ -23369,7 +23369,7 @@ index 00000000000..b5f6f1e3af2
 +}  // namespace adblock
 diff --git a/components/adblock/core/common/task_scheduler_impl.h b/components/adblock/core/common/task_scheduler_impl.h
 new file mode 100644
-index 00000000000..7eaf8cac6b1
+index 0000000000..7eaf8cac6b
 --- /dev/null
 +++ b/components/adblock/core/common/task_scheduler_impl.h
 @@ -0,0 +1,50 @@
@@ -23425,7 +23425,7 @@ index 00000000000..7eaf8cac6b1
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_TASK_SCHEDULER_IMPL_H_
 diff --git a/components/adblock/core/common/test/flatbuffer_data_test.cc b/components/adblock/core/common/test/flatbuffer_data_test.cc
 new file mode 100644
-index 00000000000..f6227e0f311
+index 0000000000..f6227e0f31
 --- /dev/null
 +++ b/components/adblock/core/common/test/flatbuffer_data_test.cc
 @@ -0,0 +1,80 @@
@@ -23511,7 +23511,7 @@ index 00000000000..f6227e0f311
 +}  // namespace adblock
 diff --git a/components/adblock/core/common/test/mock_task_scheduler.cc b/components/adblock/core/common/test/mock_task_scheduler.cc
 new file mode 100644
-index 00000000000..2641aca2eaa
+index 0000000000..2641aca2ea
 --- /dev/null
 +++ b/components/adblock/core/common/test/mock_task_scheduler.cc
 @@ -0,0 +1,25 @@
@@ -23542,7 +23542,7 @@ index 00000000000..2641aca2eaa
 +}  // namespace adblock
 diff --git a/components/adblock/core/common/test/mock_task_scheduler.h b/components/adblock/core/common/test/mock_task_scheduler.h
 new file mode 100644
-index 00000000000..3b87e068eb1
+index 0000000000..3b87e068eb
 --- /dev/null
 +++ b/components/adblock/core/common/test/mock_task_scheduler.h
 @@ -0,0 +1,40 @@
@@ -23588,7 +23588,7 @@ index 00000000000..3b87e068eb1
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_TEST_MOCK_TASK_SCHEDULER_H_
 diff --git a/components/adblock/core/common/test/task_scheduler_impl_test.cc b/components/adblock/core/common/test/task_scheduler_impl_test.cc
 new file mode 100644
-index 00000000000..13f202d2c08
+index 0000000000..13f202d2c0
 --- /dev/null
 +++ b/components/adblock/core/common/test/task_scheduler_impl_test.cc
 @@ -0,0 +1,82 @@
@@ -23676,7 +23676,7 @@ index 00000000000..13f202d2c08
 +}  // namespace adblock
 diff --git a/components/adblock/core/common/web_ui_constants.cc b/components/adblock/core/common/web_ui_constants.cc
 new file mode 100644
-index 00000000000..b167b05a6a4
+index 0000000000..b167b05a6a
 --- /dev/null
 +++ b/components/adblock/core/common/web_ui_constants.cc
 @@ -0,0 +1,24 @@
@@ -23706,7 +23706,7 @@ index 00000000000..b167b05a6a4
 +}
 diff --git a/components/adblock/core/common/web_ui_constants.h b/components/adblock/core/common/web_ui_constants.h
 new file mode 100644
-index 00000000000..53eadada875
+index 0000000000..53eadada87
 --- /dev/null
 +++ b/components/adblock/core/common/web_ui_constants.h
 @@ -0,0 +1,27 @@
@@ -23739,7 +23739,7 @@ index 00000000000..53eadada875
 +#endif  // COMPONENTS_ADBLOCK_CORE_COMMON_WEB_UI_CONSTANTS_H_
 diff --git a/components/adblock/core/configuration/BUILD.gn b/components/adblock/core/configuration/BUILD.gn
 new file mode 100644
-index 00000000000..052e264e023
+index 0000000000..052e264e02
 --- /dev/null
 +++ b/components/adblock/core/configuration/BUILD.gn
 @@ -0,0 +1,60 @@
@@ -23805,7 +23805,7 @@ index 00000000000..052e264e023
 +}
 diff --git a/components/adblock/core/configuration/filtering_configuration.h b/components/adblock/core/configuration/filtering_configuration.h
 new file mode 100644
-index 00000000000..a7e525f25f3
+index 0000000000..a7e525f25f
 --- /dev/null
 +++ b/components/adblock/core/configuration/filtering_configuration.h
 @@ -0,0 +1,91 @@
@@ -23902,7 +23902,7 @@ index 00000000000..a7e525f25f3
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONFIGURATION_FILTERING_CONFIGURATION_H_
 diff --git a/components/adblock/core/configuration/persistent_filtering_configuration.cc b/components/adblock/core/configuration/persistent_filtering_configuration.cc
 new file mode 100644
-index 00000000000..c309eb97ae2
+index 0000000000..c309eb97ae
 --- /dev/null
 +++ b/components/adblock/core/configuration/persistent_filtering_configuration.cc
 @@ -0,0 +1,270 @@
@@ -24178,7 +24178,7 @@ index 00000000000..c309eb97ae2
 +}  // namespace adblock
 diff --git a/components/adblock/core/configuration/persistent_filtering_configuration.h b/components/adblock/core/configuration/persistent_filtering_configuration.h
 new file mode 100644
-index 00000000000..20d40e87ae9
+index 0000000000..20d40e87ae
 --- /dev/null
 +++ b/components/adblock/core/configuration/persistent_filtering_configuration.h
 @@ -0,0 +1,84 @@
@@ -24268,7 +24268,7 @@ index 00000000000..20d40e87ae9
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONFIGURATION_PERSISTENT_FILTERING_CONFIGURATION_H_
 diff --git a/components/adblock/core/configuration/test/fake_filtering_configuration.cc b/components/adblock/core/configuration/test/fake_filtering_configuration.cc
 new file mode 100644
-index 00000000000..012eb9c56b9
+index 0000000000..012eb9c56b
 --- /dev/null
 +++ b/components/adblock/core/configuration/test/fake_filtering_configuration.cc
 @@ -0,0 +1,124 @@
@@ -24398,7 +24398,7 @@ index 00000000000..012eb9c56b9
 +}  // namespace adblock
 diff --git a/components/adblock/core/configuration/test/fake_filtering_configuration.h b/components/adblock/core/configuration/test/fake_filtering_configuration.h
 new file mode 100644
-index 00000000000..8143472eaa5
+index 0000000000..8143472eaa
 --- /dev/null
 +++ b/components/adblock/core/configuration/test/fake_filtering_configuration.h
 @@ -0,0 +1,68 @@
@@ -24472,7 +24472,7 @@ index 00000000000..8143472eaa5
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONFIGURATION_TEST_FAKE_FILTERING_CONFIGURATION_H_
 diff --git a/components/adblock/core/configuration/test/mock_filtering_configuration.cc b/components/adblock/core/configuration/test/mock_filtering_configuration.cc
 new file mode 100644
-index 00000000000..d7fad57990e
+index 0000000000..d7fad57990
 --- /dev/null
 +++ b/components/adblock/core/configuration/test/mock_filtering_configuration.cc
 @@ -0,0 +1,34 @@
@@ -24512,7 +24512,7 @@ index 00000000000..d7fad57990e
 +}  // namespace adblock
 diff --git a/components/adblock/core/configuration/test/mock_filtering_configuration.h b/components/adblock/core/configuration/test/mock_filtering_configuration.h
 new file mode 100644
-index 00000000000..9bc5f76007d
+index 0000000000..9bc5f76007
 --- /dev/null
 +++ b/components/adblock/core/configuration/test/mock_filtering_configuration.h
 @@ -0,0 +1,82 @@
@@ -24600,7 +24600,7 @@ index 00000000000..9bc5f76007d
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONFIGURATION_TEST_MOCK_FILTERING_CONFIGURATION_H_
 diff --git a/components/adblock/core/configuration/test/persistent_filtering_configuration_test.cc b/components/adblock/core/configuration/test/persistent_filtering_configuration_test.cc
 new file mode 100644
-index 00000000000..79959c30db4
+index 0000000000..79959c30db
 --- /dev/null
 +++ b/components/adblock/core/configuration/test/persistent_filtering_configuration_test.cc
 @@ -0,0 +1,255 @@
@@ -24861,7 +24861,7 @@ index 00000000000..79959c30db4
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/BUILD.gn b/components/adblock/core/converter/BUILD.gn
 new file mode 100644
-index 00000000000..463a733731e
+index 0000000000..463a733731
 --- /dev/null
 +++ b/components/adblock/core/converter/BUILD.gn
 @@ -0,0 +1,67 @@
@@ -24934,7 +24934,7 @@ index 00000000000..463a733731e
 +}
 diff --git a/components/adblock/core/converter/converter_main.cc b/components/adblock/core/converter/converter_main.cc
 new file mode 100644
-index 00000000000..8fde3bac876
+index 0000000000..8fde3bac87
 --- /dev/null
 +++ b/components/adblock/core/converter/converter_main.cc
 @@ -0,0 +1,117 @@
@@ -25057,7 +25057,7 @@ index 00000000000..8fde3bac876
 +}
 diff --git a/components/adblock/core/converter/flatbuffer_converter.cc b/components/adblock/core/converter/flatbuffer_converter.cc
 new file mode 100644
-index 00000000000..b94a8e3e9c1
+index 0000000000..b94a8e3e9c
 --- /dev/null
 +++ b/components/adblock/core/converter/flatbuffer_converter.cc
 @@ -0,0 +1,153 @@
@@ -25216,7 +25216,7 @@ index 00000000000..b94a8e3e9c1
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/flatbuffer_converter.h b/components/adblock/core/converter/flatbuffer_converter.h
 new file mode 100644
-index 00000000000..a01088eec22
+index 0000000000..a01088eec2
 --- /dev/null
 +++ b/components/adblock/core/converter/flatbuffer_converter.h
 @@ -0,0 +1,63 @@
@@ -25285,7 +25285,7 @@ index 00000000000..a01088eec22
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONVERTER_FLATBUFFER_CONVERTER_H_
 diff --git a/components/adblock/core/converter/parser/BUILD.gn b/components/adblock/core/converter/parser/BUILD.gn
 new file mode 100644
-index 00000000000..4c352a1a3fa
+index 0000000000..4c352a1a3f
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/BUILD.gn
 @@ -0,0 +1,67 @@
@@ -25358,7 +25358,7 @@ index 00000000000..4c352a1a3fa
 +}
 diff --git a/components/adblock/core/converter/parser/content_filter.cc b/components/adblock/core/converter/parser/content_filter.cc
 new file mode 100644
-index 00000000000..cc870a9056c
+index 0000000000..cc870a9056
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/content_filter.cc
 @@ -0,0 +1,100 @@
@@ -25464,7 +25464,7 @@ index 00000000000..cc870a9056c
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/content_filter.h b/components/adblock/core/converter/parser/content_filter.h
 new file mode 100644
-index 00000000000..d7726550246
+index 0000000000..d772655024
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/content_filter.h
 @@ -0,0 +1,53 @@
@@ -25523,7 +25523,7 @@ index 00000000000..d7726550246
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONVERTER_PARSER_CONTENT_FILTER_H_
 diff --git a/components/adblock/core/converter/parser/domain_option.cc b/components/adblock/core/converter/parser/domain_option.cc
 new file mode 100644
-index 00000000000..b2045d25fc8
+index 0000000000..b2045d25fc
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/domain_option.cc
 @@ -0,0 +1,146 @@
@@ -25675,7 +25675,7 @@ index 00000000000..b2045d25fc8
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/domain_option.h b/components/adblock/core/converter/parser/domain_option.h
 new file mode 100644
-index 00000000000..0fb67dfdddd
+index 0000000000..0fb67dfddd
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/domain_option.h
 @@ -0,0 +1,62 @@
@@ -25743,7 +25743,7 @@ index 00000000000..0fb67dfdddd
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONVERTER_PARSER_DOMAIN_OPTION_H_
 diff --git a/components/adblock/core/converter/parser/filter_classifier.cc b/components/adblock/core/converter/parser/filter_classifier.cc
 new file mode 100644
-index 00000000000..f572091a49d
+index 0000000000..f572091a49
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/filter_classifier.cc
 @@ -0,0 +1,52 @@
@@ -25801,7 +25801,7 @@ index 00000000000..f572091a49d
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/filter_classifier.h b/components/adblock/core/converter/parser/filter_classifier.h
 new file mode 100644
-index 00000000000..b4b3e958222
+index 0000000000..b4b3e95822
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/filter_classifier.h
 @@ -0,0 +1,49 @@
@@ -25856,7 +25856,7 @@ index 00000000000..b4b3e958222
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONVERTER_PARSER_FILTER_CLASSIFIER_H_
 diff --git a/components/adblock/core/converter/parser/metadata.cc b/components/adblock/core/converter/parser/metadata.cc
 new file mode 100644
-index 00000000000..6cd60d73db2
+index 0000000000..6cd60d73db
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/metadata.cc
 @@ -0,0 +1,145 @@
@@ -26007,7 +26007,7 @@ index 00000000000..6cd60d73db2
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/metadata.h b/components/adblock/core/converter/parser/metadata.h
 new file mode 100644
-index 00000000000..4f0e78eb140
+index 0000000000..4f0e78eb14
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/metadata.h
 @@ -0,0 +1,64 @@
@@ -26077,7 +26077,7 @@ index 00000000000..4f0e78eb140
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONVERTER_PARSER_METADATA_H_
 diff --git a/components/adblock/core/converter/parser/snippet_filter.cc b/components/adblock/core/converter/parser/snippet_filter.cc
 new file mode 100644
-index 00000000000..dc69fe16ab6
+index 0000000000..dc69fe16ab
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/snippet_filter.cc
 @@ -0,0 +1,62 @@
@@ -26145,7 +26145,7 @@ index 00000000000..dc69fe16ab6
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/snippet_filter.h b/components/adblock/core/converter/parser/snippet_filter.h
 new file mode 100644
-index 00000000000..2df1ac12c5d
+index 0000000000..2df1ac12c5
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/snippet_filter.h
 @@ -0,0 +1,48 @@
@@ -26199,7 +26199,7 @@ index 00000000000..2df1ac12c5d
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONVERTER_PARSER_SNIPPET_FILTER_H_
 diff --git a/components/adblock/core/converter/parser/snippet_tokenizer.cc b/components/adblock/core/converter/parser/snippet_tokenizer.cc
 new file mode 100644
-index 00000000000..eaa8d7dfccf
+index 0000000000..eaa8d7dfcc
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/snippet_tokenizer.cc
 @@ -0,0 +1,103 @@
@@ -26308,7 +26308,7 @@ index 00000000000..eaa8d7dfccf
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/snippet_tokenizer.h b/components/adblock/core/converter/parser/snippet_tokenizer.h
 new file mode 100644
-index 00000000000..37d9fa99899
+index 0000000000..37d9fa9989
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/snippet_tokenizer.h
 @@ -0,0 +1,46 @@
@@ -26360,7 +26360,7 @@ index 00000000000..37d9fa99899
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONVERTER_PARSER_SNIPPET_TOKENIZER_H_
 diff --git a/components/adblock/core/converter/parser/test/content_filter_test.cc b/components/adblock/core/converter/parser/test/content_filter_test.cc
 new file mode 100644
-index 00000000000..440df40b2c4
+index 0000000000..440df40b2c
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/test/content_filter_test.cc
 @@ -0,0 +1,263 @@
@@ -26629,7 +26629,7 @@ index 00000000000..440df40b2c4
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/test/domain_option_test.cc b/components/adblock/core/converter/parser/test/domain_option_test.cc
 new file mode 100644
-index 00000000000..fc6de3ec5dc
+index 0000000000..fc6de3ec5d
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/test/domain_option_test.cc
 @@ -0,0 +1,214 @@
@@ -26849,7 +26849,7 @@ index 00000000000..fc6de3ec5dc
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/test/filter_classifier_test.cc b/components/adblock/core/converter/parser/test/filter_classifier_test.cc
 new file mode 100644
-index 00000000000..4e0b3fcf8ee
+index 0000000000..4e0b3fcf8e
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/test/filter_classifier_test.cc
 @@ -0,0 +1,80 @@
@@ -26935,7 +26935,7 @@ index 00000000000..4e0b3fcf8ee
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/test/metadata_test.cc b/components/adblock/core/converter/parser/test/metadata_test.cc
 new file mode 100644
-index 00000000000..3f272a2ed29
+index 0000000000..3f272a2ed2
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/test/metadata_test.cc
 @@ -0,0 +1,198 @@
@@ -27139,7 +27139,7 @@ index 00000000000..3f272a2ed29
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/test/snippet_filter_test.cc b/components/adblock/core/converter/parser/test/snippet_filter_test.cc
 new file mode 100644
-index 00000000000..517d4a47acb
+index 0000000000..517d4a47ac
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/test/snippet_filter_test.cc
 @@ -0,0 +1,79 @@
@@ -27224,7 +27224,7 @@ index 00000000000..517d4a47acb
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/test/snippet_tokenizer_test.cc b/components/adblock/core/converter/parser/test/snippet_tokenizer_test.cc
 new file mode 100644
-index 00000000000..37366826ebc
+index 0000000000..37366826eb
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/test/snippet_tokenizer_test.cc
 @@ -0,0 +1,141 @@
@@ -27371,7 +27371,7 @@ index 00000000000..37366826ebc
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/test/url_filter_options_test.cc b/components/adblock/core/converter/parser/test/url_filter_options_test.cc
 new file mode 100644
-index 00000000000..8fdd1c9a4cf
+index 0000000000..8fdd1c9a4c
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/test/url_filter_options_test.cc
 @@ -0,0 +1,258 @@
@@ -27635,7 +27635,7 @@ index 00000000000..8fdd1c9a4cf
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/test/url_filter_test.cc b/components/adblock/core/converter/parser/test/url_filter_test.cc
 new file mode 100644
-index 00000000000..8271ed6d931
+index 0000000000..8271ed6d93
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/test/url_filter_test.cc
 @@ -0,0 +1,163 @@
@@ -27804,7 +27804,7 @@ index 00000000000..8271ed6d931
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/url_filter.cc b/components/adblock/core/converter/parser/url_filter.cc
 new file mode 100644
-index 00000000000..9aefa1ffcfe
+index 0000000000..9aefa1ffcf
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/url_filter.cc
 @@ -0,0 +1,232 @@
@@ -28042,7 +28042,7 @@ index 00000000000..9aefa1ffcfe
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/url_filter.h b/components/adblock/core/converter/parser/url_filter.h
 new file mode 100644
-index 00000000000..ac86c043660
+index 0000000000..ac86c04366
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/url_filter.h
 @@ -0,0 +1,50 @@
@@ -28098,7 +28098,7 @@ index 00000000000..ac86c043660
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONVERTER_PARSER_URL_FILTER_H_
 diff --git a/components/adblock/core/converter/parser/url_filter_options.cc b/components/adblock/core/converter/parser/url_filter_options.cc
 new file mode 100644
-index 00000000000..10e903afb02
+index 0000000000..10e903afb0
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/url_filter_options.cc
 @@ -0,0 +1,267 @@
@@ -28371,7 +28371,7 @@ index 00000000000..10e903afb02
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/parser/url_filter_options.h b/components/adblock/core/converter/parser/url_filter_options.h
 new file mode 100644
-index 00000000000..3cd7fd9f84e
+index 0000000000..3cd7fd9f84
 --- /dev/null
 +++ b/components/adblock/core/converter/parser/url_filter_options.h
 @@ -0,0 +1,122 @@
@@ -28499,7 +28499,7 @@ index 00000000000..3cd7fd9f84e
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONVERTER_PARSER_URL_FILTER_OPTIONS_H_
 diff --git a/components/adblock/core/converter/serializer/BUILD.gn b/components/adblock/core/converter/serializer/BUILD.gn
 new file mode 100644
-index 00000000000..4dababa25ec
+index 0000000000..4dababa25e
 --- /dev/null
 +++ b/components/adblock/core/converter/serializer/BUILD.gn
 @@ -0,0 +1,46 @@
@@ -28551,7 +28551,7 @@ index 00000000000..4dababa25ec
 +}
 diff --git a/components/adblock/core/converter/serializer/filter_keyword_extractor.cc b/components/adblock/core/converter/serializer/filter_keyword_extractor.cc
 new file mode 100644
-index 00000000000..df5f6479d7e
+index 0000000000..df5f6479d7
 --- /dev/null
 +++ b/components/adblock/core/converter/serializer/filter_keyword_extractor.cc
 @@ -0,0 +1,63 @@
@@ -28620,7 +28620,7 @@ index 00000000000..df5f6479d7e
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/serializer/filter_keyword_extractor.h b/components/adblock/core/converter/serializer/filter_keyword_extractor.h
 new file mode 100644
-index 00000000000..7576258b426
+index 0000000000..7576258b42
 --- /dev/null
 +++ b/components/adblock/core/converter/serializer/filter_keyword_extractor.h
 @@ -0,0 +1,59 @@
@@ -28685,7 +28685,7 @@ index 00000000000..7576258b426
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONVERTER_SERIALIZER_FILTER_KEYWORD_EXTRACTOR_H_
 diff --git a/components/adblock/core/converter/serializer/flatbuffer_serializer.cc b/components/adblock/core/converter/serializer/flatbuffer_serializer.cc
 new file mode 100644
-index 00000000000..aabef2e640f
+index 0000000000..aabef2e640
 --- /dev/null
 +++ b/components/adblock/core/converter/serializer/flatbuffer_serializer.cc
 @@ -0,0 +1,490 @@
@@ -29181,7 +29181,7 @@ index 00000000000..aabef2e640f
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/serializer/flatbuffer_serializer.h b/components/adblock/core/converter/serializer/flatbuffer_serializer.h
 new file mode 100644
-index 00000000000..7d2f0eb3ce6
+index 0000000000..7d2f0eb3ce
 --- /dev/null
 +++ b/components/adblock/core/converter/serializer/flatbuffer_serializer.h
 @@ -0,0 +1,161 @@
@@ -29348,7 +29348,7 @@ index 00000000000..7d2f0eb3ce6
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONVERTER_SERIALIZER_FLATBUFFER_SERIALIZER_H_
 diff --git a/components/adblock/core/converter/serializer/serializer.h b/components/adblock/core/converter/serializer/serializer.h
 new file mode 100644
-index 00000000000..6050ad4ee0d
+index 0000000000..6050ad4ee0
 --- /dev/null
 +++ b/components/adblock/core/converter/serializer/serializer.h
 @@ -0,0 +1,41 @@
@@ -29395,7 +29395,7 @@ index 00000000000..6050ad4ee0d
 +#endif  // COMPONENTS_ADBLOCK_CORE_CONVERTER_SERIALIZER_SERIALIZER_H_
 diff --git a/components/adblock/core/converter/serializer/test/filter_keyword_extractor_test.cc b/components/adblock/core/converter/serializer/test/filter_keyword_extractor_test.cc
 new file mode 100644
-index 00000000000..0191569b58a
+index 0000000000..0191569b58
 --- /dev/null
 +++ b/components/adblock/core/converter/serializer/test/filter_keyword_extractor_test.cc
 @@ -0,0 +1,68 @@
@@ -29469,7 +29469,7 @@ index 00000000000..0191569b58a
 +}  // namespace adblock
 diff --git a/components/adblock/core/converter/test/flatbuffer_converter_perftest.cc b/components/adblock/core/converter/test/flatbuffer_converter_perftest.cc
 new file mode 100644
-index 00000000000..0a6c0b41a4b
+index 0000000000..0a6c0b41a4
 --- /dev/null
 +++ b/components/adblock/core/converter/test/flatbuffer_converter_perftest.cc
 @@ -0,0 +1,83 @@
@@ -29558,7 +29558,7 @@ index 00000000000..0a6c0b41a4b
 +}  // namespace adblock
 diff --git a/components/adblock/core/features.cc b/components/adblock/core/features.cc
 new file mode 100644
-index 00000000000..a105cc1c111
+index 0000000000..a105cc1c11
 --- /dev/null
 +++ b/components/adblock/core/features.cc
 @@ -0,0 +1,26 @@
@@ -29590,7 +29590,7 @@ index 00000000000..a105cc1c111
 +}  // namespace adblock
 diff --git a/components/adblock/core/features.h b/components/adblock/core/features.h
 new file mode 100644
-index 00000000000..ea84b837c43
+index 0000000000..ea84b837c4
 --- /dev/null
 +++ b/components/adblock/core/features.h
 @@ -0,0 +1,31 @@
@@ -29627,7 +29627,7 @@ index 00000000000..ea84b837c43
 +#endif  // COMPONENTS_ADBLOCK_CORE_FEATURES_H_
 diff --git a/components/adblock/core/net/BUILD.gn b/components/adblock/core/net/BUILD.gn
 new file mode 100644
-index 00000000000..3e649063a0d
+index 0000000000..3e649063a0
 --- /dev/null
 +++ b/components/adblock/core/net/BUILD.gn
 @@ -0,0 +1,68 @@
@@ -29701,7 +29701,7 @@ index 00000000000..3e649063a0d
 +}
 diff --git a/components/adblock/core/net/adblock_request_throttle.h b/components/adblock/core/net/adblock_request_throttle.h
 new file mode 100644
-index 00000000000..166f13940d7
+index 0000000000..166f13940d
 --- /dev/null
 +++ b/components/adblock/core/net/adblock_request_throttle.h
 @@ -0,0 +1,45 @@
@@ -29752,7 +29752,7 @@ index 00000000000..166f13940d7
 +#endif  // COMPONENTS_ADBLOCK_CORE_NET_ADBLOCK_REQUEST_THROTTLE_H_
 diff --git a/components/adblock/core/net/adblock_request_throttle_impl.cc b/components/adblock/core/net/adblock_request_throttle_impl.cc
 new file mode 100644
-index 00000000000..de58d862acc
+index 0000000000..de58d862ac
 --- /dev/null
 +++ b/components/adblock/core/net/adblock_request_throttle_impl.cc
 @@ -0,0 +1,71 @@
@@ -29829,7 +29829,7 @@ index 00000000000..de58d862acc
 +}  // namespace adblock
 diff --git a/components/adblock/core/net/adblock_request_throttle_impl.h b/components/adblock/core/net/adblock_request_throttle_impl.h
 new file mode 100644
-index 00000000000..50ad23e5029
+index 0000000000..50ad23e502
 --- /dev/null
 +++ b/components/adblock/core/net/adblock_request_throttle_impl.h
 @@ -0,0 +1,54 @@
@@ -29889,7 +29889,7 @@ index 00000000000..50ad23e5029
 +#endif  // COMPONENTS_ADBLOCK_CORE_NET_ADBLOCK_REQUEST_THROTTLE_IMPL_H_
 diff --git a/components/adblock/core/net/adblock_resource_request.h b/components/adblock/core/net/adblock_resource_request.h
 new file mode 100644
-index 00000000000..a649153837f
+index 0000000000..a649153837
 --- /dev/null
 +++ b/components/adblock/core/net/adblock_resource_request.h
 @@ -0,0 +1,61 @@
@@ -29956,7 +29956,7 @@ index 00000000000..a649153837f
 +#endif  // COMPONENTS_ADBLOCK_CORE_NET_ADBLOCK_RESOURCE_REQUEST_H_
 diff --git a/components/adblock/core/net/adblock_resource_request_impl.cc b/components/adblock/core/net/adblock_resource_request_impl.cc
 new file mode 100644
-index 00000000000..9b327afb393
+index 0000000000..9b327afb39
 --- /dev/null
 +++ b/components/adblock/core/net/adblock_resource_request_impl.cc
 @@ -0,0 +1,217 @@
@@ -30179,7 +30179,7 @@ index 00000000000..9b327afb393
 +}  // namespace adblock
 diff --git a/components/adblock/core/net/adblock_resource_request_impl.h b/components/adblock/core/net/adblock_resource_request_impl.h
 new file mode 100644
-index 00000000000..b0634c71026
+index 0000000000..b0634c7102
 --- /dev/null
 +++ b/components/adblock/core/net/adblock_resource_request_impl.h
 @@ -0,0 +1,78 @@
@@ -30263,7 +30263,7 @@ index 00000000000..b0634c71026
 +#endif  // COMPONENTS_ADBLOCK_CORE_NET_ADBLOCK_RESOURCE_REQUEST_IMPL_H_
 diff --git a/components/adblock/core/net/test/adblock_request_throttle_impl_test.cc b/components/adblock/core/net/test/adblock_request_throttle_impl_test.cc
 new file mode 100644
-index 00000000000..722ac804957
+index 0000000000..722ac80495
 --- /dev/null
 +++ b/components/adblock/core/net/test/adblock_request_throttle_impl_test.cc
 @@ -0,0 +1,133 @@
@@ -30402,7 +30402,7 @@ index 00000000000..722ac804957
 +}  // namespace adblock
 diff --git a/components/adblock/core/net/test/adblock_resource_request_impl_test.cc b/components/adblock/core/net/test/adblock_resource_request_impl_test.cc
 new file mode 100644
-index 00000000000..41325809c36
+index 0000000000..41325809c3
 --- /dev/null
 +++ b/components/adblock/core/net/test/adblock_resource_request_impl_test.cc
 @@ -0,0 +1,414 @@
@@ -30822,7 +30822,7 @@ index 00000000000..41325809c36
 +}  // namespace adblock
 diff --git a/components/adblock/core/net/test/mock_adblock_request_throttle.cc b/components/adblock/core/net/test/mock_adblock_request_throttle.cc
 new file mode 100644
-index 00000000000..bbb7b0aa81a
+index 0000000000..bbb7b0aa81
 --- /dev/null
 +++ b/components/adblock/core/net/test/mock_adblock_request_throttle.cc
 @@ -0,0 +1,45 @@
@@ -30873,7 +30873,7 @@ index 00000000000..bbb7b0aa81a
 +}  // namespace adblock
 diff --git a/components/adblock/core/net/test/mock_adblock_request_throttle.h b/components/adblock/core/net/test/mock_adblock_request_throttle.h
 new file mode 100644
-index 00000000000..ebef4bfc902
+index 0000000000..ebef4bfc90
 --- /dev/null
 +++ b/components/adblock/core/net/test/mock_adblock_request_throttle.h
 @@ -0,0 +1,42 @@
@@ -30921,7 +30921,7 @@ index 00000000000..ebef4bfc902
 +#endif  // COMPONENTS_ADBLOCK_CORE_NET_TEST_MOCK_ADBLOCK_REQUEST_THROTTLE_H_
 diff --git a/components/adblock/core/net/test/mock_adblock_resource_request.cc b/components/adblock/core/net/test/mock_adblock_resource_request.cc
 new file mode 100644
-index 00000000000..188ca712662
+index 0000000000..188ca71266
 --- /dev/null
 +++ b/components/adblock/core/net/test/mock_adblock_resource_request.cc
 @@ -0,0 +1,25 @@
@@ -30952,7 +30952,7 @@ index 00000000000..188ca712662
 +}  // namespace adblock
 diff --git a/components/adblock/core/net/test/mock_adblock_resource_request.h b/components/adblock/core/net/test/mock_adblock_resource_request.h
 new file mode 100644
-index 00000000000..6105374435d
+index 0000000000..6105374435
 --- /dev/null
 +++ b/components/adblock/core/net/test/mock_adblock_resource_request.h
 @@ -0,0 +1,49 @@
@@ -31007,14 +31007,14 @@ index 00000000000..6105374435d
 +#endif  // COMPONENTS_ADBLOCK_CORE_NET_TEST_MOCK_ADBLOCK_RESOURCE_REQUEST_H_
 diff --git a/components/adblock/core/resources/.gitignore b/components/adblock/core/resources/.gitignore
 new file mode 100644
-index 00000000000..a7d8e0acefd
+index 0000000000..a7d8e0acef
 --- /dev/null
 +++ b/components/adblock/core/resources/.gitignore
 @@ -0,0 +1 @@
 +snippets
 diff --git a/components/adblock/core/resources/BUILD.gn b/components/adblock/core/resources/BUILD.gn
 new file mode 100644
-index 00000000000..fe6fbbb731a
+index 0000000000..fe6fbbb731
 --- /dev/null
 +++ b/components/adblock/core/resources/BUILD.gn
 @@ -0,0 +1,95 @@
@@ -31115,7 +31115,7 @@ index 00000000000..fe6fbbb731a
 +}
 diff --git a/components/adblock/core/resources/adblock_resources.grd b/components/adblock/core/resources/adblock_resources.grd
 new file mode 100644
-index 00000000000..dd4d8ab937a
+index 0000000000..dd4d8ab937
 --- /dev/null
 +++ b/components/adblock/core/resources/adblock_resources.grd
 @@ -0,0 +1,38 @@
@@ -31159,7 +31159,7 @@ index 00000000000..dd4d8ab937a
 +</grit>
 diff --git a/components/adblock/core/resources/elemhide.js b/components/adblock/core/resources/elemhide.js
 new file mode 100644
-index 00000000000..730d74a4262
+index 0000000000..730d74a426
 --- /dev/null
 +++ b/components/adblock/core/resources/elemhide.js
 @@ -0,0 +1,43 @@
@@ -31208,7 +31208,7 @@ index 00000000000..730d74a4262
 +}
 diff --git a/components/adblock/core/resources/elemhide_for_selector.jst b/components/adblock/core/resources/elemhide_for_selector.jst
 new file mode 100644
-index 00000000000..7e313363c30
+index 0000000000..7e313363c3
 --- /dev/null
 +++ b/components/adblock/core/resources/elemhide_for_selector.jst
 @@ -0,0 +1,53 @@
@@ -31268,7 +31268,7 @@ index 00000000000..7e313363c30
 \ No newline at end of file
 diff --git a/components/adblock/core/resources/elemhideemu.jst b/components/adblock/core/resources/elemhideemu.jst
 new file mode 100644
-index 00000000000..1c6b6fffc60
+index 0000000000..1c6b6fffc6
 --- /dev/null
 +++ b/components/adblock/core/resources/elemhideemu.jst
 @@ -0,0 +1,1410 @@
@@ -32684,7 +32684,7 @@ index 00000000000..1c6b6fffc60
 +elemHideEmulation.apply(elemHidingEmulatedPatterns);
 diff --git a/components/adblock/core/resources/snippets_deps.py b/components/adblock/core/resources/snippets_deps.py
 new file mode 100644
-index 00000000000..ddf8d3c940a
+index 0000000000..ddf8d3c940
 --- /dev/null
 +++ b/components/adblock/core/resources/snippets_deps.py
 @@ -0,0 +1,71 @@
@@ -32761,7 +32761,7 @@ index 00000000000..ddf8d3c940a
 +    main.prepare_script()
 diff --git a/components/adblock/core/resources/update.sh b/components/adblock/core/resources/update.sh
 new file mode 100755
-index 00000000000..809715df8ea
+index 0000000000..809715df8e
 --- /dev/null
 +++ b/components/adblock/core/resources/update.sh
 @@ -0,0 +1,33 @@
@@ -32800,7 +32800,7 @@ index 00000000000..809715df8ea
 +gzip -f anticv.txt
 diff --git a/components/adblock/core/schema/filter_list_schema.fbs b/components/adblock/core/schema/filter_list_schema.fbs
 new file mode 100644
-index 00000000000..b35e8974d13
+index 0000000000..b35e8974d1
 --- /dev/null
 +++ b/components/adblock/core/schema/filter_list_schema.fbs
 @@ -0,0 +1,190 @@
@@ -32996,7 +32996,7 @@ index 00000000000..b35e8974d13
 +root_type Subscription;
 diff --git a/components/adblock/core/schema/schema_hash.h b/components/adblock/core/schema/schema_hash.h
 new file mode 100644
-index 00000000000..e55f5343683
+index 0000000000..e55f534368
 --- /dev/null
 +++ b/components/adblock/core/schema/schema_hash.h
 @@ -0,0 +1,30 @@
@@ -33032,7 +33032,7 @@ index 00000000000..e55f5343683
 +#endif  // GEN_COMPONENTS_ADBLOCK_CORE_HASH_SCHEMA_HASH_H_
 diff --git a/components/adblock/core/session_stats.h b/components/adblock/core/session_stats.h
 new file mode 100644
-index 00000000000..2ac97c9bcfd
+index 0000000000..2ac97c9bcf
 --- /dev/null
 +++ b/components/adblock/core/session_stats.h
 @@ -0,0 +1,42 @@
@@ -33080,7 +33080,7 @@ index 00000000000..2ac97c9bcfd
 +#endif  // COMPONENTS_ADBLOCK_CORE_SESSION_STATS_H_
 diff --git a/components/adblock/core/sitekey_storage.h b/components/adblock/core/sitekey_storage.h
 new file mode 100644
-index 00000000000..bb2a7162056
+index 0000000000..bb2a716205
 --- /dev/null
 +++ b/components/adblock/core/sitekey_storage.h
 @@ -0,0 +1,53 @@
@@ -33139,7 +33139,7 @@ index 00000000000..bb2a7162056
 +#endif  // COMPONENTS_ADBLOCK_CORE_SITEKEY_STORAGE_H_
 diff --git a/components/adblock/core/sitekey_storage_impl.cc b/components/adblock/core/sitekey_storage_impl.cc
 new file mode 100644
-index 00000000000..442b7b15ec1
+index 0000000000..442b7b15ec
 --- /dev/null
 +++ b/components/adblock/core/sitekey_storage_impl.cc
 @@ -0,0 +1,164 @@
@@ -33309,7 +33309,7 @@ index 00000000000..442b7b15ec1
 +}  // namespace adblock
 diff --git a/components/adblock/core/sitekey_storage_impl.h b/components/adblock/core/sitekey_storage_impl.h
 new file mode 100644
-index 00000000000..9a61ff4823f
+index 0000000000..9a61ff4823
 --- /dev/null
 +++ b/components/adblock/core/sitekey_storage_impl.h
 @@ -0,0 +1,59 @@
@@ -33374,7 +33374,7 @@ index 00000000000..9a61ff4823f
 +#endif  // COMPONENTS_ADBLOCK_CORE_SITEKEY_STORAGE_IMPL_H_
 diff --git a/components/adblock/core/subscription/BUILD.gn b/components/adblock/core/subscription/BUILD.gn
 new file mode 100644
-index 00000000000..b0694b0a681
+index 0000000000..b0694b0a68
 --- /dev/null
 +++ b/components/adblock/core/subscription/BUILD.gn
 @@ -0,0 +1,186 @@
@@ -33566,7 +33566,7 @@ index 00000000000..b0694b0a681
 +}
 diff --git a/components/adblock/core/subscription/conversion_executors.h b/components/adblock/core/subscription/conversion_executors.h
 new file mode 100644
-index 00000000000..317624d4bb2
+index 0000000000..317624d4bb
 --- /dev/null
 +++ b/components/adblock/core/subscription/conversion_executors.h
 @@ -0,0 +1,50 @@
@@ -33622,7 +33622,7 @@ index 00000000000..317624d4bb2
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_CONVERSION_EXECUTORS_H_
 diff --git a/components/adblock/core/subscription/domain_splitter.cc b/components/adblock/core/subscription/domain_splitter.cc
 new file mode 100644
-index 00000000000..9ee8733a7e3
+index 0000000000..9ee8733a7e
 --- /dev/null
 +++ b/components/adblock/core/subscription/domain_splitter.cc
 @@ -0,0 +1,76 @@
@@ -33704,7 +33704,7 @@ index 00000000000..9ee8733a7e3
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/domain_splitter.h b/components/adblock/core/subscription/domain_splitter.h
 new file mode 100644
-index 00000000000..4c090231ef7
+index 0000000000..4c090231ef
 --- /dev/null
 +++ b/components/adblock/core/subscription/domain_splitter.h
 @@ -0,0 +1,56 @@
@@ -33766,7 +33766,7 @@ index 00000000000..4c090231ef7
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_DOMAIN_SPLITTER_H_
 diff --git a/components/adblock/core/subscription/filtering_configuration_maintainer.h b/components/adblock/core/subscription/filtering_configuration_maintainer.h
 new file mode 100644
-index 00000000000..34f81cf2376
+index 0000000000..34f81cf237
 --- /dev/null
 +++ b/components/adblock/core/subscription/filtering_configuration_maintainer.h
 @@ -0,0 +1,55 @@
@@ -33827,7 +33827,7 @@ index 00000000000..34f81cf2376
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_FILTERING_CONFIGURATION_MAINTAINER_H_
 diff --git a/components/adblock/core/subscription/filtering_configuration_maintainer_impl.cc b/components/adblock/core/subscription/filtering_configuration_maintainer_impl.cc
 new file mode 100644
-index 00000000000..3e851a4e4d5
+index 0000000000..3e851a4e4d
 --- /dev/null
 +++ b/components/adblock/core/subscription/filtering_configuration_maintainer_impl.cc
 @@ -0,0 +1,516 @@
@@ -34349,7 +34349,7 @@ index 00000000000..3e851a4e4d5
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/filtering_configuration_maintainer_impl.h b/components/adblock/core/subscription/filtering_configuration_maintainer_impl.h
 new file mode 100644
-index 00000000000..e32b836cf98
+index 0000000000..e32b836cf9
 --- /dev/null
 +++ b/components/adblock/core/subscription/filtering_configuration_maintainer_impl.h
 @@ -0,0 +1,124 @@
@@ -34479,7 +34479,7 @@ index 00000000000..e32b836cf98
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_FILTERING_CONFIGURATION_MAINTAINER_IMPL_H_
 diff --git a/components/adblock/core/subscription/installed_subscription.cc b/components/adblock/core/subscription/installed_subscription.cc
 new file mode 100644
-index 00000000000..6e282438543
+index 0000000000..6e28243854
 --- /dev/null
 +++ b/components/adblock/core/subscription/installed_subscription.cc
 @@ -0,0 +1,46 @@
@@ -34531,7 +34531,7 @@ index 00000000000..6e282438543
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/installed_subscription.h b/components/adblock/core/subscription/installed_subscription.h
 new file mode 100644
-index 00000000000..43395491ab9
+index 0000000000..43395491ab
 --- /dev/null
 +++ b/components/adblock/core/subscription/installed_subscription.h
 @@ -0,0 +1,147 @@
@@ -34684,7 +34684,7 @@ index 00000000000..43395491ab9
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_INSTALLED_SUBSCRIPTION_H_
 diff --git a/components/adblock/core/subscription/installed_subscription_impl.cc b/components/adblock/core/subscription/installed_subscription_impl.cc
 new file mode 100644
-index 00000000000..aa136b19416
+index 0000000000..aa136b1941
 --- /dev/null
 +++ b/components/adblock/core/subscription/installed_subscription_impl.cc
 @@ -0,0 +1,640 @@
@@ -35330,7 +35330,7 @@ index 00000000000..aa136b19416
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/installed_subscription_impl.h b/components/adblock/core/subscription/installed_subscription_impl.h
 new file mode 100644
-index 00000000000..b44e585e228
+index 0000000000..b44e585e22
 --- /dev/null
 +++ b/components/adblock/core/subscription/installed_subscription_impl.h
 @@ -0,0 +1,147 @@
@@ -35483,7 +35483,7 @@ index 00000000000..b44e585e228
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_INSTALLED_SUBSCRIPTION_IMPL_H_
 diff --git a/components/adblock/core/subscription/pattern_matcher.cc b/components/adblock/core/subscription/pattern_matcher.cc
 new file mode 100644
-index 00000000000..e2daf0e8f99
+index 0000000000..e2daf0e8f9
 --- /dev/null
 +++ b/components/adblock/core/subscription/pattern_matcher.cc
 @@ -0,0 +1,277 @@
@@ -35766,7 +35766,7 @@ index 00000000000..e2daf0e8f99
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/pattern_matcher.h b/components/adblock/core/subscription/pattern_matcher.h
 new file mode 100644
-index 00000000000..65d8edd16e2
+index 0000000000..65d8edd16e
 --- /dev/null
 +++ b/components/adblock/core/subscription/pattern_matcher.h
 @@ -0,0 +1,35 @@
@@ -35807,7 +35807,7 @@ index 00000000000..65d8edd16e2
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_PATTERN_MATCHER_H_
 diff --git a/components/adblock/core/subscription/preloaded_subscription_provider.h b/components/adblock/core/subscription/preloaded_subscription_provider.h
 new file mode 100644
-index 00000000000..4ea6cdb69dc
+index 0000000000..4ea6cdb69d
 --- /dev/null
 +++ b/components/adblock/core/subscription/preloaded_subscription_provider.h
 @@ -0,0 +1,56 @@
@@ -35869,7 +35869,7 @@ index 00000000000..4ea6cdb69dc
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_PRELOADED_SUBSCRIPTION_PROVIDER_H_
 diff --git a/components/adblock/core/subscription/preloaded_subscription_provider_impl.cc b/components/adblock/core/subscription/preloaded_subscription_provider_impl.cc
 new file mode 100644
-index 00000000000..b133cbb6dcb
+index 0000000000..b133cbb6dc
 --- /dev/null
 +++ b/components/adblock/core/subscription/preloaded_subscription_provider_impl.cc
 @@ -0,0 +1,121 @@
@@ -35996,7 +35996,7 @@ index 00000000000..b133cbb6dcb
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/preloaded_subscription_provider_impl.h b/components/adblock/core/subscription/preloaded_subscription_provider_impl.h
 new file mode 100644
-index 00000000000..e341cc44259
+index 0000000000..e341cc4425
 --- /dev/null
 +++ b/components/adblock/core/subscription/preloaded_subscription_provider_impl.h
 @@ -0,0 +1,50 @@
@@ -36052,7 +36052,7 @@ index 00000000000..e341cc44259
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_PRELOADED_SUBSCRIPTION_PROVIDER_IMPL_H_
 diff --git a/components/adblock/core/subscription/recommended_subscription_installer.h b/components/adblock/core/subscription/recommended_subscription_installer.h
 new file mode 100644
-index 00000000000..e200035a72f
+index 0000000000..e200035a72
 --- /dev/null
 +++ b/components/adblock/core/subscription/recommended_subscription_installer.h
 @@ -0,0 +1,43 @@
@@ -36101,7 +36101,7 @@ index 00000000000..e200035a72f
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_RECOMMENDED_SUBSCRIPTION_INSTALLER_H_
 diff --git a/components/adblock/core/subscription/recommended_subscription_installer_impl.cc b/components/adblock/core/subscription/recommended_subscription_installer_impl.cc
 new file mode 100644
-index 00000000000..3a00e543f33
+index 0000000000..3a00e543f3
 --- /dev/null
 +++ b/components/adblock/core/subscription/recommended_subscription_installer_impl.cc
 @@ -0,0 +1,141 @@
@@ -36248,7 +36248,7 @@ index 00000000000..3a00e543f33
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/recommended_subscription_installer_impl.h b/components/adblock/core/subscription/recommended_subscription_installer_impl.h
 new file mode 100644
-index 00000000000..a8b640d83de
+index 0000000000..a8b640d83d
 --- /dev/null
 +++ b/components/adblock/core/subscription/recommended_subscription_installer_impl.h
 @@ -0,0 +1,73 @@
@@ -36327,7 +36327,7 @@ index 00000000000..a8b640d83de
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_RECOMMENDED_SUBSCRIPTION_INSTALLER_IMPL_H_
 diff --git a/components/adblock/core/subscription/recommended_subscription_parser.cc b/components/adblock/core/subscription/recommended_subscription_parser.cc
 new file mode 100644
-index 00000000000..401913e1545
+index 0000000000..401913e154
 --- /dev/null
 +++ b/components/adblock/core/subscription/recommended_subscription_parser.cc
 @@ -0,0 +1,82 @@
@@ -36415,7 +36415,7 @@ index 00000000000..401913e1545
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/recommended_subscription_parser.h b/components/adblock/core/subscription/recommended_subscription_parser.h
 new file mode 100644
-index 00000000000..717ca20a1a6
+index 0000000000..717ca20a1a
 --- /dev/null
 +++ b/components/adblock/core/subscription/recommended_subscription_parser.h
 @@ -0,0 +1,35 @@
@@ -36456,7 +36456,7 @@ index 00000000000..717ca20a1a6
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_RECOMMENDED_SUBSCRIPTION_PARSER_H_
 diff --git a/components/adblock/core/subscription/regex_matcher.cc b/components/adblock/core/subscription/regex_matcher.cc
 new file mode 100644
-index 00000000000..310e6deead4
+index 0000000000..310e6deead
 --- /dev/null
 +++ b/components/adblock/core/subscription/regex_matcher.cc
 @@ -0,0 +1,162 @@
@@ -36624,7 +36624,7 @@ index 00000000000..310e6deead4
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/regex_matcher.h b/components/adblock/core/subscription/regex_matcher.h
 new file mode 100644
-index 00000000000..0dd658d9083
+index 0000000000..0dd658d908
 --- /dev/null
 +++ b/components/adblock/core/subscription/regex_matcher.h
 @@ -0,0 +1,75 @@
@@ -36705,7 +36705,7 @@ index 00000000000..0dd658d9083
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_REGEX_MATCHER_H_
 diff --git a/components/adblock/core/subscription/subscription.cc b/components/adblock/core/subscription/subscription.cc
 new file mode 100644
-index 00000000000..34068dc11b6
+index 0000000000..34068dc11b
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription.cc
 @@ -0,0 +1,24 @@
@@ -36735,7 +36735,7 @@ index 00000000000..34068dc11b6
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/subscription.h b/components/adblock/core/subscription/subscription.h
 new file mode 100644
-index 00000000000..10b43342922
+index 0000000000..10b4334292
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription.h
 @@ -0,0 +1,81 @@
@@ -36822,7 +36822,7 @@ index 00000000000..10b43342922
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_H_
 diff --git a/components/adblock/core/subscription/subscription_collection.h b/components/adblock/core/subscription/subscription_collection.h
 new file mode 100644
-index 00000000000..f2602df6e9d
+index 0000000000..f2602df6e9
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_collection.h
 @@ -0,0 +1,98 @@
@@ -36926,7 +36926,7 @@ index 00000000000..f2602df6e9d
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_COLLECTION_H_
 diff --git a/components/adblock/core/subscription/subscription_collection_impl.cc b/components/adblock/core/subscription/subscription_collection_impl.cc
 new file mode 100644
-index 00000000000..a834989f8d1
+index 0000000000..a834989f8d
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_collection_impl.cc
 @@ -0,0 +1,382 @@
@@ -37314,7 +37314,7 @@ index 00000000000..a834989f8d1
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/subscription_collection_impl.h b/components/adblock/core/subscription/subscription_collection_impl.h
 new file mode 100644
-index 00000000000..a56ee76fcaf
+index 0000000000..a56ee76fca
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_collection_impl.h
 @@ -0,0 +1,98 @@
@@ -37418,7 +37418,7 @@ index 00000000000..a56ee76fcaf
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_COLLECTION_IMPL_H_
 diff --git a/components/adblock/core/subscription/subscription_config.cc b/components/adblock/core/subscription/subscription_config.cc
 new file mode 100644
-index 00000000000..87a7755e50b
+index 0000000000..87a7755e50
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_config.cc
 @@ -0,0 +1,428 @@
@@ -37852,7 +37852,7 @@ index 00000000000..87a7755e50b
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/subscription_config.h b/components/adblock/core/subscription/subscription_config.h
 new file mode 100644
-index 00000000000..6ef77a4c083
+index 0000000000..6ef77a4c08
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_config.h
 @@ -0,0 +1,131 @@
@@ -37989,7 +37989,7 @@ index 00000000000..6ef77a4c083
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_CONFIG_H_
 diff --git a/components/adblock/core/subscription/subscription_downloader.h b/components/adblock/core/subscription/subscription_downloader.h
 new file mode 100644
-index 00000000000..54bb10b02f6
+index 0000000000..54bb10b02f
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_downloader.h
 @@ -0,0 +1,60 @@
@@ -38055,7 +38055,7 @@ index 00000000000..54bb10b02f6
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_DOWNLOADER_H_
 diff --git a/components/adblock/core/subscription/subscription_downloader_impl.cc b/components/adblock/core/subscription/subscription_downloader_impl.cc
 new file mode 100644
-index 00000000000..245eb475b64
+index 0000000000..245eb475b6
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_downloader_impl.cc
 @@ -0,0 +1,279 @@
@@ -38340,7 +38340,7 @@ index 00000000000..245eb475b64
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/subscription_downloader_impl.h b/components/adblock/core/subscription/subscription_downloader_impl.h
 new file mode 100644
-index 00000000000..03a55c2bf17
+index 0000000000..03a55c2bf1
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_downloader_impl.h
 @@ -0,0 +1,97 @@
@@ -38443,7 +38443,7 @@ index 00000000000..03a55c2bf17
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_DOWNLOADER_IMPL_H_
 diff --git a/components/adblock/core/subscription/subscription_persistent_metadata.h b/components/adblock/core/subscription/subscription_persistent_metadata.h
 new file mode 100644
-index 00000000000..c58ab8c54d4
+index 0000000000..c58ab8c54d
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_persistent_metadata.h
 @@ -0,0 +1,99 @@
@@ -38548,7 +38548,7 @@ index 00000000000..c58ab8c54d4
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_PERSISTENT_METADATA_H_
 diff --git a/components/adblock/core/subscription/subscription_persistent_metadata_impl.cc b/components/adblock/core/subscription/subscription_persistent_metadata_impl.cc
 new file mode 100644
-index 00000000000..e7f036ec013
+index 0000000000..e7f036ec01
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_persistent_metadata_impl.cc
 @@ -0,0 +1,224 @@
@@ -38778,7 +38778,7 @@ index 00000000000..e7f036ec013
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/subscription_persistent_metadata_impl.h b/components/adblock/core/subscription/subscription_persistent_metadata_impl.h
 new file mode 100644
-index 00000000000..69987daf630
+index 0000000000..69987daf63
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_persistent_metadata_impl.h
 @@ -0,0 +1,68 @@
@@ -38852,7 +38852,7 @@ index 00000000000..69987daf630
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_PERSISTENT_METADATA_IMPL_H_
 diff --git a/components/adblock/core/subscription/subscription_persistent_storage.h b/components/adblock/core/subscription/subscription_persistent_storage.h
 new file mode 100644
-index 00000000000..fb1fe03a36b
+index 0000000000..fb1fe03a36
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_persistent_storage.h
 @@ -0,0 +1,60 @@
@@ -38918,7 +38918,7 @@ index 00000000000..fb1fe03a36b
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_PERSISTENT_STORAGE_H_
 diff --git a/components/adblock/core/subscription/subscription_persistent_storage_impl.cc b/components/adblock/core/subscription/subscription_persistent_storage_impl.cc
 new file mode 100644
-index 00000000000..3f0409e519f
+index 0000000000..3f0409e519
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_persistent_storage_impl.cc
 @@ -0,0 +1,237 @@
@@ -39161,7 +39161,7 @@ index 00000000000..3f0409e519f
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/subscription_persistent_storage_impl.h b/components/adblock/core/subscription/subscription_persistent_storage_impl.h
 new file mode 100644
-index 00000000000..80b79b3b88f
+index 0000000000..80b79b3b88
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_persistent_storage_impl.h
 @@ -0,0 +1,80 @@
@@ -39247,7 +39247,7 @@ index 00000000000..80b79b3b88f
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_PERSISTENT_STORAGE_IMPL_H_
 diff --git a/components/adblock/core/subscription/subscription_service.h b/components/adblock/core/subscription/subscription_service.h
 new file mode 100644
-index 00000000000..0bff5183da1
+index 0000000000..0bff5183da
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_service.h
 @@ -0,0 +1,92 @@
@@ -39345,7 +39345,7 @@ index 00000000000..0bff5183da1
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_SERVICE_H_
 diff --git a/components/adblock/core/subscription/subscription_service_impl.cc b/components/adblock/core/subscription/subscription_service_impl.cc
 new file mode 100644
-index 00000000000..861952c09ac
+index 0000000000..861952c09a
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_service_impl.cc
 @@ -0,0 +1,265 @@
@@ -39616,7 +39616,7 @@ index 00000000000..861952c09ac
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/subscription_service_impl.h b/components/adblock/core/subscription/subscription_service_impl.h
 new file mode 100644
-index 00000000000..4f642d1ed02
+index 0000000000..4f642d1ed0
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_service_impl.h
 @@ -0,0 +1,101 @@
@@ -39723,7 +39723,7 @@ index 00000000000..4f642d1ed02
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_SERVICE_IMPL_H_
 diff --git a/components/adblock/core/subscription/subscription_validator.h b/components/adblock/core/subscription/subscription_validator.h
 new file mode 100644
-index 00000000000..378e59b58c5
+index 0000000000..378e59b58c
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_validator.h
 @@ -0,0 +1,59 @@
@@ -39788,7 +39788,7 @@ index 00000000000..378e59b58c5
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_VALIDATOR_H_
 diff --git a/components/adblock/core/subscription/subscription_validator_impl.cc b/components/adblock/core/subscription/subscription_validator_impl.cc
 new file mode 100644
-index 00000000000..8dbcbed5121
+index 0000000000..8dbcbed512
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_validator_impl.cc
 @@ -0,0 +1,144 @@
@@ -39938,7 +39938,7 @@ index 00000000000..8dbcbed5121
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/subscription_validator_impl.h b/components/adblock/core/subscription/subscription_validator_impl.h
 new file mode 100644
-index 00000000000..f4699fdb447
+index 0000000000..f4699fdb44
 --- /dev/null
 +++ b/components/adblock/core/subscription/subscription_validator_impl.h
 @@ -0,0 +1,53 @@
@@ -39997,7 +39997,7 @@ index 00000000000..f4699fdb447
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_SUBSCRIPTION_VALIDATOR_IMPL_H_
 diff --git a/components/adblock/core/subscription/test/domain_splitter_test.cc b/components/adblock/core/subscription/test/domain_splitter_test.cc
 new file mode 100644
-index 00000000000..0ceb31496a0
+index 0000000000..0ceb31496a
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/domain_splitter_test.cc
 @@ -0,0 +1,64 @@
@@ -40067,7 +40067,7 @@ index 00000000000..0ceb31496a0
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/filtering_configuration_maintainer_impl_test.cc b/components/adblock/core/subscription/test/filtering_configuration_maintainer_impl_test.cc
 new file mode 100644
-index 00000000000..5086486207d
+index 0000000000..5086486207
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/filtering_configuration_maintainer_impl_test.cc
 @@ -0,0 +1,991 @@
@@ -41064,7 +41064,7 @@ index 00000000000..5086486207d
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/installed_subscription_impl_csp_test.cc b/components/adblock/core/subscription/test/installed_subscription_impl_csp_test.cc
 new file mode 100644
-index 00000000000..f769cb6697a
+index 0000000000..f769cb6697
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/installed_subscription_impl_csp_test.cc
 @@ -0,0 +1,236 @@
@@ -41306,7 +41306,7 @@ index 00000000000..f769cb6697a
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/installed_subscription_impl_elemhide_test.cc b/components/adblock/core/subscription/test/installed_subscription_impl_elemhide_test.cc
 new file mode 100644
-index 00000000000..57dcd0e04c7
+index 0000000000..57dcd0e04c
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/installed_subscription_impl_elemhide_test.cc
 @@ -0,0 +1,566 @@
@@ -41878,7 +41878,7 @@ index 00000000000..57dcd0e04c7
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/installed_subscription_impl_header_test.cc b/components/adblock/core/subscription/test/installed_subscription_impl_header_test.cc
 new file mode 100644
-index 00000000000..381ada16d25
+index 0000000000..381ada16d2
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/installed_subscription_impl_header_test.cc
 @@ -0,0 +1,297 @@
@@ -42181,7 +42181,7 @@ index 00000000000..381ada16d25
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/installed_subscription_impl_list_converter_test.cc b/components/adblock/core/subscription/test/installed_subscription_impl_list_converter_test.cc
 new file mode 100644
-index 00000000000..64808166905
+index 0000000000..6480816690
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/installed_subscription_impl_list_converter_test.cc
 @@ -0,0 +1,107 @@
@@ -42294,7 +42294,7 @@ index 00000000000..64808166905
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/installed_subscription_impl_metadata_test.cc b/components/adblock/core/subscription/test/installed_subscription_impl_metadata_test.cc
 new file mode 100644
-index 00000000000..ff3d1533de0
+index 0000000000..ff3d1533de
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/installed_subscription_impl_metadata_test.cc
 @@ -0,0 +1,129 @@
@@ -42429,7 +42429,7 @@ index 00000000000..ff3d1533de0
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/installed_subscription_impl_rewrite_test.cc b/components/adblock/core/subscription/test/installed_subscription_impl_rewrite_test.cc
 new file mode 100644
-index 00000000000..159b39cd1c5
+index 0000000000..159b39cd1c
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/installed_subscription_impl_rewrite_test.cc
 @@ -0,0 +1,190 @@
@@ -42625,7 +42625,7 @@ index 00000000000..159b39cd1c5
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/installed_subscription_impl_snippets_test.cc b/components/adblock/core/subscription/test/installed_subscription_impl_snippets_test.cc
 new file mode 100644
-index 00000000000..4eb3fdeaecc
+index 0000000000..4eb3fdeaec
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/installed_subscription_impl_snippets_test.cc
 @@ -0,0 +1,196 @@
@@ -42827,7 +42827,7 @@ index 00000000000..4eb3fdeaecc
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/installed_subscription_impl_test_base.cc b/components/adblock/core/subscription/test/installed_subscription_impl_test_base.cc
 new file mode 100644
-index 00000000000..d9b37524cb3
+index 0000000000..d9b37524cb
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/installed_subscription_impl_test_base.cc
 @@ -0,0 +1,78 @@
@@ -42911,7 +42911,7 @@ index 00000000000..d9b37524cb3
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/installed_subscription_impl_test_base.h b/components/adblock/core/subscription/test/installed_subscription_impl_test_base.h
 new file mode 100644
-index 00000000000..c86ec34b077
+index 0000000000..c86ec34b07
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/installed_subscription_impl_test_base.h
 @@ -0,0 +1,54 @@
@@ -42971,7 +42971,7 @@ index 00000000000..c86ec34b077
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_TEST_INSTALLED_SUBSCRIPTION_IMPL_TEST_BASE_H_
 diff --git a/components/adblock/core/subscription/test/installed_subscription_impl_url_test.cc b/components/adblock/core/subscription/test/installed_subscription_impl_url_test.cc
 new file mode 100644
-index 00000000000..89c811d0449
+index 0000000000..89c811d044
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/installed_subscription_impl_url_test.cc
 @@ -0,0 +1,1307 @@
@@ -44284,7 +44284,7 @@ index 00000000000..89c811d0449
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/load_gzipped_test_file.cc b/components/adblock/core/subscription/test/load_gzipped_test_file.cc
 new file mode 100644
-index 00000000000..b348e52bf1c
+index 0000000000..b348e52bf1
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/load_gzipped_test_file.cc
 @@ -0,0 +1,43 @@
@@ -44333,7 +44333,7 @@ index 00000000000..b348e52bf1c
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/load_gzipped_test_file.h b/components/adblock/core/subscription/test/load_gzipped_test_file.h
 new file mode 100644
-index 00000000000..3d60962c819
+index 0000000000..3d60962c81
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/load_gzipped_test_file.h
 @@ -0,0 +1,34 @@
@@ -44373,7 +44373,7 @@ index 00000000000..3d60962c819
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_TEST_LOAD_GZIPPED_TEST_FILE_H_
 diff --git a/components/adblock/core/subscription/test/mock_conversion_executors.cc b/components/adblock/core/subscription/test/mock_conversion_executors.cc
 new file mode 100644
-index 00000000000..deb9d8539f0
+index 0000000000..deb9d8539f
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_conversion_executors.cc
 @@ -0,0 +1,25 @@
@@ -44404,7 +44404,7 @@ index 00000000000..deb9d8539f0
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/mock_conversion_executors.h b/components/adblock/core/subscription/test/mock_conversion_executors.h
 new file mode 100644
-index 00000000000..c8ed33fec5a
+index 0000000000..c8ed33fec5
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_conversion_executors.h
 @@ -0,0 +1,46 @@
@@ -44456,7 +44456,7 @@ index 00000000000..c8ed33fec5a
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_TEST_MOCK_CONVERSION_EXECUTORS_H_
 diff --git a/components/adblock/core/subscription/test/mock_filtering_configuration_maintainer.cc b/components/adblock/core/subscription/test/mock_filtering_configuration_maintainer.cc
 new file mode 100644
-index 00000000000..0f59e6dc6d0
+index 0000000000..0f59e6dc6d
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_filtering_configuration_maintainer.cc
 @@ -0,0 +1,28 @@
@@ -44490,7 +44490,7 @@ index 00000000000..0f59e6dc6d0
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/mock_filtering_configuration_maintainer.h b/components/adblock/core/subscription/test/mock_filtering_configuration_maintainer.h
 new file mode 100644
-index 00000000000..63d372b1690
+index 0000000000..63d372b169
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_filtering_configuration_maintainer.h
 @@ -0,0 +1,48 @@
@@ -44544,7 +44544,7 @@ index 00000000000..63d372b1690
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_TEST_MOCK_FILTERING_CONFIGURATION_MAINTAINER_H_
 diff --git a/components/adblock/core/subscription/test/mock_installed_subscription.cc b/components/adblock/core/subscription/test/mock_installed_subscription.cc
 new file mode 100644
-index 00000000000..6442c3bcf3d
+index 0000000000..6442c3bcf3
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_installed_subscription.cc
 @@ -0,0 +1,26 @@
@@ -44576,7 +44576,7 @@ index 00000000000..6442c3bcf3d
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/mock_installed_subscription.h b/components/adblock/core/subscription/test/mock_installed_subscription.h
 new file mode 100644
-index 00000000000..80a92e81b05
+index 0000000000..80a92e81b0
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_installed_subscription.h
 @@ -0,0 +1,102 @@
@@ -44684,7 +44684,7 @@ index 00000000000..80a92e81b05
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_TEST_MOCK_INSTALLED_SUBSCRIPTION_H_
 diff --git a/components/adblock/core/subscription/test/mock_subscription.cc b/components/adblock/core/subscription/test/mock_subscription.cc
 new file mode 100644
-index 00000000000..a4abfe73262
+index 0000000000..a4abfe7326
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_subscription.cc
 @@ -0,0 +1,36 @@
@@ -44726,7 +44726,7 @@ index 00000000000..a4abfe73262
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/mock_subscription.h b/components/adblock/core/subscription/test/mock_subscription.h
 new file mode 100644
-index 00000000000..bf09ac96288
+index 0000000000..bf09ac9628
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_subscription.h
 @@ -0,0 +1,51 @@
@@ -44783,7 +44783,7 @@ index 00000000000..bf09ac96288
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_TEST_MOCK_SUBSCRIPTION_H_
 diff --git a/components/adblock/core/subscription/test/mock_subscription_collection.cc b/components/adblock/core/subscription/test/mock_subscription_collection.cc
 new file mode 100644
-index 00000000000..31f66c8d2cf
+index 0000000000..31f66c8d2c
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_subscription_collection.cc
 @@ -0,0 +1,26 @@
@@ -44815,7 +44815,7 @@ index 00000000000..31f66c8d2cf
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/mock_subscription_collection.h b/components/adblock/core/subscription/test/mock_subscription_collection.h
 new file mode 100644
-index 00000000000..5677cd9e618
+index 0000000000..5677cd9e61
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_subscription_collection.h
 @@ -0,0 +1,102 @@
@@ -44923,7 +44923,7 @@ index 00000000000..5677cd9e618
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_TEST_MOCK_SUBSCRIPTION_COLLECTION_H_
 diff --git a/components/adblock/core/subscription/test/mock_subscription_downloader.cc b/components/adblock/core/subscription/test/mock_subscription_downloader.cc
 new file mode 100644
-index 00000000000..47b0fbba3a1
+index 0000000000..47b0fbba3a
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_subscription_downloader.cc
 @@ -0,0 +1,25 @@
@@ -44954,7 +44954,7 @@ index 00000000000..47b0fbba3a1
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/mock_subscription_downloader.h b/components/adblock/core/subscription/test/mock_subscription_downloader.h
 new file mode 100644
-index 00000000000..d867c317825
+index 0000000000..d867c31782
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_subscription_downloader.h
 @@ -0,0 +1,48 @@
@@ -45008,7 +45008,7 @@ index 00000000000..d867c317825
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_TEST_MOCK_SUBSCRIPTION_DOWNLOADER_H_
 diff --git a/components/adblock/core/subscription/test/mock_subscription_persistent_metadata.cc b/components/adblock/core/subscription/test/mock_subscription_persistent_metadata.cc
 new file mode 100644
-index 00000000000..03cef098d82
+index 0000000000..03cef098d8
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_subscription_persistent_metadata.cc
 @@ -0,0 +1,27 @@
@@ -45041,7 +45041,7 @@ index 00000000000..03cef098d82
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/mock_subscription_persistent_metadata.h b/components/adblock/core/subscription/test/mock_subscription_persistent_metadata.h
 new file mode 100644
-index 00000000000..b4642ef2d30
+index 0000000000..b4642ef2d3
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_subscription_persistent_metadata.h
 @@ -0,0 +1,92 @@
@@ -45139,7 +45139,7 @@ index 00000000000..b4642ef2d30
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_TEST_MOCK_SUBSCRIPTION_PERSISTENT_METADATA_H_
 diff --git a/components/adblock/core/subscription/test/mock_subscription_service.cc b/components/adblock/core/subscription/test/mock_subscription_service.cc
 new file mode 100644
-index 00000000000..10479827a21
+index 0000000000..10479827a2
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_subscription_service.cc
 @@ -0,0 +1,36 @@
@@ -45181,7 +45181,7 @@ index 00000000000..10479827a21
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/mock_subscription_service.h b/components/adblock/core/subscription/test/mock_subscription_service.h
 new file mode 100644
-index 00000000000..4c13832e2c0
+index 0000000000..4c13832e2c
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/mock_subscription_service.h
 @@ -0,0 +1,77 @@
@@ -45264,7 +45264,7 @@ index 00000000000..4c13832e2c0
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_TEST_MOCK_SUBSCRIPTION_SERVICE_H_
 diff --git a/components/adblock/core/subscription/test/pattern_matcher_perftest.cc b/components/adblock/core/subscription/test/pattern_matcher_perftest.cc
 new file mode 100644
-index 00000000000..391f679691e
+index 0000000000..391f679691
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/pattern_matcher_perftest.cc
 @@ -0,0 +1,73 @@
@@ -45343,7 +45343,7 @@ index 00000000000..391f679691e
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/pattern_matcher_test.cc b/components/adblock/core/subscription/test/pattern_matcher_test.cc
 new file mode 100644
-index 00000000000..29519ae70ab
+index 0000000000..29519ae70a
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/pattern_matcher_test.cc
 @@ -0,0 +1,376 @@
@@ -45725,7 +45725,7 @@ index 00000000000..29519ae70ab
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/preloaded_subscription_provider_impl_test.cc b/components/adblock/core/subscription/test/preloaded_subscription_provider_impl_test.cc
 new file mode 100644
-index 00000000000..60fe0e18ba9
+index 0000000000..60fe0e18ba
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/preloaded_subscription_provider_impl_test.cc
 @@ -0,0 +1,149 @@
@@ -45880,7 +45880,7 @@ index 00000000000..60fe0e18ba9
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/recommended_subscription_installer_impl_test.cc b/components/adblock/core/subscription/test/recommended_subscription_installer_impl_test.cc
 new file mode 100644
-index 00000000000..b180c199b25
+index 0000000000..b180c199b2
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/recommended_subscription_installer_impl_test.cc
 @@ -0,0 +1,325 @@
@@ -46211,7 +46211,7 @@ index 00000000000..b180c199b25
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/recommended_subscription_parser_test.cc b/components/adblock/core/subscription/test/recommended_subscription_parser_test.cc
 new file mode 100644
-index 00000000000..fcd6e909ec8
+index 0000000000..fcd6e909ec
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/recommended_subscription_parser_test.cc
 @@ -0,0 +1,117 @@
@@ -46334,7 +46334,7 @@ index 00000000000..fcd6e909ec8
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/regex_matcher_perftest.cc b/components/adblock/core/subscription/test/regex_matcher_perftest.cc
 new file mode 100644
-index 00000000000..ab37fc6f04e
+index 0000000000..ab37fc6f04
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/regex_matcher_perftest.cc
 @@ -0,0 +1,86 @@
@@ -46426,7 +46426,7 @@ index 00000000000..ab37fc6f04e
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/subscription_collection_impl_test.cc b/components/adblock/core/subscription/test/subscription_collection_impl_test.cc
 new file mode 100644
-index 00000000000..7e06e84f608
+index 0000000000..7e06e84f60
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/subscription_collection_impl_test.cc
 @@ -0,0 +1,1021 @@
@@ -47453,7 +47453,7 @@ index 00000000000..7e06e84f608
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/subscription_downloader_impl_test.cc b/components/adblock/core/subscription/test/subscription_downloader_impl_test.cc
 new file mode 100644
-index 00000000000..3efc49fcdc0
+index 0000000000..3efc49fcdc
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/subscription_downloader_impl_test.cc
 @@ -0,0 +1,445 @@
@@ -47904,7 +47904,7 @@ index 00000000000..3efc49fcdc0
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/subscription_persistent_metadata_impl_test.cc b/components/adblock/core/subscription/test/subscription_persistent_metadata_impl_test.cc
 new file mode 100644
-index 00000000000..6bef16c006f
+index 0000000000..6bef16c006
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/subscription_persistent_metadata_impl_test.cc
 @@ -0,0 +1,268 @@
@@ -48178,7 +48178,7 @@ index 00000000000..6bef16c006f
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/subscription_persistent_storage_impl_test.cc b/components/adblock/core/subscription/test/subscription_persistent_storage_impl_test.cc
 new file mode 100644
-index 00000000000..38694a3cd68
+index 0000000000..38694a3cd6
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/subscription_persistent_storage_impl_test.cc
 @@ -0,0 +1,346 @@
@@ -48530,7 +48530,7 @@ index 00000000000..38694a3cd68
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/subscription_service_impl_test.cc b/components/adblock/core/subscription/test/subscription_service_impl_test.cc
 new file mode 100644
-index 00000000000..f16c431f89c
+index 0000000000..f16c431f89
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/subscription_service_impl_test.cc
 @@ -0,0 +1,378 @@
@@ -48914,7 +48914,7 @@ index 00000000000..f16c431f89c
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/subscription_validator_impl_test.cc b/components/adblock/core/subscription/test/subscription_validator_impl_test.cc
 new file mode 100644
-index 00000000000..1d246302afc
+index 0000000000..1d246302af
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/subscription_validator_impl_test.cc
 @@ -0,0 +1,251 @@
@@ -49171,7 +49171,7 @@ index 00000000000..1d246302afc
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/test/url_keyword_extractor_test.cc b/components/adblock/core/subscription/test/url_keyword_extractor_test.cc
 new file mode 100644
-index 00000000000..eec085d71c2
+index 0000000000..eec085d71c
 --- /dev/null
 +++ b/components/adblock/core/subscription/test/url_keyword_extractor_test.cc
 @@ -0,0 +1,74 @@
@@ -49251,7 +49251,7 @@ index 00000000000..eec085d71c2
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/url_keyword_extractor.cc b/components/adblock/core/subscription/url_keyword_extractor.cc
 new file mode 100644
-index 00000000000..b180e50628e
+index 0000000000..b180e50628
 --- /dev/null
 +++ b/components/adblock/core/subscription/url_keyword_extractor.cc
 @@ -0,0 +1,66 @@
@@ -49323,7 +49323,7 @@ index 00000000000..b180e50628e
 +}  // namespace adblock
 diff --git a/components/adblock/core/subscription/url_keyword_extractor.h b/components/adblock/core/subscription/url_keyword_extractor.h
 new file mode 100644
-index 00000000000..9561bc2f7c0
+index 0000000000..9561bc2f7c
 --- /dev/null
 +++ b/components/adblock/core/subscription/url_keyword_extractor.h
 @@ -0,0 +1,59 @@
@@ -49388,7 +49388,7 @@ index 00000000000..9561bc2f7c0
 +#endif  // COMPONENTS_ADBLOCK_CORE_SUBSCRIPTION_URL_KEYWORD_EXTRACTOR_H_
 diff --git a/components/adblock/core/test/activeping_telemetry_topic_provider_test.cc b/components/adblock/core/test/activeping_telemetry_topic_provider_test.cc
 new file mode 100644
-index 00000000000..1f90e7e0fd1
+index 0000000000..1f90e7e0fd
 --- /dev/null
 +++ b/components/adblock/core/test/activeping_telemetry_topic_provider_test.cc
 @@ -0,0 +1,325 @@
@@ -49719,7 +49719,7 @@ index 00000000000..1f90e7e0fd1
 +}  // namespace adblock
 diff --git a/components/adblock/core/test/adblock_telemetry_service_unittest.cc b/components/adblock/core/test/adblock_telemetry_service_unittest.cc
 new file mode 100644
-index 00000000000..7fa2ba274f2
+index 0000000000..7fa2ba274f
 --- /dev/null
 +++ b/components/adblock/core/test/adblock_telemetry_service_unittest.cc
 @@ -0,0 +1,460 @@
@@ -50185,7 +50185,7 @@ index 00000000000..7fa2ba274f2
 +}  // namespace adblock
 diff --git a/components/adblock/core/test/bundled_subscription_test.cc b/components/adblock/core/test/bundled_subscription_test.cc
 new file mode 100644
-index 00000000000..38316697ae5
+index 0000000000..38316697ae
 --- /dev/null
 +++ b/components/adblock/core/test/bundled_subscription_test.cc
 @@ -0,0 +1,49 @@
@@ -50240,7 +50240,7 @@ index 00000000000..38316697ae5
 +}  // namespace adblock
 diff --git a/components/adblock/core/test/mock_sitekey_storage.cc b/components/adblock/core/test/mock_sitekey_storage.cc
 new file mode 100644
-index 00000000000..5bb92b65f0e
+index 0000000000..5bb92b65f0
 --- /dev/null
 +++ b/components/adblock/core/test/mock_sitekey_storage.cc
 @@ -0,0 +1,26 @@
@@ -50272,7 +50272,7 @@ index 00000000000..5bb92b65f0e
 +}  // namespace adblock
 diff --git a/components/adblock/core/test/mock_sitekey_storage.h b/components/adblock/core/test/mock_sitekey_storage.h
 new file mode 100644
-index 00000000000..511c32986d7
+index 0000000000..511c32986d
 --- /dev/null
 +++ b/components/adblock/core/test/mock_sitekey_storage.h
 @@ -0,0 +1,49 @@
@@ -50327,7 +50327,7 @@ index 00000000000..511c32986d7
 +#endif  // COMPONENTS_ADBLOCK_CORE_TEST_MOCK_SITEKEY_STORAGE_H_
 diff --git a/components/adblock/core/test/sitekey_storage_impl_test.cc b/components/adblock/core/test/sitekey_storage_impl_test.cc
 new file mode 100644
-index 00000000000..f7d6909d09e
+index 0000000000..f7d6909d09
 --- /dev/null
 +++ b/components/adblock/core/test/sitekey_storage_impl_test.cc
 @@ -0,0 +1,155 @@
@@ -50488,7 +50488,7 @@ index 00000000000..f7d6909d09e
 +}  // namespace adblock
 diff --git a/components/adblock/features.gni b/components/adblock/features.gni
 new file mode 100644
-index 00000000000..a9e7e76ca04
+index 0000000000..a9e7e76ca0
 --- /dev/null
 +++ b/components/adblock/features.gni
 @@ -0,0 +1,51 @@
@@ -50544,7 +50544,7 @@ index 00000000000..a9e7e76ca04
 +  eyeo_disable_aa_by_default = false
 +}
 diff --git a/content/browser/loader/navigation_url_loader_impl.cc b/content/browser/loader/navigation_url_loader_impl.cc
-index 33267b7a0d4..4aa8a240c3e 100644
+index 33267b7a0d..4aa8a240c3 100644
 --- a/content/browser/loader/navigation_url_loader_impl.cc
 +++ b/content/browser/loader/navigation_url_loader_impl.cc
 @@ -1614,7 +1614,7 @@ void NavigationURLLoaderImpl::OnReceiveRedirect(
@@ -50557,7 +50557,7 @@ index 33267b7a0d4..4aa8a240c3e 100644
        error = net::ERR_UNSAFE_REDIRECT;
      } else if (--redirect_limit_ == 0) {
 diff --git a/content/browser/renderer_host/render_frame_host_impl.cc b/content/browser/renderer_host/render_frame_host_impl.cc
-index 1cb8919df85..d3b12c6c344 100644
+index 1cb8919df8..d3b12c6c34 100644
 --- a/content/browser/renderer_host/render_frame_host_impl.cc
 +++ b/content/browser/renderer_host/render_frame_host_impl.cc
 @@ -1,6 +1,10 @@
@@ -50585,7 +50585,7 @@ index 1cb8919df85..d3b12c6c344 100644
                                              JavaScriptResultCallback callback) {
    CHECK_CURRENTLY_ON(BrowserThread::UI);
 diff --git a/content/browser/renderer_host/render_frame_host_impl.h b/content/browser/renderer_host/render_frame_host_impl.h
-index 8a4abe73f00..4461b95dded 100644
+index 8a4abe73f0..4461b95dde 100644
 --- a/content/browser/renderer_host/render_frame_host_impl.h
 +++ b/content/browser/renderer_host/render_frame_host_impl.h
 @@ -1,6 +1,10 @@
@@ -50609,7 +50609,7 @@ index 8a4abe73f00..4461b95dded 100644
                           JavaScriptResultCallback callback) override;
    void ExecuteJavaScriptInIsolatedWorld(const std::u16string& javascript,
 diff --git a/content/public/browser/render_frame_host.h b/content/public/browser/render_frame_host.h
-index ea05c33f0f3..aa6df382bd0 100644
+index ea05c33f0f..aa6df382bd 100644
 --- a/content/public/browser/render_frame_host.h
 +++ b/content/public/browser/render_frame_host.h
 @@ -1,6 +1,10 @@
@@ -50634,7 +50634,7 @@ index ea05c33f0f3..aa6df382bd0 100644
    // receive a result when it is available. If there is no need to receive the
    // result, pass in a default-constructed callback. If provided, the callback
 diff --git a/content/public/common/isolated_world_ids.h b/content/public/common/isolated_world_ids.h
-index ea7489e71df..0148c6b3309 100644
+index ea7489e71d..0148c6b330 100644
 --- a/content/public/common/isolated_world_ids.h
 +++ b/content/public/common/isolated_world_ids.h
 @@ -1,6 +1,10 @@
@@ -50660,7 +50660,7 @@ index ea7489e71df..0148c6b3309 100644
    ISOLATED_WORLD_ID_CONTENT_END,
    // If any embedder has more than 10 custom isolated worlds that will be run
 diff --git a/content/public/test/fake_local_frame.cc b/content/public/test/fake_local_frame.cc
-index 75e024a8757..9b38a5be1fe 100644
+index 75e024a875..9b38a5be1f 100644
 --- a/content/public/test/fake_local_frame.cc
 +++ b/content/public/test/fake_local_frame.cc
 @@ -1,6 +1,10 @@
@@ -50685,7 +50685,7 @@ index 75e024a8757..9b38a5be1fe 100644
      blink::mojom::FocusType focus_type,
      const std::optional<blink::RemoteFrameToken>& source_frame_token) {}
 diff --git a/content/public/test/fake_local_frame.h b/content/public/test/fake_local_frame.h
-index 8ce2f517e03..e386822f96f 100644
+index 8ce2f517e0..e386822f96 100644
 --- a/content/public/test/fake_local_frame.h
 +++ b/content/public/test/fake_local_frame.h
 @@ -1,6 +1,10 @@
@@ -50708,7 +50708,7 @@ index 8ce2f517e03..e386822f96f 100644
                             const std::optional<blink::RemoteFrameToken>&
                                 source_frame_token) override;
 diff --git a/content/shell/BUILD.gn b/content/shell/BUILD.gn
-index 2886dc0847f..e6c59c12d95 100644
+index 2886dc0847..e6c59c12d9 100644
 --- a/content/shell/BUILD.gn
 +++ b/content/shell/BUILD.gn
 @@ -1,6 +1,9 @@
@@ -50784,7 +50784,7 @@ index 2886dc0847f..e6c59c12d95 100644
      "//content:content_resources",
      "//content/browser/resources",
 diff --git a/content/shell/app/shell_main_delegate.cc b/content/shell/app/shell_main_delegate.cc
-index b7c740fa457..0878614d5a8 100644
+index b7c740fa45..0878614d5a 100644
 --- a/content/shell/app/shell_main_delegate.cc
 +++ b/content/shell/app/shell_main_delegate.cc
 @@ -1,6 +1,10 @@
@@ -50818,7 +50818,7 @@ index b7c740fa457..0878614d5a8 100644
  
 diff --git a/content/shell/browser/adblock/adblock_shell_browser_context.cc b/content/shell/browser/adblock/adblock_shell_browser_context.cc
 new file mode 100644
-index 00000000000..ccad4dc4c57
+index 0000000000..ccad4dc4c5
 --- /dev/null
 +++ b/content/shell/browser/adblock/adblock_shell_browser_context.cc
 @@ -0,0 +1,69 @@
@@ -50893,7 +50893,7 @@ index 00000000000..ccad4dc4c57
 +}  // namespace content
 diff --git a/content/shell/browser/adblock/adblock_shell_browser_context.h b/content/shell/browser/adblock/adblock_shell_browser_context.h
 new file mode 100644
-index 00000000000..b335c51a22a
+index 0000000000..b335c51a22
 --- /dev/null
 +++ b/content/shell/browser/adblock/adblock_shell_browser_context.h
 @@ -0,0 +1,38 @@
@@ -50937,7 +50937,7 @@ index 00000000000..b335c51a22a
 +#endif  // CONTENT_SHELL_BROWSER_ADBLOCK_ADBLOCK_SHELL_BROWSER_CONTEXT_H_
 diff --git a/content/shell/browser/adblock/adblock_shell_content_browser_client.cc b/content/shell/browser/adblock/adblock_shell_content_browser_client.cc
 new file mode 100644
-index 00000000000..b86536a728a
+index 0000000000..b86536a728
 --- /dev/null
 +++ b/content/shell/browser/adblock/adblock_shell_content_browser_client.cc
 @@ -0,0 +1,30 @@
@@ -50973,7 +50973,7 @@ index 00000000000..b86536a728a
 +}  // namespace content
 diff --git a/content/shell/browser/adblock/adblock_shell_content_browser_client.h b/content/shell/browser/adblock/adblock_shell_content_browser_client.h
 new file mode 100644
-index 00000000000..c7383bfcf6a
+index 0000000000..c7383bfcf6
 --- /dev/null
 +++ b/content/shell/browser/adblock/adblock_shell_content_browser_client.h
 @@ -0,0 +1,35 @@
@@ -51013,7 +51013,7 @@ index 00000000000..c7383bfcf6a
 +
 +#endif  // CONTENT_SHELL_BROWSER_ADBLOCK_ADBLOCK_SHELL_CONTENT_BROWSER_CLIENT_H_
 diff --git a/content/shell/browser/shell.cc b/content/shell/browser/shell.cc
-index 5a3cb3c0311..1ba628e6ba7 100644
+index 5a3cb3c031..1ba628e6ba 100644
 --- a/content/shell/browser/shell.cc
 +++ b/content/shell/browser/shell.cc
 @@ -22,6 +22,8 @@
@@ -51047,7 +51047,7 @@ index 5a3cb3c0311..1ba628e6ba7 100644
      std::move(shell_created_callback_).Run(this);
  }
 diff --git a/content/shell/browser/shell_browser_context.h b/content/shell/browser/shell_browser_context.h
-index 596de14556e..e0fc72ef2a5 100644
+index 596de14556..e0fc72ef2a 100644
 --- a/content/shell/browser/shell_browser_context.h
 +++ b/content/shell/browser/shell_browser_context.h
 @@ -1,6 +1,10 @@
@@ -51079,7 +51079,7 @@ index 596de14556e..e0fc72ef2a5 100644
    // Performs initialization of the ShellBrowserContext while IO is still
    // allowed on the current thread.
 diff --git a/content/shell/browser/shell_browser_main_parts.cc b/content/shell/browser/shell_browser_main_parts.cc
-index 0fe48db0ea5..d1c26db8993 100644
+index 0fe48db0ea..d1c26db899 100644
 --- a/content/shell/browser/shell_browser_main_parts.cc
 +++ b/content/shell/browser/shell_browser_main_parts.cc
 @@ -1,6 +1,10 @@
@@ -51128,7 +51128,7 @@ index 0fe48db0ea5..d1c26db8993 100644
    net::NetModule::SetResourceProvider(PlatformResourceProvider);
    ShellDevToolsManagerDelegate::StartHttpHandler(browser_context_.get());
 diff --git a/extensions/browser/api/web_request/web_request_proxying_url_loader_factory.cc b/extensions/browser/api/web_request/web_request_proxying_url_loader_factory.cc
-index 6cc25cdcf9b..38354e3de42 100644
+index 6cc25cdcf9..38354e3de4 100644
 --- a/extensions/browser/api/web_request/web_request_proxying_url_loader_factory.cc
 +++ b/extensions/browser/api/web_request/web_request_proxying_url_loader_factory.cc
 @@ -2,6 +2,10 @@
@@ -51152,7 +51152,7 @@ index 6cc25cdcf9b..38354e3de42 100644
                        info_->is_navigation_request)) {
      OnNetworkError(CreateURLLoaderCompletionStatus(net::ERR_UNSAFE_REDIRECT));
 diff --git a/net/url_request/redirect_info.h b/net/url_request/redirect_info.h
-index 49fe7a94dc6..2223ebc7ed7 100644
+index 49fe7a94dc..2223ebc7ed 100644
 --- a/net/url_request/redirect_info.h
 +++ b/net/url_request/redirect_info.h
 @@ -2,6 +2,10 @@
@@ -51178,7 +51178,7 @@ index 49fe7a94dc6..2223ebc7ed7 100644
    // subsequent redirects.
    ReferrerPolicy new_referrer_policy =
 diff --git a/services/network/public/cpp/net_ipc_param_traits.h b/services/network/public/cpp/net_ipc_param_traits.h
-index 57e8674583d..b8cc086d506 100644
+index 57e8674583..b8cc086d50 100644
 --- a/services/network/public/cpp/net_ipc_param_traits.h
 +++ b/services/network/public/cpp/net_ipc_param_traits.h
 @@ -2,6 +2,10 @@
@@ -51201,7 +51201,7 @@ index 57e8674583d..b8cc086d506 100644
    IPC_STRUCT_TRAITS_MEMBER(critical_ch_restart_time)
  IPC_STRUCT_TRAITS_END()
 diff --git a/third_party/blink/public/mojom/frame/frame.mojom b/third_party/blink/public/mojom/frame/frame.mojom
-index a5e66ee60ee..40011b816ec 100644
+index a5e66ee60e..40011b816e 100644
 --- a/third_party/blink/public/mojom/frame/frame.mojom
 +++ b/third_party/blink/public/mojom/frame/frame.mojom
 @@ -1,6 +1,10 @@
@@ -51227,7 +51227,7 @@ index a5e66ee60ee..40011b816ec 100644
    // this frame. |source_frame_token| identifies the frame that issued this
    // request. This message is sent when finding the next focusable element would
 diff --git a/third_party/blink/public/web/web_document.h b/third_party/blink/public/web/web_document.h
-index a730b9e53a5..3c2e6e36566 100644
+index a730b9e53a..3c2e6e3656 100644
 --- a/third_party/blink/public/web/web_document.h
 +++ b/third_party/blink/public/web/web_document.h
 @@ -28,6 +28,10 @@
@@ -51257,7 +51257,7 @@ index a730b9e53a5..3c2e6e36566 100644
    // InsertStyleSheet().
    void RemoveInsertedStyleSheet(const WebStyleSheetKey&,
 diff --git a/third_party/blink/renderer/core/dom/events/event_target.cc b/third_party/blink/renderer/core/dom/events/event_target.cc
-index 039df6e790d..76198e320bf 100644
+index 039df6e790..76198e320b 100644
 --- a/third_party/blink/renderer/core/dom/events/event_target.cc
 +++ b/third_party/blink/renderer/core/dom/events/event_target.cc
 @@ -29,6 +29,10 @@
@@ -51284,7 +51284,7 @@ index 039df6e790d..76198e320bf 100644
    // Return whether the event was cancelled or not to JS not that it
    // might have actually been default handled; so check only against
 diff --git a/third_party/blink/renderer/core/exported/web_document.cc b/third_party/blink/renderer/core/exported/web_document.cc
-index ca42f2acc0e..4092c8b9e0e 100644
+index ca42f2acc0..4092c8b9e0 100644
 --- a/third_party/blink/renderer/core/exported/web_document.cc
 +++ b/third_party/blink/renderer/core/exported/web_document.cc
 @@ -301,6 +301,56 @@ WebStyleSheetKey WebDocument::InsertStyleSheet(
@@ -51345,7 +51345,7 @@ index ca42f2acc0e..4092c8b9e0e 100644
                                             WebCssOrigin origin) {
    Unwrap<Document>()->GetStyleEngine().RemoveInjectedSheet(key, origin);
 diff --git a/third_party/blink/renderer/core/frame/local_frame_mojo_handler.cc b/third_party/blink/renderer/core/frame/local_frame_mojo_handler.cc
-index e42771a3443..bcbe7b9f52f 100644
+index e42771a344..bcbe7b9f52 100644
 --- a/third_party/blink/renderer/core/frame/local_frame_mojo_handler.cc
 +++ b/third_party/blink/renderer/core/frame/local_frame_mojo_handler.cc
 @@ -1,6 +1,10 @@
@@ -51375,7 +51375,7 @@ index e42771a3443..bcbe7b9f52f 100644
    visitor->Trace(frame_);
    visitor->Trace(back_forward_cache_controller_host_remote_);
 diff --git a/third_party/blink/renderer/core/frame/local_frame_mojo_handler.h b/third_party/blink/renderer/core/frame/local_frame_mojo_handler.h
-index 807ce3edf0f..4e0cbead4e9 100644
+index 807ce3edf0..4e0cbead4e 100644
 --- a/third_party/blink/renderer/core/frame/local_frame_mojo_handler.h
 +++ b/third_party/blink/renderer/core/frame/local_frame_mojo_handler.h
 @@ -1,6 +1,10 @@
@@ -51398,7 +51398,7 @@ index 807ce3edf0f..4e0cbead4e9 100644
    void CheckCompleted() final;
    void StopLoading() final;
 diff --git a/third_party/blink/renderer/core/html/html_element.cc b/third_party/blink/renderer/core/html/html_element.cc
-index 379c4609b42..4c27b7e6bcd 100644
+index 379c4609b4..4c27b7e6bc 100644
 --- a/third_party/blink/renderer/core/html/html_element.cc
 +++ b/third_party/blink/renderer/core/html/html_element.cc
 @@ -3737,7 +3737,13 @@ void HTMLElement::setSpellcheck(bool enable) {
@@ -51417,7 +51417,7 @@ index 379c4609b42..4c27b7e6bcd 100644
      UseCounter::Count(GetDocument(),
                        WebFeature::kHTMLInputElementSimulatedClick);
 diff --git a/third_party/blink/renderer/platform/loader/fetch/url_loader/mojo_url_loader_client.cc b/third_party/blink/renderer/platform/loader/fetch/url_loader/mojo_url_loader_client.cc
-index d45c8c59fed..4a63e999bdf 100644
+index d45c8c59fe..4a63e999bd 100644
 --- a/third_party/blink/renderer/platform/loader/fetch/url_loader/mojo_url_loader_client.cc
 +++ b/third_party/blink/renderer/platform/loader/fetch/url_loader/mojo_url_loader_client.cc
 @@ -2,6 +2,10 @@
@@ -51442,7 +51442,7 @@ index d45c8c59fed..4a63e999bdf 100644
                                             redirect_info.original_initiator)) {
 diff --git a/tools/eyeo/generate_interdiffs.sh b/tools/eyeo/generate_interdiffs.sh
 new file mode 100755
-index 00000000000..9d6da1dae63
+index 0000000000..9d6da1dae6
 --- /dev/null
 +++ b/tools/eyeo/generate_interdiffs.sh
 @@ -0,0 +1,150 @@
@@ -51598,7 +51598,7 @@ index 00000000000..9d6da1dae63
 +done
 diff --git a/tools/eyeo/generate_modules.sh b/tools/eyeo/generate_modules.sh
 new file mode 100755
-index 00000000000..d6c89ae1a76
+index 0000000000..d6c89ae1a7
 --- /dev/null
 +++ b/tools/eyeo/generate_modules.sh
 @@ -0,0 +1,259 @@
@@ -51863,7 +51863,7 @@ index 00000000000..d6c89ae1a76
 +#git checkout -b $INITIAL_BRANCH
 diff --git a/tools/eyeo/git-grafts.txt b/tools/eyeo/git-grafts.txt
 new file mode 100644
-index 00000000000..aed84722900
+index 0000000000..aed8472290
 --- /dev/null
 +++ b/tools/eyeo/git-grafts.txt
 @@ -0,0 +1,60 @@
@@ -51929,7 +51929,7 @@ index 00000000000..aed84722900
 +70a4fda9274518dcda6e4ce9258fdcfaeb46bb83 94a3dddac5f42c677ac839d80fab44c3f07cb149
 diff --git a/tools/eyeo/update_git_grafts.py b/tools/eyeo/update_git_grafts.py
 new file mode 100755
-index 00000000000..904123d5ae2
+index 0000000000..904123d5ae
 --- /dev/null
 +++ b/tools/eyeo/update_git_grafts.py
 @@ -0,0 +1,138 @@
@@ -52072,7 +52072,7 @@ index 00000000000..904123d5ae2
 +if __name__ == '__main__':
 +  main()
 diff --git a/tools/gritsettings/resource_ids.spec b/tools/gritsettings/resource_ids.spec
-index 29f242c8806..64a32f5c860 100644
+index 29f242c880..64a32f5c86 100644
 --- a/tools/gritsettings/resource_ids.spec
 +++ b/tools/gritsettings/resource_ids.spec
 @@ -2,6 +2,10 @@
@@ -52102,7 +52102,7 @@ index 29f242c8806..64a32f5c860 100644
  
    # START ios/ section.
 diff --git a/tools/metrics/histograms/metadata/extensions/enums.xml b/tools/metrics/histograms/metadata/extensions/enums.xml
-index c3fd50e362a..e7638c58888 100644
+index c3fd50e362..e7638c5888 100644
 --- a/tools/metrics/histograms/metadata/extensions/enums.xml
 +++ b/tools/metrics/histograms/metadata/extensions/enums.xml
 @@ -2,6 +2,10 @@

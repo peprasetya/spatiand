@@ -17,7 +17,7 @@ FILE:Disable-idle-detection.patch
 
 diff --git a/cromite_flags/content/public/common/content_features_cc/Disable-idle-detection.inc b/cromite_flags/content/public/common/content_features_cc/Disable-idle-detection.inc
 new file mode 100644
-index 00000000000..d26a59ce54b
+index 0000000000..d26a59ce54
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_cc/Disable-idle-detection.inc
 @@ -0,0 +1,4 @@
@@ -27,13 +27,13 @@ index 00000000000..d26a59ce54b
 +CROMITE_FEATURE(kIdleDetection, "IdleDetection", base::FEATURE_DISABLED_BY_DEFAULT);
 diff --git a/cromite_flags/content/public/common/content_features_h/Disable-idle-detection.inc b/cromite_flags/content/public/common/content_features_h/Disable-idle-detection.inc
 new file mode 100644
-index 00000000000..65ea5dcefb7
+index 0000000000..65ea5dcefb
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_h/Disable-idle-detection.inc
 @@ -0,0 +1 @@
 +CONTENT_EXPORT BASE_DECLARE_FEATURE(kIdleDetection);
 diff --git a/services/network/public/cpp/permissions_policy/permissions_policy_features.json5 b/services/network/public/cpp/permissions_policy/permissions_policy_features.json5
-index b7591ef8af1..b448205414b 100644
+index b7591ef8af..b448205414 100644
 --- a/services/network/public/cpp/permissions_policy/permissions_policy_features.json5
 +++ b/services/network/public/cpp/permissions_policy/permissions_policy_features.json5
 @@ -388,6 +388,7 @@
@@ -45,7 +45,7 @@ index b7591ef8af1..b448205414b 100644
      {
        name: "KeyboardMap",
 diff --git a/third_party/blink/renderer/modules/idle/idle_detector.idl b/third_party/blink/renderer/modules/idle/idle_detector.idl
-index 969a8d267f6..16ef1557c57 100644
+index 969a8d267f..16ef1557c5 100644
 --- a/third_party/blink/renderer/modules/idle/idle_detector.idl
 +++ b/third_party/blink/renderer/modules/idle/idle_detector.idl
 @@ -17,7 +17,8 @@ enum ScreenIdleState {
@@ -59,7 +59,7 @@ index 969a8d267f6..16ef1557c57 100644
    [CallWith=ScriptState] constructor();
    readonly attribute UserIdleState? userState;
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 4eb9428c435..2bd1dc62251 100644
+index 4eb9428c43..2bd1dc6225 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -251,6 +251,11 @@

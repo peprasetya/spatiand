@@ -12,7 +12,7 @@ FILE:Do-not-build-API-keys-infobar.patch
  3 files changed, 3 insertions(+), 23 deletions(-)
 
 diff --git a/chrome/browser/ui/startup/BUILD.gn b/chrome/browser/ui/startup/BUILD.gn
-index d554afbea2e..ca97b71bd26 100644
+index d554afbea2..ca97b71bd2 100644
 --- a/chrome/browser/ui/startup/BUILD.gn
 +++ b/chrome/browser/ui/startup/BUILD.gn
 @@ -44,7 +44,6 @@ source_set("startup") {
@@ -32,7 +32,7 @@ index d554afbea2e..ca97b71bd26 100644
        "infobar_utils.cc",
        "launch_mode_recorder.cc",
 diff --git a/chrome/browser/ui/startup/infobar_utils.cc b/chrome/browser/ui/startup/infobar_utils.cc
-index 598e361a298..6192225ceda 100644
+index 598e361a29..6192225ced 100644
 --- a/chrome/browser/ui/startup/infobar_utils.cc
 +++ b/chrome/browser/ui/startup/infobar_utils.cc
 @@ -253,20 +253,6 @@ void AddInfoBarsIfNecessary(BrowserWindowInterface* browser,
@@ -57,7 +57,7 @@ index 598e361a298..6192225ceda 100644
      PrefService* local_state = g_browser_process->local_state();
      if (!local_state ||
 diff --git a/chrome/browser/ui/webui/infobar_internals/infobar_internals_handler.cc b/chrome/browser/ui/webui/infobar_internals/infobar_internals_handler.cc
-index b4bccb0ec38..47663c1913d 100644
+index b4bccb0ec3..47663c1913 100644
 --- a/chrome/browser/ui/webui/infobar_internals/infobar_internals_handler.cc
 +++ b/chrome/browser/ui/webui/infobar_internals/infobar_internals_handler.cc
 @@ -42,7 +42,6 @@

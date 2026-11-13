@@ -10,7 +10,7 @@ FILE:disable-AdsBlockedInfoBar.patch
  1 file changed, 1 insertion(+)
 
 diff --git a/components/subresource_filter/content/browser/profile_interaction_manager.cc b/components/subresource_filter/content/browser/profile_interaction_manager.cc
-index 63e1b6c3864..58289c1fb87 100644
+index 63e1b6c386..58289c1fb8 100644
 --- a/components/subresource_filter/content/browser/profile_interaction_manager.cc
 +++ b/components/subresource_filter/content/browser/profile_interaction_manager.cc
 @@ -129,6 +129,7 @@ mojom::ActivationLevel ProfileInteractionManager::OnPageActivationComputed(

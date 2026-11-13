@@ -12,7 +12,7 @@ FILE:Enables-keyword-based-site-search-on-Android-devices.patch
  1 file changed, 1 insertion(+)
 
 diff --git a/components/omnibox/common/omnibox_features.cc b/components/omnibox/common/omnibox_features.cc
-index 8df5d367d86..5894efd3f68 100644
+index 8df5d367d8..5894efd3f6 100644
 --- a/components/omnibox/common/omnibox_features.cc
 +++ b/components/omnibox/common/omnibox_features.cc
 @@ -434,6 +434,7 @@ BASE_FEATURE(kOmniboxSearchPrefetchOnEnterKeyDown, DISABLED);

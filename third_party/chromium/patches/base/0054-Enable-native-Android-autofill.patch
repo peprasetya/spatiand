@@ -50,7 +50,7 @@ FILE:Enable-native-Android-autofill.patch
  30 files changed, 93 insertions(+), 138 deletions(-)
 
 diff --git a/chrome/browser/android/tab_features.cc b/chrome/browser/android/tab_features.cc
-index ac601ec7e31..2c226b787e7 100644
+index ac601ec7e3..2c226b787e 100644
 --- a/chrome/browser/android/tab_features.cc
 +++ b/chrome/browser/android/tab_features.cc
 @@ -253,12 +253,8 @@ TabFeatures::TabFeatures(content::WebContents* web_contents, Profile* profile) {
@@ -69,7 +69,7 @@ index ac601ec7e31..2c226b787e7 100644
    CreateSubresourceFilterWebContentsHelper(web_contents);
    ChromeTranslateClient::CreateForWebContents(web_contents);
 diff --git a/chrome/browser/android/thin_webview/chrome_thin_webview_initializer.cc b/chrome/browser/android/thin_webview/chrome_thin_webview_initializer.cc
-index 68da17b893e..0ce5950031b 100644
+index 68da17b893..0ce5950031 100644
 --- a/chrome/browser/android/thin_webview/chrome_thin_webview_initializer.cc
 +++ b/chrome/browser/android/thin_webview/chrome_thin_webview_initializer.cc
 @@ -38,13 +38,7 @@ void ChromeThinWebViewInitializer::AttachTabHelpers(
@@ -88,7 +88,7 @@ index 68da17b893e..0ce5950031b 100644
    CreateSubresourceFilterWebContentsHelper(web_contents);
    content_settings::PageSpecificContentSettings::CreateForWebContents(
 diff --git a/chrome/browser/autofill/actor/one_time_tokens/actor_one_time_token_filling_service_impl.cc b/chrome/browser/autofill/actor/one_time_tokens/actor_one_time_token_filling_service_impl.cc
-index 19182a405f7..a828c1e2aa4 100644
+index 19182a405f..a828c1e2aa 100644
 --- a/chrome/browser/autofill/actor/one_time_tokens/actor_one_time_token_filling_service_impl.cc
 +++ b/chrome/browser/autofill/actor/one_time_tokens/actor_one_time_token_filling_service_impl.cc
 @@ -87,14 +87,6 @@ GetAutofillManager(const tabs::TabInterface& tab) {
@@ -107,7 +107,7 @@ index 19182a405f7..a828c1e2aa4 100644
    ContentAutofillClient* const client =
        ContentAutofillClient::FromWebContents(tab.GetContents());
 diff --git a/chrome/browser/password_manager/chrome_password_manager_client.cc b/chrome/browser/password_manager/chrome_password_manager_client.cc
-index 8bff35e4b75..0fff1de5d06 100644
+index 8bff35e4b7..0fff1de5d0 100644
 --- a/chrome/browser/password_manager/chrome_password_manager_client.cc
 +++ b/chrome/browser/password_manager/chrome_password_manager_client.cc
 @@ -569,6 +569,12 @@ bool ChromePasswordManagerClient::PromptUserToChooseCredentials(
@@ -124,7 +124,7 @@ index 8bff35e4b75..0fff1de5d06 100644
      password_manager::ErrorMessageFlowType flow_type,
      password_manager::PasswordStoreBackendErrorType error_type) {
 diff --git a/chrome/browser/password_manager/chrome_password_manager_client.h b/chrome/browser/password_manager/chrome_password_manager_client.h
-index 72a21b7930f..9ecb49e51f1 100644
+index 72a21b7930..9ecb49e51f 100644
 --- a/chrome/browser/password_manager/chrome_password_manager_client.h
 +++ b/chrome/browser/password_manager/chrome_password_manager_client.h
 @@ -174,6 +174,8 @@ class ChromePasswordManagerClient
@@ -137,7 +137,7 @@ index 72a21b7930f..9ecb49e51f1 100644
        password_manager::ErrorMessageFlowType flow_type,
        password_manager::PasswordStoreBackendErrorType error_type) override;
 diff --git a/chrome/browser/password_manager/factories/account_password_store_factory.cc b/chrome/browser/password_manager/factories/account_password_store_factory.cc
-index c852ab0b47b..db08303c4dd 100644
+index c852ab0b47..db08303c4d 100644
 --- a/chrome/browser/password_manager/factories/account_password_store_factory.cc
 +++ b/chrome/browser/password_manager/factories/account_password_store_factory.cc
 @@ -99,8 +99,9 @@ scoped_refptr<RefcountedKeyedService> BuildPasswordStore(
@@ -153,7 +153,7 @@ index c852ab0b47b..db08303c4dd 100644
    MaybeClearStatsTableForSyncToSigninMigration(ps, profile->GetPrefs());
  #endif  // !BUILDFLAG(IS_ANDROID)
 diff --git a/chrome/browser/password_manager/factories/profile_password_store_factory.cc b/chrome/browser/password_manager/factories/profile_password_store_factory.cc
-index d6fbd3835b0..f5be90a9081 100644
+index d6fbd3835b..f5be90a908 100644
 --- a/chrome/browser/password_manager/factories/profile_password_store_factory.cc
 +++ b/chrome/browser/password_manager/factories/profile_password_store_factory.cc
 @@ -47,9 +47,9 @@ scoped_refptr<RefcountedKeyedService> BuildPasswordStore(
@@ -169,7 +169,7 @@ index d6fbd3835b0..f5be90a9081 100644
    scoped_refptr<PasswordStore> ps =
        base::MakeRefCounted<password_manager::PasswordStore>(
 diff --git a/chrome/browser/ui/autofill/autofill_client_provider.cc b/chrome/browser/ui/autofill/autofill_client_provider.cc
-index bc0114c150b..e39485c08d1 100644
+index bc0114c150..e39485c08d 100644
 --- a/chrome/browser/ui/autofill/autofill_client_provider.cc
 +++ b/chrome/browser/ui/autofill/autofill_client_provider.cc
 @@ -4,87 +4,18 @@
@@ -285,7 +285,7 @@ index bc0114c150b..e39485c08d1 100644
 -DEFINE_JNI(AutofillClientProviderUtils)
 -#endif
 diff --git a/chrome/browser/ui/autofill/autofill_client_provider.h b/chrome/browser/ui/autofill/autofill_client_provider.h
-index 2f002d15c19..903cbd62168 100644
+index 2f002d15c1..903cbd6216 100644
 --- a/chrome/browser/ui/autofill/autofill_client_provider.h
 +++ b/chrome/browser/ui/autofill/autofill_client_provider.h
 @@ -33,13 +33,7 @@ class AutofillClientProvider : public KeyedService {
@@ -303,7 +303,7 @@ index 2f002d15c19..903cbd62168 100644
  
  }  // namespace autofill
 diff --git a/chrome/browser/ui/tabs/tab_features.cc b/chrome/browser/ui/tabs/tab_features.cc
-index b623a61b241..a853f766421 100644
+index b623a61b24..a853f76642 100644
 --- a/chrome/browser/ui/tabs/tab_features.cc
 +++ b/chrome/browser/ui/tabs/tab_features.cc
 @@ -425,11 +425,7 @@ void TabFeatures::Init(TabInterface& tab, Profile* profile) {
@@ -333,7 +333,7 @@ index b623a61b241..a853f766421 100644
    CreateSubresourceFilterWebContentsHelper(new_contents);
  
 diff --git a/components/affiliations/core/browser/affiliation_prefetcher.cc b/components/affiliations/core/browser/affiliation_prefetcher.cc
-index 4b8afe8ed70..c10229de5ad 100644
+index 4b8afe8ed7..c10229de5a 100644
 --- a/components/affiliations/core/browser/affiliation_prefetcher.cc
 +++ b/components/affiliations/core/browser/affiliation_prefetcher.cc
 @@ -41,7 +41,7 @@ AffiliationPrefetcher::~AffiliationPrefetcher() = default;
@@ -346,7 +346,7 @@ index 4b8afe8ed70..c10229de5ad 100644
    // If initialization had already happened, request facets from all sources
    // again to ensure the affiliations cache gets properly updated, otherwise
 diff --git a/components/android_autofill/browser/BUILD.gn b/components/android_autofill/browser/BUILD.gn
-index 7f44b13e826..b11344fb995 100644
+index 7f44b13e82..b11344fb99 100644
 --- a/components/android_autofill/browser/BUILD.gn
 +++ b/components/android_autofill/browser/BUILD.gn
 @@ -46,6 +46,7 @@ android_library("java") {
@@ -358,7 +358,7 @@ index 7f44b13e826..b11344fb995 100644
      "java/src/org/chromium/components/autofill/FormFieldData.java",
      "java/src/org/chromium/components/autofill/PrefillRequest.java",
 diff --git a/components/android_autofill/browser/android_autofill_manager.cc b/components/android_autofill/browser/android_autofill_manager.cc
-index 7c64c53b3d6..5a5716d6020 100644
+index 7c64c53b3d..5a5716d602 100644
 --- a/components/android_autofill/browser/android_autofill_manager.cc
 +++ b/components/android_autofill/browser/android_autofill_manager.cc
 @@ -38,6 +38,8 @@ AndroidAutofillManager::~AndroidAutofillManager() {
@@ -371,7 +371,7 @@ index 7c64c53b3d6..5a5716d6020 100644
    return weak_ptr_factory_.GetWeakPtr();
  }
 diff --git a/components/android_autofill/browser/android_autofill_manager.h b/components/android_autofill/browser/android_autofill_manager.h
-index ab6401f9bba..2e78eec16f3 100644
+index ab6401f9bb..2e78eec16f 100644
 --- a/components/android_autofill/browser/android_autofill_manager.h
 +++ b/components/android_autofill/browser/android_autofill_manager.h
 @@ -34,6 +34,8 @@ class AndroidAutofillManager : public AutofillManager,
@@ -384,7 +384,7 @@ index ab6401f9bba..2e78eec16f3 100644
      return weak_ptr_factory_.GetWeakPtr();
    }
 diff --git a/components/autofill/content/browser/content_autofill_driver.cc b/components/autofill/content/browser/content_autofill_driver.cc
-index 3fafa49b312..3774385ba34 100644
+index 3fafa49b31..3774385ba3 100644
 --- a/components/autofill/content/browser/content_autofill_driver.cc
 +++ b/components/autofill/content/browser/content_autofill_driver.cc
 @@ -325,6 +325,13 @@ void RouteToManager(
@@ -413,7 +413,7 @@ index 3fafa49b312..3774385ba34 100644
      const FormFieldData& field,
      FieldType filled_type,
 diff --git a/components/autofill/content/browser/content_autofill_driver.h b/components/autofill/content/browser/content_autofill_driver.h
-index b4f8f532a71..3af2593253e 100644
+index b4f8f532a7..3af2593253 100644
 --- a/components/autofill/content/browser/content_autofill_driver.h
 +++ b/components/autofill/content/browser/content_autofill_driver.h
 @@ -146,6 +146,12 @@ class ContentAutofillDriver : public AutofillDriver,
@@ -441,7 +441,7 @@ index b4f8f532a71..3af2593253e 100644
  
    mojo::AssociatedRemote<mojom::AutofillAgent> autofill_agent_;
 diff --git a/components/autofill/content/browser/content_autofill_driver_factory.cc b/components/autofill/content/browser/content_autofill_driver_factory.cc
-index 5a4eae83104..19d5f4807e1 100644
+index 5a4eae8310..19d5f4807e 100644
 --- a/components/autofill/content/browser/content_autofill_driver_factory.cc
 +++ b/components/autofill/content/browser/content_autofill_driver_factory.cc
 @@ -24,6 +24,12 @@
@@ -471,7 +471,7 @@ index 5a4eae83104..19d5f4807e1 100644
      for (auto& observer : observers()) {
        observer.OnAutofillDriverCreated(*this, *driver);
 diff --git a/components/autofill/content/renderer/autofill_agent.cc b/components/autofill/content/renderer/autofill_agent.cc
-index b301148dbcd..1f6286e8a9c 100644
+index b301148dbc..1f6286e8a9 100644
 --- a/components/autofill/content/renderer/autofill_agent.cc
 +++ b/components/autofill/content/renderer/autofill_agent.cc
 @@ -1669,10 +1669,6 @@ void AutofillAgent::ShowSuggestions(
@@ -486,7 +486,7 @@ index b301148dbcd..1f6286e8a9c 100644
    }
  
 diff --git a/components/autofill/content/renderer/password_autofill_agent.cc b/components/autofill/content/renderer/password_autofill_agent.cc
-index d33d43378ab..88af7595c06 100644
+index d33d43378a..88af7595c0 100644
 --- a/components/autofill/content/renderer/password_autofill_agent.cc
 +++ b/components/autofill/content/renderer/password_autofill_agent.cc
 @@ -860,7 +860,10 @@ void PasswordAutofillAgent::UpdatePasswordStateForTextChange(
@@ -502,7 +502,7 @@ index d33d43378ab..88af7595c06 100644
  }
  
 diff --git a/components/autofill/core/browser/actor/actor_form_filling_service_impl.cc b/components/autofill/core/browser/actor/actor_form_filling_service_impl.cc
-index 4529ebc0b41..2e04a65923e 100644
+index 4529ebc0b4..2e04a65923 100644
 --- a/components/autofill/core/browser/actor/actor_form_filling_service_impl.cc
 +++ b/components/autofill/core/browser/actor/actor_form_filling_service_impl.cc
 @@ -419,11 +419,6 @@ std::optional<FieldGlobalId> GetSafeCreditCardNumberField(
@@ -518,7 +518,7 @@ index 4529ebc0b41..2e04a65923e 100644
            client.GetAutofillManagerForPrimaryMainFrame()) {
      return static_cast<BrowserAutofillManager&>(*autofill_manager);
 diff --git a/components/autofill/core/browser/foundations/autofill_driver.h b/components/autofill/core/browser/foundations/autofill_driver.h
-index 5337a892c70..b7d090963b1 100644
+index 5337a892c7..b7d090963b 100644
 --- a/components/autofill/core/browser/foundations/autofill_driver.h
 +++ b/components/autofill/core/browser/foundations/autofill_driver.h
 @@ -186,6 +186,8 @@ class AutofillDriver {
@@ -531,7 +531,7 @@ index 5337a892c70..b7d090963b1 100644
    // document.
    //
 diff --git a/components/autofill/core/browser/foundations/autofill_driver_factory.cc b/components/autofill/core/browser/foundations/autofill_driver_factory.cc
-index 1615254facc..dd435abccfa 100644
+index 1615254fac..dd435abccf 100644
 --- a/components/autofill/core/browser/foundations/autofill_driver_factory.cc
 +++ b/components/autofill/core/browser/foundations/autofill_driver_factory.cc
 @@ -25,6 +25,10 @@ void AutofillDriverFactory::SetLifecycleStateAndNotifyObservers(
@@ -546,7 +546,7 @@ index 1615254facc..dd435abccfa 100644
  
  }  // namespace autofill
 diff --git a/components/autofill/core/browser/foundations/autofill_manager.h b/components/autofill/core/browser/foundations/autofill_manager.h
-index d3cec8c28ac..f7b0e4fadbd 100644
+index d3cec8c28a..f7b0e4fadb 100644
 --- a/components/autofill/core/browser/foundations/autofill_manager.h
 +++ b/components/autofill/core/browser/foundations/autofill_manager.h
 @@ -324,6 +324,8 @@ class AutofillManager
@@ -559,7 +559,7 @@ index d3cec8c28ac..f7b0e4fadbd 100644
    const AutofillClient& client() const { return driver_->GetAutofillClient(); }
  
 diff --git a/components/autofill/core/browser/foundations/browser_autofill_manager.cc b/components/autofill/core/browser/foundations/browser_autofill_manager.cc
-index 796df88be75..13184d36b1d 100644
+index 796df88be7..13184d36b1 100644
 --- a/components/autofill/core/browser/foundations/browser_autofill_manager.cc
 +++ b/components/autofill/core/browser/foundations/browser_autofill_manager.cc
 @@ -842,6 +842,8 @@ base::WeakPtr<AutofillManager> BrowserAutofillManager::GetWeakPtr() {
@@ -572,7 +572,7 @@ index 796df88be75..13184d36b1d 100644
    if (!credit_card_access_manager_) {
      credit_card_access_manager_ =
 diff --git a/components/autofill/core/browser/foundations/browser_autofill_manager.h b/components/autofill/core/browser/foundations/browser_autofill_manager.h
-index ac6cecac516..d71b24e98c7 100644
+index ac6cecac51..d71b24e98c 100644
 --- a/components/autofill/core/browser/foundations/browser_autofill_manager.h
 +++ b/components/autofill/core/browser/foundations/browser_autofill_manager.h
 @@ -492,6 +492,8 @@ class BrowserAutofillManager : public AutofillManager {
@@ -585,7 +585,7 @@ index ac6cecac516..d71b24e98c7 100644
    // kLimitBeforeRefill after the filling and records metrics for this. This
    // method should be called after we learned that JavaScript modified an
 diff --git a/components/autofill/core/common/autofill_prefs.cc b/components/autofill/core/common/autofill_prefs.cc
-index 99790b967fa..cf1fe2f5a6e 100644
+index 99790b967f..cf1fe2f5a6 100644
 --- a/components/autofill/core/common/autofill_prefs.cc
 +++ b/components/autofill/core/common/autofill_prefs.cc
 @@ -112,6 +112,8 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
@@ -607,7 +607,7 @@ index 99790b967fa..cf1fe2f5a6e 100644
                                  true);
    registry->RegisterStringPref(
 diff --git a/components/autofill/core/common/autofill_prefs.h b/components/autofill/core/common/autofill_prefs.h
-index 7fc868f7650..98fffa11105 100644
+index 7fc868f765..98fffa1110 100644
 --- a/components/autofill/core/common/autofill_prefs.h
 +++ b/components/autofill/core/common/autofill_prefs.h
 @@ -211,6 +211,11 @@ inline constexpr char kAutofillWasNameAndEmailProfileUsed[] =
@@ -623,7 +623,7 @@ index 7fc868f7650..98fffa11105 100644
      BUILDFLAG(IS_IOS) || BUILDFLAG(IS_CHROMEOS)
  // Boolean that is set when payment methods mandatory re-auth is enabled by the
 diff --git a/components/password_manager/core/browser/password_form_manager.cc b/components/password_manager/core/browser/password_form_manager.cc
-index 3602205e9ce..5caddf46f35 100644
+index 3602205e9c..5caddf46f3 100644
 --- a/components/password_manager/core/browser/password_form_manager.cc
 +++ b/components/password_manager/core/browser/password_form_manager.cc
 @@ -1214,6 +1214,10 @@ void PasswordFormManager::FillNow() {
@@ -638,7 +638,7 @@ index 3602205e9ce..5caddf46f35 100644
    // filling and saving mode might be different so it is better not to cache
    // parse result, but to parse each time again.
 diff --git a/components/password_manager/core/browser/password_manager_client.cc b/components/password_manager/core/browser/password_manager_client.cc
-index 070ea031ee3..f3ee3183bf7 100644
+index 070ea031ee..f3ee3183bf 100644
 --- a/components/password_manager/core/browser/password_manager_client.cc
 +++ b/components/password_manager/core/browser/password_manager_client.cc
 @@ -54,6 +54,8 @@ bool PasswordManagerClient::IsAutoSignInEnabled() const {
@@ -651,7 +651,7 @@ index 070ea031ee3..f3ee3183bf7 100644
      ErrorMessageFlowType flow_type,
      password_manager::PasswordStoreBackendErrorType error_type) {}
 diff --git a/components/password_manager/core/browser/password_manager_client.h b/components/password_manager/core/browser/password_manager_client.h
-index 2e44f4125b9..923c36cce23 100644
+index 2e44f4125b..923c36cce2 100644
 --- a/components/password_manager/core/browser/password_manager_client.h
 +++ b/components/password_manager/core/browser/password_manager_client.h
 @@ -257,6 +257,8 @@ class PasswordManagerClient {

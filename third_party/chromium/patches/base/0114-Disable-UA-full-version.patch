@@ -13,7 +13,7 @@ FILE:Disable-UA-full-version.patch
  1 file changed, 26 insertions(+), 2 deletions(-)
 
 diff --git a/third_party/blink/renderer/core/frame/navigator_ua_data.cc b/third_party/blink/renderer/core/frame/navigator_ua_data.cc
-index 440d03bb7b6..88227aba6e8 100644
+index 440d03bb7b..88227aba6e 100644
 --- a/third_party/blink/renderer/core/frame/navigator_ua_data.cc
 +++ b/third_party/blink/renderer/core/frame/navigator_ua_data.cc
 @@ -11,6 +11,9 @@

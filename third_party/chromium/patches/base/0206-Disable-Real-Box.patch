@@ -13,7 +13,7 @@ FILE:Disable-Real-Box.patch
  4 files changed, 7 insertions(+), 30 deletions(-)
 
 diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
-index c3f27677530..b0ea874b490 100644
+index c3f2767753..b0ea874b49 100644
 --- a/chrome/browser/prefs/browser_prefs.cc
 +++ b/chrome/browser/prefs/browser_prefs.cc
 @@ -2442,7 +2442,7 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
@@ -26,7 +26,7 @@ index c3f27677530..b0ea874b490 100644
  
    registry->RegisterBooleanPref(prefs::kDisableScreenshots, false);
 diff --git a/chrome/browser/resources/new_tab_page/app.html b/chrome/browser/resources/new_tab_page/app.html
-index c26a80fee1f..b7c5e7fe29f 100644
+index c26a80fee1..b7c5e7fe29 100644
 --- a/chrome/browser/resources/new_tab_page/app.html
 +++ b/chrome/browser/resources/new_tab_page/app.html
 @@ -44,27 +44,7 @@ import {SubmitButtonIconType} from '//resources/cr_components/composebox/compose
@@ -59,7 +59,7 @@ index c26a80fee1f..b7c5e7fe29f 100644
          ${this.showComposebox_ ? html`
            <div id="composeboxDialog">
 diff --git a/chrome/browser/ui/webui/cr_components/searchbox/searchbox_handler.cc b/chrome/browser/ui/webui/cr_components/searchbox/searchbox_handler.cc
-index d817230d7e0..28f72e77b45 100644
+index d817230d7e..28f72e77b4 100644
 --- a/chrome/browser/ui/webui/cr_components/searchbox/searchbox_handler.cc
 +++ b/chrome/browser/ui/webui/cr_components/searchbox/searchbox_handler.cc
 @@ -328,6 +328,8 @@ bool SearchboxHandler::GetVoiceSearchCoherenceAnySearchboxExperimentEnabled() {
@@ -72,7 +72,7 @@ index d817230d7e0..28f72e77b45 100644
  
    // The WebUI Omnibox code will override this to `true` to adjust various
 diff --git a/components/search/ntp_features.cc b/components/search/ntp_features.cc
-index 79ef7a78401..527d75dac61 100644
+index 79ef7a7840..527d75dac6 100644
 --- a/components/search/ntp_features.cc
 +++ b/components/search/ntp_features.cc
 @@ -140,7 +140,7 @@ BASE_FEATURE(kNtpGoogleLogo26, base::FEATURE_DISABLED_BY_DEFAULT);

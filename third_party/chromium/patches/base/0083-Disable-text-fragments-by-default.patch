@@ -22,7 +22,7 @@ FILE:Disable-text-fragments-by-default.patch
  create mode 100644 cromite_flags/third_party/blink/common/features_h/Disable-text-fragments-by-default.inc
 
 diff --git a/chrome/browser/ui/prefs/prefs_tab_helper.cc b/chrome/browser/ui/prefs/prefs_tab_helper.cc
-index 87dc1b8b9a6..66eede68f09 100644
+index 87dc1b8b9a..66eede68f0 100644
 --- a/chrome/browser/ui/prefs/prefs_tab_helper.cc
 +++ b/chrome/browser/ui/prefs/prefs_tab_helper.cc
 @@ -389,7 +389,7 @@ void PrefsTabHelper::RegisterProfilePrefs(
@@ -35,7 +35,7 @@ index 87dc1b8b9a6..66eede68f09 100644
    registry->RegisterDoublePref(browser_ui::prefs::kWebKitFontScaleFactor, 1.0);
    registry->RegisterIntegerPref(prefs::kAccessibilityTextSizeContrastFactor, 0);
 diff --git a/content/child/runtime_features.cc b/content/child/runtime_features.cc
-index 918cf28078b..c00b062823e 100644
+index 918cf28078..c00b062823 100644
 --- a/content/child/runtime_features.cc
 +++ b/content/child/runtime_features.cc
 @@ -204,6 +204,8 @@ void SetRuntimeFeaturesFromChromiumFeatures() {
@@ -49,7 +49,7 @@ index 918cf28078b..c00b062823e 100644
             device::kWebAuthnCrossDeviceFallbackUrl},
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Disable-text-fragments-by-default.inc b/cromite_flags/chrome/browser/about_flags_cc/Disable-text-fragments-by-default.inc
 new file mode 100644
-index 00000000000..f61725b405a
+index 0000000000..f61725b405
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Disable-text-fragments-by-default.inc
 @@ -0,0 +1,8 @@
@@ -63,7 +63,7 @@ index 00000000000..f61725b405a
 +#endif
 diff --git a/cromite_flags/third_party/blink/common/features_cc/Disable-text-fragments-by-default.inc b/cromite_flags/third_party/blink/common/features_cc/Disable-text-fragments-by-default.inc
 new file mode 100644
-index 00000000000..2b15f792a86
+index 0000000000..2b15f792a8
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_cc/Disable-text-fragments-by-default.inc
 @@ -0,0 +1,4 @@
@@ -73,13 +73,13 @@ index 00000000000..2b15f792a86
 +                base::FEATURE_DISABLED_BY_DEFAULT);
 diff --git a/cromite_flags/third_party/blink/common/features_h/Disable-text-fragments-by-default.inc b/cromite_flags/third_party/blink/common/features_h/Disable-text-fragments-by-default.inc
 new file mode 100644
-index 00000000000..92871473982
+index 0000000000..9287147398
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_h/Disable-text-fragments-by-default.inc
 @@ -0,0 +1 @@
 +BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kTextFragmentAnchor);
 diff --git a/third_party/blink/renderer/core/dom/document.cc b/third_party/blink/renderer/core/dom/document.cc
-index 44f99732aa6..d8e1dbbc7a1 100644
+index 44f99732aa..d8e1dbbc7a 100644
 --- a/third_party/blink/renderer/core/dom/document.cc
 +++ b/third_party/blink/renderer/core/dom/document.cc
 @@ -5046,9 +5046,14 @@ void Document::SetURL(const KURL& url) {
@@ -101,7 +101,7 @@ index 44f99732aa6..d8e1dbbc7a1 100644
    url_ = new_url;
    cached_outgoing_referrer_url_ = std::nullopt;
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 58b8bbb05ee..389f952e3d8 100644
+index 58b8bbb05e..389f952e3d 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -6650,10 +6650,9 @@

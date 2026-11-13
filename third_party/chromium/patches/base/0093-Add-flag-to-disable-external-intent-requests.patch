@@ -22,7 +22,7 @@ FILE:Add-flag-to-disable-external-intent-requests.patch
  create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Add-flag-to-disable-external-intent-requests.inc
 
 diff --git a/components/external_intents/android/external_intents_features.h b/components/external_intents/android/external_intents_features.h
-index 0f68eba5388..fa24a23f9b2 100644
+index 0f68eba538..fa24a23f9b 100644
 --- a/components/external_intents/android/external_intents_features.h
 +++ b/components/external_intents/android/external_intents_features.h
 @@ -9,6 +9,7 @@
@@ -35,7 +35,7 @@ index 0f68eba5388..fa24a23f9b2 100644
  
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Add-flag-to-disable-external-intent-requests.inc b/cromite_flags/chrome/browser/about_flags_cc/Add-flag-to-disable-external-intent-requests.inc
 new file mode 100644
-index 00000000000..292d5872698
+index 0000000000..292d587269
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Add-flag-to-disable-external-intent-requests.inc
 @@ -0,0 +1,13 @@
@@ -54,7 +54,7 @@ index 00000000000..292d5872698
 +#endif
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Revert-Delete-block-external-form-redirects.inc b/cromite_flags/chrome/browser/about_flags_cc/Revert-Delete-block-external-form-redirects.inc
 new file mode 100644
-index 00000000000..deca4e07178
+index 0000000000..deca4e0717
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Revert-Delete-block-external-form-redirects.inc
 @@ -0,0 +1,15 @@
@@ -75,7 +75,7 @@ index 00000000000..deca4e07178
 +#endif
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Add-flag-to-disable-external-intent-requests.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Add-flag-to-disable-external-intent-requests.inc
 new file mode 100644
-index 00000000000..c4015ad7de1
+index 0000000000..c4015ad7de
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Add-flag-to-disable-external-intent-requests.inc
 @@ -0,0 +1,3 @@

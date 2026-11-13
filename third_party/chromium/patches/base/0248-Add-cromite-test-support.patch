@@ -42,7 +42,7 @@ FILE:Add-cromite-test-support.patch
  create mode 100644 cromite_flags/content/public/common/content_features_h/Enable-test-support.inc
 
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 077323eaa23..7e71c565dc2 100644
+index 077323eaa2..7e71c565dc 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -1059,6 +1059,11 @@ source_set("core") {
@@ -58,7 +58,7 @@ index 077323eaa23..7e71c565dc2 100644
      ":active_use_util",
      ":after_startup_task_utils",
 diff --git a/chrome/browser/chrome_content_browser_client_receiver_bindings.cc b/chrome/browser/chrome_content_browser_client_receiver_bindings.cc
-index 180db63d399..bf2a4098fa1 100644
+index 180db63d39..bf2a4098fa 100644
 --- a/chrome/browser/chrome_content_browser_client_receiver_bindings.cc
 +++ b/chrome/browser/chrome_content_browser_client_receiver_bindings.cc
 @@ -11,6 +11,7 @@
@@ -87,7 +87,7 @@ index 180db63d399..bf2a4098fa1 100644
        [](content::RenderFrameHost* render_frame_host,
 diff --git a/chrome/browser/cromite/cromite_private_api_host.cc b/chrome/browser/cromite/cromite_private_api_host.cc
 new file mode 100644
-index 00000000000..9293ccc93f6
+index 0000000000..9293ccc93f
 --- /dev/null
 +++ b/chrome/browser/cromite/cromite_private_api_host.cc
 @@ -0,0 +1,74 @@
@@ -167,7 +167,7 @@ index 00000000000..9293ccc93f6
 +}
 diff --git a/chrome/browser/cromite/cromite_private_api_host.h b/chrome/browser/cromite/cromite_private_api_host.h
 new file mode 100644
-index 00000000000..121e3c4a85c
+index 0000000000..121e3c4a85
 --- /dev/null
 +++ b/chrome/browser/cromite/cromite_private_api_host.h
 @@ -0,0 +1,54 @@
@@ -226,7 +226,7 @@ index 00000000000..121e3c4a85c
 +
 +#endif  // CHROME_BROWSER_CROMITE_PRIVATE_API_HOST_H_
 diff --git a/chrome/browser/ui/startup/bad_flags_prompt.cc b/chrome/browser/ui/startup/bad_flags_prompt.cc
-index 5f63f915773..969700a720d 100644
+index 5f63f91577..969700a720 100644
 --- a/chrome/browser/ui/startup/bad_flags_prompt.cc
 +++ b/chrome/browser/ui/startup/bad_flags_prompt.cc
 @@ -236,6 +236,7 @@ static const std::variant<const base::Feature*, const char*>
@@ -238,7 +238,7 @@ index 5f63f915773..969700a720d 100644
  
          // This flag disables security for the Page Embedded Permission Control,
 diff --git a/chrome/common/BUILD.gn b/chrome/common/BUILD.gn
-index f4849233f9b..a25aed49592 100644
+index f4849233f9..a25aed4959 100644
 --- a/chrome/common/BUILD.gn
 +++ b/chrome/common/BUILD.gn
 @@ -677,6 +677,7 @@ mojom("mojo_bindings") {
@@ -251,7 +251,7 @@ index f4849233f9b..a25aed49592 100644
      "net_benchmarking.mojom",
 diff --git a/chrome/common/cromite_private_api_extension.mojom b/chrome/common/cromite_private_api_extension.mojom
 new file mode 100644
-index 00000000000..fecfdbd67bf
+index 0000000000..fecfdbd67b
 --- /dev/null
 +++ b/chrome/common/cromite_private_api_extension.mojom
 @@ -0,0 +1,7 @@
@@ -263,7 +263,7 @@ index 00000000000..fecfdbd67bf
 +  SetEnableLogConsole(bool enabled);
 +};
 diff --git a/chrome/renderer/BUILD.gn b/chrome/renderer/BUILD.gn
-index f63d6d2a47e..c6d478ab7d4 100644
+index f63d6d2a47..c6d478ab7d 100644
 --- a/chrome/renderer/BUILD.gn
 +++ b/chrome/renderer/BUILD.gn
 @@ -77,6 +77,8 @@ static_library("renderer") {
@@ -276,7 +276,7 @@ index f63d6d2a47e..c6d478ab7d4 100644
      "google_accounts_private_api_extension.h",
      "google_accounts_private_api_util.cc",
 diff --git a/chrome/renderer/chrome_content_renderer_client.cc b/chrome/renderer/chrome_content_renderer_client.cc
-index 48bec270b3f..d1ed2368dc2 100644
+index 48bec270b3..d1ed2368dc 100644
 --- a/chrome/renderer/chrome_content_renderer_client.cc
 +++ b/chrome/renderer/chrome_content_renderer_client.cc
 @@ -58,6 +58,7 @@
@@ -297,7 +297,7 @@ index 48bec270b3f..d1ed2368dc2 100644
      new webapps::WebPageMetadataAgent(render_frame);
 diff --git a/chrome/renderer/cromite/cromite_private_api_extension.cc b/chrome/renderer/cromite/cromite_private_api_extension.cc
 new file mode 100644
-index 00000000000..193f4af9a9c
+index 0000000000..193f4af9a9
 --- /dev/null
 +++ b/chrome/renderer/cromite/cromite_private_api_extension.cc
 @@ -0,0 +1,203 @@
@@ -506,7 +506,7 @@ index 00000000000..193f4af9a9c
 +}
 diff --git a/chrome/renderer/cromite/cromite_private_api_extension.h b/chrome/renderer/cromite/cromite_private_api_extension.h
 new file mode 100644
-index 00000000000..a0d3d86ffc2
+index 0000000000..a0d3d86ffc
 --- /dev/null
 +++ b/chrome/renderer/cromite/cromite_private_api_extension.h
 @@ -0,0 +1,65 @@
@@ -576,7 +576,7 @@ index 00000000000..a0d3d86ffc2
 +
 +#endif  // CHROME_RENDERER_CROMITE_PRIVATE_API_EXTENSION_H_
 diff --git a/components/component_updater/component_updater_service.h b/components/component_updater/component_updater_service.h
-index 45fd0dffb50..1a50c932e3d 100644
+index 45fd0dffb5..1a50c932e3 100644
 --- a/components/component_updater/component_updater_service.h
 +++ b/components/component_updater/component_updater_service.h
 @@ -254,6 +254,7 @@ class OnDemandUpdater {
@@ -588,7 +588,7 @@ index 45fd0dffb50..1a50c932e3d 100644
                                Priority priority,
                                Callback callback) = 0;
 diff --git a/content/browser/devtools/devtools_http_handler.cc b/content/browser/devtools/devtools_http_handler.cc
-index fab13300e5d..7aaa98f2741 100644
+index fab13300e5..7aaa98f274 100644
 --- a/content/browser/devtools/devtools_http_handler.cc
 +++ b/content/browser/devtools/devtools_http_handler.cc
 @@ -16,6 +16,7 @@
@@ -622,7 +622,7 @@ index fab13300e5d..7aaa98f2741 100644
      version.Set("User-Agent", GetContentClient()->browser()->GetUserAgent());
      version.Set("V8-Version", V8_VERSION_STRING);
 diff --git a/content/browser/log_console_message.cc b/content/browser/log_console_message.cc
-index c906da6aa8e..ddf5826a022 100644
+index c906da6aa8..ddf5826a02 100644
 --- a/content/browser/log_console_message.cc
 +++ b/content/browser/log_console_message.cc
 @@ -17,10 +17,23 @@ void LogConsoleMessage(blink::mojom::ConsoleMessageLevel log_level,
@@ -651,7 +651,7 @@ index c906da6aa8e..ddf5826a022 100644
      return;
  
 diff --git a/content/browser/log_console_message.h b/content/browser/log_console_message.h
-index 465d4161b29..b8d3665bb84 100644
+index 465d4161b2..b8d3665bb8 100644
 --- a/content/browser/log_console_message.h
 +++ b/content/browser/log_console_message.h
 @@ -19,7 +19,8 @@ void LogConsoleMessage(blink::mojom::ConsoleMessageLevel log_level,
@@ -665,7 +665,7 @@ index 465d4161b29..b8d3665bb84 100644
  }  // namespace content
  
 diff --git a/content/browser/renderer_host/render_frame_host_impl.cc b/content/browser/renderer_host/render_frame_host_impl.cc
-index 396665ae4dd..c15bc792233 100644
+index 396665ae4d..c15bc79223 100644
 --- a/content/browser/renderer_host/render_frame_host_impl.cc
 +++ b/content/browser/renderer_host/render_frame_host_impl.cc
 @@ -344,6 +344,8 @@
@@ -705,7 +705,7 @@ index 396665ae4dd..c15bc792233 100644
  void RenderFrameHostImpl::FrameSizeChanged(const gfx::Size& frame_size) {
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Enable-test-support.inc b/cromite_flags/chrome/browser/about_flags_cc/Enable-test-support.inc
 new file mode 100644
-index 00000000000..ffbfbed6809
+index 0000000000..ffbfbed680
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Enable-test-support.inc
 @@ -0,0 +1,19 @@
@@ -730,7 +730,7 @@ index 00000000000..ffbfbed6809
 +#endif
 diff --git a/cromite_flags/content/public/common/content_features_cc/Enable-test-support.inc b/cromite_flags/content/public/common/content_features_cc/Enable-test-support.inc
 new file mode 100644
-index 00000000000..e2a2f49f579
+index 0000000000..e2a2f49f57
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_cc/Enable-test-support.inc
 @@ -0,0 +1,7 @@
@@ -743,7 +743,7 @@ index 00000000000..e2a2f49f579
 +                base::FEATURE_DISABLED_BY_DEFAULT);
 diff --git a/cromite_flags/content/public/common/content_features_h/Enable-test-support.inc b/cromite_flags/content/public/common/content_features_h/Enable-test-support.inc
 new file mode 100644
-index 00000000000..692bd8b86bc
+index 0000000000..692bd8b86b
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_h/Enable-test-support.inc
 @@ -0,0 +1,2 @@

@@ -13,7 +13,7 @@ FILE:Enable-Android-Dynamic-Performance-Framework.patch
  4 files changed, 12 insertions(+), 8 deletions(-)
 
 diff --git a/chrome/version.gni b/chrome/version.gni
-index 934e5d9ea81..6749d7962d8 100644
+index 934e5d9ea8..6749d7962d 100644
 --- a/chrome/version.gni
 +++ b/chrome/version.gni
 @@ -87,7 +87,7 @@ if (target_os == "android") {
@@ -46,7 +46,7 @@ index 934e5d9ea81..6749d7962d8 100644
  
  if (is_android && current_toolchain == default_toolchain) {
 diff --git a/components/viz/common/features.cc b/components/viz/common/features.cc
-index 16d6206504c..e424e6dba57 100644
+index 16d6206504..e424e6dba5 100644
 --- a/components/viz/common/features.cc
 +++ b/components/viz/common/features.cc
 @@ -251,6 +251,7 @@ BASE_FEATURE(kEnableADPFRendererMain, base::FEATURE_ENABLED_BY_DEFAULT);
@@ -66,7 +66,7 @@ index 16d6206504c..e424e6dba57 100644
        soc_allowlist, "|", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
    return std::ranges::contains(allowlist, soc);
 diff --git a/components/viz/service/performance_hint/hint_session.cc b/components/viz/service/performance_hint/hint_session.cc
-index cc39d520e4c..540be36da07 100644
+index cc39d520e4..540be36da0 100644
 --- a/components/viz/service/performance_hint/hint_session.cc
 +++ b/components/viz/service/performance_hint/hint_session.cc
 @@ -419,16 +419,13 @@ bool IsAdpfEnabled() {
@@ -88,7 +88,7 @@ index cc39d520e4c..540be36da07 100644
    std::string soc_allowlist = features::kADPFSocManufacturerAllowlist.Get();
    std::string soc = base::SysInfo::SocManufacturer();
 diff --git a/third_party/blink/renderer/platform/widget/input/widget_input_handler_manager.cc b/third_party/blink/renderer/platform/widget/input/widget_input_handler_manager.cc
-index b45d7a575b9..1c07ac6c5dc 100644
+index b45d7a575b..1c07ac6c5d 100644
 --- a/third_party/blink/renderer/platform/widget/input/widget_input_handler_manager.cc
 +++ b/third_party/blink/renderer/platform/widget/input/widget_input_handler_manager.cc
 @@ -207,6 +207,11 @@ class SynchronousCompositorProxyRegistry

@@ -24,7 +24,7 @@ FILE:Restore-Simplified-NTP-launch.patch
  create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Restore-Simplified-NTP-launch.inc
 
 diff --git a/chrome/browser/engagement/important_sites_util.cc b/chrome/browser/engagement/important_sites_util.cc
-index 533cbf1fca4..1ebd61adf2f 100644
+index 533cbf1fca..1ebd61adf2 100644
 --- a/chrome/browser/engagement/important_sites_util.cc
 +++ b/chrome/browser/engagement/important_sites_util.cc
 @@ -58,7 +58,7 @@ static const int kTimesIgnoredForSuppression = 3;
@@ -37,7 +37,7 @@ index 533cbf1fca4..1ebd61adf2f 100644
  void RecordIgnore(base::DictValue& dict) {
    int times_ignored = dict.FindInt(kNumTimesIgnoredName).value_or(0);
 diff --git a/chrome/browser/flags/android/chrome_feature_list.cc b/chrome/browser/flags/android/chrome_feature_list.cc
-index 6a427386151..92372bf8084 100644
+index 6a42738615..92372bf808 100644
 --- a/chrome/browser/flags/android/chrome_feature_list.cc
 +++ b/chrome/browser/flags/android/chrome_feature_list.cc
 @@ -452,6 +452,7 @@ const base::Feature* const kFeaturesExposedToJava[] = {
@@ -49,7 +49,7 @@ index 6a427386151..92372bf8084 100644
      &kLoadAllTabsAtStartup,
      &kLockTopControlsOnLargeTabletsV2,
 diff --git a/chrome/browser/ntp_tiles/chrome_most_visited_sites_factory.cc b/chrome/browser/ntp_tiles/chrome_most_visited_sites_factory.cc
-index e97af3e79ba..b2d47c38bac 100644
+index e97af3e79b..b2d47c38ba 100644
 --- a/chrome/browser/ntp_tiles/chrome_most_visited_sites_factory.cc
 +++ b/chrome/browser/ntp_tiles/chrome_most_visited_sites_factory.cc
 @@ -79,10 +79,6 @@ ChromeMostVisitedSitesFactory::NewForProfile(Profile* profile) {
@@ -64,7 +64,7 @@ index e97af3e79ba..b2d47c38bac 100644
  
  #if BUILDFLAG(IS_ANDROID)
 diff --git a/components/history/core/browser/top_sites_constants.h b/components/history/core/browser/top_sites_constants.h
-index 686772a4cfd..3ba47c70594 100644
+index 686772a4cf..3ba47c7059 100644
 --- a/components/history/core/browser/top_sites_constants.h
 +++ b/components/history/core/browser/top_sites_constants.h
 @@ -9,7 +9,7 @@
@@ -77,7 +77,7 @@ index 686772a4cfd..3ba47c70594 100644
  
  #endif  // COMPONENTS_HISTORY_CORE_BROWSER_TOP_SITES_CONSTANTS_H_
 diff --git a/components/ntp_tiles/custom_links_store.cc b/components/ntp_tiles/custom_links_store.cc
-index c0f292fe513..bdfd20e60f0 100644
+index c0f292fe51..bdfd20e60f 100644
 --- a/components/ntp_tiles/custom_links_store.cc
 +++ b/components/ntp_tiles/custom_links_store.cc
 @@ -67,8 +67,6 @@ std::vector<CustomLinksManager::Link> CustomLinksStore::RetrieveLinks() {
@@ -90,7 +90,7 @@ index c0f292fe513..bdfd20e60f0 100644
  
    return links;
 diff --git a/components/omnibox/common/omnibox_features.cc b/components/omnibox/common/omnibox_features.cc
-index 5f7afdbfc77..8df5d367d86 100644
+index 5f7afdbfc7..8df5d367d8 100644
 --- a/components/omnibox/common/omnibox_features.cc
 +++ b/components/omnibox/common/omnibox_features.cc
 @@ -375,6 +375,7 @@ BASE_FEATURE(kOmniboxDebounceKeyboardVisibility, ENABLED);
@@ -110,7 +110,7 @@ index 5f7afdbfc77..8df5d367d86 100644
  // If enabled, the X-Geo header will include permission granularity.
  BASE_FEATURE(kOmniboxXGeoPermissionGranularity, ENABLED);
 diff --git a/components/search_engines/template_url.h b/components/search_engines/template_url.h
-index ba68f265cef..968b40bc62d 100644
+index ba68f265ce..968b40bc62 100644
 --- a/components/search_engines/template_url.h
 +++ b/components/search_engines/template_url.h
 @@ -839,9 +839,9 @@ class TemplateURL {
@@ -127,7 +127,7 @@ index ba68f265cef..968b40bc62d 100644
  
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Restore-Simplified-NTP-launch.inc b/cromite_flags/chrome/browser/about_flags_cc/Restore-Simplified-NTP-launch.inc
 new file mode 100644
-index 00000000000..a4131d8386e
+index 0000000000..a4131d8386
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Restore-Simplified-NTP-launch.inc
 @@ -0,0 +1,12 @@
@@ -145,7 +145,7 @@ index 00000000000..a4131d8386e
 +#endif
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-Simplified-NTP-launch.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-Simplified-NTP-launch.inc
 new file mode 100644
-index 00000000000..6b23d308da0
+index 0000000000..6b23d308da
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-Simplified-NTP-launch.inc
 @@ -0,0 +1,3 @@
@@ -154,7 +154,7 @@ index 00000000000..6b23d308da0
 +                base::FEATURE_ENABLED_BY_DEFAULT);
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Restore-Simplified-NTP-launch.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Restore-Simplified-NTP-launch.inc
 new file mode 100644
-index 00000000000..ff2542f25c2
+index 0000000000..ff2542f25c
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Restore-Simplified-NTP-launch.inc
 @@ -0,0 +1 @@

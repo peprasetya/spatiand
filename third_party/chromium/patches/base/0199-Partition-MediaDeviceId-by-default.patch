@@ -15,7 +15,7 @@ FILE:Partition-MediaDeviceId-by-default.patch
 
 diff --git a/components/content_settings/core/browser/bromite_content_settings/camera.inc b/components/content_settings/core/browser/bromite_content_settings/camera.inc
 new file mode 100644
-index 00000000000..a792d4b6cf1
+index 0000000000..a792d4b6cf
 --- /dev/null
 +++ b/components/content_settings/core/browser/bromite_content_settings/camera.inc
 @@ -0,0 +1,7 @@
@@ -27,7 +27,7 @@ index 00000000000..a792d4b6cf1
 +
 +#endif
 diff --git a/content/browser/media/media_devices_util.cc b/content/browser/media/media_devices_util.cc
-index f087f323bc1..d9231b72949 100644
+index f087f323bc..d9231b7294 100644
 --- a/content/browser/media/media_devices_util.cc
 +++ b/content/browser/media/media_devices_util.cc
 @@ -164,6 +164,9 @@ blink::WebMediaDeviceInfo TranslateMediaDeviceInfo(
@@ -41,7 +41,7 @@ index f087f323bc1..d9231b72949 100644
      return blink::WebMediaDeviceInfo(
          GetHMACForRawMediaDeviceID(salt_and_origin, device_info.device_id),
 diff --git a/content/browser/renderer_host/media/media_devices_manager.cc b/content/browser/renderer_host/media/media_devices_manager.cc
-index da86c44a2a0..bc24135c9d2 100644
+index da86c44a2a..bc24135c9d 100644
 --- a/content/browser/renderer_host/media/media_devices_manager.cc
 +++ b/content/browser/renderer_host/media/media_devices_manager.cc
 @@ -1241,6 +1241,11 @@ void MediaDevicesManager::OnDevicesEnumeratedAndRanked(

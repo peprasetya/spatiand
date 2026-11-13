@@ -14,7 +14,7 @@ address written there became Chrome's home page, and "about:blank" the new tab p
  2 files changed, 33 insertions(+), 2 deletions(-)
 
 diff --git a/chrome/browser/spatiand/settings_sync.cc b/chrome/browser/spatiand/settings_sync.cc
-index 898c55b9481..f14fe0b072e 100644
+index 898c55b948..f14fe0b072 100644
 --- a/chrome/browser/spatiand/settings_sync.cc
 +++ b/chrome/browser/spatiand/settings_sync.cc
 @@ -12,6 +12,7 @@
@@ -95,7 +95,7 @@ index 898c55b9481..f14fe0b072e 100644
    if (applying_) {
      return;
 diff --git a/chrome/browser/spatiand/settings_sync.h b/chrome/browser/spatiand/settings_sync.h
-index bdad8719a6a..a3607f61e32 100644
+index bdad8719a6..a3607f61e3 100644
 --- a/chrome/browser/spatiand/settings_sync.h
 +++ b/chrome/browser/spatiand/settings_sync.h
 @@ -49,6 +49,7 @@ class SettingsSync : public TemplateURLServiceObserver, public ThemeServiceObser

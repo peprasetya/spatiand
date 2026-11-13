@@ -16,13 +16,13 @@ FILE:Disable-Viewport-Segments.patch
 
 diff --git a/cromite_flags/third_party/blink/common/features_cc/Disable-ViewportSegments.inc b/cromite_flags/third_party/blink/common/features_cc/Disable-ViewportSegments.inc
 new file mode 100644
-index 00000000000..3aaccba9380
+index 0000000000..3aaccba938
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_cc/Disable-ViewportSegments.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_DISABLED(kViewportSegments);
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 345ffa7173c..70225983713 100644
+index 345ffa7173..7022598371 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -7073,8 +7073,7 @@

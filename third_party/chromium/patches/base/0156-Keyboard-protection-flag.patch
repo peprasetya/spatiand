@@ -22,7 +22,7 @@ FILE:Keyboard-protection-flag.patch
 
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Keyboard-protection-flag.inc b/cromite_flags/chrome/browser/about_flags_cc/Keyboard-protection-flag.inc
 new file mode 100644
-index 00000000000..b44cfa4cf6b
+index 0000000000..b44cfa4cf6
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Keyboard-protection-flag.inc
 @@ -0,0 +1,10 @@
@@ -37,7 +37,7 @@ index 00000000000..b44cfa4cf6b
 +
 +#endif
 diff --git a/third_party/blink/renderer/core/events/keyboard_event.cc b/third_party/blink/renderer/core/events/keyboard_event.cc
-index 7f91061eb3d..edc80ddef9e 100644
+index 7f91061eb3..edc80ddef9 100644
 --- a/third_party/blink/renderer/core/events/keyboard_event.cc
 +++ b/third_party/blink/renderer/core/events/keyboard_event.cc
 @@ -37,6 +37,18 @@
@@ -198,7 +198,7 @@ index 7f91061eb3d..edc80ddef9e 100644
    switch (location) {
      case KeyboardEvent::kDomKeyLocationNumpad:
 diff --git a/third_party/blink/renderer/core/events/keyboard_event.h b/third_party/blink/renderer/core/events/keyboard_event.h
-index af9072bd067..dd3304a6b0c 100644
+index af9072bd06..dd3304a6b0 100644
 --- a/third_party/blink/renderer/core/events/keyboard_event.h
 +++ b/third_party/blink/renderer/core/events/keyboard_event.h
 @@ -101,6 +101,8 @@ class CORE_EXPORT KeyboardEvent final : public UIEventWithKeyState {
@@ -219,7 +219,7 @@ index af9072bd067..dd3304a6b0c 100644
  
  template <>
 diff --git a/ui/base/ui_base_features.cc b/ui/base/ui_base_features.cc
-index a10856c4490..ee7530553b6 100644
+index a10856c449..ee7530553b 100644
 --- a/ui/base/ui_base_features.cc
 +++ b/ui/base/ui_base_features.cc
 @@ -179,6 +179,14 @@ bool ShouldUseCursorEventHook() {
@@ -238,7 +238,7 @@ index a10856c4490..ee7530553b6 100644
  BASE_FEATURE(kUiGpuRasterization, base::FEATURE_ENABLED_BY_DEFAULT);
  
 diff --git a/ui/base/ui_base_features.h b/ui/base/ui_base_features.h
-index 40a7a819d7a..f89f293c582 100644
+index 40a7a819d7..f89f293c58 100644
 --- a/ui/base/ui_base_features.h
 +++ b/ui/base/ui_base_features.h
 @@ -36,6 +36,8 @@ COMPONENT_EXPORT(UI_BASE_FEATURES)
@@ -251,7 +251,7 @@ index 40a7a819d7a..f89f293c582 100644
  BASE_DECLARE_FEATURE(kUiCompositorScrollWithLayers);
  COMPONENT_EXPORT(UI_BASE_FEATURES)
 diff --git a/ui/events/keycodes/keyboard_code_conversion.cc b/ui/events/keycodes/keyboard_code_conversion.cc
-index 0ed7d1443d4..f7b2359f909 100644
+index 0ed7d1443d..f7b2359f90 100644
 --- a/ui/events/keycodes/keyboard_code_conversion.cc
 +++ b/ui/events/keycodes/keyboard_code_conversion.cc
 @@ -297,16 +297,22 @@ int ModifierDomKeyToEventFlag(DomKey key) {
@@ -280,7 +280,7 @@ index 0ed7d1443d4..f7b2359f909 100644
      if (it.dom_key == dom_key)
        return it.dom_code;
 diff --git a/ui/events/keycodes/keyboard_code_conversion.h b/ui/events/keycodes/keyboard_code_conversion.h
-index e0ba3fa05fa..609bd9271e5 100644
+index e0ba3fa05f..609bd9271e 100644
 --- a/ui/events/keycodes/keyboard_code_conversion.h
 +++ b/ui/events/keycodes/keyboard_code_conversion.h
 @@ -111,7 +111,7 @@ EVENTS_BASE_EXPORT int ModifierDomKeyToEventFlag(DomKey key);

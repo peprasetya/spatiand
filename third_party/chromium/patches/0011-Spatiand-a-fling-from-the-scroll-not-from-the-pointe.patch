@@ -11,7 +11,7 @@ The time of a scroll frame was measured from the last pointer frame of any kind,
  2 files changed, 5 insertions(+), 3 deletions(-)
 
 diff --git a/ui/ozone/platform/wayland/host/wayland_event_source.cc b/ui/ozone/platform/wayland/host/wayland_event_source.cc
-index 5a3773742a9..bf83e3b561f 100644
+index 5a3773742a..bf83e3b561 100644
 --- a/ui/ozone/platform/wayland/host/wayland_event_source.cc
 +++ b/ui/ozone/platform/wayland/host/wayland_event_source.cc
 @@ -560,12 +560,14 @@ void WaylandEventSource::OnPointerFrameEvent() {
@@ -32,7 +32,7 @@ index 5a3773742a9..bf83e3b561f 100644
    if (!target_window) {
      return;
 diff --git a/ui/ozone/platform/wayland/host/wayland_event_source.h b/ui/ozone/platform/wayland/host/wayland_event_source.h
-index 04fce496547..40a052a63e0 100644
+index 04fce49654..40a052a63e 100644
 --- a/ui/ozone/platform/wayland/host/wayland_event_source.h
 +++ b/ui/ozone/platform/wayland/host/wayland_event_source.h
 @@ -282,7 +282,7 @@ class WaylandEventSource : public PlatformEventSource,

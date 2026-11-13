@@ -17,7 +17,7 @@ FILE:Remove-window-name-on-cross-origin-navigation.patch
  create mode 100644 cromite_flags/content/public/common/content_features_cc/Remove-window-name-on-cross-origin-navigation.inc
 
 diff --git a/content/browser/renderer_host/browsing_context_state.cc b/content/browser/renderer_host/browsing_context_state.cc
-index b039a394a83..5552fa4de1b 100644
+index b039a394a8..5552fa4de1 100644
 --- a/content/browser/renderer_host/browsing_context_state.cc
 +++ b/content/browser/renderer_host/browsing_context_state.cc
 @@ -16,7 +16,7 @@
@@ -30,7 +30,7 @@ index b039a394a83..5552fa4de1b 100644
  
  BrowsingContextStateImplementationType GetBrowsingContextMode() {
 diff --git a/content/browser/renderer_host/render_frame_host_manager.cc b/content/browser/renderer_host/render_frame_host_manager.cc
-index 8e4d3b52676..dcd32e8113c 100644
+index 8e4d3b5267..dcd32e8113 100644
 --- a/content/browser/renderer_host/render_frame_host_manager.cc
 +++ b/content/browser/renderer_host/render_frame_host_manager.cc
 @@ -2030,8 +2030,7 @@ RenderFrameHostManager::GetFrameHostForNavigation(
@@ -45,13 +45,13 @@ index 8e4d3b52676..dcd32e8113c 100644
    // If a crashed RenderFrameHost must not be reused, replace it by a
 diff --git a/cromite_flags/content/public/common/content_features_cc/Remove-window-name-on-cross-origin-navigation.inc b/cromite_flags/content/public/common/content_features_cc/Remove-window-name-on-cross-origin-navigation.inc
 new file mode 100644
-index 00000000000..d81b65dfcf1
+index 0000000000..d81b65dfcf
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_cc/Remove-window-name-on-cross-origin-navigation.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_ENABLED(kClearCrossSiteCrossBrowsingContextGroupWindowName);
 diff --git a/third_party/blink/renderer/core/loader/document_loader.cc b/third_party/blink/renderer/core/loader/document_loader.cc
-index 2d0dc0bbb03..661a3ef4c1c 100644
+index 2d0dc0bbb0..661a3ef4c1 100644
 --- a/third_party/blink/renderer/core/loader/document_loader.cc
 +++ b/third_party/blink/renderer/core/loader/document_loader.cc
 @@ -3226,7 +3226,8 @@ void DocumentLoader::CommitNavigation() {

@@ -21,7 +21,7 @@ FILE:Enable-HighEfficiencyMode-by-default.patch
  create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Enable-freeze-high-cpu-background-usage.inc
 
 diff --git a/components/performance_manager/features.cc b/components/performance_manager/features.cc
-index 5667f9107ac..58d5e67e05e 100644
+index 5667f9107a..58d5e67e05 100644
 --- a/components/performance_manager/features.cc
 +++ b/components/performance_manager/features.cc
 @@ -199,6 +199,7 @@ BASE_FEATURE(kPMLoadingPageVoterV2, base::FEATURE_DISABLED_BY_DEFAULT);
@@ -47,7 +47,7 @@ index 5667f9107ac..58d5e67e05e 100644
  BASE_FEATURE(kUnimportantFramesPriority, base::FEATURE_DISABLED_BY_DEFAULT);
  
 diff --git a/components/performance_manager/freezing/freezing_policy.cc b/components/performance_manager/freezing/freezing_policy.cc
-index d79986d774e..d3f2b9ef8ea 100644
+index d79986d774..d3f2b9ef8e 100644
 --- a/components/performance_manager/freezing/freezing_policy.cc
 +++ b/components/performance_manager/freezing/freezing_policy.cc
 @@ -489,7 +489,7 @@ void FreezingPolicy::UpdateFrozenState(
@@ -60,7 +60,7 @@ index d79986d774e..d3f2b9ef8ea 100644
        }
      }
 diff --git a/components/performance_manager/public/features.h b/components/performance_manager/public/features.h
-index 6170e163e55..eaaa5033cd5 100644
+index 6170e163e5..eaaa5033cd 100644
 --- a/components/performance_manager/public/features.h
 +++ b/components/performance_manager/public/features.h
 @@ -238,6 +238,9 @@ BASE_DECLARE_FEATURE(kDiscardOnCommitLimit);
@@ -74,7 +74,7 @@ index 6170e163e55..eaaa5033cd5 100644
  // individual origins.
  BASE_DECLARE_FEATURE(kResourceAttributionIncludeOrigins);
 diff --git a/components/performance_manager/user_tuning/prefs.cc b/components/performance_manager/user_tuning/prefs.cc
-index 8effd2c5e03..65775158f63 100644
+index 8effd2c5e0..65775158f6 100644
 --- a/components/performance_manager/user_tuning/prefs.cc
 +++ b/components/performance_manager/user_tuning/prefs.cc
 @@ -27,18 +27,18 @@ bool IsForceForegroundPriorityForAllTabsEnabled(PrefService* pref_service) {
@@ -101,7 +101,7 @@ index 8effd2c5e03..65775158f63 100644
    registry->RegisterBooleanPref(kTabFreezingEnabled, true);
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Enable-freeze-high-cpu-background-usage.inc b/cromite_flags/chrome/browser/about_flags_cc/Enable-freeze-high-cpu-background-usage.inc
 new file mode 100644
-index 00000000000..15ee4187293
+index 0000000000..15ee418729
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Enable-freeze-high-cpu-background-usage.inc
 @@ -0,0 +1,8 @@

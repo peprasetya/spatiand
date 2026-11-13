@@ -12,7 +12,7 @@ FILE:Block-Intents-While-Locked.patch
 
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Block-Intents-While-Locked.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Block-Intents-While-Locked.inc
 new file mode 100644
-index 00000000000..d80c81e6684
+index 0000000000..d80c81e668
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Block-Intents-While-Locked.inc
 @@ -0,0 +1 @@

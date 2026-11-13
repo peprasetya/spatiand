@@ -18,7 +18,7 @@ FILE:Add-flag-to-configure-maximum-connections-per-host.patch
  create mode 100644 cromite_flags/chrome/browser/about_flags_cc/add-flag-to-configure-maximum-connections-per-host.inc
 
 diff --git a/components/network_session_configurator/common/network_switch_list.h b/components/network_session_configurator/common/network_switch_list.h
-index d3583c91be3..e7675b7e94c 100644
+index d3583c91be..e7675b7e94 100644
 --- a/components/network_session_configurator/common/network_switch_list.h
 +++ b/components/network_session_configurator/common/network_switch_list.h
 @@ -19,6 +19,10 @@ NETWORK_SWITCH(kEnableUserAlternateProtocolPorts,
@@ -33,7 +33,7 @@ index d3583c91be3..e7675b7e94c 100644
  // Note: In tests using net::EmbeddedTestServer with a custom hostname not
  // covered by the default test certs, using this switch is usually incorrect.
 diff --git a/components/url_formatter/spoof_checks/top_domains/BUILD.gn b/components/url_formatter/spoof_checks/top_domains/BUILD.gn
-index 5ac88924376..3d12fd484ef 100644
+index 5ac8892437..3d12fd484e 100644
 --- a/components/url_formatter/spoof_checks/top_domains/BUILD.gn
 +++ b/components/url_formatter/spoof_checks/top_domains/BUILD.gn
 @@ -96,6 +96,7 @@ executable("make_top_domain_list_variables") {
@@ -46,7 +46,7 @@ index 5ac88924376..3d12fd484ef 100644
      frameworks = [ "UIKit.framework" ]
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/add-flag-to-configure-maximum-connections-per-host.inc b/cromite_flags/chrome/browser/about_flags_cc/add-flag-to-configure-maximum-connections-per-host.inc
 new file mode 100644
-index 00000000000..5d2d5be765f
+index 0000000000..5d2d5be765
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/add-flag-to-configure-maximum-connections-per-host.inc
 @@ -0,0 +1,17 @@
@@ -68,7 +68,7 @@ index 00000000000..5d2d5be765f
 +
 +#endif
 diff --git a/net/socket/client_socket_pool_manager.cc b/net/socket/client_socket_pool_manager.cc
-index 7c7946b3b98..64c8fc5e837 100644
+index 7c7946b3b9..64c8fc5e83 100644
 --- a/net/socket/client_socket_pool_manager.cc
 +++ b/net/socket/client_socket_pool_manager.cc
 @@ -22,6 +22,10 @@

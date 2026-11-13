@@ -30,7 +30,7 @@ FILE:Enable-Global-Privacy-Control.patch
  create mode 100644 chrome/browser/resources/settings/privacy_page/gpc_toggle.ts
 
 diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
-index 1cbee60222f..a803c69e262 100644
+index 1cbee60222..a803c69e26 100644
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
 @@ -1786,6 +1786,21 @@
@@ -56,7 +56,7 @@ index 1cbee60222f..a803c69e262 100644
        Controls what information sites can use and show (location, camera, pop-ups, and more)
      </message>
 diff --git a/chrome/browser/extensions/api/settings_private/prefs_util.cc b/chrome/browser/extensions/api/settings_private/prefs_util.cc
-index 25d3abeeab9..f6d98afb7c5 100644
+index 25d3abeeab..f6d98afb7c 100644
 --- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
 +++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
 @@ -497,6 +497,7 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
@@ -68,7 +68,7 @@ index 25d3abeeab9..f6d98afb7c5 100644
    // Sync and personalization page.
    (*s_allowlist)[::prefs::kSearchSuggestEnabled] =
 diff --git a/chrome/browser/renderer_preferences_util.cc b/chrome/browser/renderer_preferences_util.cc
-index 29afa0a564a..20eea6d9d92 100644
+index 29afa0a564..20eea6d9d9 100644
 --- a/chrome/browser/renderer_preferences_util.cc
 +++ b/chrome/browser/renderer_preferences_util.cc
 @@ -165,6 +165,8 @@ void UpdateFromSystemSettings(blink::RendererPreferences* prefs,
@@ -81,7 +81,7 @@ index 29afa0a564a..20eea6d9d92 100644
        pref_service->GetBoolean(prefs::kEnableEncryptedMedia);
  
 diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resources/settings/BUILD.gn
-index 931e7086371..8c77f67ec4c 100644
+index 931e708637..8c77f67ec4 100644
 --- a/chrome/browser/resources/settings/BUILD.gn
 +++ b/chrome/browser/resources/settings/BUILD.gn
 @@ -57,6 +57,7 @@ build_webui("build") {
@@ -93,7 +93,7 @@ index 931e7086371..8c77f67ec4c 100644
      "privacy_page/privacy_page.ts",
      "privacy_page/privacy_page_index.ts",
 diff --git a/chrome/browser/resources/settings/privacy_page/cookies_page.html b/chrome/browser/resources/settings/privacy_page/cookies_page.html
-index 828a9914241..bff6049f024 100644
+index 828a991424..bff6049f02 100644
 --- a/chrome/browser/resources/settings/privacy_page/cookies_page.html
 +++ b/chrome/browser/resources/settings/privacy_page/cookies_page.html
 @@ -160,6 +160,8 @@ import {ThirdPartyCookieBlockingSetting} from '../site_settings/site_settings_br
@@ -106,7 +106,7 @@ index 828a9914241..bff6049f024 100644
          @click="${this.onSiteDataClick_}" label="$i18n{cookiePageAllSitesLink}"
          role-description="$i18n{subpageArrowRoleDescription}">
 diff --git a/chrome/browser/resources/settings/privacy_page/cookies_page.ts b/chrome/browser/resources/settings/privacy_page/cookies_page.ts
-index 2aae884bef0..243dd32845a 100644
+index 2aae884bef..243dd32845 100644
 --- a/chrome/browser/resources/settings/privacy_page/cookies_page.ts
 +++ b/chrome/browser/resources/settings/privacy_page/cookies_page.ts
 @@ -20,6 +20,7 @@ import '../icons.html.js';
@@ -119,7 +119,7 @@ index 2aae884bef0..243dd32845a 100644
  import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
 diff --git a/chrome/browser/resources/settings/privacy_page/gpc_toggle.html b/chrome/browser/resources/settings/privacy_page/gpc_toggle.html
 new file mode 100644
-index 00000000000..b2c17eff546
+index 0000000000..b2c17eff54
 --- /dev/null
 +++ b/chrome/browser/resources/settings/privacy_page/gpc_toggle.html
 @@ -0,0 +1,22 @@
@@ -147,7 +147,7 @@ index 00000000000..b2c17eff546
 +  </cr-dialog>` : ''}
 diff --git a/chrome/browser/resources/settings/privacy_page/gpc_toggle.ts b/chrome/browser/resources/settings/privacy_page/gpc_toggle.ts
 new file mode 100644
-index 00000000000..21a72f030a1
+index 0000000000..21a72f030a
 --- /dev/null
 +++ b/chrome/browser/resources/settings/privacy_page/gpc_toggle.ts
 @@ -0,0 +1,102 @@
@@ -254,7 +254,7 @@ index 00000000000..21a72f030a1
 +
 +customElements.define(SettingsGpcToggleElement.is, SettingsGpcToggleElement);
 diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
-index 9d9f0e356c8..8c609c5ade2 100644
+index 9d9f0e356c..8c609c5ade 100644
 --- a/chrome/browser/ui/browser_ui_prefs.cc
 +++ b/chrome/browser/ui/browser_ui_prefs.cc
 @@ -155,6 +155,7 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
@@ -266,7 +266,7 @@ index 9d9f0e356c8..8c609c5ade2 100644
    registry->RegisterBooleanPref(prefs::kPrintPreviewUseSystemDefaultPrinter,
                                  false);
 diff --git a/chrome/browser/ui/prefs/pref_watcher.cc b/chrome/browser/ui/prefs/pref_watcher.cc
-index 3bed2a37ab3..6f0d75db4a5 100644
+index 3bed2a37ab..6f0d75db4a 100644
 --- a/chrome/browser/ui/prefs/pref_watcher.cc
 +++ b/chrome/browser/ui/prefs/pref_watcher.cc
 @@ -158,6 +158,8 @@ PrefWatcher::PrefWatcher(Profile* profile) : profile_(profile) {
@@ -279,7 +279,7 @@ index 3bed2a37ab3..6f0d75db4a5 100644
        universal_optout::prefs::kUniversalOptOutEnabled, renderer_callback);
    profile_pref_change_registrar_.Add(autofill::prefs::kAutofillAtMemoryShortcut,
 diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-index dc3adac2dbe..6e7fab0a05c 100644
+index dc3adac2db..6e7fab0a05 100644
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 @@ -2623,6 +2623,9 @@ void AddPrivacyStrings(content::WebUIDataSource* html_source,
@@ -293,7 +293,7 @@ index dc3adac2dbe..6e7fab0a05c 100644
        {"securityPageTitle", IDS_SETTINGS_SECURITY},
        {"securityPageDescription", IDS_SETTINGS_SECURITY_DESCRIPTION},
 diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
-index fde03e39d46..8c8b12126e4 100644
+index fde03e39d4..8c8b12126e 100644
 --- a/chrome/common/pref_names.h
 +++ b/chrome/common/pref_names.h
 @@ -901,6 +901,8 @@ inline constexpr char kEnableReferrers[] = "enable_referrers";
@@ -306,7 +306,7 @@ index fde03e39d46..8c8b12126e4 100644
  // use of Clear Key key sytems, which is always allowed as required by the spec.
  // TODO(crbug.com/40549758): This pref was used as a WebPreference which is why
 diff --git a/third_party/blink/common/global_privacy_control/global_privacy_control_util.cc b/third_party/blink/common/global_privacy_control/global_privacy_control_util.cc
-index 0cce5820f45..4ffaaa5242a 100644
+index 0cce5820f4..4ffaaa5242 100644
 --- a/third_party/blink/common/global_privacy_control/global_privacy_control_util.cc
 +++ b/third_party/blink/common/global_privacy_control/global_privacy_control_util.cc
 @@ -34,6 +34,11 @@ bool IsGlobalPrivacyControlFeatureAndSettingEnabled(
@@ -322,7 +322,7 @@ index 0cce5820f45..4ffaaa5242a 100644
      return false;
    }
 diff --git a/third_party/blink/common/renderer_preferences/renderer_preferences_mojom_traits.cc b/third_party/blink/common/renderer_preferences/renderer_preferences_mojom_traits.cc
-index 63d141c8416..0cc6f82c6d9 100644
+index 63d141c841..0cc6f82c6d 100644
 --- a/third_party/blink/common/renderer_preferences/renderer_preferences_mojom_traits.cc
 +++ b/third_party/blink/common/renderer_preferences/renderer_preferences_mojom_traits.cc
 @@ -55,6 +55,7 @@ bool StructTraits<blink::mojom::RendererPreferencesDataView,
@@ -334,7 +334,7 @@ index 63d141c8416..0cc6f82c6d9 100644
  
    if (!data.ReadWebrtcIpHandlingPolicy(&out->webrtc_ip_handling_policy))
 diff --git a/third_party/blink/public/common/renderer_preferences/renderer_preferences.h b/third_party/blink/public/common/renderer_preferences/renderer_preferences.h
-index b7bad104b62..80f28aec93c 100644
+index b7bad104b6..80f28aec93 100644
 --- a/third_party/blink/public/common/renderer_preferences/renderer_preferences.h
 +++ b/third_party/blink/public/common/renderer_preferences/renderer_preferences.h
 @@ -54,6 +54,7 @@ struct BLINK_COMMON_EXPORT RendererPreferences {
@@ -346,7 +346,7 @@ index b7bad104b62..80f28aec93c 100644
  #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || \
      BUILDFLAG(IS_WIN)
 diff --git a/third_party/blink/public/common/renderer_preferences/renderer_preferences_mojom_traits.h b/third_party/blink/public/common/renderer_preferences/renderer_preferences_mojom_traits.h
-index 3851a3a49ac..04ac02e0307 100644
+index 3851a3a49a..04ac02e030 100644
 --- a/third_party/blink/public/common/renderer_preferences/renderer_preferences_mojom_traits.h
 +++ b/third_party/blink/public/common/renderer_preferences/renderer_preferences_mojom_traits.h
 @@ -125,6 +125,11 @@ struct BLINK_COMMON_EXPORT
@@ -362,7 +362,7 @@ index 3851a3a49ac..04ac02e0307 100644
        const ::blink::RendererPreferences& data) {
      return data.enable_encrypted_media;
 diff --git a/third_party/blink/public/mojom/renderer_preferences.mojom b/third_party/blink/public/mojom/renderer_preferences.mojom
-index 88f561eac90..b113e2f2d64 100644
+index 88f561eac9..b113e2f2d6 100644
 --- a/third_party/blink/public/mojom/renderer_preferences.mojom
 +++ b/third_party/blink/public/mojom/renderer_preferences.mojom
 @@ -89,6 +89,8 @@ struct RendererPreferences {
@@ -375,7 +375,7 @@ index 88f561eac90..b113e2f2d64 100644
    // the use of Clear Key key system which is always allowed as required by the
    // spec.
 diff --git a/third_party/blink/renderer/core/exported/web_view_impl.cc b/third_party/blink/renderer/core/exported/web_view_impl.cc
-index 210e182a803..a9577f95f77 100644
+index 210e182a80..a9577f95f7 100644
 --- a/third_party/blink/renderer/core/exported/web_view_impl.cc
 +++ b/third_party/blink/renderer/core/exported/web_view_impl.cc
 @@ -3860,6 +3860,9 @@ void WebViewImpl::UpdateRendererPreferences(
@@ -389,7 +389,7 @@ index 210e182a803..a9577f95f77 100644
    GetSettings()->SetSelectionClipboardBufferAvailable(
        renderer_preferences_.selection_clipboard_buffer_available);
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 2fd192607f6..6591731b164 100644
+index 2fd192607f..6591731b16 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -3627,14 +3627,6 @@

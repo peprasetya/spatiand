@@ -15,7 +15,7 @@ FILE:Android-Toolbar-Scroll-Ablation-setting.patch
 
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Toolbar-Scroll-Ablation-flag.inc b/cromite_flags/chrome/browser/about_flags_cc/Toolbar-Scroll-Ablation-flag.inc
 new file mode 100644
-index 00000000000..1c696124ff9
+index 0000000000..1c696124ff
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Toolbar-Scroll-Ablation-flag.inc
 @@ -0,0 +1,12 @@

@@ -66,7 +66,7 @@ FILE:Content-settings-infrastructure.patch
  create mode 100644 components/content_settings/core/common/bromite_content_settings/placeholder.txt
 
 diff --git a/chrome/browser/content_settings/page_specific_content_settings_delegate.cc b/chrome/browser/content_settings/page_specific_content_settings_delegate.cc
-index d02ab96eef1..6449daff859 100644
+index d02ab96eef..6449daff85 100644
 --- a/chrome/browser/content_settings/page_specific_content_settings_delegate.cc
 +++ b/chrome/browser/content_settings/page_specific_content_settings_delegate.cc
 @@ -220,7 +220,7 @@ namespace {
@@ -79,7 +79,7 @@ index d02ab96eef1..6449daff859 100644
        ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
        content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK),
 diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page_index.html b/chrome/browser/resources/settings/privacy_page/privacy_page_index.html
-index c0e488b4d3e..a325ba0f900 100644
+index c0e488b4d3..a325ba0f90 100644
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page_index.html
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page_index.html
 @@ -552,4 +552,5 @@
@@ -89,7 +89,7 @@ index c0e488b4d3e..a325ba0f900 100644
 +  <div id="bromite-placeholder"></div>
  </cr-view-manager>
 diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts b/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts
-index 45f5d272d2a..c2aec405c9a 100644
+index 45f5d272d2..c2aec405c9 100644
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts
 @@ -9,6 +9,7 @@ import '../settings_page/settings_section.js';
@@ -198,7 +198,7 @@ index 45f5d272d2a..c2aec405c9a 100644
  
    static get properties() {
 diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
-index 813eddcd55b..17bb7a4de24 100644
+index 813eddcd55..17bb7a4de2 100644
 --- a/chrome/browser/resources/settings/route.ts
 +++ b/chrome/browser/resources/settings/route.ts
 @@ -8,6 +8,7 @@ import {loadTimeData} from './i18n_setup.js';
@@ -218,7 +218,7 @@ index 813eddcd55b..17bb7a4de24 100644
  
  /**
 diff --git a/chrome/browser/resources/settings/site_settings/site_details.html b/chrome/browser/resources/settings/site_settings/site_details.html
-index f8f8291410b..ef5baaa8af2 100644
+index f8f8291410..ef5baaa8af 100644
 --- a/chrome/browser/resources/settings/site_settings/site_details.html
 +++ b/chrome/browser/resources/settings/site_settings/site_details.html
 @@ -345,5 +345,6 @@
@@ -229,7 +229,7 @@ index f8f8291410b..ef5baaa8af2 100644
      </div>
    </settings-subpage>
 diff --git a/chrome/browser/resources/settings/site_settings/site_details.ts b/chrome/browser/resources/settings/site_settings/site_details.ts
-index 264a2762f87..943cda7d5a1 100644
+index 264a2762f8..943cda7d5a 100644
 --- a/chrome/browser/resources/settings/site_settings/site_details.ts
 +++ b/chrome/browser/resources/settings/site_settings/site_details.ts
 @@ -74,8 +74,39 @@ export class SiteDetailsElement extends SiteDetailsElementBase {
@@ -274,7 +274,7 @@ index 264a2762f87..943cda7d5a1 100644
  
    static get properties() {
 diff --git a/chrome/browser/resources/settings/site_settings/site_details_permission.html b/chrome/browser/resources/settings/site_settings/site_details_permission.html
-index 46b4d7824ea..d51564b16f9 100644
+index 46b4d7824e..d51564b16f 100644
 --- a/chrome/browser/resources/settings/site_settings/site_details_permission.html
 +++ b/chrome/browser/resources/settings/site_settings/site_details_permission.html
 @@ -58,7 +58,9 @@
@@ -300,7 +300,7 @@ index 46b4d7824ea..d51564b16f9 100644
          </select>
        </div>
 diff --git a/chrome/browser/resources/settings/site_settings/site_details_permission.ts b/chrome/browser/resources/settings/site_settings/site_details_permission.ts
-index 432e89dd7d9..eeb48a00a41 100644
+index 432e89dd7d..eeb48a00a4 100644
 --- a/chrome/browser/resources/settings/site_settings/site_details_permission.ts
 +++ b/chrome/browser/resources/settings/site_settings/site_details_permission.ts
 @@ -20,6 +20,7 @@ import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener
@@ -390,7 +390,7 @@ index 432e89dd7d9..eeb48a00a41 100644
      if (category === ContentSettingsTypes.SERIAL_PORTS ||
          category === ContentSettingsTypes.USB_DEVICES ||
 diff --git a/chrome/browser/resources/settings/site_settings/site_settings_mixin.ts b/chrome/browser/resources/settings/site_settings/site_settings_mixin.ts
-index a2712cad4de..8d2ed25becb 100644
+index a2712cad4d..8d2ed25bec 100644
 --- a/chrome/browser/resources/settings/site_settings/site_settings_mixin.ts
 +++ b/chrome/browser/resources/settings/site_settings/site_settings_mixin.ts
 @@ -11,9 +11,10 @@ import type {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polym
@@ -439,7 +439,7 @@ index a2712cad4de..8d2ed25becb 100644
    toUrl(originOrPattern: string): URL|null;
    expandSiteException(exception: RawSiteException): SiteException;
 diff --git a/chrome/browser/resources/settings/site_settings/site_settings_page.ts b/chrome/browser/resources/settings/site_settings/site_settings_page.ts
-index 8bed6495847..dff9d7313a4 100644
+index 8bed649584..dff9d7313a 100644
 --- a/chrome/browser/resources/settings/site_settings/site_settings_page.ts
 +++ b/chrome/browser/resources/settings/site_settings/site_settings_page.ts
 @@ -52,7 +52,7 @@ function getCategoryItemMap(): Map<ContentSettingsTypes, CategoryListItem> {
@@ -499,7 +499,7 @@ index 8bed6495847..dff9d7313a4 100644
                Id.JAVASCRIPT,
                Id.IMAGES,
 diff --git a/chrome/browser/resources/settings/site_settings/site_settings_util.ts b/chrome/browser/resources/settings/site_settings/site_settings_util.ts
-index 482541e4ab6..c81d2485b29 100644
+index 482541e4ab..c81d2485b2 100644
 --- a/chrome/browser/resources/settings/site_settings/site_settings_util.ts
 +++ b/chrome/browser/resources/settings/site_settings/site_settings_util.ts
 @@ -6,6 +6,55 @@ import {assertNotReached} from 'chrome://resources/js/assert.js';
@@ -573,7 +573,7 @@ index 482541e4ab6..c81d2485b29 100644
    }
  }
 diff --git a/chrome/browser/ui/views/controls/rich_controls_container_view.h b/chrome/browser/ui/views/controls/rich_controls_container_view.h
-index 81676e1073b..de30f3de472 100644
+index 81676e1073..de30f3de47 100644
 --- a/chrome/browser/ui/views/controls/rich_controls_container_view.h
 +++ b/chrome/browser/ui/views/controls/rich_controls_container_view.h
 @@ -50,6 +50,13 @@ class RichControlsContainerView : public views::FlexLayoutView {
@@ -591,7 +591,7 @@ index 81676e1073b..de30f3de472 100644
    gfx::Size FlexRule(const views::View* view,
                       const views::SizeBounds& maximum_size) const;
 diff --git a/chrome/browser/ui/views/page_info/BUILD.gn b/chrome/browser/ui/views/page_info/BUILD.gn
-index d6e74b52c8f..3ef724e8b39 100644
+index d6e74b52c8..3ef724e8b3 100644
 --- a/chrome/browser/ui/views/page_info/BUILD.gn
 +++ b/chrome/browser/ui/views/page_info/BUILD.gn
 @@ -103,6 +103,7 @@ source_set("impl") {
@@ -603,7 +603,7 @@ index d6e74b52c8f..3ef724e8b39 100644
      "//components/omnibox/browser:vector_icons",
      "//components/page_info/core",
 diff --git a/chrome/browser/ui/views/page_info/page_info_bubble_view.cc b/chrome/browser/ui/views/page_info/page_info_bubble_view.cc
-index 72e4e2e06d8..fe8b1d3f296 100644
+index 72e4e2e06d..fe8b1d3f29 100644
 --- a/chrome/browser/ui/views/page_info/page_info_bubble_view.cc
 +++ b/chrome/browser/ui/views/page_info/page_info_bubble_view.cc
 @@ -279,7 +279,7 @@ void PageInfoBubbleView::OpenMainPage(base::OnceClosure initialized_callback) {
@@ -616,7 +616,7 @@ index 72e4e2e06d8..fe8b1d3f296 100644
  
  void PageInfoBubbleView::OpenSecurityPage() {
 diff --git a/chrome/browser/ui/views/page_info/page_info_main_view.cc b/chrome/browser/ui/views/page_info/page_info_main_view.cc
-index 7cb610624d8..c30f0db292a 100644
+index 7cb610624d..c30f0db292 100644
 --- a/chrome/browser/ui/views/page_info/page_info_main_view.cc
 +++ b/chrome/browser/ui/views/page_info/page_info_main_view.cc
 @@ -58,6 +58,7 @@
@@ -688,7 +688,7 @@ index 7cb610624d8..c30f0db292a 100644
        std::make_unique<views::MdTextButton>(base::BindRepeating(
            [=](PageInfoMainView* view) {
 diff --git a/chrome/browser/ui/views/page_info/page_info_view_factory.cc b/chrome/browser/ui/views/page_info/page_info_view_factory.cc
-index d5a31045999..92eeeb834c0 100644
+index d5a3104599..92eeeb834c 100644
 --- a/chrome/browser/ui/views/page_info/page_info_view_factory.cc
 +++ b/chrome/browser/ui/views/page_info/page_info_view_factory.cc
 @@ -22,6 +22,8 @@
@@ -734,7 +734,7 @@ index d5a31045999..92eeeb834c0 100644
        // not shown in the Page Info bubble.
        NOTREACHED();
 diff --git a/chrome/browser/ui/views/page_info/page_info_view_factory.h b/chrome/browser/ui/views/page_info/page_info_view_factory.h
-index f65908e54de..8e2b3e2b71c 100644
+index f65908e54d..8e2b3e2b71 100644
 --- a/chrome/browser/ui/views/page_info/page_info_view_factory.h
 +++ b/chrome/browser/ui/views/page_info/page_info_view_factory.h
 @@ -105,6 +105,11 @@ class PageInfoViewFactory {
@@ -750,7 +750,7 @@ index f65908e54de..8e2b3e2b71c 100644
    static const ui::ImageModel GetChosenObjectIcon(
        const PageInfoUI::ChosenObjectInfo& info,
 diff --git a/chrome/browser/ui/views/page_info/permission_toggle_row_view.cc b/chrome/browser/ui/views/page_info/permission_toggle_row_view.cc
-index 5fa04fcde9b..7366857f2e9 100644
+index 5fa04fcde9..7366857f2e 100644
 --- a/chrome/browser/ui/views/page_info/permission_toggle_row_view.cc
 +++ b/chrome/browser/ui/views/page_info/permission_toggle_row_view.cc
 @@ -36,6 +36,34 @@
@@ -1002,7 +1002,7 @@ index 5fa04fcde9b..7366857f2e9 100644
  
  void PermissionToggleRowView::ResetPermission() {
 diff --git a/chrome/browser/ui/views/page_info/permission_toggle_row_view.h b/chrome/browser/ui/views/page_info/permission_toggle_row_view.h
-index 760131a5070..72601f054a4 100644
+index 760131a507..72601f054a 100644
 --- a/chrome/browser/ui/views/page_info/permission_toggle_row_view.h
 +++ b/chrome/browser/ui/views/page_info/permission_toggle_row_view.h
 @@ -17,6 +17,11 @@
@@ -1052,7 +1052,7 @@ index 760131a5070..72601f054a4 100644
    raw_ptr<PageInfoNavigationHandler, DanglingUntriaged> navigation_handler_ =
        nullptr;
 diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-index 817b9d6e52e..dc3adac2dbe 100644
+index 817b9d6e52..dc3adac2db 100644
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 @@ -14,6 +14,7 @@
@@ -1131,7 +1131,7 @@ index 817b9d6e52e..dc3adac2dbe 100644
  }
  
 diff --git a/chrome/browser/ui/webui/settings/site_settings_helper.cc b/chrome/browser/ui/webui/settings/site_settings_helper.cc
-index 5f970bd6209..5e48f6106e6 100644
+index 5f970bd620..5e48f6106e 100644
 --- a/chrome/browser/ui/webui/settings/site_settings_helper.cc
 +++ b/chrome/browser/ui/webui/settings/site_settings_helper.cc
 @@ -50,6 +50,8 @@
@@ -1229,13 +1229,13 @@ index 5f970bd6209..5e48f6106e6 100644
  
 diff --git a/components/browser_ui/strings/bromite_content_settings/placeholder.txt b/components/browser_ui/strings/bromite_content_settings/placeholder.txt
 new file mode 100644
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/components/browser_ui/strings/bromite_content_settings/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/components/content_settings/core/browser/BUILD.gn b/components/content_settings/core/browser/BUILD.gn
-index ea4cda7c684..8ed6b13a53a 100644
+index ea4cda7c68..8ed6b13a53 100644
 --- a/components/content_settings/core/browser/BUILD.gn
 +++ b/components/content_settings/core/browser/BUILD.gn
 @@ -84,6 +84,8 @@ static_library("browser") {
@@ -1261,13 +1261,13 @@ index ea4cda7c684..8ed6b13a53a 100644
      "cookie_settings.cc",
 diff --git a/components/content_settings/core/browser/bromite_content_settings/placeholder.txt b/components/content_settings/core/browser/bromite_content_settings/placeholder.txt
 new file mode 100644
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/components/content_settings/core/browser/bromite_content_settings/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
-index 42580f75732..6ca9372c4ef 100644
+index 42580f7573..6ca9372c4e 100644
 --- a/components/content_settings/core/browser/content_settings_registry.cc
 +++ b/components/content_settings/core/browser/content_settings_registry.cc
 @@ -18,6 +18,7 @@
@@ -1287,7 +1287,7 @@ index 42580f75732..6ca9372c4ef 100644
  
  void ContentSettingsRegistry::Register(
 diff --git a/components/content_settings/core/browser/content_settings_uma_util.cc b/components/content_settings/core/browser/content_settings_uma_util.cc
-index a920b1dd191..0dfd97e3d92 100644
+index a920b1dd19..0dfd97e3d9 100644
 --- a/components/content_settings/core/browser/content_settings_uma_util.cc
 +++ b/components/content_settings/core/browser/content_settings_uma_util.cc
 @@ -22,11 +22,7 @@ void RecordContentSettingsHistogram(const std::string& name,
@@ -1304,7 +1304,7 @@ index a920b1dd191..0dfd97e3d92 100644
    auto found = content_settings::kContentSettingsTypeToHistogramValue.find(
        content_setting);
 diff --git a/components/content_settings/core/browser/content_settings_utils.cc b/components/content_settings/core/browser/content_settings_utils.cc
-index 802fcb3e96d..bcb626e2cdc 100644
+index 802fcb3e96..bcb626e2cd 100644
 --- a/components/content_settings/core/browser/content_settings_utils.cc
 +++ b/components/content_settings/core/browser/content_settings_utils.cc
 @@ -19,6 +19,7 @@
@@ -1334,7 +1334,7 @@ index 802fcb3e96d..bcb626e2cdc 100644
    rules->mixed_content_rules =
        map->GetSettingsForOneType(ContentSettingsType::MIXEDSCRIPT);
 diff --git a/components/content_settings/core/browser/website_settings_info.h b/components/content_settings/core/browser/website_settings_info.h
-index f01e572fb7f..ffd5e513653 100644
+index f01e572fb7..ffd5e51365 100644
 --- a/components/content_settings/core/browser/website_settings_info.h
 +++ b/components/content_settings/core/browser/website_settings_info.h
 @@ -125,6 +125,32 @@ class WebsiteSettingsInfo {
@@ -1390,7 +1390,7 @@ index f01e572fb7f..ffd5e513653 100644
  
  }  // namespace content_settings
 diff --git a/components/content_settings/core/browser/website_settings_registry.cc b/components/content_settings/core/browser/website_settings_registry.cc
-index 8abc6e3dba1..83365a92a60 100644
+index 8abc6e3dba..83365a92a6 100644
 --- a/components/content_settings/core/browser/website_settings_registry.cc
 +++ b/components/content_settings/core/browser/website_settings_registry.cc
 @@ -45,6 +45,12 @@ const WebsiteSettingsInfo* WebsiteSettingsRegistry::Get(
@@ -1407,7 +1407,7 @@ index 8abc6e3dba1..83365a92a60 100644
      const std::string& name) const {
    for (const auto& entry : website_settings_info_) {
 diff --git a/components/content_settings/core/browser/website_settings_registry.h b/components/content_settings/core/browser/website_settings_registry.h
-index 9fc5048633d..7f257abc200 100644
+index 9fc5048633..7f257abc20 100644
 --- a/components/content_settings/core/browser/website_settings_registry.h
 +++ b/components/content_settings/core/browser/website_settings_registry.h
 @@ -62,6 +62,7 @@ class WebsiteSettingsRegistry {
@@ -1419,7 +1419,7 @@ index 9fc5048633d..7f257abc200 100644
  
    // Register a new website setting. This maps an origin to an arbitrary
 diff --git a/components/content_settings/core/common/BUILD.gn b/components/content_settings/core/common/BUILD.gn
-index e7148ad2c34..d8ef4967fe3 100644
+index e7148ad2c3..d8ef4967fe 100644
 --- a/components/content_settings/core/common/BUILD.gn
 +++ b/components/content_settings/core/common/BUILD.gn
 @@ -54,6 +54,13 @@ static_library("common") {
@@ -1446,13 +1446,13 @@ index e7148ad2c34..d8ef4967fe3 100644
    generate_legacy_js_bindings = true
 diff --git a/components/content_settings/core/common/bromite_content_settings/placeholder.txt b/components/content_settings/core/common/bromite_content_settings/placeholder.txt
 new file mode 100644
-index 00000000000..5174b09c227
+index 0000000000..5174b09c22
 --- /dev/null
 +++ b/components/content_settings/core/common/bromite_content_settings/placeholder.txt
 @@ -0,0 +1 @@
 +this file is intentionally empty
 diff --git a/components/content_settings/core/common/content_settings.cc b/components/content_settings/core/common/content_settings.cc
-index a6660fb35b0..03536b4e405 100644
+index a6660fb35b..03536b4e40 100644
 --- a/components/content_settings/core/common/content_settings.cc
 +++ b/components/content_settings/core/common/content_settings.cc
 @@ -17,11 +17,12 @@
@@ -1518,7 +1518,7 @@ index a6660fb35b0..03536b4e405 100644
  content_settings::SettingInfo::SettingInfo() = default;
  content_settings::SettingInfo& content_settings::SettingInfo::operator=(
 diff --git a/components/content_settings/core/common/content_settings.h b/components/content_settings/core/common/content_settings.h
-index 882dc2e3877..0643b6d48bf 100644
+index 882dc2e387..0643b6d48b 100644
 --- a/components/content_settings/core/common/content_settings.h
 +++ b/components/content_settings/core/common/content_settings.h
 @@ -97,10 +97,22 @@ std::ostream& operator<<(std::ostream& os,
@@ -1545,7 +1545,7 @@ index 882dc2e3877..0643b6d48bf 100644
    // Filters all the rules by matching the primary pattern with
    // |outermost_main_frame_url|. Any new type added below that needs to match
 diff --git a/components/content_settings/core/common/content_settings.mojom b/components/content_settings/core/common/content_settings.mojom
-index 08b3576a02e..58ff279a44d 100644
+index 08b3576a02..58ff279a44 100644
 --- a/components/content_settings/core/common/content_settings.mojom
 +++ b/components/content_settings/core/common/content_settings.mojom
 @@ -73,6 +73,11 @@ struct RuleMetaData {
@@ -1568,7 +1568,7 @@ index 08b3576a02e..58ff279a44d 100644
    array<ContentSettingPatternSource> mixed_content_rules;
  };
 diff --git a/components/content_settings/core/common/content_settings_mojom_traits.cc b/components/content_settings/core/common/content_settings_mojom_traits.cc
-index 7e8b417089c..f0eb39dee8f 100644
+index 7e8b417089..f0eb39dee8 100644
 --- a/components/content_settings/core/common/content_settings_mojom_traits.cc
 +++ b/components/content_settings/core/common/content_settings_mojom_traits.cc
 @@ -113,12 +113,22 @@ bool StructTraits<content_settings::mojom::ContentSettingPatternSourceDataView,
@@ -1596,7 +1596,7 @@ index 7e8b417089c..f0eb39dee8f 100644
  
  }  // namespace mojo
 diff --git a/components/content_settings/core/common/content_settings_mojom_traits.h b/components/content_settings/core/common/content_settings_mojom_traits.h
-index 06bfcac6395..1eaaebc393a 100644
+index 06bfcac639..1eaaebc393 100644
 --- a/components/content_settings/core/common/content_settings_mojom_traits.h
 +++ b/components/content_settings/core/common/content_settings_mojom_traits.h
 @@ -181,10 +181,34 @@ struct StructTraits<
@@ -1635,7 +1635,7 @@ index 06bfcac6395..1eaaebc393a 100644
        const RendererContentSettingRules& r) {
      return r.mixed_content_rules;
 diff --git a/components/content_settings/core/common/content_settings_types.mojom b/components/content_settings/core/common/content_settings_types.mojom
-index 26387f4dc48..ff662acccfd 100644
+index 26387f4dc4..ff662acccf 100644
 --- a/components/content_settings/core/common/content_settings_types.mojom
 +++ b/components/content_settings/core/common/content_settings_types.mojom
 @@ -480,6 +480,7 @@ enum ContentSettingsType {
@@ -1647,7 +1647,7 @@ index 26387f4dc48..ff662acccfd 100644
    // Stores allowlist decisions for Suspicious Site Warnings.
    SUSPICIOUS_SITE_WARNING_DATA,
 diff --git a/components/content_settings/renderer/content_settings_agent_impl.cc b/components/content_settings/renderer/content_settings_agent_impl.cc
-index 81645b3bb44..1b02a24ed2f 100644
+index 81645b3bb4..1b02a24ed2 100644
 --- a/components/content_settings/renderer/content_settings_agent_impl.cc
 +++ b/components/content_settings/renderer/content_settings_agent_impl.cc
 @@ -225,6 +225,80 @@ void ContentSettingsAgentImpl::SendRendererContentSettingRules(
@@ -1732,7 +1732,7 @@ index 81645b3bb44..1b02a24ed2f 100644
      mojo::PendingAssociatedReceiver<mojom::ContentSettingsAgent> receiver) {
    receivers_.Add(this, std::move(receiver));
 diff --git a/components/content_settings/renderer/content_settings_agent_impl.h b/components/content_settings/renderer/content_settings_agent_impl.h
-index 3ced460d084..009d70427ff 100644
+index 3ced460d08..009d70427f 100644
 --- a/components/content_settings/renderer/content_settings_agent_impl.h
 +++ b/components/content_settings/renderer/content_settings_agent_impl.h
 @@ -72,6 +72,13 @@ class ContentSettingsAgentImpl
@@ -1759,7 +1759,7 @@ index 3ced460d084..009d70427ff 100644
    mojom::ContentSettingsManager& GetContentSettingsManager();
  
 diff --git a/components/page_info/android/page_info_controller_android.cc b/components/page_info/android/page_info_controller_android.cc
-index 13c042ca2eb..a676fdf832d 100644
+index 13c042ca2e..a676fdf832 100644
 --- a/components/page_info/android/page_info_controller_android.cc
 +++ b/components/page_info/android/page_info_controller_android.cc
 @@ -16,6 +16,7 @@
@@ -1802,7 +1802,7 @@ index 13c042ca2eb..a676fdf832d 100644
    // are set to the default.
    if (permission.type == ContentSettingsType::ADS) {
 diff --git a/components/page_info/page_info.cc b/components/page_info/page_info.cc
-index a8402e7de85..0438d763f01 100644
+index a8402e7de8..0438d763f0 100644
 --- a/components/page_info/page_info.cc
 +++ b/components/page_info/page_info.cc
 @@ -25,6 +25,7 @@
@@ -1850,7 +1850,7 @@ index a8402e7de85..0438d763f01 100644
      permission_info.type = type;
  
 diff --git a/components/page_info/page_info_ui.cc b/components/page_info/page_info_ui.cc
-index a4c1c51327f..4f52b8be277 100644
+index a4c1c51327..4f52b8be27 100644
 --- a/components/page_info/page_info_ui.cc
 +++ b/components/page_info/page_info_ui.cc
 @@ -16,6 +16,7 @@
@@ -1914,7 +1914,7 @@ index a4c1c51327f..4f52b8be277 100644
  }
  
 diff --git a/components/site_settings_strings.grdp b/components/site_settings_strings.grdp
-index ab3c100b747..dd1b4c39e60 100644
+index ab3c100b74..dd1b4c39e6 100644
 --- a/components/site_settings_strings.grdp
 +++ b/components/site_settings_strings.grdp
 @@ -1,5 +1,6 @@
@@ -1925,7 +1925,7 @@ index ab3c100b747..dd1b4c39e60 100644
    <message name="IDS_SITE_SETTINGS_TYPE_ADS" desc="This string is the name of the intrusive ads setting (visit chrome://settings/content and click 'Additional content settings').">
      Intrusive ads
 diff --git a/third_party/blink/public/platform/web_content_settings_client.h b/third_party/blink/public/platform/web_content_settings_client.h
-index 36410ff29d9..791016c8f5e 100644
+index 36410ff29d..791016c8f5 100644
 --- a/third_party/blink/public/platform/web_content_settings_client.h
 +++ b/third_party/blink/public/platform/web_content_settings_client.h
 @@ -10,6 +10,11 @@
@@ -1956,7 +1956,7 @@ index 36410ff29d9..791016c8f5e 100644
    virtual bool AllowRunningInsecureContent(bool enabled_per_settings,
                                             const WebURL&) {
 diff --git a/third_party/blink/renderer/core/execution_context/execution_context.cc b/third_party/blink/renderer/core/execution_context/execution_context.cc
-index d62a75389d6..c0fbff0af26 100644
+index d62a75389d..c0fbff0af2 100644
 --- a/third_party/blink/renderer/core/execution_context/execution_context.cc
 +++ b/third_party/blink/renderer/core/execution_context/execution_context.cc
 @@ -71,6 +71,22 @@
@@ -1983,7 +1983,7 @@ index d62a75389d6..c0fbff0af26 100644
                                     Agent* agent,
                                     bool is_window)
 diff --git a/third_party/blink/renderer/core/execution_context/execution_context.h b/third_party/blink/renderer/core/execution_context/execution_context.h
-index 7e039f43153..6120fa226fc 100644
+index 7e039f4315..6120fa226f 100644
 --- a/third_party/blink/renderer/core/execution_context/execution_context.h
 +++ b/third_party/blink/renderer/core/execution_context/execution_context.h
 @@ -44,6 +44,7 @@

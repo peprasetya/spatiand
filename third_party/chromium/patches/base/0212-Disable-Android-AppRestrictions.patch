@@ -16,7 +16,7 @@ FILE:Disable-Android-AppRestrictions.patch
  create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/disable-android-app-restriction.inc
 
 diff --git a/chrome/browser/flags/BUILD.gn b/chrome/browser/flags/BUILD.gn
-index dbb1b78deac..39b58999705 100644
+index dbb1b78dea..39b5899970 100644
 --- a/chrome/browser/flags/BUILD.gn
 +++ b/chrome/browser/flags/BUILD.gn
 @@ -29,6 +29,7 @@ android_library("java") {
@@ -29,7 +29,7 @@ index dbb1b78deac..39b58999705 100644
      "//third_party/jni_zero:jni_zero_java",
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/DisableAndroidAppRestriction.inc b/cromite_flags/chrome/browser/about_flags_cc/DisableAndroidAppRestriction.inc
 new file mode 100644
-index 00000000000..420bb63f2e8
+index 0000000000..420bb63f2e
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/DisableAndroidAppRestriction.inc
 @@ -0,0 +1,13 @@
@@ -48,7 +48,7 @@ index 00000000000..420bb63f2e8
 +#endif
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/disable-android-app-restriction.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/disable-android-app-restriction.inc
 new file mode 100644
-index 00000000000..953881a0ef6
+index 0000000000..953881a0ef
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/disable-android-app-restriction.inc
 @@ -0,0 +1,3 @@
@@ -57,7 +57,7 @@ index 00000000000..953881a0ef6
 +                base::FEATURE_DISABLED_BY_DEFAULT);
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/disable-android-app-restriction.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/disable-android-app-restriction.inc
 new file mode 100644
-index 00000000000..b8f71c0f700
+index 0000000000..b8f71c0f70
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/disable-android-app-restriction.inc
 @@ -0,0 +1 @@

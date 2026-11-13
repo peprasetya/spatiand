@@ -10,7 +10,7 @@ FILE:Temp-guard-FileSystemAccessPersistentPermissions.patch
  2 files changed, 3 insertions(+), 2 deletions(-)
 
 diff --git a/chrome/browser/file_system_access/chrome_file_system_access_permission_context.cc b/chrome/browser/file_system_access/chrome_file_system_access_permission_context.cc
-index 18ede1fa9f7..ecf10983c93 100644
+index 18ede1fa9f..ecf10983c9 100644
 --- a/chrome/browser/file_system_access/chrome_file_system_access_permission_context.cc
 +++ b/chrome/browser/file_system_access/chrome_file_system_access_permission_context.cc
 @@ -809,7 +809,7 @@ bool ShouldBlockAccessToPath(
@@ -32,7 +32,7 @@ index 18ede1fa9f7..ecf10983c93 100644
    return true;
  }
 diff --git a/chrome/browser/file_system_access/file_system_access_features.cc b/chrome/browser/file_system_access/file_system_access_features.cc
-index 2cc7e5e4804..6066ad82160 100644
+index 2cc7e5e480..6066ad8216 100644
 --- a/chrome/browser/file_system_access/file_system_access_features.cc
 +++ b/chrome/browser/file_system_access/file_system_access_features.cc
 @@ -28,4 +28,5 @@ BASE_FEATURE(kFileSystemAccessPersistentPermissions,

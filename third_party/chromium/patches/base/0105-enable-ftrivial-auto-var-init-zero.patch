@@ -11,7 +11,7 @@ FILE:enable-ftrivial-auto-var-init-zero.patch
  1 file changed, 4 insertions(+)
 
 diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
-index 9ec0c26dfdf..6a7e14b9a0d 100644
+index 9ec0c26dfd..6a7e14b9a0 100644
 --- a/build/config/compiler/BUILD.gn
 +++ b/build/config/compiler/BUILD.gn
 @@ -438,6 +438,10 @@ config("compiler") {

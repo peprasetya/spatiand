@@ -21,7 +21,7 @@ its other side).
  1 file changed, 10 insertions(+)
 
 diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
-index 92e00d7c66c..3a022e1f2fd 100644
+index 92e00d7c66..3a022e1f2f 100644
 --- a/content/browser/web_contents/web_contents_view_aura.cc
 +++ b/content/browser/web_contents/web_contents_view_aura.cc
 @@ -1236,6 +1236,10 @@ void WebContentsViewAura::StartDragging(

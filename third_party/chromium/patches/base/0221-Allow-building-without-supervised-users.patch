@@ -21,7 +21,7 @@ FILE:Allow-building-without-supervised-users.patch
  12 files changed, 14 insertions(+), 31 deletions(-)
 
 diff --git a/chrome/browser/prefs/chrome_pref_service_factory.cc b/chrome/browser/prefs/chrome_pref_service_factory.cc
-index cff3803cf3a..3c4ee9442dc 100644
+index cff3803cf3..3c4ee9442d 100644
 --- a/chrome/browser/prefs/chrome_pref_service_factory.cc
 +++ b/chrome/browser/prefs/chrome_pref_service_factory.cc
 @@ -350,12 +350,6 @@ void PrepareFactory(
@@ -38,7 +38,7 @@ index cff3803cf3a..3c4ee9442dc 100644
  
  class ResetOnLoadObserverImpl : public prefs::mojom::ResetOnLoadObserver {
 diff --git a/chrome/browser/profiles/profile_attributes_entry.cc b/chrome/browser/profiles/profile_attributes_entry.cc
-index a6dccad9777..42a5b656765 100644
+index a6dccad977..42a5b65676 100644
 --- a/chrome/browser/profiles/profile_attributes_entry.cc
 +++ b/chrome/browser/profiles/profile_attributes_entry.cc
 @@ -468,7 +468,7 @@ bool ProfileAttributesEntry::IsSigninRequired() const {
@@ -51,7 +51,7 @@ index a6dccad9777..42a5b656765 100644
  
  bool ProfileAttributesEntry::IsEphemeral() const {
 diff --git a/chrome/browser/profiles/profile_impl.cc b/chrome/browser/profiles/profile_impl.cc
-index d5badceb0ac..1e7799c18af 100644
+index d5badceb0a..1e7799c18a 100644
 --- a/chrome/browser/profiles/profile_impl.cc
 +++ b/chrome/browser/profiles/profile_impl.cc
 @@ -71,7 +71,6 @@
@@ -93,7 +93,7 @@ index d5badceb0ac..1e7799c18af 100644
    ProfileAttributesEntry* entry = profile_manager->GetProfileAttributesStorage()
                                        .GetProfileAttributesWithPath(GetPath());
 diff --git a/chrome/browser/profiles/profile_manager.cc b/chrome/browser/profiles/profile_manager.cc
-index f9b77d9bd44..2e441094335 100644
+index f9b77d9bd4..2e44109433 100644
 --- a/chrome/browser/profiles/profile_manager.cc
 +++ b/chrome/browser/profiles/profile_manager.cc
 @@ -1299,10 +1299,6 @@ void ProfileManager::InitProfileUserPrefs(Profile* profile) {
@@ -118,7 +118,7 @@ index f9b77d9bd44..2e441094335 100644
    user_manager::User* user =
        ash::ProfileHelper::Get()->GetUserByProfile(profile);
 diff --git a/chrome/browser/supervised_user/supervised_user_browser_utils.cc b/chrome/browser/supervised_user/supervised_user_browser_utils.cc
-index 8f6655459d0..9946603082c 100644
+index 8f6655459d..9946603082 100644
 --- a/chrome/browser/supervised_user/supervised_user_browser_utils.cc
 +++ b/chrome/browser/supervised_user/supervised_user_browser_utils.cc
 @@ -99,6 +99,7 @@ bool SupervisedUserCanSkipExtensionParentApprovals(const Profile* profile) {
@@ -130,7 +130,7 @@ index 8f6655459d0..9946603082c 100644
    return profile->IsChild();
  #else
 diff --git a/chrome/browser/ui/webui/managed_ui_handler.cc b/chrome/browser/ui/webui/managed_ui_handler.cc
-index 370a9c0f54d..b1608a46717 100644
+index 370a9c0f54..b1608a4671 100644
 --- a/chrome/browser/ui/webui/managed_ui_handler.cc
 +++ b/chrome/browser/ui/webui/managed_ui_handler.cc
 @@ -88,10 +88,6 @@ void ManagedUIHandler::AddObservers() {
@@ -145,7 +145,7 @@ index 370a9c0f54d..b1608a46717 100644
  
  void ManagedUIHandler::RemoveObservers() {
 diff --git a/chrome/browser/ui/webui/management/management_ui_handler.cc b/chrome/browser/ui/webui/management/management_ui_handler.cc
-index 5829b606735..8ebca5ac9ad 100644
+index 5829b60673..8ebca5ac9a 100644
 --- a/chrome/browser/ui/webui/management/management_ui_handler.cc
 +++ b/chrome/browser/ui/webui/management/management_ui_handler.cc
 @@ -665,10 +665,6 @@ bool ManagementUIHandler::managed() const {
@@ -160,7 +160,7 @@ index 5829b606735..8ebca5ac9ad 100644
  
  void ManagementUIHandler::UpdateManagedState() {
 diff --git a/components/supervised_user/core/browser/android/content_filters_observer_bridge.cc b/components/supervised_user/core/browser/android/content_filters_observer_bridge.cc
-index c930b9faeca..5611c7c8a0c 100644
+index c930b9faec..5611c7c8a0 100644
 --- a/components/supervised_user/core/browser/android/content_filters_observer_bridge.cc
 +++ b/components/supervised_user/core/browser/android/content_filters_observer_bridge.cc
 @@ -39,7 +39,7 @@ void ContentFiltersObserverBridge::OnChange(JNIEnv* env, bool enabled) {
@@ -173,7 +173,7 @@ index c930b9faeca..5611c7c8a0c 100644
  }
  
 diff --git a/components/supervised_user/core/browser/supervised_user_pref_store.cc b/components/supervised_user/core/browser/supervised_user_pref_store.cc
-index ed40d89c1ac..5fc11f9b0c0 100644
+index ed40d89c1a..5fc11f9b0c 100644
 --- a/components/supervised_user/core/browser/supervised_user_pref_store.cc
 +++ b/components/supervised_user/core/browser/supervised_user_pref_store.cc
 @@ -165,6 +165,7 @@ void SupervisedUserPrefStore::RecreatePreferences() {
@@ -185,7 +185,7 @@ index ed40d89c1ac..5fc11f9b0c0 100644
    prefs_ = std::make_unique<PrefValueMap>();
  
 diff --git a/components/supervised_user/core/browser/supervised_user_preferences.cc b/components/supervised_user/core/browser/supervised_user_preferences.cc
-index f881db2bca7..5e543850d76 100644
+index f881db2bca..5e543850d7 100644
 --- a/components/supervised_user/core/browser/supervised_user_preferences.cc
 +++ b/components/supervised_user/core/browser/supervised_user_preferences.cc
 @@ -159,6 +159,10 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
@@ -209,7 +209,7 @@ index f881db2bca7..5e543850d76 100644
  
  bool IsGoogleSafeSearchEnforced(const PrefService& pref_service) {
 diff --git a/components/supervised_user/core/common/features.cc b/components/supervised_user/core/common/features.cc
-index e4c1bf8e034..76fbbaa9529 100644
+index e4c1bf8e03..76fbbaa952 100644
 --- a/components/supervised_user/core/common/features.cc
 +++ b/components/supervised_user/core/common/features.cc
 @@ -19,6 +19,7 @@ namespace supervised_user {
@@ -221,7 +221,7 @@ index e4c1bf8e034..76fbbaa9529 100644
  // TODO(crbug.com/391799078): Support local web approval for subframes on
  // Desktop.
 diff --git a/extensions/browser/api/management/management_api.cc b/extensions/browser/api/management/management_api.cc
-index 3e60f78f58e..f36f392d331 100644
+index 3e60f78f58..f36f392d33 100644
 --- a/extensions/browser/api/management/management_api.cc
 +++ b/extensions/browser/api/management/management_api.cc
 @@ -662,6 +662,7 @@ bool ManagementSetEnabledFunction::HasUnsupportedRequirements(

@@ -16,7 +16,7 @@ FILE:Remove-navigator.connection-info.patch
  3 files changed, 21 insertions(+), 2 deletions(-)
 
 diff --git a/third_party/blink/renderer/modules/netinfo/network_information.cc b/third_party/blink/renderer/modules/netinfo/network_information.cc
-index 81df80e2b5d..a95a8765147 100644
+index 81df80e2b5..a95a876514 100644
 --- a/third_party/blink/renderer/modules/netinfo/network_information.cc
 +++ b/third_party/blink/renderer/modules/netinfo/network_information.cc
 @@ -80,7 +80,7 @@ NetworkInformation::~NetworkInformation() {
@@ -61,7 +61,7 @@ index 81df80e2b5d..a95a8765147 100644
      DCHECK(connection_observer_handle_);
      connection_observer_handle_ = nullptr;
 diff --git a/third_party/blink/renderer/platform/network/network_state_notifier.cc b/third_party/blink/renderer/platform/network/network_state_notifier.cc
-index bd079c61289..61c29127d9b 100644
+index bd079c6128..61c29127d9 100644
 --- a/third_party/blink/renderer/platform/network/network_state_notifier.cc
 +++ b/third_party/blink/renderer/platform/network/network_state_notifier.cc
 @@ -106,6 +106,21 @@ NetworkStateNotifier::ScopedNotifier::~ScopedNotifier() {
@@ -87,7 +87,7 @@ index bd079c61289..61c29127d9b 100644
      NetworkStateNotifier* notifier,
      NetworkStateNotifier::ObserverType type,
 diff --git a/third_party/blink/renderer/platform/network/network_state_notifier.h b/third_party/blink/renderer/platform/network/network_state_notifier.h
-index 46df15303ef..619cc51ff58 100644
+index 46df15303e..619cc51ff5 100644
 --- a/third_party/blink/renderer/platform/network/network_state_notifier.h
 +++ b/third_party/blink/renderer/platform/network/network_state_notifier.h
 @@ -125,7 +125,7 @@ class PLATFORM_EXPORT NetworkStateNotifier {

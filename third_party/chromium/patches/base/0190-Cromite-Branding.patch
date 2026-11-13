@@ -17,10 +17,10 @@ FILE:Cromite-Branding.patch
  .../browser/chrome_content_browser_client.cc  |   2 +-
  chrome/browser/prefs/BUILD.gn                 |   1 +
  .../prefs/chrome_pref_service_factory.cc      |   6 +-
+ .../settings/about_page/about_page.html.ts    |   2 +-
  .../settings/settings_menu/settings_menu.css  |  12 +++
  .../settings/settings_menu/settings_menu.html |   2 +-
  .../toolbar/chrome_labs/chrome_labs_utils.cc  |   1 +
- chrome/common/url_constants.h                 |   4 +-
  .../install_static/chromium_install_modes.h   |   2 +-
  .../chrome_content_renderer_client.cc         |   3 -
  components/activity_reporter/buildflags.gni   |   2 +-
@@ -37,11 +37,11 @@ FILE:Cromite-Branding.patch
  content/child/runtime_features.cc             |  20 +++-
  .../Cromite-Branding.inc                      |   2 +
  tools/grit/grit/grd_reader.py                 |  35 +++++++
- 31 files changed, 156 insertions(+), 75 deletions(-)
+ 31 files changed, 155 insertions(+), 74 deletions(-)
  create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Cromite-Branding.inc
 
 diff --git a/build/BUILD.gn b/build/BUILD.gn
-index 3fa5cae7e11..b9efb135871 100644
+index 3fa5cae7e1..b9efb13587 100644
 --- a/build/BUILD.gn
 +++ b/build/BUILD.gn
 @@ -56,6 +56,14 @@ buildflag_header("branding_buildflags") {
@@ -60,7 +60,7 @@ index 3fa5cae7e11..b9efb135871 100644
    header = "blink_buildflags.h"
    flags = [ "USE_BLINK=$use_blink" ]
 diff --git a/build/config/BUILDCONFIG.gn b/build/config/BUILDCONFIG.gn
-index 9193673b4eb..1c9f6c212a1 100644
+index 9193673b4e..1c9f6c212a 100644
 --- a/build/config/BUILDCONFIG.gn
 +++ b/build/config/BUILDCONFIG.gn
 @@ -191,6 +191,10 @@ declare_args() {
@@ -75,7 +75,7 @@ index 9193673b4eb..1c9f6c212a1 100644
    # Whether to enable strict deps checks. This ensures that your dependencies
    # are correctly declared (no missing deps and no accessing transitive deps).
 diff --git a/chrome/app/extensions_strings.grdp b/chrome/app/extensions_strings.grdp
-index 338e9305c3a..93ef8c153e7 100644
+index 338e9305c3..93ef8c153e 100644
 --- a/chrome/app/extensions_strings.grdp
 +++ b/chrome/app/extensions_strings.grdp
 @@ -407,7 +407,7 @@
@@ -97,7 +97,7 @@ index 338e9305c3a..93ef8c153e7 100644
    <message name="IDS_EXTENSIONS_MODERN_WEB_GUIDANCE_PROMO" desc="The promotional text displayed in the sidebar of the chrome://extensions page when Developer Mode is enabled. It encourages developers to download the Chrome Extensions and Chrome Web Store skill for their AI coding agents to get latest API updates and best practices.">
      Using AI coding agents to build extensions? Install the <ph name="BEGIN_LINK">&lt;a target="_blank" href="$1"&gt;</ph><ph name="CHROME_EXTENSIONS">Chrome Extensions<ex>Chrome Extensions</ex></ph> and <ph name="WEB_STORE_SKILL">Chrome Web Store skill<ex>Chrome Web Store skill</ex></ph><ph name="END_LINK">&lt;/a&gt;</ph> to teach your coding agent the latest API updates and best practices.
 diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
-index a95e514f94f..05f9f4d8152 100644
+index a95e514f94..05f9f4d815 100644
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
 @@ -83,7 +83,7 @@
@@ -110,7 +110,7 @@ index a95e514f94f..05f9f4d8152 100644
      <message name="IDS_SETTINGS_MORE_FEATURES_LINK" desc="Link which opens page where users can install extensions which provide additional accessibility features.">
        Add accessibility features
 diff --git a/chrome/app/theme/chromium/BRANDING b/chrome/app/theme/chromium/BRANDING
-index f8363d5b294..9f98aa4bf54 100644
+index f8363d5b29..9f98aa4bf5 100644
 --- a/chrome/app/theme/chromium/BRANDING
 +++ b/chrome/app/theme/chromium/BRANDING
 @@ -1,9 +1,9 @@
@@ -196,7 +196,7 @@ zy!Exb55=LoamMVg1=qOj#GBt8GwM$xjQE}{_YlrlZYhRD-?QeT`GFOymy+1&#`gJI
 e)fqMZZ`3a)Ds&5H<cfp<0000<MNUMnLSTYHt&Yn8
 
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 4f20814e6f2..077323eaa23 100644
+index 4f20814e6f..077323eaa2 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -2276,6 +2276,7 @@ source_set("browser") {
@@ -208,7 +208,7 @@ index 4f20814e6f2..077323eaa23 100644
      "//chrome:extra_resources",
      "//chrome/browser/accessibility:impl",
 diff --git a/chrome/browser/browser_process_impl.cc b/chrome/browser/browser_process_impl.cc
-index d72ab4b8470..0088821ba95 100644
+index d72ab4b847..0088821ba9 100644
 --- a/chrome/browser/browser_process_impl.cc
 +++ b/chrome/browser/browser_process_impl.cc
 @@ -1457,7 +1457,7 @@ activity_reporter::ActivityReporter* BrowserProcessImpl::activity_reporter() {
@@ -221,7 +221,7 @@ index d72ab4b8470..0088821ba95 100644
          }),
          base::BindRepeating(&updater::SetActive),
 diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
-index 4ab002ddacc..521d5076bf6 100644
+index 4ab002ddac..521d5076bf 100644
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
 @@ -7459,7 +7459,7 @@ bool ChromeContentBrowserClient::HandleExternalProtocol(
@@ -234,7 +234,7 @@ index 4ab002ddacc..521d5076bf6 100644
                                        bad_message::CCBC_GOOGLE_CHROME_SCHEME);
        return false;
 diff --git a/chrome/browser/prefs/BUILD.gn b/chrome/browser/prefs/BUILD.gn
-index 66f9c0d285f..6bee485b7c1 100644
+index 66f9c0d285..6bee485b7c 100644
 --- a/chrome/browser/prefs/BUILD.gn
 +++ b/chrome/browser/prefs/BUILD.gn
 @@ -59,6 +59,7 @@ source_set("impl") {
@@ -246,7 +246,7 @@ index 66f9c0d285f..6bee485b7c1 100644
      "//chrome/browser:browser_process_impl",
      "//chrome/browser:chrome_content_browser_client",
 diff --git a/chrome/browser/prefs/chrome_pref_service_factory.cc b/chrome/browser/prefs/chrome_pref_service_factory.cc
-index 32aa9fd7a90..cff3803cf3a 100644
+index 32aa9fd7a9..cff3803cf3 100644
 --- a/chrome/browser/prefs/chrome_pref_service_factory.cc
 +++ b/chrome/browser/prefs/chrome_pref_service_factory.cc
 @@ -25,6 +25,7 @@
@@ -269,8 +269,21 @@ index 32aa9fd7a90..cff3803cf3a 100644
    return std::make_unique<ProfilePrefStoreManager>(profile_path, seed);
  }
  
+diff --git a/chrome/browser/resources/settings/about_page/about_page.html.ts b/chrome/browser/resources/settings/about_page/about_page.html.ts
+index b9ac4e634f..37b7e52428 100644
+--- a/chrome/browser/resources/settings/about_page/about_page.html.ts
++++ b/chrome/browser/resources/settings/about_page/about_page.html.ts
+@@ -89,7 +89,7 @@ export function getHtml(this: SettingsAboutPageElement) {
+     </div>
+   ` : ''}
+ </if>
+-  <cr-link-row class="hr" id="help" @click="${this.onHelpClick_}"
++  <cr-link-row class="hr" id="help" @click="${this.onHelpClick_}" hidden
+       label="$i18n{aboutGetHelpUsingChrome}" external></cr-link-row>
+ <if expr="_google_chrome">
+   <cr-link-row class="hr" id="reportIssue" @click="${this.onReportIssueClick_}"
 diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.css b/chrome/browser/resources/settings/settings_menu/settings_menu.css
-index 6e6a63e1ef5..9ce72867807 100644
+index 6e6a63e1ef..9ce7286780 100644
 --- a/chrome/browser/resources/settings/settings_menu/settings_menu.css
 +++ b/chrome/browser/resources/settings/settings_menu/settings_menu.css
 @@ -19,6 +19,18 @@
@@ -293,7 +306,7 @@ index 6e6a63e1ef5..9ce72867807 100644
    --cr-nav-menu-item-content-height: 20px;
    border-radius: 100px;
 diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
-index c35c985ddf3..cf04bff754d 100644
+index c35c985ddf..cf04bff754 100644
 --- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
 +++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
 @@ -123,7 +123,7 @@
@@ -306,7 +319,7 @@ index c35c985ddf3..cf04bff754d 100644
            <cr-ripple></cr-ripple>
          </a>
 diff --git a/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_utils.cc b/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_utils.cc
-index f7c81500b2e..00beba8625a 100644
+index f7c81500b2..00beba8625 100644
 --- a/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_utils.cc
 +++ b/chrome/browser/ui/toolbar/chrome_labs/chrome_labs_utils.cc
 @@ -140,6 +140,7 @@ bool AreNewChromeLabsExperimentsAvailable(Profile* profile) {
@@ -317,30 +330,8 @@ index f7c81500b2e..00beba8625a 100644
    // Always early out on the stable channel regardless of other conditions.
    if (chrome::GetChannel() == version_info::Channel::STABLE) {
      return false;
-diff --git a/chrome/common/url_constants.h b/chrome/common/url_constants.h
-index 1bbf3afad91..5bf8aa98c59 100644
---- a/chrome/common/url_constants.h
-+++ b/chrome/common/url_constants.h
-@@ -106,7 +106,7 @@ inline constexpr char kChromeHelpViaMenuURL[] =
- #endif  // BUILDFLAG(IS_CHROMEOS)
- 
- inline constexpr char kChromeHelpViaWebUIURL[] =
--    "https://support.google.com/chrome?p=help&ctx=settings";
-+    "https://github.com/uazo/cromite/issues";
- #if BUILDFLAG(IS_CHROMEOS)
- inline constexpr char kChromeOsHelpViaWebUIURL[] =
- #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-@@ -170,7 +170,7 @@ inline constexpr char kChromeUIUntrustedNewTabPageUrl[] =
-     "chrome-untrusted://new-tab-page/";
- 
- // The URL for the Chromium project used in the About dialog.
--inline constexpr char16_t kChromiumProjectURL[] = u"https://www.chromium.org/";
-+inline constexpr char16_t kChromiumProjectURL[] = u"https://www.cromite.org/";
- #if BUILDFLAG(IS_CHROMEOS)
- static_assert(std::u16string_view(kChromiumProjectURL) ==
-               ash::chrome_external_urls::kChromiumProjectURL);
 diff --git a/chrome/install_static/chromium_install_modes.h b/chrome/install_static/chromium_install_modes.h
-index a6d969df56d..5f33ecfb1ea 100644
+index a6d969df56..5f33ecfb1e 100644
 --- a/chrome/install_static/chromium_install_modes.h
 +++ b/chrome/install_static/chromium_install_modes.h
 @@ -21,7 +21,7 @@ inline constexpr wchar_t kCompanyPathName[] = L"";
@@ -353,7 +344,7 @@ index a6d969df56d..5f33ecfb1ea 100644
  // The brand-specific safe browsing client name.
  inline constexpr char kSafeBrowsingName[] = "chromium";
 diff --git a/chrome/renderer/chrome_content_renderer_client.cc b/chrome/renderer/chrome_content_renderer_client.cc
-index cf5fde9f76a..48bec270b3f 100644
+index cf5fde9f76..48bec270b3 100644
 --- a/chrome/renderer/chrome_content_renderer_client.cc
 +++ b/chrome/renderer/chrome_content_renderer_client.cc
 @@ -604,13 +604,10 @@ void ChromeContentRendererClient::RenderThreadStarted() {
@@ -371,7 +362,7 @@ index cf5fde9f76a..48bec270b3f 100644
  #endif
  
 diff --git a/components/activity_reporter/buildflags.gni b/components/activity_reporter/buildflags.gni
-index 7c72657bffb..a95642e4487 100644
+index 7c72657bff..a95642e448 100644
 --- a/components/activity_reporter/buildflags.gni
 +++ b/components/activity_reporter/buildflags.gni
 @@ -8,7 +8,7 @@ declare_args() {
@@ -384,7 +375,7 @@ index 7c72657bffb..a95642e4487 100644
    # Starting in November 2025, there was an effort to redefine what it meant
    # for the browser to be "actively used", in order to exclude certain types of
 diff --git a/components/omnibox/browser/autocomplete_controller.cc b/components/omnibox/browser/autocomplete_controller.cc
-index f80ec395c25..4805e1c5040 100644
+index f80ec395c2..4805e1c504 100644
 --- a/components/omnibox/browser/autocomplete_controller.cc
 +++ b/components/omnibox/browser/autocomplete_controller.cc
 @@ -1214,6 +1214,7 @@ bool AutocompleteController::ShouldRunProvider(
@@ -396,7 +387,7 @@ index f80ec395c25..4805e1c5040 100644
             provider->type() == AutocompleteProvider::Type::kOpenTab ||
             provider->type() == AutocompleteProvider::Type::kBookmark ||
 diff --git a/components/omnibox/browser/vector_icons/product_chrome_refresh_old.icon b/components/omnibox/browser/vector_icons/product_chrome_refresh_old.icon
-index 5c35bda0d73..7d2b3936958 100644
+index 5c35bda0d7..7d2b393695 100644
 --- a/components/omnibox/browser/vector_icons/product_chrome_refresh_old.icon
 +++ b/components/omnibox/browser/vector_icons/product_chrome_refresh_old.icon
 @@ -1,51 +1,50 @@
@@ -498,7 +489,7 @@ index 5c35bda0d73..7d2b3936958 100644
 +MOVE_TO, 11.2f, 8,
  CLOSE
 diff --git a/components/policy/core/common/policy_paths.cc b/components/policy/core/common/policy_paths.cc
-index 7c15eeaa4f8..89ea499acb9 100644
+index 7c15eeaa4f..89ea499acb 100644
 --- a/components/policy/core/common/policy_paths.cc
 +++ b/components/policy/core/common/policy_paths.cc
 @@ -18,7 +18,7 @@ const char kPolicyPath[] = "/etc/opt/chrome/policies";
@@ -511,7 +502,7 @@ index 7c15eeaa4f8..89ea499acb9 100644
  #endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC)
  
 diff --git a/components/policy/tools/generate_policy_source.py b/components/policy/tools/generate_policy_source.py
-index 0f77424e427..a50c61156d7 100755
+index 0f77424e42..a50c61156d 100755
 --- a/components/policy/tools/generate_policy_source.py
 +++ b/components/policy/tools/generate_policy_source.py
 @@ -27,7 +27,7 @@ from xml.sax.saxutils import escape as xml_escape
@@ -1124,7 +1115,7 @@ z3=3bI32q;3&^A^#@RQ;k{^t41Rq+f34W3u|*@1288y{>q;|6&;qJI})ZE0^oH1|#U
 EKU(of)Bpeg
 
 diff --git a/components/webui/version/resources/about_version.ts b/components/webui/version/resources/about_version.ts
-index 105c2e28e6e..5c5d96f5c84 100644
+index 105c2e28e6..5c5d96f5c8 100644
 --- a/components/webui/version/resources/about_version.ts
 +++ b/components/webui/version/resources/about_version.ts
 @@ -192,7 +192,7 @@ function initialize() {
@@ -1137,7 +1128,7 @@ index 105c2e28e6e..5c5d96f5c84 100644
        'requestVariationInfo', includeVariationsCmd)
        .then(handleVariationInfo);
 diff --git a/components/webui/version/resources/about_version_mobile.css b/components/webui/version/resources/about_version_mobile.css
-index 2687c8f338e..3d257ce4500 100644
+index 2687c8f338..3d257ce450 100644
 --- a/components/webui/version/resources/about_version_mobile.css
 +++ b/components/webui/version/resources/about_version_mobile.css
 @@ -21,4 +21,14 @@
@@ -1156,7 +1147,7 @@ index 2687c8f338e..3d257ce4500 100644
 +  }
  }
 diff --git a/content/child/runtime_features.cc b/content/child/runtime_features.cc
-index 7fd7a265371..47b5c84b9e6 100644
+index 7fd7a26537..47b5c84b9e 100644
 --- a/content/child/runtime_features.cc
 +++ b/content/child/runtime_features.cc
 @@ -505,13 +505,16 @@ void ResolveInvalidConfigurations() {
@@ -1203,14 +1194,14 @@ index 7fd7a265371..47b5c84b9e6 100644
          << blink::features::kUserMediaElement.name << " instead.";
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Cromite-Branding.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Cromite-Branding.inc
 new file mode 100644
-index 00000000000..fe918b0a0f5
+index 0000000000..fe918b0a0f
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Cromite-Branding.inc
 @@ -0,0 +1,2 @@
 +SET_CROMITE_FEATURE_DISABLED(kShowTabListAnimations);
 +SET_CROMITE_FEATURE_ENABLED(kAndroidStartupImprovements);
 diff --git a/tools/grit/grit/grd_reader.py b/tools/grit/grit/grd_reader.py
-index 03d16ada293..46b1b31bc8f 100755
+index 03d16ada29..46b1b31bc8 100755
 --- a/tools/grit/grit/grd_reader.py
 +++ b/tools/grit/grit/grd_reader.py
 @@ -139,6 +139,7 @@ class GrdContentHandler(xml.sax.handler.ContentHandler):

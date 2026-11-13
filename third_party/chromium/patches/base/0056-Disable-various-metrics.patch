@@ -24,7 +24,7 @@ FILE:Disable-various-metrics.patch
  10 files changed, 8 insertions(+), 29 deletions(-)
 
 diff --git a/chrome/browser/browser_process_impl.cc b/chrome/browser/browser_process_impl.cc
-index b52271e8e8c..9af0eef4db0 100644
+index b52271e8e8..9af0eef4db 100644
 --- a/chrome/browser/browser_process_impl.cc
 +++ b/chrome/browser/browser_process_impl.cc
 @@ -1360,7 +1360,7 @@ void BrowserProcessImpl::RegisterPrefs(PrefRegistrySimple* registry) {
@@ -37,7 +37,7 @@ index b52271e8e8c..9af0eef4db0 100644
    registry->RegisterBooleanPref(prefs::kDevToolsRemoteDebuggingEnabled, false);
  
 diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
-index 0e2124251ce..43201db35cc 100644
+index 0e2124251c..43201db35c 100644
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
 @@ -1607,7 +1607,6 @@ ChromeContentBrowserClient::ChromeContentBrowserClient() {
@@ -49,7 +49,7 @@ index 0e2124251ce..43201db35cc 100644
    extra_parts_.push_back(
        std::make_unique<ChromeContentBrowserClientIsolatedWebAppsPart>());
 diff --git a/chrome/browser/chrome_content_browser_client_navigation_throttles.cc b/chrome/browser/chrome_content_browser_client_navigation_throttles.cc
-index 0f6731054f2..3f399ff12d7 100644
+index 0f6731054f..3f399ff12d 100644
 --- a/chrome/browser/chrome_content_browser_client_navigation_throttles.cc
 +++ b/chrome/browser/chrome_content_browser_client_navigation_throttles.cc
 @@ -22,7 +22,6 @@
@@ -87,7 +87,7 @@ index 0f6731054f2..3f399ff12d7 100644
  
  #if BUILDFLAG(ENABLE_PDF)
 diff --git a/chrome/browser/metrics/chrome_metrics_services_manager_client.cc b/chrome/browser/metrics/chrome_metrics_services_manager_client.cc
-index 3f31e4ba450..5906e872f2f 100644
+index 3f31e4ba45..5906e872f2 100644
 --- a/chrome/browser/metrics/chrome_metrics_services_manager_client.cc
 +++ b/chrome/browser/metrics/chrome_metrics_services_manager_client.cc
 @@ -86,6 +86,10 @@ BASE_FEATURE(kPostFREFixMetricsReportingFeature,
@@ -102,7 +102,7 @@ index 3f31e4ba450..5906e872f2f 100644
  }  // namespace metrics
  
 diff --git a/chrome/browser/ui/search/most_visited_metrics_logger.cc b/chrome/browser/ui/search/most_visited_metrics_logger.cc
-index 2aba98bba90..0d9480ed7e9 100644
+index 2aba98bba9..0d9480ed7e 100644
 --- a/chrome/browser/ui/search/most_visited_metrics_logger.cc
 +++ b/chrome/browser/ui/search/most_visited_metrics_logger.cc
 @@ -42,18 +42,15 @@ void MostVisitedMetricsLogger::LogMostVisitedLoaded(
@@ -133,7 +133,7 @@ index 2aba98bba90..0d9480ed7e9 100644
    base::RecordAction(base::UserMetricsAction("MostVisited_Clicked"));
  }
 diff --git a/components/ntp_tiles/BUILD.gn b/components/ntp_tiles/BUILD.gn
-index 2918a2ae8b0..4e714644883 100644
+index 2918a2ae8b..4e71464488 100644
 --- a/components/ntp_tiles/BUILD.gn
 +++ b/components/ntp_tiles/BUILD.gn
 @@ -63,8 +63,6 @@ static_library("ntp_tiles") {
@@ -154,7 +154,7 @@ index 2918a2ae8b0..4e714644883 100644
      "popular_sites_impl_unittest.cc",
    ]
 diff --git a/components/ntp_tiles/custom_links_manager_impl.cc b/components/ntp_tiles/custom_links_manager_impl.cc
-index b7b2bdb4145..b08ecd3c5a8 100644
+index b7b2bdb414..b08ecd3c5a 100644
 --- a/components/ntp_tiles/custom_links_manager_impl.cc
 +++ b/components/ntp_tiles/custom_links_manager_impl.cc
 @@ -290,7 +290,6 @@ void CustomLinksManagerImpl::RemoveCustomLinksForPreinstalledApps() {
@@ -166,7 +166,7 @@ index b7b2bdb4145..b08ecd3c5a8 100644
      }
    }
 diff --git a/components/ntp_tiles/most_visited_sites.cc b/components/ntp_tiles/most_visited_sites.cc
-index d1589b69b9f..a5265d8d1d6 100644
+index d1589b69b9..a5265d8d1d 100644
 --- a/components/ntp_tiles/most_visited_sites.cc
 +++ b/components/ntp_tiles/most_visited_sites.cc
 @@ -964,10 +964,6 @@ void MostVisitedSites::SaveTilesAndNotify(
@@ -181,7 +181,7 @@ index d1589b69b9f..a5265d8d1d6 100644
    fixed_tiles = ImposeEnterpriseShortcuts(std::move(fixed_tiles));
  
 diff --git a/components/performance_manager/persistence/site_data/leveldb_site_data_store.cc b/components/performance_manager/persistence/site_data/leveldb_site_data_store.cc
-index ae1d246bd36..73b218cb715 100644
+index ae1d246bd3..73b218cb71 100644
 --- a/components/performance_manager/persistence/site_data/leveldb_site_data_store.cc
 +++ b/components/performance_manager/persistence/site_data/leveldb_site_data_store.cc
 @@ -40,7 +40,7 @@ namespace {
@@ -194,7 +194,7 @@ index ae1d246bd36..73b218cb715 100644
  
  // Attempt to repair the database stored in |db_path|.
 diff --git a/services/metrics/public/cpp/ukm_recorder.cc b/services/metrics/public/cpp/ukm_recorder.cc
-index e00753e70ba..2decd0d171d 100644
+index e00753e70b..2decd0d171 100644
 --- a/services/metrics/public/cpp/ukm_recorder.cc
 +++ b/services/metrics/public/cpp/ukm_recorder.cc
 @@ -263,4 +263,5 @@ void UkmRecorder::RemoveObserver(Observer* observer) {

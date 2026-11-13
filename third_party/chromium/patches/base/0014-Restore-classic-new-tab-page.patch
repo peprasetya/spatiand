@@ -10,7 +10,7 @@ FILE:Restore-classic-new-tab-page.patch
  1 file changed, 1 insertion(+), 51 deletions(-)
 
 diff --git a/chrome/browser/search/search.cc b/chrome/browser/search/search.cc
-index a9fdb0a96fe..0eeb13c0bbf 100644
+index a9fdb0a96f..0eeb13c0bb 100644
 --- a/chrome/browser/search/search.cc
 +++ b/chrome/browser/search/search.cc
 @@ -100,17 +100,6 @@ enum NewTabURLState {

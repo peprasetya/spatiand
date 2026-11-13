@@ -15,7 +15,7 @@ FILE:Add-PartialLowEndModeOnMidRangeDevices-flag.patch
  create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Add-PartialLowEndModeOnMidRangeDevices-flag.inc
 
 diff --git a/base/features.cc b/base/features.cc
-index d0659c5cfa4..c7c41ad5b3f 100644
+index d0659c5cfa..c7c41ad5b3 100644
 --- a/base/features.cc
 +++ b/base/features.cc
 @@ -255,6 +255,10 @@ bool IsI18nOptimizationsEnabled() {
@@ -30,7 +30,7 @@ index d0659c5cfa4..c7c41ad5b3f 100644
    g_i18n_optimizations.store(FeatureList::IsEnabled(kI18nOptimizations),
                               std::memory_order_relaxed);
 diff --git a/content/renderer/render_process_impl.cc b/content/renderer/render_process_impl.cc
-index 3946b20d776..ff8cdd07a47 100644
+index 3946b20d77..ff8cdd07a4 100644
 --- a/content/renderer/render_process_impl.cc
 +++ b/content/renderer/render_process_impl.cc
 @@ -2,6 +2,7 @@
@@ -62,7 +62,7 @@ index 3946b20d776..ff8cdd07a47 100644
      // V8 flags are typically set in gin/v8_initializer.cc. Only those flags
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Add-PartialLowEndModeOnMidRangeDevices-flag.inc b/cromite_flags/chrome/browser/about_flags_cc/Add-PartialLowEndModeOnMidRangeDevices-flag.inc
 new file mode 100644
-index 00000000000..c2f9ac85940
+index 0000000000..c2f9ac8594
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Add-PartialLowEndModeOnMidRangeDevices-flag.inc
 @@ -0,0 +1,12 @@

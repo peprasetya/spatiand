@@ -41,7 +41,7 @@ FILE:Remove-binary-blob-integrations.patch
  12 files changed, 7 insertions(+), 34 deletions(-)
 
 diff --git a/chrome/browser/push_messaging/push_messaging_service_factory.cc b/chrome/browser/push_messaging/push_messaging_service_factory.cc
-index 337a07eb340..31be99dc969 100644
+index 337a07eb34..31be99dc96 100644
 --- a/chrome/browser/push_messaging/push_messaging_service_factory.cc
 +++ b/chrome/browser/push_messaging/push_messaging_service_factory.cc
 @@ -28,8 +28,7 @@
@@ -55,7 +55,7 @@ index 337a07eb340..31be99dc969 100644
  
  // static
 diff --git a/chrome/browser/safe_browsing/notification_telemetry/notification_telemetry_service.cc b/chrome/browser/safe_browsing/notification_telemetry/notification_telemetry_service.cc
-index 2afdfdb52da..5086b7e38db 100644
+index 2afdfdb52d..5086b7e38d 100644
 --- a/chrome/browser/safe_browsing/notification_telemetry/notification_telemetry_service.cc
 +++ b/chrome/browser/safe_browsing/notification_telemetry/notification_telemetry_service.cc
 @@ -70,6 +70,7 @@ NotificationTelemetryService::NotificationTelemetryService(
@@ -67,7 +67,7 @@ index 2afdfdb52da..5086b7e38db 100644
        &NotificationTelemetryService::OnNewNotificationServiceWorkerSubscription,
        base::Unretained(this)));
 diff --git a/chrome/browser/ui/webui/chrome_web_ui_configs.cc b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
-index d79e9dfdb0e..f3a1ecac47d 100644
+index d79e9dfdb0..f3a1ecac47 100644
 --- a/chrome/browser/ui/webui/chrome_web_ui_configs.cc
 +++ b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
 @@ -296,7 +296,6 @@ void RegisterChromeWebUIConfigs() {
@@ -79,7 +79,7 @@ index d79e9dfdb0e..f3a1ecac47d 100644
        std::make_unique<
            history_clusters_internals::HistoryClustersInternalsUIConfig>());
 diff --git a/chrome/browser/webid/BUILD.gn b/chrome/browser/webid/BUILD.gn
-index 5fc09fb1d31..049e52aef13 100644
+index 5fc09fb1d3..049e52aef1 100644
 --- a/chrome/browser/webid/BUILD.gn
 +++ b/chrome/browser/webid/BUILD.gn
 @@ -19,8 +19,6 @@ if (is_android) {
@@ -100,7 +100,7 @@ index 5fc09fb1d31..049e52aef13 100644
        "//base:promise_java",
        "//content/public/android:content_java",
 diff --git a/components/gcm_driver/gcm_client_impl.cc b/components/gcm_driver/gcm_client_impl.cc
-index c7e37b01dcb..55b39672e43 100644
+index c7e37b01dc..55b39672e4 100644
 --- a/components/gcm_driver/gcm_client_impl.cc
 +++ b/components/gcm_driver/gcm_client_impl.cc
 @@ -332,6 +332,7 @@ void GCMClientImpl::StartGCM() {
@@ -136,7 +136,7 @@ index c7e37b01dcb..55b39672e43 100644
    // Make sure no checkin is in progress.
    if (checkin_request_.get() || !device_checkin_info_.accounts_set()) {
 diff --git a/content/browser/push_messaging/push_messaging_manager.cc b/content/browser/push_messaging/push_messaging_manager.cc
-index 342ba19bf7f..689dd8d19bf 100644
+index 342ba19bf7..689dd8d19b 100644
 --- a/content/browser/push_messaging/push_messaging_manager.cc
 +++ b/content/browser/push_messaging/push_messaging_manager.cc
 @@ -847,7 +847,7 @@ void PushMessagingManager::GetSubscriptionInfo(
@@ -149,7 +149,7 @@ index 342ba19bf7f..689dd8d19bf 100644
  
  }  // namespace content
 diff --git a/content/test/BUILD.gn b/content/test/BUILD.gn
-index 309d2cd9282..8b8a53732dc 100644
+index 309d2cd928..8b8a53732d 100644
 --- a/content/test/BUILD.gn
 +++ b/content/test/BUILD.gn
 @@ -3917,10 +3917,6 @@ if (is_android) {
@@ -164,7 +164,7 @@ index 309d2cd9282..8b8a53732dc 100644
        "//content/public/android:content_java",
        "//third_party/jni_zero:jni_zero_java",
 diff --git a/device/BUILD.gn b/device/BUILD.gn
-index 2cdc91e243d..527defc2631 100644
+index 2cdc91e243..527defc263 100644
 --- a/device/BUILD.gn
 +++ b/device/BUILD.gn
 @@ -523,9 +523,6 @@ if (is_android) {
@@ -178,7 +178,7 @@ index 2cdc91e243d..527defc2631 100644
        "//base:base_java_test_support",
        "//base:base_junit_test_support",
 diff --git a/services/BUILD.gn b/services/BUILD.gn
-index 589a30c7323..4bae69db1f8 100644
+index 589a30c732..4bae69db1f 100644
 --- a/services/BUILD.gn
 +++ b/services/BUILD.gn
 @@ -201,12 +201,6 @@ if (is_android) {
@@ -206,7 +206,7 @@ index 589a30c7323..4bae69db1f8 100644
        "//base:base_java_test_support",
        "//mojo/public/java:base_java",
 diff --git a/services/device/geolocation/BUILD.gn b/services/device/geolocation/BUILD.gn
-index 44485d88411..7090bb82686 100644
+index 44485d8841..7090bb8268 100644
 --- a/services/device/geolocation/BUILD.gn
 +++ b/services/device/geolocation/BUILD.gn
 @@ -163,10 +163,6 @@ if (is_android) {
@@ -221,7 +221,7 @@ index 44485d88411..7090bb82686 100644
        "//build/android:build_java",
        "//components/location/android:location_java",
 diff --git a/services/shape_detection/BUILD.gn b/services/shape_detection/BUILD.gn
-index cbc2d1dc9c1..e0b02621f3b 100644
+index cbc2d1dc9c..e0b02621f3 100644
 --- a/services/shape_detection/BUILD.gn
 +++ b/services/shape_detection/BUILD.gn
 @@ -129,8 +129,6 @@ if (is_android) {
@@ -234,7 +234,7 @@ index cbc2d1dc9c1..e0b02621f3b 100644
        "//mojo/public/java:base_java",
        "//mojo/public/java:bindings_java",
 diff --git a/third_party/cardboard/BUILD.gn b/third_party/cardboard/BUILD.gn
-index dce4e969b72..c3eb09329b5 100644
+index dce4e969b7..c3eb09329b 100644
 --- a/third_party/cardboard/BUILD.gn
 +++ b/third_party/cardboard/BUILD.gn
 @@ -51,10 +51,6 @@ android_library("cardboard_java") {

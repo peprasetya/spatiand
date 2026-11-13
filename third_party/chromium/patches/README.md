@@ -20,9 +20,16 @@ tree, `../rebase/`), and applied to a clean Chromium of the pinned version they 
 build was made from, exactly: checked at every update. Change a patch in the tree and write it out
 again, not by hand here.
 
-**What depends on Cromite still (2026-11-14):** the ad blocker's lists are fetched from
-`uazo.github.io/cromite/filters/` (in `base/`'s "Eyeo Adblock for Cromite"). To decide: the lists'
-own addresses, or a copy of ours.
+**Nothing is fetched from Cromite's pages any more (2026-11-14):** the ad blocker's lists come
+from their maintainers' own addresses (eyeo's `easylist-downloads.adblockplus.org` for the EasyList
+family and the anti-circumvention list, each other list from the address its maintainers register),
+every one free-licensed; a profile that had the mirror's addresses is moved to them at its next
+start, its own subscriptions and switches untouched. No longer offered at first run, a profile that
+had them keeps them: the Bulgarian list (no licence stated) and Dandelion Sprout's Nordic (its own
+licence, not a free one). The component updater asks nobody (its one source was Cromite's, and
+served only a fonts pack no build of ours installed). In the same change: Google's model execution
+is off by default, on the device and on its servers, with its pages' APIs and the Settings page gone
+(SpatiPal is the assistant here), and Web Bluetooth is there on Linux and asks, as in Chrome.
 
 **Candidates to drop when they next cost work**, since they do nothing in a Linux-UI build:
 "Experimental support for extensions on Android" (235 files, and it renames build flags across the

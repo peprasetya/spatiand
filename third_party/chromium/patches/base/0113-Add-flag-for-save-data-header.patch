@@ -16,7 +16,7 @@ FILE:Add-flag-for-save-data-header.patch
  create mode 100644 cromite_flags/services/network/public/cpp/features_h/Add-flag-for-save-data-header.inc
 
 diff --git a/content/browser/loader/browser_initiated_resource_request.cc b/content/browser/loader/browser_initiated_resource_request.cc
-index 5615000e36d..34245cc82ea 100644
+index 5615000e36..34245cc82e 100644
 --- a/content/browser/loader/browser_initiated_resource_request.cc
 +++ b/content/browser/loader/browser_initiated_resource_request.cc
 @@ -4,6 +4,9 @@
@@ -45,7 +45,7 @@ index 5615000e36d..34245cc82ea 100644
      }
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Add-flag-for-save-data-header.inc b/cromite_flags/chrome/browser/about_flags_cc/Add-flag-for-save-data-header.inc
 new file mode 100644
-index 00000000000..1cb168febc4
+index 0000000000..1cb168febc
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Add-flag-for-save-data-header.inc
 @@ -0,0 +1,10 @@
@@ -61,7 +61,7 @@ index 00000000000..1cb168febc4
 +#endif
 diff --git a/cromite_flags/services/network/public/cpp/features_cc/Add-flag-for-save-data-header.inc b/cromite_flags/services/network/public/cpp/features_cc/Add-flag-for-save-data-header.inc
 new file mode 100644
-index 00000000000..cc7d0fdb415
+index 0000000000..cc7d0fdb41
 --- /dev/null
 +++ b/cromite_flags/services/network/public/cpp/features_cc/Add-flag-for-save-data-header.inc
 @@ -0,0 +1,4 @@
@@ -71,7 +71,7 @@ index 00000000000..cc7d0fdb415
 +                base::FEATURE_DISABLED_BY_DEFAULT);
 diff --git a/cromite_flags/services/network/public/cpp/features_h/Add-flag-for-save-data-header.inc b/cromite_flags/services/network/public/cpp/features_h/Add-flag-for-save-data-header.inc
 new file mode 100644
-index 00000000000..f33eb11a4ee
+index 0000000000..f33eb11a4e
 --- /dev/null
 +++ b/cromite_flags/services/network/public/cpp/features_h/Add-flag-for-save-data-header.inc
 @@ -0,0 +1 @@

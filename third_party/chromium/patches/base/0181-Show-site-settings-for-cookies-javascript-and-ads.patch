@@ -14,7 +14,7 @@ FILE:Show-site-settings-for-cookies-javascript-and-ads.patch
 
 diff --git a/components/content_settings/core/browser/bromite_content_settings/javascript.inc b/components/content_settings/core/browser/bromite_content_settings/javascript.inc
 new file mode 100644
-index 00000000000..9bfc38e3faf
+index 0000000000..9bfc38e3fa
 --- /dev/null
 +++ b/components/content_settings/core/browser/bromite_content_settings/javascript.inc
 @@ -0,0 +1,4 @@

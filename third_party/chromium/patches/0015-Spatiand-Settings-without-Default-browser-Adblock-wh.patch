@@ -12,7 +12,7 @@ Subject: [PATCH 295/310] Spatiand: Settings without Default browser, Adblock
  4 files changed, 6 insertions(+), 34 deletions(-)
 
 diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
-index ea3824cd754..5e8dfa972d7 100644
+index ea3824cd75..5e8dfa972d 100644
 --- a/chrome/browser/resources/settings/route.ts
 +++ b/chrome/browser/resources/settings/route.ts
 @@ -249,14 +249,6 @@ function createRoutes(): SettingsRoutes {
@@ -31,7 +31,7 @@ index ea3824cd754..5e8dfa972d7 100644
      r.ON_STARTUP = r.BASIC.createSection(
          '/onStartup', 'onStartup', loadTimeData.getString('onStartup'));
 diff --git a/chrome/browser/resources/settings/settings_main/settings_main.html b/chrome/browser/resources/settings/settings_main/settings_main.html
-index 8a4a2dfdff5..d4ff71736f1 100644
+index 8a4a2dfdff..d4ff71736f 100644
 --- a/chrome/browser/resources/settings/settings_main/settings_main.html
 +++ b/chrome/browser/resources/settings/settings_main/settings_main.html
 @@ -119,17 +119,6 @@
@@ -53,7 +53,7 @@ index 8a4a2dfdff5..d4ff71736f1 100644
      <div slot="view" id="onStartup">
        <template is="dom-if" if="[[renderPlugin_(
 diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
-index 8014c545a0f..eb30c967d12 100644
+index 8014c545a0..eb30c967d1 100644
 --- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
 +++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
 @@ -30,6 +30,11 @@
@@ -98,7 +98,7 @@ index 8014c545a0f..eb30c967d12 100644
          <a role="menuitem" id="system" href="/system" class="cr-nav-menu-item"
              ?hidden="${this.shouldHideMenuItem_(this.pageVisibility_?.system)}">
 diff --git a/services/firewall/tools/rules.xml b/services/firewall/tools/rules.xml
-index 033df730515..4880ebb0889 100644
+index 033df73051..4880ebb088 100644
 --- a/services/firewall/tools/rules.xml
 +++ b/services/firewall/tools/rules.xml
 @@ -96,4 +96,5 @@

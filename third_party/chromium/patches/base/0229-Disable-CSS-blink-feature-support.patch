@@ -20,7 +20,7 @@ FILE:Disable-CSS-blink-feature-support.patch
 
 diff --git a/third_party/blink/renderer/build/scripts/cromite_feature_gen.py b/third_party/blink/renderer/build/scripts/cromite_feature_gen.py
 new file mode 100644
-index 00000000000..85b178d3f31
+index 0000000000..85b178d3f3
 --- /dev/null
 +++ b/third_party/blink/renderer/build/scripts/cromite_feature_gen.py
 @@ -0,0 +1,63 @@
@@ -88,7 +88,7 @@ index 00000000000..85b178d3f31
 +if __name__ == '__main__':
 +    main()
 diff --git a/third_party/blink/renderer/core/css/parser/css_supports_parser.cc b/third_party/blink/renderer/core/css/parser/css_supports_parser.cc
-index 6426d62a1a8..51363b9a63d 100644
+index 6426d62a1a..51363b9a63 100644
 --- a/third_party/blink/renderer/core/css/parser/css_supports_parser.cc
 +++ b/third_party/blink/renderer/core/css/parser/css_supports_parser.cc
 @@ -13,6 +13,7 @@
@@ -114,7 +114,7 @@ index 6426d62a1a8..51363b9a63d 100644
      }
    }
 diff --git a/third_party/blink/renderer/core/speculation_rules/document_rule_predicate.cc b/third_party/blink/renderer/core/speculation_rules/document_rule_predicate.cc
-index 0da3497ae84..b9441e4eb5d 100644
+index 0da3497ae8..b9441e4eb5 100644
 --- a/third_party/blink/renderer/core/speculation_rules/document_rule_predicate.cc
 +++ b/third_party/blink/renderer/core/speculation_rules/document_rule_predicate.cc
 @@ -521,7 +521,7 @@ DocumentRulePredicate* DocumentRulePredicate::Parse(
@@ -127,7 +127,7 @@ index 0da3497ae84..b9441e4eb5d 100644
          MakeGarbageCollected<CSSParserContext>(*execution_context);
      for (auto* raw_selector : raw_selectors) {
 diff --git a/third_party/blink/renderer/platform/BUILD.gn b/third_party/blink/renderer/platform/BUILD.gn
-index aa4c805bb25..aeb96b93283 100644
+index aa4c805bb2..aeb96b9328 100644
 --- a/third_party/blink/renderer/platform/BUILD.gn
 +++ b/third_party/blink/renderer/platform/BUILD.gn
 @@ -47,6 +47,23 @@ make_names("font_family_names") {

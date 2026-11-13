@@ -9,7 +9,7 @@ FILE:Disable-devtools-remote-and-custom-protocols.patch
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/chrome/browser/ui/webui/devtools/devtools_ui_data_source.cc b/chrome/browser/ui/webui/devtools/devtools_ui_data_source.cc
-index 31bea976c80..6f1eb1d18fc 100644
+index 31bea976c8..6f1eb1d18f 100644
 --- a/chrome/browser/ui/webui/devtools/devtools_ui_data_source.cc
 +++ b/chrome/browser/ui/webui/devtools/devtools_ui_data_source.cc
 @@ -183,7 +183,7 @@ void DevToolsDataSource::StartDataRequest(

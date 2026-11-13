@@ -13,7 +13,7 @@ FILE:Disable-visited-pseudo-class.patch
  2 files changed, 5 insertions(+), 4 deletions(-)
 
 diff --git a/components/visitedlink/browser/visitedlink_writer.cc b/components/visitedlink/browser/visitedlink_writer.cc
-index 002bdd73ba7..3855b0d8427 100644
+index 002bdd73ba..3855b0d842 100644
 --- a/components/visitedlink/browser/visitedlink_writer.cc
 +++ b/components/visitedlink/browser/visitedlink_writer.cc
 @@ -233,7 +233,7 @@ VisitedLinkWriter::VisitedLinkWriter(content::BrowserContext* browser_context,
@@ -55,7 +55,7 @@ index 002bdd73ba7..3855b0d8427 100644
  }
  
 diff --git a/components/visitedlink/common/visitedlink_common.cc b/components/visitedlink/common/visitedlink_common.cc
-index f81b469c579..20cbf101b2c 100644
+index f81b469c57..20cbf101b2 100644
 --- a/components/visitedlink/common/visitedlink_common.cc
 +++ b/components/visitedlink/common/visitedlink_common.cc
 @@ -76,6 +76,7 @@ bool VisitedLinkCommon::IsVisited(const GURL& link_url,

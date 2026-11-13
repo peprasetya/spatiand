@@ -19,7 +19,7 @@ FILE:Switch-to-fstack-protector-strong.patch
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
-index c106acfca9f..c6004e5deb6 100644
+index c106acfca9..c6004e5deb 100644
 --- a/build/config/compiler/BUILD.gn
 +++ b/build/config/compiler/BUILD.gn
 @@ -465,7 +465,7 @@ config("compiler") {

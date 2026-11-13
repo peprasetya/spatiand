@@ -13,7 +13,7 @@ FILE:WIN-Fix-log-to-file.patch
  3 files changed, 22 insertions(+), 7 deletions(-)
 
 diff --git a/chrome/common/logging_chrome.cc b/chrome/common/logging_chrome.cc
-index b6d6fc87bdf..33ac5a8af97 100644
+index b6d6fc87bd..33ac5a8af9 100644
 --- a/chrome/common/logging_chrome.cc
 +++ b/chrome/common/logging_chrome.cc
 @@ -39,6 +39,9 @@
@@ -73,7 +73,7 @@ index b6d6fc87bdf..33ac5a8af97 100644
  
  }  // namespace logging
 diff --git a/chrome/common/logging_chrome.h b/chrome/common/logging_chrome.h
-index 1bb3aebf0a4..20c256295fa 100644
+index 1bb3aebf0a..20c256295f 100644
 --- a/chrome/common/logging_chrome.h
 +++ b/chrome/common/logging_chrome.h
 @@ -34,10 +34,14 @@ LoggingDestination DetermineLoggingDestination(
@@ -101,7 +101,7 @@ index 1bb3aebf0a4..20c256295fa 100644
  // "_yymmdd-hhmmss".
  base::FilePath GenerateTimestampedName(const base::FilePath& base_path,
 diff --git a/content/app/content_main.cc b/content/app/content_main.cc
-index 0fd60fa8208..2c4b6bb6681 100644
+index 0fd60fa820..2c4b6bb668 100644
 --- a/content/app/content_main.cc
 +++ b/content/app/content_main.cc
 @@ -323,9 +323,12 @@ NO_STACK_PROTECTOR int RunContentProcess(

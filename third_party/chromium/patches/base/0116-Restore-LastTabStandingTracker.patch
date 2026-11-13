@@ -27,7 +27,7 @@ FILE:Restore-LastTabStandingTracker.patch
  create mode 100644 chrome/browser/permissions/last_tab_standing_tracker_tab_helper.h
 
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 2aad2bbf53b..67253ff2ca1 100644
+index 2aad2bbf53..67253ff2ca 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -1036,6 +1036,13 @@ source_set("core") {
@@ -45,7 +45,7 @@ index 2aad2bbf53b..67253ff2ca1 100644
  
    if (is_android) {
 diff --git a/chrome/browser/content_settings/host_content_settings_map_factory.cc b/chrome/browser/content_settings/host_content_settings_map_factory.cc
-index dc5898b7d0b..630240e1dfb 100644
+index dc5898b7d0..630240e1df 100644
 --- a/chrome/browser/content_settings/host_content_settings_map_factory.cc
 +++ b/chrome/browser/content_settings/host_content_settings_map_factory.cc
 @@ -11,6 +11,7 @@
@@ -66,7 +66,7 @@ index dc5898b7d0b..630240e1dfb 100644
        safe_browsing::AdvancedProtectionStatusManagerFactory::GetInstance());
 diff --git a/chrome/browser/permissions/last_tab_standing_tracker.cc b/chrome/browser/permissions/last_tab_standing_tracker.cc
 new file mode 100644
-index 00000000000..5df1981731e
+index 0000000000..5df1981731
 --- /dev/null
 +++ b/chrome/browser/permissions/last_tab_standing_tracker.cc
 @@ -0,0 +1,59 @@
@@ -131,7 +131,7 @@ index 00000000000..5df1981731e
 +}
 diff --git a/chrome/browser/permissions/last_tab_standing_tracker.h b/chrome/browser/permissions/last_tab_standing_tracker.h
 new file mode 100644
-index 00000000000..fedb9d1973a
+index 0000000000..fedb9d1973
 --- /dev/null
 +++ b/chrome/browser/permissions/last_tab_standing_tracker.h
 @@ -0,0 +1,40 @@
@@ -177,7 +177,7 @@ index 00000000000..fedb9d1973a
 +#endif  // CHROME_BROWSER_PERMISSIONS_LAST_TAB_STANDING_TRACKER_H_
 diff --git a/chrome/browser/permissions/last_tab_standing_tracker_factory.cc b/chrome/browser/permissions/last_tab_standing_tracker_factory.cc
 new file mode 100644
-index 00000000000..bab291209a8
+index 0000000000..bab291209a
 --- /dev/null
 +++ b/chrome/browser/permissions/last_tab_standing_tracker_factory.cc
 @@ -0,0 +1,36 @@
@@ -219,7 +219,7 @@ index 00000000000..bab291209a8
 +}
 diff --git a/chrome/browser/permissions/last_tab_standing_tracker_factory.h b/chrome/browser/permissions/last_tab_standing_tracker_factory.h
 new file mode 100644
-index 00000000000..f9c493f6ccf
+index 0000000000..f9c493f6cc
 --- /dev/null
 +++ b/chrome/browser/permissions/last_tab_standing_tracker_factory.h
 @@ -0,0 +1,40 @@
@@ -265,7 +265,7 @@ index 00000000000..f9c493f6ccf
 +#endif  // CHROME_BROWSER_PERMISSIONS_LAST_TAB_STANDING_TRACKER_FACTORY_H_
 diff --git a/chrome/browser/permissions/last_tab_standing_tracker_observer.h b/chrome/browser/permissions/last_tab_standing_tracker_observer.h
 new file mode 100644
-index 00000000000..6a9eaa33c09
+index 0000000000..6a9eaa33c0
 --- /dev/null
 +++ b/chrome/browser/permissions/last_tab_standing_tracker_observer.h
 @@ -0,0 +1,24 @@
@@ -295,7 +295,7 @@ index 00000000000..6a9eaa33c09
 +#endif  // CHROME_BROWSER_PERMISSIONS_LAST_TAB_STANDING_TRACKER_OBSERVER_H_
 diff --git a/chrome/browser/permissions/last_tab_standing_tracker_tab_helper.cc b/chrome/browser/permissions/last_tab_standing_tracker_tab_helper.cc
 new file mode 100644
-index 00000000000..1d5f0f041b6
+index 0000000000..1d5f0f041b
 --- /dev/null
 +++ b/chrome/browser/permissions/last_tab_standing_tracker_tab_helper.cc
 @@ -0,0 +1,46 @@
@@ -347,7 +347,7 @@ index 00000000000..1d5f0f041b6
 +WEB_CONTENTS_USER_DATA_KEY_IMPL(LastTabStandingTrackerTabHelper);
 diff --git a/chrome/browser/permissions/last_tab_standing_tracker_tab_helper.h b/chrome/browser/permissions/last_tab_standing_tracker_tab_helper.h
 new file mode 100644
-index 00000000000..e282172d0d4
+index 0000000000..e282172d0d
 --- /dev/null
 +++ b/chrome/browser/permissions/last_tab_standing_tracker_tab_helper.h
 @@ -0,0 +1,37 @@
@@ -389,7 +389,7 @@ index 00000000000..e282172d0d4
 +
 +#endif  // CHROME_BROWSER_PERMISSIONS_LAST_TAB_STANDING_TRACKER_TAB_HELPER_H_
 diff --git a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
-index 77632fa020f..f857d3c6cae 100644
+index 77632fa020..f857d3c6ca 100644
 --- a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
 +++ b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
 @@ -176,6 +176,7 @@
@@ -409,7 +409,7 @@ index 77632fa020f..f857d3c6cae 100644
  #if BUILDFLAG(ENABLE_WEBUI_NTP)
    OneGoogleBarServiceFactory::GetInstance();
 diff --git a/chrome/browser/ui/tab_helpers.cc b/chrome/browser/ui/tab_helpers.cc
-index 8dccf1cf05b..9725e8f2f97 100644
+index 8dccf1cf05..9725e8f2f9 100644
 --- a/chrome/browser/ui/tab_helpers.cc
 +++ b/chrome/browser/ui/tab_helpers.cc
 @@ -18,6 +18,7 @@

@@ -22,7 +22,7 @@ FILE:Add-webRTC-site-settings.patch
 
 diff --git a/components/browser_ui/strings/bromite_content_settings/webrtc.grdp b/components/browser_ui/strings/bromite_content_settings/webrtc.grdp
 new file mode 100644
-index 00000000000..cf4fd02e990
+index 0000000000..cf4fd02e99
 --- /dev/null
 +++ b/components/browser_ui/strings/bromite_content_settings/webrtc.grdp
 @@ -0,0 +1,27 @@
@@ -55,7 +55,7 @@ index 00000000000..cf4fd02e990
 +</grit-part>
 diff --git a/components/content_settings/core/browser/bromite_content_settings/webrtc.inc b/components/content_settings/core/browser/bromite_content_settings/webrtc.inc
 new file mode 100644
-index 00000000000..03843792d8d
+index 0000000000..03843792d8
 --- /dev/null
 +++ b/components/content_settings/core/browser/bromite_content_settings/webrtc.inc
 @@ -0,0 +1,22 @@
@@ -83,13 +83,13 @@ index 00000000000..03843792d8d
 +    .set_mid_sentence_ui(IDS_SITE_SETTINGS_TYPE_WEBRTC_MID_SENTENCE);
 diff --git a/components/content_settings/core/common/bromite_content_settings/WEBRTC.inc b/components/content_settings/core/common/bromite_content_settings/WEBRTC.inc
 new file mode 100644
-index 00000000000..9af8b04d794
+index 0000000000..9af8b04d79
 --- /dev/null
 +++ b/components/content_settings/core/common/bromite_content_settings/WEBRTC.inc
 @@ -0,0 +1 @@
 +  WEBRTC,
 diff --git a/third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.cc b/third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.cc
-index d99253b2940..f1b045569bb 100644
+index d99253b294..f1b045569b 100644
 --- a/third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.cc
 +++ b/third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.cc
 @@ -59,6 +59,7 @@
@@ -113,7 +113,7 @@ index d99253b2940..f1b045569bb 100644
          // TODO(guoweis): specify the flag of disabling local candidate
          // collection when webrtc is updated.
 diff --git a/third_party/blink/renderer/modules/peerconnection/rtc_rtp_receiver.cc b/third_party/blink/renderer/modules/peerconnection/rtc_rtp_receiver.cc
-index c8c39e3a49c..360274b192e 100644
+index c8c39e3a49..360274b192 100644
 --- a/third_party/blink/renderer/modules/peerconnection/rtc_rtp_receiver.cc
 +++ b/third_party/blink/renderer/modules/peerconnection/rtc_rtp_receiver.cc
 @@ -25,6 +25,9 @@
@@ -142,7 +142,7 @@ index c8c39e3a49c..360274b192e 100644
    capabilities->setCodecs(HeapVector<Member<RTCRtpCodecCapability>>());
    capabilities->setHeaderExtensions(
 diff --git a/third_party/blink/renderer/modules/peerconnection/rtc_rtp_sender.cc b/third_party/blink/renderer/modules/peerconnection/rtc_rtp_sender.cc
-index ecb63731646..c38c7d9f5d4 100644
+index ecb6373164..c38c7d9f5d 100644
 --- a/third_party/blink/renderer/modules/peerconnection/rtc_rtp_sender.cc
 +++ b/third_party/blink/renderer/modules/peerconnection/rtc_rtp_sender.cc
 @@ -32,6 +32,9 @@

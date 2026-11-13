@@ -15,7 +15,7 @@ FILE:Use-list-mode-for-tab-switcher.patch
 
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/tab-switcher-list-mode.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/tab-switcher-list-mode.inc
 new file mode 100644
-index 00000000000..71e9bdc0d59
+index 0000000000..71e9bdc0d5
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/tab-switcher-list-mode.inc
 @@ -0,0 +1,3 @@

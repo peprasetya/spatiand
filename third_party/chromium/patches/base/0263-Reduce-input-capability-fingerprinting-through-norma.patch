@@ -18,7 +18,7 @@ FILE:Reduce-input-capability-fingerprinting-through-normalization.patch
  1 file changed, 4 insertions(+)
 
 diff --git a/ui/base/pointer/pointer_device_linux.cc b/ui/base/pointer/pointer_device_linux.cc
-index 5c9bf105bb1..0b6998b320c 100644
+index 5c9bf105bb..0b6998b320 100644
 --- a/ui/base/pointer/pointer_device_linux.cc
 +++ b/ui/base/pointer/pointer_device_linux.cc
 @@ -15,6 +15,7 @@ namespace ui {

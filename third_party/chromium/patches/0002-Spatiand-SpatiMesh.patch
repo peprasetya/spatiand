@@ -20,7 +20,7 @@ The product's name and icon (assets/apps/spatimesh.svg) in place of Cromite's.
  12 files changed, 8 insertions(+), 8 deletions(-)
 
 diff --git a/chrome/app/theme/chromium/BRANDING b/chrome/app/theme/chromium/BRANDING
-index 9f98aa4bf54..47dc8192ebc 100644
+index 9f98aa4bf5..47dc8192eb 100644
 --- a/chrome/app/theme/chromium/BRANDING
 +++ b/chrome/app/theme/chromium/BRANDING
 @@ -1,10 +1,10 @@

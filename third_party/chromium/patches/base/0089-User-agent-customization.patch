@@ -24,7 +24,7 @@ FILE:User-agent-customization.patch
  create mode 100644 components/browser_ui/strings/bromite_content_settings/request_desktop_site.grdp
 
 diff --git a/base/base_switches.h b/base/base_switches.h
-index 389eecbd79c..9d544c40c69 100644
+index 389eecbd79..9d544c40c6 100644
 --- a/base/base_switches.h
 +++ b/base/base_switches.h
 @@ -195,6 +195,8 @@ inline constexpr char kPackageName[] = "package-name";
@@ -37,7 +37,7 @@ index 389eecbd79c..9d544c40c69 100644
  // Override the default scheduling boosting value for urgent tasks.
  // This can be adjusted if a specific chromeos device shows better perf/power
 diff --git a/chrome/browser/content_settings/request_desktop_site_web_contents_observer_android.cc b/chrome/browser/content_settings/request_desktop_site_web_contents_observer_android.cc
-index 44347aed1cb..363eda8f281 100644
+index 44347aed1c..363eda8f28 100644
 --- a/chrome/browser/content_settings/request_desktop_site_web_contents_observer_android.cc
 +++ b/chrome/browser/content_settings/request_desktop_site_web_contents_observer_android.cc
 @@ -14,10 +14,12 @@
@@ -71,7 +71,7 @@ index 44347aed1cb..363eda8f281 100644
                          ? navigation_handle->GetParentFrameOrOuterDocument()
                                ->GetOutermostMainFrame()
 diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
-index b474bd710e7..5fa8d8b23bd 100644
+index b474bd710e..5fa8d8b23b 100644
 --- a/chrome/common/pref_names.h
 +++ b/chrome/common/pref_names.h
 @@ -1185,6 +1185,14 @@ inline constexpr char kNaviOnboardGroup[] = "browser.navi_onboard_group";
@@ -91,7 +91,7 @@ index b474bd710e7..5fa8d8b23bd 100644
  inline constexpr char kDataUrlInSvgUseEnabled[] =
 diff --git a/components/browser_ui/strings/bromite_content_settings/request_desktop_site.grdp b/components/browser_ui/strings/bromite_content_settings/request_desktop_site.grdp
 new file mode 100644
-index 00000000000..3ec4a851c30
+index 0000000000..3ec4a851c3
 --- /dev/null
 +++ b/components/browser_ui/strings/bromite_content_settings/request_desktop_site.grdp
 @@ -0,0 +1,18 @@
@@ -114,7 +114,7 @@ index 00000000000..3ec4a851c30
 +  </message>
 +</grit-part>
 diff --git a/content/browser/renderer_host/navigation_controller_android.h b/content/browser/renderer_host/navigation_controller_android.h
-index 84945344e69..ce45a812a9d 100644
+index 84945344e6..ce45a812a9 100644
 --- a/content/browser/renderer_host/navigation_controller_android.h
 +++ b/content/browser/renderer_host/navigation_controller_android.h
 @@ -69,6 +69,7 @@ class CONTENT_EXPORT NavigationControllerAndroid {
@@ -126,7 +126,7 @@ index 84945344e69..ce45a812a9d 100644
        bool has_user_gesture,
        bool should_clear_history_list,
 diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
-index 00d13b47500..7089a3e315d 100644
+index 00d13b4750..7089a3e315 100644
 --- a/content/browser/renderer_host/render_process_host_impl.cc
 +++ b/content/browser/renderer_host/render_process_host_impl.cc
 @@ -4089,6 +4089,7 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
@@ -138,7 +138,7 @@ index 00d13b47500..7089a3e315d 100644
    renderer_cmd->CopySwitchesFrom(browser_cmd, kSwitchNames);
  
 diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
-index a2704216f1c..4d5fdf1e4fd 100644
+index a2704216f1..4d5fdf1e4f 100644
 --- a/content/browser/web_contents/web_contents_impl.cc
 +++ b/content/browser/web_contents/web_contents_impl.cc
 @@ -19,6 +19,7 @@
@@ -169,7 +169,7 @@ index a2704216f1c..4d5fdf1e4fd 100644
  
    prefs.spatial_navigation_enabled =
 diff --git a/content/renderer/render_thread_impl.cc b/content/renderer/render_thread_impl.cc
-index a5cf4998876..2aa51df7d57 100644
+index a5cf499887..2aa51df7d5 100644
 --- a/content/renderer/render_thread_impl.cc
 +++ b/content/renderer/render_thread_impl.cc
 @@ -860,7 +860,6 @@ void RenderThreadImpl::InitializeRenderer(

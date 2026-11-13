@@ -12,7 +12,7 @@ FILE:Disable-crash-reporting.patch
  4 files changed, 3 insertions(+), 11 deletions(-)
 
 diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
-index 83eb09e070d..5a31c470918 100644
+index 83eb09e070..5a31c47091 100644
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
 @@ -3110,15 +3110,6 @@ void ChromeContentBrowserClient::AppendExtraCommandLineSwitches(
@@ -32,7 +32,7 @@ index 83eb09e070d..5a31c470918 100644
  
    if (logging::DialogsAreSuppressed()) {
 diff --git a/content/browser/renderer_host/render_frame_host_impl.cc b/content/browser/renderer_host/render_frame_host_impl.cc
-index 7644822472b..15ca3ffb4b8 100644
+index 7644822472..15ca3ffb4b 100644
 --- a/content/browser/renderer_host/render_frame_host_impl.cc
 +++ b/content/browser/renderer_host/render_frame_host_impl.cc
 @@ -17099,6 +17099,7 @@ void RenderFrameHostImpl::OnSameDocumentCommitProcessed(
@@ -44,7 +44,7 @@ index 7644822472b..15ca3ffb4b8 100644
      return;
    }
 diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
-index 4d5fdf1e4fd..918043ce7dd 100644
+index 4d5fdf1e4f..918043ce7d 100644
 --- a/content/browser/web_contents/web_contents_impl.cc
 +++ b/content/browser/web_contents/web_contents_impl.cc
 @@ -11498,7 +11498,7 @@ void WebContentsImpl::RendererUnresponsive(
@@ -57,7 +57,7 @@ index 4d5fdf1e4fd..918043ce7dd 100644
        this->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()) {
      RenderProcessHost* rph = render_widget_host->GetProcess();
 diff --git a/third_party/blink/renderer/controller/javascript_call_stack_collector.cc b/third_party/blink/renderer/controller/javascript_call_stack_collector.cc
-index 90e2f3b9792..feabd49708d 100644
+index 90e2f3b979..feabd49708 100644
 --- a/third_party/blink/renderer/controller/javascript_call_stack_collector.cc
 +++ b/third_party/blink/renderer/controller/javascript_call_stack_collector.cc
 @@ -98,7 +98,7 @@ void GenerateJavaScriptCallStack(v8::Isolate* isolate, void* data) {

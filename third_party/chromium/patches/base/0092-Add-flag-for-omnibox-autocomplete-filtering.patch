@@ -18,7 +18,7 @@ FILE:Add-flag-for-omnibox-autocomplete-filtering.patch
  create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Add-flag-for-omnibox-autocomplete-filtering.inc
 
 diff --git a/components/omnibox/browser/autocomplete_controller.cc b/components/omnibox/browser/autocomplete_controller.cc
-index f847fa3bcde..24d140b2f2e 100644
+index f847fa3bcd..24d140b2f2 100644
 --- a/components/omnibox/browser/autocomplete_controller.cc
 +++ b/components/omnibox/browser/autocomplete_controller.cc
 @@ -22,6 +22,7 @@
@@ -53,7 +53,7 @@ index f847fa3bcde..24d140b2f2e 100644
  
    // Providers run in the order they're added. Async providers should run first
 diff --git a/components/omnibox/browser/history_url_provider.cc b/components/omnibox/browser/history_url_provider.cc
-index 5067628f1f9..232c8b38878 100644
+index 5067628f1f..232c8b3887 100644
 --- a/components/omnibox/browser/history_url_provider.cc
 +++ b/components/omnibox/browser/history_url_provider.cc
 @@ -487,6 +487,9 @@ void HistoryURLProvider::Start(const AutocompleteInput& input,
@@ -67,7 +67,7 @@ index 5067628f1f9..232c8b38878 100644
    history::HistoryService* const history_service =
        client()->GetHistoryService();
 diff --git a/components/omnibox/browser/search_provider.cc b/components/omnibox/browser/search_provider.cc
-index 27f922f8036..9e5daffeee2 100644
+index 27f922f803..9e5daffeee 100644
 --- a/components/omnibox/browser/search_provider.cc
 +++ b/components/omnibox/browser/search_provider.cc
 @@ -17,6 +17,7 @@
@@ -89,7 +89,7 @@ index 27f922f8036..9e5daffeee2 100644
    // we still have the last results and don't need to do anything.
    if (minimal_changes)
 diff --git a/components/url_formatter/url_fixer.cc b/components/url_formatter/url_fixer.cc
-index f7074315199..13e44bf7220 100644
+index f707431519..13e44bf722 100644
 --- a/components/url_formatter/url_fixer.cc
 +++ b/components/url_formatter/url_fixer.cc
 @@ -11,6 +11,7 @@
@@ -111,7 +111,7 @@ index f7074315199..13e44bf7220 100644
      FixupPort(trimmed, parts.port, &url);
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Add-flag-for-omnibox-autocomplete-filtering.inc b/cromite_flags/chrome/browser/about_flags_cc/Add-flag-for-omnibox-autocomplete-filtering.inc
 new file mode 100644
-index 00000000000..52a0e4de163
+index 0000000000..52a0e4de16
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Add-flag-for-omnibox-autocomplete-filtering.inc
 @@ -0,0 +1,32 @@

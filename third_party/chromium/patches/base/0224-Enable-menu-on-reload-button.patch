@@ -14,7 +14,7 @@ FILE:Enable-menu-on-reload-button.patch
  2 files changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
-index 1d1a040cdff..3b4c52b4c03 100644
+index 1d1a040cdf..3b4c52b4c0 100644
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
 @@ -4801,10 +4801,10 @@ are declared in tools/grit/grit_args.gni.
@@ -31,7 +31,7 @@ index 1d1a040cdff..3b4c52b4c03 100644
  
        <!-- Tab sharing infobar -->
 diff --git a/chrome/browser/ui/views/toolbar/toolbar_view.cc b/chrome/browser/ui/views/toolbar/toolbar_view.cc
-index 184ae3e5bc4..55aff4cf3c5 100644
+index 184ae3e5bc..55aff4cf3c 100644
 --- a/chrome/browser/ui/views/toolbar/toolbar_view.cc
 +++ b/chrome/browser/ui/views/toolbar/toolbar_view.cc
 @@ -1214,7 +1214,7 @@ void ToolbarView::Update(WebContents* tab) {

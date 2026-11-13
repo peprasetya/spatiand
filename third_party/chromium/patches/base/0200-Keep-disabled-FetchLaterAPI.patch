@@ -22,7 +22,7 @@ FILE:Keep-disabled-FetchLaterAPI.patch
  create mode 100644 cromite_flags/third_party/blink/common/features_cc/Keep-disabled-FetchLaterAPI.inc
 
 diff --git a/content/browser/loader/keep_alive_url_loader.cc b/content/browser/loader/keep_alive_url_loader.cc
-index 0d075d87369..2c00b3dfda0 100644
+index 0d075d8736..2c00b3dfda 100644
 --- a/content/browser/loader/keep_alive_url_loader.cc
 +++ b/content/browser/loader/keep_alive_url_loader.cc
 @@ -51,6 +51,36 @@
@@ -80,7 +80,7 @@ index 0d075d87369..2c00b3dfda0 100644
        /*cors_exempt_header_list=*/std::nullopt,
        // `this`'s lifetime is at least the same as `url_loader_`.
 diff --git a/content/browser/loader/keep_alive_url_loader.h b/content/browser/loader/keep_alive_url_loader.h
-index c0925346c7a..9c1e04de93c 100644
+index c0925346c7..9c1e04de93 100644
 --- a/content/browser/loader/keep_alive_url_loader.h
 +++ b/content/browser/loader/keep_alive_url_loader.h
 @@ -430,9 +430,6 @@ class CONTENT_EXPORT KeepAliveURLLoader
@@ -95,13 +95,13 @@ index c0925346c7a..9c1e04de93c 100644
    scoped_refptr<network::SharedURLLoaderFactory> network_loader_factory_;
 diff --git a/cromite_flags/third_party/blink/common/features_cc/Keep-disabled-FetchLaterAPI.inc b/cromite_flags/third_party/blink/common/features_cc/Keep-disabled-FetchLaterAPI.inc
 new file mode 100644
-index 00000000000..cc5b531b644
+index 0000000000..cc5b531b64
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_cc/Keep-disabled-FetchLaterAPI.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_ENABLED(kKeepAliveInBrowserMigration);
 diff --git a/third_party/blink/renderer/core/fetch/fetch_manager.cc b/third_party/blink/renderer/core/fetch/fetch_manager.cc
-index 0cc6fb22f34..e145f8bf63a 100644
+index 0cc6fb22f3..e145f8bf63 100644
 --- a/third_party/blink/renderer/core/fetch/fetch_manager.cc
 +++ b/third_party/blink/renderer/core/fetch/fetch_manager.cc
 @@ -278,6 +278,7 @@ class ResponseResolver final : public GarbageCollected<ResponseResolver> {
@@ -149,7 +149,7 @@ index 0cc6fb22f34..e145f8bf63a 100644
      }
      response_resolver_.Clear();
 diff --git a/third_party/blink/renderer/platform/loader/child_url_loader_factory_bundle.cc b/third_party/blink/renderer/platform/loader/child_url_loader_factory_bundle.cc
-index 8c71902b15c..2328cdbd897 100644
+index 8c71902b15..2328cdbd89 100644
 --- a/third_party/blink/renderer/platform/loader/child_url_loader_factory_bundle.cc
 +++ b/third_party/blink/renderer/platform/loader/child_url_loader_factory_bundle.cc
 @@ -14,6 +14,7 @@
@@ -195,7 +195,7 @@ index 8c71902b15c..2328cdbd897 100644
          std::move(loader), request_id, options, request, std::move(client),
          traffic_annotation);
 diff --git a/third_party/blink/renderer/platform/loader/fetch/resource_fetcher.cc b/third_party/blink/renderer/platform/loader/fetch/resource_fetcher.cc
-index 72ffcdd1188..1cfd79bb80f 100644
+index 72ffcdd118..1cfd79bb80 100644
 --- a/third_party/blink/renderer/platform/loader/fetch/resource_fetcher.cc
 +++ b/third_party/blink/renderer/platform/loader/fetch/resource_fetcher.cc
 @@ -3264,7 +3264,7 @@ void ResourceFetcher::PrepareForLeakDetection() {
@@ -208,7 +208,7 @@ index 72ffcdd1188..1cfd79bb80f 100644
    for (const auto& loader : non_blocking_loaders_) {
      if (target == StopFetchingTarget::kIncludingKeepaliveLoaders ||
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 56c3ea3f3c9..caeed6b152c 100644
+index 56c3ea3f3c..caeed6b152 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -3091,8 +3091,8 @@

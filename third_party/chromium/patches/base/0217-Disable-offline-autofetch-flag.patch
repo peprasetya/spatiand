@@ -14,7 +14,7 @@ FILE:Disable-offline-autofetch-flag.patch
 
 diff --git a/cromite_flags/chrome/common/chrome_features_cc/Disable-offline-autofetch.inc b/cromite_flags/chrome/common/chrome_features_cc/Disable-offline-autofetch.inc
 new file mode 100644
-index 00000000000..4ee800ad6ab
+index 0000000000..4ee800ad6a
 --- /dev/null
 +++ b/cromite_flags/chrome/common/chrome_features_cc/Disable-offline-autofetch.inc
 @@ -0,0 +1,5 @@

@@ -16,7 +16,7 @@ FILE:Re-introduce-override_build_timestamp.patch
  2 files changed, 10 insertions(+), 1 deletion(-)
 
 diff --git a/base/BUILD.gn b/base/BUILD.gn
-index e70d0028fa3..dd92166c3d0 100644
+index e70d0028fa..dd92166c3d 100644
 --- a/base/BUILD.gn
 +++ b/base/BUILD.gn
 @@ -4882,8 +4882,12 @@ if (current_toolchain == default_toolchain) {
@@ -34,7 +34,7 @@ index e70d0028fa3..dd92166c3d0 100644
  }
  
 diff --git a/build_overrides/build.gni b/build_overrides/build.gni
-index cd62385050b..533726228c4 100644
+index cd62385050..533726228c 100644
 --- a/build_overrides/build.gni
 +++ b/build_overrides/build.gni
 @@ -45,6 +45,11 @@ declare_args() {

@@ -11,7 +11,7 @@ FILE:Disable-some-signed-exchange-features.patch
  2 files changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
-index a7ff03b8b81..83eb09e070d 100644
+index a7ff03b8b8..83eb09e070 100644
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
 @@ -1661,7 +1661,7 @@ void ChromeContentBrowserClient::RegisterProfilePrefs(
@@ -24,7 +24,7 @@ index a7ff03b8b81..83eb09e070d 100644
    registry->RegisterListPref(prefs::kAutoplayAllowlist);
  #if !BUILDFLAG(IS_ANDROID)
 diff --git a/content/browser/web_package/signed_exchange_utils.cc b/content/browser/web_package/signed_exchange_utils.cc
-index 0cd1ba7f86b..73fcfded18b 100644
+index 0cd1ba7f86..73fcfded18 100644
 --- a/content/browser/web_package/signed_exchange_utils.cc
 +++ b/content/browser/web_package/signed_exchange_utils.cc
 @@ -51,7 +51,7 @@ void ReportErrorAndTraceEvent(

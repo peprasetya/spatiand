@@ -23,7 +23,7 @@ visited-links-made).
  4 files changed, 215 insertions(+), 2 deletions(-)
 
 diff --git a/chrome/browser/spatiand/history_sync.cc b/chrome/browser/spatiand/history_sync.cc
-index 34c3fe94311..8d13080019e 100644
+index 34c3fe9431..8d13080019 100644
 --- a/chrome/browser/spatiand/history_sync.cc
 +++ b/chrome/browser/spatiand/history_sync.cc
 @@ -19,6 +19,10 @@
@@ -263,7 +263,7 @@ index 34c3fe94311..8d13080019e 100644
  
  void HistorySync::OnURLsModified(history::HistoryService* history_service,
 diff --git a/chrome/browser/spatiand/history_sync.h b/chrome/browser/spatiand/history_sync.h
-index 825ff9cb2c3..9d76dcccfb8 100644
+index 825ff9cb2c..9d76dcccfb 100644
 --- a/chrome/browser/spatiand/history_sync.h
 +++ b/chrome/browser/spatiand/history_sync.h
 @@ -19,6 +19,7 @@
@@ -313,7 +313,7 @@ index 825ff9cb2c3..9d76dcccfb8 100644
    base::OneShotTimer save_timer_;
    std::optional<Visit> last_;
 diff --git a/components/history/core/browser/history_service.cc b/components/history/core/browser/history_service.cc
-index e161d4a2a85..7f51e50558d 100644
+index e161d4a2a8..7f51e50558 100644
 --- a/components/history/core/browser/history_service.cc
 +++ b/components/history/core/browser/history_service.cc
 @@ -720,6 +720,20 @@ void HistoryService::AddPage(HistoryAddPageArgs add_page_args) {
@@ -338,7 +338,7 @@ index e161d4a2a85..7f51e50558d 100644
      const HistoryAddPageArgs& args) {
    // Ensure that we can communicate to our in-memory hashtable.
 diff --git a/components/history/core/browser/history_service.h b/components/history/core/browser/history_service.h
-index 048e106d216..cc70fe0a4da 100644
+index 048e106d21..cc70fe0a4d 100644
 --- a/components/history/core/browser/history_service.h
 +++ b/components/history/core/browser/history_service.h
 @@ -221,6 +221,14 @@ class HistoryService : public KeyedService,

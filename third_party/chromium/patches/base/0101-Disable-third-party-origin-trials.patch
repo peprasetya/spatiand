@@ -19,7 +19,7 @@ FILE:Disable-third-party-origin-trials.patch
  10 files changed, 20 insertions(+), 56 deletions(-)
 
 diff --git a/components/embedder_support/origin_trials/origin_trial_policy_impl.cc b/components/embedder_support/origin_trials/origin_trial_policy_impl.cc
-index eea864ee77f..a4c7097ce3e 100644
+index eea864ee77..a4c7097ce3 100644
 --- a/components/embedder_support/origin_trials/origin_trial_policy_impl.cc
 +++ b/components/embedder_support/origin_trials/origin_trial_policy_impl.cc
 @@ -24,10 +24,10 @@
@@ -46,7 +46,7 @@ index eea864ee77f..a4c7097ce3e 100644
  
  const std::vector<blink::OriginTrialPublicKey>&
 diff --git a/components/embedder_support/origin_trials/origin_trial_policy_impl.h b/components/embedder_support/origin_trials/origin_trial_policy_impl.h
-index 19ee95663f8..c44c57c2211 100644
+index 19ee95663f..c44c57c221 100644
 --- a/components/embedder_support/origin_trials/origin_trial_policy_impl.h
 +++ b/components/embedder_support/origin_trials/origin_trial_policy_impl.h
 @@ -34,6 +34,7 @@ class OriginTrialPolicyImpl : public blink::OriginTrialPolicy {
@@ -66,7 +66,7 @@ index 19ee95663f8..c44c57c2211 100644
    std::set<std::string> disabled_features_;
    std::set<std::string> disabled_tokens_;
 diff --git a/content/browser/renderer_host/navigation_request.cc b/content/browser/renderer_host/navigation_request.cc
-index 54a856a892c..dbf2dad75a4 100644
+index 54a856a892..dbf2dad75a 100644
 --- a/content/browser/renderer_host/navigation_request.cc
 +++ b/content/browser/renderer_host/navigation_request.cc
 @@ -11158,7 +11158,6 @@ void NavigationRequest::SetSourceSiteInstanceToInitiatorIfNeeded() {
@@ -78,7 +78,7 @@ index 54a856a892c..dbf2dad75a4 100644
  
  network::CrossOriginEmbedderPolicy
 diff --git a/content/browser/renderer_host/origin_trial_state_host_impl.cc b/content/browser/renderer_host/origin_trial_state_host_impl.cc
-index 1a403576f56..3e9667f66fb 100644
+index 1a403576f5..3e9667f66f 100644
 --- a/content/browser/renderer_host/origin_trial_state_host_impl.cc
 +++ b/content/browser/renderer_host/origin_trial_state_host_impl.cc
 @@ -110,25 +110,6 @@ void OriginTrialStateHostImpl::ApplyFeatureDiffForOriginTrial(
@@ -108,7 +108,7 @@ index 1a403576f56..3e9667f66fb 100644
  
  void OriginTrialStateHostImpl::EnablePersistentTrial(
 diff --git a/content/renderer/render_frame_impl.cc b/content/renderer/render_frame_impl.cc
-index 1348b5a6bc5..91b99a02d27 100644
+index 1348b5a6bc..91b99a02d2 100644
 --- a/content/renderer/render_frame_impl.cc
 +++ b/content/renderer/render_frame_impl.cc
 @@ -542,10 +542,6 @@ void FillNavigationParamsRequest(
@@ -143,7 +143,7 @@ index 1348b5a6bc5..91b99a02d27 100644
        request_destination);
  }
 diff --git a/content/shell/common/shell_origin_trial_policy.cc b/content/shell/common/shell_origin_trial_policy.cc
-index a885136435e..157ff9d2178 100644
+index a885136435..157ff9d217 100644
 --- a/content/shell/common/shell_origin_trial_policy.cc
 +++ b/content/shell/common/shell_origin_trial_policy.cc
 @@ -14,13 +14,10 @@ namespace content {
@@ -173,7 +173,7 @@ index a885136435e..157ff9d2178 100644
  
  const std::vector<blink::OriginTrialPublicKey>&
 diff --git a/third_party/blink/common/origin_trials/trial_token_validator.cc b/third_party/blink/common/origin_trials/trial_token_validator.cc
-index 800c90312b6..9d9ad256b44 100644
+index 800c90312b..9d9ad256b4 100644
 --- a/third_party/blink/common/origin_trials/trial_token_validator.cc
 +++ b/third_party/blink/common/origin_trials/trial_token_validator.cc
 @@ -427,6 +427,7 @@ TrialTokenValidator::GetValidTokens(const url::Origin& origin,
@@ -185,7 +185,7 @@ index 800c90312b6..9d9ad256b44 100644
    return policy && policy->IsOriginTrialsSupported() &&
           policy->IsOriginSecure(url);
 diff --git a/third_party/blink/renderer/core/loader/document_loader.cc b/third_party/blink/renderer/core/loader/document_loader.cc
-index c5c9d22e9a5..2d0dc0bbb03 100644
+index c5c9d22e9a..2d0dc0bbb0 100644
 --- a/third_party/blink/renderer/core/loader/document_loader.cc
 +++ b/third_party/blink/renderer/core/loader/document_loader.cc
 @@ -207,13 +207,6 @@ namespace {
@@ -233,7 +233,7 @@ index c5c9d22e9a5..2d0dc0bbb03 100644
          window, &initiator_origin_trial_features_);
    }
 diff --git a/third_party/blink/renderer/core/loader/http_equiv.cc b/third_party/blink/renderer/core/loader/http_equiv.cc
-index e9263c3b941..de7bb02d107 100644
+index e9263c3b94..de7bb02d10 100644
 --- a/third_party/blink/renderer/core/loader/http_equiv.cc
 +++ b/third_party/blink/renderer/core/loader/http_equiv.cc
 @@ -113,7 +113,7 @@ void HttpEquiv::ProcessHttpEquivDefaultStyle(Document& document,
@@ -246,7 +246,7 @@ index e9263c3b941..de7bb02d107 100644
    // For meta tags injected by script, process the token with the origin of the
    // external script, if available. Get the top 3 script urls from the stack, as
 diff --git a/third_party/blink/renderer/core/origin_trials/origin_trial_context.cc b/third_party/blink/renderer/core/origin_trials/origin_trial_context.cc
-index a0111346d82..73dc68fee83 100644
+index a0111346d8..73dc68fee8 100644
 --- a/third_party/blink/renderer/core/origin_trials/origin_trial_context.cc
 +++ b/third_party/blink/renderer/core/origin_trials/origin_trial_context.cc
 @@ -311,6 +311,9 @@ void OriginTrialContext::AddToken(const String& token) {

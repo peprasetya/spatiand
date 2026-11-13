@@ -21,7 +21,7 @@ month no longer loses the old month's.
  2 files changed, 39 insertions(+), 4 deletions(-)
 
 diff --git a/chrome/browser/spatiand/history_sync.cc b/chrome/browser/spatiand/history_sync.cc
-index 8d13080019e..b8859896e1d 100644
+index 8d13080019..b8859896e1 100644
 --- a/chrome/browser/spatiand/history_sync.cc
 +++ b/chrome/browser/spatiand/history_sync.cc
 @@ -112,6 +112,7 @@ std::vector<HistorySync::Forgotten> ForgottenFromFile(const base::FilePath& file
@@ -108,7 +108,7 @@ index 8d13080019e..b8859896e1d 100644
      return;
    }
 diff --git a/chrome/browser/spatiand/history_sync.h b/chrome/browser/spatiand/history_sync.h
-index 9d76dcccfb8..149077114d4 100644
+index 9d76dcccfb..149077114d 100644
 --- a/chrome/browser/spatiand/history_sync.h
 +++ b/chrome/browser/spatiand/history_sync.h
 @@ -61,6 +61,9 @@ class HistorySync : public history::HistoryServiceObserver {

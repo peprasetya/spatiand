@@ -34,7 +34,7 @@ FILE:Disable-privacy-sandbox.patch
  create mode 100644 cromite_flags/third_party/blink/common/features_cc/Disable-privacy-sandbox.inc
 
 diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
-index fc34583652a..0e2124251ce 100644
+index fc34583652..0e2124251c 100644
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
 @@ -8829,7 +8829,7 @@ bool ChromeContentBrowserClient::ShouldDisableOriginAgentClusterDefault(
@@ -47,7 +47,7 @@ index fc34583652a..0e2124251ce 100644
               switches::kDisableComponentUpdate);
  }
 diff --git a/chrome/browser/first_party_sets/first_party_sets_policy_service.cc b/chrome/browser/first_party_sets/first_party_sets_policy_service.cc
-index 218f2b6bd6b..aab8e615fc9 100644
+index 218f2b6bd6..aab8e615fc 100644
 --- a/chrome/browser/first_party_sets/first_party_sets_policy_service.cc
 +++ b/chrome/browser/first_party_sets/first_party_sets_policy_service.cc
 @@ -35,6 +35,7 @@ namespace {
@@ -67,7 +67,7 @@ index 218f2b6bd6b..aab8e615fc9 100644
    if (service_state_ == ServiceState::kPermanentlyDisabled ||
        service_state_ == ServiceState::kDisabled) {
 diff --git a/chrome/browser/privacy_sandbox/privacy_sandbox_service_impl.cc b/chrome/browser/privacy_sandbox/privacy_sandbox_service_impl.cc
-index 1c195655807..1e8c06239ba 100644
+index 1c19565580..1e8c06239b 100644
 --- a/chrome/browser/privacy_sandbox/privacy_sandbox_service_impl.cc
 +++ b/chrome/browser/privacy_sandbox/privacy_sandbox_service_impl.cc
 @@ -94,7 +94,7 @@ void PrivacySandboxServiceImpl::Shutdown() {
@@ -88,7 +88,7 @@ index 1c195655807..1e8c06239ba 100644
    if (!IsRegularProfile(profile_type_)) {
      return;
 diff --git a/chrome/test/BUILD.gn b/chrome/test/BUILD.gn
-index bbf9901ab10..ad077e9e35c 100644
+index bbf9901ab1..ad077e9e35 100644
 --- a/chrome/test/BUILD.gn
 +++ b/chrome/test/BUILD.gn
 @@ -1031,8 +1031,6 @@ if (is_android) {
@@ -101,7 +101,7 @@ index bbf9901ab10..ad077e9e35c 100644
        "//components/qr_code_generator:bitmap_generator",
        "//components/safe_browsing/content/common:interfaces",
 diff --git a/components/privacy_sandbox/privacy_sandbox_attestations/BUILD.gn b/components/privacy_sandbox/privacy_sandbox_attestations/BUILD.gn
-index 03a3029238a..36f4461b7c9 100644
+index 03a3029238..36f4461b7c 100644
 --- a/components/privacy_sandbox/privacy_sandbox_attestations/BUILD.gn
 +++ b/components/privacy_sandbox/privacy_sandbox_attestations/BUILD.gn
 @@ -25,12 +25,6 @@ if (use_blink) {
@@ -118,7 +118,7 @@ index 03a3029238a..36f4461b7c9 100644
        "//base",
        "//build:buildflag_header_h",
 diff --git a/components/privacy_sandbox/privacy_sandbox_attestations/preload/BUILD.gn b/components/privacy_sandbox/privacy_sandbox_attestations/preload/BUILD.gn
-index 5ba7db227f5..2a786acc6e0 100644
+index 5ba7db227f..2a786acc6e 100644
 --- a/components/privacy_sandbox/privacy_sandbox_attestations/preload/BUILD.gn
 +++ b/components/privacy_sandbox/privacy_sandbox_attestations/preload/BUILD.gn
 @@ -23,7 +23,7 @@ if (is_mac) {
@@ -131,7 +131,7 @@ index 5ba7db227f5..2a786acc6e0 100644
  
    # Bundle the preload attestations list to Android APK assets.
 diff --git a/components/privacy_sandbox/privacy_sandbox_attestations/privacy_sandbox_attestations.cc b/components/privacy_sandbox/privacy_sandbox_attestations/privacy_sandbox_attestations.cc
-index eb01eb911fe..90c1b46f1c8 100644
+index eb01eb911f..90c1b46f1c 100644
 --- a/components/privacy_sandbox/privacy_sandbox_attestations/privacy_sandbox_attestations.cc
 +++ b/components/privacy_sandbox/privacy_sandbox_attestations/privacy_sandbox_attestations.cc
 @@ -42,7 +42,7 @@
@@ -171,7 +171,7 @@ index eb01eb911fe..90c1b46f1c8 100644
        base::FeatureList::IsEnabled(
            privacy_sandbox::kPrivacySandboxAttestationsLoadFromAPKAsset)) {
 diff --git a/components/privacy_sandbox/privacy_sandbox_features.cc b/components/privacy_sandbox/privacy_sandbox_features.cc
-index 11ff98e1357..7a061e6985a 100644
+index 11ff98e135..7a061e6985 100644
 --- a/components/privacy_sandbox/privacy_sandbox_features.cc
 +++ b/components/privacy_sandbox/privacy_sandbox_features.cc
 @@ -24,4 +24,6 @@ BASE_FEATURE(kRelatedWebsiteSetsUi, base::FEATURE_DISABLED_BY_DEFAULT);
@@ -182,7 +182,7 @@ index 11ff98e1357..7a061e6985a 100644
 +
  }  // namespace privacy_sandbox
 diff --git a/components/privacy_sandbox/privacy_sandbox_prefs.cc b/components/privacy_sandbox/privacy_sandbox_prefs.cc
-index 3fad8a7681b..49705a9f6cf 100644
+index 3fad8a7681..49705a9f6c 100644
 --- a/components/privacy_sandbox/privacy_sandbox_prefs.cc
 +++ b/components/privacy_sandbox/privacy_sandbox_prefs.cc
 @@ -23,7 +23,7 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
@@ -195,7 +195,7 @@ index 3fad8a7681b..49705a9f6cf 100644
  }
  
 diff --git a/content/public/browser/content_browser_client.cc b/content/public/browser/content_browser_client.cc
-index 92be4ef5f55..8ce3bac8508 100644
+index 92be4ef5f5..8ce3bac850 100644
 --- a/content/public/browser/content_browser_client.cc
 +++ b/content/public/browser/content_browser_client.cc
 @@ -1733,7 +1733,7 @@ bool ContentBrowserClient::ShouldPreconnectNavigation(
@@ -209,34 +209,34 @@ index 92be4ef5f55..8ce3bac8508 100644
  bool ContentBrowserClient::WillProvidePublicFirstPartySets() {
 diff --git a/cromite_flags/content/common/features_cc/Disable-privacy-sandbox.inc b/cromite_flags/content/common/features_cc/Disable-privacy-sandbox.inc
 new file mode 100644
-index 00000000000..4715caf4b09
+index 0000000000..4715caf4b0
 --- /dev/null
 +++ b/cromite_flags/content/common/features_cc/Disable-privacy-sandbox.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_DISABLED(kPrivacySandboxAdsAPIsM1Override);
 diff --git a/cromite_flags/content/public/common/content_features_cc/Disable-privacy-sandbox.inc b/cromite_flags/content/public/common/content_features_cc/Disable-privacy-sandbox.inc
 new file mode 100644
-index 00000000000..1098fb520ad
+index 0000000000..1098fb520a
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_cc/Disable-privacy-sandbox.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_DISABLED(kPrivacySandboxAdsAPIsOverride);
 diff --git a/cromite_flags/services/network/public/cpp/features_cc/Disable-privacy-sandbox.inc b/cromite_flags/services/network/public/cpp/features_cc/Disable-privacy-sandbox.inc
 new file mode 100644
-index 00000000000..4bd8276f349
+index 0000000000..4bd8276f34
 --- /dev/null
 +++ b/cromite_flags/services/network/public/cpp/features_cc/Disable-privacy-sandbox.inc
 @@ -0,0 +1 @@
 +// empty file
 diff --git a/cromite_flags/third_party/blink/common/features_cc/Disable-privacy-sandbox.inc b/cromite_flags/third_party/blink/common/features_cc/Disable-privacy-sandbox.inc
 new file mode 100644
-index 00000000000..a31afd31476
+index 0000000000..a31afd3147
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_cc/Disable-privacy-sandbox.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_DISABLED(kFencedFrames);
 diff --git a/third_party/blink/common/features.cc b/third_party/blink/common/features.cc
-index 8133ed5a78f..5c29d8e7ed6 100644
+index 8133ed5a78..5c29d8e7ed 100644
 --- a/third_party/blink/common/features.cc
 +++ b/third_party/blink/common/features.cc
 @@ -2485,6 +2485,7 @@ BASE_FEATURE(kXrDevice, base::FEATURE_DISABLED_BY_DEFAULT);

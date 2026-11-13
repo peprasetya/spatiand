@@ -20,7 +20,7 @@ FILE:Improve-the-browser-sandbox.patch
  create mode 100644 cromite_flags/content/public/common/content_features_cc/Improve-the-browser-sandbox.inc
 
 diff --git a/chrome/browser/net/system_network_context_manager.cc b/chrome/browser/net/system_network_context_manager.cc
-index ad24272e000..c846d615c0f 100644
+index ad24272e00..c846d615c0 100644
 --- a/chrome/browser/net/system_network_context_manager.cc
 +++ b/chrome/browser/net/system_network_context_manager.cc
 @@ -376,7 +376,7 @@ namespace features {
@@ -34,7 +34,7 @@ index ad24272e000..c846d615c0f 100644
  class SystemNetworkContextManager::NetworkProcessLaunchWatcher
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Improve-the-browser-sandbox.inc b/cromite_flags/chrome/browser/about_flags_cc/Improve-the-browser-sandbox.inc
 new file mode 100644
-index 00000000000..c3013cf6565
+index 0000000000..c3013cf656
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Improve-the-browser-sandbox.inc
 @@ -0,0 +1,12 @@
@@ -52,20 +52,20 @@ index 00000000000..c3013cf6565
 +#endif // ifdef FLAG_SECTION
 diff --git a/cromite_flags/content/common/features_cc/Improve-the-browser-sandbox.inc b/cromite_flags/content/common/features_cc/Improve-the-browser-sandbox.inc
 new file mode 100644
-index 00000000000..4bd8276f349
+index 0000000000..4bd8276f34
 --- /dev/null
 +++ b/cromite_flags/content/common/features_cc/Improve-the-browser-sandbox.inc
 @@ -0,0 +1 @@
 +// empty file
 diff --git a/cromite_flags/content/public/common/content_features_cc/Improve-the-browser-sandbox.inc b/cromite_flags/content/public/common/content_features_cc/Improve-the-browser-sandbox.inc
 new file mode 100644
-index 00000000000..d11c69f812a
+index 0000000000..d11c69f812
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_cc/Improve-the-browser-sandbox.inc
 @@ -0,0 +1 @@
 +// intentionally empty
 diff --git a/sandbox/policy/features.cc b/sandbox/policy/features.cc
-index b9383231c3f..0d733f30628 100644
+index b9383231c3..0d733f3062 100644
 --- a/sandbox/policy/features.cc
 +++ b/sandbox/policy/features.cc
 @@ -129,7 +129,7 @@ BASE_FEATURE(kHigherRendererMemoryLimit, base::FEATURE_DISABLED_BY_DEFAULT);

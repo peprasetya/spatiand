@@ -33,7 +33,7 @@ FILE:Fonts-fingerprinting-mitigation.patch
 
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Fonts-fingerprinting-mitigation.inc b/cromite_flags/chrome/browser/about_flags_cc/Fonts-fingerprinting-mitigation.inc
 new file mode 100644
-index 00000000000..863bde28ac7
+index 0000000000..863bde28ac
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Fonts-fingerprinting-mitigation.inc
 @@ -0,0 +1,8 @@
@@ -47,14 +47,14 @@ index 00000000000..863bde28ac7
 +#endif
 diff --git a/cromite_flags/content/common/features_cc/Fonts-fingerprinting-mitigation.inc b/cromite_flags/content/common/features_cc/Fonts-fingerprinting-mitigation.inc
 new file mode 100644
-index 00000000000..c2e4236e84a
+index 0000000000..c2e4236e84
 --- /dev/null
 +++ b/cromite_flags/content/common/features_cc/Fonts-fingerprinting-mitigation.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_DISABLED(kAndroidDownloadableFontsMatching);
 diff --git a/cromite_flags/third_party/blink/common/features_cc/Fonts-fingerprinting-mitigation.inc b/cromite_flags/third_party/blink/common/features_cc/Fonts-fingerprinting-mitigation.inc
 new file mode 100644
-index 00000000000..13e3e3c8e91
+index 0000000000..13e3e3c8e9
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_cc/Fonts-fingerprinting-mitigation.inc
 @@ -0,0 +1,10 @@
@@ -69,7 +69,7 @@ index 00000000000..13e3e3c8e91
 +#endif
 +);
 diff --git a/third_party/blink/public/common/features.h b/third_party/blink/public/common/features.h
-index d612b505b88..54955a200c9 100644
+index d612b505b8..54955a200c 100644
 --- a/third_party/blink/public/common/features.h
 +++ b/third_party/blink/public/common/features.h
 @@ -460,6 +460,9 @@ BASE_DECLARE_FEATURE_PARAM(bool, kDeferFadeOutScrollbarUntilMouseWheelEnded);
@@ -83,7 +83,7 @@ index d612b505b88..54955a200c9 100644
      kFencedFramesCrossOriginEventReporting);
  
 diff --git a/third_party/blink/renderer/platform/BUILD.gn b/third_party/blink/renderer/platform/BUILD.gn
-index 64f74a3714a..aa4c805bb25 100644
+index 64f74a3714..aa4c805bb2 100644
 --- a/third_party/blink/renderer/platform/BUILD.gn
 +++ b/third_party/blink/renderer/platform/BUILD.gn
 @@ -871,6 +871,7 @@ component("platform") {
@@ -95,7 +95,7 @@ index 64f74a3714a..aa4c805bb25 100644
      "fonts/skia/skia_text_metrics.h",
      "fonts/skia/sktypeface_factory.cc",
 diff --git a/third_party/blink/renderer/platform/fonts/font_cache.h b/third_party/blink/renderer/platform/fonts/font_cache.h
-index ffdb05fc463..59735da9d52 100644
+index ffdb05fc46..59735da9d5 100644
 --- a/third_party/blink/renderer/platform/fonts/font_cache.h
 +++ b/third_party/blink/renderer/platform/fonts/font_cache.h
 @@ -288,7 +288,7 @@ class PLATFORM_EXPORT FontCache final {
@@ -109,7 +109,7 @@ index ffdb05fc463..59735da9d52 100644
    // SkFontMgr_FCI::onMatchFamilyStyleCharacter always crashes.
 diff --git a/third_party/blink/renderer/platform/fonts/skia/bromite_allowed_fonts.h b/third_party/blink/renderer/platform/fonts/skia/bromite_allowed_fonts.h
 new file mode 100644
-index 00000000000..5eb9d407208
+index 0000000000..5eb9d40720
 --- /dev/null
 +++ b/third_party/blink/renderer/platform/fonts/skia/bromite_allowed_fonts.h
 @@ -0,0 +1,271 @@
@@ -385,7 +385,7 @@ index 00000000000..5eb9d407208
 +
 +}
 diff --git a/third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc b/third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc
-index 31af2c1f7c1..60bf8cc420b 100644
+index 31af2c1f7c..60bf8cc420 100644
 --- a/third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc
 +++ b/third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc
 @@ -65,12 +65,35 @@

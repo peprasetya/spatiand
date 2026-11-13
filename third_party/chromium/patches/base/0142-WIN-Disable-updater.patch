@@ -11,7 +11,7 @@ FILE:WIN-Disable-updater.patch
  3 files changed, 2 insertions(+), 57 deletions(-)
 
 diff --git a/chrome/browser/active_use_util.h b/chrome/browser/active_use_util.h
-index 2129a57246d..6a0c4b99f1f 100644
+index 2129a57246..6a0c4b99f1 100644
 --- a/chrome/browser/active_use_util.h
 +++ b/chrome/browser/active_use_util.h
 @@ -9,6 +9,6 @@
@@ -23,7 +23,7 @@ index 2129a57246d..6a0c4b99f1f 100644
  
  #endif  // CHROME_BROWSER_ACTIVE_USE_UTIL_H_
 diff --git a/chrome/browser/updater/BUILD.gn b/chrome/browser/updater/BUILD.gn
-index f7bcb1e6b7a..8d1c91c3982 100644
+index f7bcb1e6b7..8d1c91c398 100644
 --- a/chrome/browser/updater/BUILD.gn
 +++ b/chrome/browser/updater/BUILD.gn
 @@ -41,20 +41,6 @@ source_set("updater") {
@@ -48,7 +48,7 @@ index f7bcb1e6b7a..8d1c91c3982 100644
        sources += [
          "browser_updater_client_mac.mm",
 diff --git a/chrome/browser/updater/browser_updater_client.cc b/chrome/browser/updater/browser_updater_client.cc
-index 6fd0c8ac747..5e4244f95f3 100644
+index 6fd0c8ac74..5e4244f95f 100644
 --- a/chrome/browser/updater/browser_updater_client.cc
 +++ b/chrome/browser/updater/browser_updater_client.cc
 @@ -57,19 +57,6 @@ BrowserUpdaterClient::~BrowserUpdaterClient() {

@@ -11,7 +11,7 @@ FILE:kill-Location-fall-back-to-system.patch
  2 files changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/services/device/geolocation/BUILD.gn b/services/device/geolocation/BUILD.gn
-index 870d9f9464f..44485d88411 100644
+index 870d9f9464..44485d8841 100644
 --- a/services/device/geolocation/BUILD.gn
 +++ b/services/device/geolocation/BUILD.gn
 @@ -159,7 +159,6 @@ if (is_android) {
@@ -23,7 +23,7 @@ index 870d9f9464f..44485d88411 100644
  
      deps = [
 diff --git a/services/device/public/cpp/device_features.cc b/services/device/public/cpp/device_features.cc
-index e2313bd66c6..176556afa54 100644
+index e2313bd66c..176556afa5 100644
 --- a/services/device/public/cpp/device_features.cc
 +++ b/services/device/public/cpp/device_features.cc
 @@ -119,6 +119,7 @@ BASE_FEATURE(kLocationProviderManager, base::FEATURE_ENABLED_BY_DEFAULT);

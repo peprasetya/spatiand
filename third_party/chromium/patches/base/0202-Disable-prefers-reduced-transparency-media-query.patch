@@ -13,7 +13,7 @@ FILE:Disable-prefers-reduced-transparency-media-query.patch
  4 files changed, 8 insertions(+), 4 deletions(-)
 
 diff --git a/third_party/blink/renderer/core/css/media_query_exp.cc b/third_party/blink/renderer/core/css/media_query_exp.cc
-index 78f9ea82061..14601d55de1 100644
+index 78f9ea8206..14601d55de 100644
 --- a/third_party/blink/renderer/core/css/media_query_exp.cc
 +++ b/third_party/blink/renderer/core/css/media_query_exp.cc
 @@ -136,7 +136,7 @@ static inline bool FeatureWithValidIdent(const String& media_feature,
@@ -26,7 +26,7 @@ index 78f9ea82061..14601d55de1 100644
    }
  
 diff --git a/third_party/blink/renderer/core/css/parser/media_query_parser.cc b/third_party/blink/renderer/core/css/parser/media_query_parser.cc
-index d4a59da979a..3ed42289c40 100644
+index d4a59da979..3ed42289c4 100644
 --- a/third_party/blink/renderer/core/css/parser/media_query_parser.cc
 +++ b/third_party/blink/renderer/core/css/parser/media_query_parser.cc
 @@ -84,8 +84,8 @@ bool MediaQueryParser::MediaQueryFeatureSet::IsAllowedWithoutValue(
@@ -41,7 +41,7 @@ index d4a59da979a..3ed42289c40 100644
            RuntimeEnabledFeatures::ForcedColorsEnabled()) ||
           (feature == media_feature_names::kNavigationControlsMediaFeature &&
 diff --git a/third_party/blink/renderer/core/preferences/preference_manager.idl b/third_party/blink/renderer/core/preferences/preference_manager.idl
-index ddd88bdb6e8..c9284babd77 100644
+index ddd88bdb6e..c9284babd7 100644
 --- a/third_party/blink/renderer/core/preferences/preference_manager.idl
 +++ b/third_party/blink/renderer/core/preferences/preference_manager.idl
 @@ -12,6 +12,6 @@ interface PreferenceManager {
@@ -53,7 +53,7 @@ index ddd88bdb6e8..c9284babd77 100644
    [RuntimeEnabled=PrefersReducedData] readonly attribute PreferenceObject reducedData;
  };
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index caeed6b152c..b41dc712f03 100644
+index caeed6b152..b41dc712f0 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -5131,6 +5131,10 @@

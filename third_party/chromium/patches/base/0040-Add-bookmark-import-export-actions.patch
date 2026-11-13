@@ -36,7 +36,7 @@ FILE:Add-bookmark-import-export-actions.patch
  create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/add-bookmark-import-export-actions.inc
 
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index da5a3743cc1..975574458f2 100644
+index da5a3743cc..975574458f 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -1038,6 +1038,13 @@ source_set("core") {
@@ -54,7 +54,7 @@ index da5a3743cc1..975574458f2 100644
    defines = [ "ZLIB_CONST" ]
  
 diff --git a/chrome/browser/bookmarks/android/bookmark_bridge.cc b/chrome/browser/bookmarks/android/bookmark_bridge.cc
-index b94692c5baf..58832478046 100644
+index b94692c5ba..5883247804 100644
 --- a/chrome/browser/bookmarks/android/bookmark_bridge.cc
 +++ b/chrome/browser/bookmarks/android/bookmark_bridge.cc
 @@ -65,6 +65,28 @@
@@ -272,7 +272,7 @@ index b94692c5baf..58832478046 100644
                                        int64_t id,
                                        int32_t type,
 diff --git a/chrome/browser/bookmarks/android/bookmark_bridge.h b/chrome/browser/bookmarks/android/bookmark_bridge.h
-index 7b7395043de..0adac2b86df 100644
+index 7b7395043d..0adac2b86d 100644
 --- a/chrome/browser/bookmarks/android/bookmark_bridge.h
 +++ b/chrome/browser/bookmarks/android/bookmark_bridge.h
 @@ -19,6 +19,7 @@
@@ -362,7 +362,7 @@ index 7b7395043de..0adac2b86df 100644
    // object.
    base::WeakPtrFactory<BookmarkBridge> weak_ptr_factory_;
 diff --git a/chrome/browser/importer/profile_writer.cc b/chrome/browser/importer/profile_writer.cc
-index a29027ec2b2..3c1200132d6 100644
+index a29027ec2b..3c1200132d 100644
 --- a/chrome/browser/importer/profile_writer.cc
 +++ b/chrome/browser/importer/profile_writer.cc
 @@ -127,6 +127,16 @@ void ProfileWriter::AddBookmarks(
@@ -383,7 +383,7 @@ index a29027ec2b2..3c1200132d6 100644
  
    // If the bookmark bar is currently empty, we should import directly to it.
 diff --git a/chrome/browser/importer/profile_writer.h b/chrome/browser/importer/profile_writer.h
-index f609d99dde3..f6938f74d6a 100644
+index f609d99dde..f6938f74d6 100644
 --- a/chrome/browser/importer/profile_writer.h
 +++ b/chrome/browser/importer/profile_writer.h
 @@ -11,6 +11,7 @@
@@ -407,7 +407,7 @@ index f609d99dde3..f6938f74d6a 100644
  
    // Adds the TemplateURLs in |template_urls| to the local store.
 diff --git a/chrome/utility/BUILD.gn b/chrome/utility/BUILD.gn
-index e5b851a44d6..735669efe4e 100644
+index e5b851a44d..735669efe4 100644
 --- a/chrome/utility/BUILD.gn
 +++ b/chrome/utility/BUILD.gn
 @@ -218,6 +218,13 @@ static_library("utility") {
@@ -425,7 +425,7 @@ index e5b851a44d6..735669efe4e 100644
    if (!is_chromeos && use_nss_certs) {
      sources += [
 diff --git a/chrome/utility/importer/bookmarks_file_importer.cc b/chrome/utility/importer/bookmarks_file_importer.cc
-index 1184ce779e0..5047a67e38c 100644
+index 1184ce779e..5047a67e38 100644
 --- a/chrome/utility/importer/bookmarks_file_importer.cc
 +++ b/chrome/utility/importer/bookmarks_file_importer.cc
 @@ -128,8 +128,12 @@ void BookmarksFileImporter::OnBookmarksParsed(
@@ -442,7 +442,7 @@ index 1184ce779e0..5047a67e38c 100644
                    [](user_data_importer::ImportedBookmarkEntry bookmark) {
                      return !internal::CanImportURL(bookmark.url);
 diff --git a/components/headless/select_file_dialog/headless_select_file_dialog.cc b/components/headless/select_file_dialog/headless_select_file_dialog.cc
-index 23af76dec60..8cbc9290cb5 100644
+index 23af76dec6..8cbc9290cb 100644
 --- a/components/headless/select_file_dialog/headless_select_file_dialog.cc
 +++ b/components/headless/select_file_dialog/headless_select_file_dialog.cc
 @@ -57,6 +57,10 @@ class HeadlessSelectFileDialog : public ui::SelectFileDialog {
@@ -457,7 +457,7 @@ index 23af76dec60..8cbc9290cb5 100644
  };
  
 diff --git a/components/user_data_importer/content/content_bookmark_parser_utils.cc b/components/user_data_importer/content/content_bookmark_parser_utils.cc
-index f6f8396c67b..7b4088669d4 100644
+index f6f8396c67..7b4088669d 100644
 --- a/components/user_data_importer/content/content_bookmark_parser_utils.cc
 +++ b/components/user_data_importer/content/content_bookmark_parser_utils.cc
 @@ -138,6 +138,7 @@ std::optional<bool> GetBoolAttribute(std::string_view attribute_list,
@@ -482,7 +482,7 @@ index f6f8396c67b..7b4088669d4 100644
      }
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/add-bookmark-import-export-actions.inc b/cromite_flags/chrome/browser/about_flags_cc/add-bookmark-import-export-actions.inc
 new file mode 100644
-index 00000000000..2974200f1ca
+index 0000000000..2974200f1c
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/add-bookmark-import-export-actions.inc
 @@ -0,0 +1,12 @@
@@ -500,7 +500,7 @@ index 00000000000..2974200f1ca
 +#endif
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-bookmark-import-export-actions.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-bookmark-import-export-actions.inc
 new file mode 100644
-index 00000000000..df613c0776c
+index 0000000000..df613c0776
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-bookmark-import-export-actions.inc
 @@ -0,0 +1,4 @@
@@ -510,13 +510,13 @@ index 00000000000..df613c0776c
 +                base::FEATURE_DISABLED_BY_DEFAULT);
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/add-bookmark-import-export-actions.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/add-bookmark-import-export-actions.inc
 new file mode 100644
-index 00000000000..2c0451dd834
+index 0000000000..2c0451dd83
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/add-bookmark-import-export-actions.inc
 @@ -0,0 +1 @@
 +BASE_DECLARE_FEATURE(kBookmarksExportUseSaf);
 diff --git a/ui/shell_dialogs/select_file_dialog.h b/ui/shell_dialogs/select_file_dialog.h
-index 12a514b89c2..8a0e30de6bd 100644
+index 12a514b89c..8a0e30de6b 100644
 --- a/ui/shell_dialogs/select_file_dialog.h
 +++ b/ui/shell_dialogs/select_file_dialog.h
 @@ -224,6 +224,8 @@ class SHELL_DIALOGS_EXPORT SelectFileDialog
@@ -529,7 +529,7 @@ index 12a514b89c2..8a0e30de6bd 100644
    friend class base::RefCountedThreadSafe<SelectFileDialog>;
  
 diff --git a/ui/shell_dialogs/select_file_dialog_android.cc b/ui/shell_dialogs/select_file_dialog_android.cc
-index 26121305e3d..b885479f167 100644
+index 26121305e3..b885479f16 100644
 --- a/ui/shell_dialogs/select_file_dialog_android.cc
 +++ b/ui/shell_dialogs/select_file_dialog_android.cc
 @@ -204,6 +204,12 @@ void SelectFileDialogImpl::SelectFileImpl(Type type,
@@ -546,7 +546,7 @@ index 26121305e3d..b885479f167 100644
    JNIEnv* env = base::android::AttachCurrentThread();
    Java_SelectFileDialog_nativeDestroyed(env, java_object_);
 diff --git a/ui/shell_dialogs/select_file_dialog_android.h b/ui/shell_dialogs/select_file_dialog_android.h
-index 75d40a15807..5b981dea1e4 100644
+index 75d40a1580..5b981dea1e 100644
 --- a/ui/shell_dialogs/select_file_dialog_android.h
 +++ b/ui/shell_dialogs/select_file_dialog_android.h
 @@ -49,6 +49,8 @@ class SelectFileDialogImpl : public SelectFileDialog {
@@ -559,7 +559,7 @@ index 75d40a15807..5b981dea1e4 100644
    ~SelectFileDialogImpl() override;
  
 diff --git a/ui/shell_dialogs/select_file_dialog_linux.cc b/ui/shell_dialogs/select_file_dialog_linux.cc
-index 4b540a7fcdf..616f59abedd 100644
+index 4b540a7fcd..616f59abed 100644
 --- a/ui/shell_dialogs/select_file_dialog_linux.cc
 +++ b/ui/shell_dialogs/select_file_dialog_linux.cc
 @@ -31,6 +31,10 @@ void SelectFileDialogLinux::ListenerDestroyed() {
@@ -574,7 +574,7 @@ index 4b540a7fcdf..616f59abedd 100644
      const base::FilePath& path) {
    base::ScopedAllowBlocking scoped_allow_blocking;
 diff --git a/ui/shell_dialogs/select_file_dialog_linux.h b/ui/shell_dialogs/select_file_dialog_linux.h
-index 61683d0eddb..9edc0f06917 100644
+index 61683d0edd..9edc0f0691 100644
 --- a/ui/shell_dialogs/select_file_dialog_linux.h
 +++ b/ui/shell_dialogs/select_file_dialog_linux.h
 @@ -33,6 +33,8 @@ class SHELL_DIALOGS_EXPORT SelectFileDialogLinux : public SelectFileDialog {

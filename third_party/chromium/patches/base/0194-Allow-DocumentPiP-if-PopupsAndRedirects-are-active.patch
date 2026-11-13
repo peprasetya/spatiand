@@ -14,7 +14,7 @@ FILE:Allow-DocumentPiP-if-PopupsAndRedirects-are-active.patch
  1 file changed, 7 insertions(+)
 
 diff --git a/third_party/blink/renderer/modules/document_picture_in_picture/picture_in_picture_controller_impl.cc b/third_party/blink/renderer/modules/document_picture_in_picture/picture_in_picture_controller_impl.cc
-index 235575b37bc..2f433295977 100644
+index 235575b37b..2f43329597 100644
 --- a/third_party/blink/renderer/modules/document_picture_in_picture/picture_in_picture_controller_impl.cc
 +++ b/third_party/blink/renderer/modules/document_picture_in_picture/picture_in_picture_controller_impl.cc
 @@ -31,6 +31,7 @@

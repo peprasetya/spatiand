@@ -16,7 +16,7 @@ FILE:Add-flag-to-control-video-playback-resume-feature.patch
 
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/add-flag-to-control-video-playback-resume-feature.inc b/cromite_flags/chrome/browser/about_flags_cc/add-flag-to-control-video-playback-resume-feature.inc
 new file mode 100644
-index 00000000000..c30c0798a18
+index 0000000000..c30c0798a1
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/add-flag-to-control-video-playback-resume-feature.inc
 @@ -0,0 +1,13 @@
@@ -35,7 +35,7 @@ index 00000000000..c30c0798a18
 +#endif // ifdef FLAG_SECTION
 diff --git a/cromite_flags/media/base/media_switches_cc/add-flag-to-control-video-playback-resume-feature.inc b/cromite_flags/media/base/media_switches_cc/add-flag-to-control-video-playback-resume-feature.inc
 new file mode 100644
-index 00000000000..a74a2224d41
+index 0000000000..a74a2224d4
 --- /dev/null
 +++ b/cromite_flags/media/base/media_switches_cc/add-flag-to-control-video-playback-resume-feature.inc
 @@ -0,0 +1 @@

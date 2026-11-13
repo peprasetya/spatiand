@@ -32,7 +32,7 @@ FILE:Partition-HSTS-cache-by-NAK.patch
  create mode 100644 cromite_flags/net/base/features_cc/Partition-HSTS-cache-by-NAK.inc
 
 diff --git a/chrome/browser/ssl/https_upgrades_interceptor.cc b/chrome/browser/ssl/https_upgrades_interceptor.cc
-index 6fff9bdd122..d6326934eca 100644
+index 6fff9bdd12..d6326934ec 100644
 --- a/chrome/browser/ssl/https_upgrades_interceptor.cc
 +++ b/chrome/browser/ssl/https_upgrades_interceptor.cc
 @@ -396,6 +396,7 @@ void HttpsUpgradesInterceptor::MaybeCreateLoader(
@@ -44,7 +44,7 @@ index 6fff9bdd122..d6326934eca 100644
        tentative_resource_request.trusted_params->isolation_info
            .IsOutermostMainFrameRequest(),
 diff --git a/chrome/browser/ui/webui/net_internals/net_internals_ui.cc b/chrome/browser/ui/webui/net_internals/net_internals_ui.cc
-index 45b907beafc..8ac35ce216c 100644
+index 45b907beaf..8ac35ce216 100644
 --- a/chrome/browser/ui/webui/net_internals/net_internals_ui.cc
 +++ b/chrome/browser/ui/webui/net_internals/net_internals_ui.cc
 @@ -400,7 +400,10 @@ void NetInternalsMessageHandler::OnDomainSecurityPolicyDelete(
@@ -85,7 +85,7 @@ index 45b907beafc..8ac35ce216c 100644
  
  void NetInternalsMessageHandler::OnFlushSocketPools(
 diff --git a/components/password_manager/core/browser/hsts_query.cc b/components/password_manager/core/browser/hsts_query.cc
-index 5e543ada1eb..30f34974961 100644
+index 5e543ada1e..30f3497496 100644
 --- a/components/password_manager/core/browser/hsts_query.cc
 +++ b/components/password_manager/core/browser/hsts_query.cc
 @@ -63,6 +63,7 @@ void PostHSTSQueryForHostAndNetworkContext(
@@ -97,7 +97,7 @@ index 5e543ada1eb..30f34974961 100644
        mojo::WrapCallbackWithDropHandler(
            base::BindOnce(&HSTSCallbackHelper::ReportResult, callback_helper),
 diff --git a/content/browser/web_package/signed_exchange_handler.cc b/content/browser/web_package/signed_exchange_handler.cc
-index d78b8db9143..46df1f4db77 100644
+index d78b8db914..46df1f4db7 100644
 --- a/content/browser/web_package/signed_exchange_handler.cc
 +++ b/content/browser/web_package/signed_exchange_handler.cc
 @@ -96,6 +96,7 @@ using VerifyCallback =
@@ -144,7 +144,7 @@ index d78b8db9143..46df1f4db77 100644
               base::BindOnce(&SignedExchangeHandler::OnVerifyCert,
                              weak_factory_.GetWeakPtr()));
 diff --git a/content/browser/web_package/signed_exchange_handler.h b/content/browser/web_package/signed_exchange_handler.h
-index 5755d7af9bd..3eb8edc0114 100644
+index 5755d7af9b..3eb8edc011 100644
 --- a/content/browser/web_package/signed_exchange_handler.h
 +++ b/content/browser/web_package/signed_exchange_handler.h
 @@ -105,6 +105,7 @@ class CONTENT_EXPORT SignedExchangeHandler {
@@ -166,7 +166,7 @@ index 5755d7af9bd..3eb8edc0114 100644
    // prefetch request.
    std::optional<net::IsolationInfo> outer_request_isolation_info_;
 diff --git a/content/browser/web_package/signed_exchange_loader.cc b/content/browser/web_package/signed_exchange_loader.cc
-index 7cc577df035..32ac944949a 100644
+index 7cc577df03..32ac944949 100644
 --- a/content/browser/web_package/signed_exchange_loader.cc
 +++ b/content/browser/web_package/signed_exchange_loader.cc
 @@ -80,6 +80,7 @@ SignedExchangeLoader::SignedExchangeLoader(
@@ -187,7 +187,7 @@ index 7cc577df035..32ac944949a 100644
              ? std::nullopt
              : std::make_optional(outer_request_.trusted_params->isolation_info),
 diff --git a/content/browser/web_package/signed_exchange_loader.h b/content/browser/web_package/signed_exchange_loader.h
-index a572f55cbdd..7275b966e6d 100644
+index a572f55cbd..7275b966e6 100644
 --- a/content/browser/web_package/signed_exchange_loader.h
 +++ b/content/browser/web_package/signed_exchange_loader.h
 @@ -33,6 +33,7 @@ class URLLoaderThrottle;
@@ -207,7 +207,7 @@ index a572f55cbdd..7275b966e6d 100644
        const std::string& accept_langs,
        bool keep_entry_for_prefetch_cache);
 diff --git a/content/browser/web_package/signed_exchange_prefetch_handler.cc b/content/browser/web_package/signed_exchange_prefetch_handler.cc
-index f5ace3c0bf4..8c2fb0fc284 100644
+index f5ace3c0bf..8c2fb0fc28 100644
 --- a/content/browser/web_package/signed_exchange_prefetch_handler.cc
 +++ b/content/browser/web_package/signed_exchange_prefetch_handler.cc
 @@ -56,7 +56,7 @@ SignedExchangePrefetchHandler::SignedExchangePrefetchHandler(
@@ -220,7 +220,7 @@ index f5ace3c0bf4..8c2fb0fc284 100644
  }
  
 diff --git a/content/browser/web_package/signed_exchange_request_handler.cc b/content/browser/web_package/signed_exchange_request_handler.cc
-index 9ea347e1bb1..c45e723454a 100644
+index 9ea347e1bb..c45e723454 100644
 --- a/content/browser/web_package/signed_exchange_request_handler.cc
 +++ b/content/browser/web_package/signed_exchange_request_handler.cc
 @@ -117,6 +117,7 @@ bool SignedExchangeRequestHandler::MaybeCreateLoaderForResponse(
@@ -233,13 +233,13 @@ index 9ea347e1bb1..c45e723454a 100644
  
 diff --git a/cromite_flags/net/base/features_cc/Partition-HSTS-cache-by-NAK.inc b/cromite_flags/net/base/features_cc/Partition-HSTS-cache-by-NAK.inc
 new file mode 100644
-index 00000000000..a170429ee83
+index 0000000000..a170429ee8
 --- /dev/null
 +++ b/cromite_flags/net/base/features_cc/Partition-HSTS-cache-by-NAK.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_DISABLED(kHstsTopLevelNavigationsOnly);
 diff --git a/net/http/transport_security_state.cc b/net/http/transport_security_state.cc
-index e8c5bd08537..025000154a0 100644
+index e8c5bd0853..025000154a 100644
 --- a/net/http/transport_security_state.cc
 +++ b/net/http/transport_security_state.cc
 @@ -88,7 +88,7 @@ bool HashesIntersect(const absl::flat_hash_set<SHA256HashValue>& a,
@@ -530,7 +530,7 @@ index e8c5bd08537..025000154a0 100644
      return false;
    }
 diff --git a/net/http/transport_security_state.h b/net/http/transport_security_state.h
-index edfa7ef605f..fefb40cc548 100644
+index edfa7ef605..fefb40cc54 100644
 --- a/net/http/transport_security_state.h
 +++ b/net/http/transport_security_state.h
 @@ -244,6 +244,7 @@ class NET_EXPORT TransportSecurityState {
@@ -651,7 +651,7 @@ index edfa7ef605f..fefb40cc548 100644
                         base::Time expiry,
                         bool include_subdomains);
 diff --git a/net/quic/crypto/proof_verifier_chromium.cc b/net/quic/crypto/proof_verifier_chromium.cc
-index 712b6ea544f..f32f175899d 100644
+index 712b6ea544..f32f175899 100644
 --- a/net/quic/crypto/proof_verifier_chromium.cc
 +++ b/net/quic/crypto/proof_verifier_chromium.cc
 @@ -408,7 +408,8 @@ int ProofVerifierChromium::Job::DoVerifyCertComplete(int result) {
@@ -674,7 +674,7 @@ index 712b6ea544f..f32f175899d 100644
    if (result != OK) {
      std::string error_string = ErrorToString(result);
 diff --git a/net/quic/quic_chromium_client_session.cc b/net/quic/quic_chromium_client_session.cc
-index fb776e028ec..4460088cfab 100644
+index fb776e028e..4460088cfa 100644
 --- a/net/quic/quic_chromium_client_session.cc
 +++ b/net/quic/quic_chromium_client_session.cc
 @@ -1696,7 +1696,7 @@ bool QuicChromiumClientSession::CanPool(
@@ -687,7 +687,7 @@ index fb776e028ec..4460088cfab 100644
  
  bool QuicChromiumClientSession::ShouldCreateIncomingStream(
 diff --git a/net/socket/ssl_client_socket_impl.cc b/net/socket/ssl_client_socket_impl.cc
-index 17b43c108b4..2a6039fd3cf 100644
+index 17b43c108b..2a6039fd3c 100644
 --- a/net/socket/ssl_client_socket_impl.cc
 +++ b/net/socket/ssl_client_socket_impl.cc
 @@ -1282,7 +1282,8 @@ ssl_verify_result_t SSLClientSocketImpl::HandleVerifyResult() {
@@ -710,7 +710,7 @@ index 17b43c108b4..2a6039fd3cf 100644
    if (IsCertificateError(result)) {
      if (!GetECHNameOverride().empty()) {
 diff --git a/net/spdy/spdy_session.cc b/net/spdy/spdy_session.cc
-index 616dea66c39..4e82ece8d93 100644
+index 616dea66c3..4e82ece8d9 100644
 --- a/net/spdy/spdy_session.cc
 +++ b/net/spdy/spdy_session.cc
 @@ -724,7 +724,8 @@ bool SpdySession::CanPool(TransportSecurityState* transport_security_state,
@@ -753,7 +753,7 @@ index 616dea66c39..4e82ece8d93 100644
      }
      scheme_host_port = url::SchemeHostPort(gurl);
 diff --git a/net/spdy/spdy_session.h b/net/spdy/spdy_session.h
-index eee458e5cad..fbebaa7b1f8 100644
+index eee458e5ca..fbebaa7b1f 100644
 --- a/net/spdy/spdy_session.h
 +++ b/net/spdy/spdy_session.h
 @@ -333,7 +333,8 @@ class NET_EXPORT SpdySession
@@ -767,7 +767,7 @@ index eee458e5cad..fbebaa7b1f8 100644
    // Create a new SpdySession.
    // |spdy_session_key| is the host/port that this session connects to, privacy
 diff --git a/net/url_request/url_request_context_builder.cc b/net/url_request/url_request_context_builder.cc
-index a6292daadf6..3b76ed06187 100644
+index a6292daadf..3b76ed0618 100644
 --- a/net/url_request/url_request_context_builder.cc
 +++ b/net/url_request/url_request_context_builder.cc
 @@ -413,20 +413,6 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
@@ -792,7 +792,7 @@ index a6292daadf6..3b76ed06187 100644
    if (http_server_properties_) {
      context->set_http_server_properties(std::move(http_server_properties_));
 diff --git a/net/url_request/url_request_http_job.cc b/net/url_request/url_request_http_job.cc
-index 94e74c1f86d..faa4226ad86 100644
+index 94e74c1f86..faa4226ad8 100644
 --- a/net/url_request/url_request_http_job.cc
 +++ b/net/url_request/url_request_http_job.cc
 @@ -354,6 +354,7 @@ std::unique_ptr<URLRequestJob> URLRequestHttpJob::Create(URLRequest* request) {
@@ -822,7 +822,7 @@ index 94e74c1f86d..faa4226ad86 100644
    } else if (result == ERR_SSL_CLIENT_AUTH_CERT_NEEDED) {
      NotifyCertificateRequested(
 diff --git a/services/network/network_context.cc b/services/network/network_context.cc
-index 4e317912e2a..be062ee18ce 100644
+index 4e317912e2..be062ee18c 100644
 --- a/services/network/network_context.cc
 +++ b/services/network/network_context.cc
 @@ -2307,6 +2307,7 @@ void NetworkContext::CreateHostResolver(
@@ -967,7 +967,7 @@ index 4e317912e2a..be062ee18ce 100644
        case net::TransportSecurityState::PKPStatus::VIOLATED:
          pending_cert_verify->result->cert_status |=
 diff --git a/services/network/network_context.h b/services/network/network_context.h
-index d07161f6279..363b314671c 100644
+index d07161f627..363b314671 100644
 --- a/services/network/network_context.h
 +++ b/services/network/network_context.h
 @@ -466,12 +466,14 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkContext
@@ -1035,7 +1035,7 @@ index d07161f6279..363b314671c 100644
    std::map<uint64_t, std::unique_ptr<PendingCertVerify>>
        cert_verifier_requests_;
 diff --git a/services/network/public/mojom/network_context.mojom b/services/network/public/mojom/network_context.mojom
-index 9085c1b5e9f..eca3de7d321 100644
+index 9085c1b5e9..eca3de7d32 100644
 --- a/services/network/public/mojom/network_context.mojom
 +++ b/services/network/public/mojom/network_context.mojom
 @@ -1750,6 +1750,7 @@ interface NetworkContext {

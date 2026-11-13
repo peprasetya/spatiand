@@ -11,7 +11,7 @@ per-site setting stays, to block it where wanted.
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
-index f9799b561b9..401c6f3c015 100644
+index f9799b561b..401c6f3c01 100644
 --- a/components/content_settings/core/browser/content_settings_registry.cc
 +++ b/components/content_settings/core/browser/content_settings_registry.cc
 @@ -564,7 +564,7 @@ void ContentSettingsRegistry::Init() {

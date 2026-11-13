@@ -14,7 +14,7 @@ FILE:Disable-Web-Bluetooth-by-default-in-desktop-platforms.patch
  create mode 100644 cromite_flags/content/public/common/content_features_cc/Disable-Web-Bluetooth-by-default.inc
 
 diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
-index f569f2ab4ef..f9799b561b9 100644
+index f569f2ab4e..f9799b561b 100644
 --- a/components/content_settings/core/browser/content_settings_registry.cc
 +++ b/components/content_settings/core/browser/content_settings_registry.cc
 @@ -325,8 +325,13 @@ void ContentSettingsRegistry::Init() {
@@ -33,7 +33,7 @@ index f569f2ab4ef..f9799b561b9 100644
             WebsiteSettingsInfo::TOP_ORIGIN_ONLY_SCOPE,
 diff --git a/cromite_flags/content/public/common/content_features_cc/Disable-Web-Bluetooth-by-default.inc b/cromite_flags/content/public/common/content_features_cc/Disable-Web-Bluetooth-by-default.inc
 new file mode 100644
-index 00000000000..7a22b10ffee
+index 0000000000..7a22b10ffe
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_cc/Disable-Web-Bluetooth-by-default.inc
 @@ -0,0 +1,3 @@

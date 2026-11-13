@@ -35,7 +35,7 @@ FILE:Enable-ClientHello-Segmentation.patch
 
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Enable-clienthello-fragmentation.inc b/cromite_flags/chrome/browser/about_flags_cc/Enable-clienthello-fragmentation.inc
 new file mode 100644
-index 00000000000..4fad2846e10
+index 0000000000..4fad2846e1
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Enable-clienthello-fragmentation.inc
 @@ -0,0 +1,8 @@
@@ -49,7 +49,7 @@ index 00000000000..4fad2846e10
 +#endif // ifdef FLAG_SECTION
 diff --git a/cromite_flags/net/base/features_cc/Enable-clienthello-fragmentation.inc b/cromite_flags/net/base/features_cc/Enable-clienthello-fragmentation.inc
 new file mode 100644
-index 00000000000..fc289dde82c
+index 0000000000..fc289dde82
 --- /dev/null
 +++ b/cromite_flags/net/base/features_cc/Enable-clienthello-fragmentation.inc
 @@ -0,0 +1,3 @@
@@ -58,13 +58,13 @@ index 00000000000..fc289dde82c
 +                base::FEATURE_ENABLED_BY_DEFAULT);
 diff --git a/cromite_flags/net/base/features_h/Enable-clienthello-fragmentation.inc b/cromite_flags/net/base/features_h/Enable-clienthello-fragmentation.inc
 new file mode 100644
-index 00000000000..f7cb3b0fbab
+index 0000000000..f7cb3b0fba
 --- /dev/null
 +++ b/cromite_flags/net/base/features_h/Enable-clienthello-fragmentation.inc
 @@ -0,0 +1 @@
 +NET_EXPORT BASE_DECLARE_FEATURE(kClientHelloFragmentation);
 diff --git a/net/http/http_proxy_connect_job.cc b/net/http/http_proxy_connect_job.cc
-index e40cf32cb9c..31580e85d41 100644
+index e40cf32cb9..31580e85d4 100644
 --- a/net/http/http_proxy_connect_job.cc
 +++ b/net/http/http_proxy_connect_job.cc
 @@ -891,7 +891,7 @@ void HttpProxyConnectJob::ChangePriorityInternal(RequestPriority priority) {
@@ -85,7 +85,7 @@ index e40cf32cb9c..31580e85d41 100644
  
  void HttpProxyConnectJob::OnAuthChallenge() {
 diff --git a/net/http/http_proxy_connect_job.h b/net/http/http_proxy_connect_job.h
-index ef8e49c4d2d..e8845e4747b 100644
+index ef8e49c4d2..e8845e4747 100644
 --- a/net/http/http_proxy_connect_job.h
 +++ b/net/http/http_proxy_connect_job.h
 @@ -294,7 +294,7 @@ class NET_EXPORT_PRIVATE HttpProxyConnectJob : public ConnectJob,
@@ -98,7 +98,7 @@ index ef8e49c4d2d..e8845e4747b 100644
    void OnAuthChallenge();
  
 diff --git a/net/socket/connect_job.cc b/net/socket/connect_job.cc
-index 4adfb153401..18a7d2675ff 100644
+index 4adfb15340..18a7d2675f 100644
 --- a/net/socket/connect_job.cc
 +++ b/net/socket/connect_job.cc
 @@ -234,16 +234,19 @@ void ConnectJob::StopTimerAndLogConnectCompletion(int net_error) {
@@ -125,7 +125,7 @@ index 4adfb153401..18a7d2675ff 100644
  
  }  // namespace net
 diff --git a/net/socket/connect_job.h b/net/socket/connect_job.h
-index cdd27e0f305..57c95d0b760 100644
+index cdd27e0f30..57c95d0b76 100644
 --- a/net/socket/connect_job.h
 +++ b/net/socket/connect_job.h
 @@ -348,7 +348,7 @@ class NET_EXPORT_PRIVATE ConnectJob {
@@ -138,7 +138,7 @@ index cdd27e0f305..57c95d0b760 100644
    const base::TimeDelta timeout_duration_;
    RequestPriority priority_;
 diff --git a/net/socket/ssl_client_socket.h b/net/socket/ssl_client_socket.h
-index 4046a961c9c..a4a8a8bd95d 100644
+index 4046a961c9..a4a8a8bd95 100644
 --- a/net/socket/ssl_client_socket.h
 +++ b/net/socket/ssl_client_socket.h
 @@ -111,6 +111,8 @@ class NET_EXPORT SSLClientSocket : public SSLSocket {
@@ -151,7 +151,7 @@ index 4046a961c9c..a4a8a8bd95d 100644
    // SSLClientSockets are created.
    //
 diff --git a/net/socket/ssl_client_socket_impl.cc b/net/socket/ssl_client_socket_impl.cc
-index 2a6039fd3cf..b8bce32b52b 100644
+index 2a6039fd3c..b8bce32b52 100644
 --- a/net/socket/ssl_client_socket_impl.cc
 +++ b/net/socket/ssl_client_socket_impl.cc
 @@ -350,6 +350,10 @@ void SSLClientSocketImpl::SetSSLKeyLogger(
@@ -198,7 +198,7 @@ index 2a6039fd3cf..b8bce32b52b 100644
                         net_error, ssl_error, error_info);
    }
 diff --git a/net/socket/ssl_client_socket_impl.h b/net/socket/ssl_client_socket_impl.h
-index bcf1111c61b..2e70fa65a11 100644
+index bcf1111c61..2e70fa65a1 100644
 --- a/net/socket/ssl_client_socket_impl.h
 +++ b/net/socket/ssl_client_socket_impl.h
 @@ -77,6 +77,7 @@ class NET_EXPORT_PRIVATE SSLClientSocketImpl
@@ -219,7 +219,7 @@ index bcf1111c61b..2e70fa65a11 100644
  
    // Stores the value of SSLClientSessionCache's generation number at the time
 diff --git a/net/socket/ssl_connect_job.cc b/net/socket/ssl_connect_job.cc
-index 3776d69fffd..69b8a07b62e 100644
+index 3776d69fff..69b8a07b62 100644
 --- a/net/socket/ssl_connect_job.cc
 +++ b/net/socket/ssl_connect_job.cc
 @@ -43,6 +43,7 @@ namespace {
@@ -293,7 +293,7 @@ index 3776d69fffd..69b8a07b62e 100644
    next_state_ = GetInitialState(params_->GetConnectionType());
    return DoLoop(OK);
 diff --git a/net/socket/ssl_connect_job.h b/net/socket/ssl_connect_job.h
-index 4ffca0ad672..25b611f143b 100644
+index 4ffca0ad67..25b611f143 100644
 --- a/net/socket/ssl_connect_job.h
 +++ b/net/socket/ssl_connect_job.h
 @@ -169,6 +169,8 @@ class NET_EXPORT_PRIVATE SSLConnectJob : public ConnectJob,
@@ -314,7 +314,7 @@ index 4ffca0ad672..25b611f143b 100644
    scoped_refptr<SSLCertRequestInfo> ssl_cert_request_info_;
  
 diff --git a/net/ssl/ssl_config.h b/net/ssl/ssl_config.h
-index 91a9be22563..c3ffcee6784 100644
+index 91a9be2256..c3ffcee678 100644
 --- a/net/ssl/ssl_config.h
 +++ b/net/ssl/ssl_config.h
 @@ -136,6 +136,8 @@ struct NET_EXPORT SSLConfig {

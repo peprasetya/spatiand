@@ -50,7 +50,7 @@ FILE:Add-a-proxy-configuration-page.patch
  create mode 100644 chrome/browser/ui/webui/proxy_config_ui.h
 
 diff --git a/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc b/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc
-index 7d08aa18e0c..8bea10bec0d 100644
+index 7d08aa18e0..8bea10bec0 100644
 --- a/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc
 +++ b/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc
 @@ -467,6 +467,7 @@ ChromeAutocompleteProviderClient::GetBuiltinsToProvideAsUserTypes() {
@@ -62,7 +62,7 @@ index 7d08aa18e0c..8bea10bec0d 100644
  }
  
 diff --git a/chrome/browser/browser_resources.grd b/chrome/browser/browser_resources.grd
-index e8b4901c994..d066c6b53e8 100644
+index e8b4901c99..d066c6b53e 100644
 --- a/chrome/browser/browser_resources.grd
 +++ b/chrome/browser/browser_resources.grd
 @@ -200,6 +200,9 @@
@@ -76,7 +76,7 @@ index e8b4901c994..d066c6b53e8 100644
          <!-- Page not available for guest. -->
          <include name="IDR_PAGE_NOT_AVAILABLE_FOR_GUEST_APP_HTML" file="resources\page_not_available_for_guest\app.html" type="BINDATA" />
 diff --git a/chrome/browser/net/proxy_service_factory.cc b/chrome/browser/net/proxy_service_factory.cc
-index d60463495c2..dc7bff1b3de 100644
+index d60463495c..dc7bff1b3d 100644
 --- a/chrome/browser/net/proxy_service_factory.cc
 +++ b/chrome/browser/net/proxy_service_factory.cc
 @@ -6,6 +6,7 @@
@@ -131,7 +131,7 @@ index d60463495c2..dc7bff1b3de 100644
 +  registry->RegisterBooleanPref("proxy_migrated", false);
 +}
 diff --git a/chrome/browser/net/proxy_service_factory.h b/chrome/browser/net/proxy_service_factory.h
-index fdbe644f25a..a0c27ac3aba 100644
+index fdbe644f25..a0c27ac3ab 100644
 --- a/chrome/browser/net/proxy_service_factory.h
 +++ b/chrome/browser/net/proxy_service_factory.h
 @@ -6,6 +6,7 @@
@@ -152,7 +152,7 @@ index fdbe644f25a..a0c27ac3aba 100644
    // should be used for the system request context and the signin screen
    // (ChromeOS only).
 diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
-index 8415d1e2489..b08c53e79ee 100644
+index 8415d1e248..b08c53e79e 100644
 --- a/chrome/browser/prefs/browser_prefs.cc
 +++ b/chrome/browser/prefs/browser_prefs.cc
 @@ -52,6 +52,7 @@
@@ -172,7 +172,7 @@ index 8415d1e2489..b08c53e79ee 100644
    feature_engagement::RegisterLocalStatePrefs(registry);
  #if BUILDFLAG(IS_ANDROID)
 diff --git a/chrome/browser/prefs/chrome_command_line_pref_store.cc b/chrome/browser/prefs/chrome_command_line_pref_store.cc
-index 3e93688a11a..09bf06afe77 100644
+index 3e93688a11..09bf06afe7 100644
 --- a/chrome/browser/prefs/chrome_command_line_pref_store.cc
 +++ b/chrome/browser/prefs/chrome_command_line_pref_store.cc
 @@ -162,7 +162,7 @@ void ChromeCommandLinePrefStore::ApplyProxyMode() {
@@ -186,7 +186,7 @@ index 3e93688a11a..09bf06afe77 100644
  }
 diff --git a/chrome/browser/resources/proxy_config.css b/chrome/browser/resources/proxy_config.css
 new file mode 100644
-index 00000000000..0ce4fc031fa
+index 0000000000..0ce4fc031f
 --- /dev/null
 +++ b/chrome/browser/resources/proxy_config.css
 @@ -0,0 +1,61 @@
@@ -253,7 +253,7 @@ index 00000000000..0ce4fc031fa
 +}
 diff --git a/chrome/browser/resources/proxy_config.html b/chrome/browser/resources/proxy_config.html
 new file mode 100644
-index 00000000000..71df46a98a6
+index 0000000000..71df46a98a
 --- /dev/null
 +++ b/chrome/browser/resources/proxy_config.html
 @@ -0,0 +1,77 @@
@@ -336,7 +336,7 @@ index 00000000000..71df46a98a6
 +</html>
 diff --git a/chrome/browser/resources/proxy_config.js b/chrome/browser/resources/proxy_config.js
 new file mode 100644
-index 00000000000..280e2b9c41f
+index 0000000000..280e2b9c41
 --- /dev/null
 +++ b/chrome/browser/resources/proxy_config.js
 @@ -0,0 +1,278 @@
@@ -619,7 +619,7 @@ index 00000000000..280e2b9c41f
 +  return ProxyConfigView;
 +})();
 diff --git a/chrome/browser/ui/webui/BUILD.gn b/chrome/browser/ui/webui/BUILD.gn
-index d591f473242..bf0841912c1 100644
+index d591f47324..bf0841912c 100644
 --- a/chrome/browser/ui/webui/BUILD.gn
 +++ b/chrome/browser/ui/webui/BUILD.gn
 @@ -38,6 +38,8 @@ source_set("configs") {
@@ -632,7 +632,7 @@ index d591f473242..bf0841912c1 100644
  
    deps = [
 diff --git a/chrome/browser/ui/webui/chrome_web_ui_configs.cc b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
-index f3a1ecac47d..addffcc5cca 100644
+index f3a1ecac47..addffcc5cc 100644
 --- a/chrome/browser/ui/webui/chrome_web_ui_configs.cc
 +++ b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
 @@ -49,6 +49,7 @@
@@ -654,7 +654,7 @@ index f3a1ecac47d..addffcc5cca 100644
        std::make_unique<safe_browsing::ChromeSafeBrowsingUIConfig>());
 diff --git a/chrome/browser/ui/webui/proxy_config_ui.cc b/chrome/browser/ui/webui/proxy_config_ui.cc
 new file mode 100644
-index 00000000000..e4d5c3aeb91
+index 0000000000..e4d5c3aeb9
 --- /dev/null
 +++ b/chrome/browser/ui/webui/proxy_config_ui.cc
 @@ -0,0 +1,393 @@
@@ -1053,7 +1053,7 @@ index 00000000000..e4d5c3aeb91
 +}
 diff --git a/chrome/browser/ui/webui/proxy_config_ui.h b/chrome/browser/ui/webui/proxy_config_ui.h
 new file mode 100644
-index 00000000000..249bdb4398d
+index 0000000000..249bdb4398
 --- /dev/null
 +++ b/chrome/browser/ui/webui/proxy_config_ui.h
 @@ -0,0 +1,41 @@
@@ -1099,7 +1099,7 @@ index 00000000000..249bdb4398d
 +
 +#endif  // CHROME_BROWSER_UI_WEBUI_PROXY_CONFIG_UI_H_
 diff --git a/chrome/common/webui_url_constants.cc b/chrome/common/webui_url_constants.cc
-index bb97c63d197..5dc6e216764 100644
+index bb97c63d19..5dc6e21676 100644
 --- a/chrome/common/webui_url_constants.cc
 +++ b/chrome/common/webui_url_constants.cc
 @@ -119,6 +119,7 @@ bool IsSystemWebUIHost(std::string_view host) {
@@ -1111,7 +1111,7 @@ index bb97c63d197..5dc6e216764 100644
        kChromeUIAccessibilityHost,
        kChromeUIActorInternalsHost,
 diff --git a/chrome/common/webui_url_constants.h b/chrome/common/webui_url_constants.h
-index 066f46dbe14..a9e05aa1807 100644
+index 066f46dbe1..a9e05aa180 100644
 --- a/chrome/common/webui_url_constants.h
 +++ b/chrome/common/webui_url_constants.h
 @@ -223,6 +223,8 @@ inline constexpr char kChromeUINetInternalsHost[] = "net-internals";
@@ -1124,7 +1124,7 @@ index 066f46dbe14..a9e05aa1807 100644
  inline constexpr char kChromeUINewTabPageThirdPartyHost[] =
      "new-tab-page-third-party";
 diff --git a/components/proxy_config/pref_proxy_config_tracker_impl.cc b/components/proxy_config/pref_proxy_config_tracker_impl.cc
-index 3010c3ee22d..e18223c77ea 100644
+index 3010c3ee22..e18223c77e 100644
 --- a/components/proxy_config/pref_proxy_config_tracker_impl.cc
 +++ b/components/proxy_config/pref_proxy_config_tracker_impl.cc
 @@ -585,7 +585,7 @@ PrefProxyConfigTrackerImpl::GetEffectiveProxyConfig(
@@ -1154,7 +1154,7 @@ index 3010c3ee22d..e18223c77ea 100644
            proxy_config, kSettingsProxyConfigTrafficAnnotation);
        return true;
 diff --git a/components/proxy_config/proxy_config_dictionary.cc b/components/proxy_config/proxy_config_dictionary.cc
-index a508d23df26..dab960cfc27 100644
+index a508d23df2..dab960cfc2 100644
 --- a/components/proxy_config/proxy_config_dictionary.cc
 +++ b/components/proxy_config/proxy_config_dictionary.cc
 @@ -30,6 +30,8 @@ const char kProxyPacMandatory[] = "pac_mandatory";
@@ -1250,7 +1250,7 @@ index a508d23df26..dab960cfc27 100644
  }
  
 diff --git a/components/proxy_config/proxy_config_dictionary.h b/components/proxy_config/proxy_config_dictionary.h
-index 08e8b3dce12..053e281716f 100644
+index 08e8b3dce1..053e281716 100644
 --- a/components/proxy_config/proxy_config_dictionary.h
 +++ b/components/proxy_config/proxy_config_dictionary.h
 @@ -42,6 +42,7 @@ class PROXY_CONFIG_EXPORT ProxyConfigDictionary {
@@ -1282,7 +1282,7 @@ index 08e8b3dce12..053e281716f 100644
    base::DictValue dict_;
  };
 diff --git a/components/proxy_config/proxy_policy_handler.cc b/components/proxy_config/proxy_policy_handler.cc
-index 83950a53aa3..4d4ef954977 100644
+index 83950a53aa..4d4ef95497 100644
 --- a/components/proxy_config/proxy_policy_handler.cc
 +++ b/components/proxy_config/proxy_policy_handler.cc
 @@ -378,7 +378,7 @@ void ProxyPolicyHandler::ApplyPolicySettings(const PolicyMap& policies,
@@ -1295,7 +1295,7 @@ index 83950a53aa3..4d4ef954977 100644
        break;
      }
 diff --git a/extensions/browser/api/proxy/proxy_api_helpers.cc b/extensions/browser/api/proxy/proxy_api_helpers.cc
-index bc054762134..ea5c7188768 100644
+index bc05476213..ea5c718876 100644
 --- a/extensions/browser/api/proxy/proxy_api_helpers.cc
 +++ b/extensions/browser/api/proxy/proxy_api_helpers.cc
 @@ -385,7 +385,8 @@ std::optional<base::DictValue> CreateProxyConfigDict(
@@ -1309,7 +1309,7 @@ index bc054762134..ea5c7188768 100644
      case ProxyPrefs::MODE_SYSTEM:
        return ProxyConfigDictionary::CreateSystem();
 diff --git a/net/features.gni b/net/features.gni
-index 3dd88c66ddf..87e43078284 100644
+index 3dd88c66dd..87e4307828 100644
 --- a/net/features.gni
 +++ b/net/features.gni
 @@ -78,7 +78,7 @@ declare_args() {
@@ -1322,7 +1322,7 @@ index 3dd88c66ddf..87e43078284 100644
    # General QUIC proxy support is only available for debug builds.
    # TODO(crbug.com/367400641): If flag is changed or removed, ensure all
 diff --git a/net/proxy_resolution/pac_file_fetcher_impl.cc b/net/proxy_resolution/pac_file_fetcher_impl.cc
-index 4de14b85642..45252f1401d 100644
+index 4de14b8564..45252f1401 100644
 --- a/net/proxy_resolution/pac_file_fetcher_impl.cc
 +++ b/net/proxy_resolution/pac_file_fetcher_impl.cc
 @@ -367,14 +367,6 @@ bool PacFileFetcherImpl::ConsumeBytesRead(URLRequest* request, int num_bytes) {
@@ -1341,7 +1341,7 @@ index 4de14b85642..45252f1401d 100644
    return true;
  }
 diff --git a/net/proxy_resolution/proxy_config.cc b/net/proxy_resolution/proxy_config.cc
-index 520aea872d6..7a05d86c9dd 100644
+index 520aea872d..7a05d86c9d 100644
 --- a/net/proxy_resolution/proxy_config.cc
 +++ b/net/proxy_resolution/proxy_config.cc
 @@ -134,7 +134,7 @@ void ProxyConfig::ProxyRules::ParseFromString(std::string_view proxy_rules,
@@ -1412,7 +1412,7 @@ index 520aea872d6..7a05d86c9dd 100644
      const std::string& url_scheme) const {
    const ProxyList* proxy_server_list =
 diff --git a/net/proxy_resolution/proxy_config.h b/net/proxy_resolution/proxy_config.h
-index f10f45ace4a..9b491e01432 100644
+index f10f45ace4..9b491e0143 100644
 --- a/net/proxy_resolution/proxy_config.h
 +++ b/net/proxy_resolution/proxy_config.h
 @@ -111,6 +111,9 @@ class NET_EXPORT ProxyConfig {

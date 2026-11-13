@@ -15,7 +15,7 @@ FILE:Disable-GetInstalledRelatedApps-API.patch
  create mode 100644 cromite_flags/content/public/common/content_features_cc/Disable-GetInstalledRelatedApps-API.inc
 
 diff --git a/content/browser/installedapp/installed_app_provider_impl.cc b/content/browser/installedapp/installed_app_provider_impl.cc
-index 4c0e69dacad..3548f9c4fa7 100644
+index 4c0e69daca..3548f9c4fa 100644
 --- a/content/browser/installedapp/installed_app_provider_impl.cc
 +++ b/content/browser/installedapp/installed_app_provider_impl.cc
 @@ -62,7 +62,7 @@ void InstalledAppProviderImpl::FilterInstalledApps(
@@ -29,7 +29,7 @@ index 4c0e69dacad..3548f9c4fa7 100644
          base::BindOnce(std::move(callback),
 diff --git a/cromite_flags/content/common/features_cc/Disable-GetInstalledRelatedApps-API.inc b/cromite_flags/content/common/features_cc/Disable-GetInstalledRelatedApps-API.inc
 new file mode 100644
-index 00000000000..0ef596ffc9f
+index 0000000000..0ef596ffc9
 --- /dev/null
 +++ b/cromite_flags/content/common/features_cc/Disable-GetInstalledRelatedApps-API.inc
 @@ -0,0 +1,7 @@
@@ -42,14 +42,14 @@ index 00000000000..0ef596ffc9f
 +#endif
 diff --git a/cromite_flags/content/public/common/content_features_cc/Disable-GetInstalledRelatedApps-API.inc b/cromite_flags/content/public/common/content_features_cc/Disable-GetInstalledRelatedApps-API.inc
 new file mode 100644
-index 00000000000..a1aba020233
+index 0000000000..a1aba02023
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_cc/Disable-GetInstalledRelatedApps-API.inc
 @@ -0,0 +1,2 @@
 +SET_CROMITE_FEATURE_DISABLED(kInstalledApp);
 +SET_CROMITE_FEATURE_DISABLED(kInstalledAppProvider);
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 57159fe5d2c..ca38d0858d9 100644
+index 57159fe5d2..ca38d0858d 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -3970,9 +3970,8 @@

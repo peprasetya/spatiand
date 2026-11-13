@@ -10,7 +10,7 @@ FILE:Permit-PGO-for-debug-builds.patch
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/build/config/compiler/pgo/pgo.gni b/build/config/compiler/pgo/pgo.gni
-index 4f9a7b0f30a..bed3cc25a67 100644
+index 4f9a7b0f30..bed3cc25a6 100644
 --- a/build/config/compiler/pgo/pgo.gni
 +++ b/build/config/compiler/pgo/pgo.gni
 @@ -60,5 +60,5 @@ declare_args() {

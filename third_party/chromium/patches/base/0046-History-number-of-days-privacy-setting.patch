@@ -35,7 +35,7 @@ FILE:History-number-of-days-privacy-setting.patch
  create mode 100644 components/cromite_components_strings_grd/History-number-of-days-privacy-setting.grdp
 
 diff --git a/chrome/browser/extensions/api/settings_private/prefs_util.cc b/chrome/browser/extensions/api/settings_private/prefs_util.cc
-index faea6fee54c..2304eb1c542 100644
+index faea6fee54..2304eb1c54 100644
 --- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
 +++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
 @@ -48,6 +48,7 @@
@@ -57,7 +57,7 @@ index faea6fee54c..2304eb1c542 100644
    (*s_allowlist)[::prefs::kCtrlTabMru] = settings_api::PrefType::kBoolean;
    (*s_allowlist)[::prefs::kCurrentThemeID] = settings_api::PrefType::kString;
 diff --git a/chrome/browser/history/history_service_factory.cc b/chrome/browser/history/history_service_factory.cc
-index 4db893d66e4..4b947d5d9f8 100644
+index 4db893d66e..4b947d5d9f 100644
 --- a/chrome/browser/history/history_service_factory.cc
 +++ b/chrome/browser/history/history_service_factory.cc
 @@ -27,6 +27,8 @@ std::unique_ptr<KeyedService> BuildHistoryService(
@@ -70,7 +70,7 @@ index 4db893d66e4..4b947d5d9f8 100644
  }
  
 diff --git a/chrome/browser/profiles/profile_impl.cc b/chrome/browser/profiles/profile_impl.cc
-index cd7cb4e4119..5a8551da810 100644
+index cd7cb4e411..5a8551da81 100644
 --- a/chrome/browser/profiles/profile_impl.cc
 +++ b/chrome/browser/profiles/profile_impl.cc
 @@ -407,6 +407,7 @@ std::unique_ptr<Profile> Profile::CreateProfile(const base::FilePath& path,
@@ -82,7 +82,7 @@ index cd7cb4e4119..5a8551da810 100644
    registry->RegisterBooleanPref(policy::policy_prefs::kForceGoogleSafeSearch,
                                  false);
 diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page.html b/chrome/browser/resources/settings/privacy_page/privacy_page.html
-index 71101c57121..fb69dc0a9c6 100644
+index 71101c5712..fb69dc0a9c 100644
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page.html
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page.html
 @@ -42,6 +42,15 @@
@@ -102,7 +102,7 @@ index 71101c57121..fb69dc0a9c6 100644
        <div>${this.dbdDeletionConfirmationToastLabel_}</div>
      </cr-toast>
 diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page.ts b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
-index b3ecabfb8fd..41b621d9173 100644
+index b3ecabfb8f..41b621d917 100644
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page.ts
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
 @@ -7,6 +7,7 @@
@@ -154,7 +154,7 @@ index b3ecabfb8fd..41b621d9173 100644
    protected accessor showPrivacyGuideDialog_: boolean = false;
    protected accessor dbdDeletionConfirmationToastLabel_: string = '';
 diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-index 25138503199..a0b236d0459 100644
+index 2513850319..a0b236d045 100644
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 @@ -2707,6 +2707,11 @@ void AddPrivacyStrings(content::WebUIDataSource* html_source,
@@ -171,7 +171,7 @@ index 25138503199..a0b236d0459 100644
         IDS_SETTINGS_SAFEBROWSING_STANDARD_DESC_PROXY},
 diff --git a/components/cromite_components_strings_grd/History-number-of-days-privacy-setting.grdp b/components/cromite_components_strings_grd/History-number-of-days-privacy-setting.grdp
 new file mode 100644
-index 00000000000..835f3bacb38
+index 0000000000..835f3bacb3
 --- /dev/null
 +++ b/components/cromite_components_strings_grd/History-number-of-days-privacy-setting.grdp
 @@ -0,0 +1,18 @@
@@ -194,7 +194,7 @@ index 00000000000..835f3bacb38
 +    </message>
 +</grit-part>
 diff --git a/components/history/core/browser/browsing_history_service.cc b/components/history/core/browser/browsing_history_service.cc
-index 65af28275b1..f944198eecf 100644
+index 65af28275b..f944198eec 100644
 --- a/components/history/core/browser/browsing_history_service.cc
 +++ b/components/history/core/browser/browsing_history_service.cc
 @@ -824,7 +824,7 @@ void BrowsingHistoryService::QueryComplete(
@@ -216,7 +216,7 @@ index 65af28275b1..f944198eecf 100644
    base::flat_map<HistoryEntry::EntryType, size_t> post_expiry_counts;
    for (const HistoryEntry& entry : results) {
 diff --git a/components/history/core/browser/expire_history_backend.cc b/components/history/core/browser/expire_history_backend.cc
-index deedebf63a3..f57ed8b60e3 100644
+index deedebf63a..f57ed8b60e 100644
 --- a/components/history/core/browser/expire_history_backend.cc
 +++ b/components/history/core/browser/expire_history_backend.cc
 @@ -391,7 +391,7 @@ const ExpiringVisitsReader*
@@ -254,7 +254,7 @@ index deedebf63a3..f57ed8b60e3 100644
    bool more_to_expire = ExpireSomeOldHistory(
        GetCurrentExpirationTime(), reader, kNumExpirePerIteration);
 diff --git a/components/history/core/browser/expire_history_backend.h b/components/history/core/browser/expire_history_backend.h
-index 5a734ae23c9..11a69dbb1bf 100644
+index 5a734ae23c..11a69dbb1b 100644
 --- a/components/history/core/browser/expire_history_backend.h
 +++ b/components/history/core/browser/expire_history_backend.h
 @@ -82,6 +82,8 @@ class ExpireHistoryBackend {
@@ -267,7 +267,7 @@ index 5a734ae23c9..11a69dbb1bf 100644
    void DeleteURL(const GURL& url, base::Time end_time);
  
 diff --git a/components/history/core/browser/history_backend.cc b/components/history/core/browser/history_backend.cc
-index 3e80dd0c38c..fe692e57dcb 100644
+index 3e80dd0c38..fe692e57dc 100644
 --- a/components/history/core/browser/history_backend.cc
 +++ b/components/history/core/browser/history_backend.cc
 @@ -173,6 +173,10 @@ const int kCommitIntervalSeconds = 10;
@@ -302,7 +302,7 @@ index 3e80dd0c38c..fe692e57dcb 100644
    // Reset to avoid dangling pointers to the database.
    history_sync_bridge_.reset();
 diff --git a/components/history/core/browser/history_backend.h b/components/history/core/browser/history_backend.h
-index 794aa619d60..d096f2e88a8 100644
+index 794aa619d6..d096f2e88a 100644
 --- a/components/history/core/browser/history_backend.h
 +++ b/components/history/core/browser/history_backend.h
 @@ -211,10 +211,6 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
@@ -326,7 +326,7 @@ index 794aa619d60..d096f2e88a8 100644
    // the refs owned by the delegate and any pending transaction, so it will
    // actually be deleted.
 diff --git a/components/history/core/browser/history_service.cc b/components/history/core/browser/history_service.cc
-index f3058ade218..e161d4a2a85 100644
+index f3058ade21..e161d4a2a8 100644
 --- a/components/history/core/browser/history_service.cc
 +++ b/components/history/core/browser/history_service.cc
 @@ -38,6 +38,9 @@
@@ -384,7 +384,7 @@ index f3058ade218..e161d4a2a85 100644
  
    weak_ptr_factory_.InvalidateWeakPtrs();
 diff --git a/components/history/core/browser/history_service.h b/components/history/core/browser/history_service.h
-index 0be59d283c8..048e106d216 100644
+index 0be59d283c..048e106d21 100644
 --- a/components/history/core/browser/history_service.h
 +++ b/components/history/core/browser/history_service.h
 @@ -37,6 +37,8 @@
@@ -417,7 +417,7 @@ index 0be59d283c8..048e106d216 100644
    base::WeakPtrFactory<HistoryService> weak_ptr_factory_{this};
  };
 diff --git a/components/history/core/common/pref_names.cc b/components/history/core/common/pref_names.cc
-index 097ff80ea91..73d89b6d6dc 100644
+index 097ff80ea9..73d89b6d6d 100644
 --- a/components/history/core/common/pref_names.cc
 +++ b/components/history/core/common/pref_names.cc
 @@ -9,6 +9,10 @@ namespace prefs {
@@ -432,7 +432,7 @@ index 097ff80ea91..73d89b6d6dc 100644
  // permitted.
  const char kAllowDeletingBrowserHistory[] = "history.deleting_enabled";
 diff --git a/components/history/core/common/pref_names.h b/components/history/core/common/pref_names.h
-index 18c14ec39f9..a26d9d76300 100644
+index 18c14ec39f..a26d9d7630 100644
 --- a/components/history/core/common/pref_names.h
 +++ b/components/history/core/common/pref_names.h
 @@ -12,6 +12,7 @@
@@ -444,7 +444,7 @@ index 18c14ec39f9..a26d9d76300 100644
  
  }  // namespace prefs
 diff --git a/components/history_embeddings/core/sql_database.cc b/components/history_embeddings/core/sql_database.cc
-index 3b7b5655399..297befa68f2 100644
+index 3b7b565539..297befa68f 100644
 --- a/components/history_embeddings/core/sql_database.cc
 +++ b/components/history_embeddings/core/sql_database.cc
 @@ -180,7 +180,7 @@ sql::InitStatus SqlDatabase::InitInternal(const base::FilePath& storage_dir,
@@ -457,7 +457,7 @@ index 3b7b5655399..297befa68f2 100644
    // It's possible to get here without `embedder_metadata_` if forcing for
    // data deletion. In that case, don't check or change meta table.
 diff --git a/components/omnibox/browser/shortcuts_backend.cc b/components/omnibox/browser/shortcuts_backend.cc
-index dc48be1a647..4bc20648587 100644
+index dc48be1a64..4bc2064858 100644
 --- a/components/omnibox/browser/shortcuts_backend.cc
 +++ b/components/omnibox/browser/shortcuts_backend.cc
 @@ -559,7 +559,7 @@ void ShortcutsBackend::ComputeDatabaseMetrics() {
@@ -479,7 +479,7 @@ index dc48be1a647..4bc20648587 100644
      }
    }
 diff --git a/components/user_data_importer/utility/safari_data_importer.cc b/components/user_data_importer/utility/safari_data_importer.cc
-index 1d375fbe3e0..9eed1929dd8 100644
+index 1d375fbe3e..9eed1929dd 100644
 --- a/components/user_data_importer/utility/safari_data_importer.cc
 +++ b/components/user_data_importer/utility/safari_data_importer.cc
 @@ -148,7 +148,7 @@ bool IsSkippedEntry(const user_data_importer::SafariHistoryEntry& entry) {

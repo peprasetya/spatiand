@@ -31,7 +31,7 @@ FILE:prefs-always-prompt-for-download-directory.patch
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/chrome/browser/download/download_prefs.cc b/chrome/browser/download/download_prefs.cc
-index ea0e7a622df..2752aebf520 100644
+index ea0e7a622d..2752aebf52 100644
 --- a/chrome/browser/download/download_prefs.cc
 +++ b/chrome/browser/download/download_prefs.cc
 @@ -353,7 +353,7 @@ void DownloadPrefs::RegisterProfilePrefs(

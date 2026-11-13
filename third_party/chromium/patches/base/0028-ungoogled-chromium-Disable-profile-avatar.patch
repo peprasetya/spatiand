@@ -14,7 +14,7 @@ FILE:ungoogled-chromium-Disable-profile-avatar.patch
  3 files changed, 1 insertion(+), 11 deletions(-)
 
 diff --git a/chrome/browser/profiles/BUILD.gn b/chrome/browser/profiles/BUILD.gn
-index f569264cf0e..75afd49aa2b 100644
+index f569264cf0..75afd49aa2 100644
 --- a/chrome/browser/profiles/BUILD.gn
 +++ b/chrome/browser/profiles/BUILD.gn
 @@ -48,8 +48,6 @@ source_set("misc") {
@@ -27,7 +27,7 @@ index f569264cf0e..75afd49aa2b 100644
      "profile_impl.h",
      "profile_key.cc",
 diff --git a/chrome/browser/profiles/profile_attributes_entry.cc b/chrome/browser/profiles/profile_attributes_entry.cc
-index eb94d4a8ce8..a6dccad9777 100644
+index eb94d4a8ce..a6dccad977 100644
 --- a/chrome/browser/profiles/profile_attributes_entry.cc
 +++ b/chrome/browser/profiles/profile_attributes_entry.cc
 @@ -370,14 +370,6 @@ ProfileAttributesEntry::GetAvatarIconWithType(
@@ -46,7 +46,7 @@ index eb94d4a8ce8..a6dccad9777 100644
    // TODO(crbug.com/40138086): After launch, remove the treatment of placeholder
    // avatars from GetHighResAvatar() and from any other places.
 diff --git a/chrome/browser/profiles/profile_attributes_storage.cc b/chrome/browser/profiles/profile_attributes_storage.cc
-index bba21bed411..15c0d376c1c 100644
+index bba21bed41..15c0d376c1 100644
 --- a/chrome/browser/profiles/profile_attributes_storage.cc
 +++ b/chrome/browser/profiles/profile_attributes_storage.cc
 @@ -1001,7 +1001,7 @@ void ProfileAttributesStorage::DownloadHighResAvatarIfNeeded(

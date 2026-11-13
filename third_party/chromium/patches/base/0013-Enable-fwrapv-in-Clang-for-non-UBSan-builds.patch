@@ -45,7 +45,7 @@ FILE:Enable-fwrapv-in-Clang-for-non-UBSan-builds.patch
  1 file changed, 4 insertions(+)
 
 diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
-index c6004e5deb6..9ec0c26dfdf 100644
+index c6004e5deb..9ec0c26dfd 100644
 --- a/build/config/compiler/BUILD.gn
 +++ b/build/config/compiler/BUILD.gn
 @@ -430,6 +430,10 @@ config("compiler") {

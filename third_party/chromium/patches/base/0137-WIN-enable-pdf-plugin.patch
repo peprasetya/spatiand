@@ -10,7 +10,7 @@ FILE:WIN-enable-pdf-plugin.patch
  1 file changed, 3 insertions(+), 1 deletion(-)
 
 diff --git a/third_party/blink/renderer/core/frame/local_frame.cc b/third_party/blink/renderer/core/frame/local_frame.cc
-index 87d8658811a..976be40ac78 100644
+index 87d8658811..976be40ac7 100644
 --- a/third_party/blink/renderer/core/frame/local_frame.cc
 +++ b/third_party/blink/renderer/core/frame/local_frame.cc
 @@ -2487,7 +2487,9 @@ WebAutofillClient* LocalFrame::GetAutofillClient() {

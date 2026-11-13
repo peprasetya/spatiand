@@ -12,7 +12,7 @@ FILE:Disable-GSA-by-default.patch
 
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-GSA-by-default.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-GSA-by-default.inc
 new file mode 100644
-index 00000000000..6798f58714e
+index 0000000000..6798f58714
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-GSA-by-default.inc
 @@ -0,0 +1 @@

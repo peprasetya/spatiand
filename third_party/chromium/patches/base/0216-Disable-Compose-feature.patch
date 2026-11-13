@@ -6,16 +6,16 @@ Subject: [PATCH 216/310] Disable Compose feature
 License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
 FILE:Disable-Compose-feature.patch
 ---
- chrome/browser/glic/BUILD.gn                        | 5 +++++
- chrome/browser/renderer_context_menu/BUILD.gn       | 6 +++---
- chrome/browser/ui/webui/settings/BUILD.gn           | 7 +++++++
- chrome/browser/ui/webui/settings/settings_ui.cc     | 4 ++--
- components/compose/core/browser/compose_features.cc | 3 +++
- components/compose/features.gni                     | 2 +-
- 6 files changed, 21 insertions(+), 6 deletions(-)
+ chrome/browser/glic/BUILD.gn                     |  5 +++++
+ chrome/browser/renderer_context_menu/BUILD.gn    |  6 +++---
+ chrome/browser/ui/webui/settings/BUILD.gn        |  7 +++++++
+ chrome/browser/ui/webui/settings/settings_ui.cc  | 16 ++++++++--------
+ .../compose/core/browser/compose_features.cc     |  3 +++
+ components/compose/features.gni                  |  2 +-
+ 6 files changed, 27 insertions(+), 12 deletions(-)
 
 diff --git a/chrome/browser/glic/BUILD.gn b/chrome/browser/glic/BUILD.gn
-index e42a0cebb38..7c027d48838 100644
+index e42a0cebb3..7c027d4883 100644
 --- a/chrome/browser/glic/BUILD.gn
 +++ b/chrome/browser/glic/BUILD.gn
 @@ -1300,6 +1300,11 @@ if (!is_android) {
@@ -31,7 +31,7 @@ index e42a0cebb38..7c027d48838 100644
        deps += [
          "//chrome/browser/pdf:pdf_extension_test_utils",
 diff --git a/chrome/browser/renderer_context_menu/BUILD.gn b/chrome/browser/renderer_context_menu/BUILD.gn
-index 710da547b7e..5d98e7f5833 100644
+index 710da547b7..5d98e7f583 100644
 --- a/chrome/browser/renderer_context_menu/BUILD.gn
 +++ b/chrome/browser/renderer_context_menu/BUILD.gn
 @@ -121,7 +121,7 @@ source_set("impl") {
@@ -62,7 +62,7 @@ index 710da547b7e..5d98e7f5833 100644
        "//chrome/browser/contextual_tasks",
        "//chrome/browser/devtools",
 diff --git a/chrome/browser/ui/webui/settings/BUILD.gn b/chrome/browser/ui/webui/settings/BUILD.gn
-index cb8aa3beaff..5032e07c585 100644
+index cb8aa3beaf..5032e07c58 100644
 --- a/chrome/browser/ui/webui/settings/BUILD.gn
 +++ b/chrome/browser/ui/webui/settings/BUILD.gn
 @@ -5,6 +5,7 @@
@@ -87,7 +87,7 @@ index cb8aa3beaff..5032e07c585 100644
      sources += [
        "settings_default_browser_handler.cc",
 diff --git a/chrome/browser/ui/webui/settings/settings_ui.cc b/chrome/browser/ui/webui/settings/settings_ui.cc
-index 9ab115e67fd..13f4e603573 100644
+index 9ab115e67f..7be8333698 100644
 --- a/chrome/browser/ui/webui/settings/settings_ui.cc
 +++ b/chrome/browser/ui/webui/settings/settings_ui.cc
 @@ -21,7 +21,7 @@
@@ -108,8 +108,34 @@ index 9ab115e67fd..13f4e603573 100644
    const bool compose_visible = ComposeEnabling::IsSettingVisible(profile);
  #else
    const bool compose_enabled = false;
+@@ -677,9 +677,11 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
+   // Within the AI subpage are separate sections for Glic, for GEIC, and for all
+   // other AI features. The visibility of these is separately controlled, but
+   // we want to show the subpage if any of them are enabled.
+-  html_source->AddBoolean("showAiPage",
+-                          show_glic_section || show_ai_features_section ||
+-                              enable_ai_mode_search || show_geic_section);
++  // Spatiand: no AI page. Google's AI features (model execution, Gemini, AI
++  // Mode, help me write, history search) are off in this build, so the page
++  // has nothing of its own to offer; whatever its sections' flags say, it is
++  // not shown.
++  html_source->AddBoolean("showAiPage", false);
+   html_source->AddBoolean("showAiPageAiFeatureSection",
+                           show_ai_features_section);
+ 
+@@ -945,9 +947,7 @@ void SettingsUI::UpdateShowGlicState() {
+   base::DictValue update;
+   update.Set("showGlicSettings", show_glic);
+   update.Set("glicDisallowedByAdmin", enablement.DisallowedByAdmin());
+-  if (show_glic) {
+-    update.Set("showAiPage", true);
+-  }
++  // Spatiand: the AI page stays hidden (see "showAiPage" above).
+ 
+   content::WebUIDataSource::Update(
+       web_ui()->GetWebContents()->GetBrowserContext(),
 diff --git a/components/compose/core/browser/compose_features.cc b/components/compose/core/browser/compose_features.cc
-index bc0d7b5a05d..c61fed2e293 100644
+index bc0d7b5a05..c61fed2e29 100644
 --- a/components/compose/core/browser/compose_features.cc
 +++ b/components/compose/core/browser/compose_features.cc
 @@ -76,4 +76,7 @@ BASE_FEATURE(kComposeUpfrontInputModes, base::FEATURE_ENABLED_BY_DEFAULT);
@@ -121,7 +147,7 @@ index bc0d7b5a05d..c61fed2e293 100644
 +
  }  // namespace compose::features
 diff --git a/components/compose/features.gni b/components/compose/features.gni
-index a646cb40e64..a633dbe86df 100644
+index a646cb40e6..a633dbe86d 100644
 --- a/components/compose/features.gni
 +++ b/components/compose/features.gni
 @@ -4,5 +4,5 @@

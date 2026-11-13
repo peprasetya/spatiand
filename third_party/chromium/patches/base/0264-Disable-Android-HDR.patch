@@ -11,7 +11,7 @@ FILE:Disable-Android-HDR.patch
  2 files changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/content/browser/renderer_host/render_widget_host_impl.cc b/content/browser/renderer_host/render_widget_host_impl.cc
-index 4b2fbef868d..22f00d28ed8 100644
+index 4b2fbef868..22f00d28ed 100644
 --- a/content/browser/renderer_host/render_widget_host_impl.cc
 +++ b/content/browser/renderer_host/render_widget_host_impl.cc
 @@ -1094,7 +1094,7 @@ blink::VisualProperties RenderWidgetHostImpl::GetVisualProperties() {
@@ -24,7 +24,7 @@ index 4b2fbef868d..22f00d28ed8 100644
        display::DisplayUtil::DisableHdrAndHighBitDepth(&screen_info);
      }
 diff --git a/ui/android/ui_android_features.cc b/ui/android/ui_android_features.cc
-index d8523daeb15..4f8bbdafa89 100644
+index d8523daeb1..4f8bbdafa8 100644
 --- a/ui/android/ui_android_features.cc
 +++ b/ui/android/ui_android_features.cc
 @@ -9,6 +9,7 @@

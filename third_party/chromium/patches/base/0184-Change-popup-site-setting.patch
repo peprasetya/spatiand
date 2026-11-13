@@ -22,7 +22,7 @@ FILE:Change-popup-site-setting.patch
  create mode 100644 components/content_settings/core/browser/bromite_content_settings/popups.inc
 
 diff --git a/chrome/browser/resources/settings/site_settings/popups_page.html b/chrome/browser/resources/settings/site_settings/popups_page.html
-index 7068e3df751..9b0574c860b 100644
+index 7068e3df75..9b0574c860 100644
 --- a/chrome/browser/resources/settings/site_settings/popups_page.html
 +++ b/chrome/browser/resources/settings/site_settings/popups_page.html
 @@ -10,6 +10,8 @@
@@ -35,7 +35,7 @@ index 7068e3df751..9b0574c860b 100644
        block-option-icon="privacy:open-in-new-off">
    </settings-category-default-radio-group>
 diff --git a/chrome/browser/ui/blocked_content/tab_under_navigation_throttle.cc b/chrome/browser/ui/blocked_content/tab_under_navigation_throttle.cc
-index 0a496cd93fd..7cb2898deae 100644
+index 0a496cd93f..7cb2898dea 100644
 --- a/chrome/browser/ui/blocked_content/tab_under_navigation_throttle.cc
 +++ b/chrome/browser/ui/blocked_content/tab_under_navigation_throttle.cc
 @@ -144,9 +144,14 @@ TabUnderNavigationThrottle::MaybeBlockNavigation() {
@@ -57,7 +57,7 @@ index 0a496cd93fd..7cb2898deae 100644
  
  void TabUnderNavigationThrottle::ShowUI() {
 diff --git a/components/blocked_content/android/popup_blocked_message_delegate.cc b/components/blocked_content/android/popup_blocked_message_delegate.cc
-index b09729471a5..561d371eb43 100644
+index b09729471a..561d371eb4 100644
 --- a/components/blocked_content/android/popup_blocked_message_delegate.cc
 +++ b/components/blocked_content/android/popup_blocked_message_delegate.cc
 @@ -32,7 +32,7 @@ bool PopupBlockedMessageDelegate::ShowMessage(
@@ -109,7 +109,7 @@ index b09729471a5..561d371eb43 100644
  
  }  // namespace blocked_content
 diff --git a/components/blocked_content/android/popup_blocked_message_delegate.h b/components/blocked_content/android/popup_blocked_message_delegate.h
-index 09333e02ef6..0fc483c2288 100644
+index 09333e02ef..0fc483c228 100644
 --- a/components/blocked_content/android/popup_blocked_message_delegate.h
 +++ b/components/blocked_content/android/popup_blocked_message_delegate.h
 @@ -41,6 +41,7 @@ class PopupBlockedMessageDelegate
@@ -121,7 +121,7 @@ index 09333e02ef6..0fc483c2288 100644
  
    raw_ptr<HostContentSettingsMap> map_ = nullptr;
 diff --git a/components/blocked_content/popup_blocker.cc b/components/blocked_content/popup_blocker.cc
-index ca58e000ae7..f05813942f4 100644
+index ca58e000ae..f05813942f 100644
 --- a/components/blocked_content/popup_blocker.cc
 +++ b/components/blocked_content/popup_blocker.cc
 @@ -70,6 +70,9 @@ PopupBlockType ShouldBlockPopup(content::WebContents* web_contents,
@@ -135,7 +135,7 @@ index ca58e000ae7..f05813942f4 100644
      return PopupBlockType::kNoGesture;
  
 diff --git a/components/blocked_content_strings.grdp b/components/blocked_content_strings.grdp
-index d6b469cf70a..9edf137d3d6 100644
+index d6b469cf70..9edf137d3d 100644
 --- a/components/blocked_content_strings.grdp
 +++ b/components/blocked_content_strings.grdp
 @@ -4,6 +4,9 @@
@@ -150,7 +150,7 @@ index d6b469cf70a..9edf137d3d6 100644
      </message>
 diff --git a/components/browser_ui/strings/bromite_content_settings/popups.grdp b/components/browser_ui/strings/bromite_content_settings/popups.grdp
 new file mode 100644
-index 00000000000..d7f16a48c09
+index 0000000000..d7f16a48c0
 --- /dev/null
 +++ b/components/browser_ui/strings/bromite_content_settings/popups.grdp
 @@ -0,0 +1,18 @@
@@ -174,7 +174,7 @@ index 00000000000..d7f16a48c09
 +</grit-part>
 diff --git a/components/content_settings/core/browser/bromite_content_settings/popups.inc b/components/content_settings/core/browser/bromite_content_settings/popups.inc
 new file mode 100644
-index 00000000000..d22740c87b0
+index 0000000000..d22740c87b
 --- /dev/null
 +++ b/components/content_settings/core/browser/bromite_content_settings/popups.inc
 @@ -0,0 +1,13 @@
@@ -192,7 +192,7 @@ index 00000000000..d22740c87b0
 +    .set_blocked_exceptions_ui(IDS_WEBSITE_SETTINGS_CATEGORY_POPUP_BLOCKED)
 +    .set_mid_sentence_ui(IDS_WEBSITE_SETTINGS_CATEGORY_POPUP);
 diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
-index 94175212f88..f569f2ab4ef 100644
+index 94175212f8..f569f2ab4e 100644
 --- a/components/content_settings/core/browser/content_settings_registry.cc
 +++ b/components/content_settings/core/browser/content_settings_registry.cc
 @@ -139,7 +139,7 @@ void ContentSettingsRegistry::Init() {

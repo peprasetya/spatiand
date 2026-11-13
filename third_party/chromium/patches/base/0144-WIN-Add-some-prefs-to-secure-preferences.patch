@@ -10,7 +10,7 @@ FILE:WIN-Add-some-prefs-to-secure-preferences.patch
  2 files changed, 9 insertions(+), 1 deletion(-)
 
 diff --git a/chrome/browser/prefs/chrome_pref_service_factory.cc b/chrome/browser/prefs/chrome_pref_service_factory.cc
-index cd4f964e723..32aa9fd7a90 100644
+index cd4f964e72..32aa9fd7a9 100644
 --- a/chrome/browser/prefs/chrome_pref_service_factory.cc
 +++ b/chrome/browser/prefs/chrome_pref_service_factory.cc
 @@ -116,6 +116,14 @@ bool g_disable_domain_check_for_testing = false;
@@ -29,7 +29,7 @@ index cd4f964e723..32aa9fd7a90 100644
       PrefTrackingStrategy::ATOMIC, ValueType::IMPERSONAL},
      {1, prefs::kHomePageIsNewTabPage, EnforcementLevel::ENFORCE_ON_LOAD,
 diff --git a/services/preferences/tracked/pref_hash_filter.cc b/services/preferences/tracked/pref_hash_filter.cc
-index 32772a722fe..75d2df96bfa 100644
+index 32772a722f..75d2df96bf 100644
 --- a/services/preferences/tracked/pref_hash_filter.cc
 +++ b/services/preferences/tracked/pref_hash_filter.cc
 @@ -134,7 +134,7 @@ PrefHashFilter::PrefHashFilter(

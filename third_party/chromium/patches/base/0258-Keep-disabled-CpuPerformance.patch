@@ -9,14 +9,54 @@ see https://github.com/explainers-by-googlers/cpu-performance?tab=readme-ov-file
 License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
 FILE:Keep-disabled-CpuPerformance.patch
 ---
- .../blink/renderer/platform/runtime_enabled_features.json5    | 4 +---
- 1 file changed, 1 insertion(+), 3 deletions(-)
+ .../platform/runtime_enabled_features.json5   | 21 +++++++++++--------
+ 1 file changed, 12 insertions(+), 9 deletions(-)
 
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index f95fcf49a7a..e8551f267e7 100644
+index f95fcf49a7..13cdf7750a 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-@@ -1549,9 +1549,7 @@
+@@ -458,11 +458,13 @@
+     },
+     {
+       name: "AIPromptAPI",
++      // Spatiand: not on Linux or the Mac (SpatiMesh on every system): the
++      // browser side of the built-in AI APIs is not built
++      // (build_with_model_execution = false), and a page that found the API
++      // waited forever for its answer.
+       public: true,
+       status: {
+         "Win": "stable",
+-        "Mac": "stable",
+-        "Linux": "stable",
+         "ChromeOS": "stable",
+         "default": "",
+       },
+@@ -487,8 +489,6 @@
+       name: "AIPromptAPIMultimodalInput",
+       status: {
+         "Win": "stable",
+-        "Mac": "stable",
+-        "Linux": "stable",
+         "ChromeOS": "stable",
+         "default": "",
+       },
+@@ -563,10 +563,12 @@
+     },
+     {
+       name: "AISummarizationAPI",
++      // Spatiand: not on Linux or the Mac (SpatiMesh on every system): the
++      // browser side of the built-in AI APIs is not built
++      // (build_with_model_execution = false), and a page that found the API
++      // waited forever for its answer.
+       status: {
+         "Win": "stable",
+-        "Mac": "stable",
+-        "Linux": "stable",
+         "ChromeOS": "stable",
+         "default": "",
+       },
+@@ -1549,9 +1551,7 @@
        // https://chromestatus.com/feature/5189864286978048
        // https://github.com/WICG/cpu-performance/
        name: "CpuPerformance",
@@ -27,3 +67,20 @@ index f95fcf49a7a..e8551f267e7 100644
      },
      {
        name: "CrashReportingStorageAPI",
+@@ -7272,6 +7272,8 @@
+ 
+     // WebBluetooth is enabled by default on Android, ChromeOS, iOS, macOS and
+     // Windows.
++    // Spatiand: and on Linux (SpatiMesh on the Deck and other Linux, and on
++    // the Beam Pro, whose build is a Linux one on Android's libc).
+     {
+       name: "WebBluetooth",
+       public: true,
+@@ -7279,6 +7281,7 @@
+         "Android": "stable",
+         "ChromeOS": "stable",
+         "iOS": "stable",
++        "Linux": "stable",
+         "Mac": "stable",
+         "Win": "stable",
+         "default": "experimental",

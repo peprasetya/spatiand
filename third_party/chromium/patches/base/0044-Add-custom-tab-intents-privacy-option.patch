@@ -20,7 +20,7 @@ FILE:Add-custom-tab-intents-privacy-option.patch
  create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-custom-tab-intents-privacy-option.inc
 
 diff --git a/components/language/core/common/language_experiments.cc b/components/language/core/common/language_experiments.cc
-index d9a556a9c81..9a900d26829 100644
+index d9a556a9c8..9a900d2682 100644
 --- a/components/language/core/common/language_experiments.cc
 +++ b/components/language/core/common/language_experiments.cc
 @@ -17,4 +17,5 @@ BASE_FEATURE(kDisableGeoLanguageModel, base::FEATURE_ENABLED_BY_DEFAULT);
@@ -31,7 +31,7 @@ index d9a556a9c81..9a900d26829 100644
  }  // namespace language
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-custom-tab-intents-privacy-option.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-custom-tab-intents-privacy-option.inc
 new file mode 100644
-index 00000000000..bcd6982e5bc
+index 0000000000..bcd6982e5b
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-custom-tab-intents-privacy-option.inc
 @@ -0,0 +1 @@

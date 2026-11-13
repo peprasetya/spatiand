@@ -13,7 +13,7 @@ FILE:Disable-prefers-reduced-motion.patch
  1 file changed, 1 insertion(+)
 
 diff --git a/ui/gfx/animation/animation_linux.cc b/ui/gfx/animation/animation_linux.cc
-index 8b3afc65842..45d5717701b 100644
+index 8b3afc6584..45d5717701 100644
 --- a/ui/gfx/animation/animation_linux.cc
 +++ b/ui/gfx/animation/animation_linux.cc
 @@ -13,6 +13,7 @@ namespace {

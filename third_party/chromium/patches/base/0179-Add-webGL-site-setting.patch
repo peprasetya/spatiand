@@ -25,7 +25,7 @@ FILE:Add-webGL-site-setting.patch
 
 diff --git a/components/browser_ui/strings/bromite_content_settings/webgl.grdp b/components/browser_ui/strings/bromite_content_settings/webgl.grdp
 new file mode 100644
-index 00000000000..53635991ed2
+index 0000000000..53635991ed
 --- /dev/null
 +++ b/components/browser_ui/strings/bromite_content_settings/webgl.grdp
 @@ -0,0 +1,27 @@
@@ -58,7 +58,7 @@ index 00000000000..53635991ed2
 +</grit-part>
 diff --git a/components/content_settings/core/browser/bromite_content_settings/webgl.inc b/components/content_settings/core/browser/bromite_content_settings/webgl.inc
 new file mode 100644
-index 00000000000..32fbb909806
+index 0000000000..32fbb90980
 --- /dev/null
 +++ b/components/content_settings/core/browser/bromite_content_settings/webgl.inc
 @@ -0,0 +1,22 @@
@@ -86,13 +86,13 @@ index 00000000000..32fbb909806
 +    .set_mid_sentence_ui(IDS_SITE_SETTINGS_TYPE_WEBGL);
 diff --git a/components/content_settings/core/common/bromite_content_settings/WEBGL.inc b/components/content_settings/core/common/bromite_content_settings/WEBGL.inc
 new file mode 100644
-index 00000000000..30dc2ff2d12
+index 0000000000..30dc2ff2d1
 --- /dev/null
 +++ b/components/content_settings/core/common/bromite_content_settings/WEBGL.inc
 @@ -0,0 +1 @@
 +  WEBGL,
 diff --git a/third_party/blink/renderer/core/execution_context/execution_context.cc b/third_party/blink/renderer/core/execution_context/execution_context.cc
-index c0fbff0af26..6d33bd5a36e 100644
+index c0fbff0af2..6d33bd5a36 100644
 --- a/third_party/blink/renderer/core/execution_context/execution_context.cc
 +++ b/third_party/blink/renderer/core/execution_context/execution_context.cc
 @@ -87,6 +87,13 @@ blink::WebContentSettingsClient* GetContentSettingsClientFor(
@@ -110,7 +110,7 @@ index c0fbff0af26..6d33bd5a36e 100644
                                     Agent* agent,
                                     bool is_window)
 diff --git a/third_party/blink/renderer/core/execution_context/execution_context.h b/third_party/blink/renderer/core/execution_context/execution_context.h
-index 6120fa226fc..df7dc611806 100644
+index 6120fa226f..df7dc61180 100644
 --- a/third_party/blink/renderer/core/execution_context/execution_context.h
 +++ b/third_party/blink/renderer/core/execution_context/execution_context.h
 @@ -113,6 +113,8 @@ enum ReasonForCallingCanExecuteScripts {
@@ -123,7 +123,7 @@ index 6120fa226fc..df7dc611806 100644
  // properties of script execution environments on the web (i.e, common between
  // script executing in a window and script executing in a worker), such as:
 diff --git a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
-index e72f6f7ca60..82c1f6ea096 100644
+index e72f6f7ca6..82c1f6ea09 100644
 --- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
 +++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
 @@ -441,6 +441,13 @@ void WebGLRenderingContextBase::InitializeWebGLContextLimits(
@@ -177,7 +177,7 @@ index e72f6f7ca60..82c1f6ea096 100644
         !host->IsWebGL1Enabled()) ||
        (context_type == Platform::kWebGL2ContextType &&
 diff --git a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h
-index add96cfd872..efafe6ca257 100644
+index add96cfd87..efafe6ca25 100644
 --- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h
 +++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h
 @@ -1947,6 +1947,8 @@ class MODULES_EXPORT WebGLRenderingContextBase

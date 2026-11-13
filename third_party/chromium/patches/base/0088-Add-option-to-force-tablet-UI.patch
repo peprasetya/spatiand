@@ -10,7 +10,7 @@ FILE:Add-option-to-force-tablet-UI.patch
  1 file changed, 1 insertion(+)
 
 diff --git a/chrome/browser/preferences/BUILD.gn b/chrome/browser/preferences/BUILD.gn
-index d3440ebb58f..785dd414fb7 100644
+index d3440ebb58..785dd414fb 100644
 --- a/chrome/browser/preferences/BUILD.gn
 +++ b/chrome/browser/preferences/BUILD.gn
 @@ -25,6 +25,7 @@ android_library("java") {

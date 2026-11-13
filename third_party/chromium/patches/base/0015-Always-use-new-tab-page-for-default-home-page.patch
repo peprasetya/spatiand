@@ -14,7 +14,7 @@ FILE:Always-use-new-tab-page-for-default-home-page.patch
  create mode 100755 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/always-use-new-tab-page-for-default-home-page.inc
 
 diff --git a/components/search_engines/android/template_url_service_android.cc b/components/search_engines/android/template_url_service_android.cc
-index 8628ba9f55c..9fa682e33b4 100644
+index 8628ba9f55..9fa682e33b 100644
 --- a/components/search_engines/android/template_url_service_android.cc
 +++ b/components/search_engines/android/template_url_service_android.cc
 @@ -438,6 +438,7 @@ bool TemplateUrlServiceAndroid::SetPlayAPISearchEngine(
@@ -27,7 +27,7 @@ index 8628ba9f55c..9fa682e33b4 100644
    CHECK(template_url_service_->loaded());
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/always-use-new-tab-page-for-default-home-page.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/always-use-new-tab-page-for-default-home-page.inc
 new file mode 100755
-index 00000000000..4d8ec20eaf4
+index 0000000000..4d8ec20eaf
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/always-use-new-tab-page-for-default-home-page.inc
 @@ -0,0 +1 @@

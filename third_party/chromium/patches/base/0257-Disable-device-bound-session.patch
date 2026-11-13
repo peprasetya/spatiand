@@ -16,7 +16,7 @@ FILE:Disable-device-bound-session.patch
  4 files changed, 17 insertions(+), 7 deletions(-)
 
 diff --git a/chrome/browser/metrics/chrome_browser_main_extra_parts_metrics.cc b/chrome/browser/metrics/chrome_browser_main_extra_parts_metrics.cc
-index 443ffadf697..fc97d71e899 100644
+index 443ffadf69..fc97d71e89 100644
 --- a/chrome/browser/metrics/chrome_browser_main_extra_parts_metrics.cc
 +++ b/chrome/browser/metrics/chrome_browser_main_extra_parts_metrics.cc
 @@ -135,6 +135,11 @@ BASE_FEATURE(kWindowsIsPinnedToTaskbar3, base::FEATURE_ENABLED_BY_DEFAULT);
@@ -52,7 +52,7 @@ index 443ffadf697..fc97d71e899 100644
    // DBSC operations right after startup. The measurement runs slow TPM
    // operations, which must not block shutdown.
 diff --git a/net/BUILD.gn b/net/BUILD.gn
-index b6f72f8beb7..31fa067e786 100644
+index b6f72f8beb..31fa067e78 100644
 --- a/net/BUILD.gn
 +++ b/net/BUILD.gn
 @@ -1342,6 +1342,13 @@ component("net") {
@@ -70,7 +70,7 @@ index b6f72f8beb7..31fa067e786 100644
      sources += [
        "device_bound_sessions/cookie_access_check_params.h",
 diff --git a/net/base/features.cc b/net/base/features.cc
-index d1cbab1122b..e797553ecac 100644
+index d1cbab1122..e797553eca 100644
 --- a/net/base/features.cc
 +++ b/net/base/features.cc
 @@ -456,11 +456,7 @@ BASE_FEATURE(kUseNetworkPathMonitorForNetworkChangeNotifier,
@@ -86,7 +86,7 @@ index d1cbab1122b..e797553ecac 100644
               base::FEATURE_ENABLED_BY_DEFAULT);
  BASE_FEATURE(kDeviceBoundSessionsRetryTransientRefreshErrors,
 diff --git a/net/features.gni b/net/features.gni
-index 87e43078284..3d1b273e757 100644
+index 87e4307828..3d1b273e75 100644
 --- a/net/features.gni
 +++ b/net/features.gni
 @@ -73,7 +73,7 @@ declare_args() {

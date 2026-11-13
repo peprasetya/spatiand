@@ -18,7 +18,7 @@ FILE:Enable-extension-in-incognito.patch
  7 files changed, 51 insertions(+), 7 deletions(-)
 
 diff --git a/chrome/browser/extensions/api/developer_private/developer_private_functions.cc b/chrome/browser/extensions/api/developer_private/developer_private_functions.cc
-index fbfad825b26..0c4ecc65fef 100644
+index fbfad825b2..0c4ecc65fe 100644
 --- a/chrome/browser/extensions/api/developer_private/developer_private_functions.cc
 +++ b/chrome/browser/extensions/api/developer_private/developer_private_functions.cc
 @@ -1821,7 +1821,8 @@ DeveloperPrivateDismissSafetyHubExtensionsMenuNotificationFunction::Run() {
@@ -32,7 +32,7 @@ index fbfad825b26..0c4ecc65fef 100644
            safety_hub::SafetyHubModuleType::EXTENSIONS);
    return RespondNow(NoArguments());
 diff --git a/chrome/browser/extensions/extension_tab_util.cc b/chrome/browser/extensions/extension_tab_util.cc
-index 2f42ca7da9c..0df825d277b 100644
+index 2f42ca7da9..0df825d277 100644
 --- a/chrome/browser/extensions/extension_tab_util.cc
 +++ b/chrome/browser/extensions/extension_tab_util.cc
 @@ -1226,7 +1226,7 @@ bool ExtensionTabUtil::OpenOptionsPageFromWebContents(
@@ -45,7 +45,7 @@ index 2f42ca7da9c..0df825d277b 100644
        browser_window_util::GetBrowserForTabContents(*web_contents);
    if (!browser) {
 diff --git a/chrome/browser/performance_manager/decorators/helpers/page_live_state_decorator_helper.cc b/chrome/browser/performance_manager/decorators/helpers/page_live_state_decorator_helper.cc
-index 6f5e06eb84a..6de52b63d00 100644
+index 6f5e06eb84..6de52b63d0 100644
 --- a/chrome/browser/performance_manager/decorators/helpers/page_live_state_decorator_helper.cc
 +++ b/chrome/browser/performance_manager/decorators/helpers/page_live_state_decorator_helper.cc
 @@ -83,6 +83,14 @@ class ActiveTabTracker : public TabModelObserver {
@@ -80,7 +80,7 @@ index 6f5e06eb84a..6de52b63d00 100644
        tracker_map_ GUARDED_BY_CONTEXT(sequence_checker_);
  
 diff --git a/chrome/browser/ui/extensions/extensions_menu_view_model.cc b/chrome/browser/ui/extensions/extensions_menu_view_model.cc
-index 07f8519e90a..e828df19eac 100644
+index 07f8519e90..e828df19ea 100644
 --- a/chrome/browser/ui/extensions/extensions_menu_view_model.cc
 +++ b/chrome/browser/ui/extensions/extensions_menu_view_model.cc
 @@ -981,6 +981,7 @@ ExtensionsMenuViewModel::GetMenuEntryState(
@@ -103,7 +103,7 @@ index 07f8519e90a..e828df19eac 100644
 +  return web_contents;
  }
 diff --git a/chrome/browser/ui/extensions/extensions_menu_view_model.h b/chrome/browser/ui/extensions/extensions_menu_view_model.h
-index 8f052e6d5fa..645a815782c 100644
+index 8f052e6d5f..645a815782 100644
 --- a/chrome/browser/ui/extensions/extensions_menu_view_model.h
 +++ b/chrome/browser/ui/extensions/extensions_menu_view_model.h
 @@ -210,7 +210,7 @@ class ExtensionsMenuViewModel : public extensions::PermissionsManager::Observer,
@@ -134,7 +134,7 @@ index 8f052e6d5fa..645a815782c 100644
    // the current site.
    const std::vector<extensions::ExtensionId>& host_access_requests() {
 diff --git a/components/tabs/impl/tab_collection.cc b/components/tabs/impl/tab_collection.cc
-index 4dcfbebdc04..58845af9398 100644
+index 4dcfbebdc0..58845af939 100644
 --- a/components/tabs/impl/tab_collection.cc
 +++ b/components/tabs/impl/tab_collection.cc
 @@ -18,6 +18,10 @@
@@ -171,7 +171,7 @@ index 4dcfbebdc04..58845af9398 100644
  
  void TabCollection::AddObserver(TabCollectionObserver* observer) const {
 diff --git a/components/tabs/impl/tab_strip_collection.cc b/components/tabs/impl/tab_strip_collection.cc
-index bfb0b512753..0a67c1be636 100644
+index bfb0b51275..0a67c1be63 100644
 --- a/components/tabs/impl/tab_strip_collection.cc
 +++ b/components/tabs/impl/tab_strip_collection.cc
 @@ -332,13 +332,13 @@ ScopedTab TabStripCollection::RemoveTabAtIndexRecursive(size_t index) {

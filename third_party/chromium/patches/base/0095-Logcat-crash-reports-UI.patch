@@ -23,7 +23,7 @@ FILE:Logcat-crash-reports-UI.patch
  13 files changed, 357 insertions(+), 87 deletions(-)
 
 diff --git a/chrome/browser/crash_upload_list/crash_upload_list_android.cc b/chrome/browser/crash_upload_list/crash_upload_list_android.cc
-index 90c3d103bf1..728c66a52f9 100644
+index 90c3d103bf..728c66a52f 100644
 --- a/chrome/browser/crash_upload_list/crash_upload_list_android.cc
 +++ b/chrome/browser/crash_upload_list/crash_upload_list_android.cc
 @@ -15,6 +15,7 @@
@@ -84,7 +84,7 @@ index 90c3d103bf1..728c66a52f9 100644
  }
  
 diff --git a/chrome/browser/crash_upload_list/crash_upload_list_android.h b/chrome/browser/crash_upload_list/crash_upload_list_android.h
-index d95f96cbaa4..e916a4e24d2 100644
+index d95f96cbaa..e916a4e24d 100644
 --- a/chrome/browser/crash_upload_list/crash_upload_list_android.h
 +++ b/chrome/browser/crash_upload_list/crash_upload_list_android.h
 @@ -35,6 +35,7 @@ class CrashUploadListAndroid : public TextLogUploadList {
@@ -96,7 +96,7 @@ index d95f96cbaa4..e916a4e24d2 100644
   private:
    void LoadUnsuccessfulUploadList(
 diff --git a/chrome/browser/net/chrome_network_delegate.cc b/chrome/browser/net/chrome_network_delegate.cc
-index 5ac6f584419..befaa01c532 100644
+index 5ac6f58441..befaa01c53 100644
 --- a/chrome/browser/net/chrome_network_delegate.cc
 +++ b/chrome/browser/net/chrome_network_delegate.cc
 @@ -112,6 +112,13 @@ bool IsAccessAllowedAndroid(const base::FilePath& path) {
@@ -114,7 +114,7 @@ index 5ac6f584419..befaa01c532 100644
    std::vector<base::FilePath> all_download_dirs =
        base::android::GetAllPrivateDownloadsDirectories();
 diff --git a/chrome/browser/ui/webui/crashes/BUILD.gn b/chrome/browser/ui/webui/crashes/BUILD.gn
-index a53c50b5adf..1c78dcd2a1d 100644
+index a53c50b5ad..1c78dcd2a1 100644
 --- a/chrome/browser/ui/webui/crashes/BUILD.gn
 +++ b/chrome/browser/ui/webui/crashes/BUILD.gn
 @@ -22,6 +22,8 @@ source_set("crashes") {
@@ -127,7 +127,7 @@ index a53c50b5adf..1c78dcd2a1d 100644
      "//ui/webui",
    ]
 diff --git a/chrome/browser/ui/webui/crashes/crashes_ui.cc b/chrome/browser/ui/webui/crashes/crashes_ui.cc
-index ba95fabb35e..a1d3495b840 100644
+index ba95fabb35..a1d3495b84 100644
 --- a/chrome/browser/ui/webui/crashes/crashes_ui.cc
 +++ b/chrome/browser/ui/webui/crashes/crashes_ui.cc
 @@ -39,6 +39,20 @@
@@ -392,7 +392,7 @@ index ba95fabb35e..a1d3495b840 100644
    // Set up the chrome://crashes/ source.
    CreateAndAddCrashesUIHTMLSource(Profile::FromWebUI(web_ui));
 diff --git a/components/crash/core/browser/crashes_ui_util.h b/components/crash/core/browser/crashes_ui_util.h
-index 081cdd3aaa6..9d9073121cf 100644
+index 081cdd3aaa..9d9073121c 100644
 --- a/components/crash/core/browser/crashes_ui_util.h
 +++ b/components/crash/core/browser/crashes_ui_util.h
 @@ -51,6 +51,8 @@ inline constexpr CrashesUILocalizedString kCrashesUILocalizedStrings[] = {
@@ -414,7 +414,7 @@ index 081cdd3aaa6..9d9073121cf 100644
  // Converts and appends the most recent uploads to |out_value|.
  void UploadListToValue(UploadList* upload_list, base::ListValue* out_value);
 diff --git a/components/crash/core/browser/resources/crashes.css b/components/crash/core/browser/resources/crashes.css
-index ca1b00f7552..21ec8bc91b3 100644
+index ca1b00f755..21ec8bc91b 100644
 --- a/components/crash/core/browser/resources/crashes.css
 +++ b/components/crash/core/browser/resources/crashes.css
 @@ -3,7 +3,9 @@
@@ -507,7 +507,7 @@ index ca1b00f7552..21ec8bc91b3 100644
 +  }
 +}
 diff --git a/components/crash/core/browser/resources/crashes.html b/components/crash/core/browser/resources/crashes.html
-index db8b09fdf94..efee2b80006 100644
+index db8b09fdf9..efee2b8000 100644
 --- a/components/crash/core/browser/resources/crashes.html
 +++ b/components/crash/core/browser/resources/crashes.html
 @@ -1,6 +1,7 @@
@@ -542,7 +542,7 @@ index db8b09fdf94..efee2b80006 100644
  
      <div id="crashList">
 diff --git a/components/crash/core/browser/resources/crashes.ts b/components/crash/core/browser/resources/crashes.ts
-index 87a7170b4eb..0029cc39e53 100644
+index 87a7170b4e..0029cc39e5 100644
 --- a/components/crash/core/browser/resources/crashes.ts
 +++ b/components/crash/core/browser/resources/crashes.ts
 @@ -12,7 +12,7 @@ import '/strings.m.js';
@@ -702,7 +702,7 @@ index 87a7170b4eb..0029cc39e53 100644
    requestCrashes();
  });
 diff --git a/components/crash_strings.grdp b/components/crash_strings.grdp
-index 06e865ec624..c39ccdd9235 100644
+index 06e865ec62..c39ccdd923 100644
 --- a/components/crash_strings.grdp
 +++ b/components/crash_strings.grdp
 @@ -19,22 +19,22 @@
@@ -753,7 +753,7 @@ index 06e865ec624..c39ccdd9235 100644
    </message>
  </grit-part>
 diff --git a/components/upload_list/text_log_upload_list.cc b/components/upload_list/text_log_upload_list.cc
-index 2c3a95e82b9..3e323b0ece0 100644
+index 2c3a95e82b..3e323b0ece 100644
 --- a/components/upload_list/text_log_upload_list.cc
 +++ b/components/upload_list/text_log_upload_list.cc
 @@ -169,6 +169,7 @@ std::unique_ptr<UploadList::UploadInfo> TextLogUploadList::TryParseCsvLogEntry(
@@ -765,7 +765,7 @@ index 2c3a95e82b9..3e323b0ece0 100644
    // Add local ID if present.
    if (components.size() > 2)
 diff --git a/components/upload_list/upload_list.cc b/components/upload_list/upload_list.cc
-index 176f0b70225..14eee5c4d23 100644
+index 176f0b7022..14eee5c4d2 100644
 --- a/components/upload_list/upload_list.cc
 +++ b/components/upload_list/upload_list.cc
 @@ -99,6 +99,11 @@ std::vector<const UploadList::UploadInfo*> UploadList::GetUploads(
@@ -794,7 +794,7 @@ index 176f0b70225..14eee5c4d23 100644
 +  return std::string();
 +}
 diff --git a/components/upload_list/upload_list.h b/components/upload_list/upload_list.h
-index b4f61f6de22..52db7826dd4 100644
+index b4f61f6de2..52db7826dd 100644
 --- a/components/upload_list/upload_list.h
 +++ b/components/upload_list/upload_list.h
 @@ -70,6 +70,9 @@ class UploadList : public base::RefCountedThreadSafe<UploadList> {

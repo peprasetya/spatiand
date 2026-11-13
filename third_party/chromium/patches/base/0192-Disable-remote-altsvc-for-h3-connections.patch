@@ -14,7 +14,7 @@ FILE:Disable-remote-altsvc-for-h3-connections.patch
  3 files changed, 4 insertions(+), 9 deletions(-)
 
 diff --git a/net/http/http_server_properties_manager.cc b/net/http/http_server_properties_manager.cc
-index 6cbcfaf2296..cbb02f2836c 100644
+index 6cbcfaf229..cbb02f2836 100644
 --- a/net/http/http_server_properties_manager.cc
 +++ b/net/http/http_server_properties_manager.cc
 @@ -41,7 +41,7 @@ const int kMissingVersion = 0;
@@ -27,7 +27,7 @@ index 6cbcfaf2296..cbb02f2836c 100644
  const char kServerKey[] = "server";
  const char kQuicServerIdKey[] = "server_id";
 diff --git a/net/http/http_stream_factory_job_controller.cc b/net/http/http_stream_factory_job_controller.cc
-index 29256d79c1f..a3cb162d234 100644
+index 29256d79c1..a3cb162d23 100644
 --- a/net/http/http_stream_factory_job_controller.cc
 +++ b/net/http/http_stream_factory_job_controller.cc
 @@ -1437,11 +1437,7 @@ HttpStreamFactory::JobController::GetAdvertisedAltSvcInternal(
@@ -54,7 +54,7 @@ index 29256d79c1f..a3cb162d234 100644
      }
  
 diff --git a/net/quic/quic_context.h b/net/quic/quic_context.h
-index fb68e214d6d..0e2215add47 100644
+index fb68e214d6..0e2215add4 100644
 --- a/net/quic/quic_context.h
 +++ b/net/quic/quic_context.h
 @@ -214,7 +214,7 @@ struct NET_EXPORT QuicParams {

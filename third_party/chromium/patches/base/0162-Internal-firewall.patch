@@ -60,7 +60,7 @@ FILE:Internal-firewall.patch
  create mode 100644 services/firewall/tools/rules_model.py
 
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 67253ff2ca1..99adc086c3a 100644
+index 67253ff2ca..99adc086c3 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -3030,6 +3030,7 @@ source_set("browser") {
@@ -72,7 +72,7 @@ index 67253ff2ca1..99adc086c3a 100644
        "//components/webapps/isolated_web_apps",
        "//components/webauthn/content/browser",
 diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
-index 083fc5f35a9..acc36add26c 100644
+index 083fc5f35a..acc36add26 100644
 --- a/chrome/browser/about_flags.cc
 +++ b/chrome/browser/about_flags.cc
 @@ -258,6 +258,7 @@
@@ -84,7 +84,7 @@ index 083fc5f35a9..acc36add26c 100644
  #include "services/network/public/cpp/features.h"
  #include "services/network/public/cpp/network_switches.h"
 diff --git a/chrome/browser/download/android/download_controller.cc b/chrome/browser/download/android/download_controller.cc
-index 9a94d2dd61f..ca4ab918753 100644
+index 9a94d2dd61..ca4ab91875 100644
 --- a/chrome/browser/download/android/download_controller.cc
 +++ b/chrome/browser/download/android/download_controller.cc
 @@ -212,6 +212,35 @@ ui::WindowAndroid* GetCurrentWindow() {
@@ -133,7 +133,7 @@ index 9a94d2dd61f..ca4ab918753 100644
      dl_params->set_download_source(download::DownloadSource::TOOLBAR_MENU);
      download_manager->DownloadUrl(std::move(dl_params));
 diff --git a/chrome/browser/offline_pages/android/downloads/offline_page_download_bridge.cc b/chrome/browser/offline_pages/android/downloads/offline_page_download_bridge.cc
-index b56ad63d50b..e27dfcc4e54 100644
+index b56ad63d50..e27dfcc4e5 100644
 --- a/chrome/browser/offline_pages/android/downloads/offline_page_download_bridge.cc
 +++ b/chrome/browser/offline_pages/android/downloads/offline_page_download_bridge.cc
 @@ -243,13 +243,43 @@ void DuplicateCheckDone(const GURL& url,
@@ -182,7 +182,7 @@ index b56ad63d50b..e27dfcc4e54 100644
    content::NavigationEntry* entry =
        web_contents->GetController().GetLastCommittedEntry();
 diff --git a/components/download/content/internal/context_menu_download.cc b/components/download/content/internal/context_menu_download.cc
-index 6cb1a5fce06..5866d517a26 100644
+index 6cb1a5fce0..5866d517a2 100644
 --- a/components/download/content/internal/context_menu_download.cc
 +++ b/components/download/content/internal/context_menu_download.cc
 @@ -19,6 +19,36 @@
@@ -232,7 +232,7 @@ index 6cb1a5fce06..5866d517a26 100644
        url,
        content::Referrer(referring_url.GetAsReferrer(), params.referrer_policy));
 diff --git a/components/download/internal/common/download_job_factory.cc b/components/download/internal/common/download_job_factory.cc
-index 3887e3689d5..3cefc006c66 100644
+index 3887e3689d..3cefc006c6 100644
 --- a/components/download/internal/common/download_job_factory.cc
 +++ b/components/download/internal/common/download_job_factory.cc
 @@ -43,6 +43,7 @@ ConnectionType GetConnectionType(net::HttpConnectionInfo connection_info) {
@@ -244,7 +244,7 @@ index 3887e3689d5..3cefc006c66 100644
        download_item->GetDownloadFile()->IsMemoryFile()) {
      return false;
 diff --git a/components/webapps/browser/android/webapk/webapk_single_icon_hasher.cc b/components/webapps/browser/android/webapk/webapk_single_icon_hasher.cc
-index c9c5d0584e5..319f4627add 100644
+index c9c5d0584e..319f4627ad 100644
 --- a/components/webapps/browser/android/webapk/webapk_single_icon_hasher.cc
 +++ b/components/webapps/browser/android/webapk/webapk_single_icon_hasher.cc
 @@ -48,6 +48,36 @@ std::string ComputeMurmur2Hash(const std::string& raw_image_data) {
@@ -295,7 +295,7 @@ index c9c5d0584e5..319f4627add 100644
        base::BindOnce(&WebApkSingleIconHasher::OnSimpleLoaderComplete,
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Internal-firewall.inc b/cromite_flags/chrome/browser/about_flags_cc/Internal-firewall.inc
 new file mode 100644
-index 00000000000..f634ed71047
+index 0000000000..f634ed7104
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Internal-firewall.inc
 @@ -0,0 +1,8 @@
@@ -308,7 +308,7 @@ index 00000000000..f634ed71047
 +
 +#endif
 diff --git a/net/BUILD.gn b/net/BUILD.gn
-index b4d8b28b454..b6f72f8beb7 100644
+index b4d8b28b45..b6f72f8beb 100644
 --- a/net/BUILD.gn
 +++ b/net/BUILD.gn
 @@ -1270,6 +1270,7 @@ component("net") {
@@ -320,7 +320,7 @@ index b4d8b28b454..b6f72f8beb7 100644
      "//third_party/simdutf",
    ]
 diff --git a/net/traffic_annotation/network_traffic_annotation.h b/net/traffic_annotation/network_traffic_annotation.h
-index bf1b1e69209..181e8dba6c3 100644
+index bf1b1e6920..181e8dba6c 100644
 --- a/net/traffic_annotation/network_traffic_annotation.h
 +++ b/net/traffic_annotation/network_traffic_annotation.h
 @@ -372,10 +372,6 @@ struct MutablePartialNetworkTrafficAnnotationTag {
@@ -335,7 +335,7 @@ index bf1b1e69209..181e8dba6c3 100644
  // These annotations are unavailable on desktop Linux + Windows. They are
  // available on other platforms, since we only audit network annotations on
 diff --git a/net/url_request/url_request_http_job.cc b/net/url_request/url_request_http_job.cc
-index faa4226ad86..9c62d25615c 100644
+index faa4226ad8..9c62d25615 100644
 --- a/net/url_request/url_request_http_job.cc
 +++ b/net/url_request/url_request_http_job.cc
 @@ -415,6 +415,9 @@ URLRequestHttpJob::URLRequestHttpJob(
@@ -368,7 +368,7 @@ index faa4226ad86..9c62d25615c 100644
  
    // If we already have a transaction, then we should restart the transaction
 diff --git a/net/url_request/url_request_http_job.h b/net/url_request/url_request_http_job.h
-index 69f9ec45c5d..46e75eaf2d9 100644
+index 69f9ec45c5..46e75eaf2d 100644
 --- a/net/url_request/url_request_http_job.h
 +++ b/net/url_request/url_request_http_job.h
 @@ -29,6 +29,7 @@
@@ -390,7 +390,7 @@ index 69f9ec45c5d..46e75eaf2d9 100644
    FRIEND_TEST_ALL_PREFIXES(URLRequestHttpJobTest,
 diff --git a/services/firewall/public/BUILD.gn b/services/firewall/public/BUILD.gn
 new file mode 100644
-index 00000000000..c384945cba0
+index 0000000000..c384945cba
 --- /dev/null
 +++ b/services/firewall/public/BUILD.gn
 @@ -0,0 +1,74 @@
@@ -470,7 +470,7 @@ index 00000000000..c384945cba0
 +}
 diff --git a/services/firewall/public/firewall_features.cc b/services/firewall/public/firewall_features.cc
 new file mode 100644
-index 00000000000..797267d670e
+index 0000000000..797267d670
 --- /dev/null
 +++ b/services/firewall/public/firewall_features.cc
 @@ -0,0 +1,28 @@
@@ -504,7 +504,7 @@ index 00000000000..797267d670e
 +} // namespace firewall
 diff --git a/services/firewall/public/firewall_features.h b/services/firewall/public/firewall_features.h
 new file mode 100644
-index 00000000000..913ea3d2f3e
+index 0000000000..913ea3d2f3
 --- /dev/null
 +++ b/services/firewall/public/firewall_features.h
 @@ -0,0 +1,31 @@
@@ -541,7 +541,7 @@ index 00000000000..913ea3d2f3e
 +#endif // COMPONENTS_FIREWALL_FIREWALL_FEATURES_H_
 diff --git a/services/firewall/public/firewall_service.cc b/services/firewall/public/firewall_service.cc
 new file mode 100644
-index 00000000000..0ba9b2f7695
+index 0000000000..0ba9b2f769
 --- /dev/null
 +++ b/services/firewall/public/firewall_service.cc
 @@ -0,0 +1,46 @@
@@ -593,7 +593,7 @@ index 00000000000..0ba9b2f7695
 +}
 diff --git a/services/firewall/public/firewall_service.h b/services/firewall/public/firewall_service.h
 new file mode 100644
-index 00000000000..08fcf79dada
+index 0000000000..08fcf79dad
 --- /dev/null
 +++ b/services/firewall/public/firewall_service.h
 @@ -0,0 +1,57 @@
@@ -656,7 +656,7 @@ index 00000000000..08fcf79dada
 +#endif // COMPONENTS_FIREWALL_FIREWALL_SERVICE_H_
 diff --git a/services/firewall/tools/annotation_model.py b/services/firewall/tools/annotation_model.py
 new file mode 100644
-index 00000000000..6e79bc5a90e
+index 0000000000..6e79bc5a90
 --- /dev/null
 +++ b/services/firewall/tools/annotation_model.py
 @@ -0,0 +1,49 @@
@@ -711,7 +711,7 @@ index 00000000000..6e79bc5a90e
 +  return ANNOTATION_XML_TYPE.PrettyPrint(config)
 diff --git a/services/firewall/tools/annotations.xml b/services/firewall/tools/annotations.xml
 new file mode 100644
-index 00000000000..c34b796ef94
+index 0000000000..c34b796ef9
 --- /dev/null
 +++ b/services/firewall/tools/annotations.xml
 @@ -0,0 +1,503 @@
@@ -1220,7 +1220,7 @@ index 00000000000..c34b796ef94
 +</annotations>
 diff --git a/services/firewall/tools/builders_template.py b/services/firewall/tools/builders_template.py
 new file mode 100644
-index 00000000000..d5ef391f334
+index 0000000000..d5ef391f33
 --- /dev/null
 +++ b/services/firewall/tools/builders_template.py
 @@ -0,0 +1,72 @@
@@ -1298,7 +1298,7 @@ index 00000000000..d5ef391f334
 +  IMPL.WriteFile(outdir, relpath, data)
 diff --git a/services/firewall/tools/codegen.py b/services/firewall/tools/codegen.py
 new file mode 100644
-index 00000000000..e50d9fe9f91
+index 0000000000..e50d9fe9f9
 --- /dev/null
 +++ b/services/firewall/tools/codegen.py
 @@ -0,0 +1,82 @@
@@ -1386,7 +1386,7 @@ index 00000000000..e50d9fe9f91
 +    output.close()
 diff --git a/services/firewall/tools/decode_template.py b/services/firewall/tools/decode_template.py
 new file mode 100644
-index 00000000000..c48946fa904
+index 0000000000..c48946fa90
 --- /dev/null
 +++ b/services/firewall/tools/decode_template.py
 @@ -0,0 +1,85 @@
@@ -1477,7 +1477,7 @@ index 00000000000..c48946fa904
 +  IMPL.WriteFile(outdir, relpath, data)
 diff --git a/services/firewall/tools/gen_builders.py b/services/firewall/tools/gen_builders.py
 new file mode 100644
-index 00000000000..7e24a7a68c8
+index 0000000000..7e24a7a68c
 --- /dev/null
 +++ b/services/firewall/tools/gen_builders.py
 @@ -0,0 +1,65 @@
@@ -1548,7 +1548,7 @@ index 00000000000..7e24a7a68c8
 +  sys.exit(main(sys.argv))
 diff --git a/services/firewall/tools/rules.xml b/services/firewall/tools/rules.xml
 new file mode 100644
-index 00000000000..033df730515
+index 0000000000..033df73051
 --- /dev/null
 +++ b/services/firewall/tools/rules.xml
 @@ -0,0 +1,99 @@
@@ -1653,7 +1653,7 @@ index 00000000000..033df730515
 +</rules>
 diff --git a/services/firewall/tools/rules_model.py b/services/firewall/tools/rules_model.py
 new file mode 100644
-index 00000000000..0c97314b649
+index 0000000000..0c97314b64
 --- /dev/null
 +++ b/services/firewall/tools/rules_model.py
 @@ -0,0 +1,35 @@
@@ -1693,7 +1693,7 @@ index 00000000000..0c97314b649
 +
 +RULES_XML_TYPE = models.DocumentType(_RULES_CONFIGURATION_TYPE)
 diff --git a/services/network/network_context.cc b/services/network/network_context.cc
-index be062ee18ce..a3d4a3b933d 100644
+index be062ee18c..a3d4a3b933 100644
 --- a/services/network/network_context.cc
 +++ b/services/network/network_context.cc
 @@ -116,6 +116,7 @@
@@ -1819,7 +1819,7 @@ index be062ee18ce..a3d4a3b933d 100644
    if (!websocket_factory_) {
      websocket_factory_ = std::make_unique<WebSocketFactory>(this);
 diff --git a/services/network/public/cpp/simple_url_loader.cc b/services/network/public/cpp/simple_url_loader.cc
-index ec806dba661..228cb20ab7c 100644
+index ec806dba66..228cb20ab7 100644
 --- a/services/network/public/cpp/simple_url_loader.cc
 +++ b/services/network/public/cpp/simple_url_loader.cc
 @@ -1379,6 +1379,8 @@ SimpleURLLoaderImpl::SimpleURLLoaderImpl(
@@ -1854,7 +1854,7 @@ index ec806dba661..228cb20ab7c 100644
    mojo::PendingReceiver<mojom::URLLoaderClient> url_loader_client;
    url_loader_factory->CreateLoaderAndStart(
 diff --git a/services/network/public/cpp/simple_url_loader.h b/services/network/public/cpp/simple_url_loader.h
-index ecae8238208..192171d9693 100644
+index ecae823820..192171d969 100644
 --- a/services/network/public/cpp/simple_url_loader.h
 +++ b/services/network/public/cpp/simple_url_loader.h
 @@ -22,6 +22,7 @@
@@ -1875,7 +1875,7 @@ index ecae8238208..192171d9693 100644
        const base::FilePath& upload_file_path,
        std::optional<std::string_view> upload_content_type,
 diff --git a/third_party/blink/renderer/platform/loader/fetch/fetch_utils.cc b/third_party/blink/renderer/platform/loader/fetch/fetch_utils.cc
-index 6b0d0828196..ebf3c6a96a8 100644
+index 6b0d082819..ebf3c6a96a 100644
 --- a/third_party/blink/renderer/platform/loader/fetch/fetch_utils.cc
 +++ b/third_party/blink/renderer/platform/loader/fetch/fetch_utils.cc
 @@ -122,27 +122,150 @@ net::NetworkTrafficAnnotationTag FetchUtils::GetTrafficAnnotationTag(
@@ -2096,7 +2096,7 @@ index 6b0d0828196..ebf3c6a96a8 100644
            sender: "Blink Resource Loader"
            description:
 diff --git a/third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader.cc b/third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader.cc
-index c7866d8efcd..73ceb465958 100644
+index c7866d8efc..73ceb46595 100644
 --- a/third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader.cc
 +++ b/third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader.cc
 @@ -280,7 +280,7 @@ void URLLoader::Context::Start(
@@ -2118,7 +2118,7 @@ index c7866d8efcd..73ceb465958 100644
        std::move(request), GetMaybeUnfreezableTaskRunner(), tag, loader_options,
        cors_exempt_header_list_, base::WrapRefCounted(this), url_loader_factory_,
 diff --git a/tools/traffic_annotation/scripts/auditor/auditor.py b/tools/traffic_annotation/scripts/auditor/auditor.py
-index 1463c1cdac4..764b22b4073 100755
+index 1463c1cdac..764b22b407 100755
 --- a/tools/traffic_annotation/scripts/auditor/auditor.py
 +++ b/tools/traffic_annotation/scripts/auditor/auditor.py
 @@ -1005,6 +1005,7 @@ class ArchivedAnnotation:
@@ -2130,7 +2130,7 @@ index 1463c1cdac4..764b22b4073 100755
      "os_list",
      "semantics_fields",
 diff --git a/tools/traffic_annotation/scripts/auditor/util.py b/tools/traffic_annotation/scripts/auditor/util.py
-index a3c859f67ae..df1ad91b4d6 100644
+index a3c859f67a..df1ad91b4d 100644
 --- a/tools/traffic_annotation/scripts/auditor/util.py
 +++ b/tools/traffic_annotation/scripts/auditor/util.py
 @@ -88,6 +88,7 @@ def get_current_platform(build_path: Optional[Path] = None) -> str:

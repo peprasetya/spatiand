@@ -54,7 +54,7 @@ FILE:Multiple-fingerprinting-mitigations.patch
  create mode 100644 third_party/ungoogled/ungoogled_switches.h
 
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 92e41eeb421..da5a3743cc1 100644
+index 92e41eeb42..da5a3743cc 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -2651,6 +2651,7 @@ source_set("browser") {
@@ -66,7 +66,7 @@ index 92e41eeb421..da5a3743cc1 100644
      "//services/metrics/public/cpp:metrics_cpp",
      "//services/network:network_service",
 diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
-index 1d51eabb21e..129e767bce6 100644
+index 1d51eabb21..129e767bce 100644
 --- a/chrome/browser/about_flags.cc
 +++ b/chrome/browser/about_flags.cc
 @@ -286,6 +286,8 @@
@@ -79,7 +79,7 @@ index 1d51eabb21e..129e767bce6 100644
  #include "chrome/browser/finds/core/finds_features.h"
  #include "chrome/browser/flags/android/chrome_feature_list.h"
 diff --git a/content/browser/BUILD.gn b/content/browser/BUILD.gn
-index bee9872ba3e..46c49c49098 100644
+index bee9872ba3..46c49c4909 100644
 --- a/content/browser/BUILD.gn
 +++ b/content/browser/BUILD.gn
 @@ -339,6 +339,7 @@ source_set("browser") {
@@ -91,7 +91,7 @@ index bee9872ba3e..46c49c49098 100644
      "//third_party/zlib",
      "//tools/v8_context_snapshot:buildflags",
 diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
-index cf64747dbc2..00d13b47500 100644
+index cf64747dbc..00d13b4750 100644
 --- a/content/browser/renderer_host/render_process_host_impl.cc
 +++ b/content/browser/renderer_host/render_process_host_impl.cc
 @@ -224,6 +224,7 @@
@@ -112,7 +112,7 @@ index cf64747dbc2..00d13b47500 100644
        switches::kDisableGpuMemoryBufferVideoFrames,
        switches::kDisableHistogramCustomizer,
 diff --git a/content/child/BUILD.gn b/content/child/BUILD.gn
-index 3bd27257628..5e8aae1dcec 100644
+index 3bd2725762..5e8aae1dce 100644
 --- a/content/child/BUILD.gn
 +++ b/content/child/BUILD.gn
 @@ -115,6 +115,7 @@ target(link_target_type, "child") {
@@ -124,7 +124,7 @@ index 3bd27257628..5e8aae1dcec 100644
      "//ui/base",
      "//ui/events/blink",
 diff --git a/content/child/runtime_features.cc b/content/child/runtime_features.cc
-index fcf03ba0b34..7fae0a62056 100644
+index fcf03ba0b3..7fae0a6205 100644
 --- a/content/child/runtime_features.cc
 +++ b/content/child/runtime_features.cc
 @@ -50,6 +50,8 @@
@@ -149,7 +149,7 @@ index fcf03ba0b34..7fae0a62056 100644
  
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Multiple-fingerprinting-mitigations.inc b/cromite_flags/chrome/browser/about_flags_cc/Multiple-fingerprinting-mitigations.inc
 new file mode 100755
-index 00000000000..6be1a3a82f6
+index 0000000000..6be1a3a82f
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Multiple-fingerprinting-mitigations.inc
 @@ -0,0 +1,12 @@
@@ -166,7 +166,7 @@ index 00000000000..6be1a3a82f6
 +
 +#endif
 diff --git a/third_party/blink/public/platform/web_runtime_features.h b/third_party/blink/public/platform/web_runtime_features.h
-index dff4c401f60..e78962e1edf 100644
+index dff4c401f6..e78962e1ed 100644
 --- a/third_party/blink/public/platform/web_runtime_features.h
 +++ b/third_party/blink/public/platform/web_runtime_features.h
 @@ -69,6 +69,8 @@ class BLINK_PLATFORM_EXPORT WebRuntimeFeatures : public WebRuntimeFeaturesBase {
@@ -179,7 +179,7 @@ index dff4c401f60..e78962e1edf 100644
    static void EnableDesktopAndroidScrollbars(bool);
  
 diff --git a/third_party/blink/renderer/core/dom/document.cc b/third_party/blink/renderer/core/dom/document.cc
-index b9e45f1460a..44f99732aa6 100644
+index b9e45f1460..44f99732aa 100644
 --- a/third_party/blink/renderer/core/dom/document.cc
 +++ b/third_party/blink/renderer/core/dom/document.cc
 @@ -41,6 +41,7 @@
@@ -223,7 +223,7 @@ index b9e45f1460a..44f99732aa6 100644
    DCHECK(IsActive());
    DCHECK(IsMainThread());
 diff --git a/third_party/blink/renderer/core/dom/document.h b/third_party/blink/renderer/core/dom/document.h
-index e95caf0808f..67d958661b2 100644
+index e95caf0808..67d958661b 100644
 --- a/third_party/blink/renderer/core/dom/document.h
 +++ b/third_party/blink/renderer/core/dom/document.h
 @@ -601,6 +601,10 @@ class CORE_EXPORT Document : public ContainerNode,
@@ -248,7 +248,7 @@ index e95caf0808f..67d958661b2 100644
    // - ScriptSchedulingType::kAsync
    // - ScriptSchedulingType::kInOrder
 diff --git a/third_party/blink/renderer/core/html/canvas/canvas_async_blob_creator.cc b/third_party/blink/renderer/core/html/canvas/canvas_async_blob_creator.cc
-index 8e9d8429042..6674ec923a7 100644
+index 8e9d842904..6674ec923a 100644
 --- a/third_party/blink/renderer/core/html/canvas/canvas_async_blob_creator.cc
 +++ b/third_party/blink/renderer/core/html/canvas/canvas_async_blob_creator.cc
 @@ -17,6 +17,7 @@
@@ -270,7 +270,7 @@ index 8e9d8429042..6674ec923a7 100644
    }
  
 diff --git a/third_party/blink/renderer/core/html/canvas/text_metrics.cc b/third_party/blink/renderer/core/html/canvas/text_metrics.cc
-index a78150b4a69..a30a1f346b7 100644
+index a78150b4a6..a30a1f346b 100644
 --- a/third_party/blink/renderer/core/html/canvas/text_metrics.cc
 +++ b/third_party/blink/renderer/core/html/canvas/text_metrics.cc
 @@ -92,6 +92,24 @@ TextMetrics::TextMetrics(const Font* font,
@@ -299,7 +299,7 @@ index a78150b4a69..a30a1f346b7 100644
                           const TextDirection& direction,
                           const V8CanvasTextBaseline::Enum baseline,
 diff --git a/third_party/blink/renderer/core/html/canvas/text_metrics.h b/third_party/blink/renderer/core/html/canvas/text_metrics.h
-index 3d2c354897f..7b3147047cf 100644
+index 3d2c354897..7b3147047c 100644
 --- a/third_party/blink/renderer/core/html/canvas/text_metrics.h
 +++ b/third_party/blink/renderer/core/html/canvas/text_metrics.h
 @@ -110,6 +110,8 @@ class CORE_EXPORT TextMetrics final : public ScriptWrappable {
@@ -312,7 +312,7 @@ index 3d2c354897f..7b3147047cf 100644
    void Update(const Font*,
                const TextDirection& direction,
 diff --git a/third_party/blink/renderer/core/svg/svg_text_content_element.cc b/third_party/blink/renderer/core/svg/svg_text_content_element.cc
-index e8a71794663..e3c78c29d6a 100644
+index e8a7179466..e3c78c29d6 100644
 --- a/third_party/blink/renderer/core/svg/svg_text_content_element.cc
 +++ b/third_party/blink/renderer/core/svg/svg_text_content_element.cc
 @@ -113,13 +113,17 @@ float SVGTextContentElement::getComputedTextLength() {
@@ -397,7 +397,7 @@ index e8a71794663..e3c78c29d6a 100644
          local_point, layout_object->Style().EffectiveZoom());
      return SvgTextQuery(*layout_object).CharacterNumberAtPosition(query_point);
 diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
-index ba2dcc2f2f0..aee35635072 100644
+index ba2dcc2f2f..aee3563507 100644
 --- a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
 +++ b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
 @@ -131,6 +131,10 @@
@@ -448,7 +448,7 @@ index ba2dcc2f2f0..aee35635072 100644
  
  String BaseRenderingContext2D::lang() const {
 diff --git a/third_party/blink/renderer/platform/BUILD.gn b/third_party/blink/renderer/platform/BUILD.gn
-index 0adcb6894f3..64f74a3714a 100644
+index 0adcb6894f..64f74a3714 100644
 --- a/third_party/blink/renderer/platform/BUILD.gn
 +++ b/third_party/blink/renderer/platform/BUILD.gn
 @@ -1837,7 +1837,9 @@ component("platform") {
@@ -471,7 +471,7 @@ index 0adcb6894f3..64f74a3714a 100644
      "//third_party/harfbuzz",
      "//third_party/highway:libhwy",
 diff --git a/third_party/blink/renderer/platform/exported/web_runtime_features.cc b/third_party/blink/renderer/platform/exported/web_runtime_features.cc
-index e37c5457485..fdb1cabbb76 100644
+index e37c545748..fdb1cabbb7 100644
 --- a/third_party/blink/renderer/platform/exported/web_runtime_features.cc
 +++ b/third_party/blink/renderer/platform/exported/web_runtime_features.cc
 @@ -96,6 +96,14 @@ void WebRuntimeFeatures::EnableDesktopAndroidScrollbars(bool enable) {
@@ -490,7 +490,7 @@ index e37c5457485..fdb1cabbb76 100644
    RuntimeEnabledFeatures::SetLocalNetworkAccessWebRTCEnabled(enable);
  }
 diff --git a/third_party/blink/renderer/platform/graphics/image_data_buffer.cc b/third_party/blink/renderer/platform/graphics/image_data_buffer.cc
-index 89f8fff042d..e97581dfecd 100644
+index 89f8fff042..e97581dfec 100644
 --- a/third_party/blink/renderer/platform/graphics/image_data_buffer.cc
 +++ b/third_party/blink/renderer/platform/graphics/image_data_buffer.cc
 @@ -35,7 +35,10 @@
@@ -517,7 +517,7 @@ index 89f8fff042d..e97581dfecd 100644
      return "data:,";
    }
 diff --git a/third_party/blink/renderer/platform/graphics/static_bitmap_image.cc b/third_party/blink/renderer/platform/graphics/static_bitmap_image.cc
-index a588009869e..4b5c6c1bd78 100644
+index a588009869..4b5c6c1bd7 100644
 --- a/third_party/blink/renderer/platform/graphics/static_bitmap_image.cc
 +++ b/third_party/blink/renderer/platform/graphics/static_bitmap_image.cc
 @@ -4,6 +4,8 @@
@@ -674,7 +674,7 @@ index a588009869e..4b5c6c1bd78 100644
 +
  }  // namespace blink
 diff --git a/third_party/blink/renderer/platform/graphics/static_bitmap_image.h b/third_party/blink/renderer/platform/graphics/static_bitmap_image.h
-index 60de4ba88b5..22893364ac7 100644
+index 60de4ba88b..22893364ac 100644
 --- a/third_party/blink/renderer/platform/graphics/static_bitmap_image.h
 +++ b/third_party/blink/renderer/platform/graphics/static_bitmap_image.h
 @@ -38,6 +38,8 @@ class PLATFORM_EXPORT StaticBitmapImage : public Image {
@@ -687,7 +687,7 @@ index 60de4ba88b5..22893364ac7 100644
  
    // Methods overridden by all sub-classes
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 812e9639a21..7703bacf91e 100644
+index 812e9639a2..7703bacf91 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -4644,6 +4644,12 @@
@@ -705,7 +705,7 @@ index 812e9639a21..7703bacf91e 100644
        public: true,
 diff --git a/third_party/ungoogled/BUILD.gn b/third_party/ungoogled/BUILD.gn
 new file mode 100644
-index 00000000000..9414e356b63
+index 0000000000..9414e356b6
 --- /dev/null
 +++ b/third_party/ungoogled/BUILD.gn
 @@ -0,0 +1,10 @@
@@ -721,7 +721,7 @@ index 00000000000..9414e356b63
 +}
 diff --git a/third_party/ungoogled/ungoogled_switches.cc b/third_party/ungoogled/ungoogled_switches.cc
 new file mode 100644
-index 00000000000..9f59cd75a8a
+index 0000000000..9f59cd75a8
 --- /dev/null
 +++ b/third_party/ungoogled/ungoogled_switches.cc
 @@ -0,0 +1,15 @@
@@ -742,7 +742,7 @@ index 00000000000..9f59cd75a8a
 +}  // namespace switches
 diff --git a/third_party/ungoogled/ungoogled_switches.h b/third_party/ungoogled/ungoogled_switches.h
 new file mode 100644
-index 00000000000..f1db5dba46d
+index 0000000000..f1db5dba46
 --- /dev/null
 +++ b/third_party/ungoogled/ungoogled_switches.h
 @@ -0,0 +1,17 @@

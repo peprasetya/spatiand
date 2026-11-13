@@ -46,7 +46,7 @@ FILE:Bromite-subresource-adblocker.patch
  create mode 100644 components/component_updater/download_filters_task.h
 
 diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
-index 0643b115efa..f659bbdb317 100644
+index 0643b115ef..f659bbdb31 100644
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
 @@ -17903,6 +17903,16 @@ Please help our engineers fix this problem. Tell us what happened right before y
@@ -67,7 +67,7 @@ index 0643b115efa..f659bbdb317 100644
      <message name="IDS_BLOCKED_ADS_PROMPT_TOOLTIP" desc="Explanation that Chrome blocked ads on this site. To be shown as a tooltip on the Ads blocked desktop bubble">
        Ads blocked on this site
 diff --git a/chrome/browser/after_startup_task_utils.cc b/chrome/browser/after_startup_task_utils.cc
-index a242f5d3554..70a7ab12d26 100644
+index a242f5d355..70a7ab12d2 100644
 --- a/chrome/browser/after_startup_task_utils.cc
 +++ b/chrome/browser/after_startup_task_utils.cc
 @@ -38,6 +38,9 @@
@@ -90,7 +90,7 @@ index a242f5d3554..70a7ab12d26 100644
  
  bool g_is_monitoring_started = false;
 diff --git a/chrome/browser/browser_process.h b/chrome/browser/browser_process.h
-index ee4a2bfd8f7..9c0bd728a51 100644
+index ee4a2bfd8f..9c0bd728a5 100644
 --- a/chrome/browser/browser_process.h
 +++ b/chrome/browser/browser_process.h
 @@ -100,6 +100,10 @@ namespace speech {
@@ -113,7 +113,7 @@ index ee4a2bfd8f7..9c0bd728a51 100644
  #if BUILDFLAG(IS_CHROMEOS)
    virtual MediaFileSystemRegistry* media_file_system_registry() = 0;
 diff --git a/chrome/browser/browser_process_impl.cc b/chrome/browser/browser_process_impl.cc
-index 9af0eef4db0..d72ab4b8470 100644
+index 9af0eef4db..d72ab4b847 100644
 --- a/chrome/browser/browser_process_impl.cc
 +++ b/chrome/browser/browser_process_impl.cc
 @@ -191,6 +191,8 @@
@@ -161,7 +161,7 @@ index 9af0eef4db0..d72ab4b8470 100644
    if (is_keeping_alive) {
      Pin();
 diff --git a/chrome/browser/browser_process_impl.h b/chrome/browser/browser_process_impl.h
-index c128db86884..99d87202a7d 100644
+index c128db8688..99d87202a7 100644
 --- a/chrome/browser/browser_process_impl.h
 +++ b/chrome/browser/browser_process_impl.h
 @@ -221,6 +221,7 @@ class BrowserProcessImpl : public BrowserProcess,
@@ -181,7 +181,7 @@ index c128db86884..99d87202a7d 100644
  #if !BUILDFLAG(IS_ANDROID)
    // Used to create a singleton instance of SodaInstallerImpl, which can be
 diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
-index dce129ed5cb..b1127d38e3a 100644
+index dce129ed5c..b1127d38e3 100644
 --- a/chrome/browser/chrome_browser_main.cc
 +++ b/chrome/browser/chrome_browser_main.cc
 @@ -501,6 +501,9 @@ StartupProfileInfo CreateInitialProfile(
@@ -195,7 +195,7 @@ index dce129ed5cb..b1127d38e3a 100644
    profile_info =
        GetStartupProfile(/*cur_dir=*/base::FilePath(), parsed_command_line);
 diff --git a/chrome/browser/flags/BUILD.gn b/chrome/browser/flags/BUILD.gn
-index a0cdf843c8a..dbb1b78deac 100644
+index a0cdf843c8..dbb1b78dea 100644
 --- a/chrome/browser/flags/BUILD.gn
 +++ b/chrome/browser/flags/BUILD.gn
 @@ -10,6 +10,7 @@ import("//third_party/jni_zero/jni_zero.gni")
@@ -224,7 +224,7 @@ index a0cdf843c8a..dbb1b78deac 100644
      "//base",
 diff --git a/chrome/browser/flags/android/adblock_native_gateway.cc b/chrome/browser/flags/android/adblock_native_gateway.cc
 new file mode 100755
-index 00000000000..962f9a31fd2
+index 0000000000..962f9a31fd
 --- /dev/null
 +++ b/chrome/browser/flags/android/adblock_native_gateway.cc
 @@ -0,0 +1,33 @@
@@ -262,7 +262,7 @@ index 00000000000..962f9a31fd2
 +
 +DEFINE_JNI(AdBlockNativeGateway)
 diff --git a/chrome/browser/net/system_network_context_manager.cc b/chrome/browser/net/system_network_context_manager.cc
-index ce884c3b241..3df824b5c9c 100644
+index ce884c3b24..3df824b5c9 100644
 --- a/chrome/browser/net/system_network_context_manager.cc
 +++ b/chrome/browser/net/system_network_context_manager.cc
 @@ -736,6 +736,10 @@ void SystemNetworkContextManager::RegisterPrefs(PrefRegistrySimple* registry) {
@@ -277,7 +277,7 @@ index ce884c3b241..3df824b5c9c 100644
    registry->RegisterStringPref(prefs::kAuthSchemes,
                                 "basic,digest,ntlm,negotiate");
 diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
-index 5e19e78fd69..067bce80067 100644
+index 5e19e78fd6..067bce8006 100644
 --- a/chrome/common/pref_names.h
 +++ b/chrome/common/pref_names.h
 @@ -2243,6 +2243,11 @@ static_assert(std::string_view(kAudioCaptureAllowed) ==
@@ -293,7 +293,7 @@ index 5e19e78fd69..067bce80067 100644
  // access to video capture devices.  When enabled or not set, the user is
  // prompted for device access.  When disabled, access to video capture devices
 diff --git a/components/component_updater/BUILD.gn b/components/component_updater/BUILD.gn
-index 31b516cde43..ff97c99cabe 100644
+index 31b516cde4..ff97c99cab 100644
 --- a/components/component_updater/BUILD.gn
 +++ b/components/component_updater/BUILD.gn
 @@ -21,6 +21,12 @@ static_library("component_updater") {
@@ -323,7 +323,7 @@ index 31b516cde43..ff97c99cabe 100644
  
 diff --git a/components/component_updater/adblock_updater_service.cc b/components/component_updater/adblock_updater_service.cc
 new file mode 100644
-index 00000000000..ec994996ead
+index 0000000000..ec994996ea
 --- /dev/null
 +++ b/components/component_updater/adblock_updater_service.cc
 @@ -0,0 +1,281 @@
@@ -610,7 +610,7 @@ index 00000000000..ec994996ead
 +}  // namespace adblock_updater
 diff --git a/components/component_updater/adblock_updater_service.h b/components/component_updater/adblock_updater_service.h
 new file mode 100644
-index 00000000000..e6de576e353
+index 0000000000..e6de576e35
 --- /dev/null
 +++ b/components/component_updater/adblock_updater_service.h
 @@ -0,0 +1,103 @@
@@ -719,7 +719,7 @@ index 00000000000..e6de576e353
 +#endif  // COMPONENTS_ADBLOCK_UPDATER_SERVICE_H
 diff --git a/components/component_updater/download_filters_task.cc b/components/component_updater/download_filters_task.cc
 new file mode 100644
-index 00000000000..8f6a3b09e04
+index 0000000000..8f6a3b09e0
 --- /dev/null
 +++ b/components/component_updater/download_filters_task.cc
 @@ -0,0 +1,250 @@
@@ -975,7 +975,7 @@ index 00000000000..8f6a3b09e04
 +}  // namespace adblock_updater
 diff --git a/components/component_updater/download_filters_task.h b/components/component_updater/download_filters_task.h
 new file mode 100644
-index 00000000000..e5aeb7c9a7f
+index 0000000000..e5aeb7c9a7
 --- /dev/null
 +++ b/components/component_updater/download_filters_task.h
 @@ -0,0 +1,129 @@
@@ -1109,7 +1109,7 @@ index 00000000000..e5aeb7c9a7f
 +
 +#endif  // COMPONENTS_DOWNLOAD_FILTERS_TASK_H_
 diff --git a/components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.cc b/components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.cc
-index 83957528434..1883ae7abe4 100644
+index 8395752843..1883ae7abe 100644
 --- a/components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.cc
 +++ b/components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.cc
 @@ -17,7 +17,10 @@
@@ -1150,7 +1150,7 @@ index 83957528434..1883ae7abe4 100644
    }
  
 diff --git a/components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.h b/components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.h
-index 28527325130..07734befc6b 100644
+index 2852732513..07734befc6 100644
 --- a/components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.h
 +++ b/components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.h
 @@ -409,6 +409,8 @@ class ContentSubresourceFilterThrottleManager
@@ -1163,7 +1163,7 @@ index 28527325130..07734befc6b 100644
    // The throttle manager is held as user data first on NavigationHandle, then
    // transferred to Page once it is created. Once the Page is created and this
 diff --git a/components/subresource_filter/content/browser/ruleset_service.cc b/components/subresource_filter/content/browser/ruleset_service.cc
-index 0e6ecd18ab6..53f6550b15a 100644
+index 0e6ecd18ab..53f6550b15 100644
 --- a/components/subresource_filter/content/browser/ruleset_service.cc
 +++ b/components/subresource_filter/content/browser/ruleset_service.cc
 @@ -16,6 +16,7 @@
@@ -1302,7 +1302,7 @@ index 0e6ecd18ab6..53f6550b15a 100644
      return;
    }
 diff --git a/components/subresource_filter/content/browser/ruleset_service.h b/components/subresource_filter/content/browser/ruleset_service.h
-index 6d4fc7fb031..83a66f2f8e3 100644
+index 6d4fc7fb03..83a66f2f8e 100644
 --- a/components/subresource_filter/content/browser/ruleset_service.h
 +++ b/components/subresource_filter/content/browser/ruleset_service.h
 @@ -184,7 +184,7 @@ class RulesetService {
@@ -1328,7 +1328,7 @@ index 6d4fc7fb031..83a66f2f8e3 100644
    // them using |indexer|. Returns whether the entire ruleset could be parsed.
    static bool IndexRuleset(
 diff --git a/components/subresource_filter/content/browser/unindexed_ruleset_stream_generator.cc b/components/subresource_filter/content/browser/unindexed_ruleset_stream_generator.cc
-index 6a08c96df36..cc5cac8134d 100644
+index 6a08c96df3..cc5cac8134 100644
 --- a/components/subresource_filter/content/browser/unindexed_ruleset_stream_generator.cc
 +++ b/components/subresource_filter/content/browser/unindexed_ruleset_stream_generator.cc
 @@ -12,6 +12,7 @@
@@ -1349,7 +1349,7 @@ index 6a08c96df36..cc5cac8134d 100644
        std::move(unindexed_ruleset_file));
    ruleset_stream_ =
 diff --git a/components/subresource_filter/core/browser/ruleset_version.h b/components/subresource_filter/core/browser/ruleset_version.h
-index 89a6c3a25b8..30ce5fd20d5 100644
+index 89a6c3a25b..30ce5fd20d 100644
 --- a/components/subresource_filter/core/browser/ruleset_version.h
 +++ b/components/subresource_filter/core/browser/ruleset_version.h
 @@ -53,6 +53,10 @@ struct UnindexedRulesetInfo {
@@ -1364,7 +1364,7 @@ index 89a6c3a25b8..30ce5fd20d5 100644
  
  // Encapsulates the combination of the binary format version of the indexed
 diff --git a/components/subresource_filter/core/browser/subresource_filter_features.cc b/components/subresource_filter/core/browser/subresource_filter_features.cc
-index 5a27b467964..2d2f7ed3625 100644
+index 5a27b46796..2d2f7ed362 100644
 --- a/components/subresource_filter/core/browser/subresource_filter_features.cc
 +++ b/components/subresource_filter/core/browser/subresource_filter_features.cc
 @@ -54,72 +54,8 @@ class CommaSeparatedStrings {
@@ -1518,7 +1518,7 @@ index 5a27b467964..2d2f7ed3625 100644
  }
  
 diff --git a/components/subresource_filter/core/browser/verified_ruleset_dealer.cc b/components/subresource_filter/core/browser/verified_ruleset_dealer.cc
-index f576f92ace9..3b02a3ea15b 100644
+index f576f92ace..3b02a3ea15 100644
 --- a/components/subresource_filter/core/browser/verified_ruleset_dealer.cc
 +++ b/components/subresource_filter/core/browser/verified_ruleset_dealer.cc
 @@ -11,6 +11,7 @@
@@ -1540,7 +1540,7 @@ index f576f92ace9..3b02a3ea15b 100644
      SetRulesetFile(file->Duplicate());
      expected_checksum_ = expected_checksum;
 diff --git a/components/subresource_filter/core/common/indexed_ruleset.cc b/components/subresource_filter/core/common/indexed_ruleset.cc
-index ede311a31b7..0987a156b24 100644
+index ede311a31b..0987a156b2 100644
 --- a/components/subresource_filter/core/common/indexed_ruleset.cc
 +++ b/components/subresource_filter/core/common/indexed_ruleset.cc
 @@ -13,6 +13,7 @@

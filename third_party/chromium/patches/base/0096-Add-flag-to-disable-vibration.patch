@@ -20,7 +20,7 @@ FILE:Add-flag-to-disable-vibration.patch
  create mode 100644 cromite_flags/content/public/common/content_features_h/Add-flag-to-disable-vibration.inc
 
 diff --git a/content/child/runtime_features.cc b/content/child/runtime_features.cc
-index c00b062823e..b82ab5e52ff 100644
+index c00b062823..b82ab5e52f 100644
 --- a/content/child/runtime_features.cc
 +++ b/content/child/runtime_features.cc
 @@ -585,6 +585,11 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
@@ -37,7 +37,7 @@ index c00b062823e..b82ab5e52ff 100644
            switches::kDisableOriginTrialControlledBlinkFeatures)) {
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Add-flag-to-disable-vibration.inc b/cromite_flags/chrome/browser/about_flags_cc/Add-flag-to-disable-vibration.inc
 new file mode 100644
-index 00000000000..68ef357ef9e
+index 0000000000..68ef357ef9
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Add-flag-to-disable-vibration.inc
 @@ -0,0 +1,8 @@
@@ -51,7 +51,7 @@ index 00000000000..68ef357ef9e
 +#endif
 diff --git a/cromite_flags/content/public/common/content_features_cc/Add-flag-to-disable-vibration.inc b/cromite_flags/content/public/common/content_features_cc/Add-flag-to-disable-vibration.inc
 new file mode 100644
-index 00000000000..3d5652a6101
+index 0000000000..3d5652a610
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_cc/Add-flag-to-disable-vibration.inc
 @@ -0,0 +1,4 @@
@@ -61,13 +61,13 @@ index 00000000000..3d5652a6101
 +               base::FEATURE_DISABLED_BY_DEFAULT);
 diff --git a/cromite_flags/content/public/common/content_features_h/Add-flag-to-disable-vibration.inc b/cromite_flags/content/public/common/content_features_h/Add-flag-to-disable-vibration.inc
 new file mode 100644
-index 00000000000..bda94d3022d
+index 0000000000..bda94d3022
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_h/Add-flag-to-disable-vibration.inc
 @@ -0,0 +1 @@
 +CONTENT_EXPORT BASE_DECLARE_FEATURE(kVibration);
 diff --git a/third_party/blink/public/platform/web_runtime_features.h b/third_party/blink/public/platform/web_runtime_features.h
-index e78962e1edf..874d7a9cd79 100644
+index e78962e1ed..874d7a9cd7 100644
 --- a/third_party/blink/public/platform/web_runtime_features.h
 +++ b/third_party/blink/public/platform/web_runtime_features.h
 @@ -73,6 +73,7 @@ class BLINK_PLATFORM_EXPORT WebRuntimeFeatures : public WebRuntimeFeaturesBase {
@@ -79,7 +79,7 @@ index e78962e1edf..874d7a9cd79 100644
    static void EnableLocalNetworkAccessWebRTC(bool);
  
 diff --git a/third_party/blink/renderer/modules/vibration/vibration_controller.cc b/third_party/blink/renderer/modules/vibration/vibration_controller.cc
-index 3ba3da135c4..af74d1bb739 100644
+index 3ba3da135c..af74d1bb73 100644
 --- a/third_party/blink/renderer/modules/vibration/vibration_controller.cc
 +++ b/third_party/blink/renderer/modules/vibration/vibration_controller.cc
 @@ -28,6 +28,7 @@
@@ -101,7 +101,7 @@ index 3ba3da135c4..af74d1bb739 100644
  }
  
 diff --git a/third_party/blink/renderer/platform/exported/web_runtime_features.cc b/third_party/blink/renderer/platform/exported/web_runtime_features.cc
-index fdb1cabbb76..a362818ca6a 100644
+index fdb1cabbb7..a362818ca6 100644
 --- a/third_party/blink/renderer/platform/exported/web_runtime_features.cc
 +++ b/third_party/blink/renderer/platform/exported/web_runtime_features.cc
 @@ -80,6 +80,10 @@ void WebRuntimeFeatures::EnableTestOnlyFeatures(bool enable) {
@@ -116,7 +116,7 @@ index fdb1cabbb76..a362818ca6a 100644
    RuntimeEnabledFeatures::SetOriginTrialControlledFeaturesEnabled(enable);
  }
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index 389f952e3d8..2b19592cc09 100644
+index 389f952e3d..2b19592cc0 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -1402,6 +1402,11 @@

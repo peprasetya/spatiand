@@ -13,7 +13,7 @@ FILE:Add-option-to-use-home-page-as-NTP.patch
  2 files changed, 6 insertions(+)
 
 diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
-index cfcf46dedbc..9d9f0e356c8 100644
+index cfcf46dedb..9d9f0e356c 100644
 --- a/chrome/browser/ui/browser_ui_prefs.cc
 +++ b/chrome/browser/ui/browser_ui_prefs.cc
 @@ -140,6 +140,8 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
@@ -26,7 +26,7 @@ index cfcf46dedbc..9d9f0e356c8 100644
    registry->RegisterBooleanPref(prefs::kWebAppCreateOnDesktop, true);
    registry->RegisterBooleanPref(prefs::kWebAppCreateInAppsMenu, true);
 diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
-index 067bce80067..b474bd710e7 100644
+index 067bce8006..b474bd710e 100644
 --- a/chrome/common/pref_names.h
 +++ b/chrome/common/pref_names.h
 @@ -657,6 +657,10 @@ inline constexpr char kSplitViewDragAndDropNudgeUsedCount[] =

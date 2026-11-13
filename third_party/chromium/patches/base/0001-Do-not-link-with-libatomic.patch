@@ -14,7 +14,7 @@ FILE:Do-not-link-with-libatomic.patch
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/base/BUILD.gn b/base/BUILD.gn
-index 2587bd828b8..d33624c29ff 100644
+index 2587bd828b..d33624c29f 100644
 --- a/base/BUILD.gn
 +++ b/base/BUILD.gn
 @@ -1213,7 +1213,7 @@ component("base") {

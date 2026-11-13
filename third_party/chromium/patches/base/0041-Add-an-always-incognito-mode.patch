@@ -58,7 +58,7 @@ FILE:Add-an-always-incognito-mode.patch
  create mode 100644 cromite_flags/components/offline_pages/core/offline_page_feature_h/add-an-always-incognito-mode.inc
 
 diff --git a/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc b/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc
-index 868d7421ef7..7d08aa18e0c 100644
+index 868d7421ef..7d08aa18e0 100644
 --- a/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc
 +++ b/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc
 @@ -520,6 +520,15 @@ AiModeButtonService* ChromeAutocompleteProviderClient::GetAiModeButtonService()
@@ -78,7 +78,7 @@ index 868d7421ef7..7d08aa18e0c 100644
    return profile_->IsOffTheRecord();
  }
 diff --git a/chrome/browser/autocomplete/chrome_autocomplete_provider_client.h b/chrome/browser/autocomplete/chrome_autocomplete_provider_client.h
-index 6efa1d82894..13a037d168b 100644
+index 6efa1d8289..13a037d168 100644
 --- a/chrome/browser/autocomplete/chrome_autocomplete_provider_client.h
 +++ b/chrome/browser/autocomplete/chrome_autocomplete_provider_client.h
 @@ -109,6 +109,7 @@ class ChromeAutocompleteProviderClient : public AutocompleteProviderClient {
@@ -90,7 +90,7 @@ index 6efa1d82894..13a037d168b 100644
    bool IsGuestSession() const override;
    bool SearchSuggestEnabled() const override;
 diff --git a/chrome/browser/autocomplete/remote_suggestions_service_factory.cc b/chrome/browser/autocomplete/remote_suggestions_service_factory.cc
-index 0836c117463..8471040dd26 100644
+index 0836c11746..8471040dd2 100644
 --- a/chrome/browser/autocomplete/remote_suggestions_service_factory.cc
 +++ b/chrome/browser/autocomplete/remote_suggestions_service_factory.cc
 @@ -4,6 +4,7 @@
@@ -116,7 +116,7 @@ index 0836c117463..8471040dd26 100644
                // Ash Internals.
                .WithAshInternals(ProfileSelection::kOriginalOnly)
 diff --git a/chrome/browser/content_settings/host_content_settings_map_factory.cc b/chrome/browser/content_settings/host_content_settings_map_factory.cc
-index 02a8d862461..dc5898b7d0b 100644
+index 02a8d86246..dc5898b7d0 100644
 --- a/chrome/browser/content_settings/host_content_settings_map_factory.cc
 +++ b/chrome/browser/content_settings/host_content_settings_map_factory.cc
 @@ -17,6 +17,7 @@
@@ -165,7 +165,7 @@ index 02a8d862461..dc5898b7d0b 100644
    // These must be registered before before the HostSettings are passed over to
    // the IOThread.  Simplest to do this on construction.
 diff --git a/chrome/browser/history/history_tab_helper.cc b/chrome/browser/history/history_tab_helper.cc
-index 41e33ac73f3..f146c538e21 100644
+index 41e33ac73f..f146c538e2 100644
 --- a/chrome/browser/history/history_tab_helper.cc
 +++ b/chrome/browser/history/history_tab_helper.cc
 @@ -17,11 +17,14 @@
@@ -215,7 +215,7 @@ index 41e33ac73f3..f146c538e21 100644
    translate_observation_.Reset();
  
 diff --git a/chrome/browser/history/history_tab_helper.h b/chrome/browser/history/history_tab_helper.h
-index aed6337c7de..229e88e6f60 100644
+index aed6337c7d..229e88e6f6 100644
 --- a/chrome/browser/history/history_tab_helper.h
 +++ b/chrome/browser/history/history_tab_helper.h
 @@ -20,6 +20,8 @@
@@ -250,7 +250,7 @@ index aed6337c7de..229e88e6f60 100644
    bool IsEligibleTab(const history::HistoryAddPageArgs& add_page_args) const;
  
 diff --git a/chrome/browser/offline_pages/android/offline_page_model_factory.cc b/chrome/browser/offline_pages/android/offline_page_model_factory.cc
-index de31d0e561d..8bd1a52b11b 100644
+index de31d0e561..8bd1a52b11 100644
 --- a/chrome/browser/offline_pages/android/offline_page_model_factory.cc
 +++ b/chrome/browser/offline_pages/android/offline_page_model_factory.cc
 @@ -23,6 +23,9 @@
@@ -305,7 +305,7 @@ index de31d0e561d..8bd1a52b11b 100644
 +
  }  // namespace offline_pages
 diff --git a/chrome/browser/offline_pages/android/request_coordinator_factory.cc b/chrome/browser/offline_pages/android/request_coordinator_factory.cc
-index 79c9affc1b9..2bd6309396a 100644
+index 79c9affc1b..2bd6309396 100644
 --- a/chrome/browser/offline_pages/android/request_coordinator_factory.cc
 +++ b/chrome/browser/offline_pages/android/request_coordinator_factory.cc
 @@ -19,6 +19,7 @@
@@ -376,7 +376,7 @@ index 79c9affc1b9..2bd6309396a 100644
 +
  }  // namespace offline_pages
 diff --git a/chrome/browser/offline_pages/offline_page_model_factory.h b/chrome/browser/offline_pages/offline_page_model_factory.h
-index 7e08ef422f9..765c4f54b9a 100644
+index 7e08ef422f..765c4f54b9 100644
 --- a/chrome/browser/offline_pages/offline_page_model_factory.h
 +++ b/chrome/browser/offline_pages/offline_page_model_factory.h
 @@ -48,6 +48,7 @@ class OfflinePageModelFactory : public SimpleKeyedServiceFactory {
@@ -388,7 +388,7 @@ index 7e08ef422f9..765c4f54b9a 100644
  
  }  // namespace offline_pages
 diff --git a/chrome/browser/offline_pages/recent_tab_helper.cc b/chrome/browser/offline_pages/recent_tab_helper.cc
-index ca4c4ced875..ab4b3313a7d 100644
+index ca4c4ced87..ab4b3313a7 100644
 --- a/chrome/browser/offline_pages/recent_tab_helper.cc
 +++ b/chrome/browser/offline_pages/recent_tab_helper.cc
 @@ -28,6 +28,11 @@
@@ -474,7 +474,7 @@ index ca4c4ced875..ab4b3313a7d 100644
      return;
    }
 diff --git a/chrome/browser/offline_pages/recent_tab_helper.h b/chrome/browser/offline_pages/recent_tab_helper.h
-index 020ff00b0f3..b31e5d7a8c2 100644
+index 020ff00b0f..b31e5d7a8c 100644
 --- a/chrome/browser/offline_pages/recent_tab_helper.h
 +++ b/chrome/browser/offline_pages/recent_tab_helper.h
 @@ -106,8 +106,10 @@ class RecentTabHelper : public content::WebContentsObserver,
@@ -499,7 +499,7 @@ index 020ff00b0f3..b31e5d7a8c2 100644
    // downloads. Null if there's no ongoing request.
    std::unique_ptr<SnapshotProgressInfo> downloads_ongoing_snapshot_info_;
 diff --git a/chrome/browser/offline_pages/request_coordinator_factory.h b/chrome/browser/offline_pages/request_coordinator_factory.h
-index f826269a32c..5125359582c 100644
+index f826269a32..5125359582 100644
 --- a/chrome/browser/offline_pages/request_coordinator_factory.h
 +++ b/chrome/browser/offline_pages/request_coordinator_factory.h
 @@ -18,7 +18,7 @@ namespace offline_pages {
@@ -521,7 +521,7 @@ index f826269a32c..5125359582c 100644
  
  }  // namespace offline_pages
 diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
-index 7a6cebc49f9..8415d1e2489 100644
+index 7a6cebc49f..8415d1e248 100644
 --- a/chrome/browser/prefs/browser_prefs.cc
 +++ b/chrome/browser/prefs/browser_prefs.cc
 @@ -281,6 +281,7 @@
@@ -544,7 +544,7 @@ index 7a6cebc49f9..8415d1e2489 100644
    bookmarks_webui::RegisterProfilePrefs(registry);
    browser_sync::ForeignSessionHandler::RegisterProfilePrefs(registry);
 diff --git a/chrome/browser/profiles/profile_selections.cc b/chrome/browser/profiles/profile_selections.cc
-index 4c61cf88d1f..d3f017ade46 100644
+index 4c61cf88d1..d3f017ade4 100644
 --- a/chrome/browser/profiles/profile_selections.cc
 +++ b/chrome/browser/profiles/profile_selections.cc
 @@ -5,6 +5,9 @@
@@ -572,7 +572,7 @@ index 4c61cf88d1f..d3f017ade46 100644
        return profile;
      case ProfileSelection::kRedirectedToOriginal:
 diff --git a/chrome/browser/profiles/profile_selections.h b/chrome/browser/profiles/profile_selections.h
-index 62e1ed732e7..26131d082b2 100644
+index 62e1ed732e..26131d082b 100644
 --- a/chrome/browser/profiles/profile_selections.h
 +++ b/chrome/browser/profiles/profile_selections.h
 @@ -8,6 +8,8 @@
@@ -597,7 +597,7 @@ index 62e1ed732e7..26131d082b2 100644
    kRedirectedToOriginal,  // Original: Self        --  OTR: Original
    kOffTheRecordOnly       // Original: No Profile  --  OTR: Self
 diff --git a/chrome/browser/ui/search_engines/search_engine_tab_helper.cc b/chrome/browser/ui/search_engines/search_engine_tab_helper.cc
-index 35326fab25e..6be6ddd1db3 100644
+index 35326fab25..6be6ddd1db 100644
 --- a/chrome/browser/ui/search_engines/search_engine_tab_helper.cc
 +++ b/chrome/browser/ui/search_engines/search_engine_tab_helper.cc
 @@ -11,6 +11,7 @@
@@ -621,7 +621,7 @@ index 35326fab25e..6be6ddd1db3 100644
        keyword, osdd_url, entry->GetFavicon().url,
        frame->GetLastCommittedOrigin(), url_loader_factory.get(),
 diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
-index 3824309147e..5e19e78fd69 100644
+index 3824309147..5e19e78fd6 100644
 --- a/chrome/common/pref_names.h
 +++ b/chrome/common/pref_names.h
 @@ -3076,6 +3076,12 @@ inline constexpr char kOutOfProcessSystemDnsResolutionEnabled[] =
@@ -638,7 +638,7 @@ index 3824309147e..5e19e78fd69 100644
  inline constexpr char kHttpAllowlist[] = "https_upgrades.policy.http_allowlist";
  
 diff --git a/components/content_settings/core/browser/content_settings_pref_provider.cc b/components/content_settings/core/browser/content_settings_pref_provider.cc
-index bce0af5b9bc..51b90b3f472 100644
+index bce0af5b9b..51b90b3f47 100644
 --- a/components/content_settings/core/browser/content_settings_pref_provider.cc
 +++ b/components/content_settings/core/browser/content_settings_pref_provider.cc
 @@ -142,10 +142,12 @@ void PrefProvider::RegisterProfilePrefs(
@@ -669,7 +669,7 @@ index bce0af5b9bc..51b90b3f472 100644
                                                base::Unretained(this)))));
    }
 diff --git a/components/content_settings/core/browser/content_settings_pref_provider.h b/components/content_settings/core/browser/content_settings_pref_provider.h
-index 27a6553fa7c..50c1cdc60b4 100644
+index 27a6553fa7..50c1cdc60b 100644
 --- a/components/content_settings/core/browser/content_settings_pref_provider.h
 +++ b/components/content_settings/core/browser/content_settings_pref_provider.h
 @@ -37,6 +37,7 @@ class PrefProvider : public UserModifiableProvider {
@@ -689,7 +689,7 @@ index 27a6553fa7c..50c1cdc60b4 100644
    bool store_last_modified_;
  
 diff --git a/components/content_settings/core/browser/host_content_settings_map.cc b/components/content_settings/core/browser/host_content_settings_map.cc
-index 8b8a022073c..009d529caa4 100644
+index 8b8a022073..009d529caa 100644
 --- a/components/content_settings/core/browser/host_content_settings_map.cc
 +++ b/components/content_settings/core/browser/host_content_settings_map.cc
 @@ -285,6 +285,7 @@ struct ContentSettingEntry {
@@ -718,7 +718,7 @@ index 8b8a022073c..009d529caa4 100644
    content_settings_providers_[ProviderType::kPrefProvider] =
        std::move(pref_provider_ptr);
 diff --git a/components/content_settings/core/browser/host_content_settings_map.h b/components/content_settings/core/browser/host_content_settings_map.h
-index 77cf51e5138..ce19726490c 100644
+index 77cf51e513..ce19726490 100644
 --- a/components/content_settings/core/browser/host_content_settings_map.h
 +++ b/components/content_settings/core/browser/host_content_settings_map.h
 @@ -83,6 +83,7 @@ class HostContentSettingsMap : public content_settings::Observer,
@@ -739,7 +739,7 @@ index 77cf51e5138..ce19726490c 100644
    // timestamp.
    bool store_last_modified_;
 diff --git a/components/omnibox/browser/autocomplete_provider_client.cc b/components/omnibox/browser/autocomplete_provider_client.cc
-index 8b5acf5ed6e..b1c133dfb47 100644
+index 8b5acf5ed6..b1c133dfb4 100644
 --- a/components/omnibox/browser/autocomplete_provider_client.cc
 +++ b/components/omnibox/browser/autocomplete_provider_client.cc
 @@ -98,6 +98,10 @@ AutocompleteProviderClient::GetWeakPtr() {
@@ -754,7 +754,7 @@ index 8b5acf5ed6e..b1c133dfb47 100644
    return false;
  }
 diff --git a/components/omnibox/browser/autocomplete_provider_client.h b/components/omnibox/browser/autocomplete_provider_client.h
-index 1c215d22143..9de1828e3b6 100644
+index 1c215d2214..9de1828e3b 100644
 --- a/components/omnibox/browser/autocomplete_provider_client.h
 +++ b/components/omnibox/browser/autocomplete_provider_client.h
 @@ -165,6 +165,7 @@ class AutocompleteProviderClient : public OmniboxAction::Client {
@@ -766,7 +766,7 @@ index 1c215d22143..9de1828e3b6 100644
    virtual bool SearchSuggestEnabled() const = 0;
  
 diff --git a/components/omnibox/browser/base_search_provider.cc b/components/omnibox/browser/base_search_provider.cc
-index d21f651bf0b..fd96a1e5527 100644
+index d21f651bf0..fd96a1e552 100644
 --- a/components/omnibox/browser/base_search_provider.cc
 +++ b/components/omnibox/browser/base_search_provider.cc
 @@ -406,7 +406,7 @@ bool BaseSearchProvider::CanSendSuggestRequest(
@@ -779,7 +779,7 @@ index d21f651bf0b..fd96a1e5527 100644
      return false;
    }
 diff --git a/components/omnibox/browser/search_provider.cc b/components/omnibox/browser/search_provider.cc
-index 4fad769790b..27f922f8036 100644
+index 4fad769790..27f922f803 100644
 --- a/components/omnibox/browser/search_provider.cc
 +++ b/components/omnibox/browser/search_provider.cc
 @@ -969,7 +969,8 @@ std::unique_ptr<network::SimpleURLLoader> SearchProvider::CreateSuggestLoader(
@@ -794,7 +794,7 @@ index 4fad769790b..27f922f8036 100644
        ->GetRemoteSuggestionsService(/*create_if_necessary=*/true)
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/add-an-always-incognito-mode.inc b/cromite_flags/chrome/browser/about_flags_cc/add-an-always-incognito-mode.inc
 new file mode 100644
-index 00000000000..49ef2ef7574
+index 0000000000..49ef2ef757
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/add-an-always-incognito-mode.inc
 @@ -0,0 +1,13 @@
@@ -813,14 +813,14 @@ index 00000000000..49ef2ef7574
 +#endif
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-an-always-incognito-mode.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-an-always-incognito-mode.inc
 new file mode 100644
-index 00000000000..c382b02da9e
+index 0000000000..c382b02da9
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-an-always-incognito-mode.inc
 @@ -0,0 +1 @@
 +SET_CROMITE_FEATURE_ENABLED(kCCTIncognitoAvailableToThirdParty);
 diff --git a/cromite_flags/components/offline_pages/core/offline_page_feature_cc/add-an-always-incognito-mode.inc b/cromite_flags/components/offline_pages/core/offline_page_feature_cc/add-an-always-incognito-mode.inc
 new file mode 100644
-index 00000000000..db45879e065
+index 0000000000..db45879e06
 --- /dev/null
 +++ b/cromite_flags/components/offline_pages/core/offline_page_feature_cc/add-an-always-incognito-mode.inc
 @@ -0,0 +1,3 @@
@@ -829,13 +829,13 @@ index 00000000000..db45879e065
 +                base::FEATURE_DISABLED_BY_DEFAULT);
 diff --git a/cromite_flags/components/offline_pages/core/offline_page_feature_h/add-an-always-incognito-mode.inc b/cromite_flags/components/offline_pages/core/offline_page_feature_h/add-an-always-incognito-mode.inc
 new file mode 100644
-index 00000000000..78d0eabf7bd
+index 0000000000..78d0eabf7b
 --- /dev/null
 +++ b/cromite_flags/components/offline_pages/core/offline_page_feature_h/add-an-always-incognito-mode.inc
 @@ -0,0 +1 @@
 +BASE_DECLARE_FEATURE(kOfflinePagesAutoSaveFeature);
 diff --git a/extensions/browser/api/webstore_private/webstore_private_api.cc b/extensions/browser/api/webstore_private/webstore_private_api.cc
-index ad5ac45ba49..f6c467f4b7a 100644
+index ad5ac45ba4..f6c467f4b7 100644
 --- a/extensions/browser/api/webstore_private/webstore_private_api.cc
 +++ b/extensions/browser/api/webstore_private/webstore_private_api.cc
 @@ -31,6 +31,9 @@

@@ -23,7 +23,7 @@ FILE:eyeo-133.0.6943.49-android_api.patch
  create mode 100644 components/adblock/android/resource_classification_notifier_android.h
 
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 04d78bac9e8..120b4b3576f 100644
+index 04d78bac9e..120b4b3576 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -1876,6 +1876,11 @@ source_set("core") {
@@ -40,7 +40,7 @@ index 04d78bac9e8..120b4b3576f 100644
        "//chrome/browser/android",
 diff --git a/components/adblock/android/adblock_controller_jni.cc b/components/adblock/android/adblock_controller_jni.cc
 new file mode 100644
-index 00000000000..aa0340dae79
+index 0000000000..aa0340dae7
 --- /dev/null
 +++ b/components/adblock/android/adblock_controller_jni.cc
 @@ -0,0 +1,133 @@
@@ -179,7 +179,7 @@ index 00000000000..aa0340dae79
 +}
 diff --git a/components/adblock/android/filtering_configuration_android.cc b/components/adblock/android/filtering_configuration_android.cc
 new file mode 100644
-index 00000000000..bf8280748a1
+index 0000000000..bf8280748a
 --- /dev/null
 +++ b/components/adblock/android/filtering_configuration_android.cc
 @@ -0,0 +1,246 @@
@@ -431,7 +431,7 @@ index 00000000000..bf8280748a1
 +DEFINE_JNI(FilteringConfiguration)
 diff --git a/components/adblock/android/filtering_configuration_android.h b/components/adblock/android/filtering_configuration_android.h
 new file mode 100644
-index 00000000000..c4fb706387b
+index 0000000000..c4fb706387
 --- /dev/null
 +++ b/components/adblock/android/filtering_configuration_android.h
 @@ -0,0 +1,94 @@
@@ -531,7 +531,7 @@ index 00000000000..c4fb706387b
 +#endif  // COMPONENTS_ADBLOCK_ANDROID_FILTERING_CONFIGURATION_ANDROID_H_
 diff --git a/components/adblock/android/resource_classification_notifier_android.cc b/components/adblock/android/resource_classification_notifier_android.cc
 new file mode 100644
-index 00000000000..0e009b15b27
+index 0000000000..0e009b15b2
 --- /dev/null
 +++ b/components/adblock/android/resource_classification_notifier_android.cc
 @@ -0,0 +1,166 @@
@@ -703,7 +703,7 @@ index 00000000000..0e009b15b27
 +DEFINE_JNI(ResourceClassificationNotifier)
 diff --git a/components/adblock/android/resource_classification_notifier_android.h b/components/adblock/android/resource_classification_notifier_android.h
 new file mode 100644
-index 00000000000..aa55dcaa5e7
+index 0000000000..aa55dcaa5e
 --- /dev/null
 +++ b/components/adblock/android/resource_classification_notifier_android.h
 @@ -0,0 +1,72 @@

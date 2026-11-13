@@ -13,7 +13,7 @@ FILE:Increase-number-of-autocomplete-matches-to-10.patch
  2 files changed, 8 insertions(+), 3 deletions(-)
 
 diff --git a/components/omnibox/browser/autocomplete_result.cc b/components/omnibox/browser/autocomplete_result.cc
-index eed55cfbe16..c496471848d 100644
+index eed55cfbe1..c496471848 100644
 --- a/components/omnibox/browser/autocomplete_result.cc
 +++ b/components/omnibox/browser/autocomplete_result.cc
 @@ -134,10 +134,11 @@ bool ShouldRemoveActionInSuggest(const scoped_refptr<OmniboxAction>& action,
@@ -31,7 +31,7 @@ index eed55cfbe16..c496471848d 100644
    constexpr size_t kMaxFeaturedKeywordAutocompleteMatches = 9;
  #endif
 diff --git a/components/omnibox/browser/omnibox_field_trial.cc b/components/omnibox/browser/omnibox_field_trial.cc
-index d62a1f377d3..24910d88c98 100644
+index d62a1f377d..24910d88c9 100644
 --- a/components/omnibox/browser/omnibox_field_trial.cc
 +++ b/components/omnibox/browser/omnibox_field_trial.cc
 @@ -173,7 +173,11 @@ void OmniboxFieldTrial::GetActiveSuggestFieldTrialHashes(

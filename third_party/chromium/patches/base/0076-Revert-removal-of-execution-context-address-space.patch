@@ -58,7 +58,7 @@ FILE:Revert-removal-of-execution-context-address-space.patch
  36 files changed, 131 insertions(+), 8 deletions(-)
 
 diff --git a/third_party/blink/renderer/core/execution_context/execution_context.cc b/third_party/blink/renderer/core/execution_context/execution_context.cc
-index 00531d469b2..d62a75389d6 100644
+index 00531d469b..d62a75389d 100644
 --- a/third_party/blink/renderer/core/execution_context/execution_context.cc
 +++ b/third_party/blink/renderer/core/execution_context/execution_context.cc
 @@ -528,6 +528,15 @@ void ExecutionContext::SetReferrerPolicy(
@@ -78,7 +78,7 @@ index 00531d469b2..d62a75389d6 100644
      std::unique_ptr<PolicyContainer> container) {
    policy_container_ = std::move(container);
 diff --git a/third_party/blink/renderer/core/execution_context/execution_context.h b/third_party/blink/renderer/core/execution_context/execution_context.h
-index 2b779e154ba..5287f6128b2 100644
+index 2b779e154b..5287f6128b 100644
 --- a/third_party/blink/renderer/core/execution_context/execution_context.h
 +++ b/third_party/blink/renderer/core/execution_context/execution_context.h
 @@ -35,6 +35,7 @@
@@ -100,7 +100,7 @@ index 2b779e154ba..5287f6128b2 100644
    unsigned ContextLifecycleStateObserverCountForTesting() const;
  
 diff --git a/third_party/blink/renderer/core/exported/web_shared_worker_impl.cc b/third_party/blink/renderer/core/exported/web_shared_worker_impl.cc
-index a66cfd94177..ef4619d091a 100644
+index a66cfd9417..ef4619d091 100644
 --- a/third_party/blink/renderer/core/exported/web_shared_worker_impl.cc
 +++ b/third_party/blink/renderer/core/exported/web_shared_worker_impl.cc
 @@ -283,6 +283,7 @@ void WebSharedWorkerImpl::StartWorkerContext(
@@ -112,7 +112,7 @@ index a66cfd94177..ef4619d091a 100644
        std::move(worker_settings), mojom::blink::V8CacheOptions::kDefault,
        nullptr /* worklet_module_response_map */,
 diff --git a/third_party/blink/renderer/core/frame/policy_container.cc b/third_party/blink/renderer/core/frame/policy_container.cc
-index 9cfabb2fa14..904bf347b8a 100644
+index 9cfabb2fa1..904bf347b8 100644
 --- a/third_party/blink/renderer/core/frame/policy_container.cc
 +++ b/third_party/blink/renderer/core/frame/policy_container.cc
 @@ -46,6 +46,11 @@ network::mojom::blink::ReferrerPolicy PolicyContainer::GetReferrerPolicy()
@@ -140,7 +140,7 @@ index 9cfabb2fa14..904bf347b8a 100644
      const {
    return *policies_;
 diff --git a/third_party/blink/renderer/core/frame/policy_container.h b/third_party/blink/renderer/core/frame/policy_container.h
-index 2b20055ca64..de7602230ea 100644
+index 2b20055ca6..de7602230e 100644
 --- a/third_party/blink/renderer/core/frame/policy_container.h
 +++ b/third_party/blink/renderer/core/frame/policy_container.h
 @@ -8,6 +8,7 @@
@@ -169,7 +169,7 @@ index 2b20055ca64..de7602230ea 100644
    // the PolicyContainerHost.
    // A new initiator state token should be generated and passed to this
 diff --git a/third_party/blink/renderer/core/layout/custom/layout_worklet_global_scope_proxy.cc b/third_party/blink/renderer/core/layout/custom/layout_worklet_global_scope_proxy.cc
-index f004ea95f5f..e3e50511b6d 100644
+index f004ea95f5..e3e50511b6 100644
 --- a/third_party/blink/renderer/core/layout/custom/layout_worklet_global_scope_proxy.cc
 +++ b/third_party/blink/renderer/core/layout/custom/layout_worklet_global_scope_proxy.cc
 @@ -48,6 +48,7 @@ LayoutWorkletGlobalScopeProxy::LayoutWorkletGlobalScopeProxy(
@@ -181,7 +181,7 @@ index f004ea95f5f..e3e50511b6d 100644
        base::UnguessableToken::Create(), nullptr /* worker_settings */,
        mojom::blink::V8CacheOptions::kDefault, module_responses_map,
 diff --git a/third_party/blink/renderer/core/loader/modulescript/installed_service_worker_module_script_fetcher.cc b/third_party/blink/renderer/core/loader/modulescript/installed_service_worker_module_script_fetcher.cc
-index 3bcd8a2b8b6..a5a5af66fd9 100644
+index 3bcd8a2b8b..a5a5af66fd 100644
 --- a/third_party/blink/renderer/core/loader/modulescript/installed_service_worker_module_script_fetcher.cc
 +++ b/third_party/blink/renderer/core/loader/modulescript/installed_service_worker_module_script_fetcher.cc
 @@ -70,6 +70,7 @@ void InstalledServiceWorkerModuleScriptFetcher::Fetch(
@@ -193,7 +193,7 @@ index 3bcd8a2b8b6..a5a5af66fd9 100644
              script_data->GetContentSecurityPolicyResponseHeaders()),
          // TODO(crbug.com/488089240): Plumb Document Policy in Service Workers.
 diff --git a/third_party/blink/renderer/core/loader/modulescript/module_script_loader_test.cc b/third_party/blink/renderer/core/loader/modulescript/module_script_loader_test.cc
-index ee5dd06941f..dbec0a358b2 100644
+index ee5dd06941..dbec0a358b 100644
 --- a/third_party/blink/renderer/core/loader/modulescript/module_script_loader_test.cc
 +++ b/third_party/blink/renderer/core/loader/modulescript/module_script_loader_test.cc
 @@ -221,6 +221,7 @@ void ModuleScriptLoaderTest::InitializeForWorklet() {
@@ -205,7 +205,7 @@ index ee5dd06941f..dbec0a358b2 100644
        nullptr /* worker_settings */, mojom::blink::V8CacheOptions::kDefault,
        MakeGarbageCollected<WorkletModuleResponsesMap>(),
 diff --git a/third_party/blink/renderer/core/loader/modulescript/worker_module_script_fetcher.cc b/third_party/blink/renderer/core/loader/modulescript/worker_module_script_fetcher.cc
-index 3256cc722d8..db4226db68c 100644
+index 3256cc722d..db4226db68 100644
 --- a/third_party/blink/renderer/core/loader/modulescript/worker_module_script_fetcher.cc
 +++ b/third_party/blink/renderer/core/loader/modulescript/worker_module_script_fetcher.cc
 @@ -6,6 +6,7 @@
@@ -226,7 +226,7 @@ index 3256cc722d8..db4226db68c 100644
              ContentSecurityPolicyResponseHeaders(response)),
          // TODO(crbug.com/488090079): Plumb Document Policy in Module Workers.
 diff --git a/third_party/blink/renderer/core/messaging/message_port_test.cc b/third_party/blink/renderer/core/messaging/message_port_test.cc
-index 6775ce8deb5..d99796a53b8 100644
+index 6775ce8deb..d99796a53b 100644
 --- a/third_party/blink/renderer/core/messaging/message_port_test.cc
 +++ b/third_party/blink/renderer/core/messaging/message_port_test.cc
 @@ -125,6 +125,7 @@ class MessagePortAudioWorkletOriginTest : public PageTestBase {
@@ -238,7 +238,7 @@ index 6775ce8deb5..d99796a53b8 100644
          base::UnguessableToken::Create(), nullptr /* worker_settings */,
          mojom::blink::V8CacheOptions::kDefault,
 diff --git a/third_party/blink/renderer/core/workers/dedicated_worker.cc b/third_party/blink/renderer/core/workers/dedicated_worker.cc
-index 64be4c4900f..5f509e088ac 100644
+index 64be4c4900..5f509e088a 100644
 --- a/third_party/blink/renderer/core/workers/dedicated_worker.cc
 +++ b/third_party/blink/renderer/core/workers/dedicated_worker.cc
 @@ -550,6 +550,7 @@ DedicatedWorker::CreateGlobalScopeCreationParams(
@@ -250,7 +250,7 @@ index 64be4c4900f..5f509e088ac 100644
        parent_devtools_token, std::move(settings),
        mojom::blink::V8CacheOptions::kDefault,
 diff --git a/third_party/blink/renderer/core/workers/dedicated_worker_global_scope.cc b/third_party/blink/renderer/core/workers/dedicated_worker_global_scope.cc
-index 33c5e9bd1c7..34cbd7e1e4d 100644
+index 33c5e9bd1c..34cbd7e1e4 100644
 --- a/third_party/blink/renderer/core/workers/dedicated_worker_global_scope.cc
 +++ b/third_party/blink/renderer/core/workers/dedicated_worker_global_scope.cc
 @@ -233,6 +233,7 @@ const AtomicString& DedicatedWorkerGlobalScope::InterfaceName() const {
@@ -272,7 +272,7 @@ index 33c5e9bd1c7..34cbd7e1e4d 100644
    // parts of "Initialize worker global scope's policy container":
    // https://html.spec.whatwg.org/#initialize-worker-policy-container
 diff --git a/third_party/blink/renderer/core/workers/dedicated_worker_global_scope.h b/third_party/blink/renderer/core/workers/dedicated_worker_global_scope.h
-index 6bad4a8ee4b..190f84611e8 100644
+index 6bad4a8ee4..190f84611e 100644
 --- a/third_party/blink/renderer/core/workers/dedicated_worker_global_scope.h
 +++ b/third_party/blink/renderer/core/workers/dedicated_worker_global_scope.h
 @@ -111,6 +111,7 @@ class CORE_EXPORT DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
@@ -284,7 +284,7 @@ index 6bad4a8ee4b..190f84611e8 100644
        DocumentPolicy::DocumentPolicyBundle response_document_policy,
        const Vector<String>* response_origin_trial_tokens) override;
 diff --git a/third_party/blink/renderer/core/workers/global_scope_creation_params.cc b/third_party/blink/renderer/core/workers/global_scope_creation_params.cc
-index 8b740229696..c58fb6e1b58 100644
+index 8b74022969..c58fb6e1b5 100644
 --- a/third_party/blink/renderer/core/workers/global_scope_creation_params.cc
 +++ b/third_party/blink/renderer/core/workers/global_scope_creation_params.cc
 @@ -33,6 +33,7 @@ GlobalScopeCreationParams::GlobalScopeCreationParams(
@@ -312,7 +312,7 @@ index 8b740229696..c58fb6e1b58 100644
        std::move(worker_settings), mojom::blink::V8CacheOptions::kDefault,
        /*worklet_module_responses_map=*/nullptr, mojo::NullRemote(),
 diff --git a/third_party/blink/renderer/core/workers/global_scope_creation_params.h b/third_party/blink/renderer/core/workers/global_scope_creation_params.h
-index 334882e5f64..8040d46ab6a 100644
+index 334882e5f6..8040d46ab6 100644
 --- a/third_party/blink/renderer/core/workers/global_scope_creation_params.h
 +++ b/third_party/blink/renderer/core/workers/global_scope_creation_params.h
 @@ -15,6 +15,7 @@
@@ -344,7 +344,7 @@ index 334882e5f64..8040d46ab6a 100644
  
    std::unique_ptr<WorkerSettings> worker_settings;
 diff --git a/third_party/blink/renderer/core/workers/installed_scripts_manager.cc b/third_party/blink/renderer/core/workers/installed_scripts_manager.cc
-index 58c5413ec03..c6ef497c3c5 100644
+index 58c5413ec0..c6ef497c3c 100644
 --- a/third_party/blink/renderer/core/workers/installed_scripts_manager.cc
 +++ b/third_party/blink/renderer/core/workers/installed_scripts_manager.cc
 @@ -4,6 +4,7 @@
@@ -378,7 +378,7 @@ index 58c5413ec03..c6ef497c3c5 100644
  
  ContentSecurityPolicyResponseHeaders
 diff --git a/third_party/blink/renderer/core/workers/installed_scripts_manager.h b/third_party/blink/renderer/core/workers/installed_scripts_manager.h
-index 5b4ece7c114..6c2592ac3b5 100644
+index 5b4ece7c11..6c2592ac3b 100644
 --- a/third_party/blink/renderer/core/workers/installed_scripts_manager.h
 +++ b/third_party/blink/renderer/core/workers/installed_scripts_manager.h
 @@ -5,6 +5,7 @@
@@ -408,7 +408,7 @@ index 5b4ece7c114..6c2592ac3b5 100644
  
    // Used on the main or worker thread. Returns true if the script has been
 diff --git a/third_party/blink/renderer/core/workers/main_thread_worklet_test.cc b/third_party/blink/renderer/core/workers/main_thread_worklet_test.cc
-index 1eb3bace696..e35da0d2045 100644
+index 1eb3bace69..e35da0d204 100644
 --- a/third_party/blink/renderer/core/workers/main_thread_worklet_test.cc
 +++ b/third_party/blink/renderer/core/workers/main_thread_worklet_test.cc
 @@ -71,6 +71,7 @@ class MainThreadWorkletTest : public PageTestBase {
@@ -420,7 +420,7 @@ index 1eb3bace696..e35da0d2045 100644
          base::UnguessableToken::Create(), nullptr /* worker_settings */,
          mojom::blink::V8CacheOptions::kDefault,
 diff --git a/third_party/blink/renderer/core/workers/shared_worker_global_scope.cc b/third_party/blink/renderer/core/workers/shared_worker_global_scope.cc
-index bed465396ec..b8833b1b721 100644
+index bed465396e..b8833b1b72 100644
 --- a/third_party/blink/renderer/core/workers/shared_worker_global_scope.cc
 +++ b/third_party/blink/renderer/core/workers/shared_worker_global_scope.cc
 @@ -82,6 +82,7 @@ const AtomicString& SharedWorkerGlobalScope::InterfaceName() const {
@@ -451,7 +451,7 @@ index bed465396ec..b8833b1b721 100644
        response_url.ProtocolIsAbout() || response_url.ProtocolIsData() ||
                response_url.ProtocolIs("blob")
 diff --git a/third_party/blink/renderer/core/workers/shared_worker_global_scope.h b/third_party/blink/renderer/core/workers/shared_worker_global_scope.h
-index eeb26688166..b5618396243 100644
+index eeb2668816..b561839624 100644
 --- a/third_party/blink/renderer/core/workers/shared_worker_global_scope.h
 +++ b/third_party/blink/renderer/core/workers/shared_worker_global_scope.h
 @@ -64,6 +64,7 @@ class CORE_EXPORT SharedWorkerGlobalScope final : public WorkerGlobalScope {
@@ -463,7 +463,7 @@ index eeb26688166..b5618396243 100644
        DocumentPolicy::DocumentPolicyBundle response_document_policy,
        const Vector<String>* response_origin_trial_tokens) override;
 diff --git a/third_party/blink/renderer/core/workers/threaded_worklet_messaging_proxy.cc b/third_party/blink/renderer/core/workers/threaded_worklet_messaging_proxy.cc
-index 8d72054fb86..8d608ac0212 100644
+index 8d72054fb8..8d608ac021 100644
 --- a/third_party/blink/renderer/core/workers/threaded_worklet_messaging_proxy.cc
 +++ b/third_party/blink/renderer/core/workers/threaded_worklet_messaging_proxy.cc
 @@ -91,7 +91,9 @@ void ThreadedWorkletMessagingProxy::Initialize(
@@ -486,7 +486,7 @@ index 8d72054fb86..8d608ac0212 100644
            base::UnguessableToken::Create(),
            std::make_unique<WorkerSettings>(window->GetFrame()->GetSettings()),
 diff --git a/third_party/blink/renderer/core/workers/threaded_worklet_test.cc b/third_party/blink/renderer/core/workers/threaded_worklet_test.cc
-index b01038a03ce..c24c509140e 100644
+index b01038a03c..c24c509140 100644
 --- a/third_party/blink/renderer/core/workers/threaded_worklet_test.cc
 +++ b/third_party/blink/renderer/core/workers/threaded_worklet_test.cc
 @@ -218,6 +218,7 @@ class ThreadedWorkletMessagingProxyForTest
@@ -498,7 +498,7 @@ index b01038a03ce..c24c509140e 100644
                  .get(),
              base::UnguessableToken::Create(), std::move(worker_settings),
 diff --git a/third_party/blink/renderer/core/workers/worker_classic_script_loader.cc b/third_party/blink/renderer/core/workers/worker_classic_script_loader.cc
-index 687a1d13829..bc1db4c0db4 100644
+index 687a1d1382..bc1db4c0db 100644
 --- a/third_party/blink/renderer/core/workers/worker_classic_script_loader.cc
 +++ b/third_party/blink/renderer/core/workers/worker_classic_script_loader.cc
 @@ -30,6 +30,8 @@
@@ -529,7 +529,7 @@ index 687a1d13829..bc1db4c0db4 100644
    referrer_policy_ = response.HttpHeaderField(http_names::kReferrerPolicy);
    ProcessContentSecurityPolicy(response);
 diff --git a/third_party/blink/renderer/core/workers/worker_classic_script_loader.h b/third_party/blink/renderer/core/workers/worker_classic_script_loader.h
-index f6e97867234..79cbbbed88d 100644
+index f6e9786723..79cbbbed88 100644
 --- a/third_party/blink/renderer/core/workers/worker_classic_script_loader.h
 +++ b/third_party/blink/renderer/core/workers/worker_classic_script_loader.h
 @@ -32,6 +32,7 @@
@@ -560,7 +560,7 @@ index f6e97867234..79cbbbed88d 100644
    String referrer_policy_;
    DocumentPolicy::DocumentPolicyBundle document_policy_;
 diff --git a/third_party/blink/renderer/core/workers/worker_global_scope.cc b/third_party/blink/renderer/core/workers/worker_global_scope.cc
-index a70870c22a9..98b236b7716 100644
+index a70870c22a..98b236b771 100644
 --- a/third_party/blink/renderer/core/workers/worker_global_scope.cc
 +++ b/third_party/blink/renderer/core/workers/worker_global_scope.cc
 @@ -639,6 +639,7 @@ void WorkerGlobalScope::DidFetchClassicScript(
@@ -592,7 +592,7 @@ index a70870c22a9..98b236b7716 100644
    // [Worker] Step 12, onComplete, Step 10. "run the classic script script."
    // [spec text]
 diff --git a/third_party/blink/renderer/core/workers/worker_global_scope.h b/third_party/blink/renderer/core/workers/worker_global_scope.h
-index b7f3b19f12d..329ecb619d3 100644
+index b7f3b19f12..329ecb619d 100644
 --- a/third_party/blink/renderer/core/workers/worker_global_scope.h
 +++ b/third_party/blink/renderer/core/workers/worker_global_scope.h
 @@ -34,6 +34,7 @@
@@ -620,7 +620,7 @@ index b7f3b19f12d..329ecb619d3 100644
        DocumentPolicy::DocumentPolicyBundle response_document_policy,
        const Vector<String>* response_origin_trial_tokens,
 diff --git a/third_party/blink/renderer/core/workers/worker_thread_test.cc b/third_party/blink/renderer/core/workers/worker_thread_test.cc
-index 4c4949ce7c7..299638a9fc9 100644
+index 4c4949ce7c..299638a9fc 100644
 --- a/third_party/blink/renderer/core/workers/worker_thread_test.cc
 +++ b/third_party/blink/renderer/core/workers/worker_thread_test.cc
 @@ -10,6 +10,7 @@
@@ -632,7 +632,7 @@ index 4c4949ce7c7..299638a9fc9 100644
  #include "testing/gtest/include/gtest/gtest.h"
  #include "third_party/blink/public/mojom/v8_cache_options.mojom-blink.h"
 diff --git a/third_party/blink/renderer/core/workers/worker_thread_test_helper.h b/third_party/blink/renderer/core/workers/worker_thread_test_helper.h
-index 3b57ea4c5a1..2302e32a23e 100644
+index 3b57ea4c5a..2302e32a23 100644
 --- a/third_party/blink/renderer/core/workers/worker_thread_test_helper.h
 +++ b/third_party/blink/renderer/core/workers/worker_thread_test_helper.h
 @@ -9,6 +9,7 @@
@@ -661,7 +661,7 @@ index 3b57ea4c5a1..2302e32a23e 100644
      BindContentSecurityPolicyToExecutionContext();
  
 diff --git a/third_party/blink/renderer/core/workers/worklet_module_responses_map_test.cc b/third_party/blink/renderer/core/workers/worklet_module_responses_map_test.cc
-index a5884e24d6b..7882ebae8f1 100644
+index a5884e24d6..7882ebae8f 100644
 --- a/third_party/blink/renderer/core/workers/worklet_module_responses_map_test.cc
 +++ b/third_party/blink/renderer/core/workers/worklet_module_responses_map_test.cc
 @@ -62,6 +62,7 @@ class WorkletModuleResponsesMapTest : public PageTestBase {
@@ -673,7 +673,7 @@ index a5884e24d6b..7882ebae8f1 100644
          base::UnguessableToken::Create(), nullptr /* worker_settings */,
          mojom::blink::V8CacheOptions::kDefault,
 diff --git a/third_party/blink/renderer/modules/csspaint/paint_worklet_global_scope_proxy.cc b/third_party/blink/renderer/modules/csspaint/paint_worklet_global_scope_proxy.cc
-index 09a11da5ed1..ed2c586d44a 100644
+index 09a11da5ed..ed2c586d44 100644
 --- a/third_party/blink/renderer/modules/csspaint/paint_worklet_global_scope_proxy.cc
 +++ b/third_party/blink/renderer/modules/csspaint/paint_worklet_global_scope_proxy.cc
 @@ -46,7 +46,7 @@ PaintWorkletGlobalScopeProxy::PaintWorkletGlobalScopeProxy(
@@ -686,7 +686,7 @@ index 09a11da5ed1..ed2c586d44a 100644
        base::UnguessableToken::Create(), nullptr /* worker_settings */,
        mojom::blink::V8CacheOptions::kDefault, module_responses_map,
 diff --git a/third_party/blink/renderer/modules/exported/web_embedded_worker_impl.cc b/third_party/blink/renderer/modules/exported/web_embedded_worker_impl.cc
-index 630b499aec0..79a674df532 100644
+index 630b499aec..79a674df53 100644
 --- a/third_party/blink/renderer/modules/exported/web_embedded_worker_impl.cc
 +++ b/third_party/blink/renderer/modules/exported/web_embedded_worker_impl.cc
 @@ -221,6 +221,7 @@ void WebEmbeddedWorkerImpl::StartWorkerThread(
@@ -698,7 +698,7 @@ index 630b499aec0..79a674df532 100644
        worker_start_data->devtools_worker_token, std::move(worker_settings),
    /*v8_cache_options=*/
 diff --git a/third_party/blink/renderer/modules/service_worker/service_worker_global_scope.cc b/third_party/blink/renderer/modules/service_worker/service_worker_global_scope.cc
-index ad59ebae496..28145f582d2 100644
+index ad59ebae49..28145f582d 100644
 --- a/third_party/blink/renderer/modules/service_worker/service_worker_global_scope.cc
 +++ b/third_party/blink/renderer/modules/service_worker/service_worker_global_scope.cc
 @@ -408,6 +408,7 @@ ServiceWorkerGlobalScope::GetAssociatedInterfaceRegistry() {
@@ -739,7 +739,7 @@ index ad59ebae496..28145f582d2 100644
            script_data->GetContentSecurityPolicyResponseHeaders()),
        // TODO(crbug.com/488089240): Plumb Document Policy in Service Workers.
 diff --git a/third_party/blink/renderer/modules/service_worker/service_worker_global_scope.h b/third_party/blink/renderer/modules/service_worker/service_worker_global_scope.h
-index f086da48d40..e267c700a39 100644
+index f086da48d4..e267c700a3 100644
 --- a/third_party/blink/renderer/modules/service_worker/service_worker_global_scope.h
 +++ b/third_party/blink/renderer/modules/service_worker/service_worker_global_scope.h
 @@ -162,6 +162,7 @@ class MODULES_EXPORT ServiceWorkerGlobalScope final
@@ -751,7 +751,7 @@ index f086da48d40..e267c700a39 100644
        DocumentPolicy::DocumentPolicyBundle response_document_policy,
        const Vector<String>* response_origin_trial_tokens) override;
 diff --git a/third_party/blink/renderer/modules/webaudio/audio_worklet_global_scope_test.cc b/third_party/blink/renderer/modules/webaudio/audio_worklet_global_scope_test.cc
-index 6d69dab033c..3169baba115 100644
+index 6d69dab033..3169baba11 100644
 --- a/third_party/blink/renderer/modules/webaudio/audio_worklet_global_scope_test.cc
 +++ b/third_party/blink/renderer/modules/webaudio/audio_worklet_global_scope_test.cc
 @@ -106,6 +106,7 @@ class AudioWorkletGlobalScopeTest : public PageTestBase, public ModuleTestBase {
@@ -763,7 +763,7 @@ index 6d69dab033c..3169baba115 100644
              base::UnguessableToken::Create(), nullptr /* worker_settings */,
              mojom::blink::V8CacheOptions::kDefault,
 diff --git a/third_party/blink/renderer/modules/webaudio/audio_worklet_thread_test.cc b/third_party/blink/renderer/modules/webaudio/audio_worklet_thread_test.cc
-index 5650557f768..bda247920f7 100644
+index 5650557f76..bda247920f 100644
 --- a/third_party/blink/renderer/modules/webaudio/audio_worklet_thread_test.cc
 +++ b/third_party/blink/renderer/modules/webaudio/audio_worklet_thread_test.cc
 @@ -107,6 +107,7 @@ class AudioWorkletThreadTest : public PageTestBase, public ModuleTestBase {
@@ -775,7 +775,7 @@ index 5650557f768..bda247920f7 100644
              base::UnguessableToken::Create(), nullptr /* worker_settings */,
              mojom::blink::V8CacheOptions::kDefault,
 diff --git a/third_party/blink/renderer/modules/worklet/worklet_thread_test_common.cc b/third_party/blink/renderer/modules/worklet/worklet_thread_test_common.cc
-index 85f73e6303d..1f3f4b6e322 100644
+index 85f73e6303..1f3f4b6e32 100644
 --- a/third_party/blink/renderer/modules/worklet/worklet_thread_test_common.cc
 +++ b/third_party/blink/renderer/modules/worklet/worklet_thread_test_common.cc
 @@ -37,7 +37,7 @@ CreateAnimationAndPaintWorkletThread(

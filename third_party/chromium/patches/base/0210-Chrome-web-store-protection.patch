@@ -55,7 +55,7 @@ FILE:Chrome-web-store-protection.patch
  create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Webstore-protection.inc
 
 diff --git a/chrome/app/extensions_strings.grdp b/chrome/app/extensions_strings.grdp
-index 93ef8c153e7..f83c63e258e 100644
+index 93ef8c153e..f83c63e258 100644
 --- a/chrome/app/extensions_strings.grdp
 +++ b/chrome/app/extensions_strings.grdp
 @@ -79,6 +79,12 @@
@@ -72,7 +72,7 @@ index 93ef8c153e7..f83c63e258e 100644
      This extension is outdated and disabled by enterprise policy. It might become enabled automatically when a newer version is available.
    </message>
 diff --git a/chrome/browser/extensions/api/developer_private/developer_private_api.cc b/chrome/browser/extensions/api/developer_private/developer_private_api.cc
-index 023a3d09c8f..16519c8a6cd 100644
+index 023a3d09c8..16519c8a6c 100644
 --- a/chrome/browser/extensions/api/developer_private/developer_private_api.cc
 +++ b/chrome/browser/extensions/api/developer_private/developer_private_api.cc
 @@ -28,6 +28,12 @@
@@ -118,7 +118,7 @@ index 023a3d09c8f..16519c8a6cd 100644
  void BrowserContextKeyedAPIFactory<
      DeveloperPrivateAPI>::DeclareFactoryDependencies() {
 diff --git a/chrome/browser/extensions/api/developer_private/developer_private_api.h b/chrome/browser/extensions/api/developer_private/developer_private_api.h
-index 7a3dc30fd78..30066a1b14f 100644
+index 7a3dc30fd7..30066a1b14 100644
 --- a/chrome/browser/extensions/api/developer_private/developer_private_api.h
 +++ b/chrome/browser/extensions/api/developer_private/developer_private_api.h
 @@ -37,6 +37,9 @@ class DeveloperPrivateAPI : public BrowserContextKeyedAPI,
@@ -132,7 +132,7 @@ index 7a3dc30fd78..30066a1b14f 100644
    static DeveloperPrivateAPI* Get(content::BrowserContext* context);
  
 diff --git a/chrome/browser/extensions/api/developer_private/developer_private_functions.cc b/chrome/browser/extensions/api/developer_private/developer_private_functions.cc
-index d77921a19ce..fbfad825b26 100644
+index d77921a19c..fbfad825b2 100644
 --- a/chrome/browser/extensions/api/developer_private/developer_private_functions.cc
 +++ b/chrome/browser/extensions/api/developer_private/developer_private_functions.cc
 @@ -455,6 +455,7 @@ ExtensionFunction::ResponseAction DeveloperPrivateAutoUpdateFunction::Run() {
@@ -165,7 +165,7 @@ index d77921a19ce..fbfad825b26 100644
  }
  
 diff --git a/chrome/browser/extensions/api/developer_private/profile_info_generator.cc b/chrome/browser/extensions/api/developer_private/profile_info_generator.cc
-index 42d6b20224b..74434811b45 100644
+index 42d6b20224..74434811b4 100644
 --- a/chrome/browser/extensions/api/developer_private/profile_info_generator.cc
 +++ b/chrome/browser/extensions/api/developer_private/profile_info_generator.cc
 @@ -9,6 +9,7 @@
@@ -186,7 +186,7 @@ index 42d6b20224b..74434811b45 100644
    return info;
  }
 diff --git a/chrome/browser/extensions/chrome_extension_system.cc b/chrome/browser/extensions/chrome_extension_system.cc
-index 53e2ad0e842..415267b9d42 100644
+index 53e2ad0e84..415267b9d4 100644
 --- a/chrome/browser/extensions/chrome_extension_system.cc
 +++ b/chrome/browser/extensions/chrome_extension_system.cc
 @@ -101,6 +101,7 @@ UninstallPingSender::FilterResult ShouldSendUninstallPing(
@@ -198,7 +198,7 @@ index 53e2ad0e842..415267b9d42 100644
        ExtensionManagementFactory::GetForBrowserContext(profile);
    if (extension && (extension->from_webstore() ||
 diff --git a/chrome/browser/extensions/cws_info_service_factory.cc b/chrome/browser/extensions/cws_info_service_factory.cc
-index e9a9cec0ae3..8843b560960 100644
+index e9a9cec0ae..8843b56096 100644
 --- a/chrome/browser/extensions/cws_info_service_factory.cc
 +++ b/chrome/browser/extensions/cws_info_service_factory.cc
 @@ -51,7 +51,8 @@ CWSInfoServiceFactory::CWSInfoServiceFactory()
@@ -212,7 +212,7 @@ index e9a9cec0ae3..8843b560960 100644
  
  bool CWSInfoServiceFactory::ServiceIsCreatedWithBrowserContext() const {
 diff --git a/chrome/browser/extensions/extension_management.cc b/chrome/browser/extensions/extension_management.cc
-index b15e80f839a..ee455994edb 100644
+index b15e80f839..ee455994ed 100644
 --- a/chrome/browser/extensions/extension_management.cc
 +++ b/chrome/browser/extensions/extension_management.cc
 @@ -424,6 +424,7 @@ bool ExtensionManagement::IsAllowedManifestType(
@@ -224,7 +224,7 @@ index b15e80f839a..ee455994edb 100644
    if (!UpdatesFromWebstore(*extension)) {
      return true;
 diff --git a/chrome/browser/extensions/extension_safety_check_utils.cc b/chrome/browser/extensions/extension_safety_check_utils.cc
-index 5e61e9e45cc..49d4b412e9e 100644
+index 5e61e9e45c..49d4b412e9 100644
 --- a/chrome/browser/extensions/extension_safety_check_utils.cc
 +++ b/chrome/browser/extensions/extension_safety_check_utils.cc
 @@ -244,8 +244,7 @@ developer::SafetyCheckWarningReason GetSafetyCheckWarningReasonHelper(
@@ -238,7 +238,7 @@ index 5e61e9e45cc..49d4b412e9e 100644
    if (unpublished_only) {
      if (valid_cws_info && cws_info->unpublished_long_ago) {
 diff --git a/chrome/browser/extensions/extension_service.cc b/chrome/browser/extensions/extension_service.cc
-index 2d3c496c7ca..775c32ae601 100644
+index 2d3c496c7c..775c32ae60 100644
 --- a/chrome/browser/extensions/extension_service.cc
 +++ b/chrome/browser/extensions/extension_service.cc
 @@ -255,9 +255,6 @@ ExtensionService::ExtensionService(
@@ -261,7 +261,7 @@ index 2d3c496c7ca..775c32ae601 100644
        kAllowUnpublishedExtensions) {
      CWSInfoServiceFactory::GetForProfile(profile_)->CheckAndMaybeFetchInfo();
 diff --git a/chrome/browser/extensions/updater/chrome_extension_downloader_factory.cc b/chrome/browser/extensions/updater/chrome_extension_downloader_factory.cc
-index fc052a6b4b1..74a6a185f04 100644
+index fc052a6b4b..74a6a185f0 100644
 --- a/chrome/browser/extensions/updater/chrome_extension_downloader_factory.cc
 +++ b/chrome/browser/extensions/updater/chrome_extension_downloader_factory.cc
 @@ -53,7 +53,6 @@ ChromeExtensionDownloaderFactory::CreateForURLLoaderFactory(
@@ -273,7 +273,7 @@ index fc052a6b4b1..74a6a185f04 100644
  }
  
 diff --git a/chrome/browser/extensions/updater/extension_updater.cc b/chrome/browser/extensions/updater/extension_updater.cc
-index fd6684c9250..17d17f2e1af 100644
+index fd6684c925..17d17f2e1a 100644
 --- a/chrome/browser/extensions/updater/extension_updater.cc
 +++ b/chrome/browser/extensions/updater/extension_updater.cc
 @@ -56,6 +56,7 @@
@@ -380,7 +380,7 @@ index fd6684c9250..17d17f2e1af 100644
      std::move(request.callback).Run();
    }
 diff --git a/chrome/browser/extensions/updater/extension_updater.h b/chrome/browser/extensions/updater/extension_updater.h
-index c5cb7f14045..9d62ad277dd 100644
+index c5cb7f1404..9d62ad277d 100644
 --- a/chrome/browser/extensions/updater/extension_updater.h
 +++ b/chrome/browser/extensions/updater/extension_updater.h
 @@ -91,6 +91,8 @@ class ExtensionUpdater : public KeyedService,
@@ -402,7 +402,7 @@ index c5cb7f14045..9d62ad277dd 100644
    raw_ptr<PrefService> prefs_ = nullptr;
    raw_ptr<Profile> profile_ = nullptr;
 diff --git a/chrome/browser/resources/extensions/manager.html.ts b/chrome/browser/resources/extensions/manager.html.ts
-index 2d8fea7941d..c7d2dd79edc 100644
+index 2d8fea7941..c7d2dd79ed 100644
 --- a/chrome/browser/resources/extensions/manager.html.ts
 +++ b/chrome/browser/resources/extensions/manager.html.ts
 @@ -12,6 +12,7 @@ export function getHtml(this: ExtensionsManagerElement) {
@@ -414,7 +414,7 @@ index 2d8fea7941d..c7d2dd79edc 100644
      ?is-child-account="${this.isChildAccount_}"
      ?dev-mode-controlled-by-policy="${this.devModeControlledByPolicy}"
 diff --git a/chrome/browser/resources/extensions/manager.ts b/chrome/browser/resources/extensions/manager.ts
-index 522e280c936..1f4fa33a469 100644
+index 522e280c93..1f4fa33a46 100644
 --- a/chrome/browser/resources/extensions/manager.ts
 +++ b/chrome/browser/resources/extensions/manager.ts
 @@ -145,6 +145,8 @@ export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
@@ -436,7 +436,7 @@ index 522e280c936..1f4fa33a469 100644
        loadTimeData.getBoolean('showActivityLog');
    accessor enableEnhancedSiteControls: boolean =
 diff --git a/chrome/browser/resources/extensions/service.ts b/chrome/browser/resources/extensions/service.ts
-index b70ac01c6aa..c0e2d313dbf 100644
+index b70ac01c6a..c0e2d313db 100644
 --- a/chrome/browser/resources/extensions/service.ts
 +++ b/chrome/browser/resources/extensions/service.ts
 @@ -394,6 +394,11 @@ export class Service implements ServiceInterface {
@@ -452,7 +452,7 @@ index b70ac01c6aa..c0e2d313dbf 100644
      return this.loadUnpackedHelper_();
    }
 diff --git a/chrome/browser/resources/extensions/toolbar.css b/chrome/browser/resources/extensions/toolbar.css
-index 881317e1cfe..2e5a72b5756 100644
+index 881317e1cf..2e5a72b575 100644
 --- a/chrome/browser/resources/extensions/toolbar.css
 +++ b/chrome/browser/resources/extensions/toolbar.css
 @@ -73,6 +73,11 @@ cr-tooltip-icon {
@@ -468,7 +468,7 @@ index 881317e1cfe..2e5a72b5756 100644
    --cr-toolbar-center-basis: 680px;
    --cr-toolbar-field-max-width: var(--cr-toolbar-center-basis);
 diff --git a/chrome/browser/resources/extensions/toolbar.html.ts b/chrome/browser/resources/extensions/toolbar.html.ts
-index f2de5b086dd..872f107f015 100644
+index f2de5b086d..872f107f01 100644
 --- a/chrome/browser/resources/extensions/toolbar.html.ts
 +++ b/chrome/browser/resources/extensions/toolbar.html.ts
 @@ -33,6 +33,13 @@ export function getHtml(this: ToolbarElement) {
@@ -486,7 +486,7 @@ index f2de5b086dd..872f107f015 100644
  ${this.showPackDialog_ ? html`
    <extensions-pack-dialog .delegate="${this.delegate as ServiceInterface}"
 diff --git a/chrome/browser/resources/extensions/toolbar.ts b/chrome/browser/resources/extensions/toolbar.ts
-index 178a09a2e5a..b4c0b36132d 100644
+index 178a09a2e5..b4c0b36132 100644
 --- a/chrome/browser/resources/extensions/toolbar.ts
 +++ b/chrome/browser/resources/extensions/toolbar.ts
 @@ -26,6 +26,8 @@ export interface ToolbarDelegate {
@@ -549,7 +549,7 @@ index 178a09a2e5a..b4c0b36132d 100644
      const drawer = this.$.devDrawer;
      if (this.inDevMode) {
 diff --git a/chrome/browser/resources/webstore_app/manifest.json b/chrome/browser/resources/webstore_app/manifest.json
-index 598455a84eb..c1e192fd247 100644
+index 598455a84e..c1e192fd24 100644
 --- a/chrome/browser/resources/webstore_app/manifest.json
 +++ b/chrome/browser/resources/webstore_app/manifest.json
 @@ -17,11 +17,6 @@
@@ -566,7 +566,7 @@ index 598455a84eb..c1e192fd247 100644
    ]
  }
 diff --git a/chrome/browser/ui/webui/extensions/extensions_ui.cc b/chrome/browser/ui/webui/extensions/extensions_ui.cc
-index 0513e23fd14..60ec82463ea 100644
+index 0513e23fd1..60ec82463e 100644
 --- a/chrome/browser/ui/webui/extensions/extensions_ui.cc
 +++ b/chrome/browser/ui/webui/extensions/extensions_ui.cc
 @@ -16,6 +16,7 @@
@@ -596,7 +596,7 @@ index 0513e23fd14..60ec82463ea 100644
        "enableExtensionsPinnedByDefault",
        base::FeatureList::IsEnabled(features::kExtensionsPinnedByDefault));
 diff --git a/chrome/browser/update_client/chrome_update_query_params_delegate.cc b/chrome/browser/update_client/chrome_update_query_params_delegate.cc
-index c397eaf1494..37f23da63d8 100644
+index c397eaf149..37f23da63d 100644
 --- a/chrome/browser/update_client/chrome_update_query_params_delegate.cc
 +++ b/chrome/browser/update_client/chrome_update_query_params_delegate.cc
 @@ -34,15 +34,8 @@ ChromeUpdateQueryParamsDelegate::GetInstance() {
@@ -618,7 +618,7 @@ index c397eaf1494..37f23da63d8 100644
  
  // static
 diff --git a/chrome/common/extensions/api/developer_private.webidl b/chrome/common/extensions/api/developer_private.webidl
-index 7969e26c3bf..e83f4d54cb5 100644
+index 7969e26c3b..e83f4d54cb 100644
 --- a/chrome/common/extensions/api/developer_private.webidl
 +++ b/chrome/common/extensions/api/developer_private.webidl
 @@ -267,6 +267,7 @@ dictionary ProfileInfo {
@@ -638,7 +638,7 @@ index 7969e26c3bf..e83f4d54cb5 100644
  
  dictionary ExtensionCommandUpdate {
 diff --git a/components/update_client/update_query_params.cc b/components/update_client/update_query_params.cc
-index b865f09a022..999fbd51b2b 100644
+index b865f09a02..999fbd51b2 100644
 --- a/components/update_client/update_query_params.cc
 +++ b/components/update_client/update_query_params.cc
 @@ -86,8 +86,7 @@ UpdateQueryParamsDelegate* g_delegate = nullptr;
@@ -662,7 +662,7 @@ index b865f09a022..999fbd51b2b 100644
  // static
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Webstore-protection.inc b/cromite_flags/chrome/browser/about_flags_cc/Webstore-protection.inc
 new file mode 100644
-index 00000000000..680629c6b02
+index 0000000000..680629c6b0
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Webstore-protection.inc
 @@ -0,0 +1,19 @@
@@ -686,7 +686,7 @@ index 00000000000..680629c6b02
 +
 +#endif // ifdef FLAG_SECTION
 diff --git a/extensions/browser/api/management/management_api.cc b/extensions/browser/api/management/management_api.cc
-index ef9c8e58e15..3e60f78f58e 100644
+index ef9c8e58e1..3e60f78f58 100644
 --- a/extensions/browser/api/management/management_api.cc
 +++ b/extensions/browser/api/management/management_api.cc
 @@ -27,6 +27,9 @@
@@ -852,7 +852,7 @@ index ef9c8e58e15..3e60f78f58e 100644
                                                ->Get(browser_context())
                                                ->GetDelegate();
 diff --git a/extensions/browser/api/webstore_private/webstore_private_api.cc b/extensions/browser/api/webstore_private/webstore_private_api.cc
-index f6c467f4b7a..07515ba8fcf 100644
+index f6c467f4b7..07515ba8fc 100644
 --- a/extensions/browser/api/webstore_private/webstore_private_api.cc
 +++ b/extensions/browser/api/webstore_private/webstore_private_api.cc
 @@ -302,6 +302,10 @@ content::BrowserContext* GetContextForAlwaysIncognito(
@@ -915,7 +915,7 @@ index f6c467f4b7a..07515ba8fcf 100644
    return RespondNow(ArgumentList(
        api::webstore_private::GetReferrerChain::Results::Create("")));
 diff --git a/extensions/browser/updater/extension_downloader.cc b/extensions/browser/updater/extension_downloader.cc
-index 46befddae8e..10168fa81c5 100644
+index 46befddae8..10168fa81c 100644
 --- a/extensions/browser/updater/extension_downloader.cc
 +++ b/extensions/browser/updater/extension_downloader.cc
 @@ -486,8 +486,8 @@ void ExtensionDownloader::CreateManifestLoader() {
@@ -1100,7 +1100,7 @@ index 46befddae8e..10168fa81c5 100644
                        response_code == net::HTTP_FORBIDDEN;
    if (!auth_failure) {
 diff --git a/extensions/browser/updater/extension_downloader.h b/extensions/browser/updater/extension_downloader.h
-index f5092c09612..38c1cd4e7f7 100644
+index f5092c0961..38c1cd4e7f 100644
 --- a/extensions/browser/updater/extension_downloader.h
 +++ b/extensions/browser/updater/extension_downloader.h
 @@ -113,7 +113,6 @@ class ExtensionDownloader {
@@ -1112,7 +1112,7 @@ index f5092c09612..38c1cd4e7f7 100644
  
    // Set backoff policy for manifest and extension queue. Set `std::nullopt` to
 diff --git a/extensions/browser/updater/manifest_fetch_data.cc b/extensions/browser/updater/manifest_fetch_data.cc
-index 931fc6e64be..eaf1bce343f 100644
+index 931fc6e64b..eaf1bce343 100644
 --- a/extensions/browser/updater/manifest_fetch_data.cc
 +++ b/extensions/browser/updater/manifest_fetch_data.cc
 @@ -107,7 +107,7 @@ ManifestFetchData::ManifestFetchData(const GURL& update_url,
@@ -1144,7 +1144,7 @@ index 931fc6e64be..eaf1bce343f 100644
  
    // Append brand code, rollcall and active ping parameters.
 diff --git a/extensions/browser/updater/safe_manifest_parser.cc b/extensions/browser/updater/safe_manifest_parser.cc
-index 7148e294a4e..f3b0f94f8e7 100644
+index 7148e294a4..f3b0f94f8e 100644
 --- a/extensions/browser/updater/safe_manifest_parser.cc
 +++ b/extensions/browser/updater/safe_manifest_parser.cc
 @@ -202,6 +202,7 @@ void ParseXmlDone(ParseUpdateManifestCallback callback,
@@ -1156,7 +1156,7 @@ index 7148e294a4e..f3b0f94f8e7 100644
  
    // Parse the first <daystart> if it's present.
 diff --git a/extensions/browser/webstore_install_helper.cc b/extensions/browser/webstore_install_helper.cc
-index 915811f8f00..202f99e19c5 100644
+index 915811f8f0..202f99e19c 100644
 --- a/extensions/browser/webstore_install_helper.cc
 +++ b/extensions/browser/webstore_install_helper.cc
 @@ -74,7 +74,7 @@ class WebstoreInstallHelper : public base::RefCounted<WebstoreInstallHelper> {
@@ -1169,7 +1169,7 @@ index 915811f8f00..202f99e19c5 100644
            FROM_HERE, base::BindOnce(std::move(callback_),
                                      WebstoreParsedData{
 diff --git a/extensions/browser/webstore_installer.cc b/extensions/browser/webstore_installer.cc
-index fd67930f531..c2491b25587 100644
+index fd67930f53..c2491b2558 100644
 --- a/extensions/browser/webstore_installer.cc
 +++ b/extensions/browser/webstore_installer.cc
 @@ -590,7 +590,7 @@ void WebstoreInstaller::StartDownload(const ExtensionId& extension_id,
@@ -1182,7 +1182,7 @@ index fd67930f531..c2491b25587 100644
          download_url_,
          content::Referrer(controller.GetVisibleEntry()->GetURL(),
 diff --git a/extensions/common/extension_features.cc b/extensions/common/extension_features.cc
-index 3ba59b778db..4082c141243 100644
+index 3ba59b778d..4082c14124 100644
 --- a/extensions/common/extension_features.cc
 +++ b/extensions/common/extension_features.cc
 @@ -268,4 +268,12 @@ BASE_FEATURE(kOptimizeWebRequestProxy, base::FEATURE_ENABLED_BY_DEFAULT);
@@ -1199,7 +1199,7 @@ index 3ba59b778db..4082c141243 100644
 +
  }  // namespace extensions_features
 diff --git a/extensions/common/extension_features.h b/extensions/common/extension_features.h
-index 439829f8e61..81b080707a4 100644
+index 439829f8e6..81b080707a 100644
 --- a/extensions/common/extension_features.h
 +++ b/extensions/common/extension_features.h
 @@ -348,6 +348,17 @@ BASE_DECLARE_FEATURE(kWebRequestSecurityInfo);
@@ -1221,7 +1221,7 @@ index 439829f8e61..81b080707a4 100644
  // renderer context (using the parent event name) instead of once per listener
  // (using per-listener synthetic sub-event names). The renderer matches
 diff --git a/tools/typescript/definitions/developer_private.d.ts b/tools/typescript/definitions/developer_private.d.ts
-index 7e7fbc9ea96..b8b296a4684 100644
+index 7e7fbc9ea9..b8b296a468 100644
 --- a/tools/typescript/definitions/developer_private.d.ts
 +++ b/tools/typescript/definitions/developer_private.d.ts
 @@ -267,6 +267,7 @@ declare global {

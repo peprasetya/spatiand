@@ -12,7 +12,7 @@ FILE:Set-caret-blink-interval-to-default.patch
  1 file changed, 1 insertion(+), 3 deletions(-)
 
 diff --git a/third_party/blink/renderer/core/exported/web_view_impl.cc b/third_party/blink/renderer/core/exported/web_view_impl.cc
-index a9577f95f77..383c154674e 100644
+index a9577f95f7..383c154674 100644
 --- a/third_party/blink/renderer/core/exported/web_view_impl.cc
 +++ b/third_party/blink/renderer/core/exported/web_view_impl.cc
 @@ -3828,9 +3828,7 @@ void WebViewImpl::UpdateRendererPreferences(

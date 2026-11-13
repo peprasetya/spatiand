@@ -41,7 +41,7 @@ FILE:Timezone-customization.patch
 
 diff --git a/components/browser_ui/strings/bromite_content_settings/timezone.grdp b/components/browser_ui/strings/bromite_content_settings/timezone.grdp
 new file mode 100644
-index 00000000000..9cf114a3a1c
+index 0000000000..9cf114a3a1
 --- /dev/null
 +++ b/components/browser_ui/strings/bromite_content_settings/timezone.grdp
 @@ -0,0 +1,39 @@
@@ -86,7 +86,7 @@ index 00000000000..9cf114a3a1c
 +</grit-part>
 diff --git a/components/content_settings/core/browser/bromite_content_settings/timezone_override.inc b/components/content_settings/core/browser/bromite_content_settings/timezone_override.inc
 new file mode 100644
-index 00000000000..3e87b6a0200
+index 0000000000..3e87b6a020
 --- /dev/null
 +++ b/components/content_settings/core/browser/bromite_content_settings/timezone_override.inc
 @@ -0,0 +1,24 @@
@@ -115,7 +115,7 @@ index 00000000000..3e87b6a0200
 +    .set_blocked_exceptions_ui(IDS_WEBSITE_SETTINGS_CATEGORY_TIMEZONE_OVERRIDE_RANDOM)
 +    .set_mid_sentence_ui(IDS_SITE_SETTINGS_TIMEZONE_OVERRIDE_TITLE);
 diff --git a/components/content_settings/core/browser/content_settings_pref_provider.cc b/components/content_settings/core/browser/content_settings_pref_provider.cc
-index 51b90b3f472..6af00c32995 100644
+index 51b90b3f47..6af00c3299 100644
 --- a/components/content_settings/core/browser/content_settings_pref_provider.cc
 +++ b/components/content_settings/core/browser/content_settings_pref_provider.cc
 @@ -112,6 +112,8 @@ void PrefProvider::RegisterProfilePrefs(
@@ -154,7 +154,7 @@ index 51b90b3f472..6af00c32995 100644
 +
  }  // namespace content_settings
 diff --git a/components/content_settings/core/browser/content_settings_pref_provider.h b/components/content_settings/core/browser/content_settings_pref_provider.h
-index 50c1cdc60b4..1e07612e8e6 100644
+index 50c1cdc60b..1e07612e8e 100644
 --- a/components/content_settings/core/browser/content_settings_pref_provider.h
 +++ b/components/content_settings/core/browser/content_settings_pref_provider.h
 @@ -83,6 +83,9 @@ class PrefProvider : public UserModifiableProvider {
@@ -176,7 +176,7 @@ index 50c1cdc60b4..1e07612e8e6 100644
  
  }  // namespace content_settings
 diff --git a/components/content_settings/core/browser/content_settings_utils.cc b/components/content_settings/core/browser/content_settings_utils.cc
-index bcb626e2cdc..8575f7f7c7c 100644
+index bcb626e2cd..8575f7f7c7 100644
 --- a/components/content_settings/core/browser/content_settings_utils.cc
 +++ b/components/content_settings/core/browser/content_settings_utils.cc
 @@ -156,6 +156,11 @@ void GetRendererContentSettingRules(const HostContentSettingsMap* map,
@@ -192,7 +192,7 @@ index bcb626e2cdc..8575f7f7c7c 100644
  
  bool IsMorePermissive(ContentSetting a, ContentSetting b) {
 diff --git a/components/content_settings/core/browser/host_content_settings_map.cc b/components/content_settings/core/browser/host_content_settings_map.cc
-index 009d529caa4..e22420a5ff2 100644
+index 009d529caa..e22420a5ff 100644
 --- a/components/content_settings/core/browser/host_content_settings_map.cc
 +++ b/components/content_settings/core/browser/host_content_settings_map.cc
 @@ -748,6 +748,14 @@ void HostContentSettingsMap::SetClockForTesting(const base::Clock* clock) {
@@ -211,7 +211,7 @@ index 009d529caa4..e22420a5ff2 100644
    auto* content_setting_registry =
        content_settings::ContentSettingsRegistry::GetInstance();
 diff --git a/components/content_settings/core/browser/host_content_settings_map.h b/components/content_settings/core/browser/host_content_settings_map.h
-index ce19726490c..a63be9c450e 100644
+index ce19726490..a63be9c450 100644
 --- a/components/content_settings/core/browser/host_content_settings_map.h
 +++ b/components/content_settings/core/browser/host_content_settings_map.h
 @@ -424,6 +424,9 @@ class HostContentSettingsMap : public content_settings::Observer,
@@ -226,14 +226,14 @@ index ce19726490c..a63be9c450e 100644
    friend class content_settings::TestUtils;
 diff --git a/components/content_settings/core/common/bromite_content_settings/TIMEZONE.inc b/components/content_settings/core/common/bromite_content_settings/TIMEZONE.inc
 new file mode 100644
-index 00000000000..4888d3a7175
+index 0000000000..4888d3a717
 --- /dev/null
 +++ b/components/content_settings/core/common/bromite_content_settings/TIMEZONE.inc
 @@ -0,0 +1,2 @@
 +  // Content setting for timezone customization functionality.
 +  TIMEZONE_OVERRIDE,
 diff --git a/components/content_settings/core/common/content_settings.h b/components/content_settings/core/common/content_settings.h
-index 0643b6d48bf..a284c02c593 100644
+index 0643b6d48b..a284c02c59 100644
 --- a/components/content_settings/core/common/content_settings.h
 +++ b/components/content_settings/core/common/content_settings.h
 @@ -131,6 +131,7 @@ struct RendererContentSettingRules {
@@ -245,7 +245,7 @@ index 0643b6d48bf..a284c02c593 100644
  
  namespace content_settings {
 diff --git a/components/content_settings/core/common/content_settings.mojom b/components/content_settings/core/common/content_settings.mojom
-index 58ff279a44d..483030add5f 100644
+index 58ff279a44..483030add5 100644
 --- a/components/content_settings/core/common/content_settings.mojom
 +++ b/components/content_settings/core/common/content_settings.mojom
 @@ -93,4 +93,5 @@ struct ContentSettingPatternSource {
@@ -255,7 +255,7 @@ index 58ff279a44d..483030add5f 100644
 +  string timezone_override_value;
  };
 diff --git a/components/content_settings/core/common/content_settings_mojom_traits.cc b/components/content_settings/core/common/content_settings_mojom_traits.cc
-index f0eb39dee8f..d4786a4e629 100644
+index f0eb39dee8..d4786a4e62 100644
 --- a/components/content_settings/core/common/content_settings_mojom_traits.cc
 +++ b/components/content_settings/core/common/content_settings_mojom_traits.cc
 @@ -128,7 +128,8 @@ bool StructTraits<content_settings::mojom::RendererContentSettingRulesDataView,
@@ -269,7 +269,7 @@ index f0eb39dee8f..d4786a4e629 100644
  
  }  // namespace mojo
 diff --git a/components/content_settings/core/common/content_settings_mojom_traits.h b/components/content_settings/core/common/content_settings_mojom_traits.h
-index 1eaaebc393a..50d1563ea37 100644
+index 1eaaebc393..50d1563ea3 100644
 --- a/components/content_settings/core/common/content_settings_mojom_traits.h
 +++ b/components/content_settings/core/common/content_settings_mojom_traits.h
 @@ -214,6 +214,11 @@ struct StructTraits<
@@ -285,7 +285,7 @@ index 1eaaebc393a..50d1563ea37 100644
        content_settings::mojom::RendererContentSettingRulesDataView data,
        RendererContentSettingRules* out);
 diff --git a/components/content_settings/core/common/pref_names.h b/components/content_settings/core/common/pref_names.h
-index d62d1284c93..4f48f4139dc 100644
+index d62d1284c9..4f48f4139d 100644
 --- a/components/content_settings/core/common/pref_names.h
 +++ b/components/content_settings/core/common/pref_names.h
 @@ -284,6 +284,9 @@ inline constexpr char kDesktopSiteWindowSettingEnabled[] =
@@ -299,7 +299,7 @@ index d62d1284c93..4f48f4139dc 100644
  
  #endif  // COMPONENTS_CONTENT_SETTINGS_CORE_COMMON_PREF_NAMES_H_
 diff --git a/components/content_settings/renderer/content_settings_agent_impl.cc b/components/content_settings/renderer/content_settings_agent_impl.cc
-index 409a918cfd5..371380b9206 100644
+index 409a918cfd..371380b920 100644
 --- a/components/content_settings/renderer/content_settings_agent_impl.cc
 +++ b/components/content_settings/renderer/content_settings_agent_impl.cc
 @@ -8,7 +8,9 @@
@@ -401,7 +401,7 @@ index 409a918cfd5..371380b9206 100644
 +
  }  // namespace content_settings
 diff --git a/components/content_settings/renderer/content_settings_agent_impl.h b/components/content_settings/renderer/content_settings_agent_impl.h
-index a5bf1a26a83..72aa13e3157 100644
+index a5bf1a26a8..72aa13e315 100644
 --- a/components/content_settings/renderer/content_settings_agent_impl.h
 +++ b/components/content_settings/renderer/content_settings_agent_impl.h
 @@ -23,6 +23,10 @@
@@ -429,7 +429,7 @@ index a5bf1a26a83..72aa13e3157 100644
  
  }  // namespace content_settings
 diff --git a/third_party/blink/renderer/core/timezone/build.gni b/third_party/blink/renderer/core/timezone/build.gni
-index b6f7335f7d1..c6e11973331 100644
+index b6f7335f7d..c6e1197333 100644
 --- a/third_party/blink/renderer/core/timezone/build.gni
 +++ b/third_party/blink/renderer/core/timezone/build.gni
 @@ -5,4 +5,6 @@
@@ -441,7 +441,7 @@ index b6f7335f7d1..c6e11973331 100644
  ]
 diff --git a/third_party/blink/renderer/core/timezone/external_timezone_controller.cc b/third_party/blink/renderer/core/timezone/external_timezone_controller.cc
 new file mode 100644
-index 00000000000..2f7c4c24685
+index 0000000000..2f7c4c2468
 --- /dev/null
 +++ b/third_party/blink/renderer/core/timezone/external_timezone_controller.cc
 @@ -0,0 +1,40 @@
@@ -487,7 +487,7 @@ index 00000000000..2f7c4c24685
 +}  // namespace blink
 diff --git a/third_party/blink/renderer/core/timezone/external_timezone_controller.h b/third_party/blink/renderer/core/timezone/external_timezone_controller.h
 new file mode 100644
-index 00000000000..68ba81c4185
+index 0000000000..68ba81c418
 --- /dev/null
 +++ b/third_party/blink/renderer/core/timezone/external_timezone_controller.h
 @@ -0,0 +1,34 @@
@@ -526,7 +526,7 @@ index 00000000000..68ba81c4185
 +
 +#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_TIMEZONE_EXTERNAL_TIMEZONE_CONTROLLER_H_
 diff --git a/third_party/blink/renderer/core/timezone/timezone_controller.cc b/third_party/blink/renderer/core/timezone/timezone_controller.cc
-index 270c78bfd03..4ccf10e65bf 100644
+index 270c78bfd0..4ccf10e65b 100644
 --- a/third_party/blink/renderer/core/timezone/timezone_controller.cc
 +++ b/third_party/blink/renderer/core/timezone/timezone_controller.cc
 @@ -149,8 +149,6 @@ TimeZoneController::TimeZoneOverrideResult
@@ -586,7 +586,7 @@ index 270c78bfd03..4ccf10e65bf 100644
      CHECK(base::FeatureList::IsEnabled(kLazyBlinkTimezoneInit));
      host_timezone_id_ = GetCurrentTimezoneId();
 diff --git a/third_party/blink/renderer/core/timezone/timezone_controller.h b/third_party/blink/renderer/core/timezone/timezone_controller.h
-index 3a64ead0851..ed870161511 100644
+index 3a64ead085..ed87016151 100644
 --- a/third_party/blink/renderer/core/timezone/timezone_controller.h
 +++ b/third_party/blink/renderer/core/timezone/timezone_controller.h
 @@ -12,6 +12,7 @@

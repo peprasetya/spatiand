@@ -26,7 +26,7 @@ FILE:Show-NTP-at-startup.patch
  create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/show-ntp-at-startup.inc
 
 diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
-index 05f9f4d8152..1cbee60222f 100644
+index 05f9f4d815..1cbee60222 100644
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
 @@ -1053,7 +1053,7 @@
@@ -39,7 +39,7 @@ index 05f9f4d8152..1cbee60222f 100644
      <message name="IDS_SETTINGS_ON_STARTUP_USE_CURRENT" desc="Button to use current pages.">
        Use current pages
 diff --git a/chrome/browser/performance_manager/policies/background_tab_loading_policy.cc b/chrome/browser/performance_manager/policies/background_tab_loading_policy.cc
-index 5af2184d710..a0865f97301 100644
+index 5af2184d71..a0865f9730 100644
 --- a/chrome/browser/performance_manager/policies/background_tab_loading_policy.cc
 +++ b/chrome/browser/performance_manager/policies/background_tab_loading_policy.cc
 @@ -400,6 +400,7 @@ base::DictValue BackgroundTabLoadingPolicy::DescribeSystemNodeData(
@@ -59,7 +59,7 @@ index 5af2184d710..a0865f97301 100644
      LoadNextTab();
    }
 diff --git a/chrome/browser/resources/settings/on_startup_page/on_startup_page.ts b/chrome/browser/resources/settings/on_startup_page/on_startup_page.ts
-index 5f3a3249704..b10d54d49a4 100644
+index 5f3a324970..b10d54d49a 100644
 --- a/chrome/browser/resources/settings/on_startup_page/on_startup_page.ts
 +++ b/chrome/browser/resources/settings/on_startup_page/on_startup_page.ts
 @@ -113,6 +113,7 @@ export class SettingsOnStartupPageElement extends
@@ -71,7 +71,7 @@ index 5f3a3249704..b10d54d49a4 100644
        return false;
      }
 diff --git a/chrome/browser/sessions/session_restore.cc b/chrome/browser/sessions/session_restore.cc
-index 816c2a017bd..a438c5c95ad 100644
+index 816c2a017b..a438c5c95a 100644
 --- a/chrome/browser/sessions/session_restore.cc
 +++ b/chrome/browser/sessions/session_restore.cc
 @@ -1098,6 +1098,13 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
@@ -97,7 +97,7 @@ index 816c2a017bd..a438c5c95ad 100644
      if (!startup_tabs_from_last_and_urls_pref.empty()) {
        BrowserWindowCreateParams params(profile_, /*from_user_gesture=*/false);
 diff --git a/chrome/browser/ui/browser_tabrestore.cc b/chrome/browser/ui/browser_tabrestore.cc
-index 6aca93a4507..d4dc8248a46 100644
+index 6aca93a450..d4dc8248a4 100644
 --- a/chrome/browser/ui/browser_tabrestore.cc
 +++ b/chrome/browser/ui/browser_tabrestore.cc
 @@ -244,7 +244,7 @@ WebContents* AddRestoredTabImpl(std::unique_ptr<WebContents> web_contents,
@@ -110,7 +110,7 @@ index 6aca93a4507..d4dc8248a46 100644
  // On OS_MAC, `LoadRestoredTabIfVisible` by default so that its tab loading
  // behaves like other platforms to make FirstWebContentsProfiler wor
 diff --git a/chrome/browser/ui/startup/startup_browser_creator_impl.cc b/chrome/browser/ui/startup/startup_browser_creator_impl.cc
-index 1e34f398af7..2541d5f5bd7 100644
+index 1e34f398af..2541d5f5bd 100644
 --- a/chrome/browser/ui/startup/startup_browser_creator_impl.cc
 +++ b/chrome/browser/ui/startup/startup_browser_creator_impl.cc
 @@ -721,6 +721,14 @@ StartupBrowserCreatorImpl::DetermineStartupTabs(
@@ -129,7 +129,7 @@ index 1e34f398af7..2541d5f5bd7 100644
  
    // Maybe add any tabs which the user has previously pinned.
 diff --git a/chrome/browser/ui/tabs/tab_strip_model.cc b/chrome/browser/ui/tabs/tab_strip_model.cc
-index c8c7e124660..0a5c77814e9 100644
+index c8c7e12466..0a5c77814e 100644
 --- a/chrome/browser/ui/tabs/tab_strip_model.cc
 +++ b/chrome/browser/ui/tabs/tab_strip_model.cc
 @@ -5915,11 +5915,27 @@ std::optional<int> TabStripModel::DetermineNewSelectedIndex(
@@ -163,7 +163,7 @@ index c8c7e124660..0a5c77814e9 100644
      }
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/show-ntp-at-startup.inc b/cromite_flags/chrome/browser/about_flags_cc/show-ntp-at-startup.inc
 new file mode 100644
-index 00000000000..8c92a1c461e
+index 0000000000..8c92a1c461
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/show-ntp-at-startup.inc
 @@ -0,0 +1,12 @@
@@ -181,7 +181,7 @@ index 00000000000..8c92a1c461e
 +#endif
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/show-ntp-at-startup.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/show-ntp-at-startup.inc
 new file mode 100644
-index 00000000000..c55731cd554
+index 0000000000..c55731cd55
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/show-ntp-at-startup.inc
 @@ -0,0 +1,5 @@
@@ -192,7 +192,7 @@ index 00000000000..c55731cd554
 +                base::FEATURE_ENABLED_BY_DEFAULT);
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/show-ntp-at-startup.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/show-ntp-at-startup.inc
 new file mode 100644
-index 00000000000..3a553007a9b
+index 0000000000..3a553007a9
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/show-ntp-at-startup.inc
 @@ -0,0 +1 @@

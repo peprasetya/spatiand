@@ -13,7 +13,7 @@ FILE:mime_util-force-text-x-suse-ymp-to-be-downloaded.patch
  1 file changed, 1 insertion(+)
 
 diff --git a/third_party/blink/common/mime_util/mime_util.cc b/third_party/blink/common/mime_util/mime_util.cc
-index 0957cc27dbe..7010b178ed3 100644
+index 0957cc27db..7010b178ed 100644
 --- a/third_party/blink/common/mime_util/mime_util.cc
 +++ b/third_party/blink/common/mime_util/mime_util.cc
 @@ -88,6 +88,7 @@ constexpr auto kUnsupportedTextTypes =

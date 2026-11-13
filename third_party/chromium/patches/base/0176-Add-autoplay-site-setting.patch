@@ -19,7 +19,7 @@ FILE:Add-autoplay-site-setting.patch
 
 diff --git a/components/browser_ui/strings/bromite_content_settings/autoplay.grdp b/components/browser_ui/strings/bromite_content_settings/autoplay.grdp
 new file mode 100644
-index 00000000000..03a149f683f
+index 0000000000..03a149f683
 --- /dev/null
 +++ b/components/browser_ui/strings/bromite_content_settings/autoplay.grdp
 @@ -0,0 +1,21 @@
@@ -46,7 +46,7 @@ index 00000000000..03a149f683f
 +</grit-part>
 diff --git a/components/content_settings/core/browser/bromite_content_settings/autoplay.inc b/components/content_settings/core/browser/bromite_content_settings/autoplay.inc
 new file mode 100644
-index 00000000000..8d7a0eb1a4c
+index 0000000000..8d7a0eb1a4
 --- /dev/null
 +++ b/components/content_settings/core/browser/bromite_content_settings/autoplay.inc
 @@ -0,0 +1,12 @@
@@ -63,7 +63,7 @@ index 00000000000..8d7a0eb1a4c
 +    .set_blocked_exceptions_ui(IDS_SETTINGS_SITE_SETTINGS_AUTOPLAY_BLOCKED_EXCEPTIONS)
 +    .set_mid_sentence_ui(IDS_AUTOPLAY_PERMISSION_TITLE);
 diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
-index 6ca9372c4ef..0b6f22471a2 100644
+index 6ca9372c4e..0b6f22471a 100644
 --- a/components/content_settings/core/browser/content_settings_registry.cc
 +++ b/components/content_settings/core/browser/content_settings_registry.cc
 @@ -254,7 +254,7 @@ void ContentSettingsRegistry::Init() {
@@ -76,7 +76,7 @@ index 6ca9372c4ef..0b6f22471a2 100644
             /*valid_settings=*/{CONTENT_SETTING_ALLOW, CONTENT_SETTING_BLOCK},
             WebsiteSettingsInfo::TOP_ORIGIN_ONLY_SCOPE,
 diff --git a/third_party/blink/renderer/core/html/media/autoplay_policy.cc b/third_party/blink/renderer/core/html/media/autoplay_policy.cc
-index 6a713a6dfee..2511735839b 100644
+index 6a713a6dfe..2511735839 100644
 --- a/third_party/blink/renderer/core/html/media/autoplay_policy.cc
 +++ b/third_party/blink/renderer/core/html/media/autoplay_policy.cc
 @@ -9,6 +9,7 @@
@@ -115,7 +115,7 @@ index 6a713a6dfee..2511735839b 100644
    if (!element_->GetExecutionContext() ||
        element_->GetExecutionContext()->IsSandboxed(
 diff --git a/third_party/blink/renderer/core/html/media/autoplay_policy.h b/third_party/blink/renderer/core/html/media/autoplay_policy.h
-index 516c7a49d94..ee8406f2eb1 100644
+index 516c7a49d9..ee8406f2eb 100644
 --- a/third_party/blink/renderer/core/html/media/autoplay_policy.h
 +++ b/third_party/blink/renderer/core/html/media/autoplay_policy.h
 @@ -139,6 +139,10 @@ class CORE_EXPORT AutoplayPolicy final

@@ -11,7 +11,7 @@ FILE:Disable-Read-Aloud-by-default.patch
  create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-Read-Aloud.inc
 
 diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
-index b0ea874b490..0e2ffa72de0 100644
+index b0ea874b49..0e2ffa72de 100644
 --- a/chrome/browser/prefs/browser_prefs.cc
 +++ b/chrome/browser/prefs/browser_prefs.cc
 @@ -1755,7 +1755,7 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
@@ -25,7 +25,7 @@ index b0ea874b490..0e2ffa72de0 100644
    // Below this point is for platform-specific and compile-time conditional
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-Read-Aloud.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-Read-Aloud.inc
 new file mode 100644
-index 00000000000..4bd8276f349
+index 0000000000..4bd8276f34
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-Read-Aloud.inc
 @@ -0,0 +1 @@

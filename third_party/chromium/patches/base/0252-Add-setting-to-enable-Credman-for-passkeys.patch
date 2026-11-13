@@ -19,7 +19,7 @@ FILE:Add-setting-to-enable-Credman-for-passkeys.patch
  4 files changed, 14 insertions(+)
 
 diff --git a/chrome/browser/touch_to_fill/password_manager/touch_to_fill_password_manager_controller.cc b/chrome/browser/touch_to_fill/password_manager/touch_to_fill_password_manager_controller.cc
-index a269935ae09..ca442d1f335 100644
+index a269935ae0..ca442d1f33 100644
 --- a/chrome/browser/touch_to_fill/password_manager/touch_to_fill_password_manager_controller.cc
 +++ b/chrome/browser/touch_to_fill/password_manager/touch_to_fill_password_manager_controller.cc
 @@ -328,6 +328,7 @@ void TouchToFillPasswordManagerController::Reset() {
@@ -39,7 +39,7 @@ index a269935ae09..ca442d1f335 100644
  
  DisplayTarget TouchToFillPasswordManagerController::GetResponsibleDisplayTarget(
 diff --git a/components/webauthn/features.cc b/components/webauthn/features.cc
-index e02f92860e0..8b7202ae2d7 100644
+index e02f92860e..8b7202ae2d 100644
 --- a/components/webauthn/features.cc
 +++ b/components/webauthn/features.cc
 @@ -25,6 +25,10 @@ BASE_FEATURE(kWebAuthnFilterSmartCardTransport,
@@ -54,7 +54,7 @@ index e02f92860e0..8b7202ae2d7 100644
  
  #if !BUILDFLAG(IS_ANDROID)
 diff --git a/components/webauthn/features.h b/components/webauthn/features.h
-index a23918ca5fc..7666b709dd5 100644
+index a23918ca5f..7666b709dd 100644
 --- a/components/webauthn/features.h
 +++ b/components/webauthn/features.h
 @@ -31,6 +31,9 @@ BASE_DECLARE_FEATURE(kWebAuthnFilterSmartCardTransport);
@@ -68,7 +68,7 @@ index a23918ca5fc..7666b709dd5 100644
  #endif  // BUILDFLAG(IS_ANDROID)
  
 diff --git a/third_party/blink/renderer/modules/credentialmanagement/authentication_credentials_container.cc b/third_party/blink/renderer/modules/credentialmanagement/authentication_credentials_container.cc
-index d928a0ff7cd..54a5a2aba29 100644
+index d928a0ff7c..54a5a2aba2 100644
 --- a/third_party/blink/renderer/modules/credentialmanagement/authentication_credentials_container.cc
 +++ b/third_party/blink/renderer/modules/credentialmanagement/authentication_credentials_container.cc
 @@ -1304,6 +1304,11 @@ DOMException* AuthenticatorStatusToDOMException(

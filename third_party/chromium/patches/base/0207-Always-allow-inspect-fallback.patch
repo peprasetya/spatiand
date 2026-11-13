@@ -12,7 +12,7 @@ FILE:Always-allow-inspect-fallback.patch
  1 file changed, 4 insertions(+), 3 deletions(-)
 
 diff --git a/chrome/browser/resources/inspect/inspect.js b/chrome/browser/resources/inspect/inspect.js
-index 533ad677acc..832f2aac2ed 100644
+index 533ad677ac..832f2aac2e 100644
 --- a/chrome/browser/resources/inspect/inspect.js
 +++ b/chrome/browser/resources/inspect/inspect.js
 @@ -46,6 +46,7 @@ if ('browser-inspector' in queryParamsObject) {

@@ -10,7 +10,7 @@ FILE:Disable-plugins-enumeration.patch
  1 file changed, 1 insertion(+), 4 deletions(-)
 
 diff --git a/third_party/blink/renderer/core/frame/local_frame.cc b/third_party/blink/renderer/core/frame/local_frame.cc
-index 5cf4b1e38e0..2b3f3b004c2 100644
+index 5cf4b1e38e..2b3f3b004c 100644
 --- a/third_party/blink/renderer/core/frame/local_frame.cc
 +++ b/third_party/blink/renderer/core/frame/local_frame.cc
 @@ -2486,10 +2486,7 @@ WebAutofillClient* LocalFrame::GetAutofillClient() {

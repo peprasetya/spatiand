@@ -14,7 +14,7 @@ FILE:Override-Navigator-Language.patch
  1 file changed, 5 insertions(+), 1 deletion(-)
 
 diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
-index 7089a3e315d..200e0ab673c 100644
+index 7089a3e315..200e0ab673 100644
 --- a/content/browser/renderer_host/render_process_host_impl.cc
 +++ b/content/browser/renderer_host/render_process_host_impl.cc
 @@ -77,6 +77,7 @@

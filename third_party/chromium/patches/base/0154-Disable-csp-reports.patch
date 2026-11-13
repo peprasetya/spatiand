@@ -10,7 +10,7 @@ FILE:Disable-csp-reports.patch
  1 file changed, 3 insertions(+)
 
 diff --git a/third_party/blink/renderer/core/loader/ping_loader.cc b/third_party/blink/renderer/core/loader/ping_loader.cc
-index baacf84ba9d..d3499a61e8a 100644
+index baacf84ba9..d3499a61e8 100644
 --- a/third_party/blink/renderer/core/loader/ping_loader.cc
 +++ b/third_party/blink/renderer/core/loader/ping_loader.cc
 @@ -68,6 +68,7 @@ bool SendBeaconCommon(const ScriptState& state,

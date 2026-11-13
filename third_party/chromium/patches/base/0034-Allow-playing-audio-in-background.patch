@@ -12,7 +12,7 @@ FILE:Allow-playing-audio-in-background.patch
  3 files changed, 17 insertions(+), 1 deletion(-)
 
 diff --git a/content/public/renderer/render_frame_media_playback_options.cc b/content/public/renderer/render_frame_media_playback_options.cc
-index 5074b48ec9d..307b12497b1 100644
+index 5074b48ec9..307b12497b 100644
 --- a/content/public/renderer/render_frame_media_playback_options.cc
 +++ b/content/public/renderer/render_frame_media_playback_options.cc
 @@ -14,6 +14,7 @@
@@ -24,7 +24,7 @@ index 5074b48ec9d..307b12497b1 100644
    // For Android devices, do not suspend background media for devices with large
    // displays. Exception is for Webview.
 diff --git a/third_party/blink/renderer/platform/media/web_media_player_impl.cc b/third_party/blink/renderer/platform/media/web_media_player_impl.cc
-index 268a51238a3..92c47e86a15 100644
+index 268a51238a..92c47e86a1 100644
 --- a/third_party/blink/renderer/platform/media/web_media_player_impl.cc
 +++ b/third_party/blink/renderer/platform/media/web_media_player_impl.cc
 @@ -1349,6 +1349,14 @@ bool WebMediaPlayerImpl::HasAudio() const {
@@ -55,7 +55,7 @@ index 268a51238a3..92c47e86a15 100644
  
    // Video PiP is the only exception when background video playback is disabled.
 diff --git a/third_party/blink/renderer/platform/media/web_media_player_impl.h b/third_party/blink/renderer/platform/media/web_media_player_impl.h
-index 40e0e7c3769..7d2e10d4a3e 100644
+index 40e0e7c376..7d2e10d4a3 100644
 --- a/third_party/blink/renderer/platform/media/web_media_player_impl.h
 +++ b/third_party/blink/renderer/platform/media/web_media_player_impl.h
 @@ -220,6 +220,10 @@ class PLATFORM_EXPORT WebMediaPlayerImpl

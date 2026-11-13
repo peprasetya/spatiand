@@ -10,7 +10,7 @@ FILE:TEMP-Add-a-log-to-track-strange-behavior.patch
  1 file changed, 1 insertion(+)
 
 diff --git a/net/spdy/spdy_session.cc b/net/spdy/spdy_session.cc
-index 4e82ece8d93..569bdbf4274 100644
+index 4e82ece8d9..569bdbf427 100644
 --- a/net/spdy/spdy_session.cc
 +++ b/net/spdy/spdy_session.cc
 @@ -3195,6 +3195,7 @@ void SpdySession::OnHeaders(spdy::SpdyStreamId stream_id,

@@ -12,7 +12,7 @@ FILE:Disable-the-DIAL-repeating-discovery.patch
  1 file changed, 6 deletions(-)
 
 diff --git a/chrome/browser/media/router/discovery/dial/dial_registry.cc b/chrome/browser/media/router/discovery/dial/dial_registry.cc
-index b9b82883ac4..0917aaaa82f 100644
+index b9b82883ac..0917aaaa82 100644
 --- a/chrome/browser/media/router/discovery/dial/dial_registry.cc
 +++ b/chrome/browser/media/router/discovery/dial/dial_registry.cc
 @@ -160,10 +160,6 @@ void DialRegistry::StartPeriodicDiscovery() {

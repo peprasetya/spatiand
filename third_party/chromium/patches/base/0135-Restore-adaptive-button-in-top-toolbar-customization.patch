@@ -15,7 +15,7 @@ FILE:Restore-adaptive-button-in-top-toolbar-customization.patch
  create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-adaptive-button-in-top-toolbar-customization.inc
 
 diff --git a/chrome/browser/segmentation_platform/segmentation_platform_config.cc b/chrome/browser/segmentation_platform/segmentation_platform_config.cc
-index 89863ce0791..f4f6c824434 100644
+index 89863ce079..f4f6c82443 100644
 --- a/chrome/browser/segmentation_platform/segmentation_platform_config.cc
 +++ b/chrome/browser/segmentation_platform/segmentation_platform_config.cc
 @@ -74,6 +74,7 @@ constexpr int kAdaptiveToolbarDefaultSelectionTTLDays = 56;
@@ -28,7 +28,7 @@ index 89863ce0791..f4f6c824434 100644
    config->segmentation_uma_name = kAdaptiveToolbarUmaName;
 diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-adaptive-button-in-top-toolbar-customization.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-adaptive-button-in-top-toolbar-customization.inc
 new file mode 100644
-index 00000000000..e8c9ebe63e6
+index 0000000000..e8c9ebe63e
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-adaptive-button-in-top-toolbar-customization.inc
 @@ -0,0 +1 @@

@@ -18,7 +18,7 @@ FILE:Fix-chromium-build-bugs.patch
  8 files changed, 12 insertions(+), 6 deletions(-)
 
 diff --git a/BUILD.gn b/BUILD.gn
-index 516aa805059..0ab661efd61 100644
+index 516aa80505..0ab661efd6 100644
 --- a/BUILD.gn
 +++ b/BUILD.gn
 @@ -39,6 +39,7 @@ import("//tools/ipc_fuzzer/ipc_fuzzer.gni")
@@ -47,7 +47,7 @@ index 516aa805059..0ab661efd61 100644
        }
      }
 diff --git a/chrome/browser/navigation_predictor/navigation_predictor_metrics_document_data.h b/chrome/browser/navigation_predictor/navigation_predictor_metrics_document_data.h
-index 9f214cef138..f014cc33931 100644
+index 9f214cef13..f014cc3393 100644
 --- a/chrome/browser/navigation_predictor/navigation_predictor_metrics_document_data.h
 +++ b/chrome/browser/navigation_predictor/navigation_predictor_metrics_document_data.h
 @@ -77,6 +77,8 @@ class NavigationPredictorMetricsDocumentData
@@ -60,7 +60,7 @@ index 9f214cef138..f014cc33931 100644
      bool is_in_viewport = false;
      // True if the pointer is still hovering over the anchor element,
 diff --git a/chrome/browser/safe_browsing/BUILD.gn b/chrome/browser/safe_browsing/BUILD.gn
-index 0ceda3cbb19..9e4335961db 100644
+index 0ceda3cbb1..9e4335961d 100644
 --- a/chrome/browser/safe_browsing/BUILD.gn
 +++ b/chrome/browser/safe_browsing/BUILD.gn
 @@ -407,6 +407,7 @@ static_library("safe_browsing") {
@@ -72,7 +72,7 @@ index 0ceda3cbb19..9e4335961db 100644
  
      public_deps += [ "//chrome/browser/security_events" ]
 diff --git a/components/component_updater/installer_policies/BUILD.gn b/components/component_updater/installer_policies/BUILD.gn
-index 1454a7012af..44dba97f4ca 100644
+index 1454a7012a..44dba97f4c 100644
 --- a/components/component_updater/installer_policies/BUILD.gn
 +++ b/components/component_updater/installer_policies/BUILD.gn
 @@ -49,6 +49,7 @@ static_library("installer_policies_no_content_deps") {
@@ -84,7 +84,7 @@ index 1454a7012af..44dba97f4ca 100644
  
    # Disallow depending on content.
 diff --git a/components/contextual_tasks/internal/BUILD.gn b/components/contextual_tasks/internal/BUILD.gn
-index 38219ba6ece..4957981eb0d 100644
+index 38219ba6ec..4957981eb0 100644
 --- a/components/contextual_tasks/internal/BUILD.gn
 +++ b/components/contextual_tasks/internal/BUILD.gn
 @@ -53,6 +53,7 @@ source_set("internal") {
@@ -96,7 +96,7 @@ index 38219ba6ece..4957981eb0d 100644
  }
  
 diff --git a/components/omnibox/browser/autocomplete_classifier.cc b/components/omnibox/browser/autocomplete_classifier.cc
-index 0ed14baa0e6..1e1af1cac74 100644
+index 0ed14baa0e..1e1af1cac7 100644
 --- a/components/omnibox/browser/autocomplete_classifier.cc
 +++ b/components/omnibox/browser/autocomplete_classifier.cc
 @@ -153,8 +153,8 @@ void AutocompleteClassifier::Classify(
@@ -111,7 +111,7 @@ index 0ed14baa0e6..1e1af1cac74 100644
    base::AutoReset<bool> reset(&inside_classify_, true);
    AutocompleteInput input(text, page_classification, *scheme_classifier_);
 diff --git a/components/omnibox/browser/omnibox_field_trial.cc b/components/omnibox/browser/omnibox_field_trial.cc
-index b4f9a5f5766..1f68527ccda 100644
+index b4f9a5f576..1f68527ccd 100644
 --- a/components/omnibox/browser/omnibox_field_trial.cc
 +++ b/components/omnibox/browser/omnibox_field_trial.cc
 @@ -838,11 +838,11 @@ MLConfig& MLConfig::operator=(const MLConfig& other) = default;
@@ -129,7 +129,7 @@ index b4f9a5f5766..1f68527ccda 100644
  
  MLConfig& ScopedMLConfigForTesting::GetMLConfig() {
 diff --git a/content/browser/browser_interface_binders.cc b/content/browser/browser_interface_binders.cc
-index ca98f584a19..f78128718dc 100644
+index ca98f584a1..f78128718d 100644
 --- a/content/browser/browser_interface_binders.cc
 +++ b/content/browser/browser_interface_binders.cc
 @@ -473,6 +473,7 @@ void BindDateTimeChooserForFrame(

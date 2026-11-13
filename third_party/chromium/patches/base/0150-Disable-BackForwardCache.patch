@@ -12,7 +12,7 @@ FILE:Disable-BackForwardCache.patch
 
 diff --git a/cromite_flags/content/public/common/content_features_cc/Disable-BackForwardCache.inc b/cromite_flags/content/public/common/content_features_cc/Disable-BackForwardCache.inc
 new file mode 100644
-index 00000000000..7de0778c654
+index 0000000000..7de0778c65
 --- /dev/null
 +++ b/cromite_flags/content/public/common/content_features_cc/Disable-BackForwardCache.inc
 @@ -0,0 +1 @@

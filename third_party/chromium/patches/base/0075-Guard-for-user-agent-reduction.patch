@@ -11,7 +11,7 @@ FILE:Guard-for-user-agent-reduction.patch
  2 files changed, 7 insertions(+), 2 deletions(-)
 
 diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedder_support/user_agent_utils.cc
-index bf4a8960a0d..774f64c11b3 100644
+index bf4a8960a0..774f64c11b 100644
 --- a/components/embedder_support/user_agent_utils.cc
 +++ b/components/embedder_support/user_agent_utils.cc
 @@ -818,6 +818,7 @@ std::string BuildUnifiedPlatformUserAgentFromProduct(
@@ -34,7 +34,7 @@ index bf4a8960a0d..774f64c11b3 100644
    bool semicolon_inserted = false;
    if (include_android_model == IncludeAndroidModel::Include) {
 diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-index a5fffc4c384..58b8bbb05ee 100644
+index a5fffc4c38..58b8bbb05e 100644
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
 @@ -5349,8 +5349,8 @@

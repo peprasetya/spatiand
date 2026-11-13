@@ -19,7 +19,7 @@ VOB) gives most packets no PTS: FFmpeg makes them, as its own players do.
  4 files changed, 49 insertions(+), 2 deletions(-)
 
 diff --git a/media/ffmpeg/ffmpeg_common.cc b/media/ffmpeg/ffmpeg_common.cc
-index e196df9689e..e3200715cd3 100644
+index e196df9689..e3200715cd 100644
 --- a/media/ffmpeg/ffmpeg_common.cc
 +++ b/media/ffmpeg/ffmpeg_common.cc
 @@ -146,6 +146,12 @@ AudioCodec CodecIDToAudioCodec(AVCodecID codec_id) {
@@ -49,7 +49,7 @@ index e196df9689e..e3200715cd3 100644
  
    return kAllowedAudioCodecs.data();
 diff --git a/media/filters/ffmpeg_glue.cc b/media/filters/ffmpeg_glue.cc
-index 3514b3511ca..debfe3b9c58 100644
+index 3514b3511c..debfe3b9c5 100644
 --- a/media/filters/ffmpeg_glue.cc
 +++ b/media/filters/ffmpeg_glue.cc
 @@ -227,6 +227,9 @@ bool FFmpegGlue::OpenContext(bool is_local_file) {
@@ -63,7 +63,7 @@ index 3514b3511ca..debfe3b9c58 100644
      container_ = container_names::MediaContainerName::kContainerFLV;
    } else if (format_name == "asf") {
 diff --git a/media/filters/ffmpeg_h264_to_annex_b_bitstream_converter.cc b/media/filters/ffmpeg_h264_to_annex_b_bitstream_converter.cc
-index 7f2fbc390d2..9069f7a2031 100644
+index 7f2fbc390d..9069f7a203 100644
 --- a/media/filters/ffmpeg_h264_to_annex_b_bitstream_converter.cc
 +++ b/media/filters/ffmpeg_h264_to_annex_b_bitstream_converter.cc
 @@ -13,6 +13,20 @@
@@ -99,7 +99,7 @@ index 7f2fbc390d2..9069f7a2031 100644
  
      if (!converter_.ParseConfiguration(
 diff --git a/media/filters/ffmpeg_h265_to_annex_b_bitstream_converter.cc b/media/filters/ffmpeg_h265_to_annex_b_bitstream_converter.cc
-index fb0d0739053..38dd2753862 100644
+index fb0d073905..38dd275386 100644
 --- a/media/filters/ffmpeg_h265_to_annex_b_bitstream_converter.cc
 +++ b/media/filters/ffmpeg_h265_to_annex_b_bitstream_converter.cc
 @@ -15,6 +15,20 @@

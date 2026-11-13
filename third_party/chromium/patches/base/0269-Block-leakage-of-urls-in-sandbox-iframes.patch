@@ -25,7 +25,7 @@ FILE:Block-leakage-of-urls-in-sandbox-iframes.patch
  create mode 100644 cromite_flags/third_party/blink/common/features_h/Block-url-leakage-sandbox-iframe.inc
 
 diff --git a/content/browser/renderer_host/render_frame_host_impl.cc b/content/browser/renderer_host/render_frame_host_impl.cc
-index c15bc792233..1cb8919df85 100644
+index c15bc79223..1cb8919df8 100644
 --- a/content/browser/renderer_host/render_frame_host_impl.cc
 +++ b/content/browser/renderer_host/render_frame_host_impl.cc
 @@ -5553,7 +5553,17 @@ void RenderFrameHostImpl::SetLastCommittedOrigin(const url::Origin& origin) {
@@ -49,7 +49,7 @@ index c15bc792233..1cb8919df85 100644
  void RenderFrameHostImpl::SetLastCommittedOriginForTesting(
 diff --git a/cromite_flags/chrome/browser/about_flags_cc/Block-url-leakage-sandbox-iframe.inc b/cromite_flags/chrome/browser/about_flags_cc/Block-url-leakage-sandbox-iframe.inc
 new file mode 100644
-index 00000000000..89c3c03b076
+index 0000000000..89c3c03b07
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/about_flags_cc/Block-url-leakage-sandbox-iframe.inc
 @@ -0,0 +1,8 @@
@@ -63,7 +63,7 @@ index 00000000000..89c3c03b076
 +#endif
 diff --git a/cromite_flags/third_party/blink/common/features_cc/Block-url-leakage-sandbox-iframe.inc b/cromite_flags/third_party/blink/common/features_cc/Block-url-leakage-sandbox-iframe.inc
 new file mode 100644
-index 00000000000..f4bee49682f
+index 0000000000..f4bee49682
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_cc/Block-url-leakage-sandbox-iframe.inc
 @@ -0,0 +1,3 @@
@@ -72,13 +72,13 @@ index 00000000000..f4bee49682f
 +                base::FEATURE_DISABLED_BY_DEFAULT);
 diff --git a/cromite_flags/third_party/blink/common/features_h/Block-url-leakage-sandbox-iframe.inc b/cromite_flags/third_party/blink/common/features_h/Block-url-leakage-sandbox-iframe.inc
 new file mode 100644
-index 00000000000..b57480676ec
+index 0000000000..b57480676e
 --- /dev/null
 +++ b/cromite_flags/third_party/blink/common/features_h/Block-url-leakage-sandbox-iframe.inc
 @@ -0,0 +1 @@
 +BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kBlockUrlLeakageSandboxIframe);
 diff --git a/third_party/blink/renderer/core/frame/location.cc b/third_party/blink/renderer/core/frame/location.cc
-index 69e701eef7f..abb20c44c18 100644
+index 69e701eef7..abb20c44c1 100644
 --- a/third_party/blink/renderer/core/frame/location.cc
 +++ b/third_party/blink/renderer/core/frame/location.cc
 @@ -28,6 +28,7 @@
@@ -116,7 +116,7 @@ index 69e701eef7f..abb20c44c18 100644
            frame->GetSecurityContext()->GetSecurityOrigin()->ToString());
      }
 diff --git a/third_party/blink/renderer/core/loader/document_loader.cc b/third_party/blink/renderer/core/loader/document_loader.cc
-index 661a3ef4c1c..a643d5245fa 100644
+index 661a3ef4c1..a643d5245f 100644
 --- a/third_party/blink/renderer/core/loader/document_loader.cc
 +++ b/third_party/blink/renderer/core/loader/document_loader.cc
 @@ -887,6 +887,11 @@ WebString DocumentLoader::HttpMethod() const {
@@ -146,7 +146,7 @@ index 661a3ef4c1c..a643d5245fa 100644
        mojom::blink::DocumentPolicyFeature::kForceLoadAtTop);
  
 diff --git a/third_party/blink/renderer/core/loader/document_loader.h b/third_party/blink/renderer/core/loader/document_loader.h
-index 462358cb17f..710f65634df 100644
+index 462358cb17..710f65634d 100644
 --- a/third_party/blink/renderer/core/loader/document_loader.h
 +++ b/third_party/blink/renderer/core/loader/document_loader.h
 @@ -837,7 +837,7 @@ class CORE_EXPORT DocumentLoader : public GarbageCollected<DocumentLoader>,

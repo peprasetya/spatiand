@@ -10,7 +10,7 @@ FILE:Enable-ImprovedBookmarks-by-default.patch
  1 file changed, 1 insertion(+), 2 deletions(-)
 
 diff --git a/components/bookmarks/browser/bookmark_node.cc b/components/bookmarks/browser/bookmark_node.cc
-index c8fb6e2a3c4..251919b0bd3 100644
+index c8fb6e2a3c..251919b0bd 100644
 --- a/components/bookmarks/browser/bookmark_node.cc
 +++ b/components/bookmarks/browser/bookmark_node.cc
 @@ -168,8 +168,7 @@ bool BookmarkPermanentNode::IsTypeVisibleWhenEmpty(

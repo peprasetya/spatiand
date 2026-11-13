@@ -11,7 +11,7 @@ FILE:Hardening-against-incognito-mode-detection.patch
  2 files changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/storage/browser/quota/quota_manager_impl.cc b/storage/browser/quota/quota_manager_impl.cc
-index 2e663254e04..4b92f9c0dff 100644
+index 2e663254e0..4b92f9c0df 100644
 --- a/storage/browser/quota/quota_manager_impl.cc
 +++ b/storage/browser/quota/quota_manager_impl.cc
 @@ -1674,7 +1674,7 @@ int64_t QuotaManagerImpl::GetQuotaForStorageKey(
@@ -24,7 +24,7 @@ index 2e663254e04..4b92f9c0dff 100644
      return settings.session_only_per_storage_key_quota;
    }
 diff --git a/storage/browser/quota/quota_settings.cc b/storage/browser/quota/quota_settings.cc
-index 2769a5bee5d..47f60cd08a6 100644
+index 2769a5bee5..47f60cd08a 100644
 --- a/storage/browser/quota/quota_settings.cc
 +++ b/storage/browser/quota/quota_settings.cc
 @@ -56,7 +56,7 @@ std::optional<QuotaSettings> CalculateNominalDynamicSettings(

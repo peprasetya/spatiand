@@ -34,7 +34,7 @@ window's sink, so its streams switch as it moves to another window.
  create mode 100644 content/browser/media/spatiand_window_audio.h
 
 diff --git a/content/browser/BUILD.gn b/content/browser/BUILD.gn
-index 99386464e9f..bf20ec0d628 100644
+index 99386464e9..bf20ec0d62 100644
 --- a/content/browser/BUILD.gn
 +++ b/content/browser/BUILD.gn
 @@ -1247,6 +1247,8 @@ source_set("browser") {
@@ -47,7 +47,7 @@ index 99386464e9f..bf20ec0d628 100644
      "media/frameless_media_interface_proxy.cc",
      "media/frameless_media_interface_proxy.h",
 diff --git a/content/browser/browser_main_loop.cc b/content/browser/browser_main_loop.cc
-index 8ae26ded672..d252c3445cf 100644
+index 8ae26ded67..d252c3445c 100644
 --- a/content/browser/browser_main_loop.cc
 +++ b/content/browser/browser_main_loop.cc
 @@ -4,6 +4,8 @@
@@ -72,7 +72,7 @@ index 8ae26ded672..d252c3445cf 100644
  
 diff --git a/content/browser/media/spatiand_window_audio.cc b/content/browser/media/spatiand_window_audio.cc
 new file mode 100644
-index 00000000000..9abb7e851ce
+index 0000000000..9abb7e851c
 --- /dev/null
 +++ b/content/browser/media/spatiand_window_audio.cc
 @@ -0,0 +1,170 @@
@@ -248,7 +248,7 @@ index 00000000000..9abb7e851ce
 +}  // namespace content
 diff --git a/content/browser/media/spatiand_window_audio.h b/content/browser/media/spatiand_window_audio.h
 new file mode 100644
-index 00000000000..62e0e922d26
+index 0000000000..62e0e922d2
 --- /dev/null
 +++ b/content/browser/media/spatiand_window_audio.h
 @@ -0,0 +1,30 @@
@@ -283,7 +283,7 @@ index 00000000000..62e0e922d26
 +
 +#endif  // CONTENT_BROWSER_MEDIA_SPATIAND_WINDOW_AUDIO_H_
 diff --git a/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc b/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc
-index 53496168210..76f58767c57 100644
+index 5349616821..76f58767c5 100644
 --- a/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc
 +++ b/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc
 @@ -11,6 +11,12 @@
@@ -314,7 +314,7 @@ index 53496168210..76f58767c57 100644
  }
  
 diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
-index 1ef552b30e8..6b652423307 100644
+index 1ef552b30e..6b65242330 100644
 --- a/content/browser/web_contents/web_contents_view_aura.cc
 +++ b/content/browser/web_contents/web_contents_view_aura.cc
 @@ -4,6 +4,8 @@
@@ -338,7 +338,7 @@ index 1ef552b30e8..6b652423307 100644
  
    void OnWindowRemovingFromRootWindow(aura::Window* window,
 diff --git a/ui/aura/window_tree_host.cc b/ui/aura/window_tree_host.cc
-index 9596b0ed528..e99f0530af5 100644
+index 9596b0ed52..e99f0530af 100644
 --- a/ui/aura/window_tree_host.cc
 +++ b/ui/aura/window_tree_host.cc
 @@ -854,4 +854,8 @@ void WindowTreeHost::OnFirstSurfaceActivation(
@@ -351,7 +351,7 @@ index 9596b0ed528..e99f0530af5 100644
 +
  }  // namespace aura
 diff --git a/ui/aura/window_tree_host.h b/ui/aura/window_tree_host.h
-index e859d77fe10..6209d0137d6 100644
+index e859d77fe1..6209d0137d 100644
 --- a/ui/aura/window_tree_host.h
 +++ b/ui/aura/window_tree_host.h
 @@ -228,6 +228,10 @@ class AURA_EXPORT WindowTreeHost : public ui::ImeKeyEventDispatcher,
@@ -366,7 +366,7 @@ index e859d77fe10..6209d0137d6 100644
    virtual gfx::Rect GetBoundsInDIP() const;
  
 diff --git a/ui/aura/window_tree_host_platform.cc b/ui/aura/window_tree_host_platform.cc
-index 639d93efbb5..b08cccec596 100644
+index 639d93efbb..b08cccec59 100644
 --- a/ui/aura/window_tree_host_platform.cc
 +++ b/ui/aura/window_tree_host_platform.cc
 @@ -127,6 +127,10 @@ void WindowTreeHostPlatform::HideImpl() {
@@ -381,7 +381,7 @@ index 639d93efbb5..b08cccec596 100644
    return platform_window_->GetBoundsInPixels();
  }
 diff --git a/ui/aura/window_tree_host_platform.h b/ui/aura/window_tree_host_platform.h
-index 20b1f3b112a..8d0cc18fd1a 100644
+index 20b1f3b112..8d0cc18fd1 100644
 --- a/ui/aura/window_tree_host_platform.h
 +++ b/ui/aura/window_tree_host_platform.h
 @@ -44,6 +44,7 @@ class AURA_EXPORT WindowTreeHostPlatform : public WindowTreeHost,
@@ -393,7 +393,7 @@ index 20b1f3b112a..8d0cc18fd1a 100644
    void SetCapture() override;
    void ReleaseCapture() override;
 diff --git a/ui/ozone/platform/wayland/host/wayland_window.cc b/ui/ozone/platform/wayland/host/wayland_window.cc
-index 010e823ac14..2a402c042a3 100644
+index 010e823ac1..2a402c042a 100644
 --- a/ui/ozone/platform/wayland/host/wayland_window.cc
 +++ b/ui/ozone/platform/wayland/host/wayland_window.cc
 @@ -553,6 +553,10 @@ void WaylandWindow::Close() {
@@ -408,7 +408,7 @@ index 010e823ac14..2a402c042a3 100644
    NOTREACHED();
  }
 diff --git a/ui/ozone/platform/wayland/host/wayland_window.h b/ui/ozone/platform/wayland/host/wayland_window.h
-index e0e6bb8d525..6e15bac918d 100644
+index e0e6bb8d52..6e15bac918 100644
 --- a/ui/ozone/platform/wayland/host/wayland_window.h
 +++ b/ui/ozone/platform/wayland/host/wayland_window.h
 @@ -209,6 +209,7 @@ class WaylandWindow : public PlatformWindow,
@@ -420,7 +420,7 @@ index e0e6bb8d525..6e15bac918d 100644
    void SetBoundsInPixels(const gfx::Rect& bounds) override;
    gfx::Rect GetBoundsInPixels() const override;
 diff --git a/ui/platform_window/platform_window.cc b/ui/platform_window/platform_window.cc
-index 8b5964d3c99..eddababc20a 100644
+index 8b5964d3c9..eddababc20 100644
 --- a/ui/platform_window/platform_window.cc
 +++ b/ui/platform_window/platform_window.cc
 @@ -76,4 +76,8 @@ bool PlatformWindow::IsClientControlledWindowMovementSupported() const {
@@ -433,7 +433,7 @@ index 8b5964d3c99..eddababc20a 100644
 +
  }  // namespace ui
 diff --git a/ui/platform_window/platform_window.h b/ui/platform_window/platform_window.h
-index e9eb27e497a..57c2325dade 100644
+index e9eb27e497..57c2325dad 100644
 --- a/ui/platform_window/platform_window.h
 +++ b/ui/platform_window/platform_window.h
 @@ -45,6 +45,10 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindow

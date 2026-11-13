@@ -11,7 +11,7 @@ FILE:Remove-auth-header-upon-cross-origin-redirect.patch
  2 files changed, 7 insertions(+)
 
 diff --git a/third_party/blink/renderer/platform/loader/fetch/resource_loader.cc b/third_party/blink/renderer/platform/loader/fetch/resource_loader.cc
-index e7256814168..5e2eea9c597 100644
+index e725681416..5e2eea9c59 100644
 --- a/third_party/blink/renderer/platform/loader/fetch/resource_loader.cc
 +++ b/third_party/blink/renderer/platform/loader/fetch/resource_loader.cc
 @@ -536,6 +536,9 @@ bool ResourceLoader::WillFollowRedirect(
@@ -25,7 +25,7 @@ index e7256814168..5e2eea9c597 100644
  
    // TODO(https://crbug.com/471397, https://crbug.com/1406737): Reconsider
 diff --git a/third_party/blink/renderer/platform/loader/fetch/url_loader/sync_load_context.cc b/third_party/blink/renderer/platform/loader/fetch/url_loader/sync_load_context.cc
-index 0bac72cb7ed..8530c403525 100644
+index 0bac72cb7e..8530c40352 100644
 --- a/third_party/blink/renderer/platform/loader/fetch/url_loader/sync_load_context.cc
 +++ b/third_party/blink/renderer/platform/loader/fetch/url_loader/sync_load_context.cc
 @@ -200,6 +200,10 @@ void SyncLoadContext::FollowRedirect(std::vector<std::string> removed_headers,

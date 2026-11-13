@@ -15,7 +15,7 @@ FILE:Bubble-Locking-on-UI-DevTools.patch
  2 files changed, 21 insertions(+), 12 deletions(-)
 
 diff --git a/chrome/browser/ui/views/toolbar/reload_button.cc b/chrome/browser/ui/views/toolbar/reload_button.cc
-index 12c916998a9..28575b1dbee 100644
+index 12c916998a..28575b1dbe 100644
 --- a/chrome/browser/ui/views/toolbar/reload_button.cc
 +++ b/chrome/browser/ui/views/toolbar/reload_button.cc
 @@ -352,6 +352,14 @@ void ReloadButton::ButtonPressed(const ui::Event& event) {
@@ -34,7 +34,7 @@ index 12c916998a9..28575b1dbee 100644
      // changed to a stop button.  We do not set |intended_mode_| to Mode::kStop
      // here as the browser will do that when it actually starts loading (which
 diff --git a/ui/views/widget/widget.h b/ui/views/widget/widget.h
-index 2de787c406d..ef7c7019014 100644
+index 2de787c406..ef7c701901 100644
 --- a/ui/views/widget/widget.h
 +++ b/ui/views/widget/widget.h
 @@ -1566,6 +1566,19 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,

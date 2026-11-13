@@ -10,7 +10,7 @@ FILE:Never-fetch-popular-sites.patch
  1 file changed, 7 insertions(+), 3 deletions(-)
 
 diff --git a/components/ntp_tiles/popular_sites_impl.cc b/components/ntp_tiles/popular_sites_impl.cc
-index 0ae75f317b1..5443049c67d 100644
+index 0ae75f317b..5443049c67 100644
 --- a/components/ntp_tiles/popular_sites_impl.cc
 +++ b/components/ntp_tiles/popular_sites_impl.cc
 @@ -64,7 +64,6 @@ const char kPopularSitesDefaultDirectory[] = "chrome/ntp/";

@@ -16,7 +16,7 @@ FILE:Lock-Profile-Cookie-Database.patch
  create mode 100644 cromite_flags/chrome/browser/browser_features_h/Lock-Profile-Cookie-Database.inc
 
 diff --git a/chrome/browser/net/profile_network_context_service.cc b/chrome/browser/net/profile_network_context_service.cc
-index a38b75523dd..2e67dc3abde 100644
+index a38b75523d..2e67dc3abd 100644
 --- a/chrome/browser/net/profile_network_context_service.cc
 +++ b/chrome/browser/net/profile_network_context_service.cc
 @@ -1419,6 +1419,14 @@ void ProfileNetworkContextService::ConfigureNetworkContextParamsInternal(
@@ -36,7 +36,7 @@ index a38b75523dd..2e67dc3abde 100644
              network_context_params);
 diff --git a/cromite_flags/chrome/browser/browser_features_cc/Lock-Profile-Cookie-Database.inc b/cromite_flags/chrome/browser/browser_features_cc/Lock-Profile-Cookie-Database.inc
 new file mode 100644
-index 00000000000..6f6415f8e27
+index 0000000000..6f6415f8e2
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/browser_features_cc/Lock-Profile-Cookie-Database.inc
 @@ -0,0 +1,7 @@
@@ -49,7 +49,7 @@ index 00000000000..6f6415f8e27
 +#endif
 diff --git a/cromite_flags/chrome/browser/browser_features_h/Lock-Profile-Cookie-Database.inc b/cromite_flags/chrome/browser/browser_features_h/Lock-Profile-Cookie-Database.inc
 new file mode 100644
-index 00000000000..263a50a7c16
+index 0000000000..263a50a7c1
 --- /dev/null
 +++ b/cromite_flags/chrome/browser/browser_features_h/Lock-Profile-Cookie-Database.inc
 @@ -0,0 +1,5 @@
@@ -59,7 +59,7 @@ index 00000000000..263a50a7c16
 +
 +#endif
 diff --git a/services/network/network_context.cc b/services/network/network_context.cc
-index d6fdf88f248..84e3b984612 100644
+index d6fdf88f24..84e3b98461 100644
 --- a/services/network/network_context.cc
 +++ b/services/network/network_context.cc
 @@ -3482,7 +3482,7 @@ NetworkContext::MakeSessionCleanupCookieStore() const {
@@ -72,7 +72,7 @@ index d6fdf88f248..84e3b984612 100644
    const bool enable_exclusive_access = false;
  #endif  // BUILDFLAG(IS_WIN)
 diff --git a/services/network/public/mojom/network_context.mojom b/services/network/public/mojom/network_context.mojom
-index eca3de7d321..5c287bf5d14 100644
+index eca3de7d32..5c287bf5d1 100644
 --- a/services/network/public/mojom/network_context.mojom
 +++ b/services/network/public/mojom/network_context.mojom
 @@ -395,6 +395,14 @@ struct NetworkContextParams {

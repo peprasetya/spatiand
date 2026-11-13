@@ -12,7 +12,7 @@ FILE:Disable-WebGPU.patch
  3 files changed, 6 insertions(+), 1 deletion(-)
 
 diff --git a/content/child/runtime_features.cc b/content/child/runtime_features.cc
-index 94a8fbf6944..7fd7a265371 100644
+index 94a8fbf694..7fd7a26537 100644
 --- a/content/child/runtime_features.cc
 +++ b/content/child/runtime_features.cc
 @@ -482,6 +482,8 @@ void SetCustomizedRuntimeFeaturesFromCombinedArgs(
@@ -25,7 +25,7 @@ index 94a8fbf6944..7fd7a265371 100644
        content::IsBackForwardCacheEnabled());
  
 diff --git a/gpu/config/gpu_finch_features.cc b/gpu/config/gpu_finch_features.cc
-index bf394625ffa..ecb0f0cd804 100644
+index bf394625ff..ecb0f0cd80 100644
 --- a/gpu/config/gpu_finch_features.cc
 +++ b/gpu/config/gpu_finch_features.cc
 @@ -283,7 +283,7 @@ BASE_FEATURE(kEnableDrDc,
@@ -38,7 +38,7 @@ index bf394625ffa..ecb0f0cd804 100644
  #define WEBGPU_ENABLED base::FEATURE_DISABLED_BY_DEFAULT
  #endif
 diff --git a/third_party/blink/renderer/modules/webgpu/gpu.cc b/third_party/blink/renderer/modules/webgpu/gpu.cc
-index 74daeb175a0..d9df1e40057 100644
+index 74daeb175a..d9df1e4005 100644
 --- a/third_party/blink/renderer/modules/webgpu/gpu.cc
 +++ b/third_party/blink/renderer/modules/webgpu/gpu.cc
 @@ -151,6 +151,8 @@ GPU::GPU(NavigatorBase& navigator)

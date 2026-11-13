@@ -9,7 +9,7 @@ FILE:Temp-disable-experimental-web-platform-features.patch
  1 file changed, 4 insertions(+), 4 deletions(-)
 
 diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
-index 904b2bbe50e..654342c9666 100644
+index 904b2bbe50..654342c966 100644
 --- a/chrome/browser/about_flags.cc
 +++ b/chrome/browser/about_flags.cc
 @@ -5422,10 +5422,10 @@ const FeatureEntry kFeatureEntries[] = {

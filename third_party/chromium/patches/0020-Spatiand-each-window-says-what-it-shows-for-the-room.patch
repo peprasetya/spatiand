@@ -42,7 +42,7 @@ the password field focused, no field at all and the password nowhere in it.
  create mode 100644 ui/ozone/platform/wayland/host/spatiand_xr.h
 
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 4aa5d41e98a..18ad3d0c80d 100644
+index 4aa5d41e98..18ad3d0c80 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -1831,6 +1831,8 @@ source_set("core") {
@@ -64,7 +64,7 @@ index 4aa5d41e98a..18ad3d0c80d 100644
      if (use_dbus) {
 diff --git a/chrome/browser/spatiand/describe.cc b/chrome/browser/spatiand/describe.cc
 new file mode 100644
-index 00000000000..a4dcc14b09d
+index 0000000000..a4dcc14b09
 --- /dev/null
 +++ b/chrome/browser/spatiand/describe.cc
 @@ -0,0 +1,219 @@
@@ -289,7 +289,7 @@ index 00000000000..a4dcc14b09d
 +}  // namespace spatiand
 diff --git a/chrome/browser/spatiand/describe.h b/chrome/browser/spatiand/describe.h
 new file mode 100644
-index 00000000000..d4f37d9dee7
+index 0000000000..d4f37d9dee
 --- /dev/null
 +++ b/chrome/browser/spatiand/describe.h
 @@ -0,0 +1,18 @@
@@ -312,7 +312,7 @@ index 00000000000..d4f37d9dee7
 +
 +#endif  // CHROME_BROWSER_SPATIAND_DESCRIBE_H_
 diff --git a/chrome/browser/spatiand/main_parts.cc b/chrome/browser/spatiand/main_parts.cc
-index c5262fd921b..6b535cc7b6c 100644
+index c5262fd921..6b535cc7b6 100644
 --- a/chrome/browser/spatiand/main_parts.cc
 +++ b/chrome/browser/spatiand/main_parts.cc
 @@ -3,6 +3,7 @@
@@ -332,7 +332,7 @@ index c5262fd921b..6b535cc7b6c 100644
  }
  
 diff --git a/third_party/wayland-protocols/BUILD.gn b/third_party/wayland-protocols/BUILD.gn
-index 7beb1179926..0bcf68eedcf 100644
+index 7beb117992..0bcf68eedc 100644
 --- a/third_party/wayland-protocols/BUILD.gn
 +++ b/third_party/wayland-protocols/BUILD.gn
 @@ -144,6 +144,11 @@ wayland_protocol("single_pixel_buffer") {
@@ -349,7 +349,7 @@ index 7beb1179926..0bcf68eedcf 100644
  }
 diff --git a/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml b/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml
 new file mode 100644
-index 00000000000..4d5f2052adf
+index 0000000000..4d5f2052ad
 --- /dev/null
 +++ b/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml
 @@ -0,0 +1,673 @@
@@ -1027,7 +1027,7 @@ index 00000000000..4d5f2052adf
 +
 +</protocol>
 diff --git a/ui/ozone/platform/wayland/BUILD.gn b/ui/ozone/platform/wayland/BUILD.gn
-index 934fb02480b..484d753a02e 100644
+index 934fb02480..484d753a02 100644
 --- a/ui/ozone/platform/wayland/BUILD.gn
 +++ b/ui/ozone/platform/wayland/BUILD.gn
 @@ -71,6 +71,8 @@ source_set("wayland") {
@@ -1049,7 +1049,7 @@ index 934fb02480b..484d753a02e 100644
      "//ui/base",
 diff --git a/ui/ozone/platform/wayland/host/spatiand_xr.cc b/ui/ozone/platform/wayland/host/spatiand_xr.cc
 new file mode 100644
-index 00000000000..be06dc5f0cb
+index 0000000000..be06dc5f0c
 --- /dev/null
 +++ b/ui/ozone/platform/wayland/host/spatiand_xr.cc
 @@ -0,0 +1,114 @@
@@ -1169,7 +1169,7 @@ index 00000000000..be06dc5f0cb
 +}  // namespace ui
 diff --git a/ui/ozone/platform/wayland/host/spatiand_xr.h b/ui/ozone/platform/wayland/host/spatiand_xr.h
 new file mode 100644
-index 00000000000..34a59a44176
+index 0000000000..34a59a4417
 --- /dev/null
 +++ b/ui/ozone/platform/wayland/host/spatiand_xr.h
 @@ -0,0 +1,40 @@
@@ -1214,7 +1214,7 @@ index 00000000000..34a59a44176
 +
 +#endif  // UI_OZONE_PLATFORM_WAYLAND_HOST_SPATIAND_XR_H_
 diff --git a/ui/ozone/platform/wayland/host/wayland_connection.cc b/ui/ozone/platform/wayland/host/wayland_connection.cc
-index 7e3c92a47b6..debdaeaa485 100644
+index 7e3c92a47b..debdaeaa48 100644
 --- a/ui/ozone/platform/wayland/host/wayland_connection.cc
 +++ b/ui/ozone/platform/wayland/host/wayland_connection.cc
 @@ -37,6 +37,7 @@
@@ -1235,7 +1235,7 @@ index 7e3c92a47b6..debdaeaa485 100644
                                &ToplevelIconManager::Instantiate);
    RegisterGlobalObjectFactory(WaylandCursorShape::kInterfaceName,
 diff --git a/ui/ozone/platform/wayland/host/wayland_toplevel_window.cc b/ui/ozone/platform/wayland/host/wayland_toplevel_window.cc
-index 8fbac8ac7da..c6509735d12 100644
+index 8fbac8ac7d..c6509735d1 100644
 --- a/ui/ozone/platform/wayland/host/wayland_toplevel_window.cc
 +++ b/ui/ozone/platform/wayland/host/wayland_toplevel_window.cc
 @@ -2,6 +2,7 @@
@@ -1268,7 +1268,7 @@ index 8fbac8ac7da..c6509735d12 100644
  
    // If session management is supported and session data was passed in at
 diff --git a/ui/platform_window/platform_window.cc b/ui/platform_window/platform_window.cc
-index eddababc20a..e3bdc92fe81 100644
+index eddababc20..e3bdc92fe8 100644
 --- a/ui/platform_window/platform_window.cc
 +++ b/ui/platform_window/platform_window.cc
 @@ -6,6 +6,7 @@
@@ -1302,7 +1302,7 @@ index eddababc20a..e3bdc92fe81 100644
 +
  }  // namespace ui
 diff --git a/ui/platform_window/platform_window.h b/ui/platform_window/platform_window.h
-index 57c2325dade..b0ac163d524 100644
+index 57c2325dad..b0ac163d52 100644
 --- a/ui/platform_window/platform_window.h
 +++ b/ui/platform_window/platform_window.h
 @@ -10,6 +10,8 @@

@@ -29,7 +29,7 @@ FILE:Site-setting-for-images.patch
 
 diff --git a/components/browser_ui/strings/bromite_content_settings/images.grdp b/components/browser_ui/strings/bromite_content_settings/images.grdp
 new file mode 100644
-index 00000000000..4aed8ad0176
+index 0000000000..4aed8ad017
 --- /dev/null
 +++ b/components/browser_ui/strings/bromite_content_settings/images.grdp
 @@ -0,0 +1,23 @@
@@ -58,7 +58,7 @@ index 00000000000..4aed8ad0176
 +</grit-part>
 diff --git a/components/content_settings/core/browser/bromite_content_settings/images.inc b/components/content_settings/core/browser/bromite_content_settings/images.inc
 new file mode 100644
-index 00000000000..fb8d4a9a154
+index 0000000000..fb8d4a9a15
 --- /dev/null
 +++ b/components/content_settings/core/browser/bromite_content_settings/images.inc
 @@ -0,0 +1,6 @@
@@ -69,7 +69,7 @@ index 00000000000..fb8d4a9a154
 +    .set_title_ui(IDS_SITE_SETTINGS_TYPE_IMAGES)
 +    .set_mid_sentence_ui(IDS_SITE_SETTINGS_TYPE_IMAGES_MID_SENTENCE);
 diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
-index 0b6f22471a2..e822af4b1d2 100644
+index 0b6f22471a..e822af4b1d 100644
 --- a/components/content_settings/core/browser/content_settings_registry.cc
 +++ b/components/content_settings/core/browser/content_settings_registry.cc
 @@ -106,8 +106,7 @@ void ContentSettingsRegistry::Init() {
@@ -83,7 +83,7 @@ index 0b6f22471a2..e822af4b1d2 100644
             PermissionSettingsInfo::EXCEPTIONS_ON_SECURE_AND_INSECURE_ORIGINS);
  
 diff --git a/components/content_settings/renderer/content_settings_agent_impl.cc b/components/content_settings/renderer/content_settings_agent_impl.cc
-index 1b02a24ed2f..f367c973e87 100644
+index 1b02a24ed2..f367c973e8 100644
 --- a/components/content_settings/renderer/content_settings_agent_impl.cc
 +++ b/components/content_settings/renderer/content_settings_agent_impl.cc
 @@ -416,6 +416,21 @@ bool ContentSettingsAgentImpl::AllowStorageAccessSync(
@@ -109,7 +109,7 @@ index 1b02a24ed2f..f367c973e87 100644
    return delegate_->AllowReadFromClipboard();
  }
 diff --git a/components/content_settings/renderer/content_settings_agent_impl.h b/components/content_settings/renderer/content_settings_agent_impl.h
-index 009d70427ff..c083ea28bd0 100644
+index 009d70427f..c083ea28bd 100644
 --- a/components/content_settings/renderer/content_settings_agent_impl.h
 +++ b/components/content_settings/renderer/content_settings_agent_impl.h
 @@ -83,6 +83,8 @@ class ContentSettingsAgentImpl
@@ -122,7 +122,7 @@ index 009d70427ff..c083ea28bd0 100644
    bool AllowWriteToClipboard() override;
    void DidNotAllowImage() override;
 diff --git a/third_party/blink/public/platform/web_content_settings_client.h b/third_party/blink/public/platform/web_content_settings_client.h
-index 791016c8f5e..8b9ec0f94a3 100644
+index 791016c8f5..8b9ec0f94a 100644
 --- a/third_party/blink/public/platform/web_content_settings_client.h
 +++ b/third_party/blink/public/platform/web_content_settings_client.h
 @@ -55,6 +55,11 @@ class WebContentSettingsClient {
@@ -138,7 +138,7 @@ index 791016c8f5e..8b9ec0f94a3 100644
    virtual bool AllowRunningInsecureContent(bool enabled_per_settings,
                                             const WebURL&) {
 diff --git a/third_party/blink/renderer/core/frame/local_frame.cc b/third_party/blink/renderer/core/frame/local_frame.cc
-index 976be40ac78..5f1d2d4c912 100644
+index 976be40ac7..5f1d2d4c91 100644
 --- a/third_party/blink/renderer/core/frame/local_frame.cc
 +++ b/third_party/blink/renderer/core/frame/local_frame.cc
 @@ -4460,19 +4460,6 @@ bool LocalFrame::IsSameOrigin() {
@@ -162,7 +162,7 @@ index 976be40ac78..5f1d2d4c912 100644
    DCHECK(!IsDetached());
    // If this is called in the middle of detach, GetDocumentLoader() might
 diff --git a/third_party/blink/renderer/core/frame/local_frame.h b/third_party/blink/renderer/core/frame/local_frame.h
-index fc1bb89344d..ec7f3300a51 100644
+index fc1bb89344..ec7f3300a5 100644
 --- a/third_party/blink/renderer/core/frame/local_frame.h
 +++ b/third_party/blink/renderer/core/frame/local_frame.h
 @@ -978,12 +978,6 @@ class CORE_EXPORT LocalFrame final
@@ -179,7 +179,7 @@ index fc1bb89344d..ec7f3300a51 100644
    // convenience method that checks both renderer content settings and frame
    // settings.
 diff --git a/third_party/blink/renderer/core/html/image_document.cc b/third_party/blink/renderer/core/html/image_document.cc
-index 3fbb2424093..2ce2fe27cad 100644
+index 3fbb242409..2ce2fe27ca 100644
 --- a/third_party/blink/renderer/core/html/image_document.cc
 +++ b/third_party/blink/renderer/core/html/image_document.cc
 @@ -146,7 +146,14 @@ void ImageDocumentParser::AppendBytes(base::span<const uint8_t> data) {
@@ -199,7 +199,7 @@ index 3fbb2424093..2ce2fe27cad 100644
      auto* client = frame->GetContentSettingsClient();
      if (client) {
 diff --git a/third_party/blink/renderer/core/loader/frame_fetch_context.cc b/third_party/blink/renderer/core/loader/frame_fetch_context.cc
-index 530d05e0e7b..0716bcba68b 100644
+index 530d05e0e7..0716bcba68 100644
 --- a/third_party/blink/renderer/core/loader/frame_fetch_context.cc
 +++ b/third_party/blink/renderer/core/loader/frame_fetch_context.cc
 @@ -314,6 +314,7 @@ ResourceFetcher* FrameFetchContext::CreateFetcherForCommittedDocument(
@@ -233,7 +233,7 @@ index 530d05e0e7b..0716bcba68b 100644
    return images_enabled;
  }
 diff --git a/third_party/blink/renderer/core/loader/frame_fetch_context.h b/third_party/blink/renderer/core/loader/frame_fetch_context.h
-index 8ef950db977..5ccce864b6a 100644
+index 8ef950db97..5ccce864b6 100644
 --- a/third_party/blink/renderer/core/loader/frame_fetch_context.h
 +++ b/third_party/blink/renderer/core/loader/frame_fetch_context.h
 @@ -96,7 +96,7 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
@@ -246,7 +246,7 @@ index 8ef950db977..5ccce864b6a 100644
    void CheckGuardrailsPolicyForAssetSize(GuardrailPolicyAssetType asset_type,
                                           size_t bytes,
 diff --git a/third_party/blink/renderer/core/page/page.cc b/third_party/blink/renderer/core/page/page.cc
-index b85152c9ca8..bed7908c76f 100644
+index b85152c9ca..bed7908c76 100644
 --- a/third_party/blink/renderer/core/page/page.cc
 +++ b/third_party/blink/renderer/core/page/page.cc
 @@ -1029,9 +1029,8 @@ void Page::SettingsChanged(ChangeType change_type) {
@@ -262,7 +262,7 @@ index b85152c9ca8..bed7908c76f 100644
                GetSettings().GetLoadsImagesAutomatically());
          }
 diff --git a/third_party/blink/renderer/platform/loader/fetch/fetch_context.h b/third_party/blink/renderer/platform/loader/fetch/fetch_context.h
-index 804d2065f30..bfb1a08b9b2 100644
+index 804d2065f3..bfb1a08b9b 100644
 --- a/third_party/blink/renderer/platform/loader/fetch/fetch_context.h
 +++ b/third_party/blink/renderer/platform/loader/fetch/fetch_context.h
 @@ -116,7 +116,7 @@ class PLATFORM_EXPORT FetchContext : public GarbageCollected<FetchContext> {
@@ -275,7 +275,7 @@ index 804d2065f30..bfb1a08b9b2 100644
        ResourceType,
        const ResourceRequest&,
 diff --git a/third_party/blink/renderer/platform/loader/fetch/resource_fetcher.cc b/third_party/blink/renderer/platform/loader/fetch/resource_fetcher.cc
-index 8c54158fb8d..72ffcdd1188 100644
+index 8c54158fb8..72ffcdd118 100644
 --- a/third_party/blink/renderer/platform/loader/fetch/resource_fetcher.cc
 +++ b/third_party/blink/renderer/platform/loader/fetch/resource_fetcher.cc
 @@ -835,6 +835,7 @@ ResourceFetcher::ResourceFetcher(const ResourceFetcherInit& init)
@@ -318,7 +318,7 @@ index 8c54158fb8d..72ffcdd1188 100644
  }
  
 diff --git a/third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h b/third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h
-index f74971032d3..a2283bca8da 100644
+index f74971032d..a2283bca8d 100644
 --- a/third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h
 +++ b/third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h
 @@ -235,6 +235,7 @@ class PLATFORM_EXPORT ResourceFetcher

@@ -27,7 +27,7 @@ own subtitle tracks.
  4 files changed, 59 insertions(+), 10 deletions(-)
 
 diff --git a/media/base/supported_types.cc b/media/base/supported_types.cc
-index f78f0937960..0e25f040cd5 100644
+index f78f093796..0e25f040cd 100644
 --- a/media/base/supported_types.cc
 +++ b/media/base/supported_types.cc
 @@ -452,10 +452,12 @@ bool IsDefaultDecoderSupportedVideoType(const VideoType& type) {
@@ -63,7 +63,7 @@ index f78f0937960..0e25f040cd5 100644
      case AudioCodec::kDTSE:
        return BUILDFLAG(ENABLE_PLATFORM_DTS_AUDIO);
 diff --git a/media/ffmpeg/ffmpeg_common.cc b/media/ffmpeg/ffmpeg_common.cc
-index b05f744b7a0..e196df9689e 100644
+index b05f744b7a..e196df9689 100644
 --- a/media/ffmpeg/ffmpeg_common.cc
 +++ b/media/ffmpeg/ffmpeg_common.cc
 @@ -65,8 +65,9 @@ VideoColorSpace GetGuessedColorSpace(const VideoColorSpace& color_space) {
@@ -133,7 +133,7 @@ index b05f744b7a0..e196df9689e 100644
  
    return kAllowedAudioCodecs.data();
 diff --git a/media/filters/ffmpeg_glue.cc b/media/filters/ffmpeg_glue.cc
-index 73aeffcacdf..3514b3511ca 100644
+index 73aeffcacd..3514b3511c 100644
 --- a/media/filters/ffmpeg_glue.cc
 +++ b/media/filters/ffmpeg_glue.cc
 @@ -90,6 +90,12 @@ static const char* GetAllowedDemuxers() {
@@ -175,7 +175,7 @@ index 73aeffcacdf..3514b3511ca 100644
  
    // For a successfully opened file, we will get a container we've compiled in.
 diff --git a/media/filters/ffmpeg_video_decoder.cc b/media/filters/ffmpeg_video_decoder.cc
-index f754854f55e..1c5db2fb2d3 100644
+index f754854f55..1c5db2fb2d 100644
 --- a/media/filters/ffmpeg_video_decoder.cc
 +++ b/media/filters/ffmpeg_video_decoder.cc
 @@ -72,17 +72,18 @@ static int GetFFmpegVideoDecoderThreadCount(const VideoDecoderConfig& config) {
