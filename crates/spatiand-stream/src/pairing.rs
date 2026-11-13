@@ -31,7 +31,8 @@
 //!
 //! An attempt is spent when the host answers a [`ClientMessage::PairStart`], not when a wrong
 //! confirmation arrives: the reply already carries the host's confirmation, which lets whoever
-//! asked check one guess at leisure, so the attempt is used whether or not it comes back.
+//! asked check one guess at leisure, so the attempt is used whether or not it comes back. A
+//! `PairStart` that cannot be answered -- its bytes are not a SPAKE2 message -- spends nothing.
 //!
 //! Both hosts -- the Linux `spatiand-host` and the Mac's -- run [`Window`]; every device runs
 //! [`Prover`] (through `link::pair`). One implementation, so the two cannot drift apart.
@@ -215,16 +216,21 @@ impl Window {
         if self.expired() {
             return Err("pairing on this host has closed again".into());
         }
-        self.pending = None;
         if self.started >= ATTEMPTS {
+            self.pending = None;
             return Err("too many wrong codes; pairing on this host has closed".into());
         }
-        self.started += 1;
         let (a, b) = spake_identities(&client, &host);
         let (state, mine) = Spake2::<Ed25519Group>::start_b(&Password::new(self.code.as_bytes()), &a, &b);
+        // **Before anything is spent.** A message that is not one is answered with nothing, so
+        // whoever sent it has learnt nothing to check a guess with, and it costs the window
+        // nothing: three of them used to close it, with every attempt gone and nobody at the
+        // host told, and whatever exchange was under way was dropped on the way.
         let key = state
             .finish(spake)
             .map_err(|e| format!("the device's pairing message is not one ({e:?})"))?;
+        self.pending = None;
+        self.started += 1;
         let confirm = confirmation(&key, HOST_LABEL, &client, &host).as_ref().to_vec();
         self.pending = Some(HostExchange { client, host, key });
         Ok(HostMessage::PairReply { spake: mine, confirm })
@@ -409,6 +415,30 @@ mod tests {
         }
         assert_eq!(window.abandon(&device), Some(Verdict::Locked));
         assert!(window.locked());
+    }
+
+    #[test]
+    fn a_message_that_is_not_one_spends_nothing() {
+        let (device, host) = (fp(1), fp(2));
+        let mut window = Window::with_code("482913".into(), LASTS);
+        // Somebody part way through, honestly.
+        let (prover, start) = Prover::start("482913", device, host);
+        let ClientMessage::PairStart { spake } = start else { unreachable!() };
+        let HostMessage::PairReply { spake, confirm } = window.start(host, device, &spake).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(window.attempts_left(), ATTEMPTS - 1);
+        // Too short, too long, the right length and not a point with the right side's mark.
+        for nonsense in [&[][..], &[0u8; 5][..], &[0u8; 33][..], &[0xffu8; 33][..], &[0u8; 64][..]] {
+            for _ in 0..ATTEMPTS + 1 {
+                assert!(window.start(host, fp(7), nonsense).is_err());
+            }
+        }
+        assert_eq!(window.attempts_left(), ATTEMPTS - 1, "nothing was answered, so nothing is spent");
+        assert!(!window.locked());
+        // And the exchange under way is still under way: it finishes and pairs.
+        let Ok(ClientMessage::PairConfirm { confirm }) = prover.finish(&spake, &confirm) else { unreachable!() };
+        assert_eq!(window.confirm(device, &confirm), Verdict::Paired(device));
     }
 
     #[test]
