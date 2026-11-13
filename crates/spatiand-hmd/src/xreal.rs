@@ -526,10 +526,16 @@ impl Hmd for XrealGlasses {
             // frame late for as long as the jolt lasted, and the queue backing up behind it.
             // Not for ever: a headset sending nothing else must not hold the frame.
             for _ in 0..64 {
-                let n = self
-                    .imu
-                    .read_report(&mut self.buf, Duration::ZERO)?
-                    .unwrap_or(0);
+                // A read that fails is the glasses unplugged, where that does not come as a
+                // hangup (the Mac: one empty report, `iohid`). Said as that, not as an error,
+                // which those draining a frame's samples drop without a word.
+                let n = match self.imu.read_report(&mut self.buf, Duration::ZERO) {
+                    Ok(read) => read.unwrap_or(0),
+                    Err(e) => {
+                        log::warn!("the glasses' IMU cannot be read ({e})");
+                        return Ok(Some(HmdEvent::Disconnected));
+                    }
+                };
                 if let Some(sample) = Self::parse_imu(&self.buf[..n]) {
                     if sample.is_plausible() {
                         return Ok(Some(HmdEvent::Imu(sample)));

@@ -114,6 +114,7 @@ impl Mcu {
             // the answer before going on.
             next_read: Instant::now() + timing.read_every,
             finished: false,
+            unplugged: false,
             unknown: std::collections::HashMap::new(),
         };
         let thread = std::thread::Builder::new()
@@ -212,6 +213,9 @@ struct Worker<P> {
     next_read: Instant,
     /// The owner has gone, noticed in the middle of a command.
     finished: bool,
+    /// The glasses have gone, noticed in the middle of a command: the read that said so has
+    /// used the notice up, where it comes once and not as a lasting hangup (the Mac, `iohid`).
+    unplugged: bool,
     /// The last payload of each event the glasses pushed that is not understood here, so that
     /// each is said once when it changes (`unprompted`).
     unknown: std::collections::HashMap<u16, Vec<u8>>,
@@ -233,6 +237,14 @@ impl<P: Port> Worker<P> {
     fn run(mut self, commands: &mpsc::Receiver<Command>) {
         let mut buf = [0u8; 64];
         loop {
+            // Noticed while an ack was waited for. Said here, as the idle wait below says it:
+            // on the Mac the unplugging is one empty report, read and gone by now, and the wait
+            // would never see it (the room then told of glasses "gone quiet", not unplugged,
+            // and this thread left writing to nothing every two seconds).
+            if self.unplugged {
+                self.emit(HmdEvent::Disconnected);
+                return;
+            }
             // Until there are none, before sleeping. A command sent while the last batch was
             // being carried out had its wake-up swallowed by the wait for that batch's ack, and
             // sleeping now would leave it queued until something else happened to arrive.
@@ -420,8 +432,15 @@ impl<P: Port> Worker<P> {
                 // Left for the idle wait to report, which it will as soon as this returns.
                 Waited::Unplugged => break,
             }
-            let Some(n) = self.port.read_report(&mut buf, Duration::ZERO)? else {
-                continue;
+            let n = match self.port.read_report(&mut buf, Duration::ZERO) {
+                Ok(Some(n)) => n,
+                Ok(None) => continue,
+                // What an unplug looks like from here, when it does not arrive as a hangup:
+                // kept for `run` to report, since reading it has taken it off the port.
+                Err(e) => {
+                    self.unplugged = true;
+                    return Err(e);
+                }
             };
             if n <= MCU_MSGID_OFFSET + 1 {
                 continue;
@@ -545,6 +564,51 @@ mod tests {
                 }),
             }
         }
+    }
+
+    /// A port that hears of an unplugging the Mac's way (`iohid`): once, as an empty report
+    /// whose reading fails, with no hangup after it.
+    struct OnceTold(UnixDatagram);
+
+    impl Port for OnceTold {
+        fn fd(&self) -> RawFd {
+            self.0.as_raw_fd()
+        }
+
+        fn write_report(&mut self, payload: &[u8]) -> Result<()> {
+            self.0.write_report(payload)
+        }
+
+        fn describe(&self) -> String {
+            "test port".into()
+        }
+
+        fn read_report(&mut self, buf: &mut [u8], timeout: Duration) -> Result<Option<usize>> {
+            match self.0.read_report(buf, timeout)? {
+                Some(0) => Err(HmdError::Io {
+                    path: "test port".into(),
+                    source: std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the glasses were unplugged"),
+                }),
+                read => Ok(read),
+            }
+        }
+    }
+
+    #[test]
+    fn an_unplug_that_lands_while_an_ack_is_waited_for_is_still_reported() {
+        let (ours, theirs) = UnixDatagram::pair().unwrap();
+        let timing = Timing { ack: SOON, read_every: Duration::from_secs(3600), settle: Duration::from_secs(3600) };
+        let mut mcu = Mcu::start(OnceTold(ours), timing).unwrap();
+        let glasses = Glasses(theirs);
+        let device = std::thread::spawn(move || {
+            glasses.command(SOON).expect("no command arrived");
+            // Unplugged instead of answering: the one empty report, and nothing after it.
+            glasses.0.send(&[]).unwrap();
+            glasses
+        });
+        assert!(mcu.exchange(MSG_R_BRIGHTNESS, &[], "read brightness").is_err());
+        assert_eq!(event(&mut mcu), Some(HmdEvent::Disconnected));
+        device.join().unwrap();
     }
 
     /// The glasses' side of the wire.
