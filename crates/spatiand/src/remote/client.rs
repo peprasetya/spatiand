@@ -1116,6 +1116,18 @@ impl Dispatch<wl_pointer::WlPointer, ()> for Client {
     }
 }
 
+/// The modifier keys among those `wl_keyboard.enter` says are down (evdev codes, four bytes
+/// each): Ctrl, Shift, Alt and Meta of either side. Only those: any other key held as the
+/// keyboard arrives -- the Enter that opened the window -- was pressed for whatever had the keys
+/// before and would be typed into this one, and Caps Lock pressed again would turn over.
+fn held_modifiers(keys: &[u8]) -> Vec<u32> {
+    const MODIFIERS: [u32; 8] = [29, 97, 42, 54, 56, 100, 125, 126];
+    keys.chunks_exact(4)
+        .map(|code| u32::from_ne_bytes([code[0], code[1], code[2], code[3]]))
+        .filter(|code| MODIFIERS.contains(code))
+        .collect()
+}
+
 impl Dispatch<wl_keyboard::WlKeyboard, ()> for Client {
     fn event(
         state: &mut Self,
@@ -1126,7 +1138,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for Client {
         _handle: &QueueHandle<Self>,
     ) {
         match event {
-            wl_keyboard::Event::Enter { surface, .. } => {
+            wl_keyboard::Event::Enter { surface, keys, .. } => {
                 state.keyboard_on = state.ids.get(&surface).copied();
                 // Said now, not with the first key. The host used to move its focus when a key
                 // arrived, which made that key the moment of the switch -- and an application
@@ -1134,6 +1146,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for Client {
                 // Ctrl+Shift+V in a terminal on the host, after turning to it, pasted nothing.
                 if let Some(id) = state.keyboard_on {
                     state.input.push(Told::Focus(Some(id)));
+                    // A modifier already held as the keyboard arrives is pressed there too: the
+                    // host has one keyboard, which let go of everything when the last window
+                    // lost the keys (or never had this key), and the V of a Ctrl+V begun before
+                    // the move would arrive bare. Its release comes as any key's does.
+                    for code in held_modifiers(&keys) {
+                        state.held_keys.retain(|held| *held != (id, code));
+                        state.held_keys.push((id, code));
+                        state.told(id, Input::Key { code, pressed: true }, None);
+                    }
                 }
             }
             wl_keyboard::Event::Leave { .. } => {
@@ -1171,5 +1192,21 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for Client {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::held_modifiers;
+
+    /// Of the keys down as the keyboard arrives, the host is told the modifiers and no others.
+    #[test]
+    fn only_modifiers_held_on_enter_are_pressed() {
+        // Left Ctrl, Enter, right Shift, Caps Lock, V.
+        let keys: Vec<u8> = [29u32, 28, 54, 58, 47].iter().flat_map(|code| code.to_ne_bytes()).collect();
+        assert_eq!(held_modifiers(&keys), vec![29, 54]);
+        assert!(held_modifiers(&[]).is_empty());
+        // A torn array (never sent, but not ours to trust) is read as far as it is whole.
+        assert_eq!(held_modifiers(&keys[..6]), vec![29]);
     }
 }
