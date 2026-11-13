@@ -402,7 +402,7 @@ fn run_host(
                 format!("0.0.0.0:{}", options.port).parse()
             },
         )?;
-        Some(Net::start(bind, identity, trust, poses)?)
+        Some(Net::start(bind, identity, trust, paired.fingerprints(), poses)?)
     } else {
         None
     };
@@ -483,11 +483,15 @@ fn run_host(
             pair::Paired::load(&list).fingerprints().iter().map(|f| (f.to_string(), String::new())).collect()
         })
     };
-    // Whether the session that is here has been let in. A stranger that came through an open
-    // pairing gate is connected but **not** admitted until it has proved the code shown here
-    // (`spatiand_stream::pairing`): until then it is told nothing but the pairing replies
-    // (`net.rs` sees to that), and everything it says but its pairing messages is ignored.
+    // Whether the session that is here has been let in.
     let mut admitted = false;
+    // A stranger that came through an open pairing gate, if one is waiting: which connection
+    // it is and whose certificate it has. It is **not** the session and has taken nothing
+    // over: the network holds it beside whoever is here, tells it nothing but the pairing
+    // replies addressed to it and passes on nothing it says but its pairing messages
+    // (`net.rs` sees to both). It becomes the session when it has proved the code shown here
+    // (`spatiand_stream::pairing`), and not before.
+    let mut stranger: Option<(u64, Fingerprint)> = None;
     // Set when a session arrives: one frame of every window, whether or not anything changed.
     let mut refresh_all = false;
     let mut pacer = Pacer::new(library.rates(Rates::default()));
@@ -523,11 +527,11 @@ fn run_host(
                         if paired.contains(&who) {
                             log::info!("{} is a session this host knows", who.short());
                             admitted = true;
-                        } else if pairing.is_some() {
-                            // In through the open gate, and let in only once it proves the code.
-                            log::info!("session {} from {address} may pair, if it has the code", who.short());
                         } else {
-                            // The gate should not have let it in; say no rather than serve it.
+                            // The network seats only the paired as the session, by a list
+                            // that can be a moment behind this one: a device just removed.
+                            // Say no rather than serve it.
+                            log::info!("session {} from {address} is not paired here", who.short());
                             net.send(ToSession::Control(HostMessage::Refused {
                                 version: spatiand_stream::VERSION,
                                 reason: "this host has not been paired with this headset".into(),
@@ -544,8 +548,44 @@ fn run_host(
                             refresh_all = true;
                         }
                     }
-                    FromSession::Left => {
-                        let gone = here.take();
+                    // **A stranger at the door.** It has taken nobody's place, and whoever is
+                    // here has not noticed.
+                    FromSession::Knocked { session, who, address } => {
+                        if paired.contains(&who) {
+                            // Paired, and the network had not heard yet: it is a session.
+                            net.send(ToSession::Proved { session });
+                        } else if pairing.is_some() {
+                            // In through the open gate, and let in only once it proves the code.
+                            log::info!("{} from {address} may pair, if it has the code", who.short());
+                            stranger = Some((session, who));
+                        } else {
+                            // The gate let it through as pairing closed. Nothing to wait for.
+                            net.send(ToSession::Stranger {
+                                session,
+                                message: HostMessage::Refused {
+                                    version: spatiand_stream::VERSION,
+                                    reason: "this host has not been paired with this headset".into(),
+                                },
+                            });
+                            net.send(ToSession::TurnAway { session });
+                        }
+                    }
+                    // The one waiting to pair went, by itself or hung up on. If it was part
+                    // way through proving the code it has spent its attempt: it heard the
+                    // host's half, which is enough to check one guess.
+                    FromSession::Left { session } if !(here.is_some() && session == here_session) => {
+                        let Some((_, who)) = stranger.filter(|(waiting, _)| *waiting == session) else {
+                            continue;
+                        };
+                        stranger = None;
+                        if let Some(verdict) = pairing.as_mut().and_then(|p| p.window.abandon(&who)) {
+                            if pairing_failed(&mut pairing, verdict, &who, control.as_ref()) {
+                                gate.set_open(false);
+                            }
+                        }
+                    }
+                    FromSession::Left { .. } => {
+                        here = None;
                         host.settings_peer = false;
                         attached = false;
                         // What the session was holding goes with it. What was copied here
@@ -562,37 +602,38 @@ fn run_host(
                         input::release_everything(&mut host, 0);
                         admitted = false;
                         net.set_admitted(here_session, false);
-                        // A device that leaves part way through proving the code has spent its
-                        // attempt: it heard the host's half, which is enough to check one guess.
-                        if let (Some(p), Some(who)) = (pairing.as_mut(), gone) {
-                            if let Some(verdict) = p.window.abandon(&who) {
-                                if pairing_failed(&mut pairing, verdict, &who, control.as_ref()) {
-                                    gate.set_open(false);
-                                }
-                            }
-                        }
                     }
-                    FromSession::Said(message) if admitted => {
+                    FromSession::Said { session, message }
+                        if admitted && here.is_some() && session == here_session =>
+                    {
                         said(&mut host, &library.served, message, &mut streams, &mut pads, &mut pacer);
                     }
-                    // **A device not let in.** Only its pairing is listened to; anything else
-                    // it says is dropped here.
-                    FromSession::Said(message) => {
-                        let (Some(who), Some(p)) = (here, pairing.as_mut()) else { continue };
+                    // **The one waiting to pair.** Only its pairing is listened to, and it is
+                    // answered by its number, so that no answer can reach the session. What
+                    // anybody else says -- a session not let in, a connection that has gone
+                    // -- is dropped here.
+                    FromSession::Said { session, message } => {
+                        let Some((_, who)) = stranger.filter(|(waiting, _)| *waiting == session) else {
+                            continue;
+                        };
+                        let Some(p) = pairing.as_mut() else { continue };
                         use spatiand_stream::ClientMessage as Says;
                         match message {
                             Says::PairStart { spake } => match p.window.start(this_host, who, &spake) {
                                 Ok(reply) => {
                                     log::info!("session {} is proving a pairing code", who.short());
-                                    net.send(ToSession::Control(reply));
+                                    net.send(ToSession::Stranger { session, message: reply });
                                 }
                                 Err(reason) => {
                                     log::info!("session {} cannot pair: {reason}", who.short());
-                                    net.send(ToSession::Control(HostMessage::Refused {
-                                        version: spatiand_stream::VERSION,
-                                        reason,
-                                    }));
-                                    net.send(ToSession::Close);
+                                    net.send(ToSession::Stranger {
+                                        session,
+                                        message: HostMessage::Refused {
+                                            version: spatiand_stream::VERSION,
+                                            reason,
+                                        },
+                                    });
+                                    net.send(ToSession::TurnAway { session });
                                 }
                             },
                             Says::PairConfirm { confirm } => match p.window.confirm(who, &confirm) {
@@ -603,22 +644,24 @@ fn run_host(
                                         control.tell(client, &format!("paired {}", who.short()));
                                     }
                                     pairing = None;
-                                    admitted = true;
-                                    attached = true;
-                                    net.set_admitted(here_session, true);
-                                    if let Some(s) = &host.sounds {
-                                        s.set_attached(true);
-                                    }
-                                    greet(net, &host, &library.served, &mut streams, recording);
-                                    refresh_all = true;
+                                    stranger = None;
+                                    // **Only now does it take anybody's place.** The network
+                                    // makes it the session, whoever was here is taken over, and
+                                    // it comes back as `Joined`, where it is found in the list
+                                    // just written, let in and greeted like any other.
+                                    net.set_paired(paired.fingerprints());
+                                    net.send(ToSession::Proved { session });
                                 }
                                 Verdict::Stray => {}
                                 verdict => {
-                                    net.send(ToSession::Control(HostMessage::Refused {
-                                        version: spatiand_stream::VERSION,
-                                        reason: spatiand_stream::pairing::WRONG_CODE.into(),
-                                    }));
-                                    net.send(ToSession::Close);
+                                    net.send(ToSession::Stranger {
+                                        session,
+                                        message: HostMessage::Refused {
+                                            version: spatiand_stream::VERSION,
+                                            reason: spatiand_stream::pairing::WRONG_CODE.into(),
+                                        },
+                                    });
+                                    net.send(ToSession::TurnAway { session });
                                     if pairing_failed(&mut pairing, verdict, &who, control.as_ref()) {
                                         gate.set_open(false);
                                     }
@@ -628,13 +671,16 @@ fn run_host(
                             // way, and would otherwise wait for an answer that never comes.
                             Says::Hello { .. } => {
                                 log::info!("session {} tried to pair the old way", who.short());
-                                net.send(ToSession::Control(HostMessage::Refused {
-                                    version: spatiand_stream::VERSION,
-                                    reason: "this host pairs with a code typed on the device; update \
-                                             Spatiand on this device, then pair again"
-                                        .into(),
-                                }));
-                                net.send(ToSession::Close);
+                                net.send(ToSession::Stranger {
+                                    session,
+                                    message: HostMessage::Refused {
+                                        version: spatiand_stream::VERSION,
+                                        reason: "this host pairs with a code typed on the device; update \
+                                                 Spatiand on this device, then pair again"
+                                            .into(),
+                                    },
+                                });
+                                net.send(ToSession::TurnAway { session });
                             }
                             _ => {}
                         }
@@ -686,6 +732,9 @@ fn run_host(
                 paired_seen = now;
                 paired = pair::Paired::load(&paired_path);
                 gate.set_paired(paired.fingerprints());
+                if let Some(net) = &net {
+                    net.set_paired(paired.fingerprints());
+                }
                 log::info!("the paired list changed on disk; {} trusted now", paired.fingerprints().len());
             }
         }
@@ -892,6 +941,14 @@ fn run_host(
             pairing = None;
             gate.set_open(false);
             log::info!("pairing window closed with nobody pairing");
+        }
+        // And whoever was waiting to pair when pairing closed -- its time up, its attempts
+        // gone, the terminal that asked gone -- has nothing left to wait for.
+        if pairing.is_none() {
+            if let (Some((session, who)), Some(net)) = (stranger.take(), &net) {
+                log::info!("{} was still waiting to pair when pairing closed", who.short());
+                net.send(ToSession::TurnAway { session });
+            }
         }
 
         // --- tell the session what changed ---

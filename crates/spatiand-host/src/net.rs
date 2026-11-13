@@ -23,12 +23,31 @@
 //!
 //! This used to say the same and do otherwise: the accept loop sat inside the running session,
 //! so a second device waited, connected and seeing nothing, until the first went away.
+//!
+//! ## A newcomer that is not paired takes nothing over
+//!
+//! While a pairing window is open the gate lets every certificate through the handshake, and
+//! "the newest wins" then meant anybody: a machine that did no more than connect closed the
+//! session that was in with [`CLOSE_TAKEN_OVER`] -- which a session does not come back from by
+//! itself -- before it had said one byte of the pairing code, and could do it again for as
+//! long as the window stood open. So there are two seats, kept by [`Seats`]:
+//!
+//! * **the session**: a connection whose certificate is paired sits here the moment it
+//!   arrives, taking over as above;
+//! * **the one waiting**: a connection whose certificate is not paired is held *beside* the
+//!   session. It is heard for its pairing messages and told the pairing replies, and that is
+//!   all (see [`waiting`]); the session goes on undisturbed. Only when the compositor says it
+//!   has proved the code ([`ToSession::Proved`]) does it take the session's seat. A wrong
+//!   code, a locked or closed window ([`ToSession::TurnAway`]), or its own time running out,
+//!   and it is hung up on with nobody else having noticed it.
+//!
+//! One waits at a time, and there the newest wins: strangers can push only each other out.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 
 use quinn::Connection;
 use spatiand_stream::transport::{peer_fingerprint, Trust, CLOSE_TAKEN_OVER};
@@ -41,6 +60,17 @@ pub enum ToSession {
     Control(HostMessage),
     /// Hang up on it: it was refused.
     Close,
+    /// For the connection waiting to pair, by its number, and never for the session: the
+    /// host's half of the pairing exchange or its refusal. Anything else is not sent it,
+    /// whatever is put here.
+    Stranger { session: u64, message: HostMessage },
+    /// Hang up on the connection waiting to pair, after whatever it was just told: its code
+    /// was wrong, or pairing has closed. Said of any other connection, it does nothing.
+    TurnAway { session: u64 },
+    /// The connection waiting to pair has proved the code (or turned out to be paired): it is
+    /// the session from here on, and whoever was is taken over. Said of any other connection,
+    /// it does nothing.
+    Proved { session: u64 },
     /// One encoded picture, already whole.
     Video {
         window: u16,
@@ -60,16 +90,31 @@ pub enum ToSession {
 }
 
 /// What arrives.
+///
+/// Everything carries which connection it is about, because there may be two: the session,
+/// and one waiting to pair.
 pub enum FromSession {
-    /// Somebody is here. Carries who, so pairing can write it down, and which connection
-    /// this is, to let it in by; see [`Admission`].
+    /// Somebody is here, as the session. Carries who, so pairing can write it down, and which
+    /// connection this is, to let it in by; see [`Admission`].
     Joined {
         session: u64,
         who: Fingerprint,
         address: SocketAddr,
     },
-    Said(ClientMessage),
-    Left,
+    /// Somebody the network does not know as paired has connected, and is held waiting: it
+    /// has taken nothing over and is told nothing until the compositor answers its pairing
+    /// messages ([`ToSession::Stranger`]), lets it be the session ([`ToSession::Proved`]) or
+    /// hangs up on it ([`ToSession::TurnAway`]).
+    Knocked {
+        session: u64,
+        who: Fingerprint,
+        address: SocketAddr,
+    },
+    /// What a connection said. From the session, anything; from the one waiting, only its
+    /// pairing messages ever get this far ([`heard_from`]).
+    Said { session: u64, message: ClientMessage },
+    /// That connection is gone, whichever of the two it was.
+    Left { session: u64 },
 }
 
 /// Which session has been let in, if one has.
@@ -104,11 +149,156 @@ impl Admission {
     }
 }
 
+/// The paired list, as the network thread reads it when a connection arrives.
+///
+/// The gate has the same list, but while pairing is open it answers yes for everybody, and the
+/// network has to tell the two apart: a paired certificate takes the session's seat at once, a
+/// stranger's waits. If this copy is behind, nothing is given away either way: a paired device
+/// it does not know yet waits one turn of the compositor's loop, which says [`ToSession::Proved`]
+/// on finding it in its own list; a removed one it still believes takes the seat and is told
+/// nothing, because being let in is the compositor's to say ([`Admission`]).
+#[derive(Clone, Default)]
+struct Known(Arc<RwLock<Vec<Fingerprint>>>);
+
+impl Known {
+    fn set(&self, paired: Vec<Fingerprint>) {
+        if let Ok(mut list) = self.0.write() {
+            *list = paired;
+        }
+    }
+
+    fn contains(&self, who: &Fingerprint) -> bool {
+        self.0.read().is_ok_and(|list| list.contains(who))
+    }
+}
+
+/// Whether a connection is the session or is still waiting to pair, shared with the tasks
+/// that read what it says: they are started when it arrives, and it may become the session
+/// while they are reading.
+#[derive(Clone)]
+struct Standing(Arc<AtomicBool>);
+
+impl Standing {
+    fn new(session: bool) -> Standing {
+        Standing(Arc::new(AtomicBool::new(session)))
+    }
+
+    fn is_session(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    fn now_the_session(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Which of the two seats a connection has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Seat {
+    Session,
+    Waiting,
+}
+
+/// Who sits where: the whole of the decision about who takes over from whom, apart from the
+/// sockets so that it can be tested without one.
+///
+/// Connections are named by their numbers. Every answer says who has to go, so the caller only
+/// closes what it is told to.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Seats {
+    session: Option<u64>,
+    waiting: Option<u64>,
+}
+
+impl Seats {
+    /// A connection has arrived. Paired, it is the session and whoever was is taken over;
+    /// not paired, it waits, and only another that was waiting gives way to it. Gives the seat
+    /// it got and who lost that seat to it.
+    fn arrived(&mut self, newcomer: u64, paired: bool) -> (Seat, Option<u64>) {
+        if paired {
+            (Seat::Session, self.session.replace(newcomer))
+        } else {
+            (Seat::Waiting, self.waiting.replace(newcomer))
+        }
+    }
+
+    /// The compositor says `who` has proved the pairing code. `None` if it is not the one
+    /// waiting -- it left, or another pushed it out -- and then nothing changes; otherwise it
+    /// is the session now, and inside is the session it takes over from, if there was one.
+    fn proved(&mut self, who: u64) -> Option<Option<u64>> {
+        if self.waiting != Some(who) {
+            return None;
+        }
+        self.waiting = None;
+        Some(self.session.replace(who))
+    }
+
+    /// The compositor says to hang up on `who`. Only the one waiting can be: `false`, and
+    /// nothing changes, for anybody else.
+    fn turned_away(&mut self, who: u64) -> bool {
+        if self.waiting != Some(who) {
+            return false;
+        }
+        self.waiting = None;
+        true
+    }
+
+    /// `who` has gone by itself. Gives the seat it leaves empty; `None` if it had none any
+    /// more, having been taken over or turned away already.
+    fn ended(&mut self, who: u64) -> Option<Seat> {
+        if self.session == Some(who) {
+            self.session = None;
+            Some(Seat::Session)
+        } else if self.waiting == Some(who) {
+            self.waiting = None;
+            Some(Seat::Waiting)
+        } else {
+            None
+        }
+    }
+}
+
+/// What a connection that has not proved the pairing code may say and be heard: the two
+/// halves of the exchange, and the `Hello` of a device from before codes were typed, which is
+/// answered with how to update. Nothing else it says leaves the network thread.
+fn pairing_message(message: &ClientMessage) -> bool {
+    matches!(
+        message,
+        ClientMessage::PairStart { .. } | ClientMessage::PairConfirm { .. } | ClientMessage::Hello { .. }
+    )
+}
+
+/// What a connection that has not proved the pairing code may be told: the host's half of the
+/// exchange, and no.
+fn for_the_unproven(message: &HostMessage) -> bool {
+    matches!(message, HostMessage::PairReply { .. } | HostMessage::Refused { .. })
+}
+
+/// Pass on what a connection said, if it may say it: a session anything, one waiting to pair
+/// only its pairing messages. `false` once the compositor is not there to hear.
+///
+/// Whether a session has been *let in* is not asked here but by the compositor, which hears
+/// of its joining and of what it says in the order they happened.
+fn heard_from(
+    serial: u64,
+    standing: &Standing,
+    message: ClientMessage,
+    inbox: &Sender<FromSession>,
+) -> bool {
+    if !standing.is_session() && !pairing_message(&message) {
+        log::debug!("a connection waiting to pair said something else; not listened to");
+        return true;
+    }
+    inbox.send(FromSession::Said { session: serial, message }).is_ok()
+}
+
 /// The network, as the compositor sees it: post, and poll.
 pub struct Net {
     /// Which session has been let in. Until it has, nothing is sent it but its refusal, and
     /// nothing it sends is listened to, whoever in the compositor forgets to ask.
     admitted: Admission,
+    /// Who is paired, for the network thread to seat arrivals by. See [`Known`].
+    known: Known,
     out: UnboundedSender<ToSession>,
     inbox: Receiver<FromSession>,
 }
@@ -116,17 +306,22 @@ pub struct Net {
 impl Net {
     /// Start listening. The returned handle is the only thing the compositor touches.
     /// `poses` is written on the network thread from the viewports the session sends; see
-    /// `crate::pose` for why there and not in the compositor's loop.
+    /// `crate::pose` for why there and not in the compositor's loop. `paired` is the paired
+    /// list as it stands; [`Net::set_paired`] whenever it changes.
     pub fn start(
         bind: SocketAddr,
         identity: Identity,
         trust: Trust,
+        paired: Vec<Fingerprint>,
         poses: Option<crate::pose::Poses>,
     ) -> Result<Net, String> {
         let (out, outbox) = unbounded_channel();
         let (inbox_tx, inbox) = std::sync::mpsc::channel();
         let admitted = Admission::default();
         let admitted_there = admitted.clone();
+        let known = Known::default();
+        known.set(paired);
+        let known_there = known.clone();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             // Two: one for the socket, one for everything else. A host is not a web server.
             .worker_threads(2)
@@ -149,10 +344,16 @@ impl Net {
         std::thread::Builder::new()
             .name("spatiand-host-net".into())
             .spawn(move || {
-                runtime.block_on(serve(endpoint, outbox, inbox_tx, poses, admitted_there));
+                runtime.block_on(serve(endpoint, outbox, inbox_tx, poses, admitted_there, known_there));
             })
             .map_err(|e| format!("could not start the network thread: {e}"))?;
-        Ok(Net { admitted, out, inbox })
+        Ok(Net { admitted, known, out, inbox })
+    }
+
+    /// The paired list changed: said wherever the gate is told. A connection arriving from
+    /// now on is seated by this one.
+    pub fn set_paired(&self, paired: Vec<Fingerprint>) {
+        self.known.set(paired);
     }
 
     /// The session that joined as `session` is let in, or is not any more. Said of one that
@@ -182,56 +383,236 @@ impl Net {
     }
 }
 
+/// A connection the network thread has, as that thread keeps it: enough to close it, to say
+/// who it is, and to feed the task that attends to it.
+struct There {
+    connection: Connection,
+    who: Fingerprint,
+    standing: Standing,
+    feed: UnboundedSender<Fed>,
+}
+
+/// What the network thread hands the task attending to one connection.
+enum Fed {
+    /// From the compositor, for the session.
+    Out(ToSession),
+    /// From the compositor, for the one waiting: a pairing reply or a refusal, checked to be
+    /// one before it is put here.
+    Pairing(HostMessage),
+    /// The one waiting has proved the code: it is the session from here on.
+    Proved,
+    /// The one waiting is to be hung up on, after what it has already been handed is written.
+    TurnedAway,
+}
+
+/// What the network thread wakes for.
+enum Event {
+    Arrived(Connection, Fingerprint),
+    Posted(ToSession),
+    /// The task attending to the connection with this number has finished.
+    Ended(u64),
+}
+
+/// The network thread's own loop: who sits where, and what goes to whom.
+///
+/// It never waits on a connection. Each one has a task of its own ([`attend`]) that does the
+/// writing and the reading, and this only decides: an arrival is seated ([`Seats`]), what the
+/// compositor posts is handed to whoever it is for, and a connection that ends leaves its
+/// seat. So one that will not read what it is sent -- a stranger's is the case to think of --
+/// holds up nothing but itself.
 async fn serve(
     endpoint: quinn::Endpoint,
     mut outbox: UnboundedReceiver<ToSession>,
     inbox: Sender<FromSession>,
-    mut poses: Option<crate::pose::Poses>,
+    poses: Option<crate::pose::Poses>,
     admitted: Admission,
+    known: Known,
 ) {
-    let mut next: Option<(Connection, spatiand_stream::Fingerprint)> = None;
+    // Shared with whichever task is attending to the session: one at a time writes it, the
+    // lock is only what lets the ring pass from one session's task to the next.
+    let poses = poses.map(|poses| Arc::new(Mutex::new(poses)));
+    let (arrived, mut arrivals) = unbounded_channel();
+    tokio::spawn(doorway(endpoint, arrived));
+    let (ended, mut endings) = unbounded_channel::<u64>();
+    let mut seats = Seats::default();
+    let mut there: HashMap<u64, There> = HashMap::new();
     // Which connection this is, counted from one. See `Admission`.
     let mut serial: u64 = 0;
+    // What was found in the queue while it was being emptied for a new session and is not the
+    // old session's to lose; see `stale`.
+    let mut backlog: VecDeque<ToSession> = VecDeque::new();
     loop {
-        let (connection, who) = match next.take() {
-            Some(newcomer) => newcomer,
-            None => match arrival(&endpoint).await {
-                Some(arrived) => arrived,
-                None => return,
+        let event = match backlog.pop_front() {
+            Some(posted) => Event::Posted(posted),
+            None => tokio::select! {
+                arrived = arrivals.recv() => match arrived {
+                    Some((connection, who)) => Event::Arrived(connection, who),
+                    // The endpoint has closed.
+                    None => return,
+                },
+                posted = outbox.recv() => match posted {
+                    Some(posted) => Event::Posted(posted),
+                    // The compositor has gone, and the process is going.
+                    None => return,
+                },
+                Some(gone) = endings.recv() => Event::Ended(gone),
             },
         };
-        let address = connection.remote_address();
-        log::info!("session {} joined from {address}", who.short());
-        serial += 1;
-        let _ = inbox.send(FromSession::Joined { session: serial, who, address });
-        if let Some(poses) = poses.as_mut() {
-            poses.reset();
-        }
-
-        // One at a time, and listening meanwhile: a newcomer takes over.
-        tokio::select! {
-            _ = session(&connection, serial, &mut outbox, &inbox, poses.as_mut(), &admitted) => {
-                log::info!("session {} left", who.short());
+        match event {
+            Event::Arrived(connection, who) => {
+                serial += 1;
+                let address = connection.remote_address();
+                let (seat, displaced) = seats.arrived(serial, known.contains(&who));
+                let standing = Standing::new(seat == Seat::Session);
+                let (feed, fed) = unbounded_channel();
+                match seat {
+                    // Paired: one at a time, and the newest wins.
+                    Seat::Session => {
+                        match displaced {
+                            Some(old) => taken_over(old, &who, &mut there, &inbox),
+                            None => log::info!("session {} joined from {address}", who.short()),
+                        }
+                        stale(&mut outbox, &mut backlog);
+                        reset(&poses);
+                        let _ = inbox.send(FromSession::Joined { session: serial, who, address });
+                    }
+                    // Not paired: in through an open pairing gate, and held beside the
+                    // session, which hears nothing of it.
+                    Seat::Waiting => {
+                        if let Some(old) = displaced.and_then(|old| Some((old, there.remove(&old)?))) {
+                            log::info!(
+                                "{} waits to pair in place of {}, which is hung up on",
+                                who.short(),
+                                old.1.who.short()
+                            );
+                            old.1.connection.close(1u32.into(), b"another device is pairing");
+                            let _ = inbox.send(FromSession::Left { session: old.0 });
+                        }
+                        let _ = inbox.send(FromSession::Knocked { session: serial, who, address });
+                    }
+                }
+                tokio::spawn(attend(
+                    connection.clone(),
+                    serial,
+                    standing.clone(),
+                    fed,
+                    inbox.clone(),
+                    poses.clone(),
+                    admitted.clone(),
+                    ended.clone(),
+                ));
+                there.insert(serial, There { connection, who, standing, feed });
             }
-            arrived = arrival(&endpoint) => {
-                let Some(arrived) = arrived else { return };
-                log::info!(
-                    "session {} takes over from {}; its windows go with it",
-                    arrived.1.short(),
-                    who.short()
-                );
-                connection.close(CLOSE_TAKEN_OVER.into(), b"another device took over");
-                next = Some(arrived);
+            Event::Posted(ToSession::Stranger { session, message }) => {
+                // To the one waiting and to nobody else, and only what one waiting may hear.
+                if seats.waiting != Some(session) || !for_the_unproven(&message) {
+                    continue;
+                }
+                if let Some(waiting) = there.get(&session) {
+                    let _ = waiting.feed.send(Fed::Pairing(message));
+                }
+            }
+            Event::Posted(ToSession::TurnAway { session }) => {
+                if !seats.turned_away(session) {
+                    continue;
+                }
+                // Through its own task, so that the refusal it was handed a moment ago is
+                // written before the line is cut.
+                if let Some(waiting) = there.remove(&session) {
+                    log::info!("{} is hung up on, not paired", waiting.who.short());
+                    let _ = waiting.feed.send(Fed::TurnedAway);
+                }
+                // And said back like any other leaving: the compositor closes the attempt
+                // that connection had under way when it hears this.
+                let _ = inbox.send(FromSession::Left { session });
+            }
+            Event::Posted(ToSession::Proved { session }) => {
+                let Some(displaced) = seats.proved(session) else { continue };
+                let Some((who, address)) =
+                    there.get(&session).map(|t| (t.who, t.connection.remote_address()))
+                else {
+                    continue;
+                };
+                // **Only now**, with the code proved, does anybody lose their seat to it.
+                match displaced {
+                    Some(old) => taken_over(old, &who, &mut there, &inbox),
+                    None => log::info!("session {} joined from {address}, newly paired", who.short()),
+                }
+                stale(&mut outbox, &mut backlog);
+                reset(&poses);
+                // In this order: what it says from here on is passed along as a session's,
+                // and must not reach the compositor ahead of the news that it is one.
+                let _ = inbox.send(FromSession::Joined { session, who, address });
+                if let Some(proved) = there.get(&session) {
+                    proved.standing.now_the_session();
+                    let _ = proved.feed.send(Fed::Proved);
+                }
+            }
+            // Everything else is the session's. With nobody in that seat it was for a session
+            // that has gone.
+            Event::Posted(posted) => {
+                if let Some(session) = seats.session.and_then(|session| there.get(&session)) {
+                    let _ = session.feed.send(Fed::Out(posted));
+                }
+            }
+            Event::Ended(gone) => {
+                // One taken over or turned away has been said to have left already.
+                if seats.ended(gone).is_none() {
+                    continue;
+                }
+                if let Some(left) = there.remove(&gone) {
+                    log::info!("session {} left", left.who.short());
+                }
+                let _ = inbox.send(FromSession::Left { session: gone });
             }
         }
-        let _ = inbox.send(FromSession::Left);
     }
 }
 
-/// The next session to finish connecting, with who it is. `None` once the endpoint closes.
-async fn arrival(endpoint: &quinn::Endpoint) -> Option<(Connection, spatiand_stream::Fingerprint)> {
-    loop {
-        let incoming = endpoint.accept().await?;
+/// The session gives its seat to `by`: closed with [`CLOSE_TAKEN_OVER`], and said to have left.
+fn taken_over(old: u64, by: &Fingerprint, there: &mut HashMap<u64, There>, inbox: &Sender<FromSession>) {
+    let Some(old_one) = there.remove(&old) else { return };
+    log::info!(
+        "session {} takes over from {}; its windows go with it",
+        by.short(),
+        old_one.who.short()
+    );
+    old_one.connection.close(CLOSE_TAKEN_OVER.into(), b"another device took over");
+    let _ = inbox.send(FromSession::Left { session: old });
+}
+
+/// Empty the queue for a session that is starting.
+///
+/// Whatever is still queued was meant for the session before this one -- pictures and news of
+/// its windows, posted before the compositor heard it had gone. This one hears its windows
+/// from the start, after its own hello. What is addressed to a connection by its number is
+/// not the old session's and is kept, to be dealt with in its turn.
+fn stale(outbox: &mut UnboundedReceiver<ToSession>, backlog: &mut VecDeque<ToSession>) {
+    while let Ok(posted) = outbox.try_recv() {
+        if matches!(
+            posted,
+            ToSession::Stranger { .. } | ToSession::TurnAway { .. } | ToSession::Proved { .. }
+        ) {
+            backlog.push_back(posted);
+        }
+    }
+}
+
+/// A new session's head starts from nothing.
+fn reset(poses: &Option<Arc<Mutex<crate::pose::Poses>>>) {
+    if let Some(Ok(mut poses)) = poses.as_ref().map(|poses| poses.lock()) {
+        poses.reset();
+    }
+}
+
+/// Take connections through their handshake and pass each on, with who it is, until the
+/// endpoint closes.
+///
+/// On a task of its own because a handshake is not something to abandon half way: the loop
+/// that seats them wakes for every picture posted, and waiting for a handshake there would
+/// drop it each time.
+async fn doorway(endpoint: quinn::Endpoint, arrived: UnboundedSender<(Connection, Fingerprint)>) {
+    while let Some(incoming) = endpoint.accept().await {
         let connection = match incoming.await {
             Ok(connection) => connection,
             Err(e) => {
@@ -244,47 +625,141 @@ async fn arrival(endpoint: &quinn::Endpoint) -> Option<(Connection, spatiand_str
             connection.close(1u32.into(), b"no identity");
             continue;
         };
-        return Some((connection, who));
+        if arrived.send((connection, who)).is_err() {
+            return;
+        }
     }
 }
 
-async fn session(
-    connection: &Connection,
+/// Attend to one connection for as long as it lasts: waiting to pair if it came unpaired, then
+/// -- or from the start -- as the session.
+///
+/// One task for both, because the device hears everything on the one control stream the host
+/// opened first: its pairing reply, and then, on the same stream, its welcome.
+#[allow(clippy::too_many_arguments)]
+async fn attend(
+    connection: Connection,
     serial: u64,
-    outbox: &mut UnboundedReceiver<ToSession>,
-    inbox: &Sender<FromSession>,
-    mut poses: Option<&mut crate::pose::Poses>,
-    admitted: &Admission,
+    standing: Standing,
+    mut fed: UnboundedReceiver<Fed>,
+    inbox: Sender<FromSession>,
+    poses: Option<Arc<Mutex<crate::pose::Poses>>>,
+    admitted: Admission,
+    ended: UnboundedSender<u64>,
 ) {
-    // Whatever is still queued was meant for the session before this one -- pictures and news
-    // of its windows, posted before the compositor heard it had gone. This one hears its
-    // windows from the start, after its own hello.
-    while outbox.try_recv().is_ok() {}
     let mut control = match connection.open_uni().await {
         Ok(stream) => stream,
         Err(e) => {
             log::warn!("could not open the control stream: {e}");
+            let _ = ended.send(serial);
             return;
         }
     };
 
-    // What the session says, read on its own task so that a slow reader cannot hold up
-    // pictures.
+    // What it says, read on its own task so that a slow reader cannot hold up pictures.
+    // Whether what is read is passed on depends on its standing at that moment; see
+    // `heard_from`.
     let reading = tokio::spawn({
         let connection = connection.clone();
         let inbox = inbox.clone();
         let admitted = admitted.clone();
+        let standing = standing.clone();
         async move {
             loop {
                 let stream = match connection.accept_uni().await {
                     Ok(stream) => stream,
                     Err(_) => return,
                 };
-                tokio::spawn(heard(stream, serial, inbox.clone(), admitted.clone()));
+                tokio::spawn(heard(stream, serial, inbox.clone(), admitted.clone(), standing.clone()));
             }
         }
     });
 
+    if standing.is_session() || waiting(&connection, &mut control, &mut fed).await {
+        session(&connection, serial, control, &mut fed, poses.as_deref(), &admitted).await;
+    }
+    reading.abort();
+    let _ = ended.send(serial);
+}
+
+/// How long a connection may wait to pair before it is hung up on whatever else happens: no
+/// pairing window is open for longer, and the compositor turns it away when its window closes.
+/// This is for the day that goes wrong.
+const LONGEST_WAIT: std::time::Duration = crate::pair::PAIRING_WINDOW;
+
+/// How long one waiting may take to accept what it is told. Its replies are a few dozen bytes;
+/// one that will not take them is not pairing.
+const SLOWEST_REPLY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Everything a connection gets that has not proved the pairing code. `true` when it has, and
+/// is the session from here on; `false` when it is gone.
+///
+/// **This is all of it.** What it is told: the pairing replies and refusals the compositor
+/// addresses to it by number, on the control stream. Nothing posted for the session comes
+/// here -- no welcome, no catalogue, no window, picture, sound or clipboard -- because the
+/// network thread hands those to the session's task and this is not it. What it says is read
+/// by the same tasks as a session's, which pass on its pairing messages and nothing else
+/// ([`heard_from`]), each within the small limit for one not let in; its datagrams are
+/// thrown away, and its sound is not played.
+async fn waiting(
+    connection: &Connection,
+    control: &mut quinn::SendStream,
+    fed: &mut UnboundedReceiver<Fed>,
+) -> bool {
+    let too_long = tokio::time::sleep(LONGEST_WAIT);
+    tokio::pin!(too_long);
+    loop {
+        tokio::select! {
+            handed = fed.recv() => match handed {
+                Some(Fed::Proved) => return true,
+                Some(Fed::Pairing(message)) => {
+                    let told = tokio::time::timeout(
+                        SLOWEST_REPLY,
+                        spatiand_stream::link::tell(control, &message),
+                    )
+                    .await;
+                    if !matches!(told, Ok(Ok(()))) {
+                        connection.close(1u32.into(), b"not paired");
+                        return false;
+                    }
+                }
+                Some(Fed::TurnedAway) => {
+                    connection.close(1u32.into(), b"not paired");
+                    return false;
+                }
+                // The session's, and never handed to one waiting.
+                Some(Fed::Out(_)) => {}
+                // Pushed out by another that came to pair, and closed already.
+                None => return false,
+            },
+            // Read so that they do not pile up, and dropped: a head is a session's to send.
+            datagram = connection.read_datagram() => {
+                if datagram.is_err() {
+                    return false;
+                }
+            }
+            _ = connection.closed() => return false,
+            _ = &mut too_long => {
+                log::info!("a connection waited to pair for longer than pairing is ever open; closing it");
+                connection.close(1u32.into(), b"not paired");
+                return false;
+            }
+        }
+    }
+}
+
+/// The session: everything the compositor posts goes out, and its head comes in.
+///
+/// `control` is the stream the connection's task opened when it arrived -- for one that
+/// paired a moment ago, the one its pairing reply went down.
+async fn session(
+    connection: &Connection,
+    serial: u64,
+    mut control: quinn::SendStream,
+    fed: &mut UnboundedReceiver<Fed>,
+    poses: Option<&Mutex<crate::pose::Poses>>,
+    admitted: &Admission,
+) {
     let mut frames_sent: u64 = 0;
     let mut dropped: u64 = 0;
     // One stream per application's sound, each written by a task of its own so that a sound
@@ -295,20 +770,25 @@ async fn session(
     let mut sound_dropped: u64 = 0;
     loop {
         tokio::select! {
-            outgoing = outbox.recv() => {
-                let Some(outgoing) = outgoing else { break };
-                // **The only way out.** A stranger through an open pairing gate gets the host's
-                // half of the pairing exchange and its refusal, and nothing else: not a
-                // picture, a sound, a window's name or the clipboard.
-                let for_stranger = matches!(
+            handed = fed.recv() => {
+                let Some(handed) = handed else { break };
+                // Only what the compositor posts for the session; the rest was for it while
+                // it waited to pair, and it is past that.
+                let Fed::Out(outgoing) = handed else { continue };
+                // **The only way out.** A session the compositor has not let in -- one the
+                // network took for paired from a list that was behind -- gets its refusal and
+                // nothing else: not a picture, a sound, a window's name or the clipboard.
+                let for_anybody = matches!(
                     outgoing,
-                    ToSession::Close
-                        | ToSession::Control(HostMessage::Refused { .. } | HostMessage::PairReply { .. })
+                    ToSession::Close | ToSession::Control(HostMessage::Refused { .. })
                 );
-                if !for_stranger && !admitted.is(serial) {
+                if !for_anybody && !admitted.is(serial) {
                     continue;
                 }
                 match outgoing {
+                    // For a connection by its number: the network thread deals with these
+                    // itself and hands none of them on.
+                    ToSession::Stranger { .. } | ToSession::TurnAway { .. } | ToSession::Proved { .. } => {}
                     ToSession::Close => {
                         connection.close(1u32.into(), b"not paired");
                         break;
@@ -402,7 +882,9 @@ async fn session(
                 let Ok(datagram) = datagram else { break };
                 match spatiand_stream::from_bytes::<ClientMessage>(&datagram) {
                     Ok(ClientMessage::Viewport(viewport)) => {
-                        if let (Some(poses), true) = (poses.as_deref_mut(), admitted.is(serial)) {
+                        if let (Some(Ok(mut poses)), true) =
+                            (poses.map(|poses| poses.lock()), admitted.is(serial))
+                        {
                             poses.heard(&viewport, crate::pose::now_ns());
                         }
                     }
@@ -413,7 +895,6 @@ async fn session(
             _ = connection.closed() => break,
         }
     }
-    reading.abort();
 }
 
 /// Read one thing the session opened a stream for.
@@ -422,7 +903,13 @@ async fn session(
 /// means a malformed message can never desynchronise the next one. The exception is sound
 /// coming *up* from the headset, which is endless and so is recognised by its magic before
 /// anything tries to read it to the end. See `spatiand_stream::audio` and `crate::microphone`.
-async fn heard(mut stream: quinn::RecvStream, serial: u64, inbox: Sender<FromSession>, admitted: Admission) {
+async fn heard(
+    mut stream: quinn::RecvStream,
+    serial: u64,
+    inbox: Sender<FromSession>,
+    admitted: Admission,
+    standing: Standing,
+) {
     // Enough to tell the two apart, and read in a way that tolerates a message shorter than
     // the magic: `Detach` is a couple of bytes.
     let mut first = Vec::new();
@@ -436,7 +923,7 @@ async fn heard(mut stream: quinn::RecvStream, serial: u64, inbox: Sender<FromSes
     // Everything the session says comes down one ordered stream; see
     // `spatiand_stream::CONTROL_MAGIC` for why it has to be one.
     if first.len() >= 8 && first[..4] == spatiand_stream::CONTROL_MAGIC {
-        listen_control(stream, first[4..].to_vec(), serial, inbox, admitted).await;
+        listen_control(stream, first[4..].to_vec(), serial, inbox, admitted, standing).await;
         return;
     }
     let magic = first.len() >= 8
@@ -453,7 +940,7 @@ async fn heard(mut stream: quinn::RecvStream, serial: u64, inbox: Sender<FromSes
                 first.extend_from_slice(&rest);
                 match spatiand_stream::from_bytes::<ClientMessage>(&first) {
                     Ok(message) => {
-                        let _ = inbox.send(FromSession::Said(message));
+                        heard_from(serial, &standing, message, &inbox);
                     }
                     Err(e) => log::warn!("a session sent something unreadable: {e}"),
                 }
@@ -476,6 +963,7 @@ async fn listen_control(
     serial: u64,
     inbox: Sender<FromSession>,
     admitted: Admission,
+    standing: Standing,
 ) {
     /// All a session not let in may say at once: its pairing messages are a few dozen bytes,
     /// and anything longer would be an allocation a stranger chose.
@@ -509,7 +997,7 @@ async fn listen_control(
             }
             match spatiand_stream::from_bytes::<ClientMessage>(&held[4..4 + length]) {
                 Ok(message) => {
-                    if inbox.send(FromSession::Said(message)).is_err() {
+                    if !heard_from(serial, &standing, message, &inbox) {
                         return;
                     }
                 }
@@ -681,5 +1169,446 @@ mod tests {
         admitted.withdraw(paired);
         assert!(admitted.is(stranger));
         assert!(!admitted.is(paired));
+    }
+
+    /// The defect: with pairing open, anybody who connected closed the session that was in.
+    #[test]
+    fn a_stranger_arriving_takes_nothing_from_the_session() {
+        let mut seats = Seats::default();
+        assert_eq!(seats.arrived(1, true), (Seat::Session, None));
+        // Any number of them, one after another, for as long as the window is open.
+        assert_eq!(seats.arrived(2, false), (Seat::Waiting, None));
+        assert_eq!(seats.arrived(3, false), (Seat::Waiting, Some(2)), "strangers push out only each other");
+        assert_eq!(seats.arrived(4, false), (Seat::Waiting, Some(3)));
+        assert_eq!(seats.session, Some(1), "and the session is where it was");
+    }
+
+    #[test]
+    fn a_paired_newcomer_takes_over_at_once_and_leaves_the_one_waiting_alone() {
+        let mut seats = Seats::default();
+        seats.arrived(1, true);
+        seats.arrived(2, false);
+        assert_eq!(seats.arrived(3, true), (Seat::Session, Some(1)));
+        assert_eq!(seats, Seats { session: Some(3), waiting: Some(2) });
+    }
+
+    #[test]
+    fn the_one_waiting_takes_over_only_when_it_has_proved_the_code() {
+        let mut seats = Seats::default();
+        seats.arrived(1, true);
+        seats.arrived(2, false);
+        assert_eq!(seats.proved(2), Some(Some(1)), "the session gives way now, and not before");
+        assert_eq!(seats, Seats { session: Some(2), waiting: None });
+        // With nobody in, it has nobody to take over from.
+        let mut empty = Seats::default();
+        empty.arrived(1, false);
+        assert_eq!(empty.proved(1), Some(None));
+        assert_eq!(empty, Seats { session: Some(1), waiting: None });
+    }
+
+    /// A yes that comes late -- for one that left, or that another stranger pushed out -- must
+    /// not seat whoever is waiting by then, and must not unseat the session.
+    #[test]
+    fn a_proof_for_one_no_longer_waiting_changes_nothing() {
+        let mut seats = Seats::default();
+        seats.arrived(1, true);
+        seats.arrived(2, false);
+        seats.arrived(3, false);
+        assert_eq!(seats.proved(2), None);
+        assert_eq!(seats.proved(1), None, "the session is not waiting either");
+        assert_eq!(seats.proved(9), None);
+        assert_eq!(seats, Seats { session: Some(1), waiting: Some(3) });
+    }
+
+    #[test]
+    fn only_the_one_waiting_can_be_turned_away() {
+        let mut seats = Seats::default();
+        seats.arrived(1, true);
+        seats.arrived(2, false);
+        assert!(!seats.turned_away(1), "the session is hung up on by other means");
+        assert!(!seats.turned_away(7));
+        assert!(seats.turned_away(2));
+        assert!(!seats.turned_away(2), "once");
+        assert_eq!(seats, Seats { session: Some(1), waiting: None });
+        // And having gone, it cannot be let in after all.
+        assert_eq!(seats.proved(2), None);
+    }
+
+    #[test]
+    fn a_connection_that_ends_leaves_its_own_seat_and_no_other() {
+        let mut seats = Seats::default();
+        seats.arrived(1, true);
+        seats.arrived(2, false);
+        assert_eq!(seats.ended(2), Some(Seat::Waiting));
+        assert_eq!(seats.ended(2), None);
+        seats.arrived(3, true);
+        // The one taken over ends a moment later: that is not the session leaving.
+        assert_eq!(seats.ended(1), None);
+        assert_eq!(seats.ended(3), Some(Seat::Session));
+        assert_eq!(seats, Seats::default());
+    }
+
+    fn hello() -> ClientMessage {
+        ClientMessage::Hello {
+            version: spatiand_stream::VERSION,
+            codecs: Vec::new(),
+            max_size: (1920, 1080),
+            refresh_mhz: 60_000,
+            session: String::new(),
+        }
+    }
+
+    fn welcome() -> HostMessage {
+        HostMessage::Welcome { version: spatiand_stream::VERSION, host: "workshop".into(), reattached: false }
+    }
+
+    fn refused() -> HostMessage {
+        HostMessage::Refused { version: spatiand_stream::VERSION, reason: "no".into() }
+    }
+
+    #[test]
+    fn one_waiting_is_heard_for_its_pairing_and_nothing_else() {
+        assert!(pairing_message(&ClientMessage::PairStart { spake: vec![1] }));
+        assert!(pairing_message(&ClientMessage::PairConfirm { confirm: vec![1] }));
+        assert!(pairing_message(&hello()), "to be told to update");
+        assert!(!pairing_message(&ClientMessage::Detach));
+        assert!(!pairing_message(&ClientMessage::Launch { app: "anything".into() }));
+        assert!(!pairing_message(&ClientMessage::ForceQuit { app: "anything".into() }));
+        assert!(!pairing_message(&ClientMessage::Focus { window: None }));
+    }
+
+    #[test]
+    fn one_waiting_is_told_the_pairing_reply_or_no_and_nothing_else() {
+        assert!(for_the_unproven(&HostMessage::PairReply { spake: vec![1], confirm: vec![2] }));
+        assert!(for_the_unproven(&refused()));
+        assert!(!for_the_unproven(&welcome()));
+        assert!(!for_the_unproven(&HostMessage::Catalog { apps: Vec::new() }));
+        assert!(!for_the_unproven(&HostMessage::Microphone { wanted: true }));
+    }
+
+    #[test]
+    fn what_one_waiting_says_reaches_the_compositor_only_if_it_is_pairing() {
+        let (inbox, heard) = std::sync::mpsc::channel();
+        let standing = Standing::new(false);
+        assert!(heard_from(5, &standing, ClientMessage::Launch { app: "anything".into() }, &inbox));
+        assert!(heard_from(5, &standing, ClientMessage::Detach, &inbox));
+        assert!(heard.try_recv().is_err(), "nothing was passed on");
+        assert!(heard_from(5, &standing, ClientMessage::PairStart { spake: vec![1] }, &inbox));
+        assert!(matches!(
+            heard.try_recv(),
+            Ok(FromSession::Said { session: 5, message: ClientMessage::PairStart { .. } })
+        ));
+        // Once it is the session, what it says is a session's.
+        standing.now_the_session();
+        assert!(heard_from(5, &standing, ClientMessage::Detach, &inbox));
+        assert!(matches!(
+            heard.try_recv(),
+            Ok(FromSession::Said { session: 5, message: ClientMessage::Detach })
+        ));
+    }
+
+    #[test]
+    fn emptying_the_queue_for_a_new_session_keeps_what_is_addressed_by_number() {
+        let (out, mut outbox) = unbounded_channel();
+        let _ = out.send(ToSession::Control(welcome()));
+        let _ = out.send(ToSession::Stranger { session: 2, message: refused() });
+        let _ = out.send(ToSession::Close);
+        let _ = out.send(ToSession::TurnAway { session: 2 });
+        let _ = out.send(ToSession::Proved { session: 3 });
+        let mut backlog = VecDeque::new();
+        stale(&mut outbox, &mut backlog);
+        assert!(outbox.try_recv().is_err());
+        assert!(matches!(
+            backlog.make_contiguous(),
+            [
+                ToSession::Stranger { session: 2, .. },
+                ToSession::TurnAway { session: 2 },
+                ToSession::Proved { session: 3 }
+            ]
+        ));
+    }
+
+    /// The network thread itself, over the loopback: a host with one paired device and
+    /// pairing open, with this test standing where the compositor does.
+    struct Rig {
+        runtime: tokio::runtime::Runtime,
+        address: SocketAddr,
+        host: Identity,
+        out: UnboundedSender<ToSession>,
+        heard: Receiver<FromSession>,
+        admitted: Admission,
+        paired: Identity,
+    }
+
+    impl Rig {
+        fn start() -> Rig {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("a runtime");
+            let host = Identity::new().unwrap();
+            let paired = Identity::new().unwrap();
+            let gate = Arc::new(spatiand_stream::Gate::new(vec![paired.fingerprint()]));
+            gate.set_open(true);
+            let endpoint = {
+                let _guard = runtime.enter();
+                spatiand_stream::transport::server("127.0.0.1:0".parse().unwrap(), &host, Trust::Gate(gate))
+                    .unwrap()
+            };
+            let address = endpoint.local_addr().unwrap();
+            let (out, outbox) = unbounded_channel();
+            let (inbox, heard) = std::sync::mpsc::channel();
+            let admitted = Admission::default();
+            let known = Known::default();
+            known.set(vec![paired.fingerprint()]);
+            runtime.spawn(serve(endpoint, outbox, inbox, None, admitted.clone(), known));
+            Rig { runtime, address, host, out, heard, admitted, paired }
+        }
+
+        fn next(&self) -> FromSession {
+            self.heard
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("the network thread said something")
+        }
+
+        fn quiet(&self) -> bool {
+            self.heard.recv_timeout(std::time::Duration::from_millis(300)).is_err()
+        }
+
+        /// A device connects, and has its end of the connection.
+        fn connect(&self, endpoint: &quinn::Endpoint) -> Connection {
+            self.runtime.block_on(async {
+                endpoint.connect(self.address, "spatiand").unwrap().await.expect("connects")
+            })
+        }
+
+        /// The paired device comes in and is let in, as the compositor would.
+        fn paired_session(&self) -> (quinn::Endpoint, Connection, u64) {
+            let endpoint = {
+                let _guard = self.runtime.enter();
+                spatiand_stream::transport::client(&self.paired, self.host.fingerprint()).unwrap()
+            };
+            let connection = self.connect(&endpoint);
+            let FromSession::Joined { session, who, .. } = self.next() else { panic!("not a joining") };
+            assert_eq!(who, self.paired.fingerprint());
+            self.admitted.admit(session);
+            (endpoint, connection, session)
+        }
+
+        fn stranger(&self) -> (quinn::Endpoint, Connection, u64) {
+            let identity = Identity::new().unwrap();
+            let endpoint = {
+                let _guard = self.runtime.enter();
+                spatiand_stream::transport::client_first_contact(&identity).unwrap()
+            };
+            let connection = self.connect(&endpoint);
+            let FromSession::Knocked { session, who, .. } = self.next() else { panic!("not a knock") };
+            assert_eq!(who, identity.fingerprint());
+            (endpoint, connection, session)
+        }
+
+        fn say(&self, connection: &Connection, message: ClientMessage) {
+            self.runtime
+                .block_on(spatiand_stream::link::say(connection, &message))
+                .expect("said");
+        }
+
+        /// The host's control stream as that device sees it, once something is on it.
+        fn control(&self, connection: &Connection) -> Option<quinn::RecvStream> {
+            self.runtime.block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(5), connection.accept_uni())
+                    .await
+                    .ok()?
+                    .ok()
+            })
+        }
+
+        fn hear(&self, stream: quinn::RecvStream) -> Option<(HostMessage, quinn::RecvStream)> {
+            self.runtime.block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(5), spatiand_stream::link::hear(stream))
+                    .await
+                    .ok()?
+            })
+        }
+
+        fn closed_with(&self, connection: &Connection) -> Option<u32> {
+            let reason = self.runtime.block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(5), connection.closed()).await.ok()
+            })?;
+            match reason {
+                quinn::ConnectionError::ApplicationClosed(closed) => {
+                    Some(u64::from(closed.error_code) as u32)
+                }
+                other => panic!("closed another way: {other}"),
+            }
+        }
+    }
+
+    #[test]
+    fn over_the_loopback_a_stranger_is_held_beside_the_session_and_hears_only_its_pairing() {
+        let rig = Rig::start();
+        let (_paired_endpoint, paired, session) = rig.paired_session();
+        let (_stranger_endpoint, stranger, waiting) = rig.stranger();
+        assert_ne!(session, waiting);
+        assert!(rig.quiet(), "the session was not said to have left");
+        assert!(paired.close_reason().is_none(), "and it has not been closed");
+
+        // What the compositor posts for the session goes to the session.
+        let _ = rig.out.send(ToSession::Control(welcome()));
+        let control = rig.control(&paired).expect("the session's control stream");
+        let (told, _control) = rig.hear(control).expect("the session is told");
+        assert_eq!(told, welcome());
+
+        // What the stranger says: its pairing gets through, by its number, and nothing else.
+        rig.say(&stranger, ClientMessage::Launch { app: "anything".into() });
+        rig.say(&stranger, ClientMessage::PairStart { spake: vec![7; 33] });
+        match rig.next() {
+            FromSession::Said { session: from, message: ClientMessage::PairStart { .. } } => {
+                assert_eq!(from, waiting);
+            }
+            _ => panic!("something other than its pairing was passed on"),
+        }
+        assert!(rig.quiet());
+
+        // What it is told: a welcome addressed to it is not sent; its reply is, and is the
+        // first thing on its control stream.
+        let reply = HostMessage::PairReply { spake: vec![1; 33], confirm: vec![2; 32] };
+        let _ = rig.out.send(ToSession::Stranger { session: waiting, message: welcome() });
+        let _ = rig.out.send(ToSession::Stranger { session: waiting, message: reply.clone() });
+        let control = rig.control(&stranger).expect("the stranger's control stream");
+        let (told, _control) = rig.hear(control).expect("the stranger is told");
+        assert_eq!(told, reply);
+
+        // Turned away, it goes alone.
+        let _ = rig.out.send(ToSession::TurnAway { session: waiting });
+        assert!(matches!(rig.next(), FromSession::Left { session: gone } if gone == waiting));
+        assert_eq!(rig.closed_with(&stranger), Some(1));
+        assert!(rig.quiet());
+        assert!(paired.close_reason().is_none(), "the session is still in");
+    }
+
+    #[test]
+    fn over_the_loopback_a_stranger_takes_over_when_it_is_proved_and_not_before() {
+        let rig = Rig::start();
+        let (_paired_endpoint, paired, session) = rig.paired_session();
+        let (_stranger_endpoint, stranger, waiting) = rig.stranger();
+        // Its reply goes down the control stream it will be welcomed on.
+        let reply = HostMessage::PairReply { spake: vec![1; 33], confirm: vec![2; 32] };
+        let _ = rig.out.send(ToSession::Stranger { session: waiting, message: reply.clone() });
+        let control = rig.control(&stranger).expect("the stranger's control stream");
+        let (told, control) = rig.hear(control).expect("the stranger is told");
+        assert_eq!(told, reply);
+        assert!(paired.close_reason().is_none());
+
+        let _ = rig.out.send(ToSession::Proved { session: waiting });
+        assert!(matches!(rig.next(), FromSession::Left { session: gone } if gone == session));
+        assert!(matches!(rig.next(), FromSession::Joined { session: now, .. } if now == waiting));
+        assert_eq!(rig.closed_with(&paired), Some(CLOSE_TAKEN_OVER));
+
+        // Let in, it is welcomed on the same stream, and heard as a session.
+        rig.admitted.admit(waiting);
+        let _ = rig.out.send(ToSession::Control(welcome()));
+        let (told, _control) = rig.hear(control).expect("the new session is told");
+        assert_eq!(told, welcome());
+        rig.say(&stranger, ClientMessage::Detach);
+        assert!(matches!(
+            rig.next(),
+            FromSession::Said { session: from, message: ClientMessage::Detach } if from == waiting
+        ));
+    }
+
+    #[test]
+    fn over_the_loopback_a_paired_device_takes_over_at_once() {
+        let rig = Rig::start();
+        let (_first_endpoint, first, session) = rig.paired_session();
+        let endpoint = {
+            let _guard = rig.runtime.enter();
+            spatiand_stream::transport::client(&rig.paired, rig.host.fingerprint()).unwrap()
+        };
+        let _second = rig.connect(&endpoint);
+        assert!(matches!(rig.next(), FromSession::Left { session: gone } if gone == session));
+        assert!(matches!(rig.next(), FromSession::Joined { .. }));
+        assert_eq!(rig.closed_with(&first), Some(CLOSE_TAKEN_OVER));
+    }
+
+    /// A device as it really pairs -- `spatiand_stream::link::pair`, the one every device
+    /// runs -- against the network thread, with this test answering as the compositor does:
+    /// the exchange by number, `Proved` on the right code, and the welcome once it has joined.
+    #[test]
+    fn over_the_loopback_a_device_pairs_as_devices_do_and_only_then_takes_over() {
+        use spatiand_stream::pairing::{Verdict, Window};
+        let rig = Rig::start();
+        let (_paired_endpoint, paired, session) = rig.paired_session();
+        let pairing = rig.runtime.spawn({
+            let (device, address) = (Identity::new().unwrap(), rig.address.to_string());
+            let fingerprint = device.fingerprint();
+            async move {
+                (fingerprint, spatiand_stream::link::pair(&device, &address, "482 913", |_| {}).await)
+            }
+        });
+        let mut window = Window::with_code("482913".into(), std::time::Duration::from_secs(120));
+        let mut waiting = None;
+        loop {
+            match rig.next() {
+                FromSession::Knocked { session, who, .. } => waiting = Some((session, who)),
+                FromSession::Said { session: from, message } => {
+                    let (number, who) = waiting.expect("it knocked first");
+                    assert_eq!(from, number);
+                    match message {
+                        ClientMessage::PairStart { spake } => {
+                            assert!(paired.close_reason().is_none(), "nothing is taken over for asking");
+                            let reply = window.start(rig.host.fingerprint(), who, &spake).expect("a reply");
+                            let _ = rig.out.send(ToSession::Stranger { session: number, message: reply });
+                        }
+                        ClientMessage::PairConfirm { confirm } => {
+                            assert!(paired.close_reason().is_none(), "nor before the proof is checked");
+                            assert_eq!(window.confirm(who, &confirm), Verdict::Paired(who));
+                            let _ = rig.out.send(ToSession::Proved { session: number });
+                        }
+                        _ => panic!("one waiting was heard for something else"),
+                    }
+                }
+                FromSession::Left { session: gone } => assert_eq!(gone, session),
+                FromSession::Joined { session: now, who, .. } => {
+                    assert_eq!(Some((now, who)), waiting);
+                    rig.admitted.admit(now);
+                    let _ = rig.out.send(ToSession::Control(welcome()));
+                    break;
+                }
+            }
+        }
+        let (fingerprint, outcome) = rig.runtime.block_on(pairing).expect("ran");
+        assert_eq!(waiting.map(|(_, who)| who), Some(fingerprint));
+        let outcome = outcome.expect("paired");
+        assert_eq!(outcome.fingerprint, rig.host.fingerprint());
+        assert_eq!(outcome.name, "workshop");
+        assert_eq!(rig.closed_with(&paired), Some(CLOSE_TAKEN_OVER));
+    }
+
+    /// And with the wrong code: refused, hung up on, and the session never knew.
+    #[test]
+    fn over_the_loopback_a_wrong_code_is_refused_and_the_session_stays() {
+        use spatiand_stream::pairing::{Window, WRONG_CODE};
+        let rig = Rig::start();
+        let (_paired_endpoint, paired, _session) = rig.paired_session();
+        let pairing = rig.runtime.spawn({
+            let (device, address) = (Identity::new().unwrap(), rig.address.to_string());
+            async move { spatiand_stream::link::pair(&device, &address, "111111", |_| {}).await }
+        });
+        let mut window = Window::with_code("482913".into(), std::time::Duration::from_secs(120));
+        let FromSession::Knocked { session: number, who, .. } = rig.next() else { panic!("not a knock") };
+        let FromSession::Said { message: ClientMessage::PairStart { spake }, .. } = rig.next() else {
+            panic!("not the start of a pairing")
+        };
+        let reply = window.start(rig.host.fingerprint(), who, &spake).expect("a reply");
+        let _ = rig.out.send(ToSession::Stranger { session: number, message: reply });
+        // The device sees the host's confirmation fail and hangs up itself, saying no more.
+        let error = rig.runtime.block_on(pairing).expect("ran").unwrap_err();
+        assert!(error.contains(WRONG_CODE), "{error}");
+        assert!(matches!(rig.next(), FromSession::Left { session: gone } if gone == number));
+        assert!(window.abandon(&who).is_some(), "and its attempt is spent");
+        assert!(rig.quiet());
+        assert!(paired.close_reason().is_none(), "the session is still in");
     }
 }
