@@ -63,7 +63,12 @@ enum SpatiKeyTyping {
         defer { units.withUnsafeMutableBufferPointer { $0.update(repeating: 0) } }
         var at = 0
         while at < units.count {
-            let end = min(at + 16, units.count)
+            var end = min(at + 16, units.count)
+            // Not between the two halves of a character outside the basic plane (an emoji): each
+            // half alone, in an event of its own, arrives as a character that is not one.
+            if end < units.count, UTF16.isLeadSurrogate(units[end - 1]) {
+                end -= 1
+            }
             var piece = Array(units[at..<end])
             for down in [true, false] {
                 if let event = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: down) {
