@@ -9,10 +9,10 @@ export CHROME_DESKTOP=spatiand-chromium.desktop
 # glibc 2.35+ sorts libraries by a newer method that sometimes trips its own assertion
 # (dl-sort-maps.c, _dl_sort_maps_dfs) as Chromium loads its toolkit; the older method does not.
 export GLIBC_TUNABLES=glibc.rtld.dynamic_sort=1
-# Video decoded by the GPU (VA-API) -- VP9, H.264 -- as software cannot keep up with what
-# YouTube sends a large window; VaapiIgnoreDriverChecks lets VA-API run on AMD's Mesa driver.
-# HEVC never goes to VA-API (patch 0003: it has reset this GPU family); Spatiand's FFmpeg decodes
-# it in software.
+# Video decoded by the GPU (VA-API) -- H.264, HEVC, VP9, AV1 -- as software cannot keep up with
+# what YouTube sends a large window; VaapiIgnoreDriverChecks lets VA-API run on AMD's Mesa driver.
+# (This said until 2026-11-14 that HEVC never goes to VA-API; it does, on 153 and 157 alike, and
+# the owner's rule is that video is decoded by the hardware, whichever way.)
 # No back and forward by a sideways swipe: on the Deck's pads that is a thumb's drift, and a
 # swipe taken for it scrolls nothing.
 # ProfilesReordering: the profiles' order is the one every machine shares.

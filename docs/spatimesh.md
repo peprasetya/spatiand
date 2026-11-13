@@ -364,7 +364,7 @@ glasses yet. Left as they are, for the owner: the ad blocker's lists still come 
 pages; Chromium 157 reads a kind of HDR metadata track (ITU-T T.35) through an FFmpeg newer than
 Spatiand's 9.0.2, so that track is skipped; 157's on-device model switch is one with its
 server-side one, so Cromite's line that turned the first off is gone with the feature it named;
-HEVC goes to VA-API on the Deck on both versions, though this page says it never does.
+HEVC goes to VA-API on the Deck on both versions, which is as the owner wants it (video decoded by the hardware, whichever way; `run.sh` said otherwise and was corrected).
 
 ## Three kinds of process
 
